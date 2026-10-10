@@ -120,8 +120,10 @@ type WorkspaceRepositoryTreeListProps = Readonly<{
     folderPage?: Readonly<{ onOpenFolder: (path: string) => void }> | null;
     /** What an empty folder says (default: the project's empty-files line). */
     emptyLabel?: string;
-    /** The rows now shown (a Code folder page reads its README and demands their history from them). */
+    /** Loaded rows, used for directory facts such as README discovery and entry count. */
     onNodesChange?: ((nodes: readonly WorkspaceRepositoryTreeNode[], directory: WorkspaceRepositoryDirectoryState) => void) | null;
+    /** Rows in the list's current viewport; history demand follows this boundary. */
+    onVisibleNodesChange?: ((nodes: readonly WorkspaceRepositoryTreeNode[]) => void) | null;
     /** The machine the files live on, named by the root failure. */
     machineName?: string | null;
     /**
@@ -144,6 +146,8 @@ type WorkspaceRepositoryTreeListProps = Readonly<{
     directoryUnavailable?: boolean;
     /** Drawn after the last row, in the tree's own scroll. */
     listFooter?: React.ReactElement | null;
+    listHeader?: React.ReactElement | null;
+    listEmpty?: React.ReactElement | null;
     /** `inline`: rows drawn in place inside an enclosing scroll (a turn card), see `FilesystemBrowserListProps`. */
     presentation?: 'scroll' | 'inline';
     /** Changed only: the folders that start closed (a large turn opens as one page of folders). */
@@ -613,8 +617,6 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
                 paddingRight={8}
                 style={{
                     backgroundColor: rowState.webDropHoverPath === node.path ? rowState.theme.colors.surface.pressed : undefined,
-                    // A table row runs edge to edge between its hairlines; a tree row is a rounded pill.
-                    borderRadius: rowState.folderPage ? 0 : 10,
                 }}
                 wrapContent={
                     Platform.OS === 'web'
@@ -659,11 +661,9 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
         );
     }
 
-    if (!changedOnly && props.directoryUnavailable && nodes.length === 0) {
-        return <RepositoryTreeRootErrorState kind="unavailable" machineName={props.machineName} onRetry={() => props.onRequestRefresh?.()} />;
-    }
-    if (rootError && nodes.length === 0) {
-        return (
+    const emptyRootState = !changedOnly && props.directoryUnavailable && nodes.length === 0
+        ? <RepositoryTreeRootErrorState kind="unavailable" machineName={props.machineName} onRetry={() => props.onRequestRefresh?.()} />
+        : rootError && nodes.length === 0 ? (
             <View testID="workspace-repository-tree-error" style={{ flex: 1 }}>
                 <RepositoryTreeRootErrorState
                     error={rootError}
@@ -673,8 +673,8 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
                     }}
                 />
             </View>
-        );
-    }
+        ) : null;
+    if (emptyRootState && !props.listHeader && !props.listFooter && !props.listEmpty) return emptyRootState;
 
     return (
         <FilesystemBrowser
@@ -685,6 +685,9 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
             rootLoading={rootLoading}
             showInlineLoadingHeader={props.showInlineLoadingHeader}
             listFooter={props.listFooter}
+            listHeader={props.listHeader}
+            listEmpty={emptyRootState ?? props.listEmpty}
+            onVisibleNodesChange={props.onVisibleNodesChange}
             rootError={rootError}
             retryRoot={retryRoot}
             emptyLabel={props.emptyLabel ?? t('files.noFilesInProject')}

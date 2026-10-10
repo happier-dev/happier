@@ -1,27 +1,24 @@
-import { WorkspaceSyncRuntimeEventV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { MachinePublishedWorkspaceSyncV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 
-import { invalidateWorkspaceSyncConflicts } from './workspaceSyncConflictStore';
+import { invalidateWorkspaceSyncControllerConflicts } from './workspaceSyncConflictStore';
 import { applyWorkspaceSyncEngineReadinessEvent } from './workspaceSyncEngineReadinessStore';
-import { applyWorkspaceSyncStatusEvent, type WorkspaceSyncStatusScope } from './workspaceSyncStatusStore';
+import { invalidateWorkspaceSyncStatuses } from './workspaceSyncStatusStore';
 
 export function applyWorkspaceSyncRuntimeEvent(input: Readonly<{
     serverId: string | null;
     machineId: string;
     event: unknown;
 }>): void {
-    const parsed = WorkspaceSyncRuntimeEventV1Schema.safeParse(input.event);
+    const parsed = MachinePublishedWorkspaceSyncV1Schema.safeParse(input.event);
     if (!parsed.success) return;
     applyWorkspaceSyncEngineReadinessEvent({
         serverId: input.serverId,
         machineId: input.machineId,
     }, parsed.data.readiness);
-    const status = parsed.data.status;
-    if (!status || status.controllerMachineId !== input.machineId) return;
-    const scope: WorkspaceSyncStatusScope = {
+    const controller = {
         serverId: input.serverId,
         controllerMachineId: input.machineId,
-        relationshipId: status.relationshipId,
     };
-    applyWorkspaceSyncStatusEvent(scope, status);
-    invalidateWorkspaceSyncConflicts(scope);
+    invalidateWorkspaceSyncStatuses(controller);
+    invalidateWorkspaceSyncControllerConflicts(controller);
 }

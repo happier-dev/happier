@@ -19,6 +19,9 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { WrapLinesToggleButton } from '@/components/ui/code/WrapLinesToggleButton';
 import { FileIcon } from '@/components/ui/media/FileIcon';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
+import { useSurfaceStateSize } from '@/components/ui/surfaces/surfaceStateSize';
+import type { PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 
 export type FileDisplayMode = 'file' | 'diff' | 'markdown';
 export type FileDiffMode = 'included' | 'pending' | 'both';
@@ -42,6 +45,14 @@ type FileActionToolbarProps = {
     fileName?: string;
     filePathDir?: string;
     rightElement?: React.ReactNode;
+    contentActions?: Readonly<{
+        onRaw: () => void | Promise<void>;
+        onCopy: () => void | Promise<void>;
+        rawDisabled?: boolean;
+        copyDisabled: boolean;
+        rawBusy?: boolean;
+        copyBusy?: boolean;
+    }>;
     displayMode: FileDisplayMode;
     onDisplayMode: (mode: FileDisplayMode) => void;
     showDiffToggle?: boolean;
@@ -96,6 +107,8 @@ type FileActionToolbarProps = {
 };
 
 export function FileActionToolbar(props: FileActionToolbarProps) {
+    const paintColor = useHappierMaterialColorResolver();
+    const phone = useSurfaceStateSize() === 'phone';
     const {
         theme,
         fileName,
@@ -194,7 +207,7 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
     const pathDir = typeof filePathDir === 'string' ? filePathDir.trim().replace(/\/+$/, '') : '';
     const pathName = typeof fileName === 'string' ? fileName.trim() : '';
     const [toolbarWidth, setToolbarWidth] = React.useState<number | null>(null);
-    const useCompactLayout = toolbarWidth !== null && toolbarWidth < FILE_ACTION_TOOLBAR_COMPACT_WIDTH;
+    const useCompactLayout = phone || (toolbarWidth !== null && toolbarWidth < FILE_ACTION_TOOLBAR_COMPACT_WIDTH);
     const useCompactSelectedLineActions = useCompactLayout && hasSelectedLines;
     const actionGap = useCompactLayout ? FILE_ACTION_TOOLBAR_COMPACT_GAP : FILE_ACTION_TOOLBAR_DEFAULT_GAP;
 
@@ -209,7 +222,7 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
         paddingVertical: 5,
         paddingHorizontal: 10,
         borderRadius: 10,
-        backgroundColor: active ? theme.colors.surface.inset : theme.colors.surface.base,
+        backgroundColor: paintColor(active ? theme.colors.surface.inset : theme.colors.surface.base),
         borderWidth: 1,
         borderColor: theme.colors.border.default,
         alignItems: 'center',
@@ -368,6 +381,23 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
     );
 
     const buttons: DetailsTabHeaderAction[] = [];
+    const menuActions: PageHeaderMenuAction[] = [];
+    if (props.contentActions) {
+        const contentActions = props.contentActions;
+        const rawLabel = t('settingsSourceControl.page.editor.raw');
+        const copyLabel = t('common.copy');
+        if (useCompactLayout) {
+            menuActions.push({ id: 'raw', title: rawLabel, testID: 'file-details-raw',
+                onSelect: contentActions.onRaw, disabled: contentActions.rawDisabled, loading: contentActions.rawBusy });
+            menuActions.push({ id: 'copy-content', title: copyLabel, testID: 'file-details-copy-content',
+                onSelect: contentActions.onCopy, disabled: contentActions.copyDisabled, loading: contentActions.copyBusy });
+        } else {
+            buttons.push({ label: rawLabel, testID: 'file-details-raw', onPress: contentActions.onRaw,
+                disabled: contentActions.rawDisabled, busy: contentActions.rawBusy });
+            buttons.push({ label: copyLabel, testID: 'file-details-copy-content', onPress: contentActions.onCopy,
+                disabled: contentActions.copyDisabled, busy: contentActions.copyBusy });
+        }
+    }
     if (showFileEditorActions && displayMode === 'file' && isEditingFile) {
         buttons.push({
             label: t('common.cancel'),
@@ -549,6 +579,10 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
         }
         for (const [index, fact] of (props.summaryFacts ?? []).entries()) meta.push({ key: `fact-${index}`, text: fact });
     }
+    if (showFileEditorActions && !isEditingFile && onStartEditingFile) {
+        menuActions.push({ id: 'edit', title: t('common.edit'), testID: 'file-details-edit',
+            onSelect: () => { onDisplayMode('file'); onStartEditingFile(); } });
+    }
 
     return (
         <View testID="file-action-toolbar" onLayout={onToolbarLayout}>
@@ -560,10 +594,7 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
                 actions={viewActionsElement}
                 buttons={buttons}
                 controls={controlsElement}
-                menuActions={showFileEditorActions && !isEditingFile && onStartEditingFile ? [{
-                    id: 'edit', title: t('common.edit'), testID: 'file-details-edit',
-                    onSelect: () => { onDisplayMode('file'); onStartEditingFile(); },
-                }] : undefined}
+                menuActions={menuActions}
                 notice={(
                     <>
                         {lineSelectionBar}

@@ -2,7 +2,7 @@ import * as React from 'react';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { act } from 'react-test-renderer';
 import { WorkspaceRefV1Schema } from '@happier-dev/protocol';
-import { createMachineFixture, renderScreen } from '@/dev/testkit';
+import { createMachineFixture, renderScreen, applyProjectAccountRowsFixture } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 import { installSessionRouteCommonModuleMocks } from '../../session/[id]/sessionRouteTestHelpers';
 import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
@@ -11,7 +11,7 @@ import { storage } from '@/sync/domains/state/storageStore';
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const router = createExpoRouterMock({
-    params: { workspaceRefId: 'wr_1' }, navigation: { canGoBack: () => true },
+    pathname: '/projects/wr_1/code', params: { workspaceRefId: 'wr_1' }, navigation: { canGoBack: () => true },
 });
 installSessionRouteCommonModuleMocks({
     router: () => router.module,
@@ -26,7 +26,8 @@ const runtime = installSessionPaneRuntimeTestHarness({ scopeId: 'project:wr_1' }
 beforeEach(() => {
     storage.getState().applySettingsLocal({
         mobileWorkspaceExperienceV1: 'cockpit',
-        workspaceRefsV1: [WorkspaceRefV1Schema.parse({
+    });
+    applyProjectAccountRowsFixture(storage, { workspaceRefs: [WorkspaceRefV1Schema.parse({
             id: 'wr_1', serverId: runtime.serverId, machineId: 'machine-1',
             rootPath: '/repo', label: 'Project Alpha', createdAtMs: 1,
         })],
@@ -34,10 +35,10 @@ beforeEach(() => {
     storage.getState().applyMachines([createMachineFixture({ storageMode: 'plain', activeAt: Date.now() })], true, { sourceServerId: runtime.serverId });
 });
 
-describe('project details route in cockpit mode with the real shell', () => {
+describe('canonical Project Code with the real shell', () => {
     it('renders the actual details surface when a canonical file tab is already open', async () => {
-        const Screen = (await import('@/app/(app)/projects/[workspaceRefId]/details')).default;
-        const { ProjectDetailsMainPanel } = await import('@/components/projects/detail/ProjectDetailsMainPanel');
+        const Screen = (await import('@/app/(app)/projects/[workspaceRefId]/code')).default;
+        const { WorkspaceDetailsPanel } = await import('@/components/projects/panes/WorkspaceDetailsPanel');
         const { createProjectFileDetailsTab } = await import('@/components/projects/detail/projectDetailsTabBuilders');
         const tab = createProjectFileDetailsTab('/repo/a.ts');
         const screen = await renderScreen(<runtime.Wrapper />);
@@ -47,7 +48,7 @@ describe('project details route in cockpit mode with the real shell', () => {
         });
         await screen.update(<runtime.Wrapper><Screen /></runtime.Wrapper>);
 
-        expect(screen.findByType(ProjectDetailsMainPanel).props.forceOverviewMode).toBe(false);
+        expect(screen.findByType(WorkspaceDetailsPanel).props.activeRootPath).toBe('/repo');
         const scopeState = runtime.pane.scopeState;
         if (!scopeState) throw new Error('Expected mounted project pane scope');
         expect(scopeState.details).toMatchObject({

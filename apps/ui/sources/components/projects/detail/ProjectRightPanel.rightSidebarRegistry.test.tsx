@@ -1,3 +1,4 @@
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -321,7 +322,7 @@ describe('ProjectRightPanel right-sidebar registry tabs', () => {
         await act(async () => screen.update(<runtime.Wrapper><AppShellPluginUiProjectionValueProvider value={{
             pluginUiProjection: global, pluginBrowserProjection: null, phase: 'current', interactionEnabled: true,
             machineId: 'machine-global', serverId: 'server-global', platform: 'web',
-            clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {},
+            accountLifetime: captureActiveServerAccountScopeLifetime(), clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {},
         }}><ProjectRightPanel {...panelProps()} /></AppShellPluginUiProjectionValueProvider></runtime.Wrapper>));
         await flushHookEffects({ cycles: 30 });
         expect(screen.findHostByTestId('project-rightpanel-tab:plugin:acme.global:global-project-panel')).toBeNull();

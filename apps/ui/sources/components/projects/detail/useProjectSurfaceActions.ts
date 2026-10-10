@@ -10,6 +10,7 @@ import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel
 import { t } from '@/text';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
 import { createProjectCommitDetailsTab, createProjectFileDetailsTab } from './projectDetailsTabBuilders';
+import { useScmReviewTabState } from '@/components/sessions/files/comparison/useSessionScmReviewTabState';
 
 export function useProjectSurfaceActions(params: Readonly<{
     scopeId: string;
@@ -19,6 +20,9 @@ export function useProjectSurfaceActions(params: Readonly<{
     onOpenChangesNavigate?: () => void;
 }>) {
     const pane = useAppPaneScope(params.scopeId);
+    const { setPersistedReviewTabState } = useScmReviewTabState(JSON.stringify([
+        params.workspaceRef.serverId, params.workspaceRef.machineId, params.activeRootPath,
+    ]), pane);
     const navigateToOpen = useNavigateToProjectOpen();
 
     const openFileInDetails = React.useCallback((fullPath: string) => {
@@ -35,17 +39,12 @@ export function useProjectSurfaceActions(params: Readonly<{
 
     const openReviewAllChanges = React.useCallback(() => {
         deferOnWeb(() => {
-            pane.openDetailsTab(
-                {
-                    key: 'scmReview:working',
-                    kind: 'scmReview',
-                    title: t('files.toolbar.review'),
-                    resource: { kind: 'scmReview', scope: 'working' },
-                },
-                { intent: 'pinned' },
-            );
+            setPersistedReviewTabState({ projectChangesMode: 'review' });
+            pane.openRight({ tabId: 'git' });
+            pane.setRightTab('git');
+            params.onOpenChangesNavigate?.();
         });
-    }, [pane]);
+    }, [pane, params.onOpenChangesNavigate, setPersistedReviewTabState]);
 
     const openStashDetails = React.useCallback(() => {
         deferOnWeb(() => {
@@ -82,7 +81,11 @@ export function useProjectSurfaceActions(params: Readonly<{
         if (tabId === 'files') params.onRevealInFilesTreeNavigate?.();
         else params.onOpenChangesNavigate?.();
     }, [params.onRevealInFilesTreeNavigate, params.onOpenChangesNavigate]);
-    const { revealInFilesTree, openChanges } = useWorkspaceFilePaneNavigation(params.scopeId, navigateFilesPane);
+    const { revealInFilesTree, openChanges: openGitChanges } = useWorkspaceFilePaneNavigation(params.scopeId, navigateFilesPane);
+    const openChanges = React.useCallback(() => {
+        setPersistedReviewTabState({ projectChangesMode: 'git' });
+        openGitChanges();
+    }, [openGitChanges, setPersistedReviewTabState]);
 
     return {
         openFileInDetails,

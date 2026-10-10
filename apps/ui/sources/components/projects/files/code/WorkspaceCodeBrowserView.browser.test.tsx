@@ -1,12 +1,15 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { standardCleanup } from '@/dev/testkit';
 import { createSessionFilesViewFixture, fileViewSnapshot, installSessionFilesViewBoundaries, prepareSessionFilesViewTestkit } from '@/components/sessions/files/views/sessionFilesViewTestkit';
 import type { WorkspaceCodeLocation } from './WorkspaceCodeBrowserView';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
+import type { CapturingLegendListMockState } from '@/dev/testkit/mocks/legendList';
 
-installSessionFilesViewBoundaries();
+let recycler: CapturingLegendListMockState;
+installSessionFilesViewBoundaries({ renderItemLimit: 8, onRecycler: state => { recycler = state; } });
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit')).createExpoVectorIconsMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit')).createTextModuleMock({ translate: key => key }));
 
@@ -16,27 +19,91 @@ const { WorkspaceFileDetailsView } = await import('@/components/workspaces/files
 describe('Code consumes the qualified browser and real entry-history batch', () => {
     let fixture: Awaited<ReturnType<typeof createSessionFilesViewFixture>> | undefined;
     beforeAll(prepareSessionFilesViewTestkit);
-    afterEach(async () => { standardCleanup(); await fixture?.dispose(); });
+    afterEach(async () => { standardCleanup(); vi.useRealTimers(); await fixture?.dispose(); });
 
-    it('shows the Code aside with folder entries without inserting it above the bounded file reader', async () => {
+    it('mounts and demands only the large folder viewport, then reveals an off-screen row through the shared keyboard owner', async () => {
+        const rootPath = '/code-large-folder';
+        const entries = [...Array.from({ length: 1000 }, (_, index) => ({ name: `file-${String(index).padStart(4, '0')}.ts`,
+            path: `${rootPath}/file-${String(index).padStart(4, '0')}.ts`, type: 'file' })),
+            { name: 'README.md', path: `${rootPath}/README.md`, type: 'file' }];
+        fixture = await createSessionFilesViewFixture({ rootPath, rpc: request => {
+            if (request.method === RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY) return { ok: true, path: rootPath, truncated: false, entries };
+            if (request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT) return { success: true, snapshot: fileViewSnapshot({ rootPath }) };
+            if (request.method === RPC_METHODS.SCM_HISTORY_ENTRIES) return { success: true, headOid: 'a'.repeat(40),
+                entries: (request.payload as { paths: string[] }).paths.map(path => ({ path, kind: 'none' })) };
+            return { success: false, errorCode: 'FEATURE_UNSUPPORTED', error: 'Unavailable boundary operation' };
+        } });
+        const onVisibleEntriesChange = vi.fn();
+        const page = (revealRequest?: Readonly<{ path: string }>) => <WorkspaceCodeBrowserView paneScopeId="code-large-test" scope={fixture!.scope}
+            rootLabel="Code" location={{ path: '', kind: 'folder' }} onNavigate={() => {}} revealRequest={revealRequest}
+            onVisibleEntriesChange={onVisibleEntriesChange} />;
+        const screen = await fixture.render(page());
+        await vi.waitFor(() => expect(screen.findByTestId('repository-tree-row-file-0000.ts')).toBeTruthy());
+        const mountedRows = screen.root.findAll(node => typeof node.type === 'string' && /^repository-tree-row-file-\d{4}\.ts$/.test(String(node.props.testID ?? '')));
+        expect(mountedRows).toHaveLength(8);
+        const list = screen.root.findByType('LegendList');
+        expect(list.findAll(node => node.props.testID === 'workspace-code-readme').length).toBeGreaterThan(0);
+        const visiblePaths = entries.slice(0, 8).map(entry => entry.name);
+        await vi.waitFor(() => expect(onVisibleEntriesChange).toHaveBeenLastCalledWith(visiblePaths));
+        await vi.waitFor(() => expect(fixture!.requests.some(request => request.method === RPC_METHODS.SCM_HISTORY_ENTRIES
+            && (request.payload as { paths: string[] }).paths.length === 9)).toBe(true));
+        expect(fixture.requests.filter(request => request.method === RPC_METHODS.SCM_HISTORY_ENTRIES)
+            .every(request => (request.payload as { paths: string[] }).paths.every(path => path === '' || visiblePaths.includes(path)))).toBe(true);
+
+        recycler.refHandle.scrollToIndex.mockClear();
+        await screen.update(fixture.wrap(page({ path: entries[900].name })));
+        await vi.waitFor(() => expect(recycler.refHandle.scrollToIndex).toHaveBeenCalledWith({ index: 900, animated: false }));
+        const revealed = recycler.props.data[900];
+        await act(async () => recycler.props.onViewableItemsChanged({ viewableItems: [{ item: revealed, index: 900,
+            key: `file:${revealed.path}`, isViewable: true }], changed: [] }));
+        await vi.waitFor(() => expect(onVisibleEntriesChange).toHaveBeenLastCalledWith([entries[900].name]));
+        await vi.waitFor(() => expect(fixture!.requests.some(request => request.method === RPC_METHODS.SCM_HISTORY_ENTRIES
+            && (request.payload as { paths: string[] }).paths.includes(entries[900].name))).toBe(true));
+    });
+
+    it('retires history and filesystem effects at heartbeat expiry without a second Machine update', async () => {
+        const rootPath = '/code-presence-expiry';
+        fixture = await createSessionFilesViewFixture({ rootPath, rpc: request => {
+            if (request.method === RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY) return { ok: true, path: rootPath, truncated: false,
+                entries: [{ name: 'LICENSE', path: `${rootPath}/LICENSE`, type: 'file' }] };
+            if (request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT) return { success: true, snapshot: fileViewSnapshot({ rootPath }) };
+            if (request.method === RPC_METHODS.SCM_HISTORY_ENTRIES) return { success: true, headOid: 'a'.repeat(40),
+                entries: (request.payload as { paths: string[] }).paths.map(path => ({ path, kind: 'none' })) };
+            return { success: false, errorCode: 'FEATURE_UNSUPPORTED', error: 'Unavailable boundary operation' };
+        } });
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+        const screen = await fixture.render(<WorkspaceCodeBrowserView paneScopeId="code-presence-test" scope={fixture.scope}
+            rootLabel="Code" location={{ path: '', kind: 'folder' }} onNavigate={() => {}} />);
+        await vi.waitFor(() => expect(screen.findByTestId('repository-tree-row-LICENSE')).toBeTruthy());
+        expect(screen.findByTestId('repository-tree-offline')).toBeNull();
+        await act(async () => { vi.advanceTimersByTime(60_001); });
+        expect(screen.findByTestId('repository-tree-offline')).toBeTruthy();
+        expect(screen.findByTestId('workspace-code-history-stale')).toBeTruthy();
+        expect(screen.findByTestId('repository-tree-row-LICENSE')).toBeTruthy();
+        const readsBeforeRetry = fixture.requests.filter(request => request.method === RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY
+            || request.method === RPC_METHODS.SCM_HISTORY_ENTRIES).length;
+        await screen.pressByTestIdAsync('repository-tree-offline-action');
+        await screen.pressByTestIdAsync('workspace-code-history-stale-action');
+        expect(fixture.requests.filter(request => request.method === RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY
+            || request.method === RPC_METHODS.SCM_HISTORY_ENTRIES)).toHaveLength(readsBeforeRetry);
+    });
+
+    it('is one column: folder entries, then the bounded file reader in their place', async () => {
         const rootPath = '/code-aside-consumer';
         fixture = await createSessionFilesViewFixture({ rootPath, rpc: request => {
             if (request.method === RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY) return { ok: true, path: rootPath, truncated: false,
                 entries: [{ name: 'LICENSE', path: `${rootPath}/LICENSE`, type: 'file' }] };
             return { success: false, errorCode: 'FEATURE_UNSUPPORTED', error: 'Unavailable boundary operation' };
         } });
-        const { Text } = await import('react-native');
         const renderPage = (location: WorkspaceCodeLocation) => <WorkspaceCodeBrowserView paneScopeId="code-aside-test"
-            scope={fixture!.scope} rootLabel="Code" location={location} onNavigate={() => {}} history={null}
-            aside={<Text testID="accepted-code-aside">Checkout widgets</Text>} />;
+            scope={fixture!.scope} rootLabel="Code" location={location} onNavigate={() => {}} history={null} />;
         const screen = await fixture.render(renderPage({ path: '', kind: 'folder' }));
         await vi.waitFor(() => expect(screen.findByTestId('repository-tree-row-LICENSE')).toBeTruthy());
-        expect(screen.findByTestId('accepted-code-aside')).not.toBeNull();
+        expect(screen.findByTestId('workspace-code-bar-goto')).toBeTruthy();
         await screen.update(fixture.wrap(renderPage({ path: 'LICENSE', kind: 'file' })));
-        expect(screen.findByTestId('accepted-code-aside')).toBeNull();
-        expect(screen.findByTestId('workspace-code-columns')).toBeNull();
         const reader = screen.root.findByType(WorkspaceFileDetailsView);
         expect(reader.props).toMatchObject({ scope: fixture.scope, filePath: 'LICENSE', presentation: 'screen' });
+        expect(screen.findByTestId('workspace-code-bar-goto')).toBeTruthy();
         expect(screen.findByTestId('workspace-code')?.props.scrollEnabled).toBe(false);
     });
 

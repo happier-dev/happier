@@ -1,9 +1,23 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 const listWorkspaceSyncConflicts = vi.hoisted(() => vi.fn());
 
-vi.mock('@/sync/ops/workspaceSync', () => ({
-    listWorkspaceSyncConflicts: (input: unknown) => listWorkspaceSyncConflicts(input),
+// The daemon response is the boundary; conflict request and page parsing stay real.
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
+    machineRpcWithServerScope: async (input: Readonly<{
+        serverId?: string | null; machineId: string; method: string;
+        payload: Readonly<{ relationshipId: string; cursor?: string }>;
+    }>) => {
+        if (input.method !== RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICTS_LIST) {
+            throw new Error(`Unexpected RPC: ${input.method}`);
+        }
+        return await listWorkspaceSyncConflicts({
+            ...(input.serverId !== undefined ? { serverId: input.serverId } : {}),
+            controllerMachineId: input.machineId, relationshipId: input.payload.relationshipId,
+            ...(input.payload.cursor ? { cursor: input.payload.cursor } : {}),
+        });
+    },
 }));
 
 import {
@@ -13,6 +27,7 @@ import {
     refreshWorkspaceSyncConflicts,
     resetWorkspaceSyncConflictStoreForTests,
 } from './workspaceSyncConflictStore';
+import { applyWorkspaceSyncRuntimeEvent } from './applyWorkspaceSyncRuntimeEvent';
 
 describe('workspaceSyncConflictStore', () => {
     beforeEach(() => {
@@ -30,8 +45,8 @@ describe('workspaceSyncConflictStore', () => {
             conflicts: [{
                 relationshipId: 'relationship-1',
                 path: 'file.txt',
-                alpha: { kind: 'file', digest: 'alpha' },
-                beta: { kind: 'file', digest: 'beta' },
+                alpha: { kind: 'file', digest: 'a'.repeat(40) },
+                beta: { kind: 'file', digest: 'b'.repeat(40) },
             }],
         });
 
@@ -93,6 +108,44 @@ describe('workspaceSyncConflictStore', () => {
         }));
         expect(listWorkspaceSyncConflicts).toHaveBeenCalledTimes(2);
         unsubscribe();
+    });
+
+    it('invalidates only the demanded admitted conflict scopes when Machine readiness is republished', async () => {
+        const scope = { serverId: 'server-1', relationshipId: 'private-relationship', controllerMachineId: 'machine-1' };
+        const other = { ...scope, serverId: 'server-2' };
+        listWorkspaceSyncConflicts
+            .mockResolvedValueOnce({ status: 'page', relationshipId: scope.relationshipId, totalCount: 1, nextCursor: 'old', conflicts: [] })
+            .mockResolvedValueOnce({ status: 'page', relationshipId: scope.relationshipId, totalCount: 2, nextCursor: null, conflicts: [] })
+            .mockResolvedValueOnce({ status: 'page', relationshipId: scope.relationshipId, totalCount: 0, nextCursor: null, conflicts: [] });
+        await refreshWorkspaceSyncConflicts(scope);
+        await refreshWorkspaceSyncConflicts(other);
+        const { subscribeWorkspaceSyncConflicts } = await import('./workspaceSyncConflictStore');
+        const unsubscribe = subscribeWorkspaceSyncConflicts(scope, () => {});
+        applyWorkspaceSyncRuntimeEvent({ serverId: scope.serverId, machineId: scope.controllerMachineId,
+            event: { v: 1, readiness: { engine: { state: 'ready' }, carrier: { state: 'ready' } } } });
+        await vi.waitFor(() => expect(getWorkspaceSyncConflictSnapshot(scope)).toMatchObject({
+            phase: 'ready', list: { totalCount: 0 }, nextCursor: null,
+        }));
+        expect(getWorkspaceSyncConflictSnapshot(other)).toMatchObject({ phase: 'ready', list: { totalCount: 2 } });
+        expect(listWorkspaceSyncConflicts).toHaveBeenCalledTimes(3);
+        unsubscribe();
+    });
+
+    it('preserves an unobserved conflict page as stale without fetching it', async () => {
+        const scope = { serverId: 'server-1', relationshipId: 'relationship-1', controllerMachineId: 'machine-1' };
+        listWorkspaceSyncConflicts.mockResolvedValueOnce({ status: 'page', relationshipId: scope.relationshipId,
+            totalCount: 1, nextCursor: 'old-cursor',
+            conflicts: [{ relationshipId: scope.relationshipId, path: 'known.txt', alpha: { kind: 'file' }, beta: { kind: 'file' } }] });
+        await refreshWorkspaceSyncConflicts(scope);
+        applyWorkspaceSyncRuntimeEvent({ serverId: scope.serverId, machineId: scope.controllerMachineId,
+            event: { v: 1, readiness: { engine: { state: 'ready' }, carrier: { state: 'ready' } } } });
+        expect(listWorkspaceSyncConflicts).toHaveBeenCalledOnce();
+        expect(getWorkspaceSyncConflictSnapshot(scope)).toMatchObject({ phase: 'idle',
+            list: { conflicts: [{ path: 'known.txt' }] } });
+        listWorkspaceSyncConflicts.mockImplementationOnce(() => new Promise(() => {}));
+        void refreshWorkspaceSyncConflicts(scope);
+        expect(getWorkspaceSyncConflictSnapshot(scope)).toMatchObject({ phase: 'refreshing',
+            list: { conflicts: [{ path: 'known.txt' }] } });
     });
 
     it('rejects an in-flight page invalidated by a runtime event and refreshes observers from the first page', async () => {

@@ -2,6 +2,8 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { HappierMaterialRoleProvider } from '@happier-dev/plugin-ui/presentation';
+import { StyleSheet } from 'react-native';
 
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
@@ -509,6 +511,16 @@ async function mountView(filePath = 'README.md') {
 }
 
 describe('WorkspaceFileDetailsView (markdown edit mode)', () => {
+    it('does not coat the containing material plane while keeping file details mounted', async () => {
+        const { WorkspaceFileDetailsView } = await import('./WorkspaceFileDetailsView');
+        const screen = await renderScreen(<HappierMaterialRoleProvider role="content" resolveMaterialColor={({ translucentColor }) => translucentColor ?? 'transparent'}>
+            <WorkspaceFileDetailsView scopeId="workspace:srv1:m1:/workspace" scope={{ serverId: 'srv1', machineId: 'm1', rootPath: '/workspace' }} filePath="README.md" sessionIdForAugmentation={null} />
+        </HappierMaterialRoleProvider>);
+        mountedScreens.push(screen);
+        const root = screen.findAll(node => typeof node.type === 'string' && String(node.type) === 'View')[0]!;
+        expect(StyleSheet.flatten(root.props.style).backgroundColor).toBe('transparent');
+        expect(screen.findAll(node => typeof node.type === 'string' && String(node.type) === 'FileActionToolbar')).toHaveLength(1);
+    });
     it('loads the built-in preview without openable-content I/O for empty candidates and preferences', async () => {
         const { WorkspaceFileDetailsView } = await import('./WorkspaceFileDetailsView');
         const host = {

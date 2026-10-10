@@ -19,7 +19,7 @@ import { useServicesOpenInBrowser } from '@/components/sessions/localServices/us
 import { useProjectSurfaceActions } from '@/components/projects/detail/useProjectSurfaceActions';
 import { useProjectSurfaceController } from '@/components/projects/detail/useProjectSurfaceController';
 import { useProjectRouteSurfaceSync } from '@/components/projects/detail/useProjectRouteSurfaceSync';
-import type { ProjectMobileSurface } from './projectCockpitState';
+import type { ProjectMobileSurface, ProjectAttachedDashboardSelection } from './projectCockpitState';
 
 type ProjectCockpitShellProps = Readonly<{
     workspaceRef: WorkspaceRefV1;
@@ -27,13 +27,14 @@ type ProjectCockpitShellProps = Readonly<{
     activeRootPath: string;
     activeWorktreeId?: string | null;
     layoutId?: string;
+    attachedDashboard?: ProjectAttachedDashboardSelection;
     surface: ProjectMobileSurface;
     isFocused: boolean;
     onSelectRootPath: (path: string) => void;
 }>;
 
 export const ProjectCockpitShell = React.memo((props: ProjectCockpitShellProps) => {
-    const { navigateToSurface, selectDashboard, checkoutWorkspace } = useProjectSurfaceController({
+    const { navigateToSurface, selectDashboard, checkoutWorkspace, codeLocation, navigateCodeLocation, openCodeHistory } = useProjectSurfaceController({
         scopeId: props.scopeId,
         workspaceRef: props.workspaceRef,
         activeRootPath: props.activeRootPath,
@@ -96,6 +97,7 @@ export const ProjectCockpitShell = React.memo((props: ProjectCockpitShellProps) 
                 scope={workspaceScope}
                 onOpenFile={openFileInDetails}
                 onOpenFilePinned={openFileInDetailsPinned}
+                {...(props.surface === 'code' ? { location: codeLocation, onNavigate: navigateCodeLocation, onOpenHistory: openCodeHistory } : {})}
             />
         </React.Suspense>;
         return (
@@ -174,7 +176,8 @@ export const ProjectCockpitShell = React.memo((props: ProjectCockpitShellProps) 
     }
 
     if (props.surface === 'overview') {
-        return <ProjectOverviewWidgets workspaceRef={props.workspaceRef} activeRootPath={props.activeRootPath} layoutId={props.layoutId}
+        return <ProjectOverviewWidgets workspaceRef={props.workspaceRef} activeRootPath={props.activeRootPath} activeWorktreeId={props.activeWorktreeId} layoutId={props.layoutId}
+            attachedDashboard={props.attachedDashboard}
             onSelectDashboard={selectDashboard} />;
     }
 

@@ -439,6 +439,26 @@ describe('Service Runs on through the placement and relocation Actions', () => {
     expect(screen.findByTestId('placement.move')).toBeNull();
   });
 
+  it('saves a stopped service’s same-pool change from Ask to Automatic', async () => {
+    const poolId = '00000000-0000-4000-8000-000000000032';
+    const { screen, writes } = await setup({ running: false, saved: {
+      runsOn: { kind: 'workers', destination: { kind: 'pool', poolId, selection: 'ask' } },
+      unavailable: 'fail',
+    } });
+    const { WorkerDestinationPicker } = await import('@/components/projects/workers/WorkerDestinationPicker');
+    await act(async () => {
+      screen.tree.findByType(WorkerDestinationPicker).props.onChoose({
+        kind: 'workers', destination: { kind: 'pool', poolId, selection: 'automatic' },
+      });
+    });
+    await vi.waitFor(() => expect(writes).toHaveLength(1));
+    expect(writes[0]?.services.server).toEqual({
+      runsOn: { kind: 'workers', destination: { kind: 'pool', poolId, selection: 'automatic' } },
+      unavailable: 'fail',
+    });
+    expect(screen.findByTestId('placement.move')).toBeNull();
+  });
+
   it('asks before moving a running service; Cancel and an unavailable Move both leave placement unsaved', async () => {
     const { screen, writes, choose } = await setup({ running: true });
     await choose('hz-build-1');

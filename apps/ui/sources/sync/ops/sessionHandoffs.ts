@@ -25,6 +25,7 @@ type HandoffErrorResult = Readonly<{ ok: false; errorCode: string; errorMessage:
 export type StartSessionHandoffOptions = Readonly<{
     sessionId: string; sourceMachineId?: string | null; targetMachineId: string; targetPath?: string; serverId?: string | null;
     targetSessionStorageMode?: SessionHandoffStorageMode;
+    stateTransfer?: 'transfer' | 'existing';
     workspaceAction?: HandoffWorkspaceActionV1;
     actionRequestId?: string | null;
     handoffTargetReplacementApproval?: HandoffTargetReplacementApprovalV1 | null;
@@ -88,6 +89,7 @@ async function requestCoordinator(options: StartSessionHandoffOptions): Promise<
             targetMachineId: normalizeId(options.targetMachineId),
             ...(options.targetPath ? { targetPath: options.targetPath } : {}),
             ...(options.targetSessionStorageMode ? { targetSessionStorageMode: options.targetSessionStorageMode } : {}),
+            ...(options.stateTransfer ? { stateTransfer: options.stateTransfer } : {}),
             ...(options.workspaceAction ? { workspaceAction: options.workspaceAction } : {}),
             ...(normalizeId(options.actionRequestId) ? { actionRequestId: normalizeId(options.actionRequestId) } : {}),
             ...(options.handoffTargetReplacementApproval
@@ -115,6 +117,14 @@ async function requestCoordinator(options: StartSessionHandoffOptions): Promise<
             ...(options.signal ? { signal: options.signal } : {}),
         });
     } catch (error) {
+        if (options.stateTransfer === 'existing'
+            && (isRpcMethodNotAvailableError(error) || isRpcMethodNotFoundError(error))) {
+            return {
+                ok: false,
+                errorCode: 'handoff_existing_state_update_required',
+                error: 'Existing-state handoff requires a newer daemon',
+            };
+        }
         if (options.workspaceAction && options.workspaceAction.kind !== 'none'
             && (isRpcMethodNotAvailableError(error) || isRpcMethodNotFoundError(error))) {
             return {

@@ -4,10 +4,12 @@ export function resolveMachineAbsolutePath(input: Readonly<{
     rootPath: string;
     agentRootPath?: string | null;
     requestPath?: string | null;
+    /** Selected entry identities are literal; general user paths retain home shorthand. */
+    pathKind?: 'workspace_entry';
 }>): string {
     const requestPath = input.requestPath ?? '';
     if (!requestPath || requestPath === '.') return input.rootPath;
-    if (requestPath.startsWith('~')) return requestPath;
+    if (requestPath.startsWith('~') && input.pathKind !== 'workspace_entry') return requestPath;
 
     const isAbsolutePosix = requestPath.startsWith('/');
     const isAbsoluteWindows = /^[a-zA-Z]:[\\/]/.test(requestPath) || requestPath.startsWith('\\\\');

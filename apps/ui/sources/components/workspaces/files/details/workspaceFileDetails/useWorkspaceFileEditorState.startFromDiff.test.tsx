@@ -53,6 +53,7 @@ describe('useWorkspaceFileEditorState (start from diff)', () => {
 
         function Harness(props: HarnessProps) {
             latest = useWorkspaceFileEditorState({
+                accountId: 'alice',
                 scope: { serverId: 'srv1', machineId: 'm1', rootPath: '/repo' },
                 filePath: `src/start-${initial.displayMode}.ts`,
                 displayMode: props.displayMode,
@@ -109,6 +110,7 @@ describe('useWorkspaceFileEditorState (start from diff)', () => {
 
         function Harness(props: HarnessProps) {
             latest = useWorkspaceFileEditorState({
+                accountId: 'alice',
                 scope: { serverId: 'srv1', machineId: 'm1', rootPath: '/repo' },
                 filePath: 'src/a.ts',
                 displayMode: props.displayMode,
@@ -155,6 +157,7 @@ describe('useWorkspaceFileEditorState (start from diff)', () => {
 
         function Harness(props: HarnessProps) {
             latest = useWorkspaceFileEditorState({
+                accountId: 'alice',
                 scope: { serverId: 'srv1', machineId: 'm1', rootPath: '/repo' },
                 filePath: 'src/a.ts',
                 displayMode: 'file',
@@ -208,6 +211,7 @@ describe('useWorkspaceFileEditorState (start from diff)', () => {
 
         function Harness(props: HarnessProps) {
             latest = useWorkspaceFileEditorState({
+                accountId: 'alice',
                 scope: { serverId: 'srv1', machineId: 'm1', rootPath: '/repo' },
                 filePath: 'src/a.ts',
                 displayMode: 'file',
@@ -266,6 +270,7 @@ describe('useWorkspaceFileEditorState (start from diff)', () => {
 
         function Harness(props: HarnessProps) {
             latest = useWorkspaceFileEditorState({
+                accountId: 'alice',
                 scope: { serverId: 'srv1', machineId: 'm1', rootPath: '/repo' },
                 filePath: 'src/draft-restore.ts',
                 displayMode: 'file',
@@ -294,6 +299,7 @@ describe('useWorkspaceFileEditorState (start from diff)', () => {
         };
 
         workspaceFileEditorDraftCache.setDraft({
+            accountId: 'alice',
             workspaceCacheKey: 'srv1:m1:/repo',
             filePath: 'src/draft-restore.ts',
             draft: null,
@@ -304,6 +310,7 @@ describe('useWorkspaceFileEditorState (start from diff)', () => {
                 fileText={'console.log("disk");'}
                 fileHash="disk-hash"
                 persistedDraft={{
+                    accountId: 'alice',
                     isEditingFile: true,
                     editorOriginalText: 'console.log("base");',
                     editorOriginalHash: 'base-hash',
@@ -326,6 +333,7 @@ describe('useWorkspaceFileEditorState (start from diff)', () => {
 
         function Harness(props: HarnessProps) {
             latest = useWorkspaceFileEditorState({
+                accountId: 'alice',
                 scope: { serverId: 'srv1', machineId: 'm1', rootPath: '/repo' },
                 filePath: 'src/legacy-draft.ts',
                 displayMode: 'file',
@@ -354,6 +362,7 @@ describe('useWorkspaceFileEditorState (start from diff)', () => {
         };
 
         workspaceFileEditorDraftCache.setDraft({
+            accountId: 'alice',
             workspaceCacheKey: 'srv1:m1:/repo',
             filePath: 'src/legacy-draft.ts',
             draft: null,
@@ -364,6 +373,7 @@ describe('useWorkspaceFileEditorState (start from diff)', () => {
                 fileText={'console.log("disk");'}
                 fileHash="disk-hash"
                 persistedDraft={{
+                    accountId: 'alice',
                     isEditingFile: true,
                     editorOriginalText: 'console.log("base");',
                     editorText: 'console.log("draft");',
@@ -383,6 +393,7 @@ describe('useWorkspaceFileEditorState (start from diff)', () => {
 
         function Harness(props: HarnessProps) {
             latest = useWorkspaceFileEditorState({
+                accountId: 'alice',
                 scope: { serverId: 'srv1', machineId: 'm1', rootPath: '/repo' },
                 filePath: 'src/legacy-save.ts',
                 displayMode: 'file',
@@ -412,6 +423,7 @@ describe('useWorkspaceFileEditorState (start from diff)', () => {
 
         workspaceWriteFileSpy.mockClear();
         workspaceFileEditorDraftCache.setDraft({
+            accountId: 'alice',
             workspaceCacheKey: 'srv1:m1:/repo',
             filePath: 'src/legacy-save.ts',
             draft: null,
@@ -422,6 +434,7 @@ describe('useWorkspaceFileEditorState (start from diff)', () => {
                 fileText={'console.log("disk");'}
                 fileHash="disk-hash"
                 persistedDraft={{
+                    accountId: 'alice',
                     isEditingFile: true,
                     editorOriginalText: 'console.log("base");',
                     editorText: 'console.log("draft");',
@@ -451,6 +464,7 @@ describe('useWorkspaceFileEditorState (start from diff)', () => {
 
         function Harness(props: HarnessProps) {
             latest = useWorkspaceFileEditorState({
+                accountId: 'alice',
                 scope: { serverId: 'srv1', machineId: 'm1', rootPath: '/repo' },
                 filePath: 'src/size-limit.ts',
                 displayMode: 'file',

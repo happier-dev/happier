@@ -8,7 +8,12 @@ import {
 } from '@/components/appShell/rightSidebar/rightSidebarTabRegistry';
 import { useDeviceType } from '@/utils/platform/responsive';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
-import { buildProjectRouteHref, readProjectSelectedRouteResource, readProjectRouteStringParam } from './projectRouteState';
+import { buildProjectRouteHref, readProjectCodeRouteLocation, readProjectSelectedRouteResource, readProjectRouteStringParam } from './projectRouteState';
+import type { WorkspaceCodeLocation } from '@/components/projects/files/code/WorkspaceCodeBrowserView';
+import { useRepositoryTreeBrowserState } from '@/hooks/workspaces/files/repositoryTreeBrowserState';
+import { tryBuildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
+import { useWorkspaceScmTabState } from '@/components/workspaces/scm/useWorkspaceScmTabState';
+import { useScmReviewTabState } from '@/components/sessions/files/comparison/useSessionScmReviewTabState';
 import { resolveProjectRightTabId } from './resolveProjectRightTabId';
 import {
     normalizeProjectMobileSurface,
@@ -39,16 +44,29 @@ export function useProjectSurfaceController(params: Readonly<{
         return checkout ? workspaceAddressFromRefV1(checkout) : null;
     }, [params.activeRootPath, params.workspaceRef, workspaceRefs]);
     const pane = useAppPaneScope(params.scopeId);
+    const { setActiveGitSubTab } = useWorkspaceScmTabState(pane);
+    const { setPersistedReviewTabState } = useScmReviewTabState(JSON.stringify([
+        params.workspaceRef.serverId, params.workspaceRef.machineId, params.activeRootPath,
+    ]), pane);
+    const workspaceKey = tryBuildWorkspaceCacheKey({ serverId: params.workspaceRef.serverId,
+        machineId: params.workspaceRef.machineId, rootPath: params.activeRootPath }) ?? '';
+    const { setLocation } = useRepositoryTreeBrowserState(workspaceKey);
+    const codeLocation = React.useMemo<WorkspaceCodeLocation>(() => readProjectCodeRouteLocation(routeParams)
+        ?? { kind: 'folder', path: '' }, [routeParams.codeKind, routeParams.codePath]);
+    React.useEffect(() => {
+        if (page === 'code') setLocation(codeLocation);
+    }, [codeLocation, page, setLocation]);
     const activeTab = pane.scopeState?.right.activeTabId ?? resolveProjectRightTabId(null);
 
-    const navigate = React.useCallback((surface: ProjectMobileSurface, nextPage: ProjectPageV1, dashboardId?: string | null) => {
+    const navigate = React.useCallback((surface: ProjectMobileSurface, nextPage: ProjectPageV1, layoutId?: string | null) => {
         routerRef.current.replace(buildProjectRouteHref({
             workspaceRefId: params.workspaceRef.id,
             surface,
             segment: nextPage,
             serverId: params.workspaceRef.serverId,
             routeParams,
-            dashboardId,
+            layoutId,
+            ...(layoutId !== undefined ? { attachedDashboard: null } : {}),
             activeRootPath: params.activeRootPath,
             activeWorktreeId: params.activeWorktreeId,
             defaultRootPath: params.workspaceRef.rootPath,
@@ -56,9 +74,27 @@ export function useProjectSurfaceController(params: Readonly<{
         }));
     }, [pane.scopeState?.details, params.activeRootPath, params.activeWorktreeId, params.workspaceRef.id, params.workspaceRef.rootPath, params.workspaceRef.serverId, routeParams, routerRef]);
     const navigateToPage = React.useCallback((nextPage: ProjectPageV1) => navigate(nextPage, nextPage), [navigate]);
+    const navigateCodeLocation = React.useCallback((location: WorkspaceCodeLocation) => {
+        routerRef.current.push(buildProjectRouteHref({
+            workspaceRefId: params.workspaceRef.id, serverId: params.workspaceRef.serverId,
+            segment: 'code', activeRootPath: params.activeRootPath, defaultRootPath: params.workspaceRef.rootPath,
+            activeWorktreeId: params.activeWorktreeId, routeParams, initialResource: null, codeLocation: location,
+        }));
+    }, [params.activeRootPath, params.activeWorktreeId, params.workspaceRef.id, params.workspaceRef.rootPath,
+        params.workspaceRef.serverId, routeParams, routerRef]);
+    const openCodeHistory = React.useCallback((location: WorkspaceCodeLocation) => {
+        setPersistedReviewTabState({ projectChangesMode: 'git' });
+        setActiveGitSubTab('history');
+        routerRef.current.push(buildProjectRouteHref({
+            workspaceRefId: params.workspaceRef.id, serverId: params.workspaceRef.serverId,
+            segment: 'changes', activeRootPath: params.activeRootPath, defaultRootPath: params.workspaceRef.rootPath,
+            activeWorktreeId: params.activeWorktreeId, routeParams, initialResource: null, codeLocation: location,
+        }));
+    }, [params.activeRootPath, params.activeWorktreeId, params.workspaceRef.id, params.workspaceRef.rootPath,
+        params.workspaceRef.serverId, routeParams, routerRef, setActiveGitSubTab, setPersistedReviewTabState]);
     const navigateToSurface = React.useCallback((surface: ProjectMobileSurface) => navigate(surface, page), [navigate, page]);
-    const selectDashboard = React.useCallback((dashboardId: string | null) => {
-        navigate(normalizeProjectMobileSurface(readProjectRouteStringParam(routeParams.mobileSurface)) ?? page, page, dashboardId);
+    const selectDashboard = React.useCallback((layoutId: string | null) => {
+        navigate(normalizeProjectMobileSurface(readProjectRouteStringParam(routeParams.mobileSurface)) ?? page, page, layoutId);
     }, [navigate, page, routeParams.mobileSurface]);
 
     const setActiveTab = React.useCallback((tabId: string) => {
@@ -105,5 +141,8 @@ export function useProjectSurfaceController(params: Readonly<{
         setActiveTab,
         syncSurface,
         checkoutWorkspace,
-    }), [activeTab, checkoutWorkspace, navigateToPage, navigateToSurface, page, selectDashboard, setActiveTab, syncSurface]);
+        codeLocation,
+        navigateCodeLocation,
+        openCodeHistory,
+    }), [activeTab, checkoutWorkspace, codeLocation, navigateCodeLocation, openCodeHistory, navigateToPage, navigateToSurface, page, selectDashboard, setActiveTab, syncSurface]);
 }

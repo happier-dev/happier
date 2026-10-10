@@ -8,6 +8,8 @@ import { ProjectDashboardHeader } from '@/components/projects/overview/ProjectDa
 import { WidgetArea } from '@/components/widgets/area/WidgetArea';
 import { useProjectWidgetAreaBinding } from '@/components/widgets/area/ProjectWidgetArea';
 import { useWidgetAreaLayout, type WidgetAreaLayout, type WidgetAreaPort } from '@/components/widgets/area/useWidgetAreaLayout';
+import { WidgetAreaPresetLine } from '@/components/widgets/area/WidgetAreaPresetLine';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { WidgetSurfaceContext } from '@/components/widgets/surface/widgetSurfaceSetup';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { useActiveServerAccountScope, useWorkspaceRefs } from '@/sync/domains/state/storage';
@@ -16,16 +18,19 @@ import { t } from '@/text';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 
 import { mergeProjectOverviewWidgetHeads, projectOverviewWidgetAreas, readProjectOverviewWidgetAreas } from './projectOverviewWidgets';
+import type { ProjectAttachedDashboardSelection } from './projectRouteState';
 
 /** Non-visual binding: the selected dashboard reads once; all frames use the canonical WidgetArea. */
 export function ProjectOverviewWidgets(props: Readonly<{
     workspaceRef: WorkspaceRefV1;
     activeRootPath: string;
+    activeWorktreeId?: string | null;
     projectName?: string;
-    dashboardId?: string;
+    layoutId?: string;
     artifactId?: string;
     ownerAccountId?: string;
-    onSelectDashboard: (dashboardId: string | null) => void;
+    attachedDashboard?: ProjectAttachedDashboardSelection;
+    onSelectDashboard: (layoutId: string | null) => void;
     /** A9 supplies the selected-document controller; U1 owns its visual dashboard bar. */
     bar?: React.ReactNode;
 }>): React.ReactElement {
@@ -34,13 +39,19 @@ export function ProjectOverviewWidgets(props: Readonly<{
     const activeCheckout = React.useMemo(() => resolveProjectCheckoutWorkspaceRef(refs, props.workspaceRef, props.activeRootPath) ?? undefined,
         [props.activeRootPath, props.workspaceRef, refs]);
     const binding = useProjectWidgetAreaBinding({ serverId: props.workspaceRef.serverId, projectName, projectRef: props.workspaceRef, activeCheckout,
-        dashboardId: props.dashboardId, artifactId: props.artifactId, ownerAccountId: props.ownerAccountId });
-    if (!binding.port) return <WidgetArea port={null} context={binding.context} geometry="column" title={projectName}
-        surfaceName={projectName} unavailable={{ title: t('projects.widgets.layoutUnavailable'), reasonCode: binding.unavailableReasonCode ?? 'widget_area_unavailable' }}
-        testID="project-overview" />;
+        layoutId: props.layoutId, artifactId: props.artifactId, ownerAccountId: props.ownerAccountId, attachedDashboard: props.attachedDashboard,
+        onSelectLayout: props.onSelectDashboard });
     // The bar is the Overview's own dashboard header unless a host supplies another (a Team Source view).
-    const bar = props.bar ?? <ProjectDashboardHeader workspaceRef={props.workspaceRef} activeRootPath={props.activeRootPath}
-        projectName={projectName} dashboardId={props.dashboardId ?? null} onSelectDashboard={props.onSelectDashboard} />;
+    const bar = props.bar ?? <ProjectDashboardHeader workspaceRef={props.workspaceRef}
+        activeRootPath={props.activeRootPath} activeWorktreeId={props.activeWorktreeId} projectName={projectName} layoutId={props.layoutId ?? null}
+        attachedDashboard={props.attachedDashboard} sharedDashboard={binding.sharedDashboard}
+        onSelectDashboard={props.onSelectDashboard} />;
+    if (!binding.port) return <ProjectOverviewLayout bar={bar} identity={null}
+        blocking={binding.unavailableReasonCode === 'widget_area_loading'
+            ? <SurfaceStateCard kind="loading" title={t('common.loading')} testID="project-overview.loading" />
+            : <WidgetArea port={null} context={binding.context} geometry="column" title={projectName}
+            surfaceName={projectName} unavailable={{ title: t('projects.widgets.layoutUnavailable'), reasonCode: binding.unavailableReasonCode ?? 'widget_area_unavailable' }}
+            testID="project-overview-state" />} main={null} aside={null} />;
     return <ProjectOverviewDocument port={binding.port} context={binding.context} projectName={projectName} bar={bar} />;
 }
 
@@ -52,6 +63,8 @@ export function ProjectOverviewDocument(props: Readonly<{
     bar?: React.ReactNode;
 }>): React.ReactElement {
     const layout = useWidgetAreaLayout(props.port, props.context);
+    const preset = layout.state.status === 'ready' ? layout.state.preset ?? null : null;
+    const presetSurface = layout.state.status === 'ready' ? layout.state.surface : null;
     const phone = useDeviceType() === 'phone';
     const viewer = useActiveServerAccountScope();
     const disclosureScope = layout.state.status === 'ready'
@@ -88,7 +101,9 @@ export function ProjectOverviewDocument(props: Readonly<{
     const dashboardFacts = layout.state.status === 'ready' && layout.state.isShared ? layout.state.dashboard ?? null : null;
     const identity = dashboardFacts
         ? <ProjectDashboardIdentityLine owner={{ accountId: dashboardFacts.ownerAccountId }} title={dashboardFacts.name}
-            detail={t(dashboardFacts.access === 'view' ? 'shareSheet.documents.levels.canRead' : 'shareSheet.documents.levels.canEdit')} /> : null;
+            detail={t(dashboardFacts.access === 'view' ? 'shareSheet.documents.levels.canRead' : 'shareSheet.documents.levels.canEdit')} />
+        // An edited preset says so once, with Reset to preset (lab wgsaved R).
+        : preset?.isEdited && presetSurface ? <WidgetAreaPresetLine preset={preset} surface={presetSurface} testID="project-overview.preset" /> : null;
     return <ProjectOverviewLayout bar={props.bar ?? null} identity={identity}
         blocking={!areas || !merged ? <WidgetArea {...shared} layout={layout} testID="project-overview-state" /> : undefined}
         main={areas ? <WidgetArea {...shared} layout={projections.main} area="main" dashboard={dashboard('main')} testID="project-overview-main" /> : null}

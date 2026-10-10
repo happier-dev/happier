@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ScmDiffSummaryResultSchema } from '@happier-dev/protocol';
+import { ScmDiffSummaryResultSchema, createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol';
 import { encodeBase64StoredJsonContentEnvelope } from '@/sync/encryption/base64StoredJsonContent';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
@@ -38,6 +38,15 @@ beforeEach(async () => { rpc.mockReset(); await harness.reset(); });
 afterEach(() => standardCleanup());
 
 describe('machine saved result operations', () => {
+  it('preserves a typed disabled Clear outcome before cleanup or machine deletion', async () => {
+    const actionExecutor = createActionExecutor({ isActionEnabled: () => false,
+      scmActionExecute: async () => { throw new Error('Disabled Clear reached Machine transport'); },
+    // Keep the real Action policy and schemas; only the Machine boundary is supplied.
+    } satisfies Partial<ActionExecutorDeps> as ActionExecutorDeps);
+    const operations = createScmDiffSummarySavedResultOperations({ machineId: 'machine', shouldContinue: () => true, actionExecutor });
+    expect(await operations.clear(input)).toMatchObject({ success: false, errorCode: 'action_disabled' });
+    expect(rpc).not.toHaveBeenCalled();
+  });
   it('refuses the combined Account cleanup workflow for API-token auth before any machine deletion', async () => {
     const { getCurrentAuth, setCurrentAuth } = await import('@/auth/context/currentAuth');
     const previous = getCurrentAuth();
@@ -118,11 +127,12 @@ describe('machine saved result operations', () => {
   });
   it('rejects offline and retired inventory instead of reporting zero saved results', async () => {
     let current = true;
-    const ops = createScmDiffSummarySavedResultOperations({ machineId: 'machine', shouldContinue: () => current,
-      rpc: async () => { throw new Error('Owning machine offline'); } });
+    const serverId = await addHome();
+    rpc.mockImplementation(async () => { throw new Error('Owning machine offline'); });
+    const ops = createScmDiffSummarySavedResultOperations({ machineId: 'machine', serverId, accountId: 'account', shouldContinue: () => current });
     expect(await ops.list()).toMatchObject({ success: false, errorCode: 'result_unavailable' });
-    const retiring = createScmDiffSummarySavedResultOperations({ machineId: 'machine', shouldContinue: () => current,
-      rpc: async () => { current = false; return listed; } });
+    rpc.mockImplementation(async () => { current = false; return listed; });
+    const retiring = createScmDiffSummarySavedResultOperations({ machineId: 'machine', serverId, accountId: 'account', shouldContinue: () => current });
     expect(await retiring.list()).toMatchObject({ success: false, errorCode: 'result_unavailable' });
   });
   it('reports per-result cleanup failure while deleting only another explicitly approved result', async () => {
@@ -172,10 +182,11 @@ describe('machine saved result operations', () => {
   it('uses shared Action approval before reaching the cleanup/deletion terminal', async () => {
     const serverId = await addHome();
     await harness.requireUiApproval(serverId, 'scm.diffSummary.result.clear');
-    const ops = createScmDiffSummarySavedResultOperations({ machineId: 'machine', serverId, accountId: 'account', shouldContinue: () => true,
-      rpc: async () => listed });
+    rpc.mockImplementation(async ({ method }) => method === 'scm.diffSummary.result.list' ? listed : undefined);
+    const ops = createScmDiffSummarySavedResultOperations({ machineId: 'machine', serverId, accountId: 'account', shouldContinue: () => true });
     expect(await ops.list()).toEqual(listed);
-    expect(await ops.clear(input)).toMatchObject({ success: false, errorCode: 'result_unavailable' });
+    rpc.mockClear();
+    expect(await ops.clear(input)).toMatchObject({ success: false, errorCode: 'approval_required', approvalArtifactId: expect.any(String) });
     expect(rpc).not.toHaveBeenCalled();
     expect(harness.requestsFor(marksPath)).toEqual([]);
     expect(harness.requestsFor('/v1/kv')).toEqual([]);

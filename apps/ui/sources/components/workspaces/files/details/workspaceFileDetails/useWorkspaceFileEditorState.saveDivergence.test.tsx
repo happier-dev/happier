@@ -47,6 +47,7 @@ async function createHarness() {
     const fileTextRef = { current: 'hello' };
     const Harness = () => {
         latest = useWorkspaceFileEditorState({
+            accountId: 'alice',
             scope: { serverId: 'srv1', machineId: 'm1', rootPath: '/repo' },
             filePath: 'src/a.ts',
             displayMode: 'file',

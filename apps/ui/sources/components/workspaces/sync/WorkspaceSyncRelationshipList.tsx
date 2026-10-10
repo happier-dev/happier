@@ -37,6 +37,7 @@ import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactive
 import { openWorkspaceSyncRelationshipDetails } from './openWorkspaceSyncRelationshipDetails';
 
 export type WorkspaceSyncRelationshipListProps = Readonly<{
+    serverId?: string;
     workspaceRefId?: string | null;
     onAddMachine?: () => void;
     onOpenDetails?: (summary: WorkspaceSyncRelationshipSummary) => void;
@@ -254,7 +255,7 @@ export const WorkspaceSyncRelationshipRow = React.memo(function WorkspaceSyncRel
 export const WorkspaceSyncRelationshipList = React.memo(function WorkspaceSyncRelationshipList(
     props: WorkspaceSyncRelationshipListProps,
 ) {
-    const summaries = useWorkspaceSyncRelationshipSummaries(props.workspaceRefId);
+    const summaries = useWorkspaceSyncRelationshipSummaries(props.workspaceRefId, props.serverId);
     const localMachineId = useLocalDaemonControl().status?.machineId ?? null;
     return (
         <ItemGroup title={t(props.onAddMachine ? 'workspaceSync.availableOn' : 'workspaceSync.title')} description={t('workspaceSync.footer')}>

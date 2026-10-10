@@ -490,9 +490,12 @@ export function createProjectSourcesController(scope: ServerAccountScope, execut
                 publish({ mutation: 'idle' });
             } catch (error) { if (!disposed) mutationFailure(error, current.id); }
         },
-        async updateSource(patch: ProjectSourcesUpdateInputV1['patch']) {
-            const current = state.current;
-            if (disposed || !current || !state.canManage || state.mutation !== 'idle' || state.conflict || uncertainSources.has(current.id)) return null;
+        async updateSource(patch: ProjectSourcesUpdateInputV1['patch'], target?: Pick<ProjectSourceV1, 'id' | 'revision'>) {
+            // Catalog gestures carry their own captured target. Editor selection
+            // is presentation state, never authority to retarget an attachment.
+    const current = target ?? state.current;
+            if (disposed || !current || state.mutation !== 'idle' || uncertainSources.has(current.id)
+                || conflicts.has(current.id) || (!target && (!state.canManage || state.conflict))) return null;
             publish({ mutation: 'saving', issue: null });
             try {
                 const result = ProjectSourcesUpdateOutputV1Schema.parse(await invoke('projects.sources.update', { serverId: scope.serverId, sourceId: current.id, expectedRevision: current.revision, patch }));

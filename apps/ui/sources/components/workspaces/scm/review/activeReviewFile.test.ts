@@ -96,6 +96,19 @@ describe('active review file', () => {
         expect(requestActiveReviewFile('s2', 'src/a.ts')).toBe(false);
     });
 
+    it('does not let hiding one mounted presenter hide another, but remains hidden after both leave', () => {
+        const page = { presenterId: 'page', presented: true, activePath: 'src/a.ts' };
+        const companion = { presenterId: 'companion', presented: true, activePath: 'src/a.ts' };
+        publishActiveReviewFile('workspace', page);
+        publishActiveReviewFile('workspace', companion);
+        publishActiveReviewFile('workspace', { ...page, presented: false, activePath: null });
+        expect(readActiveReviewFile('workspace')).toMatchObject({ presented: true, activePath: 'src/a.ts' });
+        expect(requestActiveReviewFile('workspace', 'src/b.ts')).toBe(true);
+        publishActiveReviewFile('workspace', { ...companion, presented: false, activePath: null });
+        expect(readActiveReviewFile('workspace')).toMatchObject({ presented: false, activePath: null });
+        expect(requestActiveReviewFile('workspace', 'src/c.ts')).toBe(false);
+    });
+
     it('a list tap shows the file in Review when Review is on screen, and opens it otherwise', () => {
         const open = vi.fn();
         openChangedFileFromList('s1', 'src/a.ts', open);

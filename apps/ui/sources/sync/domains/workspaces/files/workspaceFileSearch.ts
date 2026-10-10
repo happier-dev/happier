@@ -2,9 +2,9 @@ import Fuse from 'fuse.js';
 import { WORKSPACE_FILE_LIST_MAX_RESULTS, type DaemonWorkspaceFileListErrorCode } from '@happier-dev/protocol/machines/workspaceFiles';
 
 import type { FileSearchItem } from '@/sync/domains/fileSystem/fileSearchItem';
-import {
-    captureActiveServerAccountScopeLifetime,
-} from '@/sync/domains/scope/activeServerAccountScope';
+import { resolveServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { tryBuildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { machineFilesystemListDirectory } from '@/sync/ops/machineFileBrowser';
 import { machineWorkspaceFileList } from '@/sync/ops/machineWorkspaceFileList';
@@ -27,7 +27,7 @@ type WorkspaceCachePartition = {
 
 export type WorkspaceFileSearchAccountLifetime = Readonly<{
     accountId?: string;
-    scope?: Readonly<{ accountId: string }>;
+    scope?: Readonly<{ accountId: string; serverId?: string }>;
     isCurrent(): boolean;
     onRetire(cancel: () => void): Readonly<{ dispose(): void }>;
 }>;
@@ -79,7 +79,7 @@ function awaitWorkspaceFileSearchWork<T>(work: Promise<T>, signal: AbortSignal |
 }
 
 function normalizeRepoRelativePath(value: string): string {
-    return value.trim().replace(/\\/g, '/').replace(/^\.\/+/g, '');
+    return value.replace(/\\/g, '/').replace(/^\.\/+/g, '');
 }
 
 function shouldSkipFallbackPath(name: string): boolean {
@@ -163,11 +163,44 @@ function createFuse(files: FileSearchItem[], threshold: number = 0.3): Fuse<File
 
 const workspaceCachePartitions = new Map<WorkspaceFileSearchAccountLifetime | null, WorkspaceCachePartition>();
 
-function resolveWorkspaceFileSearchAccountLifetime(
+async function resolveWorkspaceFileSearchAccountLifetime(
+    serverId: string,
     explicitLifetime?: WorkspaceFileSearchAccountLifetime,
-): WorkspaceFileSearchAccountLifetime | null {
-    const lifetime = explicitLifetime ?? captureActiveServerAccountScopeLifetime();
-    return lifetime;
+): Promise<WorkspaceFileSearchAccountLifetime> {
+    if (explicitLifetime) return explicitLifetime;
+    // Subscribe before credential resolution so replacement during the read
+    // cannot bind a stale Account. The existing cache partition owns retirement.
+    const controller = new AbortController();
+    const unsubscribe = subscribeHomeCredentialChange((event) => {
+        if (areServerProfileIdentifiersEquivalent(event.serverId, serverId)) controller.abort();
+    });
+    try {
+        const resolution = await resolveServerCredentialAccountScope(serverId);
+        if (controller.signal.aborted || resolution.kind !== 'bound') throw new WorkspaceFileSearchUnavailableError();
+        if (resolution.lifetime) { unsubscribe(); return resolution.lifetime; }
+        for (const lifetime of workspaceCachePartitions.keys()) {
+            if (lifetime?.scope?.serverId === resolution.scope.serverId
+                && lifetime.scope.accountId === resolution.scope.accountId && lifetime.isCurrent()) {
+                unsubscribe();
+                return lifetime;
+            }
+        }
+        const lifetime: WorkspaceFileSearchAccountLifetime = {
+            scope: resolution.scope,
+            isCurrent: () => !controller.signal.aborted,
+            onRetire: (cancel) => {
+                if (controller.signal.aborted) { cancel(); return { dispose() {} }; }
+                controller.signal.addEventListener('abort', cancel, { once: true });
+                return { dispose: () => controller.signal.removeEventListener('abort', cancel) };
+            },
+        };
+        controller.signal.addEventListener('abort', unsubscribe, { once: true });
+        getOrCreateWorkspaceCachePartition(lifetime);
+        return lifetime;
+    } catch (error) {
+        unsubscribe();
+        throw error;
+    }
 }
 
 function throwIfWorkspaceFileSearchAccountRetired(lifetime: WorkspaceFileSearchAccountLifetime | null): void {
@@ -288,8 +321,8 @@ async function buildFileItemsFromRipgrepGlob(
 }
 
 function joinPathAbsolute(rootPath: string, directoryPath: string): string {
-    const root = rootPath.trim().replace(/\/+$/g, '');
-    const rel = directoryPath.trim().replace(/^\/+/g, '');
+    const root = rootPath.replace(/\/+$/g, '');
+    const rel = directoryPath.replace(/^\/+/g, '');
     if (!root) return rel;
     if (!rel) return root;
     return `${root}/${rel}`;
@@ -481,7 +514,7 @@ export type WorkspaceFileSearchInput = Readonly<{
     limit?: number;
     threshold?: number;
     resultType?: FileSearchItem['fileType'];
-    /** Exact selected-Home credential lifetime; omitted callers retain the active Account owner. */
+    /** Explicit captured lifetime; otherwise the addressed Home's credentials own the search. */
     accountLifetime?: WorkspaceFileSearchAccountLifetime;
     signal?: AbortSignal;
     includeCoverage?: boolean;
@@ -507,7 +540,10 @@ export async function searchWorkspaceFiles(
             : page;
     };
     throwIfWorkspaceFileSearchAborted(input.signal);
-    const accountLifetime = resolveWorkspaceFileSearchAccountLifetime(input.accountLifetime);
+    const accountLifetime = await awaitWorkspaceFileSearchWork(
+        resolveWorkspaceFileSearchAccountLifetime(input.scope.serverId, input.accountLifetime), input.signal,
+    );
+    throwIfWorkspaceFileSearchAborted(input.signal);
     throwIfWorkspaceFileSearchAccountRetired(accountLifetime);
     if (input.mode === 'glob') {
         const response = await machineWorkspaceFileList(input.scope.machineId, {

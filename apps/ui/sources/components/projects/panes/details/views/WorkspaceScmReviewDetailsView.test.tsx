@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushHookEffects, standardCleanup } from '@/dev/testkit';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { ScmComparisonCaptureOutputSchema } from '@happier-dev/protocol/scm';
@@ -36,19 +36,92 @@ async function mountWithRows(kind: 'exact' | 'missing' | 'ambiguous') {
     ];
     applyProjectAccountRowsFixture(fixture.storage, { workspaceRefs: refs });
     const screen = await fixture.render(<WorkspaceScmReviewDetailsView scopeId="project:project-anchor"
-        workspaceRefId="project-anchor" workspaceCacheKey="cache" serverId={fixture.home.id} machineId="m1" rootPath="/repo" />);
+        serverId={fixture.home.id} machineId="m1" rootPath="/repo" />);
     await flushHookEffects({ cycles: 20 });
     return { screen, grants, scope };
 }
 
 describe('WorkspaceScmReviewDetailsView', () => {
+    it('offers Start review at the actual workspace comparison without opening a Session', async () => {
+        fixture = await createSessionFilesViewFixture({ rootPath: '/repo', rpc: request =>
+            request.method === 'scm.status.snapshot' ? { success: true, snapshot: fileViewSnapshot({ rootPath: '/repo' }) } : undefined });
+        fixture.storage.setState({ sessions: {} });
+        const screen = await fixture.render(<WorkspaceScmReviewDetailsView scopeId="project:wr"
+            machineId="m1" serverId={fixture.home.id} rootPath="/repo" />);
+        await screen.pressByTestIdAsync('scm-comparison-start-review');
+        const { Modal } = await import('@/modal');
+        const { StartReviewDialog } = await import('@/components/sessions/reviews/walkthrough/StartReviewDialog');
+        const opened = vi.mocked(Modal.show).mock.calls.find(([config]) => config.component === StartReviewDialog)?.[0];
+        expect(opened?.props).toMatchObject({ machineId: 'm1', cwd: '/repo', serverId: fixture.home.id, comparison: { kind: 'workingTree' } });
+        expect(opened?.props).not.toHaveProperty('sessionId');
+        expect(fixture.requests.some(request => request.targetId === 's1')).toBe(false);
+    });
+    it('captures separately authorized Session evidence through that Session, never the Machine scope', async () => {
+        const captured = { id: 'session-evidence', source: { kind: 'session' as const, sessionId: 's1' },
+            repository: { rootPath: '/repo' }, endpoints: {}, inventory: { state: 'complete' as const, files: [], reasons: [] } };
+        fixture = await createSessionFilesViewFixture({ rootPath: '/repo', rpc: request => {
+            if (request.method === 'scm.status.snapshot') return { success: true, snapshot: fileViewSnapshot({ rootPath: '/repo' }) };
+            if (request.method === 'scm.diffSummary.capture') return ScmComparisonCaptureOutputSchema.parse({
+                success: true, comparison: captured, metadata: { source: captured.source, sourceKey: captured.id } });
+            return undefined;
+        } });
+        await fixture.render(<WorkspaceScmReviewDetailsView scopeId="project:wr"
+            machineId="m1" serverId={fixture.home.id} rootPath="/repo"
+            evidenceSessionId="s1" comparison={{ kind: 'session' }} />);
+        await flushHookEffects({ cycles: 20 });
+        expect(fixture.requests.filter(request => request.method === 'scm.diffSummary.capture')).toEqual([
+            expect.objectContaining({ targetId: 's1', payload: expect.objectContaining({ cwd: '/repo', source: captured.source }) }),
+        ]);
+    });
+    it('starts a no-Session review using captured Machine evidence and the canonical detached Action', async () => {
+        const captured = { id: 'detached-evidence', source: { kind: 'workingTree' as const }, repository: { rootPath: '/repo' },
+            endpoints: {}, inventory: { state: 'complete' as const, files: [], reasons: [] } };
+        fixture = await createSessionFilesViewFixture({ rootPath: '/repo', rpc: request => {
+            if (request.method === 'scm.diffSummary.capture') return ScmComparisonCaptureOutputSchema.parse({
+                success: true, comparison: captured, metadata: { source: captured.source, sourceKey: captured.id } });
+            if (request.method === 'execution.run.start') return { runId: 'review-1', callId: 'call-1', status: 'running' };
+            if (request.method === 'capabilities.detect') return { protocolVersion: 1, results: { 'tool.executionRuns': {
+                ok: true, checkedAt: 1, data: { protocolVersion: 2, backends: { claude: { available: true, intents: ['review'] } },
+                    features: { detachedScope: true, runScopedAgentBindings: true, secretReferenceOverlay: true } } } } };
+            return undefined;
+        } });
+        fixture.storage.setState({ sessions: {} });
+        const { startReviewOfComparison } = await import('@/sync/ops/reviews/reviewWalkthrough');
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const { resolveReviewWalkthroughPlan } = await import('@/sync/domains/reviews/reviewWalkthroughPlan');
+        const executor = createDefaultActionExecutor();
+        const outcome = await startReviewOfComparison({ sessionId: null, machineId: 'm1', serverId: fixture.home.id, cwd: '/repo',
+            comparison: { kind: 'workingTree' }, instructions: 'Review the pending changes',
+            plan: resolveReviewWalkthroughPlan({ engines: [{ engineId: 'claude', label: 'Claude', enabled: true, structuredNarration: false }],
+                selectedEngineIds: ['claude'], walkthrough: false, narratorEngineId: null }),
+            start: input => executor.execute('review.start', input, { serverId: fixture.home.id,
+                externalActionTarget: { kind: 'machine', machineId: 'm1' }, executionRunTargetMachineId: 'm1' }),
+        });
+        expect(outcome).toMatchObject({ ok: true, comparisonId: captured.id, reviewRunIds: ['review-1'] });
+        expect(fixture.requests.filter(request => request.method === 'scm.diffSummary.capture')).toEqual([
+            expect.objectContaining({ targetId: 'm1', payload: expect.objectContaining({ cwd: '/repo', source: captured.source }) }),
+        ]);
+        expect(fixture.requests.filter(request => request.method === 'execution.run.start')).toEqual([
+            expect.objectContaining({ targetId: 'm1', payload: expect.objectContaining({ cwd: '/repo', intent: 'review',
+                intentInput: expect.objectContaining({ comparisonId: captured.id }) }) }),
+        ]);
+    });
+    it('refuses Session evidence from another checkout without falling back to Machine capture', async () => {
+        fixture = await createSessionFilesViewFixture({ rootPath: '/repo', rpc: request =>
+            request.method === 'scm.status.snapshot' ? { success: true, snapshot: fileViewSnapshot({ rootPath: '/other' }) } : undefined });
+        const screen = await fixture.render(<WorkspaceScmReviewDetailsView scopeId="project:other"
+            machineId="m1" serverId={fixture.home.id} rootPath="/other" evidenceSessionId="s1" comparison={{ kind: 'session' }} />);
+        await flushHookEffects({ cycles: 10 });
+        expect(fixture.requests.filter(request => request.method === 'scm.diffSummary.capture')).toEqual([]);
+        expect(screen.findByTestId('scm-comparison-start-review')?.props.disabled).toBe(true);
+    });
     it('keeps the shared comparison toolbar while the first checkout snapshot is loading', async () => {
         const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
         const snapshotRead = createDeferred<unknown>();
         fixture = await createSessionFilesViewFixture({ rootPath: '/loading', rpc: request =>
             request.method === 'scm.status.snapshot' ? snapshotRead.promise : undefined });
-            const screen = await fixture.render(<WorkspaceScmReviewDetailsView scopeId="project:loading" workspaceRefId="loading"
-            workspaceCacheKey="loading" machineId="m1" serverId={fixture.home.id} rootPath="/loading" />);
+            const screen = await fixture.render(<WorkspaceScmReviewDetailsView scopeId="project:loading"
+            machineId="m1" serverId={fixture.home.id} rootPath="/loading" />);
         expect(screen.findByTestId('scm-comparison-view:walkthrough')).not.toBeNull();
         snapshotRead.resolve({ success: true, snapshot: fileViewSnapshot({ rootPath: '/loading' }) });
         await flushHookEffects({ cycles: 10 });
@@ -66,8 +139,8 @@ describe('WorkspaceScmReviewDetailsView', () => {
         } });
         fixture.storage.setState({ sessions: {} });
         const contexts: unknown[] = [];
-            const screen = await fixture.render(<WorkspaceScmReviewDetailsView scopeId="project:workspace" workspaceRefId="workspace"
-            workspaceCacheKey="cache" machineId="m1" serverId={fixture.home.id} rootPath="/repo" onExplain={input => contexts.push(input)} />);
+            const screen = await fixture.render(<WorkspaceScmReviewDetailsView scopeId="project:workspace"
+            machineId="m1" serverId={fixture.home.id} rootPath="/repo" onExplain={input => contexts.push(input)} />);
         expect(contexts).toEqual([]);
         await screen.pressByTestIdAsync('scm-comparison-explain-with-agent-action');
         await flushHookEffects({ cycles: 10 });

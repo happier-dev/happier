@@ -95,7 +95,7 @@ export function resolveReviewWalkthroughPlan(params: Readonly<{
  * findings or evidence; the host rereads the captured comparison.
  */
 export function buildReviewStartWithWalkthroughInput(params: Readonly<{
-    sessionId: string;
+    sessionId: string | null;
     plan: ReviewWalkthroughPlan;
     instructions: string;
     comparisonId: string;

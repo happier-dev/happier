@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildProjectsTreeProjects, buildProjectsTreeRows, buildProjectsPhoneTreeRows, type ProjectsTreeCheckout, type ProjectsTreeProject } from './projectsTreeRows';
+import { buildProjectsTreeProjects, buildProjectsTreeRows, buildProjectsPhoneTreeRows, projectsTreeRowSubtitle, type ProjectsTreeCheckout, type ProjectsTreeProject } from './projectsTreeRows';
 
 const checkout = (refId: string, machineId: string, label: string, extra: Partial<ProjectsTreeCheckout> = {}): ProjectsTreeCheckout => ({
     refId, machineId, machineName: machineId === 'devbox' ? 'devbox' : machineId === 'mbp' ? 'MacBook Pro' : machineId,
@@ -34,6 +34,19 @@ describe('buildProjectsTreeRows (lab p-projects RULES)', () => {
             } }),
         ]) expect(rows[0]).toMatchObject({ attention: 'needs-you', newFromSession: true });
         expect(projects[0]?.checkouts.map(row => row.workspaceAddress?.rootPath)).toEqual(['/work/first', '/work/second']);
+    });
+
+    it('leads a not-yet-viewed Project\'s second line with where it came from, in the column and on the phone', () => {
+        const projects = [{ ...project('pricing', [checkout('n1', 'mbp', 'main')]), newFromSession: true }, project('web', [checkout('w1', 'mbp', 'main')])];
+        for (const rows of [
+            buildProjectsTreeRows({ projects, openRefId: null, expandedKeys: new Set() }),
+            buildProjectsPhoneTreeRows({ projects, openRefId: null, expandedKeys: new Set(), describe: {
+                checkoutCount: String, machineCount: String, offlineCount: String,
+            } }),
+        ]) {
+            expect(projectsTreeRowSubtitle(rows[0]!, 'New from your session')).toBe('New from your session · MacBook Pro · main');
+            expect(projectsTreeRowSubtitle(rows[1]!, 'New from your session')).toBe('MacBook Pro · main');
+        }
     });
 
     it('keeps unknown branch, worktree, machine presence and Team facts unknown instead of inventing them', () => {

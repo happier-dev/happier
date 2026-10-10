@@ -3,6 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { buildSessionFileDeepLink, parseSearchFileTarget, parseSessionFileDeepLinkAnchor } from './sessionFileDeepLink';
 
 describe('sessionFileDeepLink', () => {
+    it('reads file intent on canonical Project pages without admitting unpublished alias routes', () => {
+        expect(parseSearchFileTarget('/projects/project-a/code?serverId=home-b&initialFile=src%2Fa.ts&source=file&anchor=fileLine&startLine=9'))
+            .toEqual({ workspaceRefId: 'project-a', serverId: 'home-b', path: 'src/a.ts', anchor: { kind: 'fileLine', startLine: 9 } });
+        expect(parseSearchFileTarget('/projects/project-a/details?initialFile=src%2Fa.ts')).toBeNull();
+    });
     it('accepts predecessor line URLs whose position is encoded as line rather than startLine', () => {
         expect(parseSessionFileDeepLinkAnchor({ path: 'src/a.ts', source: 'diff', anchor: 'line', line: '12', side: 'before' }))
             .toEqual({ source: 'diff', anchor: { kind: 'line', filePath: 'src/a.ts', line: 12, side: 'before' } });

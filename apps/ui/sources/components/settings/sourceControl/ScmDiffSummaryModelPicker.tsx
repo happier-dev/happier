@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { getAgentCore, getAgentStaticModels } from '@happier-dev/agents';
 import { buildBackendTargetKeyV2, readBackendTargetRefV2, type BackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import type { AcpCatalogSettingsV1 } from '@happier-dev/protocol/acp/catalog/settingsV1';
 import type { ScmDiffSummaryModelSelector } from '@happier-dev/protocol/scm/diffSummary';
 import { getResolvedBackendCatalogEntries, type ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
@@ -9,6 +8,7 @@ import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaem
 import { useNewSessionPreflightModelsState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { useSetting } from '@/sync/domains/state/storage';
+import { useAcpCatalogForServer } from '@/sync/store/useAcpCatalog';
 import { decodeScmDiffSummaryModelOverride } from '@/settings/scmDiffSummary/settings';
 import { buildScmDiffSummaryModelProfiles } from '@/settings/scmDiffSummary/models';
 import { t } from '@/text';
@@ -31,15 +31,16 @@ export function ScmDiffSummaryModelPicker(props: Readonly<{
     const viewportClass = useViewportClass();
     const [discoveryTargetKey, setDiscoveryTargetKey] = React.useState<string | null>(null);
     const enabledAgentIds = useEnabledAgentIds();
-    const acpCatalogSettings = useSetting('acpCatalogSettingsV1') as AcpCatalogSettingsV1 | undefined;
+    const { snapshot: acpCatalog } = useAcpCatalogForServer(props.serverId);
+    const catalogReady = acpCatalog?.catalog.status === 'ready' && !acpCatalog.stale;
     const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey') as Record<string, boolean> | undefined;
     const daemon = useDaemonMergedProjectionInputs({ machineId: props.machineId ?? null, serverId: props.serverId ?? null, enabled: open && Boolean(props.machineId) });
     const entries = React.useMemo(() => getResolvedBackendCatalogEntries({ enabledAgentIds,
-        acpCatalogSettingsV1: acpCatalogSettings ?? { v: 2, backends: [] }, backendEnabledByTargetKey,
+        acpCatalogSnapshot: acpCatalog?.catalog, backendEnabledByTargetKey,
         discoveredBackendIds: daemon.inputs?.discoveredBackendIds,
         mergedProviderProjectionById: daemon.inputs?.mergedProviderProjectionById,
         mergedBackendProjectionById: daemon.inputs?.mergedBackendProjectionById,
-    }), [enabledAgentIds, acpCatalogSettings, backendEnabledByTargetKey, daemon.inputs]);
+    }), [enabledAgentIds, acpCatalog, backendEnabledByTargetKey, daemon.inputs]);
     const targetFor = (entry: ResolvedBackendCatalogEntry): BackendTargetRefV2 | null => {
         try { return readBackendTargetRefV2(entry.backendTarget); }
         catch { return entry.compatibilityBackendTargets?.[0] ?? null; }
@@ -58,7 +59,11 @@ export function ScmDiffSummaryModelPicker(props: Readonly<{
     const probe = useNewSessionPreflightModelsState({
         backendTarget: probeTarget,
         runtimeCarrierAgentId: probeEntry?.agentId,
-        selectedMachineId: props.machineId ?? null, capabilityServerId: props.serverId ?? '', enabled: open && Boolean(props.machineId),
+        selectedMachineId: props.machineId ?? null,
+        capabilityServerId: props.serverId ?? '',
+        enabled: open
+            && Boolean(props.machineId)
+            && (probeEntry?.kind !== 'configuredBackend' || catalogReady),
     });
     const selections = new Map<string, ScmDiffSummaryModelSelection>();
     const discoveryTargets = new Map<string, string>();
@@ -95,7 +100,7 @@ export function ScmDiffSummaryModelPicker(props: Readonly<{
     const selectedItem = items.find((item) => item.id === props.value);
     const selectionAvailable = selections.has(props.value);
     React.useEffect(() => { props.onAvailabilityChange?.(selectionAvailable); }, [props.onAvailabilityChange, selectionAvailable]);
-    return <DropdownMenu open={open} onOpenChange={setOpen} items={items} selectedId={props.value} search
+    return <DropdownMenu open={open} onOpenChange={setOpen} items={items} selectedId={props.value} search searchPlaceholder={t('walkthroughSettings.searchModels')}
         variant="selectable" matchTriggerWidth connectToTrigger closeOnSelect={false}
         itemTrigger={{ title: t('walkthroughSettings.model'), subtitle: t('walkthroughSettings.modelDescription'),
             detailFormatter: () => selectedItem?.title ?? (props.value ? t('walkthroughSettings.unavailable') : runtimeDefault && selections.has('') ? t('agentInput.model.useCliSettings') : t('walkthroughSettings.chooseModel')),

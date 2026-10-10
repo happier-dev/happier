@@ -15,6 +15,9 @@ export type ScmRpcFailure = Readonly<{
     error: string;
     errorCode: ScmOperationErrorCode;
     outcome?: ScmOperationOutcome;
+    /** UI Action admission is not a Git failure or an uncertain dispatched command. */
+    actionErrorCode?: string;
+    approvalArtifactId?: string;
 }>;
 
 function reconciliationFor({ method, request }: ScmRpcFailureContext): ScmOperationReconciliation {

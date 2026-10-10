@@ -12,6 +12,7 @@ import {
   isMemoryStackEntry,
   promptStackEntryHref,
   promptStackEntryTitle,
+  usePromptStackEntryPresentations,
 } from '@/components/settings/prompts/stacks/promptStackEntryPresentation';
 import { showDocumentShareSheet } from '@/components/sharing/documents/showDocumentShareSheet';
 import {
@@ -27,8 +28,6 @@ import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { Modal } from '@/modal';
 import { randomUUID } from '@/platform/randomUUID';
-import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
-import { useArtifacts } from '@/sync/domains/state/storage';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -64,35 +63,33 @@ export const ProjectContextBody = React.memo(function ProjectContextBody(
   const router = useRouter();
   const model = useProjectContext(props.workspaceRef);
   const projectRef = React.useMemo(() => projectWorkspaceRefV1(props.workspaceRef), [props.workspaceRef]);
-  const artifacts = useArtifacts();
+  const { shared, personal, teamName } = model;
+  const entries = React.useMemo(() => [...shared.entries, ...personal.entries], [shared.entries, personal.entries]);
+  const presentations = usePromptStackEntryPresentations(entries, projectRef.serverId);
   const projectName = resolveWorkspaceRefDisplayName(props.workspaceRef);
-  const artifactsById = React.useMemo(() => {
-    const map = new Map<string, DecryptedArtifact>();
-    for (const artifact of artifacts) map.set(artifact.id, artifact);
-    return map;
-  }, [artifacts]);
   const [shareOffer, setShareOffer] = React.useState<ShareOffer | null>(null);
   const [picking, setPicking] = React.useState<Layer | null>(null);
+  // A change that did not land says so on the page until the next attempt (never a dialog).
+  const [refusal, setRefusal] = React.useState<'conflict' | 'refused' | null>(null);
   const sharedAddRef = React.useRef<View>(null);
   const personalAddRef = React.useRef<View>(null);
 
-  const { shared, personal, teamName } = model;
   const hasSource = shared.status !== 'none';
   // Project memory follows the Action's owner: Source-bound Projects use the Source,
   // even before it has memory or while it cannot be read. Other Projects use the viewer's row.
   const sharedMemory = React.useMemo(
     () =>
       shared.entries.find((entry) =>
-        isMemoryStackEntry(entry, artifactsById),
+        isMemoryStackEntry(entry, presentations),
       ) ?? null,
-    [artifactsById, shared.entries],
+    [presentations, shared.entries],
   );
   const personalMemory = React.useMemo(
     () =>
       personal.entries.find((entry) =>
-        isMemoryStackEntry(entry, artifactsById),
+        isMemoryStackEntry(entry, presentations),
       ) ?? null,
-    [artifactsById, personal.entries],
+    [presentations, personal.entries],
   );
   const memory = hasSource ? sharedMemory : personalMemory;
   const memoryLayer: Layer = hasSource ? 'shared' : 'personal';
@@ -107,18 +104,10 @@ export const ProjectContextBody = React.memo(function ProjectContextBody(
 
   const settle = React.useCallback(
     (run: Promise<ProjectContextOutcome>, tag: string) => {
+      setRefusal(null);
       fireAndForget(
         run.then((outcome) => {
-          if (outcome === 'conflict')
-            Modal.alert(
-              t('projects.pages.context'),
-              t('contextPages.project.conflict'),
-            );
-          else if (outcome === 'refused')
-            Modal.alert(
-              t('projects.pages.context'),
-              t('contextPages.project.refused'),
-            );
+          if (outcome === 'conflict' || outcome === 'refused') setRefusal(outcome);
         }),
         { tag },
       );
@@ -142,29 +131,17 @@ export const ProjectContextBody = React.memo(function ProjectContextBody(
         );
         return;
       }
-      const artifact = artifactsById.get(ref.artifactId);
+      setRefusal(null);
       fireAndForget(
         shared
           .update({ kind: 'attach', attachment: { purpose: 'context', entry } })
           .then((outcome) => {
-            if (outcome === 'conflict')
-              Modal.alert(
-                t('projects.pages.context'),
-                t('contextPages.project.conflict'),
-              );
-            else if (outcome === 'refused')
-              Modal.alert(
-                t('projects.pages.context'),
-                t('contextPages.project.refused'),
-              );
+            if (outcome === 'conflict' || outcome === 'refused') setRefusal(outcome);
             // Attachment alone grants nothing: a document you own stays yours until you share it.
-            else if (teamName && artifact?.access === 'owner') {
+            else if (teamName && presentations(entry).access === 'owner') {
               setShareOffer({
                 artifactId: ref.artifactId,
-                kind:
-                  typeof artifact.header?.kind === 'string'
-                    ? artifact.header.kind
-                    : null,
+                kind: presentations(entry).headerKind,
                 title,
               });
             }
@@ -172,7 +149,7 @@ export const ProjectContextBody = React.memo(function ProjectContextBody(
         { tag: 'ProjectContext.attachShared' },
       );
     },
-    [artifactsById, personal, settle, shared, teamName],
+    [presentations, personal, settle, shared, teamName],
   );
 
   const openShare = React.useCallback(
@@ -273,13 +250,13 @@ export const ProjectContextBody = React.memo(function ProjectContextBody(
 
   const describeAccess = React.useCallback(
     (entry: PromptStackEntryV1): string | undefined => {
-      const access = artifactsById.get(entry.ref.artifactId)?.access;
+      const access = presentations(entry).access;
       if (access === 'view') return t('contextPages.project.canRead');
       if (access === 'edit' || access === 'admin')
         return t('contextPages.project.canEdit');
       return undefined;
     },
-    [artifactsById],
+    [presentations],
   );
 
   const renderRows = (
@@ -288,10 +265,10 @@ export const ProjectContextBody = React.memo(function ProjectContextBody(
     editable: boolean,
   ) =>
     documents.map((entry, index) => {
-      const artifact = artifactsById.get(entry.ref.artifactId);
+      const presentation = presentations(entry);
       const rowTestID = `${testID}.${layer}.${entry.id}`;
       // A document this viewer was not granted: one honest row, without its title or contents.
-      if (!artifact || artifact.isDecrypted === false) {
+      if (presentation.kind === 'unknown') {
         return (
           <PromptStackEntryRow
             key={entry.id}
@@ -317,9 +294,8 @@ export const ProjectContextBody = React.memo(function ProjectContextBody(
           />
         );
       }
-      const title = promptStackEntryTitle(entry, artifactsById);
-      const owned =
-        artifact.access === 'owner' || artifact.access === undefined;
+      const title = promptStackEntryTitle(entry, presentations);
+      const owned = presentation.access === 'owner';
       return (
         <PromptStackEntryRow
           key={entry.id}
@@ -328,16 +304,16 @@ export const ProjectContextBody = React.memo(function ProjectContextBody(
           title={title}
           access={describeAccess(entry)}
           disabled={layer === 'shared' && shared.busy}
-          onOpen={() => router.push(promptStackEntryHref(entry) as never)}
+          onOpen={() => {
+            const href = promptStackEntryHref(entry, presentations(entry).kind, projectRef.serverId);
+            if (href) router.push(href as never);
+          }}
           onShare={
             layer === 'shared' && owned && teamName
               ? () =>
                   openShare({
-                    artifactId: artifact.id,
-                    kind:
-                      typeof artifact.header?.kind === 'string'
-                        ? artifact.header.kind
-                        : null,
+                    artifactId: entry.ref.artifactId,
+                    kind: presentation.headerKind,
                     title,
                   })
               : undefined
@@ -350,19 +326,17 @@ export const ProjectContextBody = React.memo(function ProjectContextBody(
           canMoveUp={index > 0}
           canMoveDown={index < documents.length - 1}
           onRemove={editable ? () => remove(layer, entry, title) : undefined}
+          onEnabledChange={editable ? (enabled) => settle(layer === 'shared'
+            ? shared.update({ kind: 'set_enabled', attachmentId: entry.id, enabled })
+            : personal.update({ kind: 'set_enabled', entryId: entry.id, enabled }), 'ProjectContext.enabled') : undefined}
+          onBudgetChange={editable ? (maxChars) => settle(layer === 'shared'
+            ? shared.update({ kind: 'budget', attachmentId: entry.id, maxChars })
+            : personal.update({ kind: 'set_budget', entryId: entry.id, maxChars }), 'ProjectContext.budget') : undefined}
         />
       );
     });
 
-  const attachedIds = React.useMemo(
-    () =>
-      new Set(
-        [...shared.entries, ...personal.entries].map(
-          (entry) => entry.ref.artifactId,
-        ),
-      ),
-    [personal.entries, shared.entries],
-  );
+  const attachedRefs = React.useMemo(() => entries.map(entry => entry.ref), [entries]);
   const meta = React.useMemo((): PageHeaderMetaFact[] => {
     const facts: PageHeaderMetaFact[] = [];
     if (teamName) {
@@ -389,10 +363,7 @@ export const ProjectContextBody = React.memo(function ProjectContextBody(
     teamName,
   ]);
 
-  const memoryArtifact = memory
-    ? artifactsById.get(memory.ref.artifactId)
-    : undefined;
-  const memoryReadOnly = memoryArtifact?.access === 'view';
+  const memoryReadOnly = memory ? presentations(memory).access === 'view' : false;
   const memoryShared = memoryLayer === 'shared' && teamName !== null;
   const memoryBudgetEditable =
     memory !== null && (memoryLayer === 'personal' || shared.canManage);
@@ -407,6 +378,13 @@ export const ProjectContextBody = React.memo(function ProjectContextBody(
         })}
         meta={meta}
       />
+      {refusal ? (
+        <SurfaceFreshnessLine
+          testID={`${testID}.${refusal}`}
+          tone="warning"
+          reason={t(refusal === 'conflict' ? 'contextPages.project.conflict' : 'contextPages.project.refused')}
+        />
+      ) : null}
       <ContextMemorySection
         testID={`${testID}.memory`}
         title={t('contextPages.project.memoryTitle')}
@@ -432,6 +410,10 @@ export const ProjectContextBody = React.memo(function ProjectContextBody(
         emptyText={t('contextPages.project.memoryEmpty')}
         readOnly={memoryReadOnly}
         onBudgetChange={memoryBudgetEditable ? setMemoryBudget : undefined}
+        disabled={memoryLayer === 'shared' && shared.busy}
+        onEnabledChange={memory && memoryBudgetEditable ? (enabled) => settle(memoryLayer === 'shared'
+          ? shared.update({ kind: 'set_enabled', attachmentId: memory.id, enabled })
+          : personal.update({ kind: 'set_enabled', entryId: memory.id, enabled }), 'ProjectContext.memoryEnabled') : undefined}
         onDetach={
           memory && (memoryLayer === 'personal' || shared.canManage)
             ? () => remove(memoryLayer, memory, t('contextPages.project.memoryTitle'))
@@ -510,7 +492,10 @@ export const ProjectContextBody = React.memo(function ProjectContextBody(
           onDismiss={() => setShareOffer(null)}
         />
       ) : null}
-      <ItemGroup
+      {/* "Only yours" is a teammate's own layer beside the team's (lab `c-ctx R`). Whoever manages the
+          team project adds to the team list above, so the section appears for them only while it
+          still holds documents they once kept here: those must stay reachable. */}
+      {hasSource && shared.canManage && personalDocuments.length === 0 ? null : <ItemGroup
         title={
           hasSource
             ? t('contextPages.project.onlyYoursTitle')
@@ -550,13 +535,13 @@ export const ProjectContextBody = React.memo(function ProjectContextBody(
             }
           />
         ) : null}
-      </ItemGroup>
+      </ItemGroup>}
       {picking ? (
         <PromptStackDocumentMenu
           testID={`${testID}.${picking}.picker`}
           anchorRef={picking === 'shared' ? sharedAddRef : personalAddRef}
           serverId={model.serverId}
-          attachedArtifactIds={attachedIds}
+          attachedRefs={attachedRefs}
           onClose={() => setPicking(null)}
           onPick={(ref, title) => attach(picking, ref, title)}
         />

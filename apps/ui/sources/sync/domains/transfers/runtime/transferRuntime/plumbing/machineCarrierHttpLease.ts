@@ -1,14 +1,11 @@
-import { DIRECT_ROUTE_GRANT_TTL_MS } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantCachePolicyV1';
-import { DirectRouteGrantRequestV2Schema } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantV2';
-import { IrohMachineHandshakeV1Schema } from '@happier-dev/protocol/connectivity/iroh/machineHandshakeV1';
-import { createEphemeralPeerRouteProofHandleV2 } from '@happier-dev/protocol/machines/peer/mediation/ephemeralPeerRouteProofV2';
+import { mintFiniteAccountClientTransferHandshake } from '@happier-dev/sync-client';
 
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { getReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFeatures';
 import { requestPeerRouteGrantV2, resolveTargetServer } from '@/sync/domains/machines/peer/mediation/stream/productionRouteHttp';
 import { readPeerEndpointForServerScope } from '@/sync/domains/machines/peer/mediation/readPeerEndpointForServerScope';
-import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { createServerAccountScope, areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { storage } from '@/sync/domains/state/storage';
 import { serverFetch } from '@/sync/http/client';
 import { getIrohApplicationEndpoint, probeIrohMachineTransferLifecycleAvailability, startIrohMachineTransferTunnel } from '@/sync/runtime/nativeIrohTunnels/machineTransferLifecycle';
@@ -63,6 +60,7 @@ export type AcquireMachineCarrierHttpLease = (input: Readonly<{
     machineId: string;
     serverId?: string | null;
     signal?: AbortSignal;
+    accountLifetime?: ServerAccountScopeLifetime;
 }>) => Promise<MachineCarrierHttpLease>;
 
 function readTargetIrohEndpoint(serverId: string, machineId: string) {
@@ -85,9 +83,12 @@ export type MachineCarrierRoute = Readonly<
     | {
         kind: 'iroh_peer';
         carrierKind: 'native_http' | 'browser_stream';
+        /** The Home already selected by this canonical route decision. */
+        serverId: string;
         acquire: (input: Readonly<{
             operationId: string;
             signal?: AbortSignal;
+            accountLifetime?: ServerAccountScopeLifetime;
         }>) => Promise<MachineCarrierHttpLease>;
     }
 >;
@@ -161,6 +162,7 @@ export async function resolveMachineCarrierRoute(machineId: string, serverId?: s
         return {
             kind: 'iroh_peer',
             carrierKind: 'browser_stream',
+            serverId: server.serverId,
             acquire: async (input) => {
                 try {
                     return await acquireBrowserMachineCarrierHttpLease({
@@ -181,6 +183,7 @@ export async function resolveMachineCarrierRoute(machineId: string, serverId?: s
     return {
         kind: 'iroh_peer',
         carrierKind: 'native_http',
+        serverId: server.serverId,
         acquire: async (input) => {
             try {
                 return await acquireMachineCarrierHttpLease({
@@ -214,6 +217,7 @@ export type SignedMachineCarrierHandshake = Readonly<{
 export async function mintSignedMachineCarrierHandshake(input: Readonly<{
     machineId: string;
     serverId?: string | null;
+    accountLifetime?: ServerAccountScopeLifetime;
     /** Resolves the initiator EndpointId actually owned by the calling carrier. */
     resolveInitiatorEndpointId: (targetRelayUrls: readonly string[]) => Promise<string>;
 }>): Promise<SignedMachineCarrierHandshake> {
@@ -224,61 +228,30 @@ export async function mintSignedMachineCarrierHandshake(input: Readonly<{
     if (!credentials || !targetEndpoint) throw new Error(MACHINE_CARRIER_REQUIRED_TRANSFER_ERROR);
     const accountScope = createServerAccountScope(server.serverId, parseToken(credentials.token));
     if (!accountScope) throw new Error(MACHINE_CARRIER_REQUIRED_TRANSFER_ERROR);
+    const assertCurrent = () => {
+        if (input.accountLifetime && (!input.accountLifetime.isCurrent()
+            || !areServerAccountScopesEqual(input.accountLifetime.scope, accountScope))) throw new Error('action_account_scope_changed');
+    };
+    assertCurrent();
 
     const authority = await captureServerRequestAuthorityForServerAccountScope({
-        scope: accountScope,
+        scope: input.accountLifetime?.scope ?? accountScope,
         activeRequest: async (path, init) => await serverFetch(path, init),
     });
 
     try {
-        const initiatorEndpointId = await input.resolveInitiatorEndpointId(targetEndpoint.relayUrls ?? []);
-        const proofHandle = createEphemeralPeerRouteProofHandleV2({ randomBytes: getRandomBytes });
-        try {
-            const request = DirectRouteGrantRequestV2Schema.parse({
-                v: 2,
-                kind: 'ephemeral_ed25519',
-                ephemeralPublicKeyBase64Url: proofHandle.publicKeyBase64Url,
-                machineId: input.machineId,
-                flowKind: 'bounded_transfer',
-                routeKind: 'iroh_peer',
-                endpointFingerprint: targetEndpoint.endpointId,
-                ttlMs: DIRECT_ROUTE_GRANT_TTL_MS.finiteTransferCarrier,
-                scope: {
-                    kind: 'bounded_transfer',
-                    mode: 'carrier',
-                },
-                iroh: {
-                    initiator: { kind: 'account_client', endpointId: initiatorEndpointId },
-                    target: { machineId: input.machineId, endpointId: targetEndpoint.endpointId },
-                    operationKind: 'finite_transfer',
-                },
-            });
-            const granted = await requestPeerRouteGrantV2({ authority, request });
-            if (!granted.ok) throw new Error(granted.reasonCode);
-            const proof = proofHandle.sign(granted.value);
-            const currentTarget = readTargetIrohEndpoint(server.serverId, input.machineId);
-            const signedTarget = granted.value.payload.iroh?.target;
-            if (!currentTarget || !signedTarget || currentTarget.endpointId !== signedTarget.endpointId) {
-                throw new Error('Target Iroh endpoint changed while authorizing transfer');
-            }
-            const handshake = IrohMachineHandshakeV1Schema.parse({
-                v: 1,
-                accountId: granted.value.payload.accountId,
-                initiator: granted.value.payload.iroh?.initiator,
-                target: granted.value.payload.iroh?.target,
-                flow: 'finite_transfer',
-                grant: granted.value,
-                proof,
-            });
-            return {
-                handshakeJson: JSON.stringify(handshake),
-                signedTargetEndpointId: signedTarget.endpointId,
-                currentTargetDirectAddresses: currentTarget.directAddresses ?? [],
-                currentTargetRelayUrls: currentTarget.relayUrls ?? [],
-            };
-        } finally {
-            proofHandle.dispose();
-        }
+        const minted = await mintFiniteAccountClientTransferHandshake({ accountId: accountScope.accountId,
+            machineId: input.machineId, readTargetEndpoint: () => readTargetIrohEndpoint(server.serverId, input.machineId),
+            resolveInitiatorEndpointId: input.resolveInitiatorEndpointId, randomBytes: getRandomBytes,
+            requestGrant: async request => {
+                assertCurrent();
+                const granted = await requestPeerRouteGrantV2({ authority, request });
+                assertCurrent();
+                if (!granted.ok) throw new Error(granted.reasonCode);
+                return granted.value;
+            } });
+        return { handshakeJson: JSON.stringify(minted.handshake), signedTargetEndpointId: minted.endpoint.endpointId,
+            currentTargetDirectAddresses: minted.endpoint.directAddresses ?? [], currentTargetRelayUrls: minted.endpoint.relayUrls ?? [] };
     } finally {
         await authority.release();
     }
@@ -296,11 +269,13 @@ export const acquireMachineCarrierHttpLease: AcquireMachineCarrierHttpLease = as
     const minted = await mintSignedMachineCarrierHandshake({
         machineId: input.machineId,
         serverId: input.serverId,
+        accountLifetime: input.accountLifetime,
         resolveInitiatorEndpointId: async (relayUrls) => {
             const applicationEndpoint = await getIrohApplicationEndpoint({ relayUrls });
             return applicationEndpoint.endpointId;
         },
     });
+    if (input.accountLifetime && !input.accountLifetime.isCurrent()) throw new Error('action_account_scope_changed');
     const lease = await startIrohMachineTransferTunnel({
         endpointId: minted.signedTargetEndpointId,
         directAddresses: minted.currentTargetDirectAddresses,

@@ -7,6 +7,7 @@ import {
     type WorkspaceScopeBase,
 } from '@/sync/domains/workspaces/workspaceScope';
 import { resolvePathRelativeToRoot } from '@/utils/path/resolvePathRelativeToRoot';
+import { resolveWorkspaceRefById, workspaceRefResolutionContextV1 } from '@/sync/domains/workspaces/workspaceRefs';
 
 export type WorkspaceSyncRelationshipModel = Readonly<{
     all: readonly WorkspaceSyncRelationshipV1[];
@@ -23,6 +24,7 @@ export type WorkspaceSyncRelationshipEndpoint = Readonly<{
 }>;
 
 export type WorkspaceSyncRelationshipSummary = Readonly<{
+    serverId?: string;
     relationshipId: string;
     relationship: WorkspaceSyncRelationshipV1;
     alpha: WorkspaceSyncRelationshipEndpoint;
@@ -39,6 +41,17 @@ export type WorkspaceSyncLinkedHandoffChoice = Readonly<{
 }>;
 
 const EMPTY_RELATIONSHIPS: readonly unknown[] = [];
+
+function workspaceRefsForSummaries(summaries: readonly WorkspaceSyncRelationshipSummary[]): WorkspaceRefV1[] {
+    // Repeated observations reuse the resolved ref; different candidates must never be collapsed by id.
+    return [...new Set(summaries.flatMap(summary => [summary.alpha.workspaceRef, summary.beta.workspaceRef])
+        .filter((ref): ref is WorkspaceRefV1 => ref !== null))];
+}
+
+function containingHomeForSummaries(summaries: readonly WorkspaceSyncRelationshipSummary[]): string | undefined {
+    const serverId = summaries[0]?.serverId;
+    return serverId && summaries.every(summary => summary.serverId === serverId) ? serverId : undefined;
+}
 
 /**
  * Single fail-closed projection for persisted relationship definitions.
@@ -70,10 +83,12 @@ export function projectWorkspaceSyncRelationships(raw: unknown): WorkspaceSyncRe
 
 function endpointFor(
     workspaceRefId: string,
-    workspaceRefsById: ReadonlyMap<string, WorkspaceRefV1>,
+    workspaceRefs: readonly WorkspaceRefV1[],
     machineNamesById: Readonly<Record<string, string>>,
+    serverId?: string,
 ): WorkspaceSyncRelationshipEndpoint {
-    const workspaceRef = workspaceRefsById.get(workspaceRefId) ?? null;
+    const resolution = resolveWorkspaceRefById(workspaceRefs, workspaceRefId, serverId);
+    const workspaceRef = resolution.kind === 'resolved' ? resolution.ref : null;
     const machineId = workspaceRef?.machineId ?? '';
     const machineName = machineId ? machineNamesById[machineId]?.trim() || null : null;
     return {
@@ -93,17 +108,18 @@ export function projectWorkspaceSyncRelationshipSummaries(input: Readonly<{
     workspaceRefs: readonly WorkspaceRefV1[];
     statuses: readonly WorkspaceSyncStatusV1[];
     machineNamesById?: Readonly<Record<string, string>>;
+    serverId?: string;
 }>): readonly WorkspaceSyncRelationshipSummary[] {
-    const workspaceRefsById = new Map(input.workspaceRefs.map((workspaceRef) => [workspaceRef.id, workspaceRef]));
     const statusesByRelationshipId = new Map(
         input.statuses.map((status) => [status.relationshipId, status]),
     );
 
     return input.relationships.all.map((relationship) => ({
+        ...(input.serverId ? { serverId: input.serverId } : {}),
         relationshipId: relationship.relationshipId,
         relationship,
-        alpha: endpointFor(relationship.alphaWorkspaceRefId, workspaceRefsById, input.machineNamesById ?? {}),
-        beta: endpointFor(relationship.betaWorkspaceRefId, workspaceRefsById, input.machineNamesById ?? {}),
+        alpha: endpointFor(relationship.alphaWorkspaceRefId, input.workspaceRefs, input.machineNamesById ?? {}, input.serverId),
+        beta: endpointFor(relationship.betaWorkspaceRefId, input.workspaceRefs, input.machineNamesById ?? {}, input.serverId),
         status: statusesByRelationshipId.get(relationship.relationshipId) ?? null,
     }));
 }
@@ -165,7 +181,8 @@ export function selectWorkspaceSyncLinkedHandoffChoice(
     const target = normalizeWorkspaceScopeBase(scopes.target);
     if (!source || !target || source.serverId !== target.serverId) return null;
     const endpoints = [...new Map(summaries.flatMap((summary) => [summary.alpha, summary.beta])
-        .filter((endpoint) => endpoint.workspaceRef !== null)
+        .filter((endpoint) => endpoint.workspaceRef !== null
+            && normalizeWorkspaceScopeBase(endpoint.workspaceRef)?.serverId === source.serverId)
         .map((endpoint) => [endpoint.workspaceRefId, endpoint] as const)).values()];
     const sourceEndpoints = endpoints.filter((endpoint) => endpointMatchesScope(endpoint, source, { allowScopeDescendantOfEndpointRoot: true }));
     const targetEndpoints = endpoints.filter((endpoint) => endpointMatchesScope(endpoint, target));
@@ -173,6 +190,8 @@ export function selectWorkspaceSyncLinkedHandoffChoice(
     const workspaceRefs = endpoints.flatMap((endpoint) => endpoint.workspaceRef ? [endpoint.workspaceRef] : []);
     const choices = sourceEndpoints.flatMap((sourceEndpoint) => targetEndpoints.flatMap((targetEndpoint) => {
         const route = resolveWorkspaceSyncTransferRoute({
+            context: workspaceRefResolutionContextV1,
+            serverId: source.serverId,
             workspaceRefs,
             relationships,
             sourceWorkspaceRefId: sourceEndpoint.workspaceRefId,
@@ -213,14 +232,11 @@ function projectWorkspaceSyncLinkAttention(summary: WorkspaceSyncRelationshipSum
 export function projectWorkspaceSyncSetAttentionByWorkspaceRefId(
     summaries: readonly WorkspaceSyncRelationshipSummary[],
 ): ReadonlyMap<string, WorkspaceSyncSetAttention> {
-    const refs = new Map<string, WorkspaceRefV1>();
     const summariesById = new Map(summaries.map((summary) => [summary.relationshipId, summary] as const));
-    for (const summary of summaries) {
-        if (summary.alpha.workspaceRef) refs.set(summary.alpha.workspaceRefId, summary.alpha.workspaceRef);
-        if (summary.beta.workspaceRef) refs.set(summary.beta.workspaceRefId, summary.beta.workspaceRef);
-    }
     const topology = deriveWorkspaceSyncTopology({
-        workspaceRefs: [...refs.values()],
+        context: workspaceRefResolutionContextV1,
+        workspaceRefs: workspaceRefsForSummaries(summaries),
+        serverId: containingHomeForSummaries(summaries),
         relationships: summaries.map((summary) => summary.relationship),
     });
     const result = new Map<string, WorkspaceSyncSetAttention>();
@@ -248,13 +264,10 @@ export function resolveWorkspaceSyncSetSummaries(
     summaries: readonly WorkspaceSyncRelationshipSummary[],
     workspaceRefId: string,
 ): readonly WorkspaceSyncRelationshipSummary[] {
-    const refs = new Map<string, WorkspaceRefV1>();
-    for (const summary of summaries) {
-        if (summary.alpha.workspaceRef) refs.set(summary.alpha.workspaceRefId, summary.alpha.workspaceRef);
-        if (summary.beta.workspaceRef) refs.set(summary.beta.workspaceRefId, summary.beta.workspaceRef);
-    }
     const topology = deriveWorkspaceSyncTopology({
-        workspaceRefs: [...refs.values()],
+        context: workspaceRefResolutionContextV1,
+        workspaceRefs: workspaceRefsForSummaries(summaries),
+        serverId: containingHomeForSummaries(summaries),
         relationships: summaries.map((summary) => summary.relationship),
     });
     const set = topology.sets.find((candidate) => candidate.hubWorkspaceRefId === workspaceRefId
@@ -270,18 +283,19 @@ export function selectWorkspaceSyncAddMachineHub(
     summaries: readonly WorkspaceSyncRelationshipSummary[],
     workspaceRefId: string,
 ): WorkspaceRefV1 | null {
-    const refs = new Map<string, WorkspaceRefV1>();
-    for (const summary of summaries) {
-        if (summary.alpha.workspaceRef) refs.set(summary.alpha.workspaceRefId, summary.alpha.workspaceRef);
-        if (summary.beta.workspaceRef) refs.set(summary.beta.workspaceRefId, summary.beta.workspaceRef);
-    }
+    const refs = workspaceRefsForSummaries(summaries);
+    const serverId = containingHomeForSummaries(summaries);
     const set = deriveWorkspaceSyncTopology({
-        workspaceRefs: [...refs.values()],
+        context: workspaceRefResolutionContextV1,
+        workspaceRefs: refs,
+        serverId,
         relationships: summaries.map((summary) => summary.relationship),
     }).sets.find((candidate) => candidate.relationships.some((relationship) => (
         relationship.alphaWorkspaceRefId === workspaceRefId || relationship.betaWorkspaceRefId === workspaceRefId
     )));
-    return set ? refs.get(set.hubWorkspaceRefId) ?? null : null;
+    if (!set) return null;
+    const resolution = resolveWorkspaceRefById(refs, set.hubWorkspaceRefId, serverId);
+    return resolution.kind === 'resolved' ? resolution.ref : null;
 }
 
 export function resolveWorkspaceSyncSetAttention(

@@ -2,6 +2,7 @@ import { FileBrowserToolbarIconButton } from '@/components/ui/filesystemBrowser/
 import { Icon } from '@/components/ui/icons/Icon';
 import * as React from 'react';
 import { ScrollView, View } from 'react-native';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 import { FileActionToolbar, type FileDisplayMode } from '@/components/workspaces/files/file/FileActionToolbar';
 import { FileBinaryState, FileErrorState, FileLoadingState } from '@/components/workspaces/files/file/FileScreenState';
@@ -30,6 +31,9 @@ import { buildScmDiffSnapshotSignature } from '@/scm/diffCache/scmDiffCacheKey';
 import type { ScmDiffArea } from '@happier-dev/protocol';
 import type { ReviewCommentAnchor, ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
+import { useWorkspaceFileTransfers } from '@/hooks/workspaces/transfers/useWorkspaceFileTransfers';
+import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { Modal } from '@/modal';
 import { resolveShowDiffToggle } from '@/components/workspaces/files/details/workspaceFileDetails/resolveShowDiffToggle';
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
@@ -45,10 +49,12 @@ import type { OpenableContentStatResultV1 } from '@happier-dev/protocol';
 
 import { useWorkspaceFileDetailsLoading } from '@/components/workspaces/files/details/workspaceFileDetails/useWorkspaceFileDetailsLoading';
 import { useWorkspaceFileEditorState } from '@/components/workspaces/files/details/workspaceFileDetails/useWorkspaceFileEditorState';
+import { readWorkspaceFileEditorDraft, type WorkspaceFileEditorDraft } from '@/components/workspaces/files/details/workspaceFileDetails/workspaceFileEditorDraftCache';
 import { useMarkdownFileEditMode } from '@/components/workspaces/files/details/workspaceFileDetails/useMarkdownFileEditMode';
 import { SlideTransitionSwitch } from '@/components/ui/motion/SlideTransitionSwitch';
 import {
     storage,
+    useActiveServerAccountScope,
     useProjectForSession,
     useSessionListPreferredMetadata,
     useSetting,
@@ -495,33 +501,16 @@ function WorkspaceFileOpenableContentViewerControls(props: Readonly<{
     return <PluginDetailsViewerChoiceChrome model={viewerChoice} />;
 }
 
-type WorkspaceFileDetailsPersistedDraft = Readonly<{
-    isEditingFile: boolean;
-    editorOriginalText: string;
-    editorOriginalHash?: string | null;
-    editorText: string;
-}>;
-
-function readWorkspaceFileDetailsPersistedDraft(value: unknown): WorkspaceFileDetailsPersistedDraft | null {
-    if (!value || typeof value !== 'object') return null;
-    const maybe = value as { isEditingFile?: unknown; editorOriginalText?: unknown; editorOriginalHash?: unknown; editorText?: unknown };
-    if (typeof maybe.isEditingFile !== 'boolean') return null;
-    if (typeof maybe.editorOriginalText !== 'string') return null;
-    if (typeof maybe.editorText !== 'string') return null;
-    return {
-        isEditingFile: maybe.isEditingFile,
-        editorOriginalText: maybe.editorOriginalText,
-        editorOriginalHash: typeof maybe.editorOriginalHash === 'string' ? maybe.editorOriginalHash : null,
-        editorText: maybe.editorText,
-    };
-}
+type WorkspaceFileDetailsPersistedDraft = WorkspaceFileEditorDraft;
 
 export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
     const { theme } = useUnistyles();
+    const paintColor = useHappierMaterialColorResolver();
     const mountedRef = useMountedRef();
     const presentation = props.presentation ?? 'screen';
     const constrainWidth = presentation === 'screen';
     const pane = useAppPaneScope(props.scopeId);
+    const editorAccountScope = useActiveServerAccountScope(props.scope?.serverId ?? null);
     const setDetailsTabState = pane.setDetailsTabState;
     const filePath = props.filePath;
     const scope = props.scope;
@@ -538,10 +527,12 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
         projectPath: project?.key?.rootPath ?? (scope?.rootPath ?? null),
     });
     const downloadActionsAvailable = Boolean(scope);
+    const rawTransfers = useWorkspaceFileTransfers({ workspaceScope: scope });
+    const [copyContentBusy, setCopyContentBusy] = React.useState(false);
 
     const tabKey = React.useMemo(() => `file:${filePath}`, [filePath]);
     const isActive = props.openableContentViewer?.details.active ?? (presentation === 'screen' || (pane.scopeState?.details?.isOpen === true && pane.scopeState.details.activeTabKey === tabKey));
-    const persistedDraft = readWorkspaceFileDetailsPersistedDraft(pane.scopeState?.details?.tabState?.[tabKey]);
+    const persistedDraft = readWorkspaceFileEditorDraft(pane.scopeState?.details?.tabState?.[tabKey], editorAccountScope?.accountId ?? null);
     const persistDraft = React.useCallback((draft: WorkspaceFileDetailsPersistedDraft | null) => {
         setDetailsTabState(tabKey, draft);
     }, [setDetailsTabState, tabKey]);
@@ -649,6 +640,21 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
         isActive,
         refreshFingerprint: `${lineSelectionFingerprint ?? 'none'}:${scmSnapshot?.fetchedAt ?? 'none'}`,
     });
+    const copyFileContent = React.useCallback(async () => {
+        if (!fileContent || fileContent.isBinary || copyContentBusy) return;
+        setCopyContentBusy(true);
+        try {
+            const copied = await setClipboardStringSafe(fileContent.content);
+            if (!copied && mountedRef.current) Modal.alert(t('common.error'), t('items.failedToCopyToClipboard'));
+        } finally {
+            if (mountedRef.current) setCopyContentBusy(false);
+        }
+    }, [copyContentBusy, fileContent, mountedRef]);
+    const exportRawFile = React.useCallback(async () => {
+        if (!scope || fileEntry?.kind === 'deleted') return;
+        const result = await rawTransfers.startDownload({ path: filePath, asZip: false });
+        if (!result.ok && result.canceled !== true && mountedRef.current) Modal.alert(t('common.error'), result.error);
+    }, [fileEntry?.kind, filePath, mountedRef, rawTransfers.startDownload, scope]);
     const lineSelectionEnabled = canUseLineSelection({
         scmWriteEnabled,
         includeExcludeEnabled,
@@ -808,6 +814,7 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
         compareFileEdits,
     } = useWorkspaceFileEditorState({
         scope: scope ?? { serverId: 'unknown', machineId: 'unknown', rootPath: '/' },
+        accountId: editorAccountScope?.accountId ?? null,
         filePath,
         displayMode,
         fileText: fileContent?.isBinary ? null : (fileContent?.content ?? null),
@@ -1063,7 +1070,7 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
     ) : null;
 
     return (
-        <View ref={findFocusRoot} style={[styles.container, { backgroundColor: theme.colors.surface.base }]}>
+        <View ref={findFocusRoot} style={[styles.container, { backgroundColor: paintColor(theme.colors.surface.base, 'transparent') }]}>
             <View
                 style={{
                     width: '100%',
@@ -1075,6 +1082,14 @@ export function WorkspaceFileDetailsView(props: WorkspaceFileDetailsViewProps) {
                     fileName={fileName}
                     filePathDir={filePathDir}
                     rightElement={fileHeaderRightElement}
+                    contentActions={{
+                        onRaw: exportRawFile,
+                        onCopy: copyFileContent,
+                        rawDisabled: fileEntry?.kind === 'deleted',
+                        copyDisabled: !fileContent || isBinaryFile,
+                        rawBusy: rawTransfers.downloadState.status === 'downloading',
+                        copyBusy: copyContentBusy,
+                    }}
                     displayMode={displayMode}
                     onDisplayMode={onDisplayMode}
                     showDiffToggle={resolveShowDiffToggle({ diffContent, hasPendingDelta, hasIncludedDelta, fileIsBinary: isBinaryFile })}

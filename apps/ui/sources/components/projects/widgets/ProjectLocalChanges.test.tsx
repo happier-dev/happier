@@ -53,7 +53,6 @@ const { useRepositoryTreeBrowserState } = await import('@/hooks/workspaces/files
 const { tryBuildWorkspaceCacheKey } = await import('@/sync/domains/workspaces/workspaceScope');
 const { clearCachedWorkspaceRepositoryDirectoryEntries, getCachedWorkspaceRepositoryDirectoryEntries } = await import('@/sync/domains/workspaces/files/workspaceRepositoryDirectory');
 const { WorkspaceFileDetailsView } = await import('@/components/workspaces/files/details/WorkspaceFileDetailsView');
-const { WorkspaceWorktreeListSection } = await import('@/components/workspaces/scm/worktrees/WorkspaceWorktreeListSection');
 const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
 
 function snapshot(paths: readonly string[]) {
@@ -198,17 +197,17 @@ describe('Project Local Changes', () => {
             workspaceRefs: relation === 'same-project' ? [checkout] : [checkout, current],
             relationships: [], organizations: [], revisionsByPhysicalKey: {} });
         boundary.pathname = `/projects/${current.id}/overview`;
-        boundary.routeParams = { workspaceRefId: current.id, serverId: current.serverId, dashboardId: 'named-dashboard',
+        boundary.routeParams = { workspaceRefId: current.id, serverId: current.serverId, layoutId: 'named-dashboard',
             initialFile: 'src/current.ts', comparisonId: 'saved-comparison' };
         currentSnapshot = ScmWorkingSnapshotSchema.parse({ ...snapshot([]), repo: { ...snapshot([]).repo,
             worktrees: [{ id: 'feature-checkout', path: '/repo/feature', branch: 'feature', isCurrent: false }] } });
         const screen = await mount('/repo', 'project_checkouts');
-        await act(async () => screen.findByType(WorkspaceWorktreeListSection).props.onSelectRootPath('/repo/feature'));
+        await screen.pressByTestIdAsync('local-changes.worktree:feature-checkout');
         const url = new URL(boundary.navigate.mock.calls.at(-1)?.[0], 'https://app.test');
         expect(url.pathname).toBe('/projects/wr_1/overview');
         expect(url.searchParams.get('serverId')).toBe(runtime.serverId);
         expect(url.searchParams.get('worktreeId')).toBe('feature-checkout');
-        expect(url.searchParams.get('dashboardId')).toBe(relation === 'same-project' ? 'named-dashboard' : null);
+        expect(url.searchParams.get('layoutId')).toBe(relation === 'same-project' ? 'named-dashboard' : null);
         expect(url.searchParams.get('initialFile')).toBe(relation === 'same-project' ? 'src/current.ts' : null);
         expect(url.searchParams.get('comparisonId')).toBe(relation === 'same-project' ? 'saved-comparison' : null);
     });
@@ -453,7 +452,7 @@ describe('Project Local Changes', () => {
             workspaceRefs: [{ id: 'wr_1', serverId: runtime.serverId, machineId: 'm1', rootPath: '/repo', projectKey: 'project', createdAtMs: 1 }],
             relationships: [], organizations: [], revisionsByPhysicalKey: {} });
         boundary.pathname = '/projects/wr_1/overview';
-        boundary.routeParams = { workspaceRefId: 'wr_1', serverId: runtime.serverId, dashboardId: 'named-dashboard',
+        boundary.routeParams = { workspaceRefId: 'wr_1', serverId: runtime.serverId, layoutId: 'named-dashboard',
             initialFile: 'old.ts', initialCommit: 'old-commit', details: 'file', path: 'old.ts',
             comparison: 'branch', head: 'old-head', base: 'old-base', comparisonId: 'old-comparison', anchor: 'range', startLine: '7' };
         const screen = await mount();
@@ -470,7 +469,7 @@ describe('Project Local Changes', () => {
         expect(query).not.toHaveProperty('comparisonId');
         expect(query).not.toHaveProperty('anchor');
         expect(query).not.toHaveProperty('startLine');
-        expect(query).toMatchObject({ serverId: runtime.serverId, dashboardId: 'named-dashboard' });
+        expect(query).toMatchObject({ serverId: runtime.serverId, layoutId: 'named-dashboard' });
         expect(url.searchParams.getAll('details')).toEqual(['scmReview']);
         expect(readActiveReviewFile(activeReviewFileKeyForWorkspace({ serverId: runtime.serverId, machineId: 'm1', rootPath: '/repo' })).focusRequest)
             .toMatchObject({ path: 'src/b.ts', comparison: { kind: 'workingTree' } });

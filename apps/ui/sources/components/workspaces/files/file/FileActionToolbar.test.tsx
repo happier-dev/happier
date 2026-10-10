@@ -2,6 +2,7 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { renderScreen } from '@/dev/testkit';
+import { HappierMaterialRoleProvider } from '@happier-dev/plugin-ui/presentation';
 
 
 // Required for React 18+ act() semantics with react-test-renderer.
@@ -126,6 +127,18 @@ describe('FileActionToolbar', () => {
         }));
 
         expect(screen.findByTestId('file-details-view-actions')?.findAllByType('WrapLinesToggleButton' as never)).toHaveLength(1);
+    });
+
+    it('keeps its rich/raw editing trigger translucent inside a material plane', async () => {
+        const { FileActionToolbar } = await import('./FileActionToolbar');
+        const screen = await renderScreen(<HappierMaterialRoleProvider role="content" resolveMaterialColor={() => 'rgba(0, 0, 0, 0.1)'}>
+            <FileActionToolbar theme={theme} displayMode="file" onDisplayMode={() => {}} diffMode="pending" onDiffMode={() => {}}
+                hasPendingDelta={false} hasIncludedDelta={false} scmWriteEnabled={false} includeExcludeEnabled={false} virtualSelectionEnabled={false}
+                isSelectedForCommit={false} lineSelectionEnabled={false} selectedLineCount={0} isApplyingStage={false} inFlightScmOperation={null}
+                onStageFile={() => {}} onUnstageFile={() => {}} onApplySelectedLines={() => {}} onClearSelection={() => {}}
+                fileEditorEnabled isEditingFile showMarkdownEditToggle markdownEditMode="rich" markdownRichEligible onMarkdownEditMode={() => {}} />
+        </HappierMaterialRoleProvider>);
+        expect(flattenToolbarStyle(screen.findByTestId('markdown-edit-mode-menu')!.props.style).backgroundColor).toBe('rgba(0, 0, 0, 0.1)');
     });
 
     it('shows Stage file for untracked files even when hasPendingDelta is false', async () => {

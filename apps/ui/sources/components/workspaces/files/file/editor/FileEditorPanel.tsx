@@ -11,11 +11,10 @@ import { t } from '@/text';
 import type { FileFindSeed } from '@/components/appShell/panes/fileFindSeedHandoff';
 import type { CodeEditorFindHandle } from '@/components/ui/code/editor/codeEditorTypes';
 import { FindBar } from '@/components/ui/find/FindBar';
+import { FindBarPlacement } from '@/components/ui/find/FindBarPlacement';
+import { useFindSurfaceFocusReturn } from '@/components/ui/find/useFindSurfaceFocusReturn';
 import { usePluginSurfaceFocusEligibility } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useFindSurfaceRegistration } from '@/keyboard/KeyboardShortcutProvider';
-import { readDocumentFocusReturnTarget, restoreFocusToBestTarget, type FocusReturnTarget } from '@/keyboard/focusReturn';
-import { ComposerKeyboardFloatingInset } from '@/components/sessions/keyboardAvoidance';
-import { useDeviceType } from '@/utils/platform/responsive';
 
 function FileEditorPanelImpl(props: Readonly<{
     theme: any;
@@ -42,23 +41,21 @@ function FileEditorPanelImpl(props: Readonly<{
     const eligible = usePluginSurfaceFocusEligibility() && props.active !== false;
     const localRootRef = React.useRef<React.ElementRef<typeof View> | null>(null);
     const inputRef = React.useRef<TextInput | null>(null);
-    const returnFocusRef = React.useRef<FocusReturnTarget>(null);
+    const { capture, clear, restore } = useFindSurfaceFocusReturn();
     const [sharedOpen, setSharedOpen] = React.useState(false);
     const [inputFocused, setInputFocused] = React.useState(false);
     const close = React.useCallback(() => {
         find?.close();
         setSharedOpen(false);
         setInputFocused(false);
-        if (!restoreFocusToBestTarget(returnFocusRef)) props.editorRef.current?.focus?.();
-        returnFocusRef.current = null;
-    }, [find, props.editorRef]);
+        restore(() => props.editorRef.current?.focus?.());
+    }, [find, props.editorRef, restore]);
     const open = React.useCallback(() => {
         if (!find || !eligible) return;
-        if (!find.isOpen()) returnFocusRef.current = Platform.OS === 'web' && typeof document !== 'undefined'
-            ? readDocumentFocusReturnTarget(document) : TextInput.State.currentlyFocusedInput();
+        capture(find.isOpen());
         find.open();
         if (find.presentation === 'shared') { setSharedOpen(true); inputRef.current?.focus(); }
-    }, [eligible, find]);
+    }, [capture, eligible, find]);
     const controller = React.useMemo<FindController | null>(() => find ? {
         get query() { return find.getSnapshot().query; },
         get options() { return find.getSnapshot().options; },
@@ -88,10 +85,10 @@ function FileEditorPanelImpl(props: Readonly<{
             find?.close();
             setSharedOpen(false);
             setInputFocused(false);
-            returnFocusRef.current = null;
+            clear();
             previousResetKey.current = props.resetKey;
         }
-    }, [find, props.resetKey]);
+    }, [clear, find, props.resetKey]);
     React.useEffect(() => {
         const seed = props.findSeed;
         if (!eligible || !find || !seed || !props.filePath || seed.target.path !== props.filePath) return;
@@ -107,9 +104,9 @@ function FileEditorPanelImpl(props: Readonly<{
             find?.close();
             setSharedOpen(false);
             setInputFocused(false);
-            returnFocusRef.current = null;
+            clear();
         }
-    }, [eligible, find, sharedOpen]);
+    }, [clear, eligible, find, sharedOpen]);
     return (
         <View ref={localRootRef} style={{ flex: 1, paddingHorizontal: 16, paddingVertical: 12 }}>
             <CodeEditor
@@ -128,7 +125,7 @@ function FileEditorPanelImpl(props: Readonly<{
             {eligible && sharedOpen && find?.presentation === 'shared' && controller ?
                 <FileEditorFindBar find={find} controller={controller} inputRef={inputRef}
                     onInputFocus={() => setInputFocused(true)} onInputBlur={() => setInputFocused(false)} /> : null}
-            <Text style={{ marginTop: 8, color: props.theme.colors.text.secondary, fontSize: 12, ...Typography.default() }}>
+            <Text style={{ marginTop: 8, color: props.theme.colors.text.secondary, ...Typography.rowMeta() }}>
                 {t('files.fileEditor.experimentalHint')}
             </Text>
         </View>
@@ -146,17 +143,12 @@ function FileEditorFindBar(props: Readonly<{
     onInputBlur(): void;
 }>) {
     const snapshot = React.useSyncExternalStore(props.find.subscribe, props.find.getSnapshot, props.find.getSnapshot);
-    const deviceType = useDeviceType();
-    const phone = Platform.OS !== 'web' && deviceType === 'phone';
-    const bar = <FindBar query={snapshot.query} options={snapshot.options} status={snapshot.status}
+    return <FindBarPlacement>{(presentation) => <FindBar query={snapshot.query} options={snapshot.options} status={snapshot.status}
         capabilities={props.controller.capabilities} surfaceLabel={t('find.surface.file')}
-        presentation={phone ? 'keyboardSeated' : 'inline'} inputRef={props.inputRef} autoFocus
+        presentation={presentation} inputRef={props.inputRef} autoFocus
         onInputFocus={props.onInputFocus} onInputBlur={props.onInputBlur}
         onQueryChange={props.controller.setQuery} onOptionsChange={props.controller.setOptions}
+        note={snapshot.status.kind === 'searching' ? { icon: 'history', text: t('common.loading') } : undefined}
         onStep={props.controller.step} onStop={props.controller.stop} onClose={props.controller.close}
-        testID="file-editor-find" />;
-    return phone ? <ComposerKeyboardFloatingInset baseBottom={8} style={{ position: 'absolute', left: 8, right: 8 }}>
-        {bar}
-    </ComposerKeyboardFloatingInset> : <View pointerEvents="box-none"
-        style={{ position: 'absolute', top: 10, left: 14, right: 14, alignItems: 'flex-end' }}>{bar}</View>;
+        testID="file-editor-find" />}</FindBarPlacement>;
 }

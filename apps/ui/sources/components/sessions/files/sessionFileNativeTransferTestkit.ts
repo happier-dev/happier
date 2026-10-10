@@ -4,6 +4,8 @@ import {
     createDirectRouteGrantSigningInputV2,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { FilesystemDownloadInputSchema, FilesystemDownloadOutputSchema } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import nacl from 'tweetnacl';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import type { FileViewRpcRequest } from './views/sessionFilesViewTestkit';
@@ -33,7 +35,7 @@ export function createSessionFileNativeTransferBoundary(input: Readonly<{ bytes?
     let name = input.name ?? 'file.png';
     let nextGate: ReturnType<typeof createDeferred<void>> | null = null;
     let counter = 0;
-    const exports = new Map<string, { bytes: Uint8Array; name: string }>();
+    const exports = new Map<string, { bytes: Uint8Array; name: string; destinationId?: string; manifestHash?: string }>();
     const prepares: FileViewRpcRequest[] = [];
     const httpRequests: Array<{ url: string; signal: AbortSignal | null | undefined }> = [];
     const grantRequests: Array<ReturnType<typeof DirectRouteGrantRequestV2Schema.parse>> = [];
@@ -59,8 +61,28 @@ export function createSessionFileNativeTransferBoundary(input: Readonly<{ bytes?
         rpc(request: FileViewRpcRequest) {
             if (request.method === RPC_METHODS.STAT_FILE) return { success: true, exists: true, kind: 'file', sizeBytes: bytes.byteLength };
             if (request.method === RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_RELEASE) return { success: true };
-            if (request.method !== RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE) return undefined;
+            const isFilesystemDownload = request.method === getActionSpec('daemon.filesystem.download').bindings?.rpcMethod;
+            if (!isFilesystemDownload && request.method !== RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE) return undefined;
             prepares.push(request);
+            if (isFilesystemDownload) {
+                return (async () => {
+                    const envelope = request.payload as { input?: unknown };
+                    const download = FilesystemDownloadInputSchema.parse(envelope.input);
+                    const transferId = `preview-transfer-${++counter}`;
+                    const exportedBytes = new Uint8Array(bytes);
+                    const exportedName = name;
+                    const { createTransferManifestHasher } = await import('@/sync/domains/transfers/runtime/transferRuntime/plumbing/transferManifestHasher');
+                    const hasher = createTransferManifestHasher(); hasher.update(exportedBytes);
+                    const manifestHash = hasher.digestManifestHash();
+                    exports.set(transferId, { bytes: exportedBytes, name: exportedName, destinationId: download.destination.destinationId, manifestHash });
+                    return FilesystemDownloadOutputSchema.parse({ success: true, status: 'accepted', operationId: transferId,
+                        destinationId: download.destination.destinationId,
+                        prepared: { transferId, name: exportedName, sizeBytes: exportedBytes.byteLength, manifestHash, expiresAt: Date.now() + 60_000,
+                            endpointCandidates: [{ kind: 'http', url: `${SESSION_FILE_MACHINE_CARRIER_ORIGIN}/machine-transfers/direct/${transferId}`,
+                                authorizationToken: 'preview-export-token', expiresAt: Date.now() + 60_000 }] },
+                    });
+                })();
+            }
             // This is the external daemon wire bag, not an internal parser.
             const payload = request.payload as { t?: string; handle?: { name: string } };
             const transferId = `preview-transfer-${++counter}`;
@@ -89,6 +111,14 @@ export function createSessionFileNativeTransferBoundary(input: Readonly<{ bytes?
             const transferId = segments[3];
             const exported = exports.get(transferId);
             if (!exported) return new Response('{}', { status: 404 });
+            if (parsed.pathname.endsWith('/complete')) {
+                const outcome = JSON.parse(String(init?.body)) as { destinationId?: string; success?: boolean; manifestHash?: string; sizeBytes?: number };
+                if (outcome.destinationId !== exported.destinationId || (outcome.success === true
+                    && (outcome.manifestHash !== exported.manifestHash || outcome.sizeBytes !== exported.bytes.byteLength))) {
+                    return Response.json({ success: false }, { status: 400 });
+                }
+                return Response.json({ success: true });
+            }
             if (parsed.pathname.endsWith('/open')) {
                 const gate = nextGate; nextGate = null;
                 if (gate) await gate.promise;

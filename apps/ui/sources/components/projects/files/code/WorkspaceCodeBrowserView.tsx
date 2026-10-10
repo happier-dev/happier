@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierColumn, HappierColumns, HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 import { WorkspaceRepositoryTreeBrowserView } from '@/components/projects/files/WorkspaceRepositoryTreeBrowserView';
 import type { WorkspaceRepositoryDirectoryState } from '@/components/projects/files/WorkspaceRepositoryTreeList';
@@ -21,11 +21,11 @@ import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScop
 import { tryBuildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
 import { useWorkspaceEntryHistory } from '@/hooks/workspaces/files/useWorkspaceEntryHistory';
 import { useWorkspaceScmSnapshotController } from '@/hooks/workspaces/scm/useWorkspaceScmSnapshotController';
-import { useServerScopedMachine } from '@/sync/domains/state/storage';
-import { isMachineOnline } from '@/utils/sessions/machineUtils';
+import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 
 import { CodeBrowserBar } from './CodeBrowserBar';
 import { CodeCommitStrip } from './CodeCommitStrip';
@@ -72,8 +72,6 @@ export const WorkspaceCodeBrowserView = React.memo(function WorkspaceCodeBrowser
     onOpenFilePinned?: (path: string) => void;
     selectedPath?: string | null;
     revealRequest?: Readonly<{ path: string }>;
-    /** Code-page widgets, bound by the Project host to its accepted checkout and dashboard. */
-    aside?: React.ReactNode;
     /** The visible rows changed: what the history adapter should demand next. */
     onVisibleEntriesChange?: ((paths: readonly string[]) => void) | null;
     /** The machine isn't answering: last-known rows stay under one freshness line. */
@@ -101,8 +99,8 @@ export const WorkspaceCodeBrowserView = React.memo(function WorkspaceCodeBrowser
     const readmePath = entryData?.key === demandKey ? entryData.readmePath : null;
     const entryCount = entryData?.key === demandKey ? entryData.count : null;
     const [visibleDemand, setVisibleDemand] = React.useState<Readonly<{ key: string; paths: readonly string[] }> | null>(null);
-    const machine = useServerScopedMachine(props.scope.serverId, props.scope.machineId);
-    const available = Boolean(machine && isMachineOnline(machine));
+    const machine = useMachinePresenceSummary(props.scope.serverId, props.scope.machineId);
+    const available = machine.reachability === 'reachable';
     const scm = useWorkspaceScmSnapshotController(available && props.history === undefined ? props.scope : null);
     const folder = location.kind === 'folder' ? location.path : location.path.slice(0, Math.max(0, location.path.lastIndexOf('/')));
     const demandedPaths = React.useMemo(() => [location.path, ...(location.kind === 'folder' && visibleDemand?.key === demandKey ? visibleDemand.paths : [])],
@@ -122,9 +120,9 @@ export const WorkspaceCodeBrowserView = React.memo(function WorkspaceCodeBrowser
         revision: JSON.stringify([facts.status, facts.stale, facts.headOid, [...facts.entries]]),
         // Not a Git checkout says so with where it is (lab p-code STATES 2: "No Git history here · ~/scratch").
         unavailableLabel: scm.snapshot?.repo.isRepo === false
-            ? t('projects.code.noGitHistory', { path: formatPathRelativeToHome(props.scope.rootPath, machine?.metadata?.homeDir) })
+            ? t('projects.code.noGitHistory', { path: formatPathRelativeToHome(props.scope.rootPath, machine.homeDir) })
             : facts.reason === 'SCM_SOURCE_CHANGED' ? t('projects.code.historyChanged') : t('projects.code.historyUnavailable'),
-    }, [props.history, readEntry, location.path, facts, scm.snapshot?.repo.isRepo, props.scope.rootPath, machine?.metadata?.homeDir]);
+    }, [props.history, readEntry, location.path, facts, scm.snapshot?.repo.isRepo, props.scope.rootPath, machine.homeDir]);
     const refreshHistory = React.useCallback(() => { setHistoryReload(value => value + 1); if (available) void scm.refresh(); }, [available, scm.refresh]);
 
     const openFolder = React.useCallback((path: string) => onNavigate({ path, kind: 'folder' }), [onNavigate]);
@@ -135,6 +133,8 @@ export const WorkspaceCodeBrowserView = React.memo(function WorkspaceCodeBrowser
         const readmePath = findCodeReadmePath(entries);
         const loaded = directory.loaded && !directory.loading && !directory.error;
         setEntryData(previous => previous?.key === demandKey && previous.readmePath === readmePath && previous.count === entries.length && previous.loaded === loaded ? previous : { key: demandKey, readmePath, count: entries.length, loaded });
+    }, [demandKey]);
+    const onVisibleNodesChange = React.useCallback((nodes: readonly LazyDirectoryTreeNode[]) => {
         const paths = nodes.filter((node) => node.type === 'file' || node.type === 'directory').map((node) => node.path);
         setVisibleDemand(previous => previous?.key === demandKey && JSON.stringify(previous.paths) === JSON.stringify(paths) ? previous : { key: demandKey, paths });
         onVisibleEntriesChange?.(paths);
@@ -167,7 +167,8 @@ export const WorkspaceCodeBrowserView = React.memo(function WorkspaceCodeBrowser
         renderRowMetadata: historyColumns ? renderRowMetadata : null,
         renderRowSubtitle: historyColumns ? renderRowSubtitle : null,
         onNodesChange,
-    } : null), [historyColumns, location.kind, location.path, onNodesChange, openFolder, renderRowMetadata, renderRowSubtitle]);
+        onVisibleNodesChange,
+    } : null), [historyColumns, location.kind, location.path, onNodesChange, onVisibleNodesChange, openFolder, renderRowMetadata, renderRowSubtitle]);
 
     const strip = history ? (
         <CodeCommitStrip
@@ -179,60 +180,60 @@ export const WorkspaceCodeBrowserView = React.memo(function WorkspaceCodeBrowser
     ) : null;
 
     const sheetStyle = [styles.sheet, resolveThemeHairlineBorderStyle(theme.colors.border.surface), phone ? styles.sheetPhone : null];
-    // An unborn repository with nothing in it yet: the page invites the first commit instead of an empty table.
-    const emptyRepository = available && location.kind === 'folder' && location.path === '' && entryData?.key === demandKey && entryData.loaded && entryCount === 0 && history?.current.kind === 'none';
-    const body = emptyRepository ? (
-        <View testID={`${testID}-empty-repository`} style={sheetStyle}>
-            <SurfaceStateCard
-                kind="empty"
-                iconName="code"
-                title={t('projects.code.emptyRepositoryTitle', { name: props.rootLabel })}
-                reason={t('projects.code.emptyRepositoryBody')}
-                action={props.onStartSession ? { label: t('projects.code.startSession'), onPress: props.onStartSession } : undefined}
-            />
-        </View>
-    ) : location.kind === 'folder' ? (
-        <>
-            <View testID={`${testID}-table`} style={sheetStyle}>
-                {strip}
-                <WorkspaceRepositoryTreeBrowserView
-                    scope={props.scope}
-                    folderPage={folderPage}
-                    onOpenFile={openFile}
-                    onOpenFilePinned={props.onOpenFilePinned}
-                    selectedPath={props.selectedPath}
-                    revealRequest={props.revealRequest}
-                    fileHref={props.fileHref}
-                    showSearchBar={false}
-                    // Code is the repository as committed pages (lab p-code): change marks belong to Changes.
-                    scmSnapshot={null}
-                />
-            </View>
-            {widget ? (
-                <CodeWidgetFooter
-                    testID={`${testID}-footer`}
-                    entryCount={entryCount}
-                    current={history?.current ?? null}
-                    onOpenInCode={props.onOpenInCode ? () => props.onOpenInCode?.(location) : null}
-                />
-            ) : readmePath ? (
-                <CodeReadmeCard testID={`${testID}-readme`} scope={props.scope} path={readmePath} onEdit={props.onEditFile} />
-            ) : null}
-        </>
-    ) : (
-        <View testID={`${testID}-file`} style={[sheetStyle, styles.fileSheet]}>
-            {strip}
-            <WorkspaceFileDetailsView scopeId={props.paneScopeId} scope={props.scope} filePath={location.path} presentation="screen" />
-        </View>
-    );
-
     const historyFreshness = props.history === undefined && (facts.stale || !available) ? <SurfaceFreshnessLine
         testID={`${testID}-history-stale`} asOf={null}
         reason={!available ? t('projects.code.offline') : t('projects.code.historyChanged')}
         action={{ label: t('common.retry'), onPress: refreshHistory }} /> : null;
+    // An unborn repository with nothing in it yet: the page invites the first commit instead of an empty table.
+    const emptyRepository = available && location.kind === 'folder' && location.path === '' && entryData?.key === demandKey && entryData.loaded && entryCount === 0 && history?.current.kind === 'none';
+    const emptyRepositoryState = emptyRepository ? (
+        <SurfaceStateCard
+            testID={`${testID}-empty-repository`}
+            kind="empty"
+            iconName="code"
+            title={t('projects.code.emptyRepositoryTitle', { name: props.rootLabel })}
+            reason={t('projects.code.emptyRepositoryBody')}
+            action={props.onStartSession ? { label: t('projects.code.startSession'), onPress: props.onStartSession } : undefined}
+        />
+    ) : null;
+    const folderFooter = <>
+        {widget ? (
+            <CodeWidgetFooter
+                testID={`${testID}-footer`}
+                entryCount={entryCount}
+                current={history?.current ?? null}
+                onOpenInCode={props.onOpenInCode ? () => props.onOpenInCode?.(location) : null}
+            />
+        ) : readmePath ? (
+            <CodeReadmeCard testID={`${testID}-readme`} scope={props.scope} path={readmePath} onEdit={props.onEditFile} />
+        ) : null}
+        {historyFreshness}
+    </>;
+    const body = location.kind === 'folder' ? (
+        <GlassSurface surfaceGroup="content" nested finishRole="card" testID={`${testID}-table`} style={[sheetStyle, styles.fileSheet]}>
+            <WorkspaceRepositoryTreeBrowserView
+                scope={props.scope}
+                folderPage={folderPage ? { ...folderPage, listHeader: strip, listFooter: folderFooter, listEmpty: emptyRepositoryState } : null}
+                onOpenFile={openFile}
+                onOpenFilePinned={props.onOpenFilePinned}
+                selectedPath={props.selectedPath}
+                revealRequest={props.revealRequest}
+                fileHref={props.fileHref}
+                showSearchBar={false}
+                // Code is the repository as committed pages (lab p-code): change marks belong to Changes.
+                scmSnapshot={null}
+            />
+        </GlassSurface>
+    ) : (
+        <GlassSurface surfaceGroup="content" nested finishRole="card" testID={`${testID}-file`} style={[sheetStyle, styles.fileSheet]}>
+            {strip}
+            <WorkspaceFileDetailsView scopeId={props.paneScopeId} scope={props.scope} filePath={location.path} presentation="screen" />
+        </GlassSurface>
+    );
+
     if (widget) {
         return (
-            <View testID={testID}>
+            <View testID={testID} style={styles.fileColumn}>
                 {location.path ? (
                     <CodeBrowserBar
                         testID={`${testID}-bar`}
@@ -246,50 +247,45 @@ export const WorkspaceCodeBrowserView = React.memo(function WorkspaceCodeBrowser
                     />
                 ) : null}
                 {body}
-                {historyFreshness}
+                {location.kind === 'file' ? historyFreshness : null}
             </View>
         );
     }
 
-    // A folder page scrolls as one page (table, then README); a file page hands scrolling to the file
-    // reader, whose own list must have a bounded height, so it fills the page instead of a scroll view.
+    // Folder rows and README share the browser's recycler scroll. The location bar stays above
+    // its bounded viewport; a file continues to hand scrolling to the existing reader.
     const fileMode = location.kind === 'file';
-    return (
-        <ScrollView
-            testID={testID}
-            style={styles.scroll}
-            scrollEnabled={!fileMode}
-            contentContainerStyle={[phone ? styles.contentPhone : styles.content, fileMode ? styles.fileContent : null]}
-        >
-            <ConstrainedScreenContent style={fileMode ? [styles.column, styles.fileColumn] : styles.column}>
-                {phone ? null : (
-                    <CodeBrowserBar
-                        testID={`${testID}-bar`}
-                        scope={props.scope}
-                        rootLabel={props.rootLabel}
-                        path={location.path}
-                        onNavigateFolder={openFolder}
-                        onOpenFile={openFile}
-                        fileHref={props.fileHref}
-                    />
-                )}
-                {props.offline ? (
-                    <SurfaceFreshnessLine
-                        testID={`${testID}-offline`}
-                        asOf={props.offline.asOf}
-                        reason={props.offline.reason}
-                        action={props.offline.onRetry ? { label: t('common.retry'), onPress: props.offline.onRetry } : undefined}
-                    />
-                ) : null}
-                {!fileMode && props.aside ? <HappierColumns columns={phone ? 1 : 2} paddingHorizontal={0} paddingVertical={0}
-                    testID={`${testID}-columns`}>
-                    {phone ? <HappierColumn>{props.aside}</HappierColumn> : null}
-                    <HappierColumn>{body}</HappierColumn>
-                    {!phone ? <HappierColumn>{props.aside}</HappierColumn> : null}
-                </HappierColumns> : body}
-                {historyFreshness}
-            </ConstrainedScreenContent>
+    const page = (
+        <ConstrainedScreenContent style={[styles.column, styles.fileColumn]}>
+            <CodeBrowserBar
+                testID={`${testID}-bar`}
+                scope={props.scope}
+                rootLabel={props.rootLabel}
+                path={location.path}
+                onNavigateFolder={openFolder}
+                onOpenFile={openFile}
+                fileHref={props.fileHref}
+                compact={phone}
+            />
+            {props.offline ? (
+                <SurfaceFreshnessLine
+                    testID={`${testID}-offline`}
+                    asOf={props.offline.asOf}
+                    reason={props.offline.reason}
+                    action={props.offline.onRetry ? { label: t('common.retry'), onPress: props.offline.onRetry } : undefined}
+                />
+            ) : null}
+            {body}
+            {fileMode ? historyFreshness : null}
+        </ConstrainedScreenContent>
+    );
+    return fileMode ? (
+        <ScrollView testID={testID} style={styles.scroll} scrollEnabled={false}
+            contentContainerStyle={[phone ? styles.contentPhone : styles.content, styles.fileContent]}>
+            {page}
         </ScrollView>
+    ) : (
+        <View testID={testID} style={[styles.scroll, phone ? styles.contentPhone : styles.content]}>{page}</View>
     );
 });
 

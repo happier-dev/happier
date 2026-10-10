@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
+import { computeWorkspaceSyncPolicyDigest, type HandoffWorkspaceActionV1, type WorkspaceContentPolicyV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 
 import { MachineSelector, type MachineSelectorProps } from '@/components/sessions/new/components/MachineSelector';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -13,6 +14,9 @@ import { WorkspaceSyncIgnoredIncludePatternsField } from '@/components/workspace
 import {
     SESSION_HANDOFF_CONTENT_SELECTION_OPTIONS,
     SESSION_HANDOFF_INCLUDE_IGNORED_MODE_OPTIONS,
+    SESSION_HANDOFF_WORKSPACE_SYNC_MODE_OPTIONS,
+    buildSessionHandoffWorkspaceAction,
+    parseSessionHandoffIgnoredIncludeGlobs,
 } from '@/sync/domains/sessionHandoff/sessionHandoffDefaults';
 import { t } from '@/text';
 
@@ -118,4 +122,81 @@ export function WorkspaceActivationContentPolicyFields(props: Readonly<{
             editable={!props.disabled}
         /> : null}
     </ItemGroup>;
+}
+
+/** Copy and relationship editing share the incumbent Sync action and content-policy fields. */
+export function WorkspaceActivationSyncFields(props: Readonly<{
+    action: HandoffWorkspaceActionV1;
+    onChange: (action: HandoffWorkspaceActionV1) => void;
+    disabled?: boolean;
+    testIdPrefix?: string;
+}>) {
+    const action = props.action;
+    const policy = action.kind === 'copy_once' || action.kind === 'create_relationship' ? action.contentPolicy : null;
+    const hasIncludes = Boolean(policy?.extraIncludePatterns.length);
+    const [open, setOpen] = React.useState(false);
+    const [includeIgnoredMode, setIncludeIgnoredMode] = React.useState<'exclude' | 'include_selected'>(hasIncludes ? 'include_selected' : 'exclude');
+    const [patternsDraft, setPatternsDraft] = React.useState(() => policy?.extraIncludePatterns.join(', ') ?? '');
+    const patterns = policy?.extraIncludePatterns;
+    React.useEffect(() => { setIncludeIgnoredMode(hasIncludes ? 'include_selected' : 'exclude'); }, [hasIncludes]);
+    React.useEffect(() => {
+        setPatternsDraft(current => {
+            const parsed = parseSessionHandoffIgnoredIncludeGlobs(current);
+            return parsed.length === (patterns?.length ?? 0) && parsed.every((value, index) => value === patterns?.[index])
+                ? current : patterns?.join(', ') ?? '';
+        });
+    }, [patterns]);
+    const selectedId = action.kind === 'create_relationship' ? action.mode : action.kind;
+    const options = SESSION_HANDOFF_WORKSPACE_SYNC_MODE_OPTIONS.filter(option => option.id !== 'none');
+    const selected = options.find(option => option.id === selectedId);
+    const updatePolicy = (patch: Partial<Omit<WorkspaceContentPolicyV1, 'policyDigest'>>) => {
+        if (action.kind !== 'copy_once' && action.kind !== 'create_relationship') return;
+        const { policyDigest: _digest, ...current } = action.contentPolicy;
+        const next = { ...current, ...patch };
+        props.onChange({ ...action, contentPolicy: { ...next, policyDigest: computeWorkspaceSyncPolicyDigest(next) } });
+    };
+    return <>
+        <ItemGroup>
+            <WorkspaceActivationModeField
+                open={open} onOpenChange={setOpen}
+                selectedId={selectedId}
+                title={t('settingsSession.handoff.workspaceMode.title')}
+                subtitle={selected ? t(selected.subtitleKey) : t('settingsSession.handoff.workspaceMode.relationshipSelected')}
+                testID={props.testIdPrefix ? `${props.testIdPrefix}.sync-mode` : undefined}
+                disabled={props.disabled}
+                items={[
+                    ...(!selected ? [{ id: selectedId, title: t('settingsSession.handoff.workspaceMode.relationshipTitle'),
+                        subtitle: action.kind === 'relationship' ? action.relationshipId : t('settingsSession.handoff.workspaceMode.relationshipSelected') }] : []),
+                    ...options.map(option => ({ id: option.id, title: t(option.titleKey), subtitle: t(option.subtitleKey) })),
+                ]}
+                onSelect={id => {
+                    const option = options.find(candidate => candidate.id === id);
+                    if (!option) return;
+                    const next = buildSessionHandoffWorkspaceAction({ workspaceSyncMode: option.id,
+                        contentSelection: policy?.selection ?? 'git_worktree', includeIgnoredMode,
+                        ignoredIncludeGlobs: policy?.extraIncludePatterns ?? [] });
+                    if (next?.kind === 'copy_once' || next?.kind === 'create_relationship') {
+                        props.onChange(policy ? { ...next, contentPolicy: policy } : next);
+                    }
+                    setOpen(false);
+                }}
+            />
+        </ItemGroup>
+        {policy ? <WorkspaceActivationContentPolicyFields
+            contentSelection={policy.selection}
+            onContentSelectionChange={selection => updatePolicy({ selection })}
+            includeIgnoredMode={includeIgnoredMode}
+            onIncludeIgnoredModeChange={mode => {
+                setIncludeIgnoredMode(mode);
+                updatePolicy({ extraIncludePatterns: mode === 'include_selected' ? parseSessionHandoffIgnoredIncludeGlobs(patternsDraft) : [] });
+            }}
+            patternsDraft={patternsDraft}
+            onPatternsDraftChange={value => {
+                setPatternsDraft(value);
+                updatePolicy({ extraIncludePatterns: parseSessionHandoffIgnoredIncludeGlobs(value) });
+            }}
+            disabled={props.disabled}
+            testIdPrefix={props.testIdPrefix}
+        /> : null}
+    </>;
 }

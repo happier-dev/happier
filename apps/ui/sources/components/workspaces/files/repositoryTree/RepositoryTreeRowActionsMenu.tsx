@@ -13,7 +13,9 @@ export type RepositoryTreeRowActionMenuItemId =
     | 'repository-tree-menuitem-delete'
     | 'repository-tree-menuitem-download'
     | 'repository-tree-menuitem-zip'
-    | 'repository-tree-menuitem-copy-path';
+    | 'repository-tree-menuitem-copy-path'
+    | 'repository-tree-menuitem-new-folder'
+    | 'repository-tree-menuitem-upload';
 
 type RepositoryTreeRowActionItem = Omit<ItemAction, 'onPress'>;
 
@@ -27,6 +29,11 @@ export function RepositoryTreeRowActionsMenu(props: Readonly<{
     disableWriteActions: boolean;
     downloadActionsEnabled: boolean;
     onSelect: (itemId: RepositoryTreeRowActionMenuItemId) => void;
+    /**
+     * A folder's own creation actions (lab p-code ACTIONS): a new folder or uploaded files land inside it.
+     * Offered only by hosts that own those effects.
+     */
+    folderCreation?: Readonly<{ newFolder: boolean; upload: boolean }> | null;
     /** The tree row's reveal: open from a long press, and no … drawn under a finger. */
     control?: FilesystemBrowserRowActionsControl;
 }>) {
@@ -41,11 +48,12 @@ export function RepositoryTreeRowActionsMenu(props: Readonly<{
             color: theme.colors.text.secondary,
             disabled: props.disableWriteActions,
         };
+        // Delete is last and reads as destructive (lab p-code ACTIONS); it still asks first.
         const deleteItem: RepositoryTreeRowActionItem = {
             id: 'repository-tree-menuitem-delete',
             title: t('common.delete'),
             icon: 'trash',
-            color: theme.colors.text.secondary,
+            destructive: true,
             disabled: props.disableWriteActions,
         };
 
@@ -58,8 +66,7 @@ export function RepositoryTreeRowActionsMenu(props: Readonly<{
 
         if (props.kind === 'file') {
             return [
-                renameItem,
-                deleteItem,
+                copyPathItem,
                 ...(props.downloadActionsEnabled
                     ? ([
                         {
@@ -76,13 +83,13 @@ export function RepositoryTreeRowActionsMenu(props: Readonly<{
                         },
                     ] satisfies RepositoryTreeRowActionItem[])
                     : []),
-                copyPathItem,
+                renameItem,
+                deleteItem,
             ];
         }
 
         return [
-            renameItem,
-            deleteItem,
+            copyPathItem,
             ...(props.downloadActionsEnabled
                 ? ([
                     {
@@ -93,9 +100,23 @@ export function RepositoryTreeRowActionsMenu(props: Readonly<{
                     },
                 ] satisfies RepositoryTreeRowActionItem[])
                 : []),
-            copyPathItem,
+            renameItem,
+            ...(props.folderCreation?.newFolder ? [{
+                id: 'repository-tree-menuitem-new-folder',
+                title: t('files.pane.newFolder'),
+                icon: 'folder-plus',
+                color: theme.colors.text.secondary,
+                disabled: props.disableWriteActions,
+            } satisfies RepositoryTreeRowActionItem] : []),
+            ...(props.folderCreation?.upload ? [{
+                id: 'repository-tree-menuitem-upload',
+                title: t('files.toolbar.uploadFiles'),
+                icon: 'upload',
+                color: theme.colors.text.secondary,
+            } satisfies RepositoryTreeRowActionItem] : []),
+            deleteItem,
         ];
-    }, [props.disableWriteActions, props.downloadActionsEnabled, props.kind, theme.colors.text.secondary]);
+    }, [props.disableWriteActions, props.downloadActionsEnabled, props.folderCreation?.newFolder, props.folderCreation?.upload, props.kind, theme.colors.text.secondary]);
 
     const safePath = React.useMemo(() => toTestIdSafeValue(props.path), [props.path]);
     const triggerId = `repository-tree-row-menu-${safePath}`;

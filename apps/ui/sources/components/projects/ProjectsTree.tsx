@@ -13,13 +13,14 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon } from '@/components/ui/icons/Icon';
+import { StatusDot } from '@/components/ui/status/StatusDot';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { CollectionListGroupLabel, CollectionNavigationRow } from '@/components/ui/lists/collection/CollectionList';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
-import type { ProjectsTreeRow } from './projectsTreeRows';
+import { projectsTreeRowSubtitle, type ProjectsTreeRow } from './projectsTreeRows';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 /**
@@ -146,7 +147,8 @@ export const ProjectsTree = React.memo(function ProjectsTree(props: Readonly<{
                     <View style={styles.trailing}>
                         {row.count != null ? <Text style={styles.count}>{String(row.count)}</Text> : null}
                         {row.attention === 'needs-you' ? (
-                            <View testID={`${testID}-${row.key}-needs-you`} style={[styles.dot, { backgroundColor: theme.colors.state.warning.foreground }]} />
+                            <StatusDot testID={`${testID}-${row.key}-needs-you`} color={theme.colors.state.warning.foreground} size={6}
+                                accessibilityLabel={t('projects.checkouts.needsYou')} />
                         ) : row.attention === 'working' ? (
                             <ActivitySpinner size="small" color={theme.colors.text.tertiary} />
                         ) : null}
@@ -160,7 +162,7 @@ export const ProjectsTree = React.memo(function ProjectsTree(props: Readonly<{
                         href={row.refId ? props.hrefForRef?.(row.refId, row.workspaceAddress) ?? null : null}
                         title={row.title}
                         titleAccessory={row.titleQualifier ? <Text numberOfLines={1} style={styles.qualifier}>{row.titleQualifier}</Text> : undefined}
-                        subtitle={row.subtitle ?? undefined}
+                        subtitle={projectsTreeRowSubtitle(row, t('projects.identity.newFromSession')) ?? undefined}
                         subtitleMono={row.kind === 'checkout' && row.subtitle != null}
                         leftElement={leading}
                         selected={row.selected}
@@ -252,11 +254,6 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.rowMeta(),
         ...Typography.tabular(),
         color: theme.colors.text.tertiary,
-    },
-    dot: {
-        width: 6,
-        height: 6,
-        borderRadius: 3,
     },
     hidden: {
         marginTop: 12,

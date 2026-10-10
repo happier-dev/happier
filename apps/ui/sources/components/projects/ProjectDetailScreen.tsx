@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, View } from 'react-native';
+import { View } from 'react-native';
 
 import { t } from '@/text';
 import { useLocalSetting, useLocalSettingMutable, useWorkspaceRefs } from '@/sync/domains/state/storage';
@@ -12,16 +12,17 @@ import { useScopedPluginUiProjection } from '@/components/plugins/projection/use
 import { useResolvedRepoWorktreeSelection } from '@/components/workspaces/scm/worktrees/useResolvedRepoWorktreeSelection';
 import { findVisibleRepoWorktreeByPath } from '@/components/workspaces/scm/worktrees/repoWorktreeIdentity';
 import { buildProjectPaneScopeId } from './detail/projectPaneScope';
+import { resolveProjectRightTabId } from './detail/resolveProjectRightTabId';
 import { useDestinationPaneScopeId } from '@/components/appShell/workspace/DestinationInstanceHost';
-import { PROJECT_ROUTE_ROOT_SENTINEL, type ProjectPageV1, type ProjectMobileSurface } from './detail/projectRouteState';
+import { PROJECT_ROUTE_ROOT_SENTINEL, type ProjectPageV1, type ProjectMobileSurface, type ProjectAttachedDashboardSelection } from './detail/projectRouteState';
 import { ProjectCockpitShell } from '@/components/workspaceCockpit/project/ProjectCockpitShell';
 import { WorkspaceDetailsPanel } from '@/components/projects/panes/WorkspaceDetailsPanel';
-import { resolveProjectRightTabId } from './detail/resolveProjectRightTabId';
 import { useWorkspaceRefById } from './detail/useWorkspaceRefById';
 import { ProjectRightPanel, ProjectRightSidebarProvider, ProjectRightSidebarRail } from './detail/ProjectRightPanel';
 import { ProjectWorktreeRecoveryToast } from './detail/ProjectWorktreeRecoveryToast';
 import { ProjectOpenResolutionPage } from './ProjectOpenResolution';
 import { ProjectPhoneCheckoutRow, ProjectShellHeaderHost } from './shell/ProjectShellHeaderHost';
+import { ListPresentationProvider, PageColumnProvider } from '@/components/ui/lists/listPresentation';
 import { useProjectRouteActions } from './detail/useProjectRouteActions';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { resolveProjectRightSidebarTabs } from '@/components/appShell/rightSidebar/rightSidebarTabRegistry';
@@ -34,7 +35,8 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
     serverId?: string | null;
     /** Qualified candidate/recovery state from the route owner; U2 owns its presentation. */
     workspaceResolution?: WorkspaceRefResolutionV1;
-    dashboardId?: string;
+    layoutId?: string;
+    attachedDashboard?: ProjectAttachedDashboardSelection;
     recoveryToastKey?: string | null;
     page?: ProjectPageV1;
     surface?: ProjectMobileSurface;
@@ -89,25 +91,6 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
             return currentSelection;
         });
     }, [controlledActiveRootPath, persistedActiveRootPath, preferenceKeys, workspaceRef]);
-
-    React.useEffect(() => {
-        if (!workspaceRef) return;
-        if (!multiPaneEnabled) return;
-        if (!(Platform.OS === 'web' || deviceType === 'tablet')) return;
-        const right = pane.scopeState?.right ?? null;
-        if (!right) return;
-        if (right.isOpen === true) return;
-        if (right.selectedDestination != null) {
-            // Reopening is a layout action, not a destination choice. Passing
-            // the retained built-in tab here would replace a restored plugin
-            // selection before its current projection can resolve.
-            pane.openRight();
-            return;
-        }
-        const preferredTab = resolveProjectRightTabId(right.activeTabId);
-        pane.openRight({ tabId: preferredTab });
-        pane.setRightTab(preferredTab);
-    }, [deviceType, multiPaneEnabled, pane, workspaceRef]);
 
     const requestedActiveRootPath = controlledActiveRootPath ?? localActiveRootPath ?? persistedActiveRootPath ?? workspaceRootPath;
     const {
@@ -286,10 +269,16 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
         return <ProjectOpenResolutionPage resolution={props.workspaceResolution} />;
     }
 
+    const mainSurface = deviceType === 'phone' ? props.surface ?? props.page ?? 'overview' : props.page ?? 'overview';
+    const widePage = mainSurface === 'overview' || mainSurface === 'code';
+
     return (
         <View style={{ flex: 1 }} {...pane.overlayFocusReturnCaptureProps}>
             <AppPaneScopeHost
                 scopeId={scopeId}
+                initialRight={multiPaneEnabled && deviceType === 'tablet'
+                    ? { isOpen: true, activeTabId: resolveProjectRightTabId(null) }
+                    : undefined}
                 onPluginSurfaceOpenChange={props.onPluginSurfaceOpenChange}
                 detailsPaneEnabled
                 detailsPaneBuiltinAdapter={projectDetailsPaneAdapter}
@@ -299,42 +288,47 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
                 rightSidebarAdapter={projectRightSidebarAdapter}
                 wrapScopeContent={wrapProjectScopeContent}
                 main={(
-                    <View style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
-                        {/* The six-page header (12s1); phones keep the navigation bar and the page cockpit. */}
-                        {deviceType !== 'phone' ? (
-                            <ProjectShellHeaderHost
-                                workspaceRef={workspaceRef}
-                                page={props.page ?? 'overview'}
-                                activeRootPath={resolvedActiveRootPath}
-                                activeWorktreeId={resolvedActiveWorktreeId}
-                                onSelectRootPath={handleSelectRootPath}
-                                onSelectPage={handleSelectPage}
-                                onSelectWorkspace={handleSelectWorkspace}
-                                menuActions={[{ id: 'terminal', title: t('settings.terminal'),
-                                    onSelect: () => pane.openBottom({ tabId: 'terminal' }) }]}
-                            />
-                        ) : props.surface === undefined || props.surface === props.page ? (
-                            <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 }}>
-                                <ProjectPhoneCheckoutRow
+                    <ListPresentationProvider value="page">
+                        <PageColumnProvider value={widePage ? 'wide' : 'reading'} preferencePolicy={widePage ? 'ignore' : 'respect'}>
+                            <View style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
+                                {/* The six-page header (12s1); phones keep the navigation bar and the page cockpit. */}
+                                {deviceType !== 'phone' ? (
+                                    <ProjectShellHeaderHost
+                                        workspaceRef={workspaceRef}
+                                        page={props.page ?? 'overview'}
+                                        activeRootPath={resolvedActiveRootPath}
+                                        activeWorktreeId={resolvedActiveWorktreeId}
+                                        onSelectRootPath={handleSelectRootPath}
+                                        onSelectPage={handleSelectPage}
+                                        onSelectWorkspace={handleSelectWorkspace}
+                                        menuActions={[{ id: 'terminal', title: t('settings.terminal'),
+                                            onSelect: () => pane.openBottom({ tabId: 'terminal' }) }]}
+                                    />
+                                ) : props.surface === undefined || props.surface === props.page ? (
+                                    <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4 }}>
+                                        <ProjectPhoneCheckoutRow
+                                            workspaceRef={workspaceRef}
+                                            activeRootPath={resolvedActiveRootPath}
+                                            activeWorktreeId={resolvedActiveWorktreeId}
+                                            onSelectRootPath={handleSelectRootPath}
+                                            onSelectWorkspace={handleSelectWorkspace}
+                                        />
+                                    </View>
+                                ) : null}
+                                <ProjectCockpitShell
+                                    scopeId={scopeId}
                                     workspaceRef={workspaceRef}
                                     activeRootPath={resolvedActiveRootPath}
                                     activeWorktreeId={resolvedActiveWorktreeId}
+                                    surface={mainSurface}
+                                    layoutId={props.layoutId}
+                                    attachedDashboard={props.attachedDashboard}
+                                    isFocused={props.isFocused !== false}
                                     onSelectRootPath={handleSelectRootPath}
-                                    onSelectWorkspace={handleSelectWorkspace}
                                 />
                             </View>
-                        ) : null}
-                        <ProjectCockpitShell
-                            scopeId={scopeId}
-                            workspaceRef={workspaceRef}
-                            activeRootPath={resolvedActiveRootPath}
-                            activeWorktreeId={resolvedActiveWorktreeId}
-                            surface={deviceType === 'phone' ? props.surface ?? props.page ?? 'overview' : props.page ?? 'overview'}
-                            dashboardId={props.dashboardId}
-                            isFocused={props.isFocused !== false}
-                            onSelectRootPath={handleSelectRootPath}
-                        />
-                    </View>
+                        </PageColumnProvider>
+                    </ListPresentationProvider>
                 )}
             />
             <ProjectWorktreeRecoveryToast recoveryToastKey={recoveryToastKey} />

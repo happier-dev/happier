@@ -29,6 +29,15 @@ describe('resolveMachineAbsolutePath', () => {
             .toBe(String.raw`\\server\share\repo\a\b`);
     });
 
+    it('keeps a selected workspace entry named tilde literal beneath its root', () => {
+        expect(resolveMachineAbsolutePath({ rootPath: '/repo', requestPath: '~/line\nbreak ', pathKind: 'workspace_entry' }))
+            .toBe('/repo/~/line\nbreak ');
+        expect(resolveMachineAbsolutePath({ rootPath: String.raw`D:\Repo`, requestPath: '~/file ', pathKind: 'workspace_entry' }))
+            .toBe(String.raw`D:\Repo\~/file `);
+        expect(resolveMachineAbsolutePath({ rootPath: '/repo', agentRootPath: '/agent', requestPath: '/agent/~/file', pathKind: 'workspace_entry' }))
+            .toBe('/repo/~/file');
+    });
+
     it('rebases absolute agent workspace paths without touching sibling paths', () => {
         expect(resolveMachineAbsolutePath({
             rootPath: '/Users/alice/project',

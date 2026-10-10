@@ -13,6 +13,7 @@ import { Typography } from '@/constants/Typography';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { t } from '@/text';
+import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 
 import { useCodeTextFile } from './useCodeTextFile';
 
@@ -39,7 +40,7 @@ export const CodeReadmeCard = React.memo(function CodeReadmeCard(props: Readonly
     const file = useCodeTextFile(props.scope, props.path, props.reloadToken);
     const name = props.path.split('/').pop() ?? props.path;
     return (
-        <View testID={testID} style={[styles.card, resolveThemeHairlineBorderStyle(theme.colors.border.surface)]}>
+        <GlassSurface surfaceGroup="content" nested finishRole="card" testID={testID} style={[styles.card, resolveThemeHairlineBorderStyle(theme.colors.border.surface)]}>
             <View style={styles.header}>
                 <Icon name="book-open" size={16} color={theme.colors.text.secondary} />
                 <Text numberOfLines={1} style={styles.name}>{name}</Text>
@@ -69,7 +70,7 @@ export const CodeReadmeCard = React.memo(function CodeReadmeCard(props: Readonly
                     </View>
                 )}
             </View>
-        </View>
+        </GlassSurface>
     );
 });
 

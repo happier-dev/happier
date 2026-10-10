@@ -63,6 +63,7 @@ function resolveExactHomeRepoScmSessionRequest(
         activeServerId: getActiveServerSnapshot().serverId,
         activeMachines: Object.values(state.machines ?? {}),
         machineListByServerId: state.machineListByServerId ?? {},
+        machineListStatusByServerId: state.machineListStatusByServerId,
     }) ?? [];
     const homeDir = normalizeNonEmptyString(exactMetadata?.homeDir)
         ?? normalizeNonEmptyString(

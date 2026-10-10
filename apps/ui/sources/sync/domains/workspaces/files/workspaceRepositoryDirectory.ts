@@ -9,8 +9,8 @@ import { tryBuildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domai
 import { markWorkspaceRepositoryDirectoryChanged } from './workspaceRepositoryDirectoryRevision';
 
 function joinPathAbsolute(rootPath: string, directoryPath: string): string {
-    const root = rootPath.trim().replace(/\/+$/g, '');
-    const rel = directoryPath.trim().replace(/^\/+/g, '');
+    const root = rootPath.replace(/\/+$/g, '');
+    const rel = directoryPath.replace(/^\/+/g, '');
     if (!root) return rel;
     if (!rel) return root;
     return `${root}/${rel}`;
@@ -131,7 +131,7 @@ export async function listWorkspaceRepositoryDirectoryEntries(input: Readonly<{
     const entries: RepositoryDirectoryEntry[] = [];
     for (const entry of response.entries) {
         if (!entry || typeof entry.name !== 'string') continue;
-        const name = entry.name.trim();
+        const name = entry.name;
         if (!name) continue;
         if (entry.type !== 'file' && entry.type !== 'directory') continue;
         const sizeBytes = typeof entry.size === 'number' && Number.isFinite(entry.size) && entry.size >= 0

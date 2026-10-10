@@ -32,6 +32,21 @@ const answer = (body: unknown, status = 200) => new Response(JSON.stringify(
 ), { status });
 
 describe('Project Sources controller through Source Actions', () => {
+    it('updates a captured attachment target independently of the selected Source', async () => {
+        const changed: string[] = [];
+        const controller = harness(async (path, init) => {
+            const id = path.includes('source-b') ? 'source-b' : 'source-a';
+            if (init?.method === 'PATCH') changed.push(id);
+            return answer({ ok: true, source: { ...source(init?.method === 'PATCH' ? 2 : 1), id } });
+        });
+        await controller.select('source-b');
+        await controller.updateSource({ attachment: { kind: 'detach',
+            purpose: 'dashboard', ref: { kind: 'doc', artifactId: 'dashboard-a' },
+        } }, { id: 'source-a', revision: 1 });
+        expect(changed).toEqual(['source-a']);
+        expect(controller.getSnapshot().current?.id).toBe('source-b');
+        controller.dispose();
+    });
     it('retires unused searches from wake demand while retaining the default catalog across navigation', async () => {
         const requested: string[] = [];
         const executor = createActionExecutor(createActionExecutorBoundaryFixture({

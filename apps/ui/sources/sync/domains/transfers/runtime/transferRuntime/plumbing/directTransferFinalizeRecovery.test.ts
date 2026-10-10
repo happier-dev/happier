@@ -43,6 +43,24 @@ describe('createDirectTransferFinalizeRecovery', () => {
         vi.restoreAllMocks();
     });
 
+    it('retains the captured Account until settlement and refuses a retired Account before any retry or discard effect', async () => {
+        let current = true;
+        let custodyReleased = false;
+        const recovery = createDirectTransferFinalizeRecovery({ machineId: 'machine-1', serverId: 'server-1', accountId: 'account-original',
+            accountLifetime: { scope: { serverId: 'server-1', accountId: 'account-original' }, isCurrent: () => current,
+                onRetire: () => ({ dispose: () => {} }) }, onSettled: () => { custodyReleased = true; },
+            uploadId: 'upload-1', baseUrl: 'https://machine.example.test/imports/upload-1', expiresAt: 70_000,
+            parseFinalizeResponse: response => response.finalized.path });
+        expect(recovery.isActionable()).toBe(true); expect(custodyReleased).toBe(false);
+        current = false;
+        await expect(recovery.invoke('retry_finalize')).resolves.toMatchObject({ status: 'unavailable', reason: 'session_unavailable' });
+        expect(custodyReleased).toBe(true);
+        expect(recovery.isActionable()).toBe(false);
+        await recovery.invoke('discard_staged');
+        expect(finalizeDirectImportSessionMock).not.toHaveBeenCalled();
+        expect(abortPreparedDirectImportSessionViaMachineRpcMock).not.toHaveBeenCalled();
+    });
+
     it('rebases the prepared endpoint onto a carrier reacquired for each retry', async () => {
         // The upload hands carrier custody back before this continuation exists,
         // so the origin captured with the prepared endpoint is already dead.

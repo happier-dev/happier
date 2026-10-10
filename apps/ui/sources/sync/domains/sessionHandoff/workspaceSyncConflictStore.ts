@@ -13,6 +13,7 @@ export type WorkspaceSyncConflictSnapshot = Readonly<{
 }>;
 
 type Entry = {
+    scope: WorkspaceSyncStatusScope;
     snapshot: WorkspaceSyncConflictSnapshot;
     listeners: Set<() => void>;
     inFlight: Promise<WorkspaceSyncConflictListV1> | null;
@@ -32,7 +33,7 @@ function entryFor(scope: WorkspaceSyncStatusScope): Entry {
     const key = keyFor(scope);
     const current = entries.get(key);
     if (current) return current;
-    const created: Entry = { snapshot: IDLE_SNAPSHOT, listeners: new Set(), inFlight: null, admissionGeneration: 0 };
+    const created: Entry = { scope, snapshot: IDLE_SNAPSHOT, listeners: new Set(), inFlight: null, admissionGeneration: 0 };
     entries.set(key, created);
     return created;
 }
@@ -66,6 +67,17 @@ export function invalidateWorkspaceSyncConflicts(scope: WorkspaceSyncStatusScope
         return;
     }
     publish(entry, { ...entry.snapshot, phase: 'idle', error: null });
+}
+
+export function invalidateWorkspaceSyncControllerConflicts(controller: Readonly<{
+    serverId: string | null;
+    controllerMachineId: string;
+}>): void {
+    for (const entry of entries.values()) {
+        if ((entry.scope.serverId ?? null) !== controller.serverId
+            || entry.scope.controllerMachineId !== controller.controllerMachineId) continue;
+        invalidateWorkspaceSyncConflicts(entry.scope);
+    }
 }
 
 function aggregatePage(

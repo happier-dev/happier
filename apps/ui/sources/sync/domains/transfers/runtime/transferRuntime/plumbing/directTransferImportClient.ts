@@ -1,4 +1,7 @@
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { FilesystemUploadOutputSchema, FilesystemTransferCancelOutputSchema, type FilesystemPreparedCopyInput, type FilesystemUploadOutput } from '@happier-dev/protocol/actions/filesystemActionFamily';
+import { randomUUID } from '@/platform/randomUUID';
+import { callFilesystemTransferAction } from './filesystemTransferActionClient';
 import type { ComposerContentHandleV1 } from '@happier-dev/protocol/runtime/input/composerContentV1';
 import type { SessionAttachmentUploadInitRequestV1 } from '@happier-dev/protocol/transfers/sessions/sessionAttachmentUploadInitRequestV1';
 import { DIRECT_TRANSFER_SESSION_EXPIRES_AT_HEADER, isSafeDirectTransferEndpointCandidate, normalizeDirectPeerImportEndpointBaseUrl } from '@happier-dev/protocol/machines/transfer/directPeerUrls';
@@ -127,6 +130,7 @@ export type PreparedDirectImportSession = Readonly<{
     baseUrls: readonly string[];
     request?: MachineCarrierHttpRequester;
     releaseCarrier?: (() => Promise<void> | void) | null;
+    filesystemRootPath?: string;
 }>;
 
 /**
@@ -296,7 +300,7 @@ async function readFinalizeRecoveryRequiredResponse(
     }
 }
 
-function buildDirectImportEndpoint(baseUrl: string, suffix: 'chunks' | 'finalize', sequence?: number): string {
+function buildDirectImportEndpoint(baseUrl: string, suffix: 'chunks' | 'finalize' | 'abort', sequence?: number): string {
     const url = new URL(baseUrl);
     url.pathname = `${url.pathname}/${suffix}${typeof sequence === 'number' ? `/${sequence}` : ''}`;
     return url.toString();
@@ -305,12 +309,24 @@ function buildDirectImportEndpoint(baseUrl: string, suffix: 'chunks' | 'finalize
 export async function abortPreparedDirectImportSessionViaMachineRpc(params: Readonly<{
     machineId: string;
     serverId?: string | null;
+    accountId?: string;
     uploadId: string;
     timeoutMs?: number | null;
+    filesystemRootPath?: string;
 }>): Promise<Readonly<{ aborted: boolean | null }>> {
     const timeoutMs = resolveDirectTransferRequestTimeoutMs(params.timeoutMs);
     const cleanupRequestSignal = createDirectTransferRequestAbortSignal({ timeoutMs });
     try {
+        if (params.filesystemRootPath) {
+            const response = FilesystemTransferCancelOutputSchema.parse(await callFilesystemTransferAction({
+                actionId: 'daemon.filesystem.transfer.cancel', machineId: params.machineId, serverId: params.serverId,
+                accountId: params.accountId,
+                input: { rootPath: params.filesystemRootPath, direction: 'upload', transferId: params.uploadId },
+                timeoutMs, signal: cleanupRequestSignal.signal,
+            }));
+            if (!response.success) throw new Error(response.error);
+            return { aborted: response.aborted };
+        }
         const response = await callGuardedMachineRpcWithPolicy<
             DirectTransferImportAbortResponse,
             Readonly<{ uploadId: string }>
@@ -352,10 +368,30 @@ function createDirectImportCleanupFailure(error: unknown): DirectImportPrepareFa
 export async function abortOwnedDirectImportSession(params: Readonly<{
     machineId: string;
     serverId?: string | null;
+    accountId?: string;
     uploadId: string;
     timeoutMs?: number | null;
+    filesystemRootPath?: string;
+    preparedSession?: Pick<PreparedDirectImportSession, 'baseUrls' | 'request'>;
 }>): Promise<DirectImportPrepareFailure | null> {
     try {
+        if (params.filesystemRootPath) {
+            const baseUrl = params.preparedSession?.baseUrls[0];
+            if (!baseUrl) return createDirectImportCleanupFailure(new Error('Prepared import carrier custody is unavailable; the incumbent session expiry retains cleanup'));
+            const path = new URL(baseUrl).pathname.split('/');
+            if (path.at(-1) !== params.uploadId || !path.join('/').includes('/machine-transfers/direct/imports/')) {
+                return createDirectImportCleanupFailure(new Error('Prepared import capability does not match the owned transfer'));
+            }
+            const deadline = createDirectTransferRequestAbortSignal({ timeoutMs: resolveDirectTransferRequestTimeoutMs(params.timeoutMs) });
+            try {
+                const response = await (params.preparedSession?.request ?? runtimeFetch)(buildDirectImportEndpoint(baseUrl, 'abort'), {
+                    method: 'POST', credentials: 'same-origin', signal: deadline.signal,
+                });
+                const result = await readJsonResponse(response, DIRECT_IMPORT_CHUNK_RESPONSE_MAX_BYTES, deadline.signal);
+                if (!isObject(result) || result.success !== true) throw new Error('Prepared import abort was not confirmed');
+                return null;
+            } finally { deadline.cleanup(); }
+        }
         await abortPreparedDirectImportSessionViaMachineRpc(params);
         return null;
     } catch (error) {
@@ -366,7 +402,11 @@ export async function abortOwnedDirectImportSession(params: Readonly<{
 export async function prepareDirectImportSession(params: Readonly<{
     machineId: string;
     serverId?: string | null;
+    accountId?: string;
     request: DirectTransferImportOpenRequest;
+    filesystemCopyInput?: FilesystemPreparedCopyInput;
+    /** An actual accepted record; the enclosing copy owner prepared it once. */
+    preparedImport?: Extract<FilesystemUploadOutput, { success: true; status: 'accepted' }>['prepared'];
     timeoutMs?: number | null;
     signal?: AbortSignal | null;
     preferScoped?: boolean;
@@ -377,7 +417,24 @@ export async function prepareDirectImportSession(params: Readonly<{
     | Readonly<{ success: false; error: string; errorCode?: string }>
 > {
     const timeoutMs = resolveDirectTransferRequestTimeoutMs(params.timeoutMs);
-    const prepare = await callGuardedMachineRpcWithPolicy<DirectTransferImportPrepareResponse, DirectTransferImportOpenRequest>({
+    let prepare: unknown;
+    if (params.preparedImport) prepare = { success: true, ...params.preparedImport };
+    else if (params.request.t === 'session_file_upload_v1') {
+        const sourceId = params.filesystemCopyInput?.source.sourceId ?? randomUUID();
+        const response = await callFilesystemTransferAction({ actionId: params.filesystemCopyInput ? 'daemon.filesystem.copy' : 'daemon.filesystem.upload', machineId: params.machineId,
+            serverId: params.serverId, timeoutMs, signal: params.signal,
+            accountId: params.accountId,
+            input: params.filesystemCopyInput ?? { rootPath: params.request.workingDirectory, path: params.request.path,
+                overwrite: params.request.overwrite, source: { sourceId, sizeBytes: params.request.sizeBytes,
+                    ...(typeof params.request.sha256 === 'string' ? { sha256: params.request.sha256 } : {}) } },
+        });
+        const receipt = FilesystemUploadOutputSchema.safeParse(response);
+        prepare = receipt.success && receipt.data.success && receipt.data.status === 'accepted' && receipt.data.sourceId === sourceId
+            ? { success: true, ...receipt.data.prepared }
+            : { success: false, error: isObject(response) && typeof response.error === 'string' ? response.error : unsupportedPrepareResponseError(response),
+                errorCode: isObject(response) && typeof response.errorCode === 'string' ? response.errorCode : DIRECT_IMPORT_PREPARE_INVALID_ERROR_CODE };
+    } else {
+    prepare = await callGuardedMachineRpcWithPolicy<DirectTransferImportPrepareResponse, DirectTransferImportOpenRequest>({
         machineId: params.machineId,
         ...(typeof params.serverId === 'string' ? { serverId: params.serverId } : {}),
         ...(typeof params.preferScoped === 'boolean' ? { preferScoped: params.preferScoped } : {}),
@@ -386,6 +443,7 @@ export async function prepareDirectImportSession(params: Readonly<{
         timeoutMs,
         ...(params.signal ? { signal: params.signal } : {}),
     });
+    }
 
     if (!isObject(prepare)) {
         return {
@@ -416,8 +474,10 @@ export async function prepareDirectImportSession(params: Readonly<{
         return await abortOwnedDirectImportSession({
             machineId: params.machineId,
             ...(typeof params.serverId === 'string' ? { serverId: params.serverId } : {}),
+            ...(params.accountId ? { accountId: params.accountId } : {}),
             uploadId,
             timeoutMs,
+            ...(params.request.t === 'session_file_upload_v1' ? { filesystemRootPath: params.request.workingDirectory } : {}),
         }) ?? failure;
     };
 
@@ -507,6 +567,7 @@ export async function prepareDirectImportSession(params: Readonly<{
             recipientPublicKeyBase64,
             expiresAt: prepare.expiresAt,
             baseUrls,
+            ...(params.request.t === 'session_file_upload_v1' ? { filesystemRootPath: params.request.workingDirectory } : {}),
             ...(preparedCarrier?.kind === 'browser_stream' ? { request: preparedCarrier.request } : {}),
             ...(preparedCarrier ? { releaseCarrier: preparedCarrier.release } : {}),
         },

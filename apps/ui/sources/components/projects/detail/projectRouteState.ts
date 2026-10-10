@@ -13,15 +13,25 @@ import { readRegisteredStorageState } from '@/sync/domains/state/storageStateRea
 import { readProjectWorkspaceRefs } from '@/sync/store/domains/projectAccountRows';
 
 import { resolveWorkspaceRefDisplayName } from '@/components/projects/resolveWorkspaceRefDisplayName';
+import type { WorkspaceCodeLocation } from '@/components/projects/files/code/WorkspaceCodeBrowserView';
 import {
     resolveProjectMobileSurfaceIntent,
     resolveProjectRoutePathForSurface,
     type ProjectPageV1,
     type ProjectRouteContext,
     type ProjectMobileSurface,
+    type ProjectAttachedDashboardSelection,
 } from '@/components/workspaceCockpit/project/projectCockpitState';
 
 export type ProjectFileRouteTarget = Readonly<{ kind: 'file'; path: string; anchor?: FileTargetAnchor; anchorSource?: ReviewCommentSource }>;
+
+/** Code's page location is separate from an optional file tab in Details. Paths are literal. */
+export function readProjectCodeRouteLocation(params: Readonly<Record<string, unknown>>): WorkspaceCodeLocation | null {
+    const kind = Array.isArray(params.codeKind) ? params.codeKind[0] : params.codeKind;
+    const path = Array.isArray(params.codePath) ? params.codePath[0] : params.codePath;
+    if ((kind !== 'folder' && kind !== 'file') || typeof path !== 'string' || (kind === 'file' && path.length === 0)) return null;
+    return { kind, path };
+}
 
 export function readProjectSelectedRouteResource(details: Pick<PaneDetailsStateView, 'isOpen' | 'tabs' | 'activeTabKey'> | null | undefined) {
     if (!details?.isOpen) return undefined;
@@ -40,6 +50,14 @@ export function readProjectFileRouteTarget(params: Readonly<Record<string, unkno
 
 export { PROJECT_PAGES, type ProjectPageV1 } from '@/components/workspaceCockpit/project/projectCockpitState';
 export type ProjectRouteSegment = ProjectPageV1;
+export type { ProjectAttachedDashboardSelection } from '@/components/workspaceCockpit/project/projectCockpitState';
+
+/** Keep incomplete attached intent unavailable rather than silently opening a personal dashboard. */
+export function readProjectAttachedDashboardSelection(params: Readonly<Record<string, string | string[] | undefined>>): ProjectAttachedDashboardSelection | undefined {
+    if (params.dashboardSourceId === undefined && params.dashboardArtifactId === undefined) return undefined;
+    return { sourceId: readProjectRouteStringParam(params.dashboardSourceId) ?? '',
+        artifactId: readProjectRouteStringParam(params.dashboardArtifactId) ?? '' };
+}
 export const PROJECT_ROUTE_ROOT_SENTINEL = '@root';
 export const PROJECT_ROUTE_WORKTREE_ID_QUERY_PARAM = 'worktreeId';
 export type ProjectDetailsSourceSurface = Exclude<ProjectMobileSurface, 'overview' | 'tabs'>;
@@ -210,12 +228,17 @@ export function buildProjectRouteHref(input: Readonly<{
     showWorktrees?: boolean;
     sourceSurface?: ProjectDetailsSourceSurface | null;
     initialResource?: ProjectFileRouteTarget | Readonly<{ kind: 'commit'; sha: string }> | null;
+    codeLocation?: WorkspaceCodeLocation;
     /** A newly selected Details destination replaces the old Details and initial-resource intent. */
     details?: SessionPaneUrlDetailsTarget | null;
 }> & ProjectRouteContext): string {
     const resourceParams: Record<string, string> = {};
     if (input.showWorktrees) resourceParams.showWorktrees = '1';
     const routeParams = { ...input.routeParams };
+    if (input.codeLocation) {
+        resourceParams.codePath = input.codeLocation.path;
+        resourceParams.codeKind = input.codeLocation.kind;
+    }
     if (input.showWorktrees === false) delete routeParams.showWorktrees;
     if (input.sourceSurface) resourceParams.sourceSurface = input.sourceSurface;
     if (input.initialResource !== undefined || input.details !== undefined) {

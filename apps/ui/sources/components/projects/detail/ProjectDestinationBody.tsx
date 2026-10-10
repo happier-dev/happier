@@ -7,7 +7,7 @@ import { buildProjectPaneScopeId } from './projectPaneScope';
 import { useProjectInitialResource } from './useProjectInitialResource';
 import { useProjectRouteActions } from './useProjectRouteActions';
 import { useProjectRouteHeaderOptions } from './useProjectRouteHeaderOptions';
-import { PROJECT_ROUTE_ROOT_SENTINEL, readProjectRouteStringParam, readProjectRouteWorktreeSelection, readProjectSelectedRouteResource, replaceProjectRouteSelection } from './projectRouteState';
+import { PROJECT_ROUTE_ROOT_SENTINEL, readProjectAttachedDashboardSelection, readProjectRouteStringParam, readProjectRouteWorktreeSelection, readProjectSelectedRouteResource, replaceProjectRouteSelection } from './projectRouteState';
 import { useWorkspaceRefResolutionById } from './useWorkspaceRefById';
 import { resolveProjectCockpitRouteFromPathname } from '@/components/workspaceCockpit/project/projectCockpitState';
 import { useProjectRouteRouterRef } from './useProjectRouteRouterRef';
@@ -95,7 +95,8 @@ export const ProjectDestinationBody = React.memo(() => {
             workspaceRefId={workspaceRefId}
             serverId={serverId}
             workspaceResolution={workspaceResolution}
-            dashboardId={readProjectRouteStringParam(params.dashboardId) ?? undefined}
+            layoutId={readProjectRouteStringParam(params.layoutId) ?? undefined}
+            attachedDashboard={readProjectAttachedDashboardSelection(params)}
             recoveryToastKey={didRecoverMissingWorktree ? `${workspaceRefId}:${requestedRootPath}` : null}
             page={page}
             surface={surface}

@@ -79,6 +79,21 @@ function answerFacts(lastCleanSyncAtMs: number | null = 1234, sizeBytes = 0) {
 }
 
 describe('Machine fresh-copy model', () => {
+  it('honors the public review Action policy instead of using a private preview bypass', async () => {
+    const { scope } = await seed(); answerFacts();
+    const settings = settingsParse({ actionsSettingsV1: { v: 1, actions: {
+      'projects.worker.copy.inspect': { enabled: false },
+    } } });
+    homes.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: settings }, version: 1 } });
+    await act(async () => { storage.getState().applySettingsForScope(scope, settings,
+      (storage.getState().settingsVersion ?? 0) + 1); });
+    const hook = await renderHook(() => useMachineFreshCopies(serverId, 'worker'));
+    try {
+      await waitForHomeGovernance(() => expect(hook.getCurrent().copies?.[0]?.lastCleanSyncAtMs).toBe(1234));
+      expect(hook.getCurrent().copies?.[0]?.review).toBeNull();
+      expect(rpc.machine.mock.calls.filter(([input]) => input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT)).toHaveLength(0);
+    } finally { await hook.unmount(); }
+  });
   it('reads only bound worker targets and exposes actual clean time and measured zero bytes', async () => {
     await seed(); answerFacts();
     const hook = await renderHook(() => useMachineFreshCopies(serverId, 'worker'));
@@ -243,7 +258,7 @@ describe('Machine fresh-copy model', () => {
     rpc.machine.mockClear();
     await act(async () => { await hook.getCurrent().remove(hook.getCurrent().copies![0]!); });
     expect(hook.getCurrent().copies).toHaveLength(1);
-    expect(hook.getCurrent().notice).toMatchObject({ kind: failure.kind, details: failure.details });
+    expect(hook.getCurrent().notices.get('copy')).toMatchObject({ kind: failure.kind, details: failure.details });
     await waitForHomeGovernance(() => expect(rpc.machine.mock.calls.some(([input]) => input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST)).toBe(true));
     expect(rpc.machine.mock.calls.filter(([input]) => input.method === 'projects.worker.copy.retire')).toHaveLength(1);
     await hook.unmount();
@@ -264,5 +279,132 @@ describe('Machine fresh-copy model', () => {
     expect(hook.getCurrent().copies).toHaveLength(1);
     expect(rpc.machine.mock.calls.filter(([input]) => input.method === 'projects.worker.copy.retire')).toHaveLength(0);
     await hook.unmount();
+  });
+
+  it('keeps the captured target inspectable after definition retirement, without repeating file removal', async () => {
+    const { scope, source, target } = await seed(); answerFacts(); await waiveRetirement();
+    const readFacts = rpc.machine.getMockImplementation()!;
+    let retired = false;
+    rpc.machine.mockImplementation(async input => {
+      if (input.method === 'projects.worker.copy.retire') {
+        retired = true;
+        return { ok: false, errorCode: 'workspace_copy_removal_unknown', error: 'unknown', details: { kind: 'outcomeUnknown' } };
+      }
+      // The real preview requires the definition to remain current. Retired graph custody refuses.
+      if (retired && input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT)
+        throw new Error('bootstrap_definition_conflict');
+      return await readFacts(input);
+    });
+    const hook = await renderHook((machineId: string) => useMachineFreshCopies(serverId, machineId), { initialProps: 'worker' });
+    try {
+      await act(async () => { await hook.getCurrent().remove(hook.getCurrent().copies![0]!, { removeFiles: true }); });
+      await act(async () => {
+        storage.getState().applyProjectAccountRowsForScope(scope, { scope, status: 'ready', coverage: 'complete',
+          workspaceRefs: [source, target], relationships: [], organizations: [], revisionsByPhysicalKey: {} });
+      });
+      expect(hook.getCurrent().copies).toEqual([]);
+      expect(hook.getCurrent().notices.get('copy')).toMatchObject({ kind: 'unknown', filesUnknown: true,
+        targetRootPath: '/worker/project' });
+      rpc.machine.mockClear();
+      await act(async () => { hook.getCurrent().refresh(); });
+      await waitForHomeGovernance(() => expect(rpc.machine.mock.calls.some(([input]) =>
+        input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT
+        && input.payload.targetWorkspaceRefId === 'target')).toBe(true));
+      expect(rpc.machine.mock.calls.filter(([input]) => input.method === 'projects.worker.copy.retire')).toEqual([]);
+      expect(hook.getCurrent().notices.get('copy')?.filesUnknown).toBe(true);
+      await act(async () => { hook.getCurrent().dismissNotice('copy'); });
+      expect(hook.getCurrent().notices.size).toBe(0);
+    } finally { await hook.unmount(); }
+  });
+
+  it('retires the previous Machine warning when its captured observation lifetime ends', async () => {
+    await seed(); answerFacts(); await waiveRetirement();
+    const readFacts = rpc.machine.getMockImplementation()!;
+    rpc.machine.mockImplementation(async input => input.method === 'projects.worker.copy.retire'
+      ? { ok: false, errorCode: 'workspace_copy_removal_unknown', error: 'unknown',
+          details: { kind: 'outcomeUnknown' } }
+      : await readFacts(input));
+    const hook = await renderHook((machineId: string) => useMachineFreshCopies(serverId, machineId), { initialProps: 'worker' });
+    try {
+      await act(async () => { await hook.getCurrent().remove(hook.getCurrent().copies![0]!, { removeFiles: true }); });
+      expect(hook.getCurrent().notices.get('copy')).toBeTruthy();
+      await hook.rerender('other-worker');
+      expect(hook.getCurrent().notices.size).toBe(0);
+      await hook.rerender('worker');
+      expect(hook.getCurrent().notices.size).toBe(0);
+    } finally { await hook.unmount(); }
+  });
+
+  it('retains independent file-removal outcomes when a second copy is removed', async () => {
+    const { scope, source, target, relationship } = await seed(); answerFacts(); await waiveRetirement();
+    const secondTarget = { ...target, id: 'target-2', rootPath: '/worker/second-project' };
+    const secondRelationship: WorkspaceSyncRelationshipV1 = { ...relationship, relationshipId: 'copy-2',
+      alphaWorkspaceRefId: secondTarget.id,
+      provenance: { kind: 'worker_clean_copy', sourceWorkspaceRefId: source.id, targetWorkspaceRefId: secondTarget.id } };
+    await act(async () => {
+      storage.getState().applyProjectAccountRowsForScope(scope, { scope, status: 'ready', coverage: 'complete',
+        workspaceRefs: [source, target, secondTarget], relationships: [relationship, secondRelationship],
+        organizations: [], revisionsByPhysicalKey: {} });
+    });
+    const readFacts = rpc.machine.getMockImplementation()!;
+    const retiredTargets = new Set<string>();
+    rpc.machine.mockImplementation(async input => {
+      if (input.method === 'projects.worker.copy.retire') {
+        retiredTargets.add(input.payload.removeTargetCopy.workspaceRefId);
+        return { ok: false, errorCode: 'workspace_copy_removal_unknown', error: 'unknown', details: { kind: 'outcomeUnknown' } };
+      }
+      if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT) {
+        if (retiredTargets.has(input.payload.targetWorkspaceRefId)) throw new Error('bootstrap_definition_conflict');
+        return { ok: true, preview: { targetMachineId: 'worker', workspaceRefId: input.payload.targetWorkspaceRefId,
+          rootFingerprint: 'a'.repeat(64), sizeBytes: 4 } };
+      }
+      return await readFacts(input);
+    });
+    const hook = await renderHook(() => useMachineFreshCopies(serverId, 'worker'));
+    try {
+      await act(async () => { await hook.getCurrent().remove(hook.getCurrent().copies![0]!, { removeFiles: true }); });
+      await act(async () => { await hook.getCurrent().remove(hook.getCurrent().copies![1]!, { removeFiles: true }); });
+      await act(async () => {
+        storage.getState().applyProjectAccountRowsForScope(scope, { scope, status: 'ready', coverage: 'complete',
+          workspaceRefs: [source, target, secondTarget], relationships: [], organizations: [], revisionsByPhysicalKey: {} });
+      });
+      expect([...hook.getCurrent().notices.values()]).toEqual(expect.arrayContaining([
+        expect.objectContaining({ relationshipId: 'copy', targetRootPath: '/worker/project', filesUnknown: true }),
+        expect.objectContaining({ relationshipId: 'copy-2', targetRootPath: '/worker/second-project', filesUnknown: true }),
+      ]));
+      await act(async () => { hook.getCurrent().dismissNotice('copy'); });
+      expect([...hook.getCurrent().notices.values()]).toEqual([
+        expect.objectContaining({ relationshipId: 'copy-2', filesUnknown: true }),
+      ]);
+      expect(rpc.machine.mock.calls.filter(([input]) => input.method === 'projects.worker.copy.retire')).toHaveLength(2);
+    } finally { await hook.unmount(); }
+  });
+
+  it('updates uncertain removal to observed files remaining only when the current relationship can still be inspected', async () => {
+    await seed(); answerFacts(); await waiveRetirement();
+    const readFacts = rpc.machine.getMockImplementation()!;
+    let attempted = false;
+    let canInspect = false;
+    rpc.machine.mockImplementation(async input => {
+      if (input.method === 'projects.worker.copy.retire') {
+        attempted = true;
+        return { ok: false, errorCode: 'workspace_copy_removal_unknown', error: 'unknown', details: { kind: 'outcomeUnknown' } };
+      }
+      if (attempted && !canInspect && input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT)
+        return { ok: false, errorCode: 'workspace_copy_not_owned' };
+      return await readFacts(input);
+    });
+    const hook = await renderHook(() => useMachineFreshCopies(serverId, 'worker'));
+    try {
+      await act(async () => { await hook.getCurrent().remove(hook.getCurrent().copies![0]!, { removeFiles: true }); });
+      expect(hook.getCurrent().notices.get('copy')?.filesUnknown).toBe(true);
+      canInspect = true;
+      await act(async () => { hook.getCurrent().refresh(); });
+      await waitForHomeGovernance(() => expect(hook.getCurrent().notices.get('copy')).toMatchObject({
+        filesUnknown: false, filesPresent: true, text: 'projectWorkers.removeFilesRemain',
+      }));
+      expect(hook.getCurrent().copies).toHaveLength(1);
+      expect(rpc.machine.mock.calls.filter(([input]) => input.method === 'projects.worker.copy.retire')).toHaveLength(1);
+    } finally { await hook.unmount(); }
   });
 });

@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { SessionAuthoringOpenResultV1Schema } from '@happier-dev/protocol/plugins/ui';
 
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { Modal } from '@/modal';
@@ -98,9 +100,12 @@ export function useProjectRowCreationActions(host: SaveAsSourceHost) {
   } = host;
   const accountScope = useActiveServerAccountScope();
   const newSession = React.useCallback(
-    (ref: WorkspaceRefV1) => {
-      const outcome = newSessionHere(ref);
-      if (outcome.kind === 'opened' || outcome.kind === 'stale') return;
+    async (ref: WorkspaceRefV1) => {
+      const result = await newSessionHere(ref);
+      if (!result.ok && result.errorCode === 'action_account_scope_changed') return;
+      if (result.ok && ActionApprovalRequestCreatedResultSchema.safeParse(result.result).success) return;
+      const outcome = result.ok ? SessionAuthoringOpenResultV1Schema.safeParse(result.result) : null;
+      if (outcome?.success && (outcome.data.kind === 'opened' || outcome.data.kind === 'stale')) return;
       Modal.alert(t('projects.identity.newSessionUnavailable'));
     },
     [newSessionHere],

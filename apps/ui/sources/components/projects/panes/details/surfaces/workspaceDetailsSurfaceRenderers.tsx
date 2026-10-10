@@ -22,9 +22,6 @@ import { WorkspaceCommitDetailsView } from '@/components/projects/panes/details/
 import { WorkspaceScmReviewDetailsView } from '@/components/projects/panes/details/views/WorkspaceScmReviewDetailsView';
 import { createSessionScmReviewDetailsTab } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
 import { readSessionScmReviewTarget } from '@/components/sessions/panes/url/sessionPaneUrlState';
-import { openWorkspaceScmAuthoringDraft } from '@/components/projects/scm/workspaceScmAuthoring';
-import { Modal } from '@/modal';
-import { t } from '@/text';
 import { WorkspaceScmStashDetailsView } from '@/components/projects/panes/details/views/WorkspaceScmStashDetailsView';
 import { ProjectTerminalSurface } from '@/components/projects/detail/surfaces/ProjectTerminalSurface';
 import { readTerminalDetailsCwd, readTerminalDetailsInstanceId } from '@/components/terminal/terminalDetailsTabModel';
@@ -242,26 +239,13 @@ export function createWorkspaceDetailsSurfaceRenderers(
                 <WorkspaceScmReviewDetailsView
                     key={JSON.stringify([options.serverId, options.machineId, options.activeRootPath])}
                     scopeId={options.scopeId}
-                    workspaceRefId={options.workspaceRefId}
-                    workspaceCacheKey={options.workspaceCacheKey}
                     machineId={options.machineId}
                     rootPath={options.activeRootPath}
                     serverId={options.serverId}
                     {...readSessionScmReviewTarget(input.tab.resource)}
                     onSelectTarget={input.callbacks.replaceTab ? (target) => input.callbacks.replaceTab?.(input.tab.key,
                         createSessionScmReviewDetailsTab(target), { intent: 'pinned' }) : undefined}
-                    onAsk={(basis) => {
-                        void openWorkspaceScmAuthoringDraft({ ...basis, scope: { serverId: options.serverId,
-                            machineId: options.machineId, rootPath: options.activeRootPath } }).then(outcome => {
-                            if (basis.isCurrent() && outcome.kind === 'unavailable') Modal.alert(t('common.error'), t('common.unavailable'));
-                        });
-                    }}
-                    onExplain={(basis) => {
-                        void openWorkspaceScmAuthoringDraft({ ...basis, scope: { serverId: options.serverId,
-                            machineId: options.machineId, rootPath: options.activeRootPath } }).then(outcome => {
-                            if (basis.isCurrent() && outcome.kind === 'unavailable') Modal.alert(t('common.error'), t('common.unavailable'));
-                        });
-                    }}
+                    onShowInGit={options.onOpenChanges}
                     onOpenFile={(path) => options.openFileTab(path, 'default')}
                     onOpenFilePinned={(path) => options.openFileTab(path, 'pinned')}
                 />

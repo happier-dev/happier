@@ -153,7 +153,7 @@ describe('Scripts canonical operation subscriptions', () => {
                 expect(ApprovalRequestV2Schema.parse(JSON.parse(artifacts.readPlainBody(approvalId) ?? 'null'))).toMatchObject({
                     status: 'open', actionId: 'projects.script.run', actionArgs: { workspace, selection: { kind: 'named', name: 'build' } },
                 });
-                expect(hook.getCurrent().pendingKey).toBe('build');
+                expect(hook.getCurrent().pendingKeys.build).toBe(true);
                 expect(hook.getCurrent().failure).toBeNull();
                 expect(actionOperationStore.getSnapshot().operationsByKey.size).toBe(0);
                 expect(dispatched).toEqual([]);
@@ -172,7 +172,7 @@ describe('Scripts canonical operation subscriptions', () => {
             }
             expect(hook.getCurrent().failure).toMatchObject({ key: 'build', code: refusalCode });
             expect(hook.getCurrent().failure).toMatchObject({ workerRefusal });
-            expect(hook.getCurrent().pendingKey).toBeNull();
+            expect(hook.getCurrent().pendingKeys.build).toBeUndefined();
             expect(hook.getCurrent().consent).toBeNull();
             expect(hook.getCurrent().approvalId).toBeNull();
             expect(actionOperationStore.getSnapshot().operationsByKey.size).toBe(0);

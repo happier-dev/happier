@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { computeWorkspaceSyncPolicyDigest, WorkspaceSyncConflictInspectRpcResultV1Schema } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import { createCapturingLegendListMock, createUseSettingMock, pressTestInstance, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createCapturingLegendListMock, pressTestInstance, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installSessionHandoffCommonModuleMocks } from '@/components/sessions/handoff/sessionHandoffTestHelpers';
 
 const machineRpc = vi.hoisted(() => vi.fn());
@@ -29,13 +29,13 @@ installSessionHandoffCommonModuleMocks({
         const link = { v: 1 as const, relationshipId: 'link-1', controllerMachineId: 'machine-a',
             alphaWorkspaceRefId: 'hub', betaWorkspaceRefId: 'spoke', mode: 'keep_both_in_sync' as const,
             contentPolicy: policy, enabled: true, createdAtMs: 1, updatedAtMs: 1 };
-        const baseSettings = createUseSettingMock({ values: { workspaceRefsV1: refs, workspaceSyncRelationshipsV1: [link] } });
-        const extendedSettings = createUseSettingMock({ values: { workspaceRefsV1: [
+        const extendedRefs = [
             ...refs, { id: 'third', serverId: 'server-1', machineId: 'machine-c', rootPath: '/third', createdAtMs: 1 },
-        ], workspaceSyncRelationshipsV1: [link, { ...link, relationshipId: 'link-2', betaWorkspaceRefId: 'third' }] } });
+        ];
+        const extendedRelationships = [link, { ...link, relationshipId: 'link-2', betaWorkspaceRefId: 'third' }];
         return createStorageModuleStub({
-            useSetting: ((key: Parameters<typeof baseSettings>[0]) =>
-                (includeThirdEndpoint ? extendedSettings : baseSettings)(key)) as typeof baseSettings,
+            useWorkspaceRefs: () => includeThirdEndpoint ? extendedRefs : refs,
+            useWorkspaceSyncRelationships: () => includeThirdEndpoint ? extendedRelationships : [link],
             useMachineDisplayNamesById: () => machineDisplayNames,
         });
     },

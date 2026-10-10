@@ -25,6 +25,8 @@ export async function clearScmReviewedMarksForComparisonId(params: Readonly<{
 export function createScmReviewedMarksOperations(params: Readonly<{
   comparison: ScmComparison; credentials: AuthCredentials; request: ServerFetch;
   shouldContinue: () => boolean; encryption?: AccountStorageContext['encryption'];
+  /** Admitted exact-comparison Action; this observer never writes around its policy. */
+  setReviewedAction?: (refs: readonly string[], reviewed: boolean) => Promise<ScmReviewedMarkResponse>;
 }>) {
   const key = buildScmReviewedMarksKey(params.comparison.id);
   let retired = false;
@@ -73,8 +75,9 @@ export function createScmReviewedMarksOperations(params: Readonly<{
     } catch (error) { fail(error); return { success: false, errorCode: errorCode(error), error: error instanceof Error ? error.message : 'Reviewed marks are unavailable' }; }
   };
   return {
-    key, read, setReviewed: (refs: readonly string[], reviewed: boolean) => perform(() => port.setReviewed(refs, reviewed)),
-    clear: () => perform(port.clear),
+    key, read, setReviewed: (refs: readonly string[], reviewed: boolean) => perform(() => params.setReviewedAction
+      ? params.setReviewedAction(refs, reviewed)
+      : Promise.resolve({ success: false, errorCode: 'reviewed_marks_unavailable', error: 'The comparison Action target is unavailable.' })),
     getSnapshot: () => current() ? state : retiredState,
     subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
     retire: () => { retired = true; disposePush(); apply({ status: 'retired', record: null, version: state.version }); listeners.clear(); },

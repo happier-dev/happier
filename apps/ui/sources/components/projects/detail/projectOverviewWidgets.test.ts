@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import type { WidgetAreaLayoutV1 } from '@happier-dev/protocol/widgets';
+import type { WidgetPlacementV1 } from '@happier-dev/protocol/widgets';
 import { mergeProjectOverviewWidgetHeads, projectOverviewWidgetAreas, readProjectOverviewWidgetAreas } from './projectOverviewWidgets';
 
-type Placement = WidgetAreaLayoutV1['instances'][number];
+type Placement = WidgetPlacementV1;
 const builtin = (name: string): Placement => ({ instance: { v: 1, id: name, definition: { kind: 'builtin', id: `project_${name}` }, bindings: { checkout: { kind: 'context', slot: 'checkout' } } }, frameStyle: 'plain' });
 const metric: Placement = { instance: { v: 1, id: 'metric', definition: { kind: 'installed', surface: { pluginId: 'metrics', localId: 'count' } }, bindings: {} } };
 const ids = (placements: readonly Placement[]) => placements.map(placement => placement.instance.id);

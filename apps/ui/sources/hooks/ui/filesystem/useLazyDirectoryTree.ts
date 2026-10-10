@@ -5,13 +5,12 @@ import { reuseLazyDirectoryTreeNodes } from './reuseLazyDirectoryTreeNodes';
 import type { LazyDirectoryTreeEntry, LazyDirectoryTreeLoadResult, LazyDirectoryTreeNode } from './lazyDirectoryTreeTypes';
 
 function normalizeDirectoryPath(input: string): string {
-    const trimmed = input.trim();
-    if (trimmed === '/') return '/';
-    const windowsRootMatch = /^([A-Za-z]:)[\\/]*$/.exec(trimmed);
+    if (input === '/') return '/';
+    const windowsRootMatch = /^([A-Za-z]:)[\\/]*$/.exec(input);
     if (windowsRootMatch) {
         return `${windowsRootMatch[1]}\\`;
     }
-    return trimmed.replace(/\/+$/g, '');
+    return input.replace(/\/+$/g, '');
 }
 
 function normalizeExpandedPaths(paths: readonly string[]): string[] {
@@ -76,6 +75,8 @@ function seedDirectoryTruncationByPathFromCache(input: Readonly<{
 export function useLazyDirectoryTree(input: {
     scopeKey: string;
     enabled: boolean;
+    /** An offline workspace keeps authorized cached rows without issuing reads. */
+    retainNodesWhenDisabled?: boolean;
     rootDirectoryPath: string;
     expandedPaths?: readonly string[];
     onExpandedPathsChange?: (paths: string[]) => void;
@@ -392,7 +393,7 @@ export function useLazyDirectoryTree(input: {
     }, [enabled, expandedDirectories, loadDirectory, shouldForceReloadExpandedDirectories]);
 
     const flattenedNodes = React.useMemo(() => {
-        if (!enabled) return [];
+        if ((!enabled && !input.retainNodesWhenDisabled) || scopeKeyRef.current !== scopeKey) return [];
         return flattenLazyDirectoryTree({
             directoryPath: rootDirectoryPath,
             depth: 0,
@@ -403,7 +404,7 @@ export function useLazyDirectoryTree(input: {
             directoryErrors,
             visited: new Set<string>(),
         });
-    }, [directoryEntriesByPath, directoryErrors, directoryTruncationByPath, enabled, expandedDirectories, loadingDirectories, rootDirectoryPath]);
+    }, [directoryEntriesByPath, directoryErrors, directoryTruncationByPath, enabled, input.retainNodesWhenDisabled, expandedDirectories, loadingDirectories, rootDirectoryPath, scopeKey]);
 
     const nodes = React.useMemo(() => {
         const reusedNodes = reuseLazyDirectoryTreeNodes(flattenedNodes, previousNodesRef.current);
@@ -412,8 +413,9 @@ export function useLazyDirectoryTree(input: {
     }, [flattenedNodes]);
 
     return {
-        rootLoading,
-        rootError,
+        rootLoading: scopeKeyRef.current === scopeKey && rootLoading,
+        rootError: scopeKeyRef.current === scopeKey ? rootError : null,
+        rootLoaded: scopeKeyRef.current === scopeKey && directoryEntriesByPath.has(rootDirectoryPath),
         nodes,
         toggleDirectory,
         collapseAll,

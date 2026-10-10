@@ -6,6 +6,7 @@ import { renderScreen } from '@/dev/testkit';
 
 import { ProjectsTree } from './ProjectsTree';
 import { buildProjectsTreeRows } from './projectsTreeRows';
+import { t } from '@/text';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -86,6 +87,25 @@ describe('ProjectsTree (lab p-projects TREE/HIDDEN)', () => {
         await act(async () => { screen.tree.update(<ProjectsTree rows={collapsed} onToggle={() => {}} onOpenRef={() => {}} />); });
         // The roving stop repairs to the nearest visible ancestor, never off the tree.
         expect(item('plugins')!.props.webTabIndex).toBe(0);
+    });
+
+    it('says once, on the row, that a Project arrived from a session (lab p-projects AUTO)', async () => {
+        const fresh = buildProjectsTreeRows({
+            projects: [
+                { key: 'pricing', name: 'pricing-api', newFromSession: true, checkouts: [
+                    { refId: 'n1', machineId: 'mbp', machineName: 'MacBook Pro', label: 'main', path: '~/code/pricing-api', attention: 'working' },
+                ] },
+                { key: 'web', name: 'website', checkouts: [
+                    { refId: 'w1', machineId: 'mbp', machineName: 'MacBook Pro', label: 'main', path: '~/code/website', attention: null },
+                ] },
+            ],
+            openRefId: null,
+            expandedKeys: new Set(),
+        });
+        const screen = await renderScreen(<ProjectsTree rows={fresh} onToggle={() => {}} onOpenRef={() => {}} />);
+        const line = t('projects.identity.newFromSession');
+        expect(screen.getTextContent().split(line).length - 1).toBe(1);
+        expect(screen.getTextContent()).toContain(`${line} · MacBook Pro`);
     });
 
     it('collects hidden Projects at the end and shows one back', async () => {

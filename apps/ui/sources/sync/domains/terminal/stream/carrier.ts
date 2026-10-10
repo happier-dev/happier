@@ -83,6 +83,7 @@ type LegacyTerminalMutationResponse = Readonly<{
 type MachineTerminalStreamCarrierOptions = Readonly<{
     machineId: string;
     serverId?: string | null;
+    accountId?: string | null;
     timeoutMs?: number | null;
 }>;
 
@@ -180,7 +181,7 @@ function isControlCursorCompatibilityRejection(
 export function createMachineRpcTerminalStreamCarrier(
     options: MachineTerminalStreamCarrierOptions,
 ): TerminalStreamCarrier {
-    const rpcOptions = { serverId: options.serverId, timeoutMs: options.timeoutMs };
+    const rpcOptions = { serverId: options.serverId, accountId: options.accountId, timeoutMs: options.timeoutMs };
     let inputSendTail: Promise<void> = Promise.resolve();
     let controlCursorTerminalId: string | null = null;
     let controlCursor = 0;

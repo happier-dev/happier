@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
 describe('executeSessionHandoffAction', () => {
+  it('preserves the explicit no-copy policy through Action admission and missing-state rejection', async () => {
+    const { executeSessionHandoffAction } = await import('./executeSessionHandoffAction');
+    const execute = vi.fn(async () => ({ ok: false as const, errorCode: 'existing_session_state_unavailable', error: 'Missing native history' }));
+    await expect(executeSessionHandoffAction({ execute, sessionId: 'sess_1', targetMachineId: 'machine_target', stateTransfer: 'existing', workspaceAction: { kind: 'none' }, context: { surface: 'ui', placement: 'session_info' } })).resolves.toEqual({ ok: false, errorCode: 'existing_session_state_unavailable', error: 'Missing native history' });
+    expect(execute).toHaveBeenCalledWith('session.handoff', expect.objectContaining({ stateTransfer: 'existing' }), expect.anything());
+  });
   const status = { handoffId: 'handoff_1', status: 'completed' as const, phase: 'finalizing' as const, recoveryActions: [] };
 
   it('returns deferred approval as not admitted instead of an unsupported handoff failure', async () => {

@@ -35,13 +35,15 @@ function executorFor(serverId: string | null) {
 }
 
 /** The engines that can review this Session, with whether each can write prose. */
-export async function listReviewWalkthroughEngines(params: Readonly<{ sessionId: string; serverId: string | null }>): Promise<
+export async function listReviewWalkthroughEngines(params: Readonly<{ sessionId: string | null; machineId?: string; serverId: string | null }>): Promise<
     Readonly<{ ok: true; engines: readonly ReviewWalkthroughEngine[] }> | Failure
 > {
     const result = await executorFor(params.serverId).execute(
         'review.engines.list',
-        { sessionId: params.sessionId },
-        { defaultSessionId: params.sessionId, ...(params.serverId ? { serverId: params.serverId } : {}) },
+        { sessionId: params.sessionId, ...(!params.sessionId && params.machineId ? { machineId: params.machineId } : {}) },
+        { ...(params.sessionId ? { defaultSessionId: params.sessionId } : {}), ...(params.serverId ? { serverId: params.serverId } : {}),
+            ...(!params.sessionId && params.machineId ? { externalActionTarget: { kind: 'machine' as const, machineId: params.machineId },
+                executionRunTargetMachineId: params.machineId } : {}) },
     );
     if (!result.ok) return failure(result, 'review_engines_unavailable');
     const items = (result.result as { items?: unknown })?.items;
@@ -64,7 +66,8 @@ export async function listReviewWalkthroughEngines(params: Readonly<{ sessionId:
 }
 
 async function resolveComparisonId(params: Readonly<{
-    sessionId: string;
+    sessionId: string | null;
+    machineId?: string;
     serverId: string | null;
     cwd: string;
     comparison: ScmReviewComparisonSelector;
@@ -72,10 +75,13 @@ async function resolveComparisonId(params: Readonly<{
 }>): Promise<Readonly<{ ok: true; comparisonId: string }> | Failure> {
     const existing = params.comparisonId ?? params.comparison.comparisonId;
     if (existing) return { ok: true, comparisonId: existing };
+    if (!params.sessionId && (!params.machineId || params.comparison.kind === 'session' || params.comparison.kind === 'turnCheckpoint')) {
+        return { ok: false, error: 'review_comparison_unavailable', errorCode: 'review_comparison_unavailable' };
+    }
     const captured = await captureScmComparisonForSession({
-        sessionId: params.sessionId,
+        ...(params.sessionId ? { sessionId: params.sessionId } : { machineId: params.machineId! }),
         serverId: params.serverId,
-        input: { cwd: params.cwd, source: scmComparisonSourceOf(params.comparison, params.sessionId) },
+        input: { cwd: params.cwd, source: scmComparisonSourceOf(params.comparison, params.sessionId ?? '') },
     });
     if (!captured.success) return { ok: false, error: captured.error, ...(captured.errorCode ? { errorCode: captured.errorCode } : {}) };
     return { ok: true, comparisonId: captured.comparison.id };
@@ -93,7 +99,8 @@ export type ReviewOfComparisonStarted = Readonly<{
 
 /** One review of the exact comparison on screen; the comparison is captured first and named by its id. */
 export async function startReviewOfComparison(params: Readonly<{
-    sessionId: string;
+    sessionId: string | null;
+    machineId?: string;
     serverId: string | null;
     cwd: string;
     comparison: ScmReviewComparisonSelector;
@@ -115,6 +122,7 @@ export async function startReviewOfComparison(params: Readonly<{
             comparisonId: captured.comparisonId,
             pending: params.comparison.kind === 'workingTree',
         }),
+        ...(!params.sessionId ? { target: { kind: 'detached' }, machineId: params.machineId, cwd: params.cwd } : {}),
     });
     if (!result.ok) return failure(result, 'review_start_failed');
     const output = (result.result ?? {}) as {

@@ -7,6 +7,7 @@ import {
   MACHINE_PLAIN_DATA_KEY_MARKER,
 } from '@happier-dev/protocol/machines/machineStoredContent';
 import { computeWorkspaceSyncPolicyDigest, type WorkspaceSyncRelationshipV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -167,7 +168,7 @@ async function seedWorkerCopy() {
     storage.getState().applyProjectAccountRowsForScope(scope, { scope, status: 'ready', coverage: 'complete',
       workspaceRefs: [source, target], relationships: [relationship], organizations: [], revisionsByPhysicalKey: {} });
   });
-  return { scope, source };
+  return { scope, source, target };
 }
 
 describe('Machine › Work from your projects through the Machine policy Actions', () => {
@@ -279,6 +280,51 @@ describe('Machine › Work from your projects through the Machine policy Actions
     // No duplicate Remove while the first one is pending.
     expect(screen.findAllByTestId('work.copy:proven-worker-target.remove')[0]?.props.disabled).toBe(true);
     expect(screen.findAllByTestId('work.copy:proven-worker-target').length).toBeGreaterThan(0);
+  });
+
+  it('keeps the files-unknown warning at section level after the retired copy disappears, until dismissed', async () => {
+    const { screen } = await setup({ waive: ['projects.worker.copy.retire'] });
+    const { scope, source, target } = await seedWorkerCopy();
+    let retired = false;
+    const retire = vi.fn(async () => {
+      retired = true;
+      return { ok: false, error: 'unknown', errorCode: 'workspace_copy_removal_unknown', details: { kind: 'outcomeUnknown' } };
+    });
+    rpc.machine.mockImplementation(async ({ method }: { method: string }) => {
+      if (method === 'projects.worker.copy.retire') return await retire();
+      if (method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT) {
+        if (retired) throw new Error('bootstrap_definition_conflict');
+        return { ok: true, preview: {
+          targetMachineId: 'm1', workspaceRefId: 'fresh-target', rootFingerprint: 'a'.repeat(64), sizeBytes: 4 } };
+      }
+      throw new Error(`unexpected_rpc:${method}`);
+    });
+    const menu = () => screen.findAll((node) => typeof node.props.onSelect === 'function'
+      && Array.isArray(node.props.items) && node.props.items.some((item: { id: string }) => item.id === 'files'))[0]!;
+    await vi.waitFor(() => expect(menu()).toBeTruthy());
+    await act(async () => { menu().props.onSelect('files'); });
+    await vi.waitFor(() => expect(retire).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(screen.findAllByTestId('work.copy:proven-worker-target.notice')[0]?.props.title)
+      .toBe('projectWorkers.removeFilesUnknown'));
+    await act(async () => {
+      storage.getState().applyProjectAccountRowsForScope(scope, { scope, status: 'ready', coverage: 'complete',
+        workspaceRefs: [source, target], relationships: [], organizations: [], revisionsByPhysicalKey: {} });
+    });
+    const notice = () => screen.findAllByTestId('work.copies.notice:proven-worker-target')[0]?.props;
+    await vi.waitFor(() => expect(notice()?.title).toBe('projectWorkers.copyDefinitionRetired'));
+    expect(notice()?.description).toBe('projectWorkers.removeFilesUnknown');
+    expect(notice()?.points).toEqual([[{ code: '/worker/project' }]]);
+    expect(screen.findAllByTestId('work.copy:proven-worker-target')).toEqual([]);
+    await act(async () => { notice()?.action?.onPress(); });
+    expect(retire).toHaveBeenCalledTimes(1);
+    // Unavailable census is not fresh proof of definition retirement; retain the captured warning.
+    await act(async () => { storage.getState().setProjectAccountRowsStatusForScope(scope, 'locked'); });
+    expect(notice()?.title).toBe('projectWorkers.removeFilesUnknown');
+    expect(notice()?.points).toEqual([[{ code: '/worker/project' }]]);
+    await act(async () => { storage.getState().setProjectAccountRowsStatusForScope(scope, 'ready'); });
+    await act(async () => { notice()?.onDismiss(); });
+    expect(screen.findAllByTestId('work.copies.notice:proven-worker-target')).toEqual([]);
+    expect(screen.findAllByTestId('work.copies.empty').length).toBeGreaterThan(0);
   });
 
   it('does not claim Fresh-copy emptiness when the current Account/Home row observation is unavailable', async () => {

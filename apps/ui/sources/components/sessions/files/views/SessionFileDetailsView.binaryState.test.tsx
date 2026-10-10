@@ -4,6 +4,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { standardCleanup } from '@/dev/testkit';
 import { createSessionFilesViewFixture, fileViewSnapshot, installSessionFilesViewBoundaries, prepareSessionFilesViewTestkit } from './sessionFilesViewTestkit';
 import { createSessionFileNativeTransferBoundary } from '../sessionFileNativeTransferTestkit';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 
 installSessionFilesViewBoundaries();
 let fixture: Awaited<ReturnType<typeof createSessionFilesViewFixture>>;
@@ -55,8 +56,8 @@ describe('SessionFileDetailsView (binary)', () => {
         await act(async () => { await screen.pressByTestIdAsync('file-header-download'); });
         expect(fixture.requests).toEqual(expect.arrayContaining([expect.objectContaining({
             targetId: 'm1',
-            method: 'daemon.directTransfer.export.prepare',
-            payload: expect.objectContaining({ path: '/workspace/' + filePath, asZip: false }),
+            method: getActionSpec('daemon.filesystem.download').bindings?.rpcMethod,
+            payload: expect.objectContaining({ input: expect.objectContaining({ rootPath: '/workspace', path: '/workspace/' + filePath, asZip: false }) }),
         })]));
     });
 });

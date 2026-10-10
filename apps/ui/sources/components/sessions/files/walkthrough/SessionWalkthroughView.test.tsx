@@ -244,7 +244,10 @@ async function mountWithAccountMarks(sessionId: string) {
 }
 
 describe('SessionWalkthroughView retained offline reading through real Account marks', () => {
-    it('starts workspace-native generation and observes its exact Run output without Session notifications', async () => {
+    it.each([
+        { name: 'retires workspace-native generation at silent heartbeat expiry and recovers on heartbeat', expiry: true },
+        { name: 'starts workspace-native generation and observes its exact Run output without Session notifications', expiry: false },
+    ])('$name', async ({ expiry }) => {
         boundary.capabilities = async () => ({ protocolVersion: 1, results: {
             'tool.executionRuns': { ok: true, checkedAt: Date.now(), data: { backends: { claude: { available: true } } } },
         } });
@@ -271,9 +274,23 @@ describe('SessionWalkthroughView retained offline reading through real Account m
             return <ScmWalkthroughView bound={bound} displayMachineId={machine.id} serverId={home.id} comparison={{ kind: 'workingTree' }}
                 scopeLabel="Workspace" layout="wide" renderBar={actions => actions} onShowFiles={() => {}} onOpenFile={() => {}} />;
         }
+        if (expiry) {
+            vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+            restoreObservationClock = () => vi.useRealTimers();
+        }
         const screen = await renderScreen(<Workspace />, { wrapper: ({ children }) =>
             <InjectedAuthProvider credentials={accountCredentials}>{children}</InjectedAuthProvider> });
         await vi.waitFor(() => expect(screen.findByTestId('walkthrough-start')?.props.disabled).toBe(false));
+        if (expiry) {
+            await act(async () => { vi.advanceTimersByTime(60_001); });
+            expect(screen.findByTestId('walkthrough-start')?.props.disabled).toBe(true);
+            expect(generationCalls()).toEqual([]);
+            const heartbeat = { ...machine, activeAt: Date.now() };
+            await act(async () => { getStorage().setState({ machines: { [machine.id]: heartbeat }, machineListByServerId: { [home.id]: [heartbeat] } }); });
+            expect(screen.findByTestId('walkthrough-start')?.props.disabled).toBe(false);
+            await screen.unmount();
+            return;
+        }
         await screen.pressByTestIdAsync('walkthrough-start');
         await vi.waitFor(() => expect(boundary.calls).toContainEqual(expect.objectContaining({
             method: RPC_METHODS.DAEMON_EXECUTION_RUN_GET, payload: { runId: 'native-run', includeStructured: true,

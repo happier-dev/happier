@@ -32,7 +32,7 @@ function lifetime(): ServerAccountScopeLifetime & { retire(): void } {
 describe('searchWorkspaceFileContents', () => {
     beforeEach(() => { rpc.call.mockReset(); });
 
-    it('requests only matching lines from the exact Home and Account without rewriting query text', async () => {
+    it('requests the displayed two context lines from the exact Home and Account without rewriting query text', async () => {
         const files = [{ path: 'src/a.ts', matches: [{ line: 4, column16: 4, length16: 6, text: 'é😀needle', before: ['before'], after: ['after'] }] }];
         rpc.call.mockResolvedValue({ ok: true, files, hasMore: true, coverage: 'partial' });
         const page = await searchWorkspaceFileContents({ scope, accountLifetime: lifetime(), query: ' needle ' });
@@ -40,7 +40,7 @@ describe('searchWorkspaceFileContents', () => {
         expect(rpc.call).toHaveBeenCalledWith(expect.objectContaining({
             serverId: 'home-b', accountId: 'account-b', machineId: 'machine-b',
             method: 'daemon.workspaceFiles.search.v1', operationTimeoutMs: null,
-            payload: { rootPath: '/repo/B', query: ' needle ', contextLines: 0 },
+            payload: { rootPath: '/repo/B', query: ' needle ', contextLines: 2 },
         }));
         rpc.call.mockResolvedValueOnce({ ok: true, files, hasMore: false, coverage: 'partial' });
         await expect(searchWorkspaceFileContents({ scope, accountLifetime: lifetime(), query: 'needle' }))

@@ -58,11 +58,11 @@ async function advanceRestoreTimers(times = 1): Promise<void> {
 }
 
 describe('useInitialScrollRestore', () => {
-    it('applies initial scroll when user has not scrolled', async () => {
+    it('restores on mount without jumping again when the persisted seed follows a reader scroll', async () => {
         const scrollTopRef = { current: 0 };
         const apply = vi.fn(() => true);
 
-        await renderInitialScrollRestoreHarness({
+        const hook = await renderInitialScrollRestoreHarness({
             initial: 1200,
             latestScrollTopRef: scrollTopRef,
             applyInitialScrollTop: apply,
@@ -72,6 +72,13 @@ describe('useInitialScrollRestore', () => {
 
         expect(apply).toHaveBeenCalledTimes(1);
         expect(apply).toHaveBeenCalledWith(1200);
+
+        act(() => { scrollTopRef.current = 1800; });
+        await hook.rerender({ initial: 1800, latestScrollTopRef: scrollTopRef, applyInitialScrollTop: apply });
+        await act(async () => { await vi.runOnlyPendingTimersAsync(); });
+
+        expect(scrollTopRef.current).toBe(1800);
+        expect(apply.mock.calls).toEqual([[1200]]);
     });
 
     it('does not apply initial scroll if user scrolls before restore fires', async () => {

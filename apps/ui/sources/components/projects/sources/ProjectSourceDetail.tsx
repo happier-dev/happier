@@ -7,6 +7,9 @@ import type {
   SourceAttachmentV1,
 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { PromptArtifactRefV1 } from '@happier-dev/protocol/prompts/library/promptArtifactRefsV1';
+import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
@@ -71,6 +74,10 @@ function describeAudience(
     : t('projects.sources.audienceCount', { count: grants.length });
 }
 
+function sourceAudienceDescription(creating: boolean): string {
+  return creating ? t('projects.sources.shareAfterSave') : t('projects.sources.ownCredential');
+}
+
 /**
  * "Who can see it" (lab `p-sources`): who can use this Source, opening the one Source share sheet
  * (Account, Team or group; view grants only). The disclosure above says exactly what they can read.
@@ -81,6 +88,8 @@ const SourceAudienceRow = React.memo(function SourceAudienceRow(
     /** The share sheet opens only on a saved Source this person may manage. */
     onShare: (() => void) | null;
     creating: boolean;
+    /** On a phone the row is label + value only; its sentence moves to the section description. */
+    compact: boolean;
     testID: string;
   }>,
 ) {
@@ -88,11 +97,7 @@ const SourceAudienceRow = React.memo(function SourceAudienceRow(
     <Item
       testID={props.testID}
       title={t('projects.sources.sharedWith')}
-      subtitle={
-        props.creating
-          ? t('projects.sources.shareAfterSave')
-          : t('projects.sources.ownCredential')
-      }
+      subtitle={props.compact ? undefined : sourceAudienceDescription(props.creating)}
       detail={props.summary}
       showChevron={props.onShare !== null}
       {...(props.onShare ? { onPress: props.onShare } : {})}
@@ -106,11 +111,19 @@ const DashboardAttachmentRow = React.memo(function DashboardAttachmentRow(
     reference: PromptArtifactRefV1;
     /** The Home this page reads; a reference qualified to another Home is never read from this one's cache. */
     serverId: string;
+    sourceId: string;
     canDetach: boolean;
     onDetach: (reference: PromptArtifactRefV1) => void;
+    onOpen?: (reference: PromptArtifactRefV1, workspace: WorkspaceAddressV1) => void;
   }>,
 ) {
   const { theme } = useUnistyles();
+  const refs = useWorkspaceRefs();
+  const [open, setOpen] = React.useState(false);
+  const checkouts = React.useMemo(() => refs.filter(ref => ref.source?.sourceId === props.sourceId
+      && areServerProfileIdentifiersEquivalent(ref.serverId, props.serverId))
+      .filter(ref => resolveWorkspaceRefByAddress(refs, workspaceAddressFromRefV1(ref)).kind === 'resolved'),
+    [props.serverId, props.sourceId, refs]);
   const elsewhere =
     props.reference.serverId !== undefined &&
     !areServerProfileIdentifiersEquivalent(
@@ -121,13 +134,14 @@ const DashboardAttachmentRow = React.memo(function DashboardAttachmentRow(
   const artifact = elsewhere ? null : cached;
   const loaded = useArtifactsLoaded() || elsewhere;
   const readable = artifact !== null && artifact.isDecrypted;
+  const canOpen = !elsewhere && readable && checkouts.length > 0 && props.onOpen !== undefined;
   const access =
     artifact?.access === 'edit'
       ? t('shareSheet.documents.levels.canEdit')
       : artifact?.access === 'view'
         ? t('shareSheet.documents.levels.canRead')
         : null;
-  return (
+  const row = (showPicker?: () => void) => (
     <Item
       testID={`projects.sources.dashboard.${props.reference.serverId ?? props.serverId}:${props.reference.artifactId}`}
       icon={
@@ -153,7 +167,11 @@ const DashboardAttachmentRow = React.memo(function DashboardAttachmentRow(
               ? t('projects.dashboard.unavailable')
               : undefined
       }
-      showChevron={false}
+      showChevron={canOpen}
+      {...(canOpen ? { onPress: () => {
+        if (checkouts.length === 1) props.onOpen?.(props.reference, workspaceAddressFromRefV1(checkouts[0]!));
+        else showPicker?.();
+      } } : {})}
       rightElement={
         props.canDetach ? (
           <RoundButton
@@ -167,6 +185,17 @@ const DashboardAttachmentRow = React.memo(function DashboardAttachmentRow(
       }
     />
   );
+  return checkouts.length > 1 && canOpen ? <DropdownMenu
+    testID={`projects.sources.dashboard.${props.reference.serverId ?? props.serverId}:${props.reference.artifactId}.checkouts`}
+    open={open} onOpenChange={setOpen} selectedId="" header={t('projects.sources.checkoutsTitle')}
+    trigger={({ openMenu }) => row(openMenu)}
+    items={checkouts.map((ref, index) => ({ id: String(index), title: ref.label ?? ref.rootPath,
+      subtitle: formatPathRelativeToHome(ref.rootPath) }))}
+    onSelect={id => {
+      setOpen(false);
+      const checkout = checkouts[Number(id)];
+      if (checkout) props.onOpen?.(props.reference, workspaceAddressFromRefV1(checkout));
+    }} /> : row();
 });
 
 /** "Your checkouts": the exact Project checkouts this Source was opened into, per machine. */
@@ -242,6 +271,7 @@ export type ProjectSourceDetailProps = Readonly<{
   onDiscardCreate: () => void;
   onOpen: (source: ProjectSourceV1) => void;
   onOpenCheckout: (workspaceRefId: string) => void;
+  onOpenDashboard?: (sourceId: string, reference: PromptArtifactRefV1, workspace: WorkspaceAddressV1) => void;
   onDeleted: () => void;
 }>;
 
@@ -433,11 +463,12 @@ export const ProjectSourceDetail = React.memo(function ProjectSourceDetail(
 
   const detach = React.useCallback(
     (reference: PromptArtifactRefV1) => {
+      if (!current) return;
       void controller.updateSource({
         attachment: { kind: 'detach', purpose: 'dashboard', ref: reference },
-      });
+      }, current);
     },
-    [controller],
+    [controller, current],
   );
 
   if (!props.creating && !current) {
@@ -703,6 +734,7 @@ export const ProjectSourceDetail = React.memo(function ProjectSourceDetail(
           value={(props.creating ? newDraft?.defaultRef : view?.defaultRef) || null}
           defaultLabel={t('projects.sources.repositoryDefault')}
           disabled={!canEdit}
+          compact={compact}
           onChange={(value) => {
             if (props.creating) controller.editCreation({ defaultRef: value ?? '' });
             else controller.edit({ defaultRef: value ?? undefined });
@@ -747,11 +779,14 @@ export const ProjectSourceDetail = React.memo(function ProjectSourceDetail(
       </ItemGroup>
       <ItemGroup
         title={t('projects.sources.audience')}
-        description={t('projects.sources.disclosure')}
+        description={compact
+          ? `${t('projects.sources.disclosure')} ${sourceAudienceDescription(props.creating)}`
+          : t('projects.sources.disclosure')}
       >
         <SourceAudienceRow
           testID="projects.sources.detail.audience"
           creating={props.creating}
+          compact={compact}
           summary={describeAudience(
             (props.creating ? newDraft?.audience : view?.audience) ?? [],
             props.teamName,
@@ -788,9 +823,11 @@ export const ProjectSourceDetail = React.memo(function ProjectSourceDetail(
             <DashboardAttachmentRow
               key={`${attachment.ref.serverId ?? props.controller.scope.serverId}:${attachment.ref.artifactId}`}
               reference={attachment.ref}
+              sourceId={current.id}
               serverId={props.controller.scope.serverId}
               canDetach={canEdit}
               onDetach={detach}
+              onOpen={props.onOpenDashboard ? (reference, workspace) => props.onOpenDashboard?.(current.id, reference, workspace) : undefined}
             />
           ))}
         </ItemGroup>

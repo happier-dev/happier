@@ -14,7 +14,7 @@ vi.mock('@/text', async () => {
 });
 
 const { renderScreen } = await import('@/dev/testkit/render/renderScreen');
-const { createScmDiffSummaryResultOperations } = await import('@/sync/ops/scmDiffSummary/results');
+const { createScmDiffSummaryResultOperationsWithTransport: createScmDiffSummaryResultOperations } = await import('@/dev/testkit/harness/scmActionTransport');
 const { WalkthroughSavedActions } = await import('./WalkthroughSavedActions');
 
 const SAVED = ScmDiffSummaryResultSchema.parse({

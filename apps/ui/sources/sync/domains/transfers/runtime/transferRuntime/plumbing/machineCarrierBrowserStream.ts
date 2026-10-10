@@ -42,6 +42,7 @@ import {
     MACHINE_CARRIER_INTERRUPTED_TRANSFER_ERROR,
     mintSignedMachineCarrierHandshake,
 } from './machineCarrierHttpLease';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
 /** The only ALPN this seam dials. Shared constant with happier-iroh-core. */
 export const MACHINE_CARRIER_BROWSER_ALPN_V1 = MACHINE_ALPN;
@@ -141,6 +142,7 @@ export async function acquireBrowserMachineCarrierStreamLease(input: Readonly<{
     machineId: string;
     serverId?: string | null;
     signal?: AbortSignal;
+    accountLifetime?: ServerAccountScopeLifetime;
     acquireEndpointLease: AcquireBrowserMachineCarrierEndpointLease;
     openMachineCarrierStream: OpenMachineCarrierStream;
 }>): Promise<MachineCarrierBrowserStreamLease> {
@@ -151,6 +153,7 @@ export async function acquireBrowserMachineCarrierStreamLease(input: Readonly<{
         const minted = await mintSignedMachineCarrierHandshake({
             machineId: input.machineId,
             serverId: input.serverId,
+            accountLifetime: input.accountLifetime,
             resolveInitiatorEndpointId: async (relayUrls) => {
                 const lease = await input.acquireEndpointLease(relayUrls);
                 custody.endpointLease = lease;

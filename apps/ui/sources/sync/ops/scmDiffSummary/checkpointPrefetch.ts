@@ -10,6 +10,8 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { getAcpCatalogSnapshot } from '@/sync/store/settings/acpCatalogSnapshot';
+import { refreshAcpCatalog } from '@/sync/engine/settings/acpCatalogEngine';
 import { resolveScmDiffSummaryModelSelection, resolveScmDiffSummarySettings } from '@/settings/scmDiffSummary/settings';
 import { prefetchScmDiffSummary, readCompletedScmDiffSummaryCheckpointReceipt, retireScmDiffSummaryScope } from './generate';
 
@@ -32,6 +34,13 @@ export async function prefetchCompletedCheckpointMessages(params: Readonly<{
     const metadata = readSessionOwnerMetadataView(params.session);
     const cwd = metadata?.path?.trim();
     if (!cwd) return;
+    let catalog = getAcpCatalogSnapshot(params.lifetime.scope);
+    if (!catalog || catalog.stale) {
+        await refreshAcpCatalog(params.lifetime.scope);
+        if (!current()) return;
+        catalog = getAcpCatalogSnapshot(params.lifetime.scope);
+    }
+    if (catalog?.catalog.status !== 'ready' || catalog.stale) return;
     const defaults = resolveSessionActionDefaultBackend({ session: params.session });
     let defaultBackendTarget: BackendTargetRefV2 | null = defaults?.backendTarget ?? null;
     if (!defaultBackendTarget && defaults?.agentTarget) {
@@ -41,7 +50,7 @@ export async function prefetchCompletedCheckpointMessages(params: Readonly<{
             const projection = readCachedDaemonMergedProjectionCacheEntry({ machineId: metadata?.machineId, serverId: params.lifetime.scope.serverId });
             const inputs = projection && 'inputs' in projection ? projection.inputs : null;
             const entries = getResolvedBackendCatalogEntries({ enabledAgentIds: [],
-                acpCatalogSettingsV1: params.settings.acpCatalogSettingsV1 ?? { v: 2, backends: [] },
+                acpCatalogSnapshot: catalog.catalog,
                 backendEnabledByTargetKey: params.settings.backendEnabledByTargetKey,
                 mergedProviderProjectionById: inputs?.mergedProviderProjectionById,
                 mergedBackendProjectionById: inputs?.mergedBackendProjectionById,

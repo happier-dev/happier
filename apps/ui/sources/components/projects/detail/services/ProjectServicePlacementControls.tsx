@@ -10,6 +10,7 @@ import { ProjectServiceRelocateResultV1Schema } from '@happier-dev/protocol/work
 import { ProjectServicePlacementObservationProvider, useProjectServicePlacementObservation } from './projectServicePlacementObservation';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import type { ProjectExecutionChoiceV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
+import { projectExecutionChoicesEqualV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
 
 import {
   useObservedWorkerSetting,
@@ -118,6 +119,16 @@ export function useProjectServicePlacement(
   return { ...setting, address, actual, desiredPlacement, displayChoice, canSaveNextStart, canMove, save };
 }
 
+function sameChoice(left: ProjectExecutionChoiceV1, right: ProjectExecutionChoiceV1): boolean {
+  if (left.kind !== right.kind) return false;
+  if (left.kind === 'primary' || right.kind === 'primary') return true;
+  const a = left.destination;
+  const b = right.destination;
+  return a.kind === 'machine'
+    ? b.kind === 'machine' && a.machineId === b.machineId
+    : b.kind === 'pool' && a.poolId === b.poolId;
+}
+
 function noticeText(notice: ObservedWorkerSettingNotice): string | null {
   switch (notice) {
     case 'saving':
@@ -134,19 +145,6 @@ function noticeText(notice: ObservedWorkerSettingNotice): string | null {
     default:
       return null;
   }
-}
-
-function sameChoice(
-  left: ProjectExecutionChoiceV1,
-  right: ProjectExecutionChoiceV1,
-): boolean {
-  if (left.kind !== right.kind) return false;
-  if (left.kind === 'primary' || right.kind === 'primary') return true;
-  const a = left.destination;
-  const b = right.destination;
-  return a.kind === 'machine'
-    ? b.kind === 'machine' && a.machineId === b.machineId
-    : b.kind === 'pool' && a.poolId === b.poolId;
 }
 
 /** The running instance is already on the chosen exact Machine: Move would be a no-op (32 §9). */

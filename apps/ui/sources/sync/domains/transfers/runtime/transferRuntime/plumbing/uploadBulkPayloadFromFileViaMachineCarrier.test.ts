@@ -3,11 +3,32 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const prepareImportSessionMock = vi.hoisted(() => vi.fn());
 const resolveMachineCarrierRouteMock = vi.hoisted(() => vi.fn());
 
+// The Home profile and credential stores are device persistence boundaries;
+// captureLazyActionAccountContext and its actual lifetime remain real.
+vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => {
+    const { createPartialServerProfilesModuleMock } = await import('@/dev/testkit/mocks/serverProfiles');
+    return await createPartialServerProfilesModuleMock(importOriginal, { profiles: [
+        { id: 'server-1', serverUrl: 'https://server-1.example.test' },
+        { id: 'server-2', serverUrl: 'https://server-2.example.test' },
+    ] });
+});
+vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/auth/storage/tokenStorage')>(),
+    TokenStorage: { getCredentialsForServerUrl: async () => ({ token: `header.${btoa(JSON.stringify({ sub: 'account-original' }))}.signature` }) },
+}));
+
 // Machine RPC and the carrier route/lease are the genuine network and
 // transport boundaries of this owner; prepare, chunking, finalize, and the
 // finalize-recovery continuation below stay real.
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/guardedMachineRpc', () => ({
-    callGuardedMachineRpcWithPolicy: (...args: unknown[]) => prepareImportSessionMock(...args),
+    callGuardedMachineRpcWithPolicy: async (params: { method: string; payload: { input?: { source?: { sourceId: string } } } }) => {
+        const result = await prepareImportSessionMock(params);
+        if (params.method === 'daemon.filesystem.upload' && result?.success === true && typeof result.uploadId === 'string') {
+            const { success: _success, ...prepared } = result;
+            return { success: true, status: 'accepted', operationId: 'upload-operation', sourceId: params.payload.input?.source?.sourceId, prepared };
+        }
+        return result;
+    },
 }));
 // The carrier copy is restated instead of re-exported from the real module:
 // loading it inside the factory rebinds the unmocked route resolution for the
@@ -52,6 +73,7 @@ describe('uploadBulkPayloadFromFileViaMachineCarrier', () => {
 
         resolveMachineCarrierRouteMock.mockResolvedValue({
             kind: 'iroh_peer',
+            serverId: 'server-1',
             carrierKind: 'browser_stream',
             acquire: async (input: Readonly<{ operationId: string; signal?: AbortSignal }>) => {
                 acquisitionSignals.push(input.signal);
@@ -156,8 +178,9 @@ describe('uploadBulkPayloadFromFileViaMachineCarrier', () => {
         });
         // The live upload keeps this operation's cancellation; the deferred
         // recovery acquisition never carries the completed batch signal.
-        expect(acquisitionSignals[0]).toBe(batch.signal);
+        expect(acquisitionSignals[0]?.aborted).toBe(true);
         expect(acquisitionSignals).toHaveLength(2);
+        expect(acquisitionSignals[1]).not.toBe(acquisitionSignals[0]);
         expect(acquisitionSignals[1]?.aborted ?? false).toBe(false);
         expect(finalizeCalls).toEqual([
             'lease-1 http://127.0.0.1:46001/machine-transfers/direct/imports/browser-batch-recovery-1/finalize?grant=kept',

@@ -3,18 +3,19 @@ import { resolveFilesystemErrorReason } from '@/components/ui/filesystemBrowser/
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 
-/** Root directory failures are filesystem failures, not SCM-unavailable states. */
+/** Files failures belong here, including an unresolved target before any directory read. */
 export function RepositoryTreeRootErrorState(props: Readonly<{
-    error: string;
     /** The machine the files live on, so the title says where the listing failed. */
     machineName?: string | null;
     onRetry: () => void;
-}>) {
-    const reason = resolveFilesystemErrorReason(props.error);
+}> & (Readonly<{ kind?: 'error'; error: string }> | Readonly<{ kind: 'unavailable'; error?: never }>)) {
+    const reason = props.kind === 'unavailable'
+        ? t('files.pane.workspaceUnavailableReason')
+        : resolveFilesystemErrorReason(props.error);
 
     return <SurfaceStateCard
         testID="repository-tree-root-error"
-        kind="error"
+        kind={props.kind ?? 'error'}
         iconName="folder"
         title={props.machineName
             ? t('files.pane.rootErrorTitle', { machine: props.machineName })

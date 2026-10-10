@@ -5,7 +5,7 @@ import type {
     PluginOpenableContentViewerContributionV1,
     WorkspaceFileViewerPreferencesV1,
 } from '@happier-dev/protocol';
-import { serializeOpenableContentPreferenceSelectorV1 } from '@happier-dev/protocol';
+import { accountSettingsParse, serializeOpenableContentPreferenceSelectorV1 } from '@happier-dev/protocol';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 
 import type {
@@ -178,9 +178,18 @@ describe('resolveWorkspaceFileViewer', () => {
 
     it('keeps an unavailable plugin preference intact while visibly falling back to the built-in viewer', () => {
         const preferenceKey = serializeOpenableContentPreferenceSelectorV1({ kind: 'mime', value: 'text/markdown' });
-        const storedPreferences = Object.freeze(preferences({
+        const source = preferences({
+            ...Object.fromEntries(Array.from({ length: 96 }, (_, index) => [
+                serializeOpenableContentPreferenceSelectorV1({ kind: 'extension', value: `.${'x'.repeat(250)}${index}` }),
+                { kind: 'plugin', pluginId: 'plugin.retired', contributionLocalId: 'markdown' },
+            ])),
             [preferenceKey]: { kind: 'plugin', pluginId: 'plugin.retired', contributionLocalId: 'markdown' },
-        }));
+        });
+        expect(new TextEncoder().encode(JSON.stringify(source)).byteLength).toBeGreaterThan(16 * 1024);
+        const storedPreferences = Object.freeze(accountSettingsParse(JSON.parse(JSON.stringify({
+            workspaceFileViewerPreferencesV1: source,
+        }))).workspaceFileViewerPreferencesV1);
+        expect(storedPreferences).toEqual(source);
         const otherwiseMatchingViewer = viewer({
             id: 'markdown',
             mimeTypes: ['text/markdown'],
@@ -210,6 +219,9 @@ describe('resolveWorkspaceFileViewer', () => {
             pluginId: 'plugin.retired',
             contributionLocalId: 'markdown',
         });
+        expect(resolveWorkspaceFileViewer({ metadata: markdownMetadata, preferences: storedPreferences,
+            availablePluginViewers: [candidate({ pluginId: 'plugin.retired', viewer: otherwiseMatchingViewer })],
+        })).toMatchObject({ kind: 'plugin', candidate: { identity: { pluginId: 'plugin.retired', localId: 'markdown' } } });
     });
 
     it('returns to the retained preferred plugin when it becomes available again', () => {

@@ -50,8 +50,8 @@ const relationship = { v: 1 as const, relationshipId: 'link-1', controllerMachin
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
-        useSetting: (key: string) => key === 'workspaceRefsV1' ? refs
-            : key === 'workspaceSyncRelationshipsV1' ? [relationship] : undefined,
+        useWorkspaceRefs: () => refs,
+        useWorkspaceSyncRelationships: () => [relationship],
         useLocalSetting: () => undefined,
         useLocalSettingMutable: () => [undefined, vi.fn()],
         useMachineDisplayNamesById: () => ({}),
@@ -63,7 +63,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
 }));
 
 describe('Project cockpit workspace sync navigation', () => {
-    it('opens the real conflict row into the canonical comparison on narrow overview', async () => {
+    it('opens the real conflict row in Details and retains its comparison across companion changes', async () => {
         standardCleanup();
         resetWorkspaceSyncStatusStoreForTests();
         routerReplace.mockClear();
@@ -89,22 +89,18 @@ describe('Project cockpit workspace sync navigation', () => {
         });
         const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
         const { ProjectCockpitShell } = await import('./ProjectCockpitShell');
-        const render = (surface: 'overview' | 'tabs') => <AppPaneProvider>
+        const render = (surface: 'services' | 'tabs') => <AppPaneProvider>
             <ProjectCockpitShell workspaceRef={refs[0]} scopeId="project:wr_1" activeRootPath="/repo"
                 surface={surface} isFocused onSelectRootPath={vi.fn()} />
         </AppPaneProvider>;
-        const screen = await renderScreen(render('overview'));
+        const screen = await renderScreen(render('tabs'));
         await screen.pressByTestIdAsync('workspace-sync-relationship-link-1-conflicts');
-        expect(routerReplace).toHaveBeenCalledWith('/projects/wr_1/details?worktreeId=%40root');
         await vi.waitFor(() => expect(screen.findByTestId('workspace-sync-conflict-path-list')).not.toBeNull());
         await act(async () => { await screen.update(render('tabs')); });
         expect(screen.findByTestId('workspace-sync-conflict-path-list')).not.toBeNull();
         expect(screen.getTextContent()).toContain('src/example.ts');
-        await act(async () => { await screen.update(render('overview')); });
-        expect(screen.findByTestId('workspace-sync-relationship-link-1-conflicts')).not.toBeNull();
-        routerReplace.mockClear();
-        await screen.pressByTestIdAsync('workspace-sync-relationship-link-1-conflicts');
-        expect(routerReplace).toHaveBeenCalledWith('/projects/wr_1/details?worktreeId=%40root');
+        await act(async () => { await screen.update(render('services')); });
+        await act(async () => { await screen.update(render('tabs')); });
         expect(screen.findByTestId('workspace-sync-conflict-path-list')).not.toBeNull();
         await screen.unmount();
         vi.unstubAllGlobals();

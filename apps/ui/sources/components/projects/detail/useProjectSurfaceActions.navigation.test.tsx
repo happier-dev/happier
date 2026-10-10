@@ -25,6 +25,15 @@ const scopeId = 'project:wr';
 function Wrapper({ children }: React.PropsWithChildren) { return <AppPaneProvider>{children}</AppPaneProvider>; }
 
 describe('project file navigation', () => {
+    it('opens Changes review in its companion without creating a separate Details tab', async () => {
+        const hook = await renderHook(() => ({ pane: useAppPaneScope(scopeId),
+            actions: useProjectSurfaceActions({ scopeId, workspaceRef, activeRootPath: '/repo' }),
+        }), { wrapper: Wrapper });
+        await act(async () => hook.getCurrent().actions.openReviewAllChanges());
+        expect(hook.getCurrent().pane.scopeState?.right).toMatchObject({ isOpen: true, activeTabId: 'git' });
+        expect(hook.getCurrent().pane.scopeState?.details.tabs).toEqual([]);
+        await hook.unmount();
+    });
     it('reveals through Files pane state and retains the current details draft', async () => {
         const hook = await renderHook(() => ({
             pane: useAppPaneScope(scopeId),

@@ -6,7 +6,6 @@ import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/pro
 import { SessionDraftAddressV2Schema } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { randomUUID } from '@/platform/randomUUID';
-import { useOpenProject } from '../useOpenProject';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { ensureSessionDraftRepositoryHydrated, flushProjectOpenDraftLocally } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 
@@ -16,6 +15,7 @@ import {
 } from '@/components/appShell/workspace/destinationRoute';
 import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { KeyboardStickyFooter } from '@/components/ui/keyboardAvoidance/KeyboardStickyFooter';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
@@ -47,6 +47,7 @@ import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToH
 import { formatOSPlatform } from '@/utils/sessions/sessionUtils';
 import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
 import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs';
+import { WorkspaceActivationSyncFields } from '@/components/workspaces/activation/WorkspaceActivationEditor';
 
 import { ProjectRefSelect } from '../ProjectRefSelect';
 import { formatProjectSourceAddress } from '../sources/projectSourceAddress';
@@ -144,7 +145,6 @@ const ProjectOpenForm = React.memo(function ProjectOpenForm(
   const machines = useAllMachines();
   const presenceNowMs = useMachinePresenceNowMs(machines);
   const checkouts = useWorkspaceRefs();
-  const openProject = useOpenProject();
   const { state: catalog, controller: catalogController } = useProjectSources(
     props.scope,
   );
@@ -200,6 +200,7 @@ const ProjectOpenForm = React.memo(function ProjectOpenForm(
   const setSubject = (next: ProjectOpenSubject) => edit({ subject: next, checkoutId: null, checkoutAddress: null });
   const setMachineId = (next: string) => edit({ machineId: next });
   const setRef = (next: string | null) => edit({ ref: next });
+  const setSubdir = (next: string) => edit({ subdir: next });
   const setUse = (next: ProjectOpenUse) => edit({ use: next });
   const setBranch = (next: string) => edit({ branch: next });
   const setDestination = (next: string) => edit({ destination: next });
@@ -381,9 +382,11 @@ const ProjectOpenForm = React.memo(function ProjectOpenForm(
             subject={subject}
             sourceName={sourceName}
             gitRef={ref}
+            subdir={choiceBase.subdir ?? ''}
             compact={!twoPanes}
             onChooseSource={openSourceSheet}
             onChangeRef={setRef}
+            onChangeSubdir={setSubdir}
           />
           {options.find(option => option.use === effectiveUse)?.candidates.length ? (
             <ItemGroup title={t('projects.open.chooseExact')}>
@@ -433,9 +436,14 @@ const ProjectOpenForm = React.memo(function ProjectOpenForm(
             onChangeDestination={setDestination}
             onChangeBranch={setBranch}
           />
+          {effectiveUse === 'copy' && choiceBase.materialization?.kind === 'sync' ? <WorkspaceActivationSyncFields
+            action={choiceBase.materialization.workspaceAction}
+            onChange={workspaceAction => edit({ materialization: { kind: 'sync',
+              targetPath: effectiveDestination, workspaceAction } })}
+            testIdPrefix="projects.open"
+          /> : null}
           <ProjectOpenOutcome open={open} gitRef={ref}
             machineName={(id) => getMachineDisplayName(machines.find((candidate) => candidate.id === id) ?? null) ?? id}
-            onFocus={(workspace) => openProject(workspace.workspaceId, { serverId: workspace.serverId })}
             onChooseCandidate={candidate => {
             const checkout = workspaceAddressFromRefV1(candidate);
             if (!open.draft) return;
@@ -527,9 +535,11 @@ function ProjectOpenSubjectSection(
     subject: ProjectOpenSubject | null;
     sourceName: string | null;
     gitRef: string | null;
+    subdir: string;
     compact: boolean;
     onChooseSource: () => void;
     onChangeRef: (ref: string | null) => void;
+    onChangeSubdir: (subdir: string) => void;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -560,6 +570,7 @@ function ProjectOpenSubjectSection(
     );
   }
   const source = subject.kind === 'source' ? subject.source : null;
+  const repository = source?.repository ?? (subject.kind === 'repository' ? subject.selector : null);
   const defaultRef = source?.defaultRef ?? null;
   return (
     <ItemGroup title={t('projects.open.source')}>
@@ -571,11 +582,11 @@ function ProjectOpenSubjectSection(
           icon={<Icon name="git-branch" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
           onPress={props.onChooseSource}
         />
-      ) : source ? (
+      ) : repository ? (
         <Item
           testID="projects.open.subject.repository"
           title={t('projects.open.repository')}
-          detail={formatProjectSourceAddress(source.repository)}
+          detail={formatProjectSourceAddress(repository)}
           showChevron={false}
         />
       ) : (
@@ -597,12 +608,16 @@ function ProjectOpenSubjectSection(
         compact={props.compact}
         onChange={props.onChangeRef}
       />
-      {source ? (
-        <Item
+      {repository ? (
+        <FieldValueItem
           testID="projects.open.subject.folder"
           title={t('projects.open.folder')}
-          detail={source.subdir ?? t('projects.sources.wholeRepository')}
-          showChevron={false}
+          value={props.subdir}
+          placeholder={source?.subdir ?? t('projects.sources.wholeRepository')}
+          fieldTestID="projects.open.subject.subdir"
+          monospace
+          autoCapitalize="none"
+          onCommit={props.onChangeSubdir}
         />
       ) : null}
     </ItemGroup>
@@ -648,7 +663,6 @@ function describeProjectOpenUse(
 /** What the last confirmation came to, while it stays on this screen: its step, or the outcome and next action. */
 function ProjectOpenOutcome(props: Readonly<{ open: ReturnType<typeof useProjectOpen>; gitRef: string | null;
     machineName(machineId: string): string;
-    onFocus(workspace: Extract<OpenProjectResultV1, { kind: 'opened' }>['workspace']): void;
     onChooseCandidate(candidate: Parameters<typeof workspaceAddressFromRefV1>[0]): void }>) {
     const result = props.open.result;
     if (props.open.pending) return <AttentionBanner testID="projects.open.pending" tone="neutral" title={t('projects.open.resolving')} />;
@@ -669,7 +683,7 @@ function ProjectOpenOutcome(props: Readonly<{ open: ReturnType<typeof useProject
             return props.open.focusUnavailable ? <AttentionBanner testID="projects.open.acceptedUnfocused" tone="neutral"
               title={t('projects.open.opened', { machine: props.machineName(result.workspace.machineId) })}
               description={result.directory} details={[result.setup]}
-              action={{ label: t('projects.open.focus'), onPress: () => props.onFocus(result.workspace) }} /> : null;
+              action={{ label: t('projects.open.focus'), onPress: () => props.open.submit() }} /> : null;
         case 'ambiguous':
             return <ItemGroup title={t('projects.open.ambiguous')} description={t('projects.open.chooseExact')}>
                 {result.candidates.map(candidate => <Item

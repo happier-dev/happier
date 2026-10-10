@@ -2,7 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderHook, standardCleanup } from '@/dev/testkit';
+import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -134,6 +134,37 @@ describe('useOpenProject', () => {
         ] });
         expect(hook.getCurrent().ref).toBeNull();
         expect(routerPush).not.toHaveBeenCalled();
+    });
+
+    it('recovers focus from the mounted Open screen at the accepted directory without replaying Open', async () => {
+        const { ProjectOpenScreen } = await import('./activation/ProjectOpenScreen');
+        const { writeProjectOpenDraft } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+        const draftId = '00000000-0000-4000-8000-000000000081';
+        const accepted = { kind: 'opened' as const, workspace: { serverId: serverIdA, machineId: 'machine-a',
+            workspaceId: 'wr_1', rootPath: '/repo' }, directory: '/repo/packages/app', setup: 'approvalRequired' as const };
+        workspaceRefs.current.push({ ...workspaceRefs.current[0]!, serverId: serverIdB, rootPath: '/other' });
+        await refreshWorkspaceRefs();
+        storage.getState().applyLocalSettings({ projectLastActiveRootPathByWorkspaceRefId: { wr_1: '/repo/elsewhere' } });
+        writeProjectOpenDraft({ scope: { serverId: serverIdA, accountId: 'account-a' }, draftId,
+            patch: { selection: { serverId: serverIdA, machineId: 'machine-a', source: { kind: 'folder', path: '/repo' },
+                materialization: { kind: 'attach' } }, result: accepted }, materializationIntent: 'seeded' });
+        const screen = await renderScreen(React.createElement(ProjectOpenScreen, { routeParams: { draftId } }), { wrapper: PaneWrapper });
+        await vi.waitFor(() => expect(screen.findByTestId('projects.open.submit')).not.toBeNull());
+        homes.answer(serverIdA, 'POST /v1/account/project-rows/list', { status: 503, body: { error: 'unavailable' } });
+        await screen.pressByTestIdAsync('projects.open.submit');
+        await vi.waitFor(() => expect(screen.findByTestId('projects.open.acceptedUnfocused')).not.toBeNull());
+        expect(routerPush).not.toHaveBeenCalled();
+        const recovery = screen.findByTestId('projects.open.acceptedUnfocused');
+        expect(recovery).not.toBeNull();
+        homes.answer(serverIdA, 'POST /v1/account/project-rows/list', { select: () => ({ body: { status: 'listed', coverage: 'complete', rows } }) });
+        homes.requests.length = 0;
+        await act(async () => { await recovery!.props.action.onPress(); });
+        await vi.waitFor(() => expect(routerPush).toHaveBeenCalledOnce());
+        const href = new URL(routerPush.mock.calls[0]![0], 'https://happier.invalid');
+        expect(href.searchParams.get('serverId')).toBe(serverIdA);
+        expect(href.searchParams.get('activeRootPath')).toBe(accepted.directory);
+        expect(homes.requests.every(request => !request.path.includes('/actions/') && !request.path.includes('/rpc/'))).toBe(true);
+        await screen.unmount();
     });
 
     it('exposes deep-link ambiguity without staging resource or navigation state, and distinguishes missing and invalid', async () => {

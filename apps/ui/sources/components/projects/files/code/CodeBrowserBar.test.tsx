@@ -2,14 +2,19 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { useDeviceType } from '@/utils/platform/responsive';
 
 import { buildCodeBreadcrumbSegments, CodeBrowserBar } from './CodeBrowserBar';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native', async () => {
-    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({});
+    const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
+    const dimensions = { width: 390, height: 844, scale: 3, fontScale: 1 };
+    return createReactNativeNativeMock({ platformOS: 'ios' }, {
+        useWindowDimensions: () => dimensions,
+        Dimensions: { get: () => dimensions },
+    });
 });
 
 vi.mock('react-native-unistyles', async () => {
@@ -45,5 +50,22 @@ describe('Code breadcrumb (plan 13 §2: Back/up updates the route)', () => {
         expect(onNavigateFolder).toHaveBeenLastCalledWith('');
         expect(screen.findByTestId('bar-crumb-3')).toBeFalsy();
         expect(screen.findByTestId('bar-current')).toBeTruthy();
+    });
+
+    it('omits only the duplicate project label on phones, preserving nested up navigation', async () => {
+        const onNavigateFolder = vi.fn();
+        function PhoneBar({ path }: { path: string }) {
+            return <CodeBrowserBar testID="phone-bar" scope={scope} rootLabel="happier" path={path}
+                compact={useDeviceType() === 'phone'} onNavigateFolder={onNavigateFolder}
+                onOpenFile={() => {}} goToFile={false} />;
+        }
+        const screen = await renderScreen(<PhoneBar path="" />);
+        expect(screen.findByTestId('phone-bar-current')).toBeNull();
+        await screen.update(<PhoneBar path="apps/ui/SettingsModal.tsx" />);
+        expect(screen.findByTestId('phone-bar-current')).toBeTruthy();
+        await screen.pressByTestIdAsync('phone-bar-crumb-2');
+        expect(onNavigateFolder).toHaveBeenLastCalledWith('apps/ui');
+        await screen.pressByTestIdAsync('phone-bar-crumb-0');
+        expect(onNavigateFolder).toHaveBeenLastCalledWith('');
     });
 });

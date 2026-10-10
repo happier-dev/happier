@@ -34,6 +34,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { useHeaderHeight } from '@/utils/platform/responsive';
+import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 
 import type { ProjectPageV1 } from '@/components/workspaceCockpit/project/projectCockpitState';
 
@@ -103,6 +104,7 @@ export const ProjectShellHeader = React.memo(function ProjectShellHeader(
 ) {
   const { theme } = useUnistyles();
   const height = useHeaderHeight();
+  const maxWidthStyle = useLayoutMaxWidthStyle();
   const [bandWidth, setBandWidth] = React.useState<number | null>(null);
   const compact = bandWidth !== null && bandWidth < COMPACT_BAND_WIDTH_PX;
   const onLayout = React.useCallback((event: LayoutChangeEvent) => {
@@ -133,6 +135,7 @@ export const ProjectShellHeader = React.memo(function ProjectShellHeader(
       onLayout={onLayout}
       style={[
         styles.band,
+        maxWidthStyle,
         { minHeight: height, borderBottomColor: theme.colors.border.subtle },
       ]}
     >
@@ -327,6 +330,8 @@ export const ProjectCheckoutChip = React.memo(function ProjectCheckoutChip(
 
 const styles = StyleSheet.create(() => ({
   band: {
+    width: '100%',
+    alignSelf: 'center',
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,

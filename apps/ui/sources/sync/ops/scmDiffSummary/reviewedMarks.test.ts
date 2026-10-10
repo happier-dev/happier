@@ -1,14 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ScmComparison } from '@happier-dev/protocol/scm';
+import { ScmReviewedMarkResponseSchema, type ScmComparison } from '@happier-dev/protocol/scm';
 import type { ServerFetch } from '@/sync/http/client';
 import { encodeBase64StoredJsonContentEnvelope } from '@/sync/encryption/base64StoredJsonContent';
 import { dispatchKvBatchUpdate } from '@/sync/engine/socket/kvUpdateDispatcher';
 import { Encryption } from '@/sync/encryption/encryption';
 import { encodeBase64 } from '@/encryption/base64';
-import { createAccountScopedCryptoMaterialSnapshotV1, convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol';
-import { createScmReviewedMarksOperations, clearScmReviewedMarksForComparisonId } from './reviewedMarks';
+import { createActionExecutor, type ActionExecutorDeps, createAccountScopedCryptoMaterialSnapshotV1, convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol';
+import { clearScmReviewedMarksForComparisonId } from './reviewedMarks';
+import { createScmReviewedMarksOperationsWithTransport as createScmReviewedMarksOperations } from '@/dev/testkit/harness/scmActionTransport';
 
-const comparison: ScmComparison = { id: 'basis', source: { kind: 'workingTree' }, repository: { rootPath: '/repo' },
+const comparison: ScmComparison = { id: 'a'.repeat(64), source: { kind: 'workingTree' }, repository: { rootPath: '/repo' },
   endpoints: { before: 'a', after: 'b' }, inventory: { state: 'complete', reasons: [], files: [{ path: 'a.ts',
     changeKind: 'modified', binary: false, generated: false, lockfile: false, evidence: { state: 'available', unifiedDiff: 'patch' },
     occurrences: [0, 1].map(position => ({ id: `exact:${position}`, alias: `c${position}`, path: 'a.ts', position,
@@ -36,6 +37,29 @@ function fixture() {
 }
 
 describe('personal marks Account adapter and live prefix projection', () => {
+  it('honors normalized mark refusal without writing directly to the Account record', async () => {
+    const home = fixture();
+    const executor = createActionExecutor({ isActionEnabled: () => false,
+      scmActionExecute: async () => { throw new Error('Disabled mark reached Machine transport'); },
+    // The fixture retains real Action admission above the Machine boundary.
+    } as unknown as ActionExecutorDeps);
+    const params = { comparison, credentials: { token: 'Account-A' }, request: home.request,
+      shouldContinue: () => true,
+      setReviewedAction: async (refs: readonly string[], reviewed: boolean) => {
+        const action = await executor.execute(reviewed ? 'scm.diffSummary.reviewed.mark' : 'scm.diffSummary.reviewed.unmark', {
+          cwd: '/repo', resultId: 'saved', changeRefs: [...refs],
+        }, { surface: 'ui', externalActionTarget: { kind: 'machine', machineId: 'machine' } });
+        return action.ok ? ScmReviewedMarkResponseSchema.parse(action.result)
+          : { success: false as const, errorCode: action.errorCode ?? 'reviewed_marks_unavailable', error: action.error };
+      },
+    };
+    const ops = createScmReviewedMarksOperations(params);
+    try {
+      expect(await ops.setReviewed(['exact:0'], true)).toMatchObject({ success: false, errorCode: 'action_disabled' });
+      expect(ops.getSnapshot()).toMatchObject({ status: 'error', errorCode: 'action_disabled', record: null });
+      expect(home.request.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
+    } finally { ops.retire(); }
+  });
   it('clears only the deleted comparison identity through real keyless Account transport', async () => {
     const home = fixture();
     home.remote(['exact:0', 'exact:1']);
@@ -50,7 +74,7 @@ describe('personal marks Account adapter and live prefix projection', () => {
       .toMatchObject({ success: false, errorCode: 'account_kv_scope_retired' });
     expect(home.request).not.toHaveBeenCalled();
     home.request.mockImplementation(async path => path.endsWith('/currentness') ? json(currentness)
-      : json({ key: 'workspace:scm-reviewed:v1:basis', value: plain({ ...record('exact:0'), comparisonId: 'other' }), version: 3 }));
+      : json({ key: `workspace:scm-reviewed:v1:${comparison.id}`, value: plain({ ...record('exact:0'), comparisonId: 'other' }), version: 3 }));
     expect(await clearScmReviewedMarksForComparisonId(params)).toMatchObject({ success: false, errorCode: 'reviewed_marks_invalid_record' });
     expect(home.request.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
   });

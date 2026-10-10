@@ -11,6 +11,12 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
 }));
 
 describe('session handoff UI request client', () => {
+    it('keeps the no-copy policy on the source coordinator request', async () => {
+        machineRpc.mockResolvedValue({ ok: false, errorCode: 'existing_session_state_unavailable', error: 'Missing native history' });
+        const { startSessionHandoff } = await import('./sessionHandoffs');
+        await expect(startSessionHandoff({ sourceMachineId: 'source-1', sessionId: 'session-1', targetMachineId: 'target-1', serverId: 'srv_fx14_owned', stateTransfer: 'existing', workspaceAction: { kind: 'none' } })).resolves.toMatchObject({ ok: false, errorCode: 'existing_session_state_unavailable' });
+        expect(machineRpc).toHaveBeenCalledWith(expect.objectContaining({ payload: expect.objectContaining({ stateTransfer: 'existing' }) }));
+    });
     beforeEach(async () => {
         machineRpc.mockReset();
         const serverUrl = 'https://fx14-owned.example.test';
@@ -217,5 +223,13 @@ describe('session handoff UI request client', () => {
             ok: false,
             errorCode: 'UNEXPECTED',
         });
+    });
+
+    it('reports the existing-state update requirement without retrying as transfer on an older source daemon', async () => {
+        machineRpc.mockRejectedValueOnce(Object.assign(new Error('RPC method not available'), { rpcErrorCode: 'RPC_METHOD_NOT_AVAILABLE' }));
+        const { startSessionHandoff } = await import('./sessionHandoffs');
+        await expect(startSessionHandoff({ sourceMachineId: 'source-1', sessionId: 'session-1', targetMachineId: 'target-1', serverId: 'srv_fx14_owned', stateTransfer: 'existing', workspaceAction: { kind: 'none' } })).resolves.toMatchObject({ ok: false, errorCode: 'handoff_existing_state_update_required' });
+        expect(machineRpc).toHaveBeenCalledTimes(1);
+        expect(machineRpc.mock.calls[0]?.[0]?.payload.stateTransfer).toBe('existing');
     });
 });

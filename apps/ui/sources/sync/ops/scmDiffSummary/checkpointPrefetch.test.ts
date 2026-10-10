@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ScmDiffSummaryGenerateInputSchema, ScmDiffSummaryGenerateOutputSchema, type TurnChangeSet } from '@happier-dev/protocol';
 import { createSessionFixture, createToolCallMessageFixture } from '@/dev/testkit';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -7,13 +7,19 @@ import { selectSessionScmWalkthroughKey } from '@/sync/domains/scm/diffSummary/s
 import { buildTurnChangeSetDiffInput } from '../../../../../cli/src/agent/tools/diff/buildTurnChangeSetDiffInput';
 import { prefetchCompletedCheckpointMessages } from './checkpointPrefetch';
 import { getScmDiffSummaryState, retireScmDiffSummaryScope } from './generate';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { storage } from '@/sync/domains/state/storage';
 
 // Authenticated SCM RPC and execution-run RPC are transport boundaries.
 const network = vi.hoisted(() => ({ generate: vi.fn() }));
-vi.mock('@/sync/ops/sessionScm', () => ({ runSessionScmRpc: network.generate }));
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: network.generate }));
 vi.mock('@/sync/ops/sessionExecutionRuns', () => ({ sessionExecutionRunGet: vi.fn() }));
+const harness = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(harness);
+await import('@/sync/ops/actions/defaultActionExecutor');
 
-const scope = { serverId: 'checkpoint-home', accountId: 'checkpoint-account' };
+let scope = { serverId: 'checkpoint-home', accountId: 'checkpoint-account' };
 function createLifetime() {
     let current = true;
     const retirements = new Set<() => void>();
@@ -39,16 +45,26 @@ function message(changeSet: TurnChangeSet = turn) {
         input: buildTurnChangeSetDiffInput({ turnChangeSet: changeSet, protocol: 'codex', rawToolName: 'RepositoryCheckpointDiff' }),
     } });
 }
-const session = createSessionFixture({ id: turn.sessionId, serverId: scope.serverId, latestTurnId: turn.turnId,
-    latestTurnStatus: 'completed', metadata: { path: '/repo', host: 'fixture', homeDir: '/home/fixture', machineId: 'fixture-machine', flavor: 'codex' },
+let session: ReturnType<typeof createSessionFixture>;
+beforeEach(async () => {
+    await harness.reset();
+    const serverId = await harness.addHome({ name: 'Checkpoint Home', serverUrl: 'https://checkpoint-home.example',
+        accountId: 'checkpoint-account', serverIdentityId: 'srv-checkpoint-home' });
+    scope = { serverId, accountId: 'checkpoint-account' };
+    harness.answer(serverId, '/v1/account/encryption/currentness', { body: {
+        mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+    } });
+    session = createSessionFixture({ id: turn.sessionId, serverId, latestTurnId: turn.turnId,
+        latestTurnStatus: 'completed', metadata: { path: '/repo', host: 'fixture', homeDir: '/home/fixture', machineId: 'fixture-machine', flavor: 'codex' } });
+    storage.setState({ sessions: { [session.id]: session } });
 });
 
-afterEach(() => { retireScmDiffSummaryScope(scope); network.generate.mockReset(); });
+afterEach(() => { retireScmDiffSummaryScope(scope); network.generate.mockReset(); standardCleanup(); });
 
 describe('completed checkpoint transcript prefetch', () => {
     it('consumes durable final transcript evidence through the actual generate owner and reuses its run on replay', async () => {
-        network.generate.mockImplementation(async (_sessionId, _method, raw) => {
-            const input = ScmDiffSummaryGenerateInputSchema.parse(raw);
+        network.generate.mockImplementation(async ({ payload }) => {
+            const input = ScmDiffSummaryGenerateInputSchema.parse(payload);
             return ScmDiffSummaryGenerateOutputSchema.parse({ success: true, sourceKey: 'checkpoint-comparison',
                 metadata: { source: input.source, sourceKey: 'checkpoint-comparison' },
                 comparison: { id: 'checkpoint-comparison', source: input.source, repository: { rootPath: '/repo' },
@@ -62,7 +78,7 @@ describe('completed checkpoint transcript prefetch', () => {
         await Promise.all([prefetchCompletedCheckpointMessages(params), prefetchCompletedCheckpointMessages(params)]);
         await prefetchCompletedCheckpointMessages(params);
         expect(network.generate).toHaveBeenCalledTimes(1);
-        expect(network.generate.mock.calls[0]?.[2]).toMatchObject({ cwd: '/repo', sessionId: session.id,
+        expect(network.generate.mock.calls[0]?.[0]?.payload).toMatchObject({ cwd: '/repo', sessionId: session.id,
             source: { kind: 'turnCheckpoint', sessionId: session.id, turnId: turn.turnId,
                 checkpointReceiptId: 'checkpoint.finalized', evidenceMode: 'checkpoint' },
             modelSelector: { backendTargetKey: 'agent:happier.agent.codex/codex' }, outputs: ['walkthrough'],
@@ -88,7 +104,7 @@ describe('completed checkpoint transcript prefetch', () => {
         const { lifetime, retire } = createLifetime();
         const request = prefetchCompletedCheckpointMessages({ session, messages: [message()], lifetime, settings: { 'scm.diffSummary.prefetch': true } });
         await vi.waitFor(() => expect(network.generate).toHaveBeenCalledTimes(1));
-        const signal = network.generate.mock.calls[0]?.[4] as AbortSignal;
+        const signal = network.generate.mock.calls[0]?.[0]?.signal as AbortSignal;
         retire();
         expect(signal.aborted).toBe(true);
         resolve({ success: true, sourceKey: 'late-comparison', metadata: { source: { kind: 'turnCheckpoint' }, sourceKey: 'late-comparison' },

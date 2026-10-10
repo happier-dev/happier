@@ -1,107 +1,25 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { standardCleanup } from '@/dev/testkit';
+import { createSessionFilesViewFixture, installSessionFilesViewBoundaries, prepareSessionFilesViewTestkit } from './sessionFilesViewTestkit';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
-
-import { installSessionFilesViewCommonModuleMocks } from './sessionFilesViewsTestHelpers';
-
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-(globalThis as any).__DEV__ = false;
-
-installSessionFilesViewCommonModuleMocks({
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            Platform: {
-                OS: 'web',
-                select: (spec: Record<string, unknown>) =>
-                    spec && Object.prototype.hasOwnProperty.call(spec, 'web') ? (spec as any).web : (spec as any).default,
-            },
-        });
-    },
-    storage: async (importOriginal) => {
-        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        return createPartialStorageModuleMock(importOriginal, {
-            storage: {
-                getState: () => ({
-                    sessions: {
-                        s1: {
-                            metadata: { machineId: 'm1', host: 'mbp', path: '/repo' },
-                        },
-                    },
-                    getProjectForSession: () => ({ key: { machineId: 'm1', rootPath: '/repo' } }),
-                    setSessionRepositoryTreeExpandedPaths: vi.fn(),
-                }),
-            } as any,
-            useSession: () => ({ active: true, metadata: { machineId: 'm1', host: 'mbp', path: '/repo' } }) as any,
-            useProjectForSession: () => ({ key: { serverId: 'server', machineId: 'm1', rootPath: '/repo' } }) as any,
-            useAllMachines: () => ([{ id: 'm1', active: true, activeAt: 1, metadata: { host: 'mbp', platform: 'darwin', happyCliVersion: '0', happyHomeDir: '/tmp/.h', homeDir: '/tmp' } }]) as any,
-            useMachine: () => ({ id: 'm1' }) as any,
-            useSessionRepositoryTreeExpandedPaths: () => [],
-            useSessionProjectScmSnapshot: () => null,
-        });
-    },
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Octicons: 'Octicons',
-    // Simulate the production/export failure mode where this icon set resolves to undefined.
+installSessionFilesViewBoundaries();
+vi.mock('@expo/vector-icons', async () => ({
+    ...(await import('@/dev/testkit')).createExpoVectorIconsMock(),
+    // Reproduce the native icon export boundary failure without replacing browser logic.
     Ionicons: undefined,
 }));
+vi.mock('@/text', async () => (await import('@/dev/testkit')).createTextModuleMock({ translate: key => key }));
 
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
-}));
-
-vi.mock('@/components/ui/lists/ItemRowActions', () => ({
-    ItemRowActions: (props: any) => React.createElement('ItemRowActions', props),
-}));
-
-vi.mock('@/hooks/session/files/useWorkspaceFileTransfers', () => ({
-    useWorkspaceFileTransfers: () => ({
-        uploadState: { status: 'idle' },
-        downloadState: { status: 'idle' },
-        startUploads: vi.fn(async () => ({ ok: true })),
-        cancelUploads: vi.fn(),
-        startDownload: vi.fn(async () => ({ ok: true })),
-        cancelDownload: vi.fn(),
-    }),
-}));
-
-vi.mock('@/components/sessions/agents/presentation/useSessionMachineName', () => ({
-    useSessionMachineName: () => 'MacBook Pro',
-}));
-
-vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
-    useSessionMachineReachability: () => ({
-        machineReachable: true,
-        machineOnline: true,
-        machineRpcTargetAvailable: true,
-    }),
-}));
-
-vi.mock('@/hooks/session/useSessionWorkspaceTarget', () => ({
-    useSessionWorkspaceTarget: () => ({
-        workspaceCacheKey: 'server:m1:/repo',
-        machineId: 'm1',
-        rootPath: '/repo',
-        serverId: 'server',
-    }),
-}));
-
-vi.mock('@/components/projects/files/WorkspaceRepositoryTreeList', () => ({
-    WorkspaceRepositoryTreeList: (props: any) => React.createElement('View', { ...props, testID: 'workspace-repository-tree-list' }),
-}));
-
-describe('SessionRepositoryTreeBrowserView (vector icons missing)', () => {
-    it('does not crash when Ionicons resolves to undefined', async () => {
+describe('Session browser icon boundary', () => {
+    let fixture: Awaited<ReturnType<typeof createSessionFilesViewFixture>> | undefined;
+    beforeAll(prepareSessionFilesViewTestkit);
+    afterEach(async () => { standardCleanup(); await fixture?.dispose(); });
+    it('remains usable when the Ionicons export is unavailable', async () => {
+        fixture = await createSessionFilesViewFixture({ rootPath: '/missing-icon-browser' });
         const { SessionRepositoryTreeBrowserView } = await import('./SessionRepositoryTreeBrowserView');
-        await expect(renderScreen(
-            <SessionRepositoryTreeBrowserView
-                sessionId="s1"
-                onOpenFile={() => {}}
-            />,
-        )).resolves.toBeTruthy();
-        standardCleanup();
+        const screen = await fixture.render(<SessionRepositoryTreeBrowserView sessionId="s1" serverId={fixture.scope.serverId} onOpenFile={() => {}} />);
+        expect(screen.findByTestId('repository-tree-search')).toBeTruthy();
+        expect(screen.findByTestId('repository-tree-view-menu')).toBeTruthy();
     });
 });

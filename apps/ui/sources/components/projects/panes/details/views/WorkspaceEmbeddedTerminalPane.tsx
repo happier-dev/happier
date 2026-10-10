@@ -5,8 +5,7 @@ import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/worksp
 import { EmbeddedTerminalPane } from '@/components/terminal/embedded/EmbeddedTerminalPane';
 import type { EmbeddedTerminalRendererHandle } from '@/components/terminal/embedded/embeddedTerminalRendererHandle';
 import { useMachineTerminalSession } from '@/hooks/machine/useMachineTerminalSession';
-import { useServerScopedMachine } from '@/sync/domains/state/storage';
-import { getMachineDisplayName, isMachineOnline } from '@/utils/sessions/machineUtils';
+import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
 import { t } from '@/text';
 import { useEmbeddedTerminalPresentation } from '@/components/terminal/embedded/useEmbeddedTerminalPresentation';
 import { useSessionTerminalActionExecute } from '@/components/sessions/terminal/useSessionTerminalWorkspace';
@@ -30,8 +29,8 @@ export type WorkspaceEmbeddedTerminalPaneProps = Readonly<{
 
 export const WorkspaceEmbeddedTerminalPane = React.memo(function WorkspaceEmbeddedTerminalPane(props: WorkspaceEmbeddedTerminalPaneProps) {
     const terminalRendererRef = React.useRef<EmbeddedTerminalRendererHandle | null>(null);
-    const machine = useServerScopedMachine(props.serverId, props.machineId);
-    const machineReachable = Boolean(machine && isMachineOnline(machine));
+    const machine = useMachinePresenceSummary(props.serverId, props.machineId);
+    const machineReachable = machine.reachability === 'reachable';
 
     const terminalKey = props.terminalKey;
 
@@ -68,7 +67,7 @@ export const WorkspaceEmbeddedTerminalPane = React.memo(function WorkspaceEmbedd
                 testIdPrefix="workspace-embedded-terminal"
                 nativeSurfaceKey={terminalKey}
                 chrome={props.chrome}
-                machineName={machine ? getMachineDisplayName(machine) : null}
+                machineName={machine.name}
                 focused={props.focused}
                 findSurfaceId={presentation.findSurfaceId}
             />

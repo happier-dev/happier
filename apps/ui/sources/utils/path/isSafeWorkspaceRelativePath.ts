@@ -1,7 +1,6 @@
 export function isSafeWorkspaceRelativePath(raw: string): boolean {
     if (!raw) return false;
-    const value = raw.trim();
-    if (!value) return false;
+    const value = raw;
     if (value.includes('\0')) return false;
     if (value.includes('\\')) return false; // keep paths normalized to posix in UI
     if (value.startsWith('/') || value.startsWith('~')) return false; // absolute-ish paths

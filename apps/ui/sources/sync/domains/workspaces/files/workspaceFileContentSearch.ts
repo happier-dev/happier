@@ -31,7 +31,7 @@ export async function searchWorkspaceFileContents(input: Readonly<{
     try {
         checkCurrent();
         const response = await machineWorkspaceFileSearch(input.scope.machineId, {
-            rootPath: input.scope.rootPath, query: input.query, contextLines: 0,
+            rootPath: input.scope.rootPath, query: input.query, contextLines: 2,
             ...(input.matchCase !== undefined ? { matchCase: input.matchCase } : {}),
             ...(input.regex !== undefined ? { regex: input.regex } : {}),
         }, { serverId: input.scope.serverId, accountId: accountLifetime.scope.accountId, signal: controller.signal });

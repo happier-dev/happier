@@ -4,6 +4,7 @@ import {
   DropdownMenu,
   type DropdownMenuItem,
 } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { Item } from '@/components/ui/lists/Item';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 
@@ -15,6 +16,10 @@ const OTHER_ID = 'ref:@other';
  * "Default branch or revision"): the default first, the chosen ref when it differs, and "Other
  * branch or revision…" which asks for any ref. Nothing here lists remote refs; the default plus
  * Other is the truthful set while no checkout-free ref listing exists.
+ *
+ * On a phone (`compact`) it is a value row — the label, the chosen ref and a chevron (lab
+ * p-open OPENp, p-sources LISTp) — whose press opens the same menu; a short ref is the phone rule's
+ * "short value", so it stays on the label's line instead of a field stacked beneath it.
  */
 export const ProjectRefSelect = React.memo(function ProjectRefSelect(
   props: Readonly<{
@@ -27,6 +32,7 @@ export const ProjectRefSelect = React.memo(function ProjectRefSelect(
     /** A ref suggestion for the Other prompt (the default ref). */
     placeholder?: string;
     disabled?: boolean;
+    compact?: boolean;
     onChange: (value: string | null) => void;
   }>,
 ) {
@@ -70,11 +76,26 @@ export const ProjectRefSelect = React.memo(function ProjectRefSelect(
       items={items}
       selectedId={value === null ? DEFAULT_ID : `ref:${value}`}
       onSelect={select}
-      itemTrigger={{
-        title,
-        showSelectedSubtitle: false,
-        itemProps: { disabled: props.disabled },
-      }}
+      {...(props.compact
+        ? {
+            trigger: ({ toggle }: { toggle: () => void }) => (
+              <Item
+                testID={`${props.testID}.row`}
+                title={title}
+                detail={value ?? props.defaultLabel}
+                disabled={props.disabled}
+                onPress={toggle}
+                showChevron
+              />
+            ),
+          }
+        : {
+            itemTrigger: {
+              title,
+              showSelectedSubtitle: false,
+              itemProps: { disabled: props.disabled },
+            },
+          })}
     />
   );
 });

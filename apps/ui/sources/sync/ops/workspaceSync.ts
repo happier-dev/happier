@@ -2,10 +2,10 @@ import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/
 import { ReadWorkspaceSyncFileResultV1Schema, ReadWorkspaceSyncFileV1Schema, WorkspaceSyncConflictPageRequestV1Schema, WorkspaceSyncConflictPageV1Schema, WorkspaceSyncRelationshipIdV1Schema, WorkspaceSyncLegacyStateInspectionV1Schema, WorkspaceSyncStatusV1Schema, WorkspaceSyncConflictResolveActionInputV1Schema, WorkspaceSyncConflictResolutionResultV1Schema, WorkspaceSyncConflictInspectRpcRequestV1Schema, WorkspaceSyncConflictInspectRpcResultV1Schema, type WorkspaceSyncConflictResolutionV1, type WorkspaceSyncConflictResolutionResultV1, type WorkspaceSyncConflictInspectRpcRequestV1, type WorkspaceSyncConflictInspectRpcResultV1, type ReadWorkspaceSyncFileResultV1, type ReadWorkspaceSyncFileV1, type WorkspaceSyncConflictPageV1, type WorkspaceSyncStatusV1, type WorkspaceSyncLegacyStateInspectionV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
-import { ProjectWorkerCopyRetireInputV1Schema, type ProjectWorkerCopyRetireInputV1 } from '@happier-dev/protocol';
-import { WorkspaceSyncCommittedCopyPreviewV1Schema, WorkspaceSyncCommittedCopyPreviewResultV1Schema,
-    type WorkspaceSyncCommittedCopyPreviewV1, type WorkspaceSyncCommittedCopyPreviewResultV1,
+import { ProjectWorkerCopyRetireInputV1Schema, type ProjectWorkerCopyRetireInputV1 } from '@happier-dev/protocol/actions/specs/projectWorkers';
+import type { WorkspaceSyncCommittedCopyPreviewV1, WorkspaceSyncCommittedCopyPreviewResultV1,
 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
+import { executeProjectWorkerActionV1 } from '@/sync/ops/actions/projectWorkerActions';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { randomUUID } from '@/platform/randomUUID';
@@ -31,19 +31,14 @@ export async function getWorkspaceSyncCommittedCopyPreview(input: Readonly<{
     signal?: AbortSignal;
 }>): Promise<WorkspaceSyncCommittedCopyReviewResult> {
     if (!input.accountId.trim()) throw new Error('Workspace copy preview Account is unavailable');
-    const request = WorkspaceSyncCommittedCopyPreviewV1Schema.parse(input.request);
-    const method = RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT;
-    const result = WorkspaceSyncCommittedCopyPreviewResultV1Schema.safeParse(await machineRpcWithServerScope({
-        serverId: request.workspace.serverId, accountId: input.accountId, machineId: request.machineId, method, payload: request,
-        ...(input.signal ? { signal: input.signal } : {}),
-    }));
-    if (!result.success) return unsupported(method);
-    if (!result.data.ok) return result.data;
-    if (result.data.preview.targetMachineId !== request.targetMachineId
-        || result.data.preview.workspaceRefId !== request.targetWorkspaceRefId) return unsupported(method);
-    return { ...result.data, retirementInput: ProjectWorkerCopyRetireInputV1Schema.parse({
+    const request = input.request;
+    const result = await executeProjectWorkerActionV1('projects.worker.copy.inspect', request, {
+        expectedAccountId: input.accountId, ...(input.signal ? { signal: input.signal } : {}),
+    });
+    if (!result.ok) return result;
+    return { ...result, retirementInput: ProjectWorkerCopyRetireInputV1Schema.parse({
         workspace: request.workspace, machineId: request.machineId, expectedRelationship: request.expectedRelationship,
-        removeTargetCopy: { workspaceRefId: result.data.preview.workspaceRefId, rootFingerprint: result.data.preview.rootFingerprint },
+        removeTargetCopy: { workspaceRefId: result.preview.workspaceRefId, rootFingerprint: result.preview.rootFingerprint },
     }) };
 }
 

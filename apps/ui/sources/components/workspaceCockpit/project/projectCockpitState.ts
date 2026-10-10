@@ -54,10 +54,13 @@ export function resolveProjectMobileSurfaceIntent(input: Readonly<{
 
 export type ProjectRouteContext = Readonly<{
     serverId?: string | null;
-    dashboardId?: string | null;
+    layoutId?: string | null;
+    /** Selection references a Source attachment; its owner/surface are read from the Artifact. */
+    attachedDashboard?: ProjectAttachedDashboardSelection | null;
     comparisonId?: string | null;
     routeParams?: Readonly<Record<string, string | string[] | undefined>>;
 }>;
+export type ProjectAttachedDashboardSelection = Readonly<{ sourceId: string; artifactId: string }>;
 
 export function resolveProjectRoutePathForSurface(input: Readonly<{
     workspaceRefId: string;
@@ -76,10 +79,19 @@ export function resolveProjectRoutePathForSurface(input: Readonly<{
     }
     if (input.rawWorktreeId?.trim()) searchParams.set('worktreeId', input.rawWorktreeId.trim());
     else if (input.rawActiveRootPath?.trim()) searchParams.set('activeRootPath', input.rawActiveRootPath.trim());
-    for (const key of ['serverId', 'dashboardId', 'comparisonId'] as const) {
+    for (const key of ['serverId', 'layoutId', 'comparisonId'] as const) {
         if (input[key] === null) searchParams.delete(key);
         const value = input[key]?.trim();
         if (value) searchParams.set(key, value);
+    }
+    if (input.attachedDashboard !== undefined) {
+        searchParams.delete('dashboardSourceId');
+        searchParams.delete('dashboardArtifactId');
+        if (input.attachedDashboard) {
+            searchParams.delete('layoutId');
+            searchParams.set('dashboardSourceId', input.attachedDashboard.sourceId);
+            searchParams.set('dashboardArtifactId', input.attachedDashboard.artifactId);
+        }
     }
     if (input.surface !== page) searchParams.set('mobileSurface', input.surface);
     const query = searchParams.toString();

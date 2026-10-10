@@ -11,6 +11,8 @@ import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/act
 import { installSessionDetailsPanelNonRnModuleMocks } from '@/components/sessions/panes/sessionDetailsPanelNonRnModuleMocks';
 import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
+import { PAGE_COLUMN_MAX_WIDTH_PX } from '@/components/ui/layout/contentWidthMode';
+import { ConstrainedScreenContent } from '@/components/ui/layout/ConstrainedScreenContent';
 
 installSessionDetailsPanelNonRnModuleMocks();
 vi.mock('react-native', async () => {
@@ -100,7 +102,36 @@ function rootPath(screen: Awaited<ReturnType<typeof mount>>) {
 }
 
 describe('ProjectDetailScreen active worktree selection', () => {
-    it('reopens a closed project pane without overwriting its restored plugin destination', async () => {
+    it('keeps the Project header and Overview/Code bodies on the wide page column with compact preference', async () => {
+        storage.setState({ localSettings: { ...storage.getState().localSettings, uiContentWidthMode: 'compact' } });
+        const renderProject = (page: 'overview' | 'code' | 'context') => (
+            <runtime.Wrapper><ProjectDetailScreen workspaceRefId="wr_1" serverId={runtime.serverId} page={page} /></runtime.Wrapper>
+        );
+        const screen = await renderScreen(renderProject('overview'));
+        const flattenStyle = (style: unknown): Record<string, unknown> => Array.isArray(style)
+            ? Object.assign({}, ...style.map(flattenStyle))
+            : style && typeof style === 'object' ? style as Record<string, unknown> : {};
+        const headerWidth = () => flattenStyle(screen.findHostByTestId('project-shell-header')?.props.style).maxWidth;
+        const columnWidth = (component: typeof screen.root) => {
+            const column = component.findAll(node => typeof node.type === 'string'
+                && flattenStyle(node.props.style).maxWidth !== undefined)[0];
+            return flattenStyle(column?.props.style).maxWidth;
+        };
+        await vi.waitFor(() => expect(screen.findAllByTestId('project-overview').length).toBeGreaterThan(0));
+        expect(headerWidth()).toBe(PAGE_COLUMN_MAX_WIDTH_PX.wide);
+        expect(columnWidth(screen.findByType(ProjectOverviewWidgets))).toBe(PAGE_COLUMN_MAX_WIDTH_PX.wide);
+
+        await screen.update(renderProject('code'));
+        expect(headerWidth()).toBe(PAGE_COLUMN_MAX_WIDTH_PX.wide);
+        const codeColumn = screen.findByType(ProjectCockpitShell).findByType(ConstrainedScreenContent);
+        expect(columnWidth(codeColumn)).toBe(PAGE_COLUMN_MAX_WIDTH_PX.wide);
+
+        await screen.update(renderProject('context'));
+        expect(headerWidth()).toBe(PAGE_COLUMN_MAX_WIDTH_PX.reading);
+        expect(screen.findByType(ProjectShellHeaderHost).props.activeRootPath).toBe('/repo');
+    });
+
+    it('preserves a dismissed project pane and its restored plugin destination on entry', async () => {
         const destination = { kind: 'plugin' as const, destination: { pluginId: 'acme.review', localId: 'project-review' } };
         const screen = await renderScreen(<runtime.Wrapper />);
         await act(async () => {
@@ -109,7 +140,7 @@ describe('ProjectDetailScreen active worktree selection', () => {
         });
         await screen.update(<runtime.Wrapper><ProjectDetailScreen workspaceRefId="wr_1"
             serverId={runtime.serverId} page="context" /></runtime.Wrapper>);
-        expect(runtime.pane.scopeState?.right.isOpen).toBe(true);
+        expect(runtime.pane.scopeState?.right.isOpen).toBe(false);
         expect(runtime.pane.scopeState?.right.selectedDestination).toEqual(destination);
     });
 

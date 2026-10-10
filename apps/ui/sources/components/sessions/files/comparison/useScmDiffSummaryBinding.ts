@@ -190,6 +190,7 @@ export function useScmDiffSummaryBinding(params: Readonly<{
     }, [binding, isCurrent, hostKey, inputObservation, initialInputId, scope?.serverId, scope?.accountId, machineReachable, key, resultId, runId, operations, cwd, sessionId, host.machineId]);
 
     return {
+        host, serverId, comparison,
         binding, isCurrent, scope, machine, machineReachable, canControl, canSend, launch, viewModel, capturedComparison, cwd, operations,
         error, setError,
         model, setModel, onModelAvailability, modelAvailable, selected, starting, onStart,

@@ -7,6 +7,12 @@ import { scmComparisonSourceOf, scmReviewComparisonMatchesSource, selectSessionS
 const scope = { serverId: 'selection-home', accountId: 'selection-account' };
 afterEach(() => retireScmDiffSummaryScope(scope));
 describe('captured comparison result selection', () => {
+    it('matches explicit Session evidence only to that Session while a view selector remains host-relative', () => {
+        const source = { kind: 'session' as const, sessionId: 'session-a' };
+        expect(scmReviewComparisonMatchesSource({ kind: 'session', sessionId: 'session-b' }, source)).toBe(false);
+        expect(scmReviewComparisonMatchesSource(source, source)).toBe(true);
+        expect(scmReviewComparisonMatchesSource({ kind: 'session' }, source)).toBe(true);
+    });
     it('selects the saved PR by its base-tip witness when the diff begins at a different merge base', () => {
         const source = { kind: 'pullRequest' as const, locator: { providerId: 'github', repository: 'owner/repo', number: 17,
             baseOid: 'a'.repeat(40), headOid: 'b'.repeat(40) } };

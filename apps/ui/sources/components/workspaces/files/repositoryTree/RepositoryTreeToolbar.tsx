@@ -16,6 +16,8 @@ export type RepositoryTreeToolbarProps = Readonly<{
     testIDPrefix: string;
     searchValue: string;
     onSearchValueChange: (value: string) => void;
+    /** Code owns Go to file above the table; keep only the shared View and creation controls. */
+    showSearch?: boolean;
     /** The tree is pruned to the changed files (session tabs lab FC). */
     changedOnly: boolean;
     /** The one changed-file count (`selectScmChangedFiles(snapshot).length`); null while unknown. */
@@ -128,10 +130,10 @@ export const RepositoryTreeToolbar = React.memo(function RepositoryTreeToolbar(p
         clearAccessibilityLabel: t('files.pane.showAllFiles'),
     }), [clearChangedOnly, iconColor, prefix, props.changedCount]);
 
-    if (props.changedOnly) {
+    if (props.changedOnly || props.showSearch === false) {
         return (
             <View testID={`${prefix}-toolbar`} style={styles.row}>
-                <SelectionListFilterChip filter={changedOnlyChip} />
+                {props.changedOnly ? <SelectionListFilterChip filter={changedOnlyChip} /> : null}
                 <View style={styles.spacer} />
                 {viewMenu}
                 {props.trailing}

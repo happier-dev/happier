@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createMachineFixture, renderScreen, standardCleanup } from '@/dev/testkit';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { applyProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
@@ -15,6 +15,10 @@ import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration
 import { createEmptyTerminalSurfaceState, readTerminalSurfaceState, replaceTerminalSurfaceState } from '@/components/sessions/terminal/terminalSurfaceStateCache';
 import { buildProjectTerminalKey } from '../projectTerminalScope';
 import { buildProjectAccountRowPhysicalKeyV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { WorkspaceEmbeddedTerminalPane } from '@/components/projects/panes/details/views/WorkspaceEmbeddedTerminalPane';
+import { EmbeddedTerminalPane } from '@/components/terminal/embedded/EmbeddedTerminalPane';
+
+afterEach(() => { standardCleanup(); vi.useRealTimers(); });
 
 async function invoke(input: Parameters<typeof invokeSessionTerminalAction>[0]) {
     const outcome: { result?: Awaited<ReturnType<typeof invokeSessionTerminalAction>> } = {};
@@ -35,6 +39,32 @@ vi.mock('@/components/terminal/xterm/XtermTerminalView.web', () => ({
 }));
 
 describe('Project terminal through the incumbent pane workspace', () => {
+    it('shows unreachable at silent heartbeat expiry and keeps its admitted terminal identity', async () => {
+        const home = await serveActionHomes({ homes: [{ key: 'project', serverUrl: 'https://project-terminal-expiry.test', accountId: 'bob' }],
+            route: () => undefined });
+        const previous = storage.getState();
+        try {
+            publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+            const serverId = home.homes.project!.id;
+            const workspace = { serverId, workspaceId: 'accepted', machineId: 'machine', rootPath: '/accepted' };
+            applyProjectAccountRowsFixture(storage, { workspaceRefs: [{ ...workspace, id: workspace.workspaceId, createdAtMs: 1 }] });
+            const machine = createMachineFixture({ id: workspace.machineId, activeAt: Date.now() });
+            storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [serverId]: [machine] } });
+            vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+            const screen = await renderScreen(<AppPaneProvider><WorkspaceEmbeddedTerminalPane scopeId="expiry-terminal"
+                machineId={machine.id} serverId={serverId} rootPath={workspace.rootPath} workspace={workspace}
+                attachedTerminalId={null} terminalKey="expiry-terminal" /></AppPaneProvider>);
+            expect(screen.root.findByType(EmbeddedTerminalPane).props.controller.status).toBe('connecting');
+            await act(async () => { vi.advanceTimersByTime(60_001); });
+            expect(screen.root.findByType(EmbeddedTerminalPane).props.controller).toMatchObject({ status: 'error', error: 'terminal_machine_unreachable' });
+            expect(screen.root.findByType(EmbeddedTerminalPane).props.nativeSurfaceKey).toBe('expiry-terminal');
+            const heartbeat = { ...machine, activeAt: Date.now() };
+            await act(async () => { storage.setState({ machines: { [machine.id]: heartbeat }, machineListByServerId: { [serverId]: [heartbeat] } }); });
+            expect(screen.root.findByType(EmbeddedTerminalPane).props.controller.status).toBe('connecting');
+            await screen.unmount();
+        } finally { vi.useRealTimers(); storage.setState(previous); home.dispose(); }
+    });
+
     it('opens an admitted shell without a Session, then preserves labels, split identity and borrowed-view close', async () => {
         const home = await serveActionHomes({ homes: [{ key: 'project', serverUrl: 'https://project-terminal-pane.test', accountId: 'bob', settings: {
             actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: { 'session.terminals.open': ['ui'] } },

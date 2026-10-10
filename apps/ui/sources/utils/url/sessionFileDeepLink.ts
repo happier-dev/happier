@@ -1,5 +1,6 @@
 import type { ReviewCommentAnchor, ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import { isLineContentHash } from '@/utils/text/lineContentHash';
+import { resolveProjectCockpitRouteFromPathname } from '@/components/workspaceCockpit/project/projectCockpitState';
 
 type ExpoLocalSearchParams = Readonly<Record<string, unknown>>;
 
@@ -74,7 +75,7 @@ export function parseSearchFileTarget(query: string): SearchFileTarget | null {
     try {
         const url = new URL(value, 'https://happier.invalid');
         const session = /^\/session\/([^/]+)\/file$/.exec(url.pathname);
-        const project = /^\/projects\/([^/]+)(?:\/(?:details|files))?$/.exec(url.pathname);
+        const project = resolveProjectCockpitRouteFromPathname(url.pathname);
         const path = url.searchParams.get(session ? 'path' : 'initialFile');
         if ((session || project) && path) {
             const parsed = parseSessionFileDeepLinkAnchor({ ...Object.fromEntries(url.searchParams), path });
@@ -82,7 +83,7 @@ export function parseSearchFileTarget(query: string): SearchFileTarget | null {
             return { path, ...(parsed ? { anchor: parsed.anchor } : {}),
                 ...(parsed?.source === 'diff' ? { anchorSource: parsed.source } : {}),
                 ...(session ? { sessionId: decodeURIComponent(session[1]) } : {}),
-                ...(project ? { workspaceRefId: decodeURIComponent(project[1]) } : {}),
+                ...(project ? { workspaceRefId: project.workspaceRefId } : {}),
                 ...(serverId ? { serverId } : {}) };
         }
     } catch { /* Ordinary filesystem paths are not URLs. */ }

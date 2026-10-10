@@ -43,7 +43,10 @@ installDisconnectedServerSocketBoundary((socket, serverUrl) => {
 });
 
 /** Only native/Expo presentation and the embedded editor cross this renderer boundary. */
-export function installSessionFilesViewBoundaries() {
+export function installSessionFilesViewBoundaries(options: Readonly<{
+    renderItemLimit?: number;
+    onRecycler?: (state: import('@/dev/testkit/mocks/legendList').CapturingLegendListMockState) => void;
+}> = {}) {
     vi.doMock('react-native', async () => {
         const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeNativeMock({ platformOS: 'ios' });
@@ -56,7 +59,10 @@ export function installSessionFilesViewBoundaries() {
     // recycler; the canonical backend, row projection, and browser stay real.
     vi.doMock('@legendapp/list/react-native', async importOriginal => {
         const { createCapturingLegendListMock } = await import('@/dev/testkit/mocks/legendList');
-        return createCapturingLegendListMock({ original: await importOriginal<Record<string, unknown>>() }).module;
+        const recycler = createCapturingLegendListMock({ original: await importOriginal<Record<string, unknown>>(),
+            renderItemLimit: options.renderItemLimit, emitViewability: true });
+        options.onRecycler?.(recycler.state);
+        return recycler.module;
     });
     vi.doMock('@/modal', async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');

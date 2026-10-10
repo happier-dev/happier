@@ -41,6 +41,7 @@ import { t } from '@/text';
 
 import { ProjectCommandOutputHost, useProjectCommandOutputOpener } from '@/components/inbox/actionOperations/projectCommandOutputHost';
 import { ProjectCommandOutputPane } from '@/components/inbox/actionOperations/ProjectCommandOutputPane';
+import { ProjectCommandOutputFrame } from '@/components/inbox/actionOperations/ProjectCommandOutputFrame';
 import { ProjectManifestEditor } from './ProjectManifestEditor';
 import { WorkspaceWorkerSettings, useWorkspaceWorkerPreference } from '@/components/projects/workers/WorkspaceWorkerSettings';
 import { useWorkerDestinationLabel } from '@/components/projects/workers/useWorkerDestinationLabel';
@@ -360,7 +361,7 @@ function DeclaredScripts(
       props.manifest.environment.kind !== 'host');
   const setupRun = useProjectSetupRun(props.workspace, props.controller.accountId);
   const setupPresentation = presentProjectRun(setupRun, machineName, '');
-  const setupReadiness = setupPresentation.live || props.controller.consent || props.controller.pendingKey === 'setup'
+  const setupReadiness = setupPresentation.live || props.controller.consent || props.controller.pendingKeys.setup
     ? undefined : props.inspection.setupReadiness;
   const setupReady = !hasSetup || setupReadiness?.kind === 'current' || setupReadiness?.kind === 'notRequired';
   const project =
@@ -560,7 +561,7 @@ function DeclaredScriptRow(
       portable={props.declaration.execution === 'portable'}
       operation={operation}
       idleText={props.idleText}
-      pending={props.controller.pendingKey === rowKey}
+      pending={props.controller.pendingKeys[rowKey] === true}
       failureCode={failure}
       compact={props.compact}
       showDivider={props.showDivider}
@@ -572,8 +573,8 @@ function DeclaredScriptRow(
       onDismissChoice={props.controller.dismissChoice}
       onOpenWorkerSettings={props.onOpenWorkerSettings}
       workerRefusal={props.controller.failure?.key === rowKey ? props.controller.failure.workerRefusal ?? null : null}
-      managedCreation={props.controller.managedCreation?.key === rowKey ? props.controller.managedCreation : null}
-      onCancelManagedRun={props.controller.cancelRun}
+      managedCreation={props.controller.managedCreations[rowKey] ?? null}
+      onCancelManagedRun={() => props.controller.cancelRun(rowKey)}
       onResumeManagedRun={() => { void props.controller.resumeManagedRun(rowKey); }}
       onRun={(choice, managed) => {
         void props.controller.run(rowKey, { kind: 'named', name: props.name }, choice, managed);
@@ -624,7 +625,7 @@ function SetupRow(
         : props.readiness?.kind === 'current'
           ? `${t('projects.scripts.setup.readySince', { time: formatAsOfTime(props.readiness.completedAtMs) })} · ${stepCount}`
           : presentation.text;
-  const pending = props.controller.pendingKey === 'setup';
+  const pending = props.controller.pendingKeys.setup === true;
   const attachment = props.operation?.snapshot.domainRef?.kind === 'projectCommand' ? props.operation.snapshot.domainRef : null;
   const openOutput = () => {
     if (props.operation)
@@ -714,7 +715,7 @@ function SetupRow(
         }
       >
         {showsOutput && props.operation ? (
-          <View style={[styles.setupOutput, { borderColor: theme.colors.border.subtle }]}>
+          <ProjectCommandOutputFrame>
             {attachment?.terminalId ? (
               <ProjectCommandOutputPane
                 operation={props.operation}
@@ -729,7 +730,7 @@ function SetupRow(
                 testID={`${props.testID}.noOutput`}
               />
             )}
-          </View>
+          </ProjectCommandOutputFrame>
         ) : (
           <ProjectSetupReview
             testID={`${props.testID}.review`}
@@ -873,8 +874,8 @@ function FoundMore(
                   display="secondary"
                   title={t('projects.scripts.addToProjectFile')}
                   testID={`${props.testID}.detected:${index}.add`}
-                  loading={props.controller.pendingKey === `add:${id}`}
-                  disabled={props.controller.pendingKey !== null}
+                  loading={props.controller.pendingKeys[`add:${id}`] === true}
+                  disabled={Object.keys(props.controller.pendingKeys).length > 0}
                   onPress={() => {
                     void props.controller.add(`add:${id}`, props.inspection.definition, entry.source);
                   }}
@@ -1194,7 +1195,7 @@ function DetectedRow(
       portable={false}
       operation={operation}
       idleText={t('projects.scripts.run.notRun')}
-      pending={props.controller.pendingKey === rowKey}
+      pending={props.controller.pendingKeys[rowKey] === true}
       failureCode={failure}
       compact={props.compact}
       showDivider={props.showDivider}
@@ -1262,13 +1263,6 @@ const styles = StyleSheet.create((theme) => ({
   phoneEditor: { flex: 1, minHeight: 0 },
   body: { gap: 12 },
   setupTail: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  setupOutput: {
-    marginHorizontal: 16,
-    marginBottom: 12,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 10,
-    overflow: 'hidden',
-  },
   setupBanner: { marginHorizontal: 16, marginBottom: 12 },
   inlineTitle: { ...Typography.default(), ...happierPageTextMetrics('rowTitle') },
   inlineMeta: { ...Typography.default(), ...happierPageTextMetrics('rowDescription') },

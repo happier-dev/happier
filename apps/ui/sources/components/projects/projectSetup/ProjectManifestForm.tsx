@@ -31,6 +31,7 @@ import { StatusPill } from '@/components/ui/status/StatusPill';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { formatByteSize } from '@/utils/files/formatByteSize';
 import { t } from '@/text';
 
 import type { ProjectManifestEditorModel } from './projectManifestEditorModel';
@@ -51,7 +52,6 @@ type Previews = Readonly<{
   importCandidates: readonly ProjectDefinitionImportCandidateV1[];
 }>;
 
-const GIB = 2 ** 30;
 const ID = 'project-manifest-editor';
 
 export type ProjectManifestFormProps = Readonly<{
@@ -127,7 +127,7 @@ function PhoneFormSections(props: ProjectManifestFormProps & Readonly<{ onOpen: 
     describeProjectCommandSource(declaration.source).badge ?? describeProjectCommandSource(declaration.source).reference,
     declaration.execution === 'portable' ? t('projects.scripts.anyWorker') : t('projects.scripts.editor.thisCheckout'),
     'memoryDemand' in declaration && declaration.memoryDemand
-      ? t('projects.scripts.editor.needsAbout', { size: `${Math.max(1, Math.round(declaration.memoryDemand.bytes / GIB))} GB` })
+      ? t('projects.scripts.editor.needsAbout', { size: formatByteSize(declaration.memoryDemand.bytes) })
       : null,
   ].filter(Boolean).join(' · ');
   return (
@@ -579,7 +579,7 @@ function DeclarationRow(
             {memory ? (
               <CodeChip
                 text={t('projects.scripts.editor.needsAbout', {
-                  size: `${Math.max(1, Math.round(memory.bytes / GIB))} GB`,
+                  size: formatByteSize(memory.bytes),
                 })}
                 sans
               />
@@ -637,10 +637,8 @@ function DeclarationRow(
         <FieldValueItem
           title={t('projects.scripts.editor.needsAboutField')}
           subtitle={t('projects.scripts.editor.needsAboutHint')}
-          value={
-            memory ? String(Math.max(1, Math.round(memory.bytes / GIB))) : ''
-          }
-          unit="GB"
+          value={memory ? String(memory.bytes) : ''}
+          unit="B"
           kind="integer"
           allowEmpty
           fieldTestID={`${testID}.memory`}
@@ -653,10 +651,10 @@ function DeclarationRow(
                 {
                   kind: 'set',
                   path: [...path, 'memoryDemand', 'bytes'],
-                  value: size * GIB,
+                  value: size,
                 },
               ]);
-            else return memory ? String(Math.round(memory.bytes / GIB)) : '';
+            else return memory ? String(memory.bytes) : '';
           }}
         />
       ) : (

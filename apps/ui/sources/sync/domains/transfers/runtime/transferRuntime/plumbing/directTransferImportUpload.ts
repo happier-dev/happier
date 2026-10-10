@@ -21,6 +21,7 @@ import {
 } from './machineCarrierHttpLease';
 import type { MachineCarrierHttpLease } from './machineCarrierHttpLease';
 import { isRetryableDirectTransferEndpointError } from './directTransferEndpointRetry';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
 export type { DirectTransferImportOpenRequest } from './directTransferImportClient';
 export type {
@@ -33,6 +34,9 @@ export type {
 export async function uploadBulkPayloadFromFileViaDirectImport<TResponse>(params: Readonly<{
     machineId: string;
     serverId?: string | null;
+    accountId?: string;
+    accountLifetime?: ServerAccountScopeLifetime;
+    onRecoverySettled?: () => void;
     fileReader: BulkTransferFileReader;
     request: DirectTransferImportOpenRequest;
     parseFinalizeResponse?: ((response: Extract<DirectTransferImportFinalizeResponse, { success: true }>) => TResponse | null) | null;
@@ -51,6 +55,7 @@ export async function uploadBulkPayloadFromFileViaDirectImport<TResponse>(params
     const prepared = await prepareDirectImportSession({
         machineId: params.machineId,
         ...(typeof params.serverId === 'string' ? { serverId: params.serverId } : {}),
+        ...(params.accountId ? { accountId: params.accountId } : {}),
         request: params.request,
         timeoutMs: params.timeoutMs ?? null,
         signal: params.signal ?? null,
@@ -147,10 +152,14 @@ export async function uploadBulkPayloadFromFileViaDirectImport<TResponse>(params
                                     errorCode: TRANSFER_FINALIZE_RECOVERY_REQUIRED_ERROR_CODE,
                                     recovery: createDirectTransferFinalizeRecovery({
                                         machineId: params.machineId,
+                                        accountId: params.accountId,
+                                        accountLifetime: params.accountLifetime,
+                                        onSettled: params.onRecoverySettled,
                                         ...(typeof params.serverId === 'string'
                                             ? { serverId: params.serverId }
                                             : {}),
                                         uploadId: prepared.session.uploadId,
+                                        filesystemRootPath: prepared.session.filesystemRootPath,
                                         baseUrl,
                                         // Custody is handed back below, so every
                                         // retry reacquires the same pinned
@@ -263,7 +272,10 @@ export async function uploadBulkPayloadFromFileViaDirectImport<TResponse>(params
         const cleanupFailure = await abortOwnedDirectImportSession({
             machineId: params.machineId,
             ...(typeof params.serverId === 'string' ? { serverId: params.serverId } : {}),
+            ...(params.accountId ? { accountId: params.accountId } : {}),
             uploadId: prepared.session.uploadId,
+            preparedSession: prepared.session,
+            filesystemRootPath: prepared.session.filesystemRootPath,
             timeoutMs: params.timeoutMs ?? null,
         });
         if (cleanupFailure) {

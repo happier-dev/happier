@@ -2,14 +2,13 @@ import * as React from 'react';
 import { Platform, TextInput, View } from 'react-native';
 import type { FindController } from '@happier-dev/plugin-ui/presentation';
 import { FindBar } from '@/components/ui/find/FindBar';
+import { FindBarPlacement } from '@/components/ui/find/FindBarPlacement';
+import { useFindSurfaceFocusReturn } from '@/components/ui/find/useFindSurfaceFocusReturn';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Text } from '@/components/ui/text/Text';
 import { useUnistyles } from 'react-native-unistyles';
 import { useFindSurfaceRegistration, useFindSurfaceRuntime } from '@/keyboard/KeyboardShortcutProvider';
-import { readDocumentFocusReturnTarget, restoreFocusToBestTarget, type FocusReturnTarget } from '@/keyboard/focusReturn';
 import { usePluginSurfaceFocusEligibility } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
-import { ComposerKeyboardFloatingInset } from '@/components/sessions/keyboardAvoidance';
-import { useDeviceType } from '@/utils/platform/responsive';
 import { t } from '@/text';
 import { resolveTouchTargetFloorPx } from '@/components/ui/interactiveTargetSize';
 import { Typography } from '@/constants/Typography';
@@ -33,7 +32,7 @@ export function ChangedFilesReviewFindCount(props: Readonly<{ model?: ChangedFil
     // The count wears the match tint (Find lab `.fd-fc`), so the index reads as where the marks are.
     return count ? <View style={{ minWidth: 18, height: 18, paddingHorizontal: 5, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.find.matchAll }}>
         <Text testID={`scm-review-find-count:${props.path}`} accessibilityLabel={t('find.count', { current: null, total: count })}
-            style={{ color: theme.colors.text.primary, fontSize: 11, lineHeight: 14, ...Typography.default('semiBold'), ...Typography.tabular() }}>{String(count)}</Text>
+            style={{ color: theme.colors.text.primary, ...Typography.pillLabel(), ...Typography.tabular() }}>{String(count)}</Text>
     </View> : null;
 }
 
@@ -48,18 +47,16 @@ export function ChangedFilesReviewFindSurface(props: Readonly<{
     const eligible = usePluginSurfaceFocusEligibility() && props.presented;
     const input = React.useRef<TextInput | null>(null);
     const [inputFocused, setInputFocused] = React.useState(false);
-    const returnFocus = React.useRef<FocusReturnTarget>(null);
-    const device = useDeviceType();
+    const focusReturn = useFindSurfaceFocusReturn();
     const close = () => {
-        model.close(); setInputFocused(false); restoreFocusToBestTarget(returnFocus); returnFocus.current = null;
+        model.close(); setInputFocused(false); focusReturn.restore();
     };
     const controller: FindController = {
         get query() { return model.query; }, get options() { return model.options; }, get status() { return model.status; },
         capabilities: model.capabilities, setQuery: model.setQuery, setOptions: model.setOptions, step: model.step, stop: model.stop, close,
     };
     const open = () => {
-        if (!model.getSnapshot().open) returnFocus.current = Platform.OS === 'web' && typeof document !== 'undefined'
-            ? readDocumentFocusReturnTarget(document) : TextInput.State.currentlyFocusedInput();
+        focusReturn.capture(model.getSnapshot().open);
         model.open(); input.current?.focus();
     };
     useFindSurfaceRegistration(eligible ? { surfaceId: props.surfaceId, open, controller,
@@ -71,12 +68,12 @@ export function ChangedFilesReviewFindSurface(props: Readonly<{
             return !!root && typeof document !== 'undefined' && root.contains(document.activeElement);
         } } : null);
     if (!snapshot.open || !eligible) return null;
-    const bar = <FindBar testID="scm-review-find-field" autoFocus surfaceLabel={t('find.surface.changes')} query={snapshot.query} options={snapshot.options}
+    return <FindBarPlacement testID="scm-review-find-bar">{(presentation) => <FindBar testID="scm-review-find-field" autoFocus surfaceLabel={t('find.surface.changes')} query={snapshot.query} options={snapshot.options}
         status={snapshot.status} capabilities={model.capabilities} onQueryChange={model.setQuery} onOptionsChange={model.setOptions}
         onStep={model.step} onClose={close} onStop={model.stop} inputRef={input}
         onInputFocus={() => setInputFocused(true)} onInputBlur={() => setInputFocused(false)}
-        presentation={device === 'phone' ? 'keyboardSeated' : 'inline'} />;
-    return device === 'phone'
-        ? <ComposerKeyboardFloatingInset testID="scm-review-find-bar" style={{ position: 'absolute', left: 0, right: 0, zIndex: 2 }}>{bar}</ComposerKeyboardFloatingInset>
-        : <View testID="scm-review-find-bar" pointerEvents="box-none" style={{ position: 'absolute', top: 10, left: 14, right: 14, zIndex: 2 }}>{bar}</View>;
+        note={snapshot.status.kind === 'searching' ? { icon: 'history', text: t('common.loading') }
+            : snapshot.status.kind === 'results' && snapshot.status.coverage === 'partialErrors'
+                ? { icon: 'info', text: t('transcriptFind.partialErrors') } : undefined}
+        presentation={presentation} />}</FindBarPlacement>;
 }

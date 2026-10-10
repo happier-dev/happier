@@ -10,6 +10,7 @@ type WorkspaceMachineInventoryState = Readonly<{
     isDataReady?: boolean;
     machines?: Record<string, Machine | undefined>;
     machineListByServerId?: Record<string, Machine[] | null | undefined>;
+    machineListStatusByServerId?: Readonly<Record<string, 'idle' | 'loading' | 'signedOut' | 'error' | undefined>>;
 }>;
 
 /**
@@ -30,6 +31,7 @@ export function isWorkspaceScopeReachableFromState(
             ? Object.values(state.machines ?? {}).filter((candidate): candidate is Machine => candidate !== undefined)
             : [],
         machineListByServerId: state.machineListByServerId ?? {},
+        machineListStatusByServerId: state.machineListStatusByServerId,
     });
     return machine ? isMachineOnline(machine) : false;
 }

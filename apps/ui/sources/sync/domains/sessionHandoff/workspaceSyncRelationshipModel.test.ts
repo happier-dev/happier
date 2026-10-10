@@ -23,6 +23,17 @@ const policy = {
 };
 
 describe('projectWorkspaceSyncRelationships', () => {
+    it('does not collapse duplicate endpoint IDs from different Homes', () => {
+        const alpha = { id: 'alpha', serverId: 'home-a', machineId: 'machine-a', rootPath: '/repo', createdAtMs: 1 };
+        const beta = { id: 'beta', serverId: 'home-a', machineId: 'machine-b', rootPath: '/target', createdAtMs: 1 };
+        const relationship = { v: 1 as const, relationshipId: 'link', controllerMachineId: 'machine-a',
+            alphaWorkspaceRefId: 'alpha', betaWorkspaceRefId: 'beta', mode: 'keep_synced' as const,
+            contentPolicy: policy, enabled: true, createdAtMs: 1, updatedAtMs: 1 };
+        const input = { relationships: projectWorkspaceSyncRelationships([relationship]), statuses: [],
+            workspaceRefs: [alpha, beta, { ...alpha, serverId: 'home-b' }] };
+        expect(projectWorkspaceSyncRelationshipSummaries(input)[0]?.alpha.workspaceRef).toBeNull();
+        expect(projectWorkspaceSyncRelationshipSummaries({ ...input, serverId: 'home-a' })[0]?.alpha.workspaceRef).toEqual(alpha);
+    });
     it('selects the actual controller hub when Add machine starts from a beta-controlled editable spoke', () => {
         const refs = [
             { id: 'spoke', serverId: 'server-1', machineId: 'machine-c', rootPath: '/spoke', createdAtMs: 1 },

@@ -7,6 +7,11 @@ import {
 } from '@/components/workspaces/files/repositoryTree/buildChangedFilesOutlineTree';
 
 describe('buildChangedFilesOutlineTree', () => {
+    it('preserves literal changed-file names in the selectable outline', () => {
+        const nodes = buildChangedOnlyTreeNodes([{ fullPath: ' leading /line\nbreak /name ' }, { fullPath: ' ' }], new Set());
+        expect(nodes.filter(node => node.type === 'file').map(node => [node.name, node.path]))
+            .toEqual([['name ', ' leading /line\nbreak /name '], [' ', ' ']]);
+    });
     it('builds a directory-first, case-insensitive sorted outline tree', () => {
         const files = [
             { fullPath: 'src/zeta.ts', fileName: 'zeta.ts' },

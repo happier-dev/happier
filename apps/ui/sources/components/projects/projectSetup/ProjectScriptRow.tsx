@@ -19,6 +19,7 @@ import { useElapsedTime } from '@/hooks/ui/useElapsedTime';
 import { useActionOperationStopControl } from '@/components/inbox/actionOperations/useActionOperationStopControl';
 import { useProjectCommandOutputOpener } from '@/components/inbox/actionOperations/projectCommandOutputHost';
 import { ProjectCommandOutputPane } from '@/components/inbox/actionOperations/ProjectCommandOutputPane';
+import { ProjectCommandOutputFrame } from '@/components/inbox/actionOperations/ProjectCommandOutputFrame';
 import { WorkerDestinationPicker } from '@/components/projects/workers/WorkerDestinationPicker';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { useManagedWorkerWake } from '@/components/projects/workers/useManagedWorkerWake';
@@ -317,9 +318,7 @@ export const ProjectScriptRow = React.memo(function ProjectScriptRow(
         header(headerProps as Readonly<Record<string, unknown>>)
       }
     >
-      <View
-        style={[styles.output, { borderColor: theme.colors.border.subtle }]}
-      >
+      <ProjectCommandOutputFrame>
         {expanded && props.operation && attachment?.terminalId ? (
           <ProjectCommandOutputPane
             operation={props.operation}
@@ -334,7 +333,7 @@ export const ProjectScriptRow = React.memo(function ProjectScriptRow(
             testID={`${props.testID}.noOutput`}
           />
         ) : null}
-      </View>
+      </ProjectCommandOutputFrame>
     </ExpandableItem>
     {notices}
     </>
@@ -691,7 +690,7 @@ function RunControl(
   );
 }
 
-const styles = StyleSheet.create((theme) => ({
+const styles = StyleSheet.create(() => ({
   tail: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   source: {
     flexDirection: 'row',
@@ -720,13 +719,5 @@ const styles = StyleSheet.create((theme) => ({
     width: StyleSheet.hairlineWidth,
     alignSelf: 'stretch',
     marginVertical: 6,
-  },
-  output: {
-    marginHorizontal: 16,
-    marginBottom: 12,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 10,
-    overflow: 'hidden',
-    backgroundColor: theme.colors.surface.base,
   },
 }));

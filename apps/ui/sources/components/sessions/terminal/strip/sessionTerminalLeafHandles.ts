@@ -1,3 +1,5 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
+
 /**
  * The verbs only a mounted terminal view can perform (copy its selection, paste, clear, restart). The
  * pane's tab menu reaches the visible tab's terminals through these; a tab that is not on screen has
@@ -8,7 +10,7 @@ export type SessionTerminalLeafHandle = Readonly<{
     copySelection: (() => void) | null;
     paste: () => void;
     clear: () => void;
-    restart: () => void;
+    restart: (context?: ActionExecutorContext) => void;
 }>;
 
 export type SessionTerminalLeafHandles = Readonly<{

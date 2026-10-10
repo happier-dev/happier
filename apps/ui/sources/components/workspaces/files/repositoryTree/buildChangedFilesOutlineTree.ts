@@ -57,7 +57,7 @@ function toNode(dir: DirBuilder): ChangedFilesOutlineNode & { kind: 'dir' } {
 }
 
 function readChangedFilePath(path: string): Readonly<{ fullPath: string; parts: string[] }> | null {
-    const fullPath = path?.trim();
+    const fullPath = path;
     if (!fullPath) return null;
     // SCM paths are normally forward-slash normalized; retain Windows/interop inputs.
     const parts = fullPath.replace(/\\/g, '/').split('/').filter(Boolean);

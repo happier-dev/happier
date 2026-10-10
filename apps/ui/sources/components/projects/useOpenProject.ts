@@ -8,7 +8,7 @@ import { readProjectWorkspaceRefs } from '@/sync/store/domains/projectAccountRow
 import { useDeviceType } from '@/utils/platform/responsive';
 
 import { buildProjectPaneScopeId } from './detail/projectPaneScope';
-import { buildProjectRouteHref, resolveProjectOpenHref } from './detail/projectRouteState';
+import { buildProjectRouteHref, resolveProjectOpenHref, type ProjectAttachedDashboardSelection } from './detail/projectRouteState';
 import { createProjectCommitDetailsTab, createProjectFileDetailsTab } from './detail/projectDetailsTabBuilders';
 import type { FileTargetAnchor } from '@/utils/url/sessionFileDeepLink';
 import type { ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
@@ -25,6 +25,7 @@ export type OpenProjectOptions = Readonly<{
     serverId?: string;
     workspaceAddress?: WorkspaceAddressV1;
     activeRootPath?: string;
+    attachedDashboard?: ProjectAttachedDashboardSelection;
     initialResource?: Readonly<{ kind: 'file'; path: string; anchor?: FileTargetAnchor; anchorSource?: ReviewCommentSource; find?: FindSeed }> | Readonly<{ kind: 'commit'; sha: string }>;
 }>;
 
@@ -80,6 +81,12 @@ export function useOpenProject(): OpenProject {
             : activeRootPath === persistedActiveRootPath
             ? persistedWorktreeId
             : null;
+        if (options?.attachedDashboard) {
+            router.push(buildProjectRouteHref({ workspaceRefId: workspaceRef.id, serverId: workspaceRef.serverId,
+                segment: 'overview', activeRootPath, defaultRootPath: workspaceRef.rootPath, activeWorktreeId,
+                attachedDashboard: options.attachedDashboard }) as never);
+            return true;
+        }
         if (options?.initialResource) {
             const tab = options.initialResource.kind === 'file'
                 ? createProjectFileDetailsTab(options.initialResource.path, options.initialResource.anchor, options.initialResource.anchorSource)

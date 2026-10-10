@@ -76,7 +76,7 @@ export const ScmWalkthroughView = React.memo(function ScmWalkthroughView(props: 
     const [choosingModel, setChoosingModel] = React.useState(false);
     const key = viewModel?.requestKey;
     const runId = viewModel?.executionRunId ?? null;
-    const marks = useWalkthroughReviewedMarks({ comparison: capturedComparison, serverId: props.serverId ?? null });
+    const marks = useWalkthroughReviewedMarks({ comparison: capturedComparison, serverId: props.serverId ?? null, host: bound.host });
     const reading = React.useMemo(() => (capturedComparison
         ? buildWalkthroughReading({
             comparison: capturedComparison,

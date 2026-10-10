@@ -3,6 +3,10 @@ import { describe, expect, it } from 'vitest';
 import { computeExpandedPathsForReveal } from './computeExpandedPathsForReveal';
 
 describe('computeExpandedPathsForReveal', () => {
+    it('preserves literal whitespace in revealed and existing directory identities', () => {
+        expect(computeExpandedPathsForReveal({ expandedPaths: [' kept '], fullPath: ' leading /line\nbreak /name ' }))
+            .toEqual([' kept ', ' leading ', ' leading /line\nbreak ']);
+    });
     it('adds directory ancestors for a file path', () => {
         expect(
             computeExpandedPathsForReveal({

@@ -6,6 +6,7 @@ import { readProjectManifestDocument } from '@happier-dev/protocol/workspaces/pr
 
 import {
   createSessionFixture,
+  createDeferred,
   renderScreen,
   standardCleanup,
 } from '@/dev/testkit';
@@ -48,12 +49,13 @@ vi.mock(
 );
 
 vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({
-  createFrontDoorActionExecute: () => async (actionId: string, input: any) => {
+  createFrontDoorActionExecute: (_runtime?: unknown, options?: { actionOperationOpenOutput?: (address: unknown) => Promise<void> }) => async (actionId: string, input: any) => {
     shared.calls.push({ actionId, input });
     if (actionId === 'projects.inspect')
       return { ok: true, result: shared.inspectionPending ? await shared.inspectionPending : shared.inspection };
     if (shared.failures[actionId]) return shared.failures[actionId];
-    return { ok: true, result: shared.responses[actionId] ?? {} };
+    if (actionId === 'projects.execution.output.open') await options?.actionOperationOpenOutput?.(input);
+    return { ok: true, result: await (shared.responses[actionId] ?? {}) };
   },
 }));
 
@@ -86,7 +88,11 @@ vi.mock('@/components/ui/code/editor/CodeEditor', async () => {
 
 vi.mock('@/text', async () => {
   const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-  return createTextModuleMock({ translate: (key: string) => key });
+  const parameterized = createTextModuleMock();
+  return createTextModuleMock({ translate: (key, params) =>
+    // Memory summaries disclose the stored amount through the translation parameter.
+    key === 'projects.scripts.editor.needsAbout' ? parameterized.t(key, params) : key,
+  });
 });
 
 const { ProjectScriptsBody } = await import('./ProjectScriptsBody');
@@ -389,6 +395,25 @@ describe('ProjectScriptsBody setup affordance', () => {
 });
 
 describe('ProjectScriptsBody runs', () => {
+  it('keeps the first row pending while a second independent Run is admitted and settles', async () => {
+    shared.inspection = { definition: presentDefinition({ version: 1, scripts: {
+      test: { source: nativeRef('test') }, lint: { source: nativeRef('lint') },
+    } }), detection, importCandidates: [] };
+    const gate = createDeferred<{ operation: ActionOperationSnapshotV1 }>();
+    shared.responses['projects.script.run'] = gate.promise;
+    const screen = await render('page', 'scripts.script:test.run');
+    try {
+      await screen.pressByTestIdAsync('scripts.script:test.run');
+      await vi.waitFor(() => expect(screen.findByTestId('scripts.script:test.run')?.props.disabled).toBe(true));
+      shared.responses['projects.script.run'] = { operation: { ...operation('accepted', 1), operationId: 'op-lint' } };
+      await screen.pressByTestIdAsync('scripts.script:lint.run');
+      await vi.waitFor(() => expect(shared.calls.filter(call => call.actionId === 'projects.script.run')).toHaveLength(2));
+      expect(screen.findByTestId('scripts.script:test.run')?.props.disabled).toBe(true);
+      expect(screen.findByTestId('scripts.script:lint.run')?.props.disabled).toBe(false);
+    } finally {
+      await act(async () => { gate.resolve({ operation: operation('accepted', 1) }); });
+    }
+  });
   it('withdraws current readiness on this checkout operation update until the same inspection owner refreshes', async () => {
     const manifest = { version: 1, workspace: { setup: [{ kind: 'command', command: 'echo setup' }] }, scripts: { test: { source: nativeRef('test') } } };
     shared.inspection = { definition: presentDefinition(manifest), detection, importCandidates: [],
@@ -730,6 +755,38 @@ describe('ProjectScriptsBody runs', () => {
 });
 
 describe('ProjectScriptsBody project file editor', () => {
+  it.each([false, true])('preserves loaded sub-GB and fractional-GB memory demand and exact byte edits (phone=%s)', async phone => {
+    shared.device = phone ? 'phone' : null;
+    const initial = { version: 1, scripts: {
+      test: { source: nativeRef('test'), memoryDemand: { bytes: 512 * 2 ** 20, basis: { kind: 'measured' } } },
+      lint: { source: nativeRef('lint'), memoryDemand: { bytes: 1.5 * 2 ** 30, basis: { kind: 'declared' } } },
+    } };
+    shared.inspection = { definition: presentDefinition(initial), detection, importCandidates: [] };
+    const screen = await render('page', 'scripts.edit');
+    await act(async () => { await screen.pressByTestIdAsync('scripts.edit'); });
+    const first = phone ? 'project-manifest-editor.section:scripts:test' : 'project-manifest-editor.script:test';
+    await vi.waitFor(() => expect(screen.findByTestId(first)).toBeTruthy());
+    expect(screen.getTextContent()).toContain('512 MB');
+    expect(screen.getTextContent()).toContain('1.5 GB');
+    if (phone) await screen.pressByTestIdAsync(first);
+    for (const [name, bytes, edited] of [['test', 512 * 2 ** 20, 1], ['lint', 1.5 * 2 ** 30, Number.MAX_SAFE_INTEGER]] as const) {
+      await screen.pressByTestIdAsync(`project-manifest-editor.script:${name}`);
+      const testID = `project-manifest-editor.script:${name}.memory`;
+      await vi.waitFor(() => expect(screen.findByTestId(testID)).toBeTruthy());
+      expect(screen.findByTestId(testID)?.props.value).toBe(String(bytes));
+      await act(async () => { screen.findAllByTestId(testID)[0]?.props.onBlur?.(); });
+      if (name === 'test') expect(screen.findByTestId('project-manifest-editor.save')?.props.disabled).toBe(true);
+      await act(async () => { screen.changeTextByTestId(testID, String(edited)); });
+      await act(async () => { screen.findAllByTestId(testID)[0]?.props.onBlur?.(); });
+    }
+    shared.responses['projects.manifest.update'] = { status: 'refused', code: 'write_failed' };
+    await screen.pressByTestIdAsync('project-manifest-editor.save');
+    const update = shared.calls.find(call => call.actionId === 'projects.manifest.update');
+    const saved = JSON.parse(update?.input.bytes);
+    expect(saved.scripts.test.memoryDemand).toEqual({ bytes: 1, basis: { kind: 'declared' } });
+    expect(saved.scripts.lint.memoryDemand).toEqual({ bytes: Number.MAX_SAFE_INTEGER, basis: { kind: 'declared' } });
+  });
+
   it('keeps the Form usable while reporting unrecognized keys, and saves through projects.manifest.update', async () => {
     shared.inspection = {
       definition: presentDefinition(declared, { sevices: {} }),
@@ -866,7 +923,7 @@ describe('ProjectScriptsBody project file editor', () => {
     await act(async () => {
       await screen.pressByTestIdAsync('project-manifest-editor.script:test');
     });
-    await commit('project-manifest-editor.script:test.memory', '8');
+    await commit('project-manifest-editor.script:test.memory', String(8 * 2 ** 30));
     // The namespace is its own choice beside the toolchain.
     await act(async () => {
       screen
@@ -875,7 +932,11 @@ describe('ProjectScriptsBody project file editor', () => {
     });
     // Found references: a missing tool stays visible and cannot be checked; an available one is added.
     expect(
-      screen.findAllByTestId('project-manifest-editor.found:1')[0]?.props.disabled,
+      screen.findHostByTestId('project-manifest-editor.found:1')?.props.accessibilityState?.disabled,
+      JSON.stringify(screen.findAllByTestId('project-manifest-editor.found:1').map(node => ({
+        type: typeof node.type === 'string' ? node.type : 'component', disabled: node.props.disabled,
+        accessibilityState: node.props.accessibilityState, ariaDisabled: node.props['aria-disabled'],
+      }))),
     ).toBe(true);
     await act(async () => {
       await screen.pressByTestIdAsync('project-manifest-editor.found:2');
@@ -1140,6 +1201,7 @@ describe('ProjectScriptsBody output', () => {
       actionOperationStore.mergeSnapshots({ serverId: workspace.serverId, snapshots: [withTerminal() as never] });
     });
     await act(async () => { await screen.pressByTestIdAsync('scripts.script:test'); });
+    await vi.waitFor(() => expect(shared.calls.some((call) => call.actionId === 'projects.execution.output.open')).toBe(true));
     await vi.waitFor(() => expect(shared.calls.some((call) => call.actionId === 'session.terminals.open')).toBe(true));
     expect(shared.calls.find((call) => call.actionId === 'session.terminals.open')?.input).toMatchObject({
       scopeId: outputScopeId,

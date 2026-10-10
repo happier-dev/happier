@@ -199,6 +199,10 @@ const ProjectSourcesCollection = React.memo(function ProjectSourcesCollection(
       onOpenCheckout={(workspaceRefId) => {
         openProject(workspaceRefId, { serverId: props.scope.serverId });
       }}
+      onOpenDashboard={(sourceId, reference, workspaceAddress) => {
+        openProject(workspaceAddress.workspaceId, { serverId: props.scope.serverId, workspaceAddress,
+          attachedDashboard: { sourceId, artifactId: reference.artifactId } });
+      }}
       onDeleted={() => navigate(projectSourceRoute(null), true)}
     />
   ) : null;

@@ -30,6 +30,7 @@ import { resolvePreferScopedMachineRpc } from '../routing/resolvePreferScopedMac
 type MachinePromptRegistriesTransferOpts = Readonly<{
     serverId?: string | null;
     timeoutMs?: number | null;
+    signal?: AbortSignal;
 }>;
 
 export async function listDaemonPromptRegistryAdapters(
@@ -127,6 +128,7 @@ export async function installDaemonPromptRegistryItem(
         serverId: opts?.serverId,
         timeoutMs: opts?.timeoutMs ?? undefined,
         method: RPC_METHODS.DAEMON_PROMPT_REGISTRY_INSTALL,
+        signal: opts?.signal,
         preferScoped,
         payload,
     });
@@ -166,6 +168,7 @@ export async function downloadDaemonPromptRegistryItem(
         serverId: opts?.serverId,
         timeoutMs: opts?.timeoutMs ?? undefined,
         parsePayload: parsePromptRegistryTransferPayload,
+        signal: opts?.signal,
         directExportRequest: {
             t: 'prompt_registry_download_v1',
             sourceId: payload.sourceId,

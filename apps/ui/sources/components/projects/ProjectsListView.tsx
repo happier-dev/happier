@@ -13,8 +13,9 @@ import { Typography } from '@/constants/Typography';
 
 import { ProjectsListItemMenu } from './ProjectsListItemMenu';
 import { Icon } from '@/components/ui/icons/Icon';
+import { StatusDot } from '@/components/ui/status/StatusDot';
 import { useProjectsListModel } from './useProjectsListModel';
-import { buildProjectsPhoneTreeRows, type ProjectsTreeRow } from './projectsTreeRows';
+import { buildProjectsPhoneTreeRows, projectsTreeRowSubtitle, type ProjectsTreeRow } from './projectsTreeRows';
 import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces';
 import { ProjectsTree, useProjectsTreeKeyboard } from './ProjectsTree';
 import { ProjectHideUndoNotice } from './ProjectHideUndoNotice';
@@ -103,12 +104,12 @@ export const ProjectsListView = React.memo(() => {
                         const ref = row.workspaceAddress ? refsById.get(JSON.stringify(row.workspaceAddress)) ?? null : null;
                         const project = row.kind === 'project' ? projectGroupsByKey.get(row.key) : undefined;
                         const attentionLabel = ref ? model.workspaceAttentionLabel(ref) : null;
-                        const subtitle = [row.subtitle, attentionLabel].filter((part): part is string => Boolean(part)).join(' · ');
+                        const subtitle = [projectsTreeRowSubtitle(row, t('projects.identity.newFromSession')), attentionLabel].filter((part): part is string => Boolean(part)).join(' · ');
                         const trailing = (
                             <View style={styles.trailing}>
                                 {row.count != null ? <Text style={styles.count}>{String(row.count)}</Text> : null}
                                 {row.attention === 'needs-you' ? (
-                                    <View style={[styles.dot, { backgroundColor: theme.colors.state.warning.foreground }]} />
+                                    <StatusDot color={theme.colors.state.warning.foreground} size={6} accessibilityLabel={t('projects.checkouts.needsYou')} />
                                 ) : row.attention === 'working' ? (
                                     <ActivitySpinner size="small" color={theme.colors.text.tertiary} />
                                 ) : null}
@@ -199,11 +200,6 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.rowMeta(),
         ...Typography.tabular(),
         color: theme.colors.text.tertiary,
-    },
-    dot: {
-        width: 7,
-        height: 7,
-        borderRadius: 4,
     },
     qualifier: {
         ...Typography.rowMeta(),

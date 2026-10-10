@@ -1,6 +1,6 @@
 import type { WorkspaceScopeBase } from './workspaceScope';
 import type { WorkspaceRefV1 } from './workspaceRefModel';
-import { findWorkspaceRefByScope, upsertWorkspaceRefByScope } from './workspaceRefs';
+import { resolveWorkspaceRefByScope, upsertWorkspaceRefByScope } from './workspaceRefs';
 
 function normalizeOptionalLabel(raw: unknown): string | null {
     if (raw == null) return null;
@@ -31,7 +31,9 @@ export function migrateLegacyWorkspaceLabelsToWorkspaceRefs(input: Readonly<{
         const scope = input.resolveScopeForLegacyKey(legacyKey);
         if (!scope) continue;
 
-        const existing = findWorkspaceRefByScope(nextWorkspaceRefs, scope);
+        const resolution = resolveWorkspaceRefByScope(nextWorkspaceRefs, scope);
+        if (resolution.kind === 'ambiguous' || resolution.kind === 'invalid') continue;
+        const existing = resolution.kind === 'resolved' ? resolution.ref : null;
         if (normalizeOptionalLabel(existing?.label)) {
             // A canonical label already exists; do not overwrite it.
             continue;

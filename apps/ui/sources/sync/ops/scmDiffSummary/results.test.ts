@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ScmDiffSummaryResultResponseSchema, type ScmDiffSummaryResultResponse } from '@happier-dev/protocol/scm';
-import { createScmDiffSummaryResultOperations } from './results';
+import { createScmDiffSummaryResultOperationsWithTransport as createScmDiffSummaryResultOperations } from '@/dev/testkit/harness/scmActionTransport';
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol';
 
 const result = ScmDiffSummaryResultResponseSchema.options[0].parse({ success: true, result: { resultId: 'saved', revision: 0, canUndo: false,
@@ -10,6 +10,45 @@ const result = ScmDiffSummaryResultResponseSchema.options[0].parse({ success: tr
     analysis: { suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: [] } },
 } });
 describe('saved SCM result client operations', () => {
+  it('refuses a disabled saved-result read before any owning-machine transport', async () => {
+    const calls: string[] = [];
+    const executor = createActionExecutor({ isActionEnabled: () => false,
+      scmActionExecute: async () => { calls.push('action-transport'); return result; },
+    // Only the owning-machine transport boundary is supplied by this fixture.
+    } as unknown as ActionExecutorDeps);
+    const ops = createScmDiffSummaryResultOperations({ machineId: 'machine', serverId: 'home', accountId: 'account',
+      shouldContinue: () => true, actionExecutor: executor,
+      rpc: async () => { calls.push('direct-transport'); return result; } });
+    expect(await ops.read({ cwd: '/repo', resultId: 'saved' })).toMatchObject({ success: false, errorCode: 'action_disabled' });
+    expect(calls).toEqual([]);
+  });
+  it('retains approval admission for saved edits instead of sending a raw mutation', async () => {
+    const calls: string[] = [];
+    const executor = createActionExecutor({ isActionApprovalRequired: () => true,
+      scmActionExecute: async () => { calls.push('action-transport'); return result; },
+    // Only the owning-machine transport boundary is supplied by this fixture.
+    } as unknown as ActionExecutorDeps);
+    const ops = createScmDiffSummaryResultOperations({ machineId: 'machine', shouldContinue: () => true,
+      actionExecutor: executor, rpc: async () => { calls.push('direct-transport'); return result; } });
+    expect(await ops.edit({ cwd: '/repo', resultId: 'saved', expectedRevision: 0,
+      edit: { kind: 'renameWalkthrough', title: 'Edited' } })).toMatchObject({ success: false, errorCode: 'approvals_not_supported' });
+    expect(calls).toEqual([]);
+  });
+  it('admits workspace effects on the actual Machine without using a Project as a Session', async () => {
+    const admitted: unknown[] = [];
+    const executor = createActionExecutor({ isActionApprovalRequired: () => false,
+      scmActionExecute: async ({ context }: Parameters<NonNullable<ActionExecutorDeps['scmActionExecute']>>[0]) => {
+        admitted.push({ target: context.externalActionTarget, sessionId: context.defaultSessionId });
+        return result;
+      },
+    // The fixture implements the real SCM transport boundary only.
+    } as unknown as ActionExecutorDeps);
+    const ops = createScmDiffSummaryResultOperations({ machineId: 'machine', serverId: 'home', accountId: 'account',
+      shouldContinue: () => true, actionExecutor: executor });
+    expect(await ops.includeCommitPlanHookChanges({ cwd: '/repo', resultId: 'saved', expectedRevision: 0,
+      groupId: 'one', beforeTreeOid: 'a'.repeat(40), afterTreeOid: 'b'.repeat(40) })).toEqual(result);
+    expect(admitted).toEqual([{ target: { kind: 'machine', machineId: 'machine' }, sessionId: undefined }]);
+  });
   it('admits acceptance through real Action policy and never falls back to direct mutation RPC', async () => {
     const calls: string[] = [];
     // The RPC is the only exercised system boundary; Action admission and schemas are real.
@@ -68,6 +107,18 @@ describe('saved SCM result client operations', () => {
     let current = true;
     const ops = createScmDiffSummaryResultOperations({ sessionId: 'session', shouldContinue: () => current,
       rpc: async () => { current = false; return result; } });
+    expect(await ops.read({ cwd: '/repo', resultId: 'saved' })).toMatchObject({ success: false, errorCode: 'result_unavailable' });
+  });
+  it('returns a completed effect receipt without publishing an admission into a retired binding', async () => {
+    let current = true;
+    const observations: unknown[] = [];
+    const admitted = ScmDiffSummaryResultResponseSchema.parse({ ...result, runId: 'actual-run', inputId: 'actual-input' });
+    const ops = createScmDiffSummaryResultOperations({ sessionId: 'session', shouldContinue: () => current,
+      onRunAdmitted: observation => observations.push(observation),
+      rpc: async () => { current = false; return admitted; } });
+    expect(await ops.edit({ cwd: '/repo', resultId: 'saved', expectedRevision: 0,
+      edit: { kind: 'renameWalkthrough', title: 'Acknowledged' } })).toEqual(admitted);
+    expect(observations).toEqual([]);
     expect(await ops.read({ cwd: '/repo', resultId: 'saved' })).toMatchObject({ success: false, errorCode: 'result_unavailable' });
   });
   it('preserves the owning machine deletion and revision-conflict outcomes', async () => {

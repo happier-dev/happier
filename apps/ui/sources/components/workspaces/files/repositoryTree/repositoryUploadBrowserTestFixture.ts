@@ -61,7 +61,8 @@ export function createRepositoryPickerInputHost(
     input.addEventListener('change', () => {
         // React DOM dispatches to the latest committed handler, not the one at ref attachment.
         const onChange = readOnChange ? readOnChange() : element.props.onChange;
-        if (typeof onChange === 'function') onChange({ target: input });
+        if (typeof onChange !== 'function') throw new Error('Mounted picker input has no committed change handler');
+        onChange({ target: input, currentTarget: input });
     });
     inputs.push(input);
     return input;

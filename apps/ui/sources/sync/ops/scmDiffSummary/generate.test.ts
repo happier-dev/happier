@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ExecutionRunPublicState, ScmComparison, ScmDiffSummaryGenerateInput, ScmDiffSummaryGenerateOutput, ScmDiffSummaryGenerateSuccess, TurnChangeSet } from '@happier-dev/protocol';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends';
-import { createScmDiffSummaryOperations, getScmDiffSummaryOperationState, type ScmDiffSummaryGenerateRpc } from './generate';
+import { getScmDiffSummaryOperationState, type ScmDiffSummaryGenerateRpc } from './generate';
+import { createScmDiffSummaryOperationsWithTransport as createScmDiffSummaryOperations } from '@/dev/testkit/harness/scmActionTransport';
 
 // Execution-run RPCs are network boundaries; keep all domain and envelope logic real.
 vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
@@ -42,6 +43,37 @@ const finalCheckpointParams = { ...params,
 } satisfies Parameters<ReturnType<typeof createScmDiffSummaryOperations>['prefetch']>[0];
 
 describe('SCM diff summary operations', () => {
+    it('rejects captured evidence from another checkout, source or pinned comparison', async () => {
+        const requested = { cwd: '/repo', source: { kind: 'workingTree' as const }, comparisonId: 'a'.repeat(64) };
+        const basis = { ...comparison, id: requested.comparisonId, source: requested.source };
+        const valid = createScmDiffSummaryOperations({ captureComparison: async () => ({ success: true, comparison: basis,
+            metadata: { source: requested.source, sourceKey: basis.id } }) });
+        expect(await valid.captureComparison({ sessionId: 'session_1', input: requested })).toMatchObject({ success: true });
+        for (const captured of [
+            { ...basis, repository: { rootPath: '/other' } },
+            { ...basis, source: { kind: 'commit' as const, commit: 'deadbeef' } },
+            { ...basis, id: 'b'.repeat(64) },
+        ]) {
+            const ops = createScmDiffSummaryOperations({ captureComparison: async () => ({ success: true, comparison: captured,
+                metadata: { source: requested.source, sourceKey: captured.id } }) });
+            expect(await ops.captureComparison({ sessionId: 'session_1', input: requested })).toMatchObject({ success: false });
+        }
+    });
+    it('keeps workspace-native saved results separate from Sessions, Machines and Homes', () => {
+        const ops = createScmDiffSummaryOperations();
+        const scope = { serverId: 'home', accountId: 'account' };
+        const result = { resultId: 'result_1', revision: 3, canUndo: true, output: { ...complete, revision: 3,
+            comparison: { ...comparison, source: { kind: 'workingTree' as const } } } };
+        const workspace = ops.loadSavedResult({ machineId: 'machine', scope, result });
+        const otherMachine = ops.loadSavedResult({ machineId: 'other-machine', scope, result });
+        const otherHome = ops.loadSavedResult({ machineId: 'machine', scope: { ...scope, serverId: 'other-home' }, result });
+        const session = ops.loadSavedResult({ sessionId: 'machine', scope, result });
+        expect(new Set([workspace, otherMachine, otherHome, session]).size).toBe(4);
+        expect(ops.getState().entriesByKey[workspace!]).toMatchObject({ sessionId: null, machineId: 'machine' });
+        ops.applySavedResult(workspace!, { ...result, revision: 4, output: { ...result.output, revision: 4 } });
+        expect(getScmDiffSummaryOperationState(ops.getState(), otherMachine!).revision).toBe(3);
+        expect(getScmDiffSummaryOperationState(ops.getState(), workspace!).revision).toBe(4);
+    });
     it('rejects an explicitly unsupported stored choice without silently admitting the caller default', async () => {
         const generate = vi.fn<ScmDiffSummaryGenerateRpc>(async () => pending);
         const ops = createScmDiffSummaryOperations({ generateSummary: generate });
@@ -98,14 +130,15 @@ describe('SCM diff summary operations', () => {
             unsubscribe();
         }
     });
-    it('does not publish a late admission after its captured Account has retired', async () => {
+    it('keeps the actual late generation receipt without publishing into a retired Account', async () => {
         let current = true;
         let resolve!: (output: ScmDiffSummaryGenerateOutput) => void;
         const ops = createScmDiffSummaryOperations({ generateSummary: () => new Promise((done) => { resolve = done; }) });
         const admission = ops.generateFromUserAction({ ...params, shouldContinue: () => current });
+        await vi.waitFor(() => expect(resolve).toBeTypeOf('function'));
         current = false;
         resolve(pending);
-        expect(await admission).toMatchObject({ ok: false, errorCode: 'SCM_DIFF_SUMMARY_SCOPE_RETIRED' });
+        expect(await admission).toMatchObject({ ok: true, runId: pending.runId });
         expect(ops.getState()).toEqual({ entriesByKey: {} });
     });
     it('captures Files evidence independently of disabled narration without admitting a model run', async () => {
@@ -128,6 +161,7 @@ describe('SCM diff summary operations', () => {
         const controller = new AbortController();
         const request = { sessionId: 'session_1', input, scope, signal: controller.signal, shouldContinue: () => current };
         const result = ops.captureComparison(request);
+        await vi.waitFor(() => expect(capture).toHaveBeenCalled());
         current = false;
         controller.abort();
         release();
@@ -236,14 +270,14 @@ describe('SCM diff summary operations', () => {
         const scoped = { ...finalCheckpointParams, scope: { serverId: 'home', accountId: 'account_a' } };
         const first = ops.prefetch(scoped);
         const concurrent = ops.prefetch(scoped);
-        expect(generate).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(generate).toHaveBeenCalledTimes(1));
         resolve(pending);
         const admitted = await first;
         expect(await concurrent).toEqual(admitted);
         expect(await ops.prefetch(scoped)).toMatchObject({ ok: true, key: admitted.key, runId: 'run_1' });
         expect(generate).toHaveBeenCalledTimes(1);
         const otherAccount = ops.prefetch({ ...scoped, scope: { serverId: 'home', accountId: 'account_b' } });
-        expect(generate).toHaveBeenCalledTimes(2);
+        await vi.waitFor(() => expect(generate).toHaveBeenCalledTimes(2));
         resolve(pending);
         await otherAccount;
     });

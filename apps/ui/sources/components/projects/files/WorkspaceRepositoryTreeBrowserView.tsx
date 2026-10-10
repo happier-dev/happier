@@ -41,7 +41,7 @@ import { useWorkspaceRepositoryTreeWebDropState } from '@/hooks/workspaces/files
 import { useRepositoryUploadActionTarget } from '@/components/workspaces/files/repositoryTree/useRepositoryUploadActionTarget';
 import { useWorkspaceRepositoryTreeRowActions } from '@/hooks/workspaces/files/useWorkspaceRepositoryTreeRowActions';
 import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
-import { isMachineOnline } from '@/utils/sessions/machineUtils';
+import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
 import { isMachineDaemonFiniteTransferApplicationSupported } from '@/sync/domains/transfers/runtime/transferRuntime/availability/machineDaemonTransferState';
 import { isMachineFiniteTransferRpcDeclared, readCurrentMachineIrohEndpoint, resolveMachineCarrierPreselection } from '@/sync/domains/transfers/runtime/transferRuntime/routing/resolveMachineCarrierPreselection';
 import { isBrowserIrohHost } from '@/sync/runtime/browserIroh/hostEligibility';
@@ -91,7 +91,7 @@ export type WorkspaceRepositoryTreeBrowserViewProps = Readonly<{
     scrollOverlay?: React.ReactNode;
     /**
      * A Code folder page (plan 13 §2, lab p-code BROWSE): one folder's entries drawn in place as the
-     * page's table — no tree toolbar, the name goes into the folder, the chevron opens it inline —
+     * page's table — compact controls without another search, the name goes into the folder, the chevron opens it inline —
      * keeping this browser's row actions, uploads, drops and transfers.
      */
     folderPage?: Readonly<{
@@ -100,6 +100,10 @@ export type WorkspaceRepositoryTreeBrowserViewProps = Readonly<{
         renderRowMetadata?: React.ComponentProps<typeof WorkspaceRepositoryTreeList>['renderRowMetadata'];
         renderRowSubtitle?: React.ComponentProps<typeof WorkspaceRepositoryTreeList>['renderRowSubtitle'];
         onNodesChange?: React.ComponentProps<typeof WorkspaceRepositoryTreeList>['onNodesChange'];
+        onVisibleNodesChange?: React.ComponentProps<typeof WorkspaceRepositoryTreeList>['onVisibleNodesChange'];
+        listHeader?: React.ReactElement | null;
+        listFooter?: React.ReactElement | null;
+        listEmpty?: React.ReactElement | null;
     }> | null;
 }>;
 
@@ -128,7 +132,8 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
     // Changed-only and file-query modes belong to the tree; a Code page always lists its folder.
     const showChangedOnly = props.folderPage ? false : storedChangedOnly;
     const machine = useServerScopedMachine(workspaceScope.serverId, workspaceScope.machineId);
-    const machineRpcTargetAvailable = props.effectsEnabled !== false && Boolean(machine && isMachineOnline(machine));
+    const presence = useMachinePresenceSummary(workspaceScope.serverId, workspaceScope.machineId);
+    const machineRpcTargetAvailable = props.effectsEnabled !== false && presence.reachability === 'reachable';
     const workspaceScmController = useWorkspaceScmSnapshotController(props.scmSnapshot === undefined && machineRpcTargetAvailable ? workspaceScope : null);
     const effectiveScmSnapshot = props.scmSnapshot !== undefined ? props.scmSnapshot : workspaceScmController.snapshot ?? null;
     const serverSnapshot = useServerFeaturesSnapshotForServerId(workspaceScope.serverId, {
@@ -528,13 +533,14 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
     const showAllFiles = React.useCallback(() => setShowChangedOnly(false), [setShowChangedOnly]);
 
     return (
-        <View style={folderPage ? null : { flex: 1 }}>
+        <View style={{ flex: 1, minHeight: 0 }}>
             {props.createMenuPlacement === 'paneHeader' ? <BrowserHeaderAction action={createMenu} /> : null}
-            {showSearchBar ? (
+            {showSearchBar || folderPage ? (
                 <RepositoryTreeToolbar
                     testIDPrefix={props.createMenuPlacement === 'paneHeader' ? 'repository-tree' : 'workspace-repository-tree'}
                     searchValue={searchQuery}
                     onSearchValueChange={setSearchQuery}
+                    showSearch={showSearchBar}
                     changedOnly={showChangedOnly}
                     changedCount={changedCount}
                     onChangedOnlyChange={setShowChangedOnly}
@@ -547,7 +553,7 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
                     onRequestClose={props.onRequestClose}
                 />
             ) : null}
-            {!folderPage && !showChangedOnly && !shouldShowSearchResults ? <RepositoryTreeVisibilityControl mode={visibilityMode} available={gitIgnoreAvailable} onChange={setVisibilityMode} /> : null}
+            {!showChangedOnly && !shouldShowSearchResults ? <RepositoryTreeVisibilityControl mode={visibilityMode} available={gitIgnoreAvailable} onChange={setVisibilityMode} /> : null}
             {Platform.OS === 'web' ? (
                 <>
                     <input
@@ -584,8 +590,8 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
                     })}
                 </>
             ) : null}
-            <WebDropTargetView testID="repository-tree-drop-zone" style={folderPage ? null : { flex: 1 }} {...dropZoneHandlersWithRoot}>
-                <View style={folderPage ? { position: 'relative' } : { flex: 1, position: 'relative' }}>
+            <WebDropTargetView testID="repository-tree-drop-zone" style={{ flex: 1, minHeight: 0 }} {...dropZoneHandlersWithRoot}>
+                <View style={{ flex: 1, minHeight: 0, position: 'relative' }}>
                     {!shouldShowSearchResults ? props.rootHeading : null}
                     {shouldShowSearchResults ? (
                         <SearchResultsList
@@ -632,12 +638,15 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
                             onShowAllFiles={showAllFiles}
                             selectedPath={props.selectedPath ?? null}
                             machineName={machineName}
-                            presentation={folderPage ? 'inline' : undefined}
                             rootDirectoryPath={folderPage?.path}
                             folderPage={folderPageNavigation}
                             renderRowMetadata={folderPage?.renderRowMetadata}
                             renderRowSubtitle={folderPage?.renderRowSubtitle}
                             onNodesChange={folderPage?.onNodesChange}
+                            onVisibleNodesChange={folderPage?.onVisibleNodesChange}
+                            listHeader={folderPage?.listHeader}
+                            listFooter={folderPage?.listFooter}
+                            listEmpty={folderPage?.listEmpty}
                             emptyLabel={folderPage ? t('projects.code.emptyFolder') : undefined}
                             {...props.scrollProps}
                         />

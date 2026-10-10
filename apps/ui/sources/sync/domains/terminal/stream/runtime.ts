@@ -28,6 +28,9 @@ export type TerminalUtf8ProjectionDecoder = Readonly<{
     reset: () => void;
 }>;
 
+/** Visible retention-gap projection shared by terminal display and copied output. */
+export const TERMINAL_OUTPUT_GAP_MARKER = '\r\n[Output truncated]\r\n';
+
 export function createTerminalUtf8ProjectionDecoder(): TerminalUtf8ProjectionDecoder {
     let decoder = new TextDecoder();
 

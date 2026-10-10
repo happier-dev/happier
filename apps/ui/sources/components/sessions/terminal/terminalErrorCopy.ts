@@ -5,6 +5,11 @@ export type TerminalErrorCopy = Readonly<{
 }>;
 
 const COPY_BY_ERROR_CODE: Record<string, TerminalErrorCopy> = {
+    terminal_forbidden: { bodyKey: 'machines.terminals.denied' },
+    terminal_access_denied: { bodyKey: 'machines.terminals.denied' },
+    access_denied: { bodyKey: 'machines.terminals.denied' },
+    terminal_unavailable: { bodyKey: 'machines.terminals.unavailable' },
+    outcome_unknown: { bodyKey: 'machines.terminals.openUnknown' },
     terminal_missing_machine_target: { bodyKey: 'terminalEmbedded.errors.missingMachineTarget' },
     terminal_rpc_target_unavailable: { bodyKey: 'terminalEmbedded.errors.rpcTargetUnavailable' },
     terminal_machine_unreachable: { bodyKey: 'terminalEmbedded.errors.machineUnreachable' },

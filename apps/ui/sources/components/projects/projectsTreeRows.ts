@@ -78,9 +78,18 @@ export type ProjectsTreeRow = Readonly<{
     attention: ProjectsTreeAttention;
     offline?: boolean;
     selected: boolean;
-    /** The visual owner renders projects.identity.newFromSession when true. */
+    /** Drawn through `projectsTreeRowSubtitle` as the row's second line. */
     newFromSession?: boolean;
 }>;
+
+/**
+ * A row's second line (lab p-projects AUTO): a Project that arrived from a session and has not been
+ * viewed yet leads with that, once, until it is opened. The column and the phone list both draw it.
+ */
+export function projectsTreeRowSubtitle(row: Pick<ProjectsTreeRow, 'subtitle' | 'newFromSession'>, newFromSessionLabel: string): string | null {
+    if (row.newFromSession !== true) return row.subtitle ?? null;
+    return [newFromSessionLabel, row.subtitle].filter((part): part is string => Boolean(part)).join(' · ');
+}
 
 function mostUrgent(checkouts: readonly ProjectsTreeCheckout[]): ProjectsTreeAttention {
     if (checkouts.some((checkout) => checkout.attention === 'needs-you')) return 'needs-you';

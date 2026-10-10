@@ -3,6 +3,7 @@ import { OpenProjectInputV1Schema } from '@happier-dev/protocol/projects/openPro
 import { OpenProjectDraftSelectionV1Schema } from '@happier-dev/protocol/projects/openProjectDraftV1';
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { buildWorkspaceContentPolicy } from '@/sync/domains/sessionHandoff/sessionHandoffDefaults';
 import { MMKV } from 'react-native-mmkv';
 import { scopedStorageId } from '@/utils/system/storageScope';
 import { resetServerProfilesRuntimeForTests, resolveServerProfileScopeIdForIdentifier, type ServerProfile } from '@/sync/domains/server/serverProfiles';
@@ -71,6 +72,41 @@ const base: ProjectOpenChoiceState = {
 };
 
 describe('Project Open choices', () => {
+  it('retains a direct repository selection through the same canonical clone editor', () => {
+    const selection = { serverId: 'home', machineId: 'devbox', source: { kind: 'repository' as const, selector: source.repository },
+      materialization: { kind: 'clone' as const, destinationParentPath: '/clones', destinationDirectoryName: 'repo' } };
+    const state = projectOpenChoiceStateFromDraft(selection, [], '/home/me');
+    expect(resolveProjectOpenUseOptions(state).map(option => option.use)).toEqual(['clone']);
+    expect(buildProjectOpenInput(buildProjectOpenDraft({ ...state, ref: 'feature' }), [])).toMatchObject({
+      source: selection.source, ref: 'feature', materialization: selection.materialization });
+  });
+  it.each([
+    { kind: 'copy_once' as const, contentPolicy: buildWorkspaceContentPolicy({ contentSelection: 'all_files', includeIgnoredMode: 'include_selected', ignoredIncludeGlobs: ['.env.local'] }) },
+    { kind: 'create_relationship' as const, mode: 'keep_synced' as const, flushBeforeCommit: true as const,
+      contentPolicy: buildWorkspaceContentPolicy({ contentSelection: 'all_files', includeIgnoredMode: 'include_selected', ignoredIncludeGlobs: ['.env.local'] }) },
+    { kind: 'relationship' as const, relationshipId: 'existing-link', flushBeforeCommit: false },
+    { kind: 'linked_workspace' as const },
+  ])('preserves a retained $kind activation when another Open field changes', workspaceAction => {
+    const from = checkout('other', 'mac', '/source');
+    const retained = { serverId: 'home', machineId: 'devbox', source: { kind: 'source' as const,
+      id: source.id, revision: source.revision, selector: source.repository, subdir: 'saved/default',
+      checkout: { serverId: 'home', machineId: 'mac', workspaceId: from.id, rootPath: from.rootPath } },
+      materialization: { kind: 'sync' as const, targetPath: '/target', workspaceAction }, subdir: 'packages/app' };
+    const state = projectOpenChoiceStateFromDraft(retained, [from], '/home/me');
+    const edited = buildProjectOpenDraft({ ...state, ref: 'feature', destination: '/new-target' });
+    expect(buildProjectOpenInput(edited, [from])).toMatchObject({ ref: 'feature', subdir: 'packages/app',
+      source: { subdir: 'saved/default' }, materialization: { kind: 'sync', targetPath: '/new-target', workspaceAction } });
+    expect(retained.source.subdir).toBe('saved/default');
+  });
+
+  it('retains the canonical worktree mode and target while editing the displayed branch', () => {
+    const retained = { serverId: 'home', machineId: 'devbox', source: { kind: 'folder' as const, path: '/repo' },
+      materialization: { kind: 'worktree' as const, targetPath: '/elsewhere', checkout: {
+        kind: 'git_worktree' as const, displayName: 'existing', baseRef: 'main', branchMode: 'existing' as const } } };
+    const state = projectOpenChoiceStateFromDraft(retained, [], '/home/me');
+    expect(buildProjectOpenInput(buildProjectOpenDraft({ ...state, branch: 'other-existing' }), [])).toMatchObject({
+      materialization: { targetPath: '/elsewhere', checkout: { displayName: 'other-existing', branchMode: 'existing' } } });
+  });
   it('allows partial authoring while the full Open owner enforces Home and Workspace match', () => {
     expect(OpenProjectDraftSelectionV1Schema.safeParse({ serverId: 'home', editing: { destination: 'typing' } }).success).toBe(true);
     const selection = { serverId: 'home', machineId: 'devbox', source: { kind: 'workspace' as const,

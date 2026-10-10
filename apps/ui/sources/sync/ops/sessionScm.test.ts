@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { ScmPullRequestListRequest } from '@happier-dev/protocol/scm';
+import { RPC_METHODS, type SocketRpcAuthorizationContext } from '@happier-dev/protocol/rpc';
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpc';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
@@ -25,6 +26,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
         payload: unknown;
         serverId?: string | null;
         timeoutMs?: number;
+        authorization?: SocketRpcAuthorizationContext;
     }) => machineRpcMock(
         params.machineId,
         params.method,
@@ -32,6 +34,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
         {
             ...(params.serverId ? { serverId: params.serverId } : {}),
             timeoutMs: params.timeoutMs ?? 30_000,
+            ...(params.authorization ? { authorization: params.authorization } : {}),
         },
     ),
 }));
@@ -83,6 +86,21 @@ function createSessionScmState(params: Readonly<{
 }
 
 describe('sessionScm', () => {
+    it('admits private Work evidence only under the exact Session transport authorization', async () => {
+        getStateMock.mockReturnValue(createSessionScmState({
+            session: createSessionFixture({ id: 'session-1', metadata: baseSessionMetadata }),
+            machines: [createMachineFixture({ id: 'machine-1', active: true })],
+        }));
+        machineRpcMock.mockResolvedValue({ success: true, pullRequests: [], workEvidence: [], workEvidenceStatus: 'partial' });
+        const { runSessionScmRpc } = await import('./sessionScm');
+        const admittedRequest: ScmPullRequestListRequest = { workEvidence: { sessionId: 'session-1' } };
+        await runSessionScmRpc('session-1', RPC_METHODS.SCM_PULL_REQUEST_LIST, admittedRequest);
+        expect(machineRpcMock.mock.calls[0]?.[3]).toMatchObject({ authorization: { kind: 'session.write', sessionId: 'session-1' } });
+        const foreignSessionRequest: ScmPullRequestListRequest = { workEvidence: { sessionId: 'another-session' } };
+        const refused = await runSessionScmRpc('session-1', RPC_METHODS.SCM_PULL_REQUEST_LIST, foreignSessionRequest);
+        expect(refused.success).toBe(false);
+        expect(machineRpcMock.mock.calls.filter(call => call[2].workEvidence?.sessionId === 'another-session')).toEqual([]);
+    });
     it('keeps reads and mutations on the explicitly selected Home with duplicate session and machine ids', async () => {
         const session = (serverId: string, path: string) => createSessionFixture({
             id: 'same-session', serverId, active: true,

@@ -45,6 +45,7 @@ function resolveReviewDiffPathsToEnsure(input: Readonly<{
 
 export function useChangedFilesReviewDiffLoading(input: {
     sessionId: string;
+    reviewScopeKey?: string;
     isRepo: boolean;
     reviewFiles: readonly ScmFileStatus[];
     diffArea: ScmDiffArea;
@@ -63,6 +64,7 @@ export function useChangedFilesReviewDiffLoading(input: {
 }) {
     const {
         sessionId,
+        reviewScopeKey = sessionId,
         isRepo,
         reviewFiles,
         diffArea,
@@ -129,14 +131,14 @@ export function useChangedFilesReviewDiffLoading(input: {
         diffStateSource.reset();
         lastFetchAtMsByPathRef.current = {};
         inFlightPathsRef.current = new Set();
-    }, [diffArea, hasScopedDiffs, sessionId]);
+    }, [diffArea, hasScopedDiffs, reviewScopeKey]);
 
     React.useEffect(() => {
         inFlightPathsRef.current = new Set();
         // Force a revalidate on the next effect run without clearing already-loaded diffs.
         // This is used for manual refresh, and for snapshot signature changes from SCM refresh.
         lastFetchAtMsByPathRef.current = {};
-    }, [diffArea, refreshToken, sessionId, snapshotSignature]);
+    }, [diffArea, refreshToken, reviewScopeKey, snapshotSignature]);
 
     React.useEffect(() => {
         diffStateSource.prune(new Set(fileStatusByPath.keys()), inFlightPathsRef.current);
@@ -167,7 +169,7 @@ export function useChangedFilesReviewDiffLoading(input: {
     }, [diffStateSource, fallbackError, providerDiffByPath, requestedPathsKey, reviewFiles, selectedPath, tooLarge]);
 
     React.useEffect(() => {
-        if (!sessionId) return;
+        if (!sessionId && !fetchUnifiedDiffForPath) return;
         if (!isRepo) return;
         if (reviewFiles.length === 0) return;
 
@@ -315,6 +317,7 @@ export function useChangedFilesReviewDiffLoading(input: {
         reviewFiles,
         selectedPath,
         sessionId,
+        reviewScopeKey,
         snapshotSignature,
         tooLarge,
         providerDiffByPath,

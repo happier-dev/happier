@@ -8,7 +8,7 @@ import { useWorkspaceScmSnapshotController } from '@/hooks/workspaces/scm/useWor
 import { NotSourceControlRepositoryState } from '@/components/workspaces/scm/states/NotSourceControlRepositoryState';
 import { SourceControlUnavailableState } from '@/components/workspaces/scm/states/SourceControlUnavailableState';
 import { SourceControlStaleSnapshotNotice } from '@/components/workspaces/scm/states/SourceControlStaleSnapshotNotice';
-import { useSetting, useWorkspaceRefs, useWorkspaceReviewCommentsDrafts, useWorkspaceScmCommitSelectionPatches, useWorkspaceScmCommitSelectionPaths } from '@/sync/domains/state/storage';
+import { useSession, useSetting, useWorkspaceRefs, useWorkspaceReviewCommentsDrafts, useWorkspaceScmCommitSelectionPatches, useWorkspaceScmCommitSelectionPaths } from '@/sync/domains/state/storage';
 import { ChangedFilesReview } from '@/components/workspaces/scm/review/ChangedFilesReview';
 import { fetchWorkspaceUnifiedDiffForPath } from '@/scm/diff/fetchWorkspaceUnifiedDiffForPath';
 import type { ScmReviewUnifiedDiffFetcher } from '@/components/workspaces/scm/review/scmReviewDiffFetcher';
@@ -46,20 +46,28 @@ import type { SessionScmReviewComparison, SessionScmReviewView } from '@/compone
 import { t } from '@/text';
 import { findWorkspaceRefByScope } from '@/sync/domains/workspaces/workspaceRefs';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
-import { useScmReviewTabState } from '@/components/sessions/files/comparison/useSessionScmReviewTabState';
+import { useScmReviewActiveFileSelection, useScmReviewTabState } from '@/components/sessions/files/comparison/useSessionScmReviewTabState';
 import type { ScmComparison, ScmDiffSummaryResult } from '@happier-dev/protocol/scm';
 import type { WalkthroughStop } from '@/components/sessions/files/walkthrough/walkthroughReading';
 import { captureScmComparisonForSession } from '@/sync/ops/scmDiffSummary/generate';
 import { scmComparisonSourceOf } from '@/sync/domains/scm/diffSummary/selection';
 import { Modal } from '@/modal';
+import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
+import { useSessionScmDiffSummaryBinding } from '@/components/sessions/files/comparison/useSessionScmDiffSummaryBinding';
+import { presentStartReviewDialog } from '@/components/sessions/reviews/walkthrough/StartReviewDialog';
+import { WorkspaceCommitsView } from '@/components/projects/scm/WorkspaceCommitsView';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import type { ScmDiffSummaryHost } from '@/sync/ops/scmDiffSummary/results';
+import { readSessionScmReviewTarget } from '@/components/sessions/panes/url/sessionPaneUrlState';
+import { openWorkspaceScmAuthoringDraft } from '@/components/projects/scm/workspaceScmAuthoring';
+import { useScmWalkthrough } from '@/components/sessions/files/walkthrough/useSessionScmWalkthrough';
+import { normalizeWorkspaceRootPath } from '@/sync/domains/workspaces/workspaceScope';
 
-/** A project's Review is a Details tab too: the shared Review header and its file list first. */
+/** The same comparison body serves Changes and explicit review Details destinations. */
 const WORKSPACE_REVIEW_DETAILS_HEADER = Object.freeze({});
 
 export type WorkspaceScmReviewDetailsViewProps = Readonly<{
     scopeId: string;
-    workspaceRefId: string;
-    workspaceCacheKey: string;
     machineId: string;
     rootPath: string;
     serverId: string;
@@ -68,15 +76,61 @@ export type WorkspaceScmReviewDetailsViewProps = Readonly<{
     comparison?: SessionScmReviewComparison;
     view?: SessionScmReviewView;
     explain?: boolean;
+    /** Independently authorized Session evidence; never inferred from Machine/Project access. */
+    evidenceSessionId?: string;
+    onShowInGit?: () => void;
     onSelectTarget?: (target: Readonly<{ comparison: SessionScmReviewComparison; view: SessionScmReviewView; explain: boolean }>) => void;
     onAsk?: (input: Readonly<{ comparison: ScmComparison; result: ScmDiffSummaryResult | null; stop: WalkthroughStop; isCurrent: () => boolean }>) => void;
     onExplain?: (input: Readonly<{ comparison: ScmComparison; result: ScmDiffSummaryResult | null; isCurrent: () => boolean }>) => void;
 }>;
 
+type WorkspaceReviewTarget = Readonly<{ comparison: SessionScmReviewComparison; view: SessionScmReviewView; explain: boolean }>;
+
 export const WorkspaceScmReviewDetailsView = React.memo((props: WorkspaceScmReviewDetailsViewProps) => {
+    const pane = useAppPaneScope(props.scopeId);
+    const hostKey = JSON.stringify([props.serverId, props.machineId, props.rootPath, props.evidenceSessionId ?? null]);
+    const { persistedReviewTabState, setPersistedReviewTabState } = useScmReviewTabState(hostKey, pane);
+    const routeKey = JSON.stringify([props.comparison, props.view, props.explain]);
+    const target = React.useMemo<WorkspaceReviewTarget>(() => {
+        const saved = !props.onSelectTarget && persistedReviewTabState?.workspaceReviewHost === hostKey
+            && persistedReviewTabState.workspaceReviewRouteKey === routeKey
+            ? readSessionScmReviewTarget(persistedReviewTabState.workspaceReviewTarget) : undefined;
+        return { comparison: saved?.comparison ?? props.comparison ?? { kind: 'workingTree' },
+            view: saved?.view ?? props.view ?? 'files', explain: saved?.explain ?? props.explain === true };
+    }, [hostKey, routeKey, props.onSelectTarget, props.comparison, props.view, props.explain,
+        persistedReviewTabState?.workspaceReviewHost, persistedReviewTabState?.workspaceReviewRouteKey, persistedReviewTabState?.workspaceReviewTarget]);
+    const selectTarget = React.useCallback((next: WorkspaceReviewTarget) => {
+        setPersistedReviewTabState({ workspaceReviewHost: hostKey, workspaceReviewRouteKey: routeKey, workspaceReviewTarget: next });
+        props.onSelectTarget?.(next);
+    }, [hostKey, routeKey, props.onSelectTarget, setPersistedReviewTabState]);
+    const session = useSession(props.evidenceSessionId ?? '', props.serverId);
+    const sessionMachine = useSessionMachineTarget(props.evidenceSessionId ?? null, props.serverId);
+    const privateEvidence = target.comparison.kind === 'session' || target.comparison.kind === 'turnCheckpoint';
+    const evidenceSessionId = session && sessionMachine?.machineId === props.machineId
+        && normalizeWorkspaceRootPath(sessionMachine.basePath) === normalizeWorkspaceRootPath(props.rootPath) ? props.evidenceSessionId : undefined;
+    const boundProps = { ...props, ...target, evidenceSessionId, onSelectTarget: selectTarget };
+    return privateEvidence && evidenceSessionId ? <SessionBoundWorkspaceReview {...boundProps} evidenceSessionId={evidenceSessionId} />
+        : <MachineBoundWorkspaceReview {...boundProps} />;
+});
+
+function MachineBoundWorkspaceReview(props: WorkspaceScmReviewDetailsViewProps) {
+    const bound = useWorkspaceScmDiffSummaryBinding({ machineId: props.machineId, rootPath: props.rootPath,
+        serverId: props.serverId, comparison: props.comparison ?? { kind: 'workingTree' }, output: 'walkthrough' });
+    return <WorkspaceReviewBody {...props} bound={bound} host={{ machineId: props.machineId }} />;
+}
+
+function SessionBoundWorkspaceReview(props: WorkspaceScmReviewDetailsViewProps & Readonly<{ evidenceSessionId: string }>) {
+    const bound = useSessionScmDiffSummaryBinding({ sessionId: props.evidenceSessionId, serverId: props.serverId,
+        comparison: props.comparison ?? null, output: 'walkthrough' });
+    return <WorkspaceReviewBody {...props} bound={bound} host={{ sessionId: props.evidenceSessionId }} />;
+}
+
+const WorkspaceReviewBody = React.memo((props: WorkspaceScmReviewDetailsViewProps & Readonly<{
+    bound: ReturnType<typeof useWorkspaceScmDiffSummaryBinding>; host: ScmDiffSummaryHost;
+}>) => {
     const { theme } = useUnistyles();
     const pane = useAppPaneScope(props.scopeId);
-    const { mountedInitialReviewState, onScrollTopChange, onCollapsedPathsChange } = useScmReviewTabState(
+    const { persistedReviewTabState, setPersistedReviewTabState, mountedInitialReviewState, onScrollTopChange, onCollapsedPathsChange } = useScmReviewTabState(
         JSON.stringify([props.serverId, props.machineId, props.rootPath]), pane);
     const scmReviewMaxFilesSetting = useSetting('scmReviewMaxFiles');
     const scmReviewMaxChangedLinesSetting = useSetting('scmReviewMaxChangedLines');
@@ -103,19 +157,18 @@ export const WorkspaceScmReviewDetailsView = React.memo((props: WorkspaceScmRevi
     const reviewCommentDrafts = useWorkspaceReviewCommentsDrafts(scope);
     const reviewDraftHandlers = useWorkspaceReviewCommentDraftHandlers(scope);
     const { snapshot, loading, error, refresh } = useWorkspaceScmSnapshotController(scope);
-    const [localTarget, setLocalTarget] = React.useState<Readonly<{ comparison: SessionScmReviewComparison; view: SessionScmReviewView; explain: boolean }>>({
-        comparison: props.comparison ?? { kind: 'workingTree' }, view: props.view ?? 'files', explain: props.explain === true,
-    });
-    const comparison = props.onSelectTarget ? props.comparison ?? localTarget.comparison : localTarget.comparison;
-    const view = props.onSelectTarget ? props.view ?? localTarget.view : localTarget.view;
-    const explain = props.onSelectTarget ? props.explain ?? localTarget.explain : localTarget.explain;
-    const selectTarget = (patch: Partial<typeof localTarget>) => {
+    const comparison = props.comparison ?? { kind: 'workingTree' };
+    const view = props.view ?? 'files';
+    const explain = props.explain === true;
+    const selectTarget = (patch: Partial<WorkspaceReviewTarget>) => {
         const next = { comparison, view, explain, ...patch };
-        if (next.comparison.kind === 'session' || next.comparison.kind === 'turnCheckpoint') return;
-        setLocalTarget(next);
+        if ((next.comparison.kind === 'session' || next.comparison.kind === 'turnCheckpoint') && !props.evidenceSessionId) return;
+        if (patch.comparison && patch.comparison.kind !== 'workingTree' && next.view === 'commits') next.view = 'files';
         props.onSelectTarget?.(next);
     };
-    const bound = useWorkspaceScmDiffSummaryBinding({ ...scope, comparison, output: 'walkthrough' });
+    const bound = props.bound;
+    useScmReviewActiveFileSelection({ pane, hostKey: JSON.stringify([props.serverId, bound.scope?.accountId, props.machineId, props.rootPath, props.host.sessionId]),
+        activeFileKey: activeReviewFileKey, comparison, view, presented: presented && Boolean(bound.scope), isCurrent: bound.isCurrent });
     const readingIdentity = JSON.stringify([bound.capturedComparison?.id, bound.viewModel?.resultId, bound.viewModel?.revision]);
     const currentReadingIdentity = React.useRef(readingIdentity);
     currentReadingIdentity.current = readingIdentity;
@@ -132,7 +185,7 @@ export const WorkspaceScmReviewDetailsView = React.memo((props: WorkspaceScmRevi
     }, [bound.isCurrent, bound.scope?.serverId, bound.scope?.accountId]);
     const pluginPermissionGrantActions = React.useMemo(
         () => createPluginPermissionGrantActions({ execute: frontDoorActionExecutor }), [frontDoorActionExecutor]);
-    const capture = useCapturedScmComparison({ host: { machineId: props.machineId }, machine: bound.machine,
+    const capture = useCapturedScmComparison({ host: props.host, machine: bound.machine,
         identity: { machineId: props.machineId, basePath: props.rootPath }, serverId: props.serverId, comparison,
         active: comparison.kind !== 'workingTree' || Boolean(comparison.comparisonId), knownComparison: bound.capturedComparison });
     const displayedComparison = view === 'walkthrough' ? bound.capturedComparison
@@ -143,35 +196,62 @@ export const WorkspaceScmReviewDetailsView = React.memo((props: WorkspaceScmRevi
     currentDisplayedIdentity.current = displayedIdentity;
     const displayedIsCurrent = React.useCallback(() => bound.isCurrent() && currentDisplayedIdentity.current === displayedIdentity,
         [bound.isCurrent, displayedIdentity]);
+    const authoringDraft = (basis: Parameters<typeof openWorkspaceScmAuthoringDraft>[0]) => {
+        void openWorkspaceScmAuthoringDraft(basis).then((outcome) => {
+            if (basis.isCurrent() && outcome.kind === 'unavailable') Modal.alert(t('common.error'), t('common.unavailable'));
+        });
+    };
+    const onExplain = props.onExplain ?? ((basis: Parameters<NonNullable<typeof props.onExplain>>[0]) => authoringDraft({ ...basis, scope }));
+    const onAsk = props.onAsk ?? ((basis: Parameters<NonNullable<typeof props.onAsk>>[0]) => authoringDraft({ ...basis, scope }));
     const explainFiles = async () => {
-        if (!props.onExplain || !bound.scope || !bound.machine || !displayedIsCurrent()) return;
+        if (!bound.scope || !bound.machine || !displayedIsCurrent()) return;
         if (displayedComparison) {
-            props.onExplain({ comparison: displayedComparison, result: displayedResult, isCurrent: displayedIsCurrent });
+            onExplain({ comparison: displayedComparison, result: displayedResult, isCurrent: displayedIsCurrent });
             return;
         }
         // An ordinary draft from live Files needs an actual immutable reading,
         // not a saved walkthrough or a fabricated snapshot comparison.
         try {
-            const result = await captureScmComparisonForSession({ machineId: props.machineId,
+            const result = await captureScmComparisonForSession({ ...props.host,
                 scope: bound.scope, shouldContinue: displayedIsCurrent,
-                input: { cwd: props.rootPath, source: scmComparisonSourceOf(comparison, ''),
+                input: { cwd: props.rootPath, source: scmComparisonSourceOf(comparison, props.host.sessionId ?? ''),
                     ...(comparison.comparisonId ? { comparisonId: comparison.comparisonId } : {}) } });
             if (!displayedIsCurrent()) return;
-            if (result.success) props.onExplain({ comparison: result.comparison, result: null, isCurrent: displayedIsCurrent });
+            if (result.success) onExplain({ comparison: result.comparison, result: null, isCurrent: displayedIsCurrent });
             else Modal.alert(t('common.error'), t('common.unavailable'));
         } catch {
             if (displayedIsCurrent()) Modal.alert(t('common.error'), t('common.unavailable'));
         }
     };
-    const marks = useWalkthroughReviewedMarks({ comparison: bound.capturedComparison, serverId: props.serverId });
+    const marks = useWalkthroughReviewedMarks({ comparison: bound.capturedComparison, serverId: props.serverId, host: props.host });
     const reading = React.useMemo(() => bound.capturedComparison ? buildWalkthroughReading({ comparison: bound.capturedComparison,
         walkthrough: bound.viewModel?.outputs?.walkthrough ?? null, analysis: bound.viewModel?.analysis ?? null,
         reviewed: marks.record, provenance: bound.viewModel?.savedResult?.walkthroughProvenance }) : null,
         [bound.capturedComparison, bound.viewModel?.outputs?.walkthrough, bound.viewModel?.analysis, bound.viewModel?.savedResult?.walkthroughProvenance, marks.record]);
     const scopeLabel = resolveFilesComparisonLabel(comparison, null);
     const scopeOptions = listFilesComparisonScopeOptions({ showTurnViewToggle: false, showTurnAgentReportedViewToggle: false,
-        showTurnCheckpointViewToggle: false, showSessionViewToggle: false }, null, comparison,
-        { pendingFileCount: snapshot?.entries.length }).filter((option) => option.sourceKind !== 'session' && option.sourceKind !== 'turnCheckpoint');
+        showTurnCheckpointViewToggle: false, showSessionViewToggle: Boolean(props.evidenceSessionId) }, null, comparison,
+        { pendingFileCount: snapshot?.entries.length }).filter((option) => option.sourceKind !== 'turnCheckpoint'
+            && (option.sourceKind !== 'session' || Boolean(props.evidenceSessionId)));
+    const pendingComparison = comparison.kind === 'workingTree';
+    const reviewDisabled = !bound.scope || !bound.machine || !bound.canControl
+        || ((comparison.kind === 'session' || comparison.kind === 'turnCheckpoint') && !props.host.sessionId);
+    const commitPlan = useScmWalkthrough(props.host.sessionId ? { sessionId: props.host.sessionId }
+        : { machineId: props.machineId, cwd: props.rootPath }, pendingComparison ? comparison : null, 'commitPlan', props.serverId);
+    const startedReviewRunIds = Array.isArray(persistedReviewTabState?.reviewRunIds)
+        ? persistedReviewTabState.reviewRunIds.filter((id): id is string => typeof id === 'string') : null;
+    const startReview = () => {
+        if (!bound.scope || !bound.machine || !bound.isCurrent()) return;
+        presentStartReviewDialog({ ...(props.host.sessionId ? { sessionId: props.host.sessionId } : { machineId: props.machineId }),
+            serverId: props.serverId, cwd: props.rootPath, comparison, scopeLabel, scopeDetail: props.rootPath,
+            defaultWalkthrough: Boolean(props.host.sessionId), onStarted: (started, walkthrough) => {
+                if (!bound.isCurrent()) return;
+                setPersistedReviewTabState({ reviewRunIds: [...started.reviewRunIds] });
+                if (walkthrough) selectTarget({ comparison: { ...comparison, comparisonId: started.comparisonId }, view: 'walkthrough' });
+                if (started.notStartedEngineIds.length || started.narrationError) Modal.alert(t('common.warning'),
+                    started.narrationError ?? started.notStartedEngineIds.join(', '));
+            } });
+    };
     const commitSelectionPaths = useWorkspaceScmCommitSelectionPaths(scope);
     const commitSelectionPatches = useWorkspaceScmCommitSelectionPatches(scope);
     const workspaceRefs = useWorkspaceRefs();
@@ -283,6 +363,16 @@ export const WorkspaceScmReviewDetailsView = React.memo((props: WorkspaceScmRevi
             ) : null}
             {snapshot ? <SourceControlStaleSnapshotNotice error={error} onRetry={() => { void refresh(); }} testID="workspace-review-stale" /> : null}
             <WorkspaceScmReviewBody activeReviewFile={activeReviewFile} comparison={comparison} view={view} scopeLabel={scopeLabel} scopeDetail={props.rootPath}
+                views={pendingComparison ? ['files', 'walkthrough', 'commits'] : ['files', 'walkthrough']}
+                commitsCount={commitPlan?.outputs?.commitPlan?.value?.groups.length ?? null}
+                onStartReview={startReview} reviewDisabled={reviewDisabled}
+                reviewDisabledReason={reviewDisabled ? t('common.unavailable') : null}
+                onProposeCommits={pendingComparison ? () => selectTarget({ view: 'commits' }) : undefined}
+                proposeCommits={pendingComparison && view !== 'commits' && !commitPlan?.outputs?.commitPlan ? <RoundButton testID="scm-comparison-propose-commits"
+                    title={t('scmComparison.proposeCommits')} onPress={() => selectTarget({ view: 'commits' })} /> : undefined}
+                renderCommits={({ layout, renderBar }) => <WorkspaceCommitsView scope={scope}
+                    comparison={comparison} branch={snapshot?.branch.detached ? null : snapshot?.branch.head ?? null} layout={layout === 'phone' ? 'phone' : 'wide'}
+                    active={presented} renderBar={() => renderBar()} onShowInGit={props.onShowInGit} />}
                 filesState={comparison.kind === 'workingTree' && !comparison.comparisonId
                     ? loading && !snapshot ? <PaneLoadingFallback />
                         : error && !snapshot ? <SourceControlUnavailableState details={error.message} errorCode={error.errorCode} onRetry={() => { void refresh(); }} />
@@ -294,15 +384,16 @@ export const WorkspaceScmReviewDetailsView = React.memo((props: WorkspaceScmRevi
                 fileCount={capture.comparison?.inventory.files.length ?? changedFiles.allRepositoryChangedFiles.length}
                 reading={reading} marksAvailable={marks.unavailableReason === null && marks.record !== null}
                 modelLabel={bound.viewModel?.producer?.modelId} explain={explain} onExplainChange={(next) => selectTarget({ explain: next })}
-                onExplainDraft={props.onExplain && bound.scope && bound.machine && comparison.kind !== 'session' && comparison.kind !== 'turnCheckpoint'
+                onExplainDraft={bound.scope && bound.machine && comparison.kind !== 'session' && comparison.kind !== 'turnCheckpoint'
                     ? () => { void explainFiles(); } : undefined}
                 renderWalkthrough={({ layout, renderBar, onShowFiles }) => <View testID="workspace-walkthrough" style={{ flex: 1, minHeight: 0 }}>
                     <ScmWalkthroughView bound={bound} displayMachineId={props.machineId} serverId={props.serverId}
+                        sessionId={props.host.sessionId} startedReviewRunIds={props.host.sessionId ? startedReviewRunIds : null}
                         comparison={comparison} scopeLabel={scopeLabel} scopeDetail={props.rootPath} layout={layout}
                         renderBar={renderBar} onShowFiles={onShowFiles} onOpenFile={(path) => props.onOpenFile?.(path)}
-                        onAskStop={props.onAsk && bound.capturedComparison ? (stop) => {
+                        onAskStop={bound.capturedComparison ? (stop) => {
                             if (!readingIsCurrent() || !bound.capturedComparison) return;
-                            props.onAsk?.({ comparison: bound.capturedComparison, result: bound.viewModel?.savedResult ?? null, stop, isCurrent: readingIsCurrent });
+                            onAsk({ comparison: bound.capturedComparison, result: bound.viewModel?.savedResult ?? null, stop, isCurrent: readingIsCurrent });
                         } : undefined} />
                 </View>}
                 renderFiles={(comparisonChrome) => comparison.kind !== 'workingTree' || comparison.comparisonId

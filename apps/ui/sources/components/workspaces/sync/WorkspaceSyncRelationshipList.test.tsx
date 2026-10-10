@@ -14,7 +14,8 @@ installSessionHandoffCommonModuleMocks({
     storage: async (importOriginal) => {
         const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
         return createPartialStorageModuleMock(importOriginal, {
-                useSetting: (key: string) => key === 'workspaceRefsV1' || key === 'workspaceSyncRelationshipsV1' ? [] : undefined,
+                useWorkspaceRefs: () => [],
+                useWorkspaceSyncRelationships: () => [],
                 useMachineDisplayNamesById: () => ({}),
         });
     },

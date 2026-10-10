@@ -14,6 +14,8 @@ type CopyFacts = Readonly<{ lastCleanSyncAtMs: number | null; sizeBytes: number 
 export type MachineFreshCopy = MachineFreshCopyRow & CopyFacts & Readonly<{ name: string; sourceRefId: string; sourceMachineId: string }>;
 export type MachineFreshCopyNotice = Readonly<{
   relationshipId: string;
+  /** Captured before retirement; the relationship may disappear before file removal settles. */
+  targetRootPath: string;
   kind: 'saving' | 'approval' | 'unknown' | 'in_use' | 'failed';
   text: string;
   errorCode?: string;
@@ -22,7 +24,15 @@ export type MachineFreshCopyNotice = Readonly<{
   dependencies?: readonly ProjectWorkerDependencyV1[];
   /** File removal was attempted and its outcome is unknown; the definition may already be retired. */
   filesUnknown?: boolean;
+  /** A later successful current-definition preview observed the target files still present. */
+  filesPresent?: boolean;
 }>;
+type ScopedCopyNotices = Readonly<{
+  key: string;
+  lifetime: AbortController;
+  values: ReadonlyMap<string, Readonly<{ copy: MachineFreshCopyRow; notice: MachineFreshCopyNotice }>>;
+}>;
+const EMPTY_NOTICES: ReadonlyMap<string, MachineFreshCopyNotice> = new Map();
 
 /** Mounted Machine detail model. Sync owns copy identity, facts and retirement; Actions own consent. */
 export function useMachineFreshCopies(serverId: string, machineId: string) {
@@ -46,6 +56,13 @@ export function useMachineFreshCopies(serverId: string, machineId: string) {
   }, [accountId, machineId, serverId, rows?.scope, rows?.status, rows?.coverage, rows?.workspaceRefs, rows?.relationships]);
   const [readToken, setReadToken] = React.useState(0);
   const refresh = React.useCallback(() => setReadToken(token => token + 1), []);
+  const [scopedNotices, setNotices] = React.useState<ScopedCopyNotices | null>(null);
+  // Read pending interactions synchronously, before React commits a second click.
+  const noticesRef = React.useRef(scopedNotices);
+  const notices = React.useMemo<ReadonlyMap<string, MachineFreshCopyNotice>>(() =>
+    scopedNotices?.key === key && scopedNotices.lifetime === lifetime
+      ? new Map([...scopedNotices.values].map(([id, value]) => [id, value.notice]))
+      : EMPTY_NOTICES, [key, lifetime, scopedNotices]);
   const [facts, setFacts] = React.useState<Readonly<{ key: string; values: ReadonlyMap<MachineFreshCopyRow['relationship'], CopyFacts> }> | null>(null);
   const reviewCopy = React.useCallback((copy: MachineFreshCopyRow, signal: AbortSignal) => {
     if (!accountId || !binding?.isCurrent()) throw new Error('Fresh-copy Account is unavailable');
@@ -57,19 +74,26 @@ export function useMachineFreshCopies(serverId: string, machineId: string) {
   }, [accountId, binding, serverId]);
   React.useEffect(() => {
     if (!binding || !rawCopies || lifetime.signal.aborted) return;
+    // A retired definition is absent from the graph. Keep inspecting its captured target without
+    // treating lost custody as proof that its files were removed, or repeating the removal Action.
+    const retainedCopies = scopedNotices?.key === key && scopedNotices.lifetime === lifetime
+      ? [...scopedNotices.values.values()].filter(value => value.notice.filesUnknown
+          && !rawCopies.some(copy => copy.relationship.relationshipId === value.notice.relationshipId)).map(value => value.copy)
+      : [];
+    const observedCopies = [...rawCopies, ...retainedCopies];
     const observation = new AbortController();
     const abort = () => observation.abort();
     lifetime.signal.addEventListener('abort', abort, { once: true });
     void (async () => {
-      // One status census per controller; committed root inspection has an exact-copy RPC boundary.
-      const controllers = [...new Set(rawCopies.map(copy => copy.relationship.controllerMachineId))];
+      // One status census per controller; committed root inspection uses the exact-copy read Action.
+      const controllers = [...new Set(observedCopies.map(copy => copy.relationship.controllerMachineId))];
       const [statusResults, previews] = await Promise.all([
         Promise.allSettled(controllers.map(controllerMachineId => listWorkspaceSyncStatuses({ serverId, controllerMachineId, signal: observation.signal }))),
-        Promise.allSettled(rawCopies.map(copy => reviewCopy(copy, observation.signal))),
+        Promise.allSettled(observedCopies.map(copy => reviewCopy(copy, observation.signal))),
       ]);
       if (observation.signal.aborted || !binding.isCurrent()) return;
       const values = new Map<MachineFreshCopyRow['relationship'], CopyFacts>();
-      rawCopies.forEach((copy, index) => {
+      observedCopies.forEach((copy, index) => {
         const statusResult = statusResults[controllers.indexOf(copy.relationship.controllerMachineId)];
         const status = statusResult?.status === 'fulfilled' ? statusResult.value.find(status =>
           status.relationshipId === copy.relationship.relationshipId && status.controllerMachineId === copy.relationship.controllerMachineId) : null;
@@ -79,9 +103,27 @@ export function useMachineFreshCopies(serverId: string, machineId: string) {
           sizeBytes: review?.ok ? review.preview.sizeBytes ?? null : null, review });
       });
       setFacts({ key, values });
+      const currentNotices = noticesRef.current;
+      if (currentNotices !== scopedNotices || currentNotices?.key !== key || currentNotices.lifetime !== lifetime) return;
+      const updated = new Map(currentNotices.values);
+      let changed = false;
+      for (const [id, value] of currentNotices.values) {
+        if (!value.notice.filesUnknown) continue;
+        // The preview requires a current relationship. An orphan refusal is not absence proof.
+        const copy = rawCopies.find(candidate => candidate.relationship === value.copy.relationship
+          && candidate.target.id === value.copy.target.id && candidate.target.rootPath === value.copy.target.rootPath);
+        if (!copy || !values.get(copy.relationship)?.review?.ok) continue;
+        updated.set(id, { ...value, notice: { ...value.notice, kind: 'failed', filesUnknown: false,
+          filesPresent: true, text: t('projectWorkers.removeFilesRemain') } });
+        changed = true;
+      }
+      if (changed) {
+        noticesRef.current = { key, lifetime, values: updated };
+        setNotices(noticesRef.current);
+      }
     })();
     return () => { observation.abort(); lifetime.signal.removeEventListener('abort', abort); };
-  }, [binding, key, lifetime, rawCopies, readToken, reviewCopy, serverId]);
+  }, [binding, key, lifetime, rawCopies, readToken, reviewCopy, scopedNotices, serverId]);
   const [retired, setRetired] = React.useState<Readonly<{ key: string; definitions: ReadonlySet<MachineFreshCopyRow['relationship']> }> | null>(null);
   const copies = React.useMemo(() => rawCopies?.filter(row => retired?.key !== key || !retired.definitions.has(row.relationship)).map(row => {
     const observed = facts?.key === key ? facts.values.get(row.relationship) : null;
@@ -90,9 +132,6 @@ export function useMachineFreshCopies(serverId: string, machineId: string) {
       name: row.source.label ?? row.source.rootPath.split(/[\\/]+/).filter(Boolean).at(-1) ?? row.source.rootPath,
       sourceRefId: row.source.id, sourceMachineId: row.source.machineId };
   }) ?? null, [facts, key, rawCopies, retired]);
-  const [scopedNotice, setNotice] = React.useState<Readonly<{ key: string; value: MachineFreshCopyNotice | null }> | null>(null);
-  // Read the same pending interaction synchronously, before React commits a second click.
-  const noticeRef = React.useRef(scopedNotice);
   const keyRef = React.useRef(key);
   keyRef.current = key;
   const copiesRef = React.useRef(copies);
@@ -105,12 +144,18 @@ export function useMachineFreshCopies(serverId: string, machineId: string) {
     const isCurrentCopy = () => copiesRef.current?.some(row => row.relationship === copy.relationship
       && row.source.id === copy.source.id && row.target.id === copy.target.id);
     if (!accountId || !isCurrent() || !isCurrentCopy()) return;
-    const pendingNotice = noticeRef.current?.key === key ? noticeRef.current.value : null;
-    if (pendingNotice?.kind === 'saving' || pendingNotice?.kind === 'approval') return;
-    const publishNotice = (value: MachineFreshCopyNotice | null) => {
+    const currentNotices = noticesRef.current?.key === key && noticesRef.current.lifetime === lifetime
+      ? noticesRef.current.values : null;
+    if (currentNotices && [...currentNotices.values()].some(value => value.notice.kind === 'saving' || value.notice.kind === 'approval')) return;
+    const publishNotice = (value: Omit<MachineFreshCopyNotice, 'targetRootPath'> | null) => {
       if (!isCurrent()) return;
-      noticeRef.current = { key, value };
-      setNotice(noticeRef.current);
+      const current = noticesRef.current;
+      const values = new Map(current?.key === key && current.lifetime === lifetime ? current.values : []);
+      if (value) values.set(copy.relationship.relationshipId, { copy,
+        notice: { ...value, targetRootPath: copy.target.rootPath } });
+      else values.delete(copy.relationship.relationshipId);
+      noticesRef.current = { key, lifetime, values };
+      setNotices(noticesRef.current);
     };
     publishNotice({ relationshipId: copy.relationship.relationshipId, kind: 'saving', text: t('projectWorkers.saving') });
     try {
@@ -158,7 +203,14 @@ export function useMachineFreshCopies(serverId: string, machineId: string) {
       if (isCurrent()) refresh();
     }
   };
-  const notice = scopedNotice?.key === key ? scopedNotice.value : null;
-  return { copies, loading, remove, notice, refresh, approvalId: approval.approvalId, approvalPending: approval.approvalPending,
-    refreshApproval: approval.refresh, busy: notice?.kind === 'saving' || notice?.kind === 'approval' };
+  const dismissNotice = React.useCallback((relationshipId: string) => {
+    const current = noticesRef.current;
+    if (!current || current.key !== key || current.lifetime !== lifetime || lifetime.signal.aborted) return;
+    const values = new Map(current.values);
+    values.delete(relationshipId);
+    noticesRef.current = { key, lifetime, values };
+    setNotices(noticesRef.current);
+  }, [key, lifetime]);
+  return { copies, loading, remove, notices, dismissNotice, refresh, approvalId: approval.approvalId, approvalPending: approval.approvalPending,
+    refreshApproval: approval.refresh, busy: [...notices.values()].some(notice => notice.kind === 'saving' || notice.kind === 'approval') };
 }

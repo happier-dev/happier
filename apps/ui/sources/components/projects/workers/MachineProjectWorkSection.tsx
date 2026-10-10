@@ -23,7 +23,7 @@ import { useActiveActionOperations } from '@/sync/domains/actionOperations/useAc
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { useMachineFreshCopies, type MachineFreshCopy, type MachineFreshCopyNotice } from './useMachineFreshCopies';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { formatRelativeTimeShort } from '@/components/ui/selectionList/formatRelativeTimeShort';
+import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { useServerScopedMachine } from '@/sync/store/hooks';
 import { formatByteSize } from '@/utils/files/formatByteSize';
 import { executeProjectWorkerActionV1 } from '@/sync/ops/actions/projectWorkerActions';
@@ -31,31 +31,10 @@ import { t } from '@/text';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { presentProjectRun } from '@/components/projects/projectSetup/projectScriptPresentation';
 
-import {
-  useObservedWorkerSetting,
-  type ObservedWorkerSettingNotice,
-} from './useObservedWorkerSetting';
+import { useObservedWorkerSetting } from './useObservedWorkerSetting';
+import { describeObservedWorkerSettingNotice } from './observedWorkerSettingNotice';
 
 type ReadyPolicy = Extract<ProjectWorkerActionOutputV1<'machines.worker.policy.get'>, { status: 'ready' }>;
-
-function noticeText(notice: ObservedWorkerSettingNotice): string | null {
-  switch (notice) {
-    case 'saving':
-      return t('projectWorkers.saving');
-    case 'approval':
-      return t('projectWorkers.approvalPending');
-    case 'unknown':
-      return t('projectWorkers.writeUnknown');
-    case 'changed':
-      return t('projectWorkers.changed');
-    case 'failed':
-      return t('projectWorkers.saveFailed');
-    case 'locked':
-      return t('projectWorkers.settingsLocked');
-    default:
-      return null;
-  }
-}
 
 /** The Machine's own finite work policy, read and changed through `machines.worker.policy.*` (30s1). */
 export function useMachineWorkerPolicy(serverId: string, machineId: string) {
@@ -393,7 +372,7 @@ export function MachineProjectWorkSection(
   const state = policy.state;
   const value = state.kind === 'ready' ? state.value.policy : null;
   const disabled = !value || policy.busy;
-  const notice = noticeText(policy.notice);
+  const notice = describeObservedWorkerSettingNotice(policy.notice);
 
   return (
     <>
@@ -603,6 +582,23 @@ export function MachineProjectWorkSection(
           />
         }
       >
+        {[...freshCopies.notices.values()].filter(notice => false && (notice.filesUnknown || notice.filesPresent)
+          && !freshCopies.copies?.some(copy => copy.relationship.relationshipId === notice.relationshipId)).map(notice => (
+          <AttentionBanner
+            key={notice.relationshipId}
+            testID={`${testID}.copies.notice:${notice.relationshipId}`}
+            tone="warning"
+            title={freshCopies.copies === null ? notice.text : t('projectWorkers.copyDefinitionRetired')}
+            description={freshCopies.copies === null ? undefined : notice.text}
+            points={[[{ code: notice.targetRootPath }]]}
+            action={{
+              label: t('projectWorkers.checkAgain'),
+              testID: `${testID}.copies.checkAgain:${notice.relationshipId}`,
+              onPress: freshCopies.refresh,
+            }}
+            onDismiss={() => freshCopies.dismissNotice(notice.relationshipId)}
+          />
+        ))}
         {freshCopies.loading ? (
           <Item
             testID={`${testID}.copies.loading`}
@@ -636,11 +632,7 @@ export function MachineProjectWorkSection(
               compact={compact}
               busy={freshCopies.busy}
               approvalId={freshCopies.approvalId}
-              notice={
-                freshCopies.notice?.relationshipId === copy.relationship.relationshipId
-                  ? freshCopies.notice
-                  : null
-              }
+              notice={freshCopies.notices.get(copy.relationship.relationshipId) ?? null}
               onRemove={(choice) => void freshCopies.remove(copy, choice)}
               onRefresh={freshCopies.refresh}
             />

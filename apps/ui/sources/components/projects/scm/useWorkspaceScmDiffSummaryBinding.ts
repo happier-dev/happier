@@ -2,8 +2,7 @@ import * as React from 'react';
 import type { ScmDiffSummaryOutputKind } from '@happier-dev/protocol';
 import type { SessionScmReviewComparison } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
 import { useScmDiffSummaryBinding } from '@/components/sessions/files/comparison/useScmDiffSummaryBinding';
-import { useServerScopedMachine } from '@/sync/domains/state/storage';
-import { isMachineOnline } from '@/utils/sessions/machineUtils';
+import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useExecutionRunsBackendsForMachine } from '@/hooks/server/useExecutionRunsBackendsForSession';
 import { resolveExecutionRunAvailableBackends } from '@/sync/domains/executionRuns/resolveExecutionRunAvailableBackends';
@@ -13,12 +12,13 @@ export function useWorkspaceScmDiffSummaryBinding(params: Readonly<{
     machineId: string; rootPath: string; serverId: string;
     comparison: SessionScmReviewComparison | null; output: ScmDiffSummaryOutputKind;
 }>) {
-    const owner = useServerScopedMachine(params.serverId, params.machineId);
-    const machineReachable = Boolean(owner && isMachineOnline(owner));
+    const owner = useMachinePresenceSummary(params.serverId, params.machineId);
+    const machineKnown = owner.reachability !== 'unknown';
+    const machineReachable = owner.reachability === 'reachable';
     const enabled = useFeatureEnabled('execution.runs', { scopeKind: 'spawn', serverId: params.serverId }) === true;
     const backends = useExecutionRunsBackendsForMachine({ machineId: params.machineId, serverId: params.serverId, enabled });
-    const machine = React.useMemo(() => owner ? { machineId: params.machineId, basePath: params.rootPath } : null,
-        [Boolean(owner), params.machineId, params.rootPath]);
+    const machine = React.useMemo(() => machineKnown ? { machineId: params.machineId, basePath: params.rootPath } : null,
+        [machineKnown, params.machineId, params.rootPath]);
     const launch = React.useMemo(() => ({ canLaunchExecutionRuns: enabled && machineReachable
         && resolveExecutionRunAvailableBackends(backends, 'scm_diff_summary').length > 0 }), [enabled, machineReachable, backends]);
     const comparison = params.comparison?.kind === 'session' || params.comparison?.kind === 'turnCheckpoint' ? null : params.comparison;

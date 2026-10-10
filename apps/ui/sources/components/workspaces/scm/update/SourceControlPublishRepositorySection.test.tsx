@@ -78,6 +78,32 @@ function createSourceControlUpdateThemeFixture(): SourceControlUpdateTheme {
 }
 
 describe('SourceControlPublishRepositorySection', () => {
+    it('keeps same-owner publish choices distinct across deployments and submits the selected deployment', async () => {
+        const targets = ['https://github.com', 'https://github.company'].map(baseUrl => ({
+            provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: baseUrl === 'https://github.com' ? 'GitHub' : 'GitHub Enterprise',
+                baseUrl, urlSafety: { allowedSchemes: ['https:'] } },
+            owner: 'acme', ownerKind: 'org', label: 'acme', supportedVisibilities: ['private', 'public'], supportedRemoteUrlKinds: ['https'],
+        }));
+        const published = vi.fn(async (): Promise<ScmHostingRepositoryPublishResponse> => ({ success: false,
+            errorCode: SCM_OPERATION_ERROR_CODES.REMOTE_PERMISSION_DENIED, error: 'Permission boundary refusal' }));
+        const section = (currentTargets: typeof targets) => <SourceControlPublishRepositorySection theme={createSourceControlUpdateThemeFixture()}
+            snapshot={createSnapshot()} writeEnabled publishTargets={ScmHostingRepositoryDescribePublishTargetsResponseSchema.parse({
+                success: true, defaultRepositoryName: 'repo', auth: { state: 'authenticated', profileKind: 'connected_account' }, targets: currentTargets,
+            })} onDescribePublishTargets={vi.fn()} onPublishRepository={published} onRefresh={vi.fn()} />;
+        const screen = await renderScreen(section(targets));
+        const chooser = screen.findAllByType(SourceControlUpdateDropdown).find(node => node.props.testID === 'scm-publish-owner-dropdown');
+        expect(chooser).toBeDefined();
+        expect(new Set(chooser!.props.items.map((item: { id: string }) => item.id)).size).toBe(2);
+        await act(async () => { chooser!.props.onSelect(chooser!.props.items[1].id); });
+        await screen.pressByTestIdAsync('scm-publish-repository-submit');
+        expect(published).toHaveBeenCalledWith(expect.objectContaining({ providerId: 'happier.scm.forge.github/github',
+            providerBaseUrl: 'https://github.company', owner: 'acme', repositoryName: 'repo' }));
+        await screen.update(section([targets[0]]));
+        expect(screen.findByTestId('scm-publish-repository-submit')?.props.disabled).toBe(true);
+        await screen.pressByTestIdAsync('scm-publish-repository-submit');
+        expect(published).toHaveBeenCalledTimes(1);
+    });
+
     it('connects GitHub from the actual unauthenticated provider result', async () => {
         const { createGithubRepositoryProvisioningAdapter } = await import('../../../../../../../packages/plugins/scm-github/src/repositoryProvisioning/createRepositoryWithAuthFallback');
         const adapter = createGithubRepositoryProvisioningAdapter({

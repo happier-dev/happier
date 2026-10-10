@@ -5,7 +5,7 @@ export async function deletePathConfirm(params: Readonly<{
     path: string;
     kind: 'file' | 'directory';
 }>): Promise<{ confirmed: boolean; recursive: boolean }> {
-    const path = String(params.path ?? '').trim();
+    const path = String(params.path ?? '');
     if (!path) return { confirmed: false, recursive: false };
 
     if (params.kind === 'directory') {
@@ -32,4 +32,3 @@ export async function deletePathConfirm(params: Readonly<{
     );
     return { confirmed, recursive: false };
 }
-

@@ -1,11 +1,9 @@
 import * as React from 'react';
 
-import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import {
     useSessionProjectScmCommitSelectionPatches,
     useSessionProjectScmCommitSelectionPaths,
-    useSetting,
     storage,
 } from '@/sync/domains/state/storage';
 import { executeScmCommit } from './executeScmCommit';
@@ -18,7 +16,7 @@ import { validateCommitMessage } from '@/scm/operations/commitMessage';
 import { trackBlockedScmOperation } from '@/scm/operations/reporting';
 import { tracking } from '@/track';
 import { showScmCommitMessageEditorModal } from '@/components/sessions/files/commit/showScmCommitMessageEditorModal';
-import { generateScmCommitMessage } from '@/scm/operations/commitMessageGenerator';
+import { useScmCommitMessageSuggestion } from '@/scm/operations/useScmCommitMessageSuggestion';
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
 import { buildCommitSelectionPathHints } from '@/scm/operations/commitSelectionHints';
 import { useScmRemoteOperations } from '@/hooks/session/sourceControl/useScmRemoteOperations';
@@ -68,9 +66,6 @@ export function useFilesScmOperations(input: {
     }, [mountedRef, sessionId, serverId]);
     const commitSelectionPaths = useSessionProjectScmCommitSelectionPaths(sessionId, serverId);
     const commitSelectionPatches = useSessionProjectScmCommitSelectionPatches(sessionId, serverId);
-    const scmCommitMessageGeneratorEnabled = useSetting('scmCommitMessageGeneratorEnabled');
-    const scmCommitMessageGeneratorBackendId = useSetting('scmCommitMessageGeneratorBackendId');
-    const scmCommitMessageGeneratorInstructions = useSetting('scmCommitMessageGeneratorInstructions');
     const commitSelectionPathHints = React.useMemo(() => {
         return buildCommitSelectionPathHints({
             commitSelectionPaths,
@@ -78,35 +73,12 @@ export function useFilesScmOperations(input: {
         });
     }, [commitSelectionPatches, commitSelectionPaths]);
 
-    const commitMessageGeneratorBackendId = React.useMemo(() => {
-        return typeof scmCommitMessageGeneratorBackendId === 'string' && scmCommitMessageGeneratorBackendId.trim().length > 0
-            ? scmCommitMessageGeneratorBackendId.trim()
-            : DEFAULT_AGENT_ID;
-    }, [scmCommitMessageGeneratorBackendId]);
-
-    const generateCommitMessageSuggestion = React.useCallback(async () => {
-        if (!sessionId) return { ok: false as const, error: t('files.commitMessageEditor.generateFailed') };
-        if (scmCommitMessageGeneratorEnabled !== true) {
-            return { ok: false as const, error: t('files.commitMessageEditor.generatorDisabled') };
-        }
-
-        const res = await generateScmCommitMessage({
-            sessionId, serverId,
-            backendId: commitMessageGeneratorBackendId,
-            instructions: typeof scmCommitMessageGeneratorInstructions === 'string'
-                ? scmCommitMessageGeneratorInstructions
-                : undefined,
-            scopePaths: commitSelectionPathHints,
-        });
-        if (!res.ok) return { ok: false as const, error: res.error };
-        return { ok: true as const, message: res.message };
-    }, [
-        commitMessageGeneratorBackendId,
-        commitSelectionPathHints,
-        scmCommitMessageGeneratorEnabled,
-        scmCommitMessageGeneratorInstructions,
-        sessionId, serverId,
-    ]);
+    const commitMessageHost = React.useMemo(() => sessionId
+        ? { kind: 'session' as const, sessionId, serverId }
+        : null, [serverId, sessionId]);
+    const { enabled: commitMessageGeneratorEnabled, generate: generateCommitMessageSuggestion, cancel: cancelCommitMessageSuggestion, contextKey: commitMessageSuggestionContextKey }
+        = useScmCommitMessageSuggestion(commitMessageHost, commitSelectionPathHints,
+            JSON.stringify([sessionPath, scmSnapshot?.branch.headOid, commitSelectionPaths, commitSelectionPatches]));
 
     const commitPreflight = React.useMemo(
         () =>
@@ -216,7 +188,7 @@ export function useFilesScmOperations(input: {
         if (!sessionPath) return;
 
         const rawMessage = await showScmCommitMessageEditorModal({
-            canGenerate: scmCommitMessageGeneratorEnabled === true,
+            canGenerate: commitMessageGeneratorEnabled,
             onGenerate: async () => {
                 const res = await generateCommitMessageSuggestion();
                 if (!res.ok) return { ok: false, error: res.error };
@@ -230,9 +202,7 @@ export function useFilesScmOperations(input: {
         commitPreflightBlockedMessage,
         commitSelectionPathHints,
         createCommitFromMessage,
-        scmCommitMessageGeneratorBackendId,
-        scmCommitMessageGeneratorEnabled,
-        scmCommitMessageGeneratorInstructions,
+        commitMessageGeneratorEnabled,
         sessionId, serverId,
         sessionPath,
         tracking,
@@ -248,7 +218,9 @@ export function useFilesScmOperations(input: {
         runRemoteOperation,
         createCommit,
         createCommitFromMessage,
-        commitMessageGeneratorEnabled: scmCommitMessageGeneratorEnabled === true,
+        commitMessageGeneratorEnabled,
         generateCommitMessageSuggestion,
+        cancelCommitMessageSuggestion,
+        commitMessageSuggestionContextKey,
     };
 }

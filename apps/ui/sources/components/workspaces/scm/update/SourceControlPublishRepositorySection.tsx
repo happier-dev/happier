@@ -30,6 +30,10 @@ import {
 
 type PublishTargetsSuccess = Extract<ScmHostingRepositoryDescribePublishTargetsResponse, { success: true }>;
 
+function publishTargetKey(target: PublishTargetsSuccess['targets'][number]): string {
+    return JSON.stringify([target.provider.id, target.provider.baseUrl, target.owner, target.ownerKind]);
+}
+
 function isGithubFamilyUrl(value: string | undefined): boolean {
     if (!value) return false;
     const scpStyleHost = value.match(/^[^@\s]+@([^:\s]+):/)?.[1]?.toLowerCase();
@@ -77,7 +81,7 @@ export function SourceControlPublishRepositorySection(props: Readonly<{
     const [publishFailure, setPublishFailure] = React.useState<Extract<ScmHostingRepositoryPublishResponse, { success: false }> | null>(null);
     const [showRemoteConflictRemediation, setShowRemoteConflictRemediation] = React.useState(false);
     const [repositoryName, setRepositoryName] = React.useState('');
-    const [selectedOwner, setSelectedOwner] = React.useState<string | null>(null);
+    const [selectedTargetKey, setSelectedTargetKey] = React.useState<string | null>(null);
     const [visibility, setVisibility] = React.useState<ScmHostingRepositoryVisibility>('private');
     const [remoteUrlKind, setRemoteUrlKind] = React.useState<ScmHostingRepositoryRemoteUrlKind>('https');
     const [remoteConflictStrategy, setRemoteConflictStrategy] = React.useState<ScmHostingRepositoryRemoteConflictStrategy>('fail');
@@ -99,7 +103,7 @@ export function SourceControlPublishRepositorySection(props: Readonly<{
 
     React.useEffect(() => {
         setRepositoryName('');
-        setSelectedOwner(null);
+        setSelectedTargetKey(null);
         setVisibility('private');
         setRemoteUrlKind('https');
         setRemoteConflictStrategy('fail');
@@ -146,7 +150,9 @@ export function SourceControlPublishRepositorySection(props: Readonly<{
         setResolvedTargets(null);
     }, []);
     const targets = successTargets?.targets ?? [];
-    const selectedTarget = targets.find((target) => target.owner === selectedOwner) ?? targets.find((target) => target.isDefault) ?? targets[0] ?? null;
+    const selectedTarget = selectedTargetKey === null
+        ? targets.find((target) => target.isDefault) ?? targets[0] ?? null
+        : targets.find((target) => publishTargetKey(target) === selectedTargetKey) ?? null;
 
     React.useEffect(() => {
         if (!successTargets) return;
@@ -155,7 +161,7 @@ export function SourceControlPublishRepositorySection(props: Readonly<{
 
     React.useEffect(() => {
         if (!selectedTarget) return;
-        setSelectedOwner((current) => current ?? selectedTarget.owner);
+        setSelectedTargetKey((current) => current ?? publishTargetKey(selectedTarget));
         setVisibility((current) => selectedTarget.supportedVisibilities.includes(current) ? current : selectedTarget.supportedVisibilities[0] ?? 'private');
         setRemoteUrlKind((current) => selectedTarget.supportedRemoteUrlKinds.includes(current) ? current : selectedTarget.supportedRemoteUrlKinds[0] ?? 'https');
     }, [selectedTarget]);
@@ -183,6 +189,7 @@ export function SourceControlPublishRepositorySection(props: Readonly<{
                 const response = await props.onPublishRepository({
                     providerId: selectedTarget.provider.id,
                     providerKind: selectedTarget.provider.kind,
+                    providerBaseUrl: selectedTarget.provider.baseUrl,
                     owner: selectedTarget.owner,
                     ownerKind: selectedTarget.ownerKind,
                     repositoryName: repositoryName.trim(),
@@ -219,7 +226,7 @@ export function SourceControlPublishRepositorySection(props: Readonly<{
         onAuthenticateGh: props.onAuthenticateGh,
     });
     const ownerItems = targets.map((target) => ({
-        id: target.owner,
+        id: publishTargetKey(target),
         title: target.label,
         subtitle: target.provider.displayName,
     }));
@@ -277,9 +284,9 @@ export function SourceControlPublishRepositorySection(props: Readonly<{
                         testID="scm-publish-owner-dropdown"
                         title={t('files.sourceControlOperations.update.publishRepository.ownerLabel')}
                         items={ownerItems}
-                        selectedId={selectedTarget?.owner ?? ''}
+                        selectedId={selectedTarget ? publishTargetKey(selectedTarget) : ''}
                         disabled={disabled}
-                        onSelect={setSelectedOwner}
+                        onSelect={setSelectedTargetKey}
                     />
                     <SourceControlUpdateDropdown
                         testID="scm-publish-visibility-dropdown"

@@ -20,6 +20,33 @@ const patch = '@@ -1 +1 @@\n-needle needle\n+needle';
 const lines = buildCodeLinesFromUnifiedDiff({ unifiedDiff: patch, hideFilePrelude: true });
 
 describe('mounted review Find', () => {
+    it.each(['binary', 'unreadable'] as const)('explains incomplete zero-hit results from a %s file', async (kind) => {
+        const container = document.createElement('div'); document.body.appendChild(container);
+        const root = createRoot(container);
+        const source = createChangedFilesReviewDiffStateSource();
+        source.setDiffState('a.ts', kind === 'binary'
+            ? { status: 'loaded', diff: 'Binary files a/a.ts and b/a.ts differ', error: null }
+            : { status: 'error', diff: '', error: 'unreadable' });
+        const model = createChangedFilesReviewFind();
+        const disconnect = model.connect({ paths: ['a.ts'], diffStateSource: source, reveal() {} });
+        model.open(); model.setQuery('needle');
+        function Review() {
+            const surfaceRef = React.useRef<View | null>(null);
+            return <View ref={surfaceRef}><ChangedFilesReviewFindSurface model={model}
+                surfaceId="review:partial" surfaceRef={surfaceRef} presented /></View>;
+        }
+        try {
+            await act(async () => { root.render(<KeyboardShortcutProvider handlers={{}}>
+                <PluginSurfaceFocusEligibilityProvider active><Review /></PluginSurfaceFocusEligibilityProvider>
+            </KeyboardShortcutProvider>); });
+            expect(model.status).toMatchObject({ kind: 'results', total: 0, coverage: 'partialErrors' });
+            expect(container.querySelector('[data-testid="scm-review-find-field.note"]')).not.toBeNull();
+            await act(async () => { source.setDiffState('a.ts', { status: 'loaded', diff: patch, error: null }); });
+            expect(model.status).toMatchObject({ coverage: 'complete' });
+            expect(container.querySelector('[data-testid="scm-review-find-field.note"]')).toBeNull();
+        } finally { await act(async () => { root.unmount(); }); disconnect(); container.remove(); }
+    });
+
     it('focuses from its toolbar, decorates character ranges, restores focus and ignores parked surfaces', async () => {
         const settings = storage.getState().settings;
         storage.setState({ settings: { ...settings, keyboardShortcutsV2Enabled: true,

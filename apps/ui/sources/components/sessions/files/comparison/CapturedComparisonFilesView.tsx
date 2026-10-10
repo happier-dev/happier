@@ -21,7 +21,8 @@ const doNotOpenWorkingFile = () => {};
 /** The Files renderer for immutable captured evidence, shared by PR, branch, commit and pinned routes. */
 export function CapturedComparisonFilesView(props: Readonly<{
     comparison: ScmComparison;
-    sessionId: string;
+    sessionId?: string;
+    reviewScopeKey?: string;
     comparisonChrome?: ReviewProps['comparisonChrome'];
     maxFiles: number;
     maxChangedLines: number;
@@ -29,6 +30,7 @@ export function CapturedComparisonFilesView(props: Readonly<{
     onCollapsedPathsChange?: (paths: string[]) => void;
     initialScrollTop?: number | null;
     onScrollTopChange?: (top: number) => void;
+    activeReviewFile?: ReviewProps['activeReviewFile'];
 }>) {
     const { theme } = useUnistyles();
     const projected = React.useMemo(() => buildCapturedComparisonFiles(props.comparison), [props.comparison]);
@@ -64,7 +66,9 @@ export function CapturedComparisonFilesView(props: Readonly<{
             message={t('walkthrough.evidence.unavailable', { reason: props.comparison.inventory.reasons.join(' · ') })} /> : null}
         {props.comparison.freshness === 'stale' || props.comparison.freshness === 'unknown' ? <WalkthroughNotice testID="captured-comparison-freshness" tone="warning" icon="clock"
             message={t(props.comparison.freshness === 'stale' ? 'scmComparison.capturedStale' : 'scmComparison.capturedFreshnessUnknown')} /> : null}
-        <ChangedFilesReview theme={theme} sessionId={props.sessionId} snapshot={projected.snapshot} changedFilesViewMode="repository"
+        <ChangedFilesReview activeReviewFile={props.activeReviewFile} theme={theme} sessionId={props.sessionId}
+            reviewScopeKey={props.reviewScopeKey ?? props.sessionId ?? props.comparison.id}
+            snapshot={projected.snapshot} changedFilesViewMode="repository"
             allRepositoryChangedFiles={projected.files} sessionAttributedFiles={NO_ATTRIBUTED_FILES} repositoryOnlyFiles={NO_FILES}
             maxFiles={props.maxFiles} maxChangedLines={props.maxChangedLines} onFilePress={doNotOpenWorkingFile}
             evidenceOnly comparisonChrome={chrome} providerDiffByPath={projected.diffByPath} fetchUnifiedDiffForPath={fetchCapturedDiff}

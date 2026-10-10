@@ -1,12 +1,10 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { Icon } from '@/components/ui/icons/Icon';
-import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
@@ -18,6 +16,8 @@ import { buildSessionScmSummary } from '@/components/sessions/sourceControl/stat
 import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
 import { resolveChangesGlanceFiles } from '@/components/sessions/companion/glances/glanceModels';
 import { Typography } from '@/constants/Typography';
+import { WidgetGlanceRow } from '@/components/widgets/glance/WidgetGlanceRow';
+import { DiffStat } from '@/components/workspaces/scm/DiffStat';
 import { buildCommitSelectionPathHints, isFileSelectedForCommit } from '@/scm/operations/commitSelectionHints';
 import { isAtomicCommitStrategy } from '@/scm/settings/commitStrategy';
 import { storage } from '@/sync/domains/state/storage';
@@ -90,42 +90,27 @@ export const WorkspaceLocalChangesBody = React.memo(function WorkspaceLocalChang
         return <SurfaceStateCard testID={`${testID}-not-repo`} size="line" kind="empty" title={t('files.notRepo')} />;
     }
 
-    const lines = (
-        <Text style={styles.lines}>
-            {added > 0 ? <Text style={[styles.lines, { color: theme.colors.state.success.foreground }]}>{`+${added.toLocaleString()}`}</Text> : null}
-            {added > 0 && removed > 0 ? ' ' : null}
-            {removed > 0 ? <Text style={[styles.lines, { color: theme.colors.state.danger.foreground }]}>{`−${removed.toLocaleString()}`}</Text> : null}
-        </Text>
-    );
     const clean = changedFiles.length === 0 && ahead === 0;
 
     return (
         <View testID={testID} style={styles.body}>
             {offline ? <SurfaceFreshnessLine testID={`${testID}-offline`} asOf={offline.asOf} reason={offline.reason} /> : null}
             {clean ? (
-                <View testID={`${testID}-clean`} style={styles.row}>
-                    <Icon name="check-circle" size={16} color={theme.colors.text.secondary} />
-                    <Text style={styles.quiet}>{t('projects.localChanges.clean')}</Text>
-                </View>
+                <WidgetGlanceRow testID={`${testID}-clean`} variant="fact" mark="check-circle" title={t('projects.localChanges.clean')} />
             ) : null}
             {changedFiles.length > 0 ? (
-                <HappierPressable
+                <WidgetGlanceRow
                     testID={`${testID}-files`}
-                    accessibilityRole={openChanges ? 'button' : undefined}
-                    disabled={!openChanges}
-                    onPress={() => openChanges?.()}
-                    style={(state) => [
-                        styles.row,
-                        focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
-                        styles.pressableRow,
-                        openChanges && (state.pressed || state.hovered) ? { backgroundColor: theme.colors.surface.pressed } : null,
-                    ]}
-                >
-                    <Icon name="file" size={16} color={theme.colors.text.secondary} />
-                    <Text numberOfLines={1} style={styles.label}>{t('projects.localChanges.filesNotCommitted', { count: changedFiles.length })}</Text>
-                    {lines}
-                    {openChanges ? <Icon name="caret-right" size={12} color={theme.colors.text.tertiary} /> : null}
-                </HappierPressable>
+                    mark="file"
+                    title={t('projects.localChanges.filesNotCommitted', { count: changedFiles.length })}
+                    onPress={openChanges}
+                    trailing={(
+                        <>
+                            <DiffStat added={added} removed={removed} />
+                            {openChanges ? <Icon name="caret-right" size={12} color={theme.colors.text.tertiary} /> : null}
+                        </>
+                    )}
+                />
             ) : null}
             {props.onOpenReview ? changedFiles.slice(0, visibleCount).map(file => (
                 <ScmChangeRow key={file.fullPath} theme={theme} file={file} density="compact" layout="compact"
@@ -150,10 +135,11 @@ export const WorkspaceLocalChangesBody = React.memo(function WorkspaceLocalChang
             {changedFiles.length > 0 && props.onWalkThrough ? <ToolbarButton
                 label={t('turnChanges.card.walkThrough')} onPress={props.onWalkThrough} /> : null}
             {ahead > 0 ? (
-                <View testID={`${testID}-ahead`} style={styles.row}>
-                    <Icon name="arrow-up" size={16} color={theme.colors.text.secondary} />
-                    <Text numberOfLines={1} style={styles.label}>{t('projects.localChanges.commitsToPush', { count: ahead })}</Text>
-                    {controls.commitAdjacentPushAction ? (
+                <WidgetGlanceRow
+                    testID={`${testID}-ahead`}
+                    mark="arrow-up"
+                    title={t('projects.localChanges.commitsToPush', { count: ahead })}
+                    trailing={controls.commitAdjacentPushAction ? (
                         <ToolbarButton
                             testID={`${testID}-push`}
                             label={t('projects.localChanges.push')}
@@ -163,7 +149,7 @@ export const WorkspaceLocalChangesBody = React.memo(function WorkspaceLocalChang
                             onPress={controls.commitAdjacentPushAction.onPress}
                         />
                     ) : null}
-                </View>
+                />
             ) : null}
             {changedFiles.length > 0 && writeEnabled && snapshot.capabilities.writeCommit ? (
                 <ScmCommitComposerCard
@@ -198,30 +184,8 @@ const styles = StyleSheet.create((theme) => ({
     body: {
         gap: 4,
     },
-    row: {
-        minHeight: 40,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 10,
-    },
-    pressableRow: {
-        marginHorizontal: -8,
-        paddingHorizontal: 8,
-        borderRadius: 8,
-    },
-    label: {
-        ...Typography.rowTitle(),
-        flex: 1,
-        minWidth: 0,
-        color: theme.colors.text.primary,
-    },
     quiet: {
         ...Typography.rowMeta(),
         color: theme.colors.text.secondary,
-    },
-    lines: {
-        ...Typography.rowMeta(),
-        ...Typography.mono(),
-        ...Typography.tabular(),
     },
 }));

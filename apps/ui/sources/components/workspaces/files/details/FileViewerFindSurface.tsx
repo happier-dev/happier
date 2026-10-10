@@ -3,11 +3,10 @@ import { Platform, TextInput, View } from 'react-native';
 import type { FindController } from '@happier-dev/plugin-ui/presentation';
 import type { FileFindSeed } from '@/components/appShell/panes/fileFindSeedHandoff';
 import { FindBar } from '@/components/ui/find/FindBar';
-import { ComposerKeyboardFloatingInset } from '@/components/sessions/keyboardAvoidance';
+import { FindBarPlacement } from '@/components/ui/find/FindBarPlacement';
+import { useFindSurfaceFocusReturn } from '@/components/ui/find/useFindSurfaceFocusReturn';
 import { usePluginSurfaceFocusEligibility } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useFindSurfaceRegistration } from '@/keyboard/KeyboardShortcutProvider';
-import { readDocumentFocusReturnTarget, restoreFocusToBestTarget, type FocusReturnTarget } from '@/keyboard/focusReturn';
-import { useDeviceType } from '@/utils/platform/responsive';
 import { t } from '@/text';
 import { useFileViewerFind, type FileViewerFindContent, type FileViewerFindSnapshot } from './useFileViewerFind';
 
@@ -24,18 +23,16 @@ export function FileViewerFindSurface(props: Readonly<{
     const snapshot = React.useSyncExternalStore(model.subscribe, model.getSnapshot, model.getSnapshot);
     const viewport = React.useRef<View | null>(null);
     const input = React.useRef<TextInput | null>(null);
-    const returnFocus = React.useRef<FocusReturnTarget>(null);
+    const focusReturn = useFindSurfaceFocusReturn();
     const [inputFocused, setInputFocused] = React.useState(false);
     const eligible = usePluginSurfaceFocusEligibility() && props.active && props.content.text !== null;
-    const phone = useDeviceType() === 'phone';
     const captureFocus = () => {
-        if (!model.getSnapshot().open) returnFocus.current = Platform.OS === 'web' && typeof document !== 'undefined'
-            ? readDocumentFocusReturnTarget(document) : TextInput.State.currentlyFocusedInput();
+        focusReturn.capture(model.getSnapshot().open);
     };
     const open = () => { captureFocus(); model.open(); input.current?.focus(); };
     const close = () => {
         model.close(); setInputFocused(false);
-        restoreFocusToBestTarget(returnFocus); returnFocus.current = null;
+        focusReturn.restore();
     };
     const controller: FindController = { get query() { return model.query; }, get options() { return model.options; },
         get status() { return model.status; }, capabilities: model.capabilities,
@@ -53,15 +50,15 @@ export function FileViewerFindSurface(props: Readonly<{
         captureFocus();
         if (model.applySeed(props.findSeed)) props.onFindSeedConsumed?.();
     }, [model, props.active, props.content.mode, props.content.text, props.findSeed, props.onFindSeedConsumed]);
-    const bar = snapshot.open && props.active ? <FindBar
+    const bar = snapshot.open && props.active ? <FindBarPlacement>{(presentation) => <FindBar
         query={snapshot.query} options={snapshot.options} status={snapshot.status} capabilities={model.capabilities}
-        surfaceLabel={t('find.surface.file')} presentation={phone ? 'keyboardSeated' : 'inline'} autoFocus inputRef={input}
+        surfaceLabel={t('find.surface.file')} presentation={presentation} autoFocus inputRef={input}
         onInputFocus={() => setInputFocused(true)} onInputBlur={() => setInputFocused(false)}
         onQueryChange={model.setQuery} onOptionsChange={model.setOptions} onStep={model.step}
-        onStop={model.stop} onClose={close} testID="file-viewer-find" /> : null;
+        note={snapshot.status.kind === 'searching' ? { icon: 'history', text: t('common.loading') } : undefined}
+        onStop={model.stop} onClose={close} testID="file-viewer-find" />}</FindBarPlacement> : null;
     return <View ref={viewport} testID="file-viewer-find-surface" tabIndex={-1} style={{ flex: 1, minHeight: 0 }}>
         {props.children(snapshot)}
-        {phone ? <ComposerKeyboardFloatingInset baseBottom={8} style={{ position: 'absolute', left: 8, right: 8 }}>{bar}</ComposerKeyboardFloatingInset>
-            : <View pointerEvents="box-none" style={{ position: 'absolute', top: 10, left: 14, right: 14 }}>{bar}</View>}
+        {bar}
     </View>;
 }

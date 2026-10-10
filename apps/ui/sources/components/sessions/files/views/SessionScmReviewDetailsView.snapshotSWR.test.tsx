@@ -2,7 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ReviewCommentCreateRequestV1Schema, ReviewCommentListRequestV1Schema, ReviewCommentWorkspaceV1Schema, matchesReviewCommentListFilters, type ReviewCommentV1, type PluginPermissionGrantV1, type WorkspaceRefV1 } from '@happier-dev/protocol';
-import { flushHookEffects, standardCleanup } from '@/dev/testkit';
+import { flushHookEffects, standardCleanup, applyProjectAccountRowsFixture, invokeTestInstanceHandler } from '@/dev/testkit';
 import { buildReviewCommentFixture, storePlainReviewCommentFixture } from '@/dev/testkit/fixtures/reviewComments';
 import { createSessionFilesViewFixture, fileViewSnapshot, installSessionFilesViewBoundaries, prepareSessionFilesViewTestkit } from './sessionFilesViewTestkit';
 import type { AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
@@ -123,7 +123,7 @@ describe('SessionScmReviewDetailsView (snapshot SWR)', () => {
             id: 'wr_stable', serverId: fixture.home.id, machineId: 'm1', rootPath: '/tmp/repo',
             label: null, createdAtMs: 1, lastOpenedAtMs: null,
         };
-        fixture.storage.getState().applySettingsLocal({ workspaceRefsV1: [workspaceRef] });
+        applyProjectAccountRowsFixture(fixture.storage, { workspaceRefs: [workspaceRef] });
         servedGrants = [{
             v: 1, id: 'grant-project', accountId: 'alice', grantedByUserId: 'alice',
             pluginId: 'review-coderabbit', capability: 'reviews.comments.write.direct',
@@ -146,12 +146,12 @@ describe('SessionScmReviewDetailsView (snapshot SWR)', () => {
         await screen.update(1);
         expect(screen.findHostByTestId('review-comments-session-direct-write-grant-grant-project')).not.toBeNull();
         const otherRef = { ...workspaceRef, id: 'wr_other', rootPath: '/tmp/other' };
-        fixture.storage.getState().applySettingsLocal({ workspaceRefsV1: [workspaceRef, otherRef] });
+        applyProjectAccountRowsFixture(fixture.storage, { workspaceRefs: [workspaceRef, otherRef] });
         const otherCheckoutSession = { ...fixture.session, metadata: { ...sessionMetadata, path: '/tmp/other' } };
         await act(async () => { fixture.storage.getState().applySessions([otherCheckoutSession]); });
         await screen.update(2);
         expect(screen.findHostByTestId('review-comments-session-direct-write-grant-grant-project')).toBeNull();
-        fixture.storage.getState().applySettingsLocal({ workspaceRefsV1: [] });
+        applyProjectAccountRowsFixture(fixture.storage, { workspaceRefs: [] });
         const requestCount = homeRequests.filter(request => request.path === '/v1/plugins/permissions/grants/list').length;
         await screen.update(3);
         expect(screen.findHostByTestId('review-comments-session-direct-write-grant-grant-project')).toBeNull();
@@ -276,7 +276,7 @@ describe('SessionScmReviewDetailsView (snapshot SWR)', () => {
         expect(scrollTop()).toBe(96);
     });
 
-    it('keeps the mounted review initial scroll position stable after persistence updates', async () => {
+    it('preserves the mounted review and restores the latest scroll position on remount', async () => {
         const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
         const { SessionScmReviewDetailsView } = await import('./SessionScmReviewDetailsView');
         function Probe() { pane = useAppPaneScope('session:s1'); return null; }
@@ -286,14 +286,23 @@ describe('SessionScmReviewDetailsView (snapshot SWR)', () => {
         await screen.update(fixture.wrap(element(0)));
         await flushHookEffects({ cycles: 20 });
         const { ChangedFilesReview } = await import('@/components/workspaces/scm/review/ChangedFilesReview');
-        const first = screen.tree.root.findByType(ChangedFilesReview).props;
+        const mountedReview = screen.tree.root.findByType(ChangedFilesReview);
+        const first = mountedReview.props;
         expect(first.initialScrollTop).toBe(120);
-        const onScrollTopChange = first.onScrollTopChange;
-        if (!onScrollTopChange) throw new Error('Expected the mounted review scroll persistence callback');
         vi.useFakeTimers();
-        act(() => { onScrollTopChange(360); vi.advanceTimersByTime(250); });
+        act(() => {
+            invokeTestInstanceHandler(screen.findHostByTestId('scm-review-list'), 'onScroll', {
+                nativeEvent: { contentOffset: { y: 360 } },
+            });
+            vi.advanceTimersByTime(250);
+        });
         expect(scrollTop()).toBe(360);
         await screen.update(fixture.wrap(element(1)));
-        expect(screen.tree.root.findByType(ChangedFilesReview).props.initialScrollTop).toBe(120);
+        expect(screen.tree.root.findByType(ChangedFilesReview)).toBe(mountedReview);
+        // The seed can follow persistence without remounting the reading surface.
+        // Closing and reopening Files must restore the latest position, not its first one.
+        await screen.update(fixture.wrap(<Probe />));
+        await screen.update(fixture.wrap(element(2)));
+        expect(screen.tree.root.findByType(ChangedFilesReview).props.initialScrollTop).toBe(360);
     });
 });

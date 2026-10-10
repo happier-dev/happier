@@ -9,27 +9,27 @@ describe('projectCockpitState', () => {
 
     it('keeps the full phone route intent while changing the canonical page', () => {
         const href = resolveProjectRoutePathForSurface({ workspaceRefId: 'wr_1', page: 'scripts', surface: 'scripts',
-            serverId: 'home-a', rawWorktreeId: 'checkout-a', routeParams: { dashboardId: 'dashboard-a', comparisonId: 'comparison-a',
+            serverId: 'home-a', rawWorktreeId: 'checkout-a', routeParams: { layoutId: 'dashboard-a', comparisonId: 'comparison-a',
                 initialFile: 'src/a.ts', source: 'diff', anchor: 'range', startLine: '7', endLine: '12' } });
         const url = new URL(href, 'https://happier.test');
         expect(url.pathname).toBe('/projects/wr_1/scripts');
-        expect(Object.fromEntries(url.searchParams)).toEqual({ serverId: 'home-a', worktreeId: 'checkout-a', dashboardId: 'dashboard-a',
+        expect(Object.fromEntries(url.searchParams)).toEqual({ serverId: 'home-a', worktreeId: 'checkout-a', layoutId: 'dashboard-a',
             comparisonId: 'comparison-a', initialFile: 'src/a.ts', source: 'diff', anchor: 'range', startLine: '7', endLine: '12' });
     });
     it('returns to the default dashboard without losing the captured page, Home, checkout or resource', () => {
         const href = resolveProjectRoutePathForSurface({ workspaceRefId: 'wr_1', page: 'overview', surface: 'overview',
-            serverId: 'home-a', rawWorktreeId: 'checkout-a', dashboardId: null,
-            routeParams: { dashboardId: 'stale', initialFile: 'src/a.ts', comparisonId: 'comparison-a' } });
+            serverId: 'home-a', rawWorktreeId: 'checkout-a', layoutId: null,
+            routeParams: { layoutId: 'stale', initialFile: 'src/a.ts', comparisonId: 'comparison-a' } });
         expect(Object.fromEntries(new URL(href, 'https://happier.test').searchParams)).toEqual({
             serverId: 'home-a', worktreeId: 'checkout-a', initialFile: 'src/a.ts', comparisonId: 'comparison-a' });
     });
     it.each(['overview', 'code', 'changes', 'scripts', 'services', 'context'] as const)('preserves the %s page and exact checkout', (surface) => {
         const href = resolveProjectRoutePathForSurface({ workspaceRefId: 'wr_1', surface,
-            rawWorktreeId: 'checkout-a', serverId: 'home-a', dashboardId: 'dashboard-a', comparisonId: 'comparison-a' });
+            rawWorktreeId: 'checkout-a', serverId: 'home-a', layoutId: 'dashboard-a', comparisonId: 'comparison-a' });
         const url = new URL(href, 'https://app.happier.test');
         expect(url.pathname).toBe(`/projects/wr_1/${surface}`);
         expect(Object.fromEntries(url.searchParams)).toMatchObject({ worktreeId: 'checkout-a', serverId: 'home-a',
-            dashboardId: 'dashboard-a', comparisonId: 'comparison-a' });
+            layoutId: 'dashboard-a', comparisonId: 'comparison-a' });
         expect(resolveProjectCockpitRouteFromPathname(href)).toEqual({ workspaceRefId: 'wr_1', page: surface, surface });
     });
 

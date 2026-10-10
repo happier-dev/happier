@@ -78,7 +78,7 @@ describe('project initial resource admission', () => {
     it('changes pages with the actual selected pane resource and captured Home, checkout, dashboard and comparison', async () => {
         const navigations: string[] = [];
         const screen = await renderScreen(<AppPaneProvider><DestinationInstanceHost tabId="selected"
-            ref={{ kind: 'project', params: { workspaceRefId: 'project-a', serverId: 'home-a', dashboardId: 'selected',
+            ref={{ kind: 'project', params: { workspaceRefId: 'project-a', serverId: 'home-a', layoutId: 'selected',
                 comparisonId: 'comparison-a', initialFile: 'src/index.ts' } }}
             pathname="/projects/project-a/code" focused visible navigation={{ push: (href) => navigations.push(String(href)),
                 replace: () => {}, back: () => {}, setParams: () => {} }}><Body /></DestinationInstanceHost></AppPaneProvider>);
@@ -86,7 +86,7 @@ describe('project initial resource admission', () => {
         await act(async () => { screen.root.findByType('ProjectResourceProbe').props.selectPage(); });
         const url = new URL(navigations[0], 'https://happier.test');
         expect(url.pathname).toBe('/projects/project-a/changes');
-        expect(Object.fromEntries(url.searchParams)).toEqual({ serverId: 'home-a', dashboardId: 'selected',
+        expect(Object.fromEntries(url.searchParams)).toEqual({ serverId: 'home-a', layoutId: 'selected',
             comparisonId: 'comparison-a', initialFile: 'src/current.ts', worktreeId: 'checkout-a' });
         await act(async () => { screen.root.findByType('ProjectResourceProbe').props.closeCurrent(); });
         // Closing the other retained file as well leaves no current resource to carry forward.

@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
 import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
-import { useLocalSetting, useMachine, useServerScopedMachine, useSessionRpcAvailabilityState } from '@/sync/domains/state/storage';
+import { useLocalSetting, useServerScopedMachine, useSessionRpcAvailabilityState } from '@/sync/domains/state/storage';
 import {
     resolveSessionFileTransferAvailability,
     type ResolveSessionFileTransferAvailabilityResult,
@@ -33,9 +33,7 @@ export function useSessionFileTransferAvailabilityState(
     const machineTarget = enabled ? readMachineTargetForSession(serverId
         ? { serverId, sessionId }
         : sessionId) : null;
-    const globalMachine = useMachine(machineTarget?.machineId ?? '');
-    const serverScopedMachine = useServerScopedMachine(serverId, machineTarget?.machineId ?? '');
-    const machine = serverScopedMachine ?? globalMachine;
+    const machine = useServerScopedMachine(serverId, machineTarget?.machineId ?? '');
     const nativeMachineCarrierAvailable = React.useSyncExternalStore(
         subscribeIrohMachineTransferLifecycleAvailability,
         isIrohMachineTransferLifecycleAvailable,

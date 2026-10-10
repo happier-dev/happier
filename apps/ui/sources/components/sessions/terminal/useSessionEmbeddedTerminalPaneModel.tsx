@@ -5,15 +5,11 @@ import { View } from 'react-native';
 import type { EmbeddedTerminalRendererHandle } from '@/components/terminal/embedded/embeddedTerminalRendererHandle';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { t } from '@/text';
-import { useFindSurfaceRuntime } from '@/keyboard/KeyboardShortcutProvider';
-import { usePluginSurfaceFocusEligibility } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
-import { getClipboardStringTrimmedSafe } from '@/utils/ui/clipboard';
+import { useEmbeddedTerminalPresentation } from '@/components/terminal/embedded/useEmbeddedTerminalPresentation';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
 import type { EmbeddedTerminalDockLocation } from './embeddedTerminalDocking';
 import type { SessionTerminalIdentity, SessionTerminalMode } from './sessionTerminalMode';
-import { publishTerminalSurfaceSummary } from './terminalSurfaceSummary';
-import { createSessionTerminalLeafHandles } from './strip/sessionTerminalLeafHandles';
 import { useSessionEmbeddedTerminalPty } from './useSessionEmbeddedTerminalPty';
 
 export type SessionEmbeddedTerminalPaneProps = Readonly<{
@@ -53,46 +49,17 @@ export function useSessionEmbeddedTerminalPaneModel(props: SessionEmbeddedTermin
         sessionId: props.sessionId,
         serverId,
         terminalKey,
+        scopeId: props.scopeId,
+        memberId: props.terminalIdentity.terminalId ?? (terminalMode === 'session_attach' ? 'session-attach' : 'embedded'),
         terminalMode,
         terminalTarget: props.terminalIdentity.terminalTarget,
         available: props.terminalIdentity.available,
         terminalRef: terminalRendererRef,
     });
 
-    // A bell asks for attention only when it rings in a view nobody is looking at.
-    const bellSeenRef = React.useRef<string | null>(controller.terminalBell ?? null);
-    if (props.focused) bellSeenRef.current = controller.terminalBell ?? null;
-    const unseenBell = controller.terminalBell && controller.terminalBell !== bellSeenRef.current ? controller.terminalBell : null;
-    const detectedUrl = controller.detectedUrl?.url ?? null;
-    React.useEffect(() => {
-        publishTerminalSurfaceSummary(terminalKey, {
-            title: controller.terminalTitle ?? null,
-            bell: unseenBell,
-            status: controller.status,
-            error: controller.status === 'error' ? controller.error : null,
-            url: detectedUrl,
-        });
-    }, [controller.error, controller.status, controller.terminalTitle, detectedUrl, terminalKey, unseenBell]);
-
-    // The pane's tab menu reaches this view's own verbs while it is mounted.
-    const leafHandles = React.useMemo(() => createSessionTerminalLeafHandles(props.scopeId), [props.scopeId]);
-    const findRuntime = useFindSurfaceRuntime();
-    const mountedFindId = React.useId();
-    const findSurfaceId = `terminal:${terminalKey}:${mountedFindId}`;
-    const findEligible = usePluginSurfaceFocusEligibility() && props.focused !== false;
     const terminalId = props.terminalIdentity.terminalId;
-    const { clearTerminal, requestRestart, copySelection, onPaste } = controller;
-    React.useEffect(() => {
-        if (!terminalId || !props.terminalIdentity.available) return;
-        return leafHandles.register(terminalId, {
-            get find() { return findEligible && terminalRendererRef.current?.find
-                ? () => { findRuntime.open(findSurfaceId); } : null; },
-            copySelection: copySelection ? () => copySelection() : null,
-            paste: () => { void getClipboardStringTrimmedSafe().then((text) => { if (text) void onPaste(text); }); },
-            clear: clearTerminal,
-            restart: requestRestart,
-        });
-    }, [clearTerminal, copySelection, findEligible, findRuntime, findSurfaceId, leafHandles, onPaste, props.terminalIdentity.available, requestRestart, terminalId]);
+    const { findSurfaceId, onOpenApproval } = useEmbeddedTerminalPresentation({ scopeId: props.scopeId, terminalKey,
+        terminalId, available: props.terminalIdentity.available, focused: props.focused, controller, terminalRef: terminalRendererRef });
 
     const execute = React.useMemo(() => createFrontDoorActionExecute(), []);
     const restartFromSurface = React.useCallback(() => {
@@ -102,7 +69,7 @@ export function useSessionEmbeddedTerminalPaneModel(props: SessionEmbeddedTermin
         });
     }, [execute, props.scopeId, props.sessionId, serverId, terminalId]);
     // Keep the registered worker handle raw; the toolbar is an Action caller, not another restart owner.
-    const surfaceController = React.useMemo(() => ({ ...controller, requestRestart: restartFromSurface }), [controller, restartFromSurface]);
+    const surfaceController = React.useMemo(() => ({ ...controller, requestRestart: restartFromSurface, onOpenApproval }), [controller, restartFromSurface, onOpenApproval]);
 
     const toolbarActionsStart = React.useMemo(() => (props.onOpenNewTerminalTab ? (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>

@@ -14,6 +14,8 @@ export function useSessionEmbeddedTerminalPty(params: Readonly<{
     sessionId: string;
     serverId?: string | null;
     terminalKey: string;
+    scopeId?: string;
+    memberId?: string;
     terminalMode: SessionTerminalMode;
     terminalTarget?: SessionTerminalTargetV1;
     available?: boolean;
@@ -46,6 +48,8 @@ export function useSessionEmbeddedTerminalPty(params: Readonly<{
         machineReachable: explicitMachineId ? resolveSessionMachineReachability({ machineIsKnown: Boolean(explicitMachine), machineIsOnline: explicitMachine ? isMachineOnline(explicitMachine) : false }) : machineReachable,
         machineRpcTargetAvailable: explicitMachineId ? true : machineRpcTargetAvailable,
         terminalKey: params.terminalKey,
+        scopeId: params.scopeId,
+        memberId: params.memberId,
         terminalRef: params.terminalRef,
     });
 }

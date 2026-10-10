@@ -8,6 +8,9 @@ describe('isSafeWorkspaceRelativePath', () => {
         expect(isSafeWorkspaceRelativePath('.gitignore')).toBe(true);
         expect(isSafeWorkspaceRelativePath('apps/ui/sources/')).toBe(true);
         expect(isSafeWorkspaceRelativePath('dir/my file.ts')).toBe(true);
+        expect(isSafeWorkspaceRelativePath(' ')).toBe(true);
+        expect(isSafeWorkspaceRelativePath(' leading /line\nbreak /name ')).toBe(true);
+        expect(isSafeWorkspaceRelativePath(' ~/literal-relative-name')).toBe(true);
     });
 
     it('rejects absolute, traversal, and windows paths', () => {

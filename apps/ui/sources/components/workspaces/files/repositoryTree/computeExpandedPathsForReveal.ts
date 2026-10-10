@@ -4,7 +4,7 @@ export type ComputeExpandedPathsForRevealInput = Readonly<{
 }>;
 
 function normalizePathSegment(input: string): string {
-    return input.trim().replaceAll('\\', '/').replace(/^\/+/, '').replace(/\/+$/, '');
+    return input.replaceAll('\\', '/').replace(/^\/+/, '').replace(/\/+$/, '');
 }
 
 function listDirectoryAncestors(fullPath: string): string[] {

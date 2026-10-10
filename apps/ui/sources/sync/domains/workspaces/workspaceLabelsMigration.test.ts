@@ -7,6 +7,18 @@ vi.mock('@/platform/randomUUID', () => ({
 }));
 
 describe('workspaceLabelsMigration', () => {
+    it('retains the legacy label and every candidate when its exact scope is ambiguous', () => {
+        const first = { id: 'first', serverId: 'server', machineId: 'm1', rootPath: '/tmp/repo',
+            label: null, createdAtMs: 1, lastOpenedAtMs: null };
+        const refs = [first, { ...first, id: 'second' }];
+        const result = migrateLegacyWorkspaceLabelsToWorkspaceRefs({
+            legacyWorkspaceLabels: { wl_aaaa: 'Legacy' }, workspaceRefs: refs, nowMs: 10,
+            resolveScopeForLegacyKey: () => ({ serverId: 'server', machineId: 'm1', rootPath: '/tmp/repo' }),
+        });
+        expect(result.migratedCount).toBe(0);
+        expect(result.nextLegacyWorkspaceLabels).toEqual({ wl_aaaa: 'Legacy' });
+        expect(result.nextWorkspaceRefs).toEqual(refs);
+    });
     it('migrates a legacy label when a scope is resolvable', () => {
         const result = migrateLegacyWorkspaceLabelsToWorkspaceRefs({
             legacyWorkspaceLabels: { wl_aaaa: 'My Repo' },

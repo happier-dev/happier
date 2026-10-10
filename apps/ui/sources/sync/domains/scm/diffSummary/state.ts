@@ -21,7 +21,8 @@ export type ScmDiffSummaryRequestStatus = 'idle' | 'starting' | 'running' | 'suc
 export type ScmDiffSummaryOperationIntent = 'generate' | 'regenerate' | 'copy';
 
 export type ScmDiffSummaryRequestKeyInput = Readonly<{
-    sessionId: string;
+    sessionId: string | null;
+    machineId?: string;
     input: ScmDiffSummaryGenerateInput;
     summarySchemaVersion?: number;
     resolvedSelector?: Readonly<{ catalogId: string }>;
@@ -40,7 +41,8 @@ export type ScmDiffSummaryPayload = Readonly<{
 
 export type ScmDiffSummaryEntry = Readonly<{
     key: string;
-    sessionId: string;
+    sessionId: string | null;
+    machineId?: string;
     scopeKey?: string;
     savedResult?: ScmDiffSummaryResult;
     input: ScmDiffSummaryGenerateInput;
@@ -69,7 +71,8 @@ export type ScmDiffSummaryEvent =
     | Readonly<{
         type: 'request_started';
         key: string;
-        sessionId: string;
+        sessionId: string | null;
+        machineId?: string;
         scopeKey?: string;
         actionId: typeof SCM_DIFF_SUMMARY_GENERATE_ACTION_ID;
         input: ScmDiffSummaryGenerateInput;
@@ -91,7 +94,8 @@ export type ScmDiffSummaryEvent =
     | Readonly<{
         type: 'request_failed';
         key: string;
-        sessionId: string;
+        sessionId: string | null;
+        machineId?: string;
         scopeKey?: string;
         actionId: typeof SCM_DIFF_SUMMARY_GENERATE_ACTION_ID;
         input: ScmDiffSummaryGenerateInput;
@@ -103,7 +107,9 @@ export type ScmDiffSummaryEvent =
     | Readonly<{
         type: 'cache_hit';
         key: string;
-        sessionId: string;
+        sessionId: string | null;
+        machineId?: string;
+        scopeKey?: string;
         actionId: typeof SCM_DIFF_SUMMARY_GENERATE_ACTION_ID;
         input: ScmDiffSummaryGenerateInput;
         output: ScmDiffSummaryGenerateSuccess;
@@ -127,6 +133,8 @@ export type ScmDiffSummaryViewModel = Readonly<{
     status: ScmDiffSummaryRequestStatus;
     actionId: typeof SCM_DIFF_SUMMARY_GENERATE_ACTION_ID;
     executionRunId: string | null;
+    /** The generating Run's actual first admitted input, when the producer supplies it. */
+    inputId: string | null;
     callId: string | null;
     sidechainId: string | null;
     pendingIntent: ScmDiffSummaryOperationIntent | null;
@@ -161,7 +169,7 @@ export function createInitialScmDiffSummaryState(): ScmDiffSummaryState {
 }
 
 export function buildScmDiffSummaryRequestKey(input: ScmDiffSummaryRequestKeyInput): string {
-    const sessionId = input.sessionId.trim();
+    const sessionId = input.sessionId?.trim() ?? JSON.stringify(['machine', input.machineId]);
     const sourceKey = input.input.comparisonId ?? buildScmComparisonSourceKey(input.input);
     const cwd = input.input.cwd.trim();
     const schemaVersion = typeof input.summarySchemaVersion === 'number'
@@ -221,6 +229,7 @@ function makeStartedEntry(
     return {
         key: event.key,
         sessionId: event.sessionId,
+        ...(event.machineId ? { machineId: event.machineId } : {}),
         scopeKey: event.scopeKey,
         input: event.input,
         status: event.structuredOutput ? statusFromOutput(event.structuredOutput, event.input) : 'starting',
@@ -252,6 +261,7 @@ export function applyScmDiffSummaryEvent(state: ScmDiffSummaryState, event: ScmD
         const entry: ScmDiffSummaryEntry = {
             key: event.key,
             sessionId: event.sessionId,
+            ...(event.machineId ? { machineId: event.machineId } : previous?.machineId ? { machineId: previous.machineId } : {}),
             scopeKey: event.scopeKey ?? previous?.scopeKey,
             savedResult: previous?.savedResult,
             input: event.input,
@@ -283,6 +293,8 @@ export function applyScmDiffSummaryEvent(state: ScmDiffSummaryState, event: ScmD
         const entry: ScmDiffSummaryEntry = {
             key: event.key,
             sessionId: event.sessionId,
+            machineId: event.machineId,
+            scopeKey: event.scopeKey ?? previous?.scopeKey,
             input: event.input,
             status: statusFromOutput(event.output, event.input),
             actionId: event.actionId,
@@ -413,6 +425,7 @@ export function selectScmDiffSummaryViewModel(state: ScmDiffSummaryState, key: s
         status: entry?.status ?? 'idle',
         actionId: SCM_DIFF_SUMMARY_GENERATE_ACTION_ID,
         executionRunId: entry?.executionRunId ?? null,
+        inputId: output?.inputId ?? summary?.output.inputId ?? null,
         callId: entry?.callId ?? null,
         sidechainId: entry?.sidechainId ?? null,
         pendingIntent: entry?.pendingIntent ?? null,

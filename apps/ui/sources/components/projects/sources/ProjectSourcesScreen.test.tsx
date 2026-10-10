@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -255,6 +256,10 @@ describe('Projects › Sources', () => {
   it('never shows a same-id local document for a dashboard attached on another Home', async () => {
     signIn();
     storage.setState({
+      projectAccountRows: createProjectAccountRowsFixture({ serverId: 'server-1', accountId: 'account-1' }, {
+        workspaceRefs: [{ id: 'checkout-1', serverId: 'server-1', machineId: 'm1', rootPath: '/repo',
+          projectKey: 'viewer-project', source: { sourceId: 'source-1', revision: 1 }, createdAtMs: 1 }],
+      }),
       artifacts: {
         dash: { id: 'dash', title: 'Local release', isDecrypted: true, access: 'edit' },
       } as never,
@@ -288,6 +293,14 @@ describe('Projects › Sources', () => {
     expect(local.props.title).toBe('Local release');
     expect(foreign.props.title).not.toBe('Local release');
     expect(foreign.props.subtitle).toBe('projects.sources.dashboardOtherHome');
+    await act(async () => screen.pressByTestId('projects.sources.dashboard.server-1:dash'));
+    const href = shared.navigation.at(-1);
+    expect(typeof href).toBe('string');
+    const url = new URL(String(href), 'https://happier.test');
+    expect(url.pathname).toBe('/projects/checkout-1/overview');
+    expect(Object.fromEntries(url.searchParams)).toMatchObject({ serverId: 'server-1',
+      dashboardSourceId: 'source-1', dashboardArtifactId: 'dash' });
+    expect(foreign.props.onPress).toBeUndefined();
   });
   it('edits the default branch through a field select whose Other entry asks for any ref', async () => {
     signIn();

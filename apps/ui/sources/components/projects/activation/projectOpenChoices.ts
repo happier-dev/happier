@@ -1,14 +1,15 @@
 import { OpenProjectInputV1Schema, type OpenProjectInputV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import { OpenProjectDraftSelectionV1Schema, type OpenProjectDraftSelectionV1 } from '@happier-dev/protocol/projects/openProjectDraftV1';
-import { normalizeProjectSourceSubdirV1, type ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import { normalizeProjectSourceSubdirV1, type ProjectSourceV1, type ProjectSourceRepositorySelectorV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { WorkspaceAddressV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
-import { buildWorkspaceContentPolicy } from '@/sync/domains/sessionHandoff/sessionHandoffDefaults';
+import { buildSessionHandoffWorkspaceAction } from '@/sync/domains/sessionHandoff/sessionHandoffDefaults';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { resolveWorkspaceRefByAddress, resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs';
 
 export type ProjectOpenSubject =
   | Readonly<{ kind: 'source'; source: Pick<ProjectSourceV1, 'id' | 'revision' | 'repository' | 'defaultRef' | 'subdir'> }>
+  | Readonly<{ kind: 'repository'; selector: ProjectSourceRepositorySelectorV1 }>
   | Readonly<{ kind: 'folder'; path: string }>
   | Readonly<{ kind: 'workspace'; workspace: Pick<WorkspaceRefV1, 'id' | 'serverId' | 'machineId' | 'rootPath'> }>;
 export type ProjectOpenUse = 'existing' | 'worktree' | 'clone' | 'copy';
@@ -22,6 +23,8 @@ export type ProjectOpenChoiceState = Readonly<{
   /** Unresolved header directory intent is retained text, never a chosen Source. */
   folderPath?: string;
   use: ProjectOpenUse | null;
+  /** The canonical activation union remains authoritative for undisplayed choices. */
+  materialization?: OpenProjectDraftSelectionV1['materialization'];
   branch: string;
   destination: string;
   /** An explicit checkout choice, never a shortest-path or repository-identity guess. */
@@ -46,6 +49,7 @@ export function suggestProjectOpenDestination(
   if (!state.subject || !state.machineHomeDir) return '';
   const name = state.subject.kind === 'source'
     ? state.subject.source.repository.repository.nameWithOwner.split('/').pop()
+    : state.subject.kind === 'repository' ? state.subject.selector.repository.nameWithOwner.split('/').pop()
     : state.subject.kind === 'workspace'
       ? state.subject.workspace.rootPath.split(/[\\/]/u).filter(Boolean).pop() : null;
   if (!name) return '';
@@ -64,6 +68,7 @@ export function resolveProjectOpenUseOptions(state: ProjectOpenChoiceState): rea
     // A canonical SCM entrance may carry an explicitly chosen worktree intent.
     ...(state.use === 'worktree' ? [{ use: 'worktree' as const, from: null, candidates: [] }] : []),
   ];
+  if (state.subject.kind === 'repository') return [{ use: 'clone', from: null, candidates: [] }];
   const subject = state.subject;
   const home = resolveServerProfileScopeIdForIdentifier(state.serverId);
   let candidates: readonly WorkspaceRefV1[];
@@ -116,18 +121,21 @@ export function buildProjectOpenDraft(state: ProjectOpenChoiceState): OpenProjec
     kind: 'source' as const, id: subject.source.id, revision: subject.source.revision, selector: subject.source.repository,
     ...(subject.source.defaultRef ? { defaultRef: subject.source.defaultRef } : {}),
     ...(subject.source.subdir ? { subdir: subject.source.subdir } : {}),
-  } : subject?.kind === 'workspace' ? { kind: 'workspace' as const, workspaceId: subject.workspace.id }
+  } : subject?.kind === 'repository' ? { kind: 'repository' as const, selector: subject.selector }
+    : subject?.kind === 'workspace' ? { kind: 'workspace' as const, workspaceId: subject.workspace.id }
     : subject?.kind === 'folder' ? { kind: 'folder' as const, path:
       OpenProjectInputV1Schema.shape.source.options[1].shape.path.safeParse(subject.path).success ? subject.path : '' } : undefined;
   let materialization: OpenProjectDraftSelectionV1['materialization'];
   switch (state.use) {
     case 'existing': materialization = { kind: 'attach' }; break;
     case 'worktree': {
-      const candidate = { kind: 'worktree' as const, checkout: { kind: 'git_worktree' as const,
-        displayName: state.branch.trim(), baseRef: state.ref?.trim() || null, branchMode: 'new' as const } };
+      const retained = state.materialization?.kind === 'worktree' ? state.materialization : null;
+      const candidate = { ...retained, kind: 'worktree' as const, checkout: {
+        ...(retained?.checkout ?? { kind: 'git_worktree' as const, branchMode: 'new' as const }),
+        displayName: state.branch.trim(), baseRef: state.ref?.trim() || null } };
       const parsed = OpenProjectDraftSelectionV1Schema.shape.materialization.safeParse(candidate);
-      materialization = parsed.success ? candidate : { kind: 'worktree', checkout: {
-        kind: 'git_worktree', displayName: '', baseRef: null, branchMode: 'new' } };
+      materialization = parsed.success ? candidate : { ...candidate, checkout: {
+        ...candidate.checkout, displayName: '', baseRef: null } };
       break;
     }
     case 'clone': {
@@ -140,8 +148,9 @@ export function buildProjectOpenDraft(state: ProjectOpenChoiceState): OpenProjec
     }
     case 'copy': {
       const candidate = { kind: 'sync' as const, targetPath: state.destination.trim(),
-        workspaceAction: { kind: 'copy_once' as const,
-          contentPolicy: buildWorkspaceContentPolicy({ includeIgnoredMode: 'exclude', ignoredIncludeGlobs: [] }) } };
+        workspaceAction: state.materialization?.kind === 'sync' ? state.materialization.workspaceAction
+          : buildSessionHandoffWorkspaceAction({ workspaceSyncMode: 'copy_once', contentSelection: 'git_worktree',
+            includeIgnoredMode: 'exclude', ignoredIncludeGlobs: [] })! };
       const parsed = OpenProjectDraftSelectionV1Schema.shape.materialization.safeParse(candidate);
       materialization = parsed.success ? candidate : { ...candidate, targetPath: '' };
       break;
@@ -228,6 +237,7 @@ export function projectOpenChoiceStateFromDraft(
     ...(source.defaultRef ? { defaultRef: source.defaultRef } : {}), subdir: normalizeProjectSourceSubdirV1(source.subdir),
   } };
   else if (source?.kind === 'folder') subject = { kind: 'folder', path: editing?.folderPath ?? source.path };
+  else if (source?.kind === 'repository') subject = { kind: 'repository', selector: source.selector };
   else if (source?.kind === 'workspace') {
     const resolved = checkout ? resolveWorkspaceRefByAddress(checkouts, checkout)
       : resolveWorkspaceRefById(checkouts, source.workspaceId, selection.serverId);
@@ -240,7 +250,9 @@ export function projectOpenChoiceStateFromDraft(
   const materialization = selection.materialization;
   return { serverId: selection.serverId, machineId: selection.machineId || null, machineHomeDir, subject,
     checkouts, checkoutId: checkout?.workspaceId ?? null, checkoutAddress: checkout ?? null,
-    ref: editing?.ref ?? selection.ref ?? null, subdir: editing?.subdir ?? selection.subdir ?? null,
+    ref: editing?.ref ?? selection.ref ?? (materialization?.kind === 'worktree' ? materialization.checkout.baseRef : null),
+    subdir: editing?.subdir ?? selection.subdir ?? null,
+    materialization,
     folderPath: editing?.folderPath,
     use: !materialization ? null : materialization.kind === 'attach' ? 'existing' : materialization.kind === 'sync' ? 'copy' : materialization.kind,
     branch: editing?.branch ?? (materialization?.kind === 'worktree' ? materialization.checkout.displayName : ''),

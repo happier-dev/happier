@@ -1,6 +1,6 @@
-import { projectOverviewDefaultPlacementsV1, type WidgetAreaLayoutV1 } from '@happier-dev/protocol/widgets';
+import { projectOverviewDefaultPlacementsV1, type WidgetAreaLayoutV1, type WidgetPlacementV1 } from '@happier-dev/protocol/widgets';
 
-type Placement = WidgetAreaLayoutV1['instances'][number];
+type Placement = WidgetPlacementV1;
 export type ProjectOverviewAreaPlacements = readonly Placement[];
 
 /** One dashboard document's two areas; `null` is a genuinely missing area, `[]` a present empty one. */
@@ -20,7 +20,7 @@ const DEFAULT_ASIDE: ProjectOverviewAreaPlacements = Object.freeze(DEFAULTS.filt
 
 /** Each area of one document, in saved order; a missing document has two missing areas. */
 export function readProjectOverviewWidgetAreas(
-  layout: WidgetAreaLayoutV1 | null,
+  layout: Readonly<Pick<WidgetAreaLayoutV1, 'v' | 'surface'> & { instances: readonly WidgetPlacementV1[] }> | null,
 ): ProjectOverviewWidgetAreas {
   if (!layout) return { main: null, aside: null };
   const main: Placement[] = [];

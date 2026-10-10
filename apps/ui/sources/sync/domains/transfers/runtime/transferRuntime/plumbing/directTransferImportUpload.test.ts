@@ -8,7 +8,17 @@ function readHeadersRecord(headers: HeadersInit | undefined): Record<string, str
 }
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/guardedMachineRpc', () => ({
-    callGuardedMachineRpcWithPolicy: (...args: unknown[]) => prepareImportSessionMock(...args),
+    callGuardedMachineRpcWithPolicy: async (params: { method: string; payload: { input?: { source?: { sourceId: string } } } }) => {
+        const result = await prepareImportSessionMock(params);
+        // Existing byte/transport vectors now model the semantic Action wire
+        // envelope; unrelated prepared import families retain their own DTO.
+        if (params.method === 'daemon.filesystem.upload' && result?.success === true && typeof result.uploadId === 'string') {
+            const { success: _success, ...prepared } = result;
+            return { success: true, status: 'accepted', operationId: 'upload-operation', sourceId: params.payload.input?.source?.sourceId, prepared };
+        }
+        if (params.method === 'daemon.filesystem.transfer.cancel' && result?.success === true) return { success: true, aborted: true };
+        return result;
+    },
 }));
 
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
@@ -22,6 +32,24 @@ describe('uploadBulkPayloadFromFileViaDirectImport', () => {
     afterEach(() => {
         prepareImportSessionMock.mockReset();
         resetRuntimeFetch();
+    });
+
+    it('cleans failed filesystem byte custody through its actual prepared HTTP capability without another cancel Action', async () => {
+        prepareImportSessionMock.mockResolvedValue({ success: true, uploadId: 'owned-import', destDisplayPath: '/repo/file',
+            expectedSizeBytes: 1, chunkSizeBytes: 1, recipientPublicKeyBase64: Buffer.alloc(32, 7).toString('base64'), expiresAt: 5000,
+            endpointCandidates: [{ kind: 'http', url: 'http://127.0.0.1:46001/machine-transfers/direct/imports/owned-import', expiresAt: 5000 }] });
+        const effects: string[] = [];
+        setRuntimeFetch(async (request, init) => {
+            effects.push(`${init?.method} ${String(request)}`);
+            if (!String(request).endsWith('/owned-import/abort')) throw new Error('Unexpected data-plane effect');
+            return Response.json({ success: true });
+        });
+        await expect(uploadBulkPayloadFromFileViaDirectImport({ machineId: 'machine-1', serverId: 'server-1',
+            fileReader: { sizeBytes: 1, readBytes: async () => { throw new Error('Actual source reader failed'); }, close: async () => {} },
+            request: { t: 'session_file_upload_v1', workingDirectory: '/repo', path: 'file', sizeBytes: 1, overwrite: false },
+        })).resolves.toMatchObject({ success: false });
+        expect(effects).toEqual(['POST http://127.0.0.1:46001/machine-transfers/direct/imports/owned-import/abort']);
+        expect(prepareImportSessionMock.mock.calls.map(([request]) => request.method)).toEqual(['daemon.filesystem.upload']);
     });
 
     it('reports only the shape of an unsupported prepare response', async () => {
@@ -153,7 +181,7 @@ describe('uploadBulkPayloadFromFileViaDirectImport', () => {
         });
         expect(prepareImportSessionMock).toHaveBeenCalledTimes(1);
         expect(prepareImportSessionMock).toHaveBeenCalledWith(expect.objectContaining({
-            method: RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_PREPARE,
+            method: 'daemon.filesystem.upload',
         }));
         expect(acquirePreparedCarrier).toHaveBeenCalledWith({ operationId: 'upload-1' });
         expect(order.slice(0, 3)).toEqual(['prepare', 'lease', 'transfer']);
@@ -292,7 +320,10 @@ describe('uploadBulkPayloadFromFileViaDirectImport', () => {
             },
             acquirePreparedCarrier: async () => ({
                 kind: 'browser_stream',
-                request: async () => { throw new Error('selected Iroh stream failed'); },
+                request: async (input) => {
+                    if (String(input).endsWith('/abort')) return Response.json({ success: true, aborted: true });
+                    throw new Error('selected Iroh stream failed');
+                },
                 release,
             }),
         });
@@ -991,6 +1022,9 @@ describe('uploadBulkPayloadFromFileViaDirectImport', () => {
                     headers: { 'content-type': 'application/json' },
                 });
             }
+            if (url === 'http://127.0.0.1:46001/machine-transfers/direct/imports/upload-2/abort' && method === 'POST') {
+                return Response.json({ success: true, aborted: true });
+            }
             if (url.startsWith('http://127.0.0.1:46002/') && url.includes('/chunks/') && method === 'PUT') {
                 encryptedChunkBodies.set(url, JSON.parse(String(init?.body)));
                 acceptedChunkIndexes.push(Number(url.slice(url.lastIndexOf('/') + 1)));
@@ -1040,16 +1074,14 @@ describe('uploadBulkPayloadFromFileViaDirectImport', () => {
         expect(requests.map((request) => request.url)).toEqual([
             'http://127.0.0.1:46001/machine-transfers/direct/imports/upload-2/chunks/0',
             'http://127.0.0.1:46001/machine-transfers/direct/imports/upload-2/chunks/1',
+            'http://127.0.0.1:46001/machine-transfers/direct/imports/upload-2/abort',
         ]);
         expect(readRanges).toEqual([[0, 5], [5, 5]]);
         expect(acceptedChunkIndexes).toEqual([0]);
         expect(encryptedChunkBodies.has(
             'http://127.0.0.1:46002/machine-transfers/direct/imports/upload-2/chunks/1',
         )).toBe(false);
-        expect(prepareImportSessionMock).toHaveBeenCalledTimes(2);
-        expect(prepareImportSessionMock).toHaveBeenCalledWith(expect.objectContaining({
-            method: RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_ABORT,
-        }));
+        expect(prepareImportSessionMock.mock.calls.map(([request]) => request.method)).toEqual(['daemon.filesystem.upload']);
     });
 
     it('retries a transient endpoint status through the shared direct-transfer classifier', async () => {
@@ -1169,13 +1201,11 @@ describe('uploadBulkPayloadFromFileViaDirectImport', () => {
 
         expect(result).toEqual({
             success: false,
-            error: 'Direct import prepare returned invalid endpoint metadata',
+            error: 'Direct import prepare returned an unsupported response (shape: object; success=boolean; error=undefined; ok=undefined; result=undefined)',
             errorCode: 'DIRECT_IMPORT_PREPARE_INVALID',
         });
-        expect(prepareImportSessionMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
-            method: RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_ABORT,
-            payload: { uploadId: 'upload-3' },
-        }));
+        // A malformed wire receipt does not prove ownership of its claimed ID.
+        expect(prepareImportSessionMock).toHaveBeenCalledTimes(1);
     });
 
     it('reports a completed upload successful when the carrier release fails and hands custody back once', async () => {
@@ -1245,7 +1275,7 @@ describe('uploadBulkPayloadFromFileViaDirectImport', () => {
         expect(release).toHaveBeenCalledTimes(1);
     });
 
-    it('aborts a prepared direct import through machine RPC exactly once after caller cancellation', async () => {
+    it('aborts only the prepared HTTP capability after caller cancellation, without another Action', async () => {
         prepareImportSessionMock.mockResolvedValue({
             success: true,
             uploadId: 'upload-canceled',
@@ -1262,8 +1292,13 @@ describe('uploadBulkPayloadFromFileViaDirectImport', () => {
         });
         const controller = new AbortController();
         controller.abort(new Error('canceled'));
-        setRuntimeFetch(async () => {
-            throw new Error('HTTP transfer route must not run after cancellation');
+        const cleanupRequests: Array<{ url: string; signal?: AbortSignal | null }> = [];
+        setRuntimeFetch(async (input, init) => {
+            cleanupRequests.push({ url: String(input), signal: init?.signal });
+            if (String(input) !== 'http://127.0.0.1:46001/machine-transfers/direct/imports/upload-canceled/abort') {
+                throw new Error('Cancelled transfer must not write bytes');
+            }
+            return Response.json({ success: true, aborted: true });
         });
 
         await expect(uploadBulkPayloadFromFileViaDirectImport({
@@ -1284,15 +1319,10 @@ describe('uploadBulkPayloadFromFileViaDirectImport', () => {
             timeoutMs: 23.9,
             signal: controller.signal,
         })).resolves.toEqual({ success: false, error: 'Upload canceled' });
-        expect(prepareImportSessionMock).toHaveBeenCalledTimes(2);
-        expect(prepareImportSessionMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
-            method: RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_ABORT,
-            payload: { uploadId: 'upload-canceled' },
-            timeoutMs: 23,
-        }));
-        const cleanupCall = prepareImportSessionMock.mock.calls[1]?.[0] as { signal?: AbortSignal } | undefined;
-        expect(cleanupCall?.signal).not.toBe(controller.signal);
-        expect(cleanupCall?.signal?.aborted ?? false).toBe(false);
+        expect(prepareImportSessionMock.mock.calls.map(([request]) => request.method)).toEqual(['daemon.filesystem.upload']);
+        expect(cleanupRequests).toHaveLength(1);
+        expect(cleanupRequests[0]?.signal).not.toBe(controller.signal);
+        expect(cleanupRequests[0]?.signal?.aborted ?? false).toBe(false);
     });
 
     it('passes the resolved deadline and caller signal to prepare so cancellation settles promptly', async () => {

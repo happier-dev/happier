@@ -44,7 +44,8 @@ export function scmReviewComparisonMatchesSource(comparison: SourceSelector, sou
     captured?: Pick<ScmComparison, 'endpoints' | 'pullRequest'>): boolean {
     switch (comparison.kind) {
         case 'workingTree': return source.kind === 'workingTree';
-        case 'session': return source.kind === 'session';
+        case 'session': return source.kind === 'session'
+            && (!('sessionId' in comparison) || comparison.sessionId === source.sessionId);
         case 'turnCheckpoint': {
             const requestedMode = 'evidence' in comparison ? comparison.evidence : 'evidenceMode' in comparison ? comparison.evidenceMode : undefined;
             return source.kind === 'turnCheckpoint'
@@ -64,12 +65,21 @@ export function scmReviewComparisonMatchesSource(comparison: SourceSelector, sou
 /** Current output selection uses published results too: addOutputs need not change the initial request. */
 export function selectSessionScmWalkthroughKey(state: ScmDiffSummaryState, sessionId: string,
     comparison: SourceSelector | null, output: ScmDiffSummaryOutputKind = 'walkthrough', scopeKey?: string): string | null {
+    return selectScmWalkthroughKey(state, { sessionId }, comparison, output, scopeKey);
+}
+
+/** Exact host and checkout selection; Machine results never acquire Session authority. */
+export function selectScmWalkthroughKey(state: ScmDiffSummaryState,
+    host: Readonly<{ sessionId: string }> | Readonly<{ machineId: string; cwd: string }>,
+    comparison: SourceSelector | null, output: ScmDiffSummaryOutputKind = 'walkthrough', scopeKey?: string): string | null {
     if (!comparison) return null;
     let best: { key: string; at: number } | null = null;
     for (const entry of Object.values(state.entriesByKey)) {
         const captured = entry.latestOutput?.comparison ?? entry.finalSummary?.output.comparison ?? entry.lastKnownSummary?.output.comparison;
         if (scopeKey !== undefined && entry.scopeKey !== scopeKey) continue;
-        if (entry.sessionId !== sessionId || !scmReviewComparisonMatchesSource(comparison, entry.input.source, captured)) continue;
+        const sameHost = 'sessionId' in host ? entry.sessionId === host.sessionId
+            : entry.sessionId === null && entry.machineId === host.machineId && entry.input.cwd === host.cwd;
+        if (!sameHost || !scmReviewComparisonMatchesSource(comparison, entry.input.source, captured)) continue;
         if (comparison.comparisonId && comparison.comparisonId !== (entry.latestOutput?.comparison?.id
             ?? entry.finalSummary?.output.comparison?.id ?? entry.lastKnownSummary?.output.comparison?.id)) continue;
         if (!(entry.input.outputs ?? ['summary']).includes(output)

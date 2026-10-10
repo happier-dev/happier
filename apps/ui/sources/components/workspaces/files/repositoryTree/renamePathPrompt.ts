@@ -5,7 +5,7 @@ import { isSafeWorkspaceRelativePath } from '@/utils/path/isSafeWorkspaceRelativ
 export async function renamePathPrompt(params: Readonly<{
     currentPath: string;
 }>): Promise<string | null> {
-    const currentPath = String(params.currentPath ?? '').trim();
+    const currentPath = String(params.currentPath ?? '');
     if (!currentPath) return null;
 
     const raw = await Modal.prompt(
@@ -17,6 +17,7 @@ export async function renamePathPrompt(params: Readonly<{
         }
     );
     if (typeof raw !== 'string') return null;
+    if (raw === currentPath) return null;
     const nextPath = raw.trim().replace(/\/+$/g, '');
     if (!nextPath) return null;
     if (nextPath === currentPath) return null;
@@ -27,4 +28,3 @@ export async function renamePathPrompt(params: Readonly<{
 
     return nextPath;
 }
-

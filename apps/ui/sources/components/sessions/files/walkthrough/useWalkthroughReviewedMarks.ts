@@ -7,6 +7,7 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import { getActiveServerHomeCarrier, getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { createServerFetchAtEndpoint } from '@/sync/http/client';
 import { createScmReviewedMarksOperations } from '@/sync/ops/scmDiffSummary/reviewedMarks';
+import { createScmDiffSummaryResultOperations, type ScmDiffSummaryHost } from '@/sync/ops/scmDiffSummary/results';
 
 export type WalkthroughReviewedMarks = Readonly<{
     record: ScmReviewedMarksRecord | null;
@@ -22,7 +23,10 @@ const UNAVAILABLE: WalkthroughReviewedMarks = { record: null, unavailableReason:
  * Account on the active Home (account KV through its existing per-key CAS and prefix push). The
  * operations retire with the view, the Account or the Home; nothing is marked except on intent.
  */
-export function useWalkthroughReviewedMarks(params: Readonly<{ comparison: ScmComparison | null; serverId: string | null }>): WalkthroughReviewedMarks {
+export function useWalkthroughReviewedMarks(params: Readonly<{
+    comparison: ScmComparison | null; serverId: string | null;
+    host: ScmDiffSummaryHost | null;
+}>): WalkthroughReviewedMarks {
     const credentials = useOptionalAuth()?.credentials ?? null;
     const server = useActiveServerSnapshot(credentials !== null);
     const comparison = params.comparison;
@@ -31,10 +35,13 @@ export function useWalkthroughReviewedMarks(params: Readonly<{ comparison: ScmCo
     const [state, setState] = React.useState<WalkthroughReviewedMarks>(UNAVAILABLE);
     const comparisonRef = React.useRef(comparison);
     comparisonRef.current = comparison;
+    const sessionId = params.host?.sessionId;
+    const machineId = params.host?.machineId;
 
     React.useEffect(() => {
         const captured = comparisonRef.current;
-        if (!captured || !credentials || !sameHome || !server.serverUrl || !server.serverId) {
+        const host: ScmDiffSummaryHost | null = sessionId ? { sessionId } : machineId ? { machineId } : null;
+        if (!captured || !host || !credentials || !sameHome || !server.serverUrl || !server.serverId) {
             setState(UNAVAILABLE);
             return;
         }
@@ -59,7 +66,12 @@ export function useWalkthroughReviewedMarks(params: Readonly<{ comparison: ScmCo
             credentials,
             isCurrent: shouldContinue,
         });
-        const operations = createScmReviewedMarksOperations({ comparison: captured, credentials, request, shouldContinue });
+        const actions = createScmDiffSummaryResultOperations({ ...host, serverId: server.serverId,
+            accountId: lifetime.scope.accountId, shouldContinue });
+        const operations = createScmReviewedMarksOperations({ comparison: captured, credentials, request, shouldContinue,
+            setReviewedAction: (refs, reviewed) => actions.setReviewed({ v: 2, cwd: captured.repository.rootPath,
+                comparisonId: captured.id, source: captured.source, ...(sessionId ? { sessionId } : {}), changeRefs: [...refs] }, reviewed),
+        });
         const setReviewed = (refs: readonly string[], reviewed: boolean) => { void operations.setReviewed(refs, reviewed); };
         const publish = () => {
             const snapshot = operations.getSnapshot();
@@ -78,7 +90,7 @@ export function useWalkthroughReviewedMarks(params: Readonly<{ comparison: ScmCo
             operations.retire();
         };
         // The comparison's identity, not its object, decides the record.
-    }, [comparisonId, credentials, sameHome, server.generation, server.runtimeOrigin, server.serverId, server.serverUrl]);
+    }, [comparisonId, credentials, sameHome, server.generation, server.runtimeOrigin, server.serverId, server.serverUrl, sessionId, machineId]);
 
-    return state;
+    return params.host ? state : UNAVAILABLE;
 }

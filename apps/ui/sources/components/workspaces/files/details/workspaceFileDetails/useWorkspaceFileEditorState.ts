@@ -10,7 +10,7 @@ import type { CodeEditorHandle } from '@/components/ui/code/editor/codeEditorTyp
 import { createAdvancedDebounce } from '@/utils/timing/debounce';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { buildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
-import { workspaceFileEditorDraftCache } from './workspaceFileEditorDraftCache';
+import { buildWorkspaceFileEditorDraftKey, readWorkspaceFileEditorDraft, workspaceFileEditorDraftCache, type WorkspaceFileEditorDraft } from './workspaceFileEditorDraftCache';
 import type { FileDisplayMode } from '@/components/workspaces/files/file/FileActionToolbar';
 import { showWorkspaceFileEditorComparison } from './WorkspaceFileEditorComparison';
 
@@ -44,6 +44,7 @@ export type WorkspaceFileEditorState = Readonly<{
 
 export function useWorkspaceFileEditorState(input: Readonly<{
     scope: WorkspaceScopeBase;
+    accountId: string | null;
     filePath: string;
     displayMode: FileDisplayMode;
     fileText: string | null;
@@ -59,18 +60,8 @@ export function useWorkspaceFileEditorState(input: Readonly<{
     filesEditorBridgeMaxChunkBytes: number;
     mountedRef: Readonly<{ current: boolean }>;
     refreshAll: () => Promise<void>;
-    persistedDraft?: Readonly<{
-        isEditingFile: boolean;
-        editorOriginalText: string;
-        editorOriginalHash?: string | null;
-        editorText: string;
-    }> | null;
-    persistDraft?: (draft: Readonly<{
-        isEditingFile: boolean;
-        editorOriginalText: string;
-        editorOriginalHash?: string | null;
-        editorText: string;
-    }> | null) => void;
+    persistedDraft?: WorkspaceFileEditorDraft | null;
+    persistDraft?: (draft: WorkspaceFileEditorDraft | null) => void;
 }>): WorkspaceFileEditorState {
     const [isEditingFile, setIsEditingFile] = React.useState(false);
     const [pendingStartEditing, setPendingStartEditing] = React.useState(false);
@@ -84,7 +75,8 @@ export function useWorkspaceFileEditorState(input: Readonly<{
     const [editorByteSize, setEditorByteSize] = React.useState(0);
     const hydratedFromPersistedRef = React.useRef(false);
     const workspaceCacheKey = React.useMemo(() => buildWorkspaceCacheKey(input.scope), [input.scope]);
-    const draftKey = React.useMemo(() => `${workspaceCacheKey}:${input.filePath}`, [input.filePath, workspaceCacheKey]);
+    const draftKey = buildWorkspaceFileEditorDraftKey(input.accountId, workspaceCacheKey, input.filePath);
+    const [editorOwnerKey, setEditorOwnerKey] = React.useState(draftKey);
 
     const editorHandleRef = React.useRef<CodeEditorHandle | null>(null);
     const editorTextRef = React.useRef('');
@@ -92,18 +84,23 @@ export function useWorkspaceFileEditorState(input: Readonly<{
     const editorOriginalHashRef = React.useRef<string | null>(null);
     const isEditingFileRef = React.useRef(false);
     const fileChangedExternallyRef = React.useRef(false);
-    const savingRef = React.useRef(false);
+    const savingRef = React.useRef<object | null>(null);
     const saveEditsRef = React.useRef<((autoSave: boolean) => void) | null>(null);
     const persistDraftRef = React.useRef(input.persistDraft);
     const latestInputRef = React.useRef(input);
     latestInputRef.current = input;
+    const isDraftOwnerCurrent = React.useCallback(() => {
+        const latest = latestInputRef.current;
+        return buildWorkspaceFileEditorDraftKey(latest.accountId, buildWorkspaceCacheKey(latest.scope), latest.filePath) === draftKey;
+    }, [draftKey]);
 
     const autoSaveDebounce = React.useMemo(() => createAdvancedDebounce<boolean>(() => {
+        if (!isDraftOwnerCurrent()) return;
         const latestInput = latestInputRef.current;
         if (!latestInput.filesEditorAutoSave || !latestInput.mountedRef.current) return;
         if (!isEditingFileRef.current || fileChangedExternallyRef.current) return;
         saveEditsRef.current?.(true);
-    }, { delay: input.filesEditorChangeDebounceMs, immediateCount: 0 }), [input.filesEditorChangeDebounceMs]);
+    }, { delay: input.filesEditorChangeDebounceMs, immediateCount: 0 }), [input.filesEditorChangeDebounceMs, isDraftOwnerCurrent]);
 
     React.useEffect(() => {
         hydratedFromPersistedRef.current = false;
@@ -133,6 +130,7 @@ export function useWorkspaceFileEditorState(input: Readonly<{
         () =>
             createAdvancedDebounce<string>(
                 (value) => {
+                    if (!isDraftOwnerCurrent()) return;
                     setEditorByteSize(() => {
                         try {
                             return new Blob([value]).size;
@@ -143,7 +141,10 @@ export function useWorkspaceFileEditorState(input: Readonly<{
                     const persist = persistDraftRef.current;
                     if (!persist) return;
                     if (!isEditingFileRef.current) return;
+                    const accountId = latestInputRef.current.accountId;
+                    if (!accountId) return;
                     persist({
+                        accountId,
                         isEditingFile: true,
                         editorOriginalText: editorOriginalTextRef.current,
                         editorOriginalHash: editorOriginalHashRef.current,
@@ -152,8 +153,38 @@ export function useWorkspaceFileEditorState(input: Readonly<{
                 },
                 { delay: input.filesEditorChangeDebounceMs },
             ),
-        [input.filesEditorChangeDebounceMs],
+        [input.filesEditorChangeDebounceMs, isDraftOwnerCurrent],
     );
+    React.useEffect(() => () => {
+        autoSaveDebounce.cancel();
+        sizeAndPersistDebounce.cancel();
+    }, [autoSaveDebounce, sizeAndPersistDebounce]);
+
+    // Reset before committing a render for another Account, not one effect later.
+    if (editorOwnerKey !== draftKey) {
+        autoSaveDebounce.cancel();
+        sizeAndPersistDebounce.cancel();
+        hydratedFromPersistedRef.current = false;
+        const fileText = input.fileText ?? '';
+        editorHandleRef.current = null;
+        editorTextRef.current = fileText;
+        editorOriginalTextRef.current = fileText;
+        editorOriginalHashRef.current = input.fileHash;
+        isEditingFileRef.current = false;
+        fileChangedExternallyRef.current = false;
+        savingRef.current = null;
+        setEditorOwnerKey(draftKey);
+        setIsEditingFile(false);
+        setPendingStartEditing(false);
+        setIsSavingEdits(false);
+        setEditorDirty(false);
+        setFileChangedExternally(false);
+        setEditorOriginalText(fileText);
+        setEditorOriginalHash(input.fileHash);
+        setEditorSeedText(fileText);
+        setEditorByteSize(new Blob([fileText]).size);
+        setEditorResetKey(key => key + 1);
+    }
 
     React.useEffect(() => {
         if (input.displayMode !== 'file') {
@@ -188,8 +219,9 @@ export function useWorkspaceFileEditorState(input: Readonly<{
     React.useEffect(() => {
         if (hydratedFromPersistedRef.current) return;
         hydratedFromPersistedRef.current = true;
-        const draft = workspaceFileEditorDraftCache.getDraft({ workspaceCacheKey, filePath: input.filePath })
-            ?? input.persistedDraft;
+        if (!input.accountId) return;
+        const draft = workspaceFileEditorDraftCache.getDraft({ accountId: input.accountId, workspaceCacheKey, filePath: input.filePath })
+            ?? readWorkspaceFileEditorDraft(input.persistedDraft, input.accountId);
         if (!draft) return;
         if (typeof draft.editorText !== 'string' || typeof draft.editorOriginalText !== 'string') return;
         const draftOriginalHash = typeof draft.editorOriginalHash === 'string' ? draft.editorOriginalHash : null;
@@ -213,22 +245,25 @@ export function useWorkspaceFileEditorState(input: Readonly<{
         setEditorDirty(isEditingDraft && draft.editorText !== draft.editorOriginalText);
         setFileChangedExternally(externallyChanged);
         setEditorResetKey((key) => key + 1);
-    }, [draftKey, input.fileHash, input.filePath, input.fileText, input.persistedDraft, workspaceCacheKey]);
+    }, [draftKey, input.accountId, input.fileHash, input.filePath, input.fileText, input.persistedDraft, workspaceCacheKey]);
 
     React.useEffect(() => {
         return () => {
+            if (!isDraftOwnerCurrent()) return;
             const persist = input.persistDraft;
             if (!persist) return;
+            if (!input.accountId) return;
             if (!isEditingFile && !editorDirty) return;
             sizeAndPersistDebounce.flush();
             persist({
+                accountId: input.accountId,
                 isEditingFile,
                 editorOriginalText: editorOriginalTextRef.current,
                 editorOriginalHash: editorOriginalHashRef.current,
                 editorText: editorTextRef.current,
             });
         };
-    }, [editorDirty, editorOriginalHash, editorOriginalText, input.persistDraft, isEditingFile, sizeAndPersistDebounce]);
+    }, [editorDirty, editorOriginalHash, editorOriginalText, input.accountId, input.persistDraft, isDraftOwnerCurrent, isEditingFile, sizeAndPersistDebounce]);
 
     const editorSurfaceEnabled = input.fileWriteSupported
         && input.fileEditorFeatureEnabled === true
@@ -247,23 +282,26 @@ export function useWorkspaceFileEditorState(input: Readonly<{
         setEditorSeedText(fileText);
         editorTextRef.current = fileText;
         workspaceFileEditorDraftCache.setDraft({
+            accountId: input.accountId,
             workspaceCacheKey,
             filePath: input.filePath,
-            draft: {
+            draft: input.accountId ? {
+                accountId: input.accountId,
                 isEditingFile: true,
                 editorOriginalText: fileText,
                 editorOriginalHash: input.fileHash,
                 editorText: fileText,
-            },
+            } : null,
         });
         setEditorByteSize(new Blob([fileText]).size);
         setEditorDirty(false);
         setFileChangedExternally(false);
         setEditorResetKey((key) => key + 1);
         setPendingStartEditing(false);
-    }, [editorSurfaceEnabled, input.displayMode, input.fileHash, input.filePath, input.fileText, pendingStartEditing, workspaceCacheKey]);
+    }, [editorSurfaceEnabled, input.accountId, input.displayMode, input.fileHash, input.filePath, input.fileText, pendingStartEditing, workspaceCacheKey]);
 
     const startEditingFile = React.useCallback(() => {
+        if (!isDraftOwnerCurrent()) return;
         if (!editorSurfaceEnabled) return;
         if (input.displayMode !== 'file' || typeof input.fileText !== 'string') {
             setPendingStartEditing(true);
@@ -276,28 +314,32 @@ export function useWorkspaceFileEditorState(input: Readonly<{
         setEditorSeedText(fileText);
         editorTextRef.current = fileText;
         workspaceFileEditorDraftCache.setDraft({
+            accountId: input.accountId,
             workspaceCacheKey,
             filePath: input.filePath,
-            draft: {
+            draft: input.accountId ? {
+                accountId: input.accountId,
                 isEditingFile: true,
                 editorOriginalText: fileText,
                 editorOriginalHash: input.fileHash,
                 editorText: fileText,
-            },
+            } : null,
         });
         setEditorByteSize(new Blob([fileText]).size);
         setEditorDirty(false);
         setFileChangedExternally(false);
         setEditorResetKey((key) => key + 1);
-    }, [editorSurfaceEnabled, input.displayMode, input.fileHash, input.filePath, input.fileText, workspaceCacheKey]);
+    }, [editorSurfaceEnabled, input.accountId, input.displayMode, input.fileHash, input.filePath, input.fileText, isDraftOwnerCurrent, workspaceCacheKey]);
 
     const cancelEditingFile = React.useCallback(() => {
+        if (!isDraftOwnerCurrent()) return;
         setPendingStartEditing(false);
         setIsEditingFile(false);
         setEditorSeedText(editorOriginalText);
         editorTextRef.current = editorOriginalText;
         setFileChangedExternally(false);
         workspaceFileEditorDraftCache.setDraft({
+            accountId: input.accountId,
             workspaceCacheKey,
             filePath: input.filePath,
             draft: null,
@@ -305,46 +347,53 @@ export function useWorkspaceFileEditorState(input: Readonly<{
         setEditorByteSize(() => new Blob([editorOriginalText]).size);
         setEditorDirty(false);
         setEditorResetKey((key) => key + 1);
-        input.persistDraft?.(null);
-    }, [editorOriginalText, input.filePath, input.persistDraft, workspaceCacheKey]);
+        if (input.accountId) input.persistDraft?.(null);
+    }, [editorOriginalText, input.accountId, input.filePath, input.persistDraft, isDraftOwnerCurrent, workspaceCacheKey]);
 
     const onEditorChange = React.useCallback((value: string) => {
+        if (!isDraftOwnerCurrent()) return;
         editorTextRef.current = value;
         const nextDirty = isEditingFile && value !== editorOriginalTextRef.current;
         setEditorDirty((previous) => (previous === nextDirty ? previous : nextDirty));
         workspaceFileEditorDraftCache.setDraft({
+            accountId: input.accountId,
             workspaceCacheKey,
             filePath: input.filePath,
-            draft: {
+            draft: input.accountId ? {
+                accountId: input.accountId,
                 isEditingFile: true,
                 editorOriginalText: editorOriginalTextRef.current,
                 editorOriginalHash: editorOriginalHashRef.current,
                 editorText: value,
-            },
+            } : null,
         });
         sizeAndPersistDebounce.debounced(value);
         if (latestInputRef.current.filesEditorAutoSave && isEditingFile && value !== editorOriginalTextRef.current) {
             autoSaveDebounce.debounced(true);
         }
-    }, [autoSaveDebounce, input.filePath, isEditingFile, sizeAndPersistDebounce, workspaceCacheKey]);
+    }, [autoSaveDebounce, input.accountId, input.filePath, isDraftOwnerCurrent, isEditingFile, sizeAndPersistDebounce, workspaceCacheKey]);
 
     const getEditorText = React.useCallback(() => {
-        return editorTextRef.current;
-    }, []);
+        return isDraftOwnerCurrent() ? editorTextRef.current : '';
+    }, [isDraftOwnerCurrent]);
 
     const saveEdits = React.useCallback((autoSave: boolean) => {
         void (async () => {
             const latestInput = latestInputRef.current;
+            if (!isDraftOwnerCurrent()) return;
             if (!editorSurfaceEnabled) return;
             if (!latestInput.filePath) return;
             if (editorTextRef.current === editorOriginalTextRef.current) return;
             if (savingRef.current) return;
 
-            savingRef.current = true;
+            const saveIdentity = {};
+            savingRef.current = saveIdentity;
+            const isCurrentSave = () => savingRef.current === saveIdentity && isDraftOwnerCurrent();
             setIsSavingEdits(true);
             let writeSucceeded = false;
             try {
                 await editorHandleRef.current?.flushPendingChange?.();
+                if (!isCurrentSave()) return;
                 const latestText = editorHandleRef.current?.getValue?.() ?? editorTextRef.current;
                 editorTextRef.current = latestText;
                 sizeAndPersistDebounce.flush();
@@ -361,6 +410,7 @@ export function useWorkspaceFileEditorState(input: Readonly<{
                     content: latestText,
                     expectedHash,
                 });
+                if (!isCurrentSave()) return;
 
                 if (!response.success) {
                     if (expectedHash !== undefined && isGuardedWriteConflictError(response.error)) {
@@ -399,18 +449,20 @@ export function useWorkspaceFileEditorState(input: Readonly<{
                 setFileChangedExternally(false);
                 const liveTextAfterWrite = editorHandleRef.current?.getValue?.() ?? editorTextRef.current;
                 editorTextRef.current = liveTextAfterWrite;
-                const draft = isEditingFileRef.current && (autoSave || liveTextAfterWrite !== latestText) ? {
+                const draft = latestInput.accountId && isEditingFileRef.current && (autoSave || liveTextAfterWrite !== latestText) ? {
+                    accountId: latestInput.accountId,
                     isEditingFile: true,
                     editorOriginalText: latestText,
                     editorOriginalHash: response.hash,
                     editorText: liveTextAfterWrite,
                 } : null;
                 workspaceFileEditorDraftCache.setDraft({
+                    accountId: latestInput.accountId,
                     workspaceCacheKey,
                     filePath: latestInput.filePath,
                     draft,
                 });
-                latestInput.persistDraft?.(draft);
+                if (latestInput.accountId) latestInput.persistDraft?.(draft);
                 if (liveTextAfterWrite !== latestText) {
                     // The user kept typing while the write was in flight. Seeding the editor
                     // with the saved snapshot would replace the live document and reset the
@@ -424,6 +476,7 @@ export function useWorkspaceFileEditorState(input: Readonly<{
                 setEditorDirty(false);
                 await latestInput.refreshAll();
             } catch (err) {
+                if (!isCurrentSave()) return;
                 const shown = tryShowDaemonUnavailableAlertForRpcError({
                     error: err,
                     machine: null,
@@ -437,9 +490,10 @@ export function useWorkspaceFileEditorState(input: Readonly<{
                     Modal.alert(t('common.error'), message);
                 }
             } finally {
-                savingRef.current = false;
-                setIsSavingEdits(false);
-                if (writeSucceeded && isEditingFileRef.current) {
+                const stillCurrent = isCurrentSave();
+                if (savingRef.current === saveIdentity) savingRef.current = null;
+                if (stillCurrent) setIsSavingEdits(false);
+                if (stillCurrent && writeSucceeded && isEditingFileRef.current) {
                     const liveText = editorHandleRef.current?.getValue?.() ?? editorTextRef.current;
                     editorTextRef.current = liveText;
                     if (liveText !== editorOriginalTextRef.current) {
@@ -449,11 +503,12 @@ export function useWorkspaceFileEditorState(input: Readonly<{
                 }
             }
         })();
-    }, [autoSaveDebounce, editorSurfaceEnabled, sizeAndPersistDebounce, workspaceCacheKey]);
+    }, [autoSaveDebounce, editorSurfaceEnabled, isDraftOwnerCurrent, sizeAndPersistDebounce, workspaceCacheKey]);
     saveEditsRef.current = saveEdits;
 
     const saveFileEdits = React.useCallback(() => saveEdits(false), [saveEdits]);
     const compareFileEdits = React.useCallback(() => {
+        if (!isDraftOwnerCurrent()) return;
         const latestInput = latestInputRef.current;
         if (!isEditingFileRef.current || typeof latestInput.fileText !== 'string') return;
         showWorkspaceFileEditorComparison({
@@ -461,7 +516,7 @@ export function useWorkspaceFileEditorState(input: Readonly<{
             newText: editorHandleRef.current?.getValue?.() ?? editorTextRef.current,
             filePath: latestInput.filePath,
         });
-    }, []);
+    }, [isDraftOwnerCurrent]);
 
     React.useEffect(() => {
         if (input.filesEditorAutoSave && editorDirty && isEditingFile && !fileChangedExternally) {

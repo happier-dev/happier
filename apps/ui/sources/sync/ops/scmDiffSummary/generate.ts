@@ -34,6 +34,9 @@ import {
     type ScmDiffSummaryCacheState,
 } from '@/sync/domains/scm/diffSummary/cache/cacheState';
 import type { ScmDiffSummaryCacheKeyInput } from '@/sync/domains/scm/diffSummary/cache/cacheKey';
+import type { ScmDiffSummaryHost } from './results';
+import { invokeUiScmAction, type UiScmActionExecutor } from '@/sync/ops/scm/scmActionInvocation';
+import { scmReviewComparisonMatchesSource } from '@/sync/domains/scm/diffSummary/selection';
 import { sessionExecutionRunGet } from '@/sync/ops/sessionExecutionRuns';
 import { serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import {
@@ -54,8 +57,7 @@ export type ScmComparisonCaptureRpc = (
     opts?: Readonly<{ serverId?: string | null; scope?: ServerAccountScope; signal?: AbortSignal }>,
 ) => Promise<ScmComparisonCaptureResult>;
 
-export type CaptureScmComparisonParams = Readonly<{
-    sessionId: string;
+export type CaptureScmComparisonParams = ScmDiffSummaryHost & Readonly<{
     serverId?: string | null;
     scope?: ServerAccountScope;
     signal?: AbortSignal;
@@ -70,15 +72,13 @@ export type ScmDiffSummaryGetExecutionRun = (
 ) => Promise<ExecutionRunGetResponse | { ok: false; error: string; errorCode?: string }>;
 
 export type ScmDiffSummaryOperationsDeps = Readonly<{
-    generateSummary?: ScmDiffSummaryGenerateRpc;
-    captureComparison?: ScmComparisonCaptureRpc;
+    actionExecutor?: UiScmActionExecutor;
     getExecutionRun?: ScmDiffSummaryGetExecutionRun;
     nowMs?: () => number;
 }>;
 
-export type GenerateScmDiffSummaryParams = Readonly<{
+export type GenerateScmDiffSummaryParams = ScmDiffSummaryHost & Readonly<{
     key?: string;
-    sessionId: string;
     serverId?: string | null;
     scope?: ServerAccountScope;
     signal?: AbortSignal;
@@ -92,15 +92,16 @@ export type GenerateScmDiffSummaryParams = Readonly<{
     resolvedSelector?: Readonly<{ catalogId: string }>;
 }>;
 
-export type RefreshScmDiffSummaryRunParams = Readonly<{
+export type RefreshScmDiffSummaryRunParams = ScmDiffSummaryHost & Readonly<{
     key: string;
-    sessionId: string;
     serverId?: string | null;
     runId: string;
     progressMarkdown?: string | null;
     scope?: ServerAccountScope;
     signal?: AbortSignal;
     shouldContinue?: () => boolean;
+    waitForOutput?: ExecutionRunGetRequest['waitForOutput'];
+    waitForInputId?: string;
 }>;
 
 export type ScmDiffSummaryOperationResult =
@@ -108,6 +109,16 @@ export type ScmDiffSummaryOperationResult =
     | Readonly<{ ok: false; key: string; error: string; errorCode?: string; state: ScmDiffSummaryState; viewModel: ScmDiffSummaryViewModel }>;
 
 type OperationError = Readonly<{ ok: false; error: string; errorCode?: string }>;
+
+async function machineSummaryRpc<R>(machineId: string, method: string, payload: object,
+    options: Readonly<{ serverId?: string | null; scope?: ServerAccountScope; signal?: AbortSignal }> = {}): Promise<R> {
+    const { machineRpcWithServerScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
+    return machineRpcWithServerScope<R, object>({ machineId, method, payload,
+        ...(method === RPC_METHODS.DAEMON_EXECUTION_RUN_GET && ('waitForOutput' in payload || 'waitForInputId' in payload)
+            ? { operationTimeoutMs: null } : {}),
+        ...(options.scope ? { serverId: options.scope.serverId, accountId: options.scope.accountId }
+            : options.serverId ? { serverId: options.serverId } : {}), ...(options.signal ? { signal: options.signal } : {}) });
+}
 
 function readServerOptions(serverId: string | null | undefined): Readonly<{ serverId: string }> | undefined {
     const normalized = typeof serverId === 'string' ? serverId.trim() : '';
@@ -169,7 +180,7 @@ function buildResolvedSelector(params: GenerateScmDiffSummaryParams): Readonly<{
 
 function buildRequestKey(params: GenerateScmDiffSummaryParams): string {
     const key = buildScmDiffSummaryRequestKey({
-        sessionId: params.sessionId,
+        sessionId: params.sessionId ?? null, ...(params.machineId ? { machineId: params.machineId } : {}),
         input: buildGenerateRequest(params),
         summarySchemaVersion: SCM_DIFF_SUMMARY_CACHE_SCHEMA_VERSION,
         resolvedSelector: buildResolvedSelector(params),
@@ -195,14 +206,14 @@ export function readCompletedScmDiffSummaryCheckpointReceipt(turn: TurnChangeSet
         && receipt.phase === 'turn-final' && receipt.ref?.trim() === checkpoint.finalRef?.trim()) ?? null;
 }
 
-function buildCacheKeyInput(params: Pick<GenerateScmDiffSummaryParams, 'sessionId' | 'serverId' | 'input'>, output: ScmDiffSummaryGenerateSuccess, resolvedSelector: Readonly<{ catalogId: string }>): ScmDiffSummaryCacheKeyInput | null {
+function buildCacheKeyInput(params: Readonly<{ sessionId?: string | null; machineId?: string; serverId?: string | null; input: ScmDiffSummaryGenerateInput }>, output: ScmDiffSummaryGenerateSuccess, resolvedSelector: Readonly<{ catalogId: string }>): ScmDiffSummaryCacheKeyInput | null {
     if (!output.comparison) return null;
     return {
         source: { kind: 'comparison', comparisonId: output.comparison.id },
         summarySchemaVersion: SCM_DIFF_SUMMARY_CACHE_SCHEMA_VERSION,
         resolvedSelector,
         outputs: params.input.outputs,
-        scopeKey: JSON.stringify([params.serverId?.trim() ?? null, params.sessionId, params.input.cwd]),
+        scopeKey: JSON.stringify([params.serverId?.trim() ?? null, params.sessionId ?? null, params.machineId ?? null, params.input.cwd]),
     };
 }
 
@@ -227,7 +238,7 @@ function buildGenerateRequest(params: GenerateScmDiffSummaryParams): ScmDiffSumm
     const override = settings.modelOverride?.catalogId;
     return {
         ...params.input,
-        sessionId: params.sessionId,
+        ...(params.sessionId ? { sessionId: params.sessionId } : {}),
         modelSelector: {
             backendTargetKey: buildBackendTargetKeyV2(params.backendTarget),
             ...params.input.modelSelector,
@@ -238,13 +249,12 @@ function buildGenerateRequest(params: GenerateScmDiffSummaryParams): ScmDiffSumm
 }
 
 export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDeps = {}) {
-    const captureComparisonRpc: ScmComparisonCaptureRpc = deps.captureComparison ?? (async (sessionId, request, options) => {
-        const { runSessionScmRpc } = await import('@/sync/ops/sessionScm');
-        return runSessionScmRpc<ScmComparisonCaptureOutput, ScmComparisonCaptureInput>(sessionId, RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE, request, options?.scope?.serverId ?? options?.serverId, options?.signal, options?.scope?.accountId);
-    });
-    const generateSummary: ScmDiffSummaryGenerateRpc = deps.generateSummary ?? (async (sessionId, request, options) => {
-        const { runSessionScmRpc } = await import('@/sync/ops/sessionScm');
-        return runSessionScmRpc<ScmDiffSummaryGenerateOutput, ScmDiffSummaryGenerateInput>(sessionId, RPC_METHODS.SCM_DIFF_SUMMARY_GENERATE, request, options?.scope?.serverId ?? options?.serverId, options?.signal, options?.scope?.accountId);
+    const actionContext = (params: CaptureScmComparisonParams | GenerateScmDiffSummaryParams) => ({
+        ...(params.sessionId ? { defaultSessionId: params.sessionId, externalActionTarget: { kind: 'session' as const, sessionId: params.sessionId } }
+            : { externalActionTarget: { kind: 'machine' as const, machineId: params.machineId! } }),
+        ...(params.scope ? { serverId: params.scope.serverId, expectedAccountId: params.scope.accountId }
+            : params.serverId ? { serverId: params.serverId } : {}),
+        ...(params.signal ? { signal: params.signal } : {}),
     });
     const getExecutionRun = deps.getExecutionRun ?? sessionExecutionRunGet;
     const nowMs = deps.nowMs ?? Date.now;
@@ -283,16 +293,24 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
         const retired = (): ScmComparisonCaptureResult => ({ success: false,
             error: 'The captured Account or Session retired.', errorCode: 'SCM_DIFF_SUMMARY_SCOPE_RETIRED' });
         if (!current()) return retired();
-        const request = { ...params.input, sessionId: params.sessionId };
-        const options = params.scope || params.signal
-            ? { ...readServerOptions(params.serverId), ...(params.scope ? { scope: params.scope } : {}), ...(params.signal ? { signal: params.signal } : {}) }
-            : readServerOptions(params.serverId);
-        const result = options
-            ? await captureComparisonRpc(params.sessionId, request, options)
-            : await captureComparisonRpc(params.sessionId, request);
+        const request = { ...params.input, ...(params.sessionId ? { sessionId: params.sessionId } : {}) };
+        const result = await invokeUiScmAction({ actionId: 'scm.diffSummary.capture', input: request,
+            schema: ScmComparisonCaptureOutputSchema, context: actionContext(params), executor: deps.actionExecutor,
+            shouldContinue: current });
         if (!current()) return retired();
         const parsed = ScmComparisonCaptureOutputSchema.safeParse(result);
-        if (parsed.success) return parsed.data;
+        if (parsed.success) {
+            const requestedSource = request.source.kind === 'turnCheckpoint' ? { ...request.source,
+                ...(request.turnId ? { turnId: request.turnId } : {}),
+                ...(request.checkpointReceiptId ? { checkpointReceiptId: request.checkpointReceiptId } : {}),
+                ...(request.turnEvidenceMode ? { evidenceMode: request.turnEvidenceMode } : {}) } : request.source;
+            if (parsed.data.success && (parsed.data.comparison.repository.rootPath !== request.cwd
+                || (request.comparisonId && parsed.data.comparison.id !== request.comparisonId)
+                || !scmReviewComparisonMatchesSource(requestedSource, parsed.data.comparison.source, parsed.data.comparison))) {
+                return { success: false, error: 'Captured comparison evidence does not match the requested checkout or source.', errorCode: 'DIFF_UNAVAILABLE' };
+            }
+            return parsed.data;
+        }
         const error = readOperationError(result);
         return { success: false, error: error?.error ?? 'Unsupported SCM comparison capture response', ...(error?.errorCode ? { errorCode: error.errorCode } : {}) };
     };
@@ -328,7 +346,7 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
                 ? 'model_structured_output_unsupported'
                 : 'SCM_DIFF_SUMMARY_MODEL_UNAVAILABLE';
             setState(applyScmDiffSummaryEvent(state, {
-                type: 'request_failed', key, sessionId: params.sessionId,
+                type: 'request_failed', key, sessionId: params.sessionId ?? null, ...(params.machineId ? { machineId: params.machineId } : {}),
                 scopeKey: params.scope ? serverAccountScopeKeySuffix(params.scope) : undefined,
                 actionId: SCM_DIFF_SUMMARY_GENERATE_ACTION_ID, input: params.input,
                 error, errorCode, failedAtMs: nowMs(), intent,
@@ -336,12 +354,9 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
             return { ok: false, key, error, errorCode, state, viewModel: selectScmDiffSummaryViewModel(state, key) };
         }
         applyCheckpointCleanupReceiptsFromTurnChangeSet(params.turnChangeSet);
-        const serverOptions = params.scope || params.signal
-            ? { ...readServerOptions(params.serverId), ...(params.scope ? { scope: params.scope } : {}), ...(params.signal ? { signal: params.signal } : {}) }
-            : readServerOptions(params.serverId);
-        const generated = serverOptions
-            ? await generateSummary(params.sessionId, buildGenerateRequest(params), serverOptions)
-            : await generateSummary(params.sessionId, buildGenerateRequest(params));
+        const generated = await invokeUiScmAction({ actionId: 'scm.diffSummary.generate', input: buildGenerateRequest(params),
+            schema: ScmDiffSummaryGenerateOutputSchema, context: actionContext(params), executor: deps.actionExecutor,
+            shouldContinue: current });
         if (!current()) return retired();
         const parsed = ScmDiffSummaryGenerateOutputSchema.safeParse(generated);
         const output = parsed.success ? parsed.data : null;
@@ -350,7 +365,7 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
             setState(applyScmDiffSummaryEvent(state, {
                 type: 'request_failed',
                 key,
-                sessionId: params.sessionId,
+                sessionId: params.sessionId ?? null, ...(params.machineId ? { machineId: params.machineId } : {}),
                 scopeKey: params.scope ? serverAccountScopeKeySuffix(params.scope) : undefined,
                 actionId: SCM_DIFF_SUMMARY_GENERATE_ACTION_ID,
                 input: params.input,
@@ -384,7 +399,7 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
         setState(applyScmDiffSummaryEvent(state, {
             type: 'request_started',
             key,
-            sessionId: params.sessionId,
+            sessionId: params.sessionId ?? null, ...(params.machineId ? { machineId: params.machineId } : {}),
             scopeKey: params.scope ? serverAccountScopeKeySuffix(params.scope) : undefined,
             actionId: SCM_DIFF_SUMMARY_GENERATE_ACTION_ID,
             input: params.input,
@@ -463,9 +478,13 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
         const serverOptions = params.scope || params.signal
             ? { ...readServerOptions(params.serverId), ...(params.scope ? { scope: params.scope } : {}), ...(params.signal ? { signal: params.signal } : {}) }
             : readServerOptions(params.serverId);
-        const response = serverOptions
-            ? await getExecutionRun(params.sessionId, { runId: params.runId, includeStructured: true }, serverOptions)
-            : await getExecutionRun(params.sessionId, { runId: params.runId, includeStructured: true });
+        const request: ExecutionRunGetRequest = { runId: params.runId, includeStructured: true,
+            ...(params.waitForOutput ? { waitForOutput: params.waitForOutput } : {}),
+            ...(params.waitForInputId ? { waitForInputId: params.waitForInputId } : {}) };
+        const response = params.machineId !== undefined
+            ? await machineSummaryRpc<unknown>(params.machineId, RPC_METHODS.DAEMON_EXECUTION_RUN_GET, request, serverOptions)
+            : serverOptions ? await getExecutionRun(params.sessionId, request, serverOptions)
+                : await getExecutionRun(params.sessionId, request);
         if (!current()) return retired();
         const error = readOperationError(response);
         if (error) {
@@ -523,7 +542,7 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
         const entry = state.entriesByKey[params.key];
         const selector = selectorByRequestKey.get(params.key);
         const cacheKeyInput = entry && selector && structuredOutput?.success
-            ? buildCacheKeyInput({ sessionId: entry.sessionId, serverId: params.serverId, input: entry.input }, structuredOutput, selector) : null;
+            ? buildCacheKeyInput({ sessionId: entry.sessionId, machineId: entry.machineId, serverId: params.serverId, input: entry.input }, structuredOutput, selector) : null;
         if (cacheKeyInput && structuredOutput?.success === true && entry && hasCompletedRequestedOutputs(structuredOutput, entry.input)) {
             cacheState = putScmDiffSummaryCacheEntry(cacheState, {
                 keyInput: cacheKeyInput,
@@ -562,16 +581,16 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
         generateFromUserAction,
         prefetch,
         refreshRun,
-        loadSavedResult: (params: Readonly<{ sessionId: string; scope: ServerAccountScope; result: ScmDiffSummaryResult }>): string | null => {
+        loadSavedResult: (params: ScmDiffSummaryHost & Readonly<{ scope: ServerAccountScope; result: ScmDiffSummaryResult }>): string | null => {
             const output = params.result.output;
             if (!output.success || !output.comparison) return null;
             const scopeKey = serverAccountScopeKeySuffix(params.scope);
             const existing = Object.values(state.entriesByKey).find((entry) => entry.scopeKey === scopeKey
-                && entry.sessionId === params.sessionId && (entry.savedResult?.resultId ?? (entry.latestOutput?.success ? entry.latestOutput.resultId : null)) === params.result.resultId);
-            const key = existing?.key ?? JSON.stringify([scopeKey, params.sessionId, 'saved', params.result.resultId]);
+                && entry.sessionId === (params.sessionId ?? null) && entry.machineId === params.machineId && entry.input.cwd === output.comparison?.repository.rootPath && (entry.savedResult?.resultId ?? (entry.latestOutput?.success ? entry.latestOutput.resultId : null)) === params.result.resultId);
+            const key = existing?.key ?? JSON.stringify([scopeKey, params.sessionId ?? null, params.machineId ?? null, output.comparison.repository.rootPath, 'saved', params.result.resultId]);
             let next = state;
             if (!existing) next = applyScmDiffSummaryEvent(next, { type: 'request_started', key, scopeKey,
-                sessionId: params.sessionId, actionId: SCM_DIFF_SUMMARY_GENERATE_ACTION_ID,
+                sessionId: params.sessionId ?? null, ...(params.machineId ? { machineId: params.machineId } : {}), actionId: SCM_DIFF_SUMMARY_GENERATE_ACTION_ID,
                 input: { cwd: output.comparison.repository.rootPath, source: output.comparison.source, outputs: output.requestedOutputs ?? ['walkthrough'] },
                 runId: output.runId ?? null, structuredOutput: output, requestedAtMs: nowMs(), intent: 'generate' });
             setState(applyScmDiffSummaryEvent(next, { type: 'saved_result', key, result: params.result, observedAtMs: nowMs() }));

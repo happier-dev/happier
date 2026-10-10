@@ -25,6 +25,7 @@ function normalizeServerId(serverId?: string | null): string | undefined {
 export function createWorkspaceFileTransferRpcCaller(params: Readonly<{
     machineId: string;
     serverId?: string | null;
+    accountId?: string;
 }>): WorkspaceFileTransferRpcCaller {
     let preferScopedPromise: Promise<boolean> | null = null;
 
@@ -45,6 +46,7 @@ export function createWorkspaceFileTransferRpcCaller(params: Readonly<{
                 const response = await callGuardedMachineRpcWithPolicy<unknown, TRequest>({
                     machineId: params.machineId,
                     serverId: normalizeServerId(params.serverId),
+                    ...(params.accountId ? { accountId: params.accountId } : {}),
                     timeoutMs: typeof callParams.timeoutMs === 'number' ? callParams.timeoutMs : undefined,
                     ...(callParams.signal ? { signal: callParams.signal } : {}),
                     preferScoped: await getPreferScoped(),

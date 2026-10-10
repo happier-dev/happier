@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import { t } from '@/text';
 import { useWorkspaceRefs, usePinnedWorkspaceRefIds, useAllMachines, useProjectOrganizations } from '@/sync/domains/state/storage';
@@ -22,14 +21,16 @@ import { seedAndOpenProjectDraft } from './activation/projectOpenDraftSeed';
 import { useNavigateToProjectOpen } from './activation/projectOpenPresentation';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { ProjectVisibilitySetOutputV1Schema } from '@happier-dev/protocol/projects/projectVisibilityV1';
-import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
-import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
+import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { useProjectsSourcesComposition } from './useProjectsSourcesComposition';
 import { useProjectsTreeCheckoutFacts } from './useProjectsTreeCheckoutFacts';
 import { buildProjectsTreeProjects, projectsTreeCheckoutKey } from './projectsTreeRows';
 import { getMachineDisplayName, isMachineOnline } from '@/utils/sessions/machineUtils';
+import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs';
 import { resolveWorkspaceRefByAddress } from '@/sync/domains/workspaces/workspaceRefs';
-import type { ActionApprovalRequestCreatedResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, type ActionApprovalRequestCreatedResult,
+    type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 type ProjectHideUndo = Readonly<{ isCurrent(): boolean; undo(): Promise<boolean> }>;
 
@@ -39,11 +40,11 @@ type ProjectHideUndo = Readonly<{ isCurrent(): boolean; undo(): Promise<boolean>
  * Projects column, so the two can never disagree about what a project is or what it does.
  */
 export function useProjectsListModel() {
-    const router = useRouter();
     const navigateToOpen = useNavigateToProjectOpen();
     const openProject = useOpenProject();
     const activeServer = useActiveServerSnapshot();
     const allMachines = useAllMachines();
+    const presenceNowMs = useMachinePresenceNowMs(allMachines);
     const addFirstMachines = React.useMemo(() => resolveMachineActionCandidates(allMachines), [allMachines]);
 
     const workspaceRefsV1 = useWorkspaceRefs();
@@ -97,22 +98,34 @@ export function useProjectsListModel() {
         const project = (projectGroups: typeof groups.projectGroups) => buildProjectsTreeProjects({
             groups: projectGroups, projectName: resolveWorkspaceRefDisplayName,
             machine: machineId => { const machine = machinesById.get(machineId); return machine ? {
-                name: getMachineDisplayName(machine) ?? machineId, homeDir: machine.metadata?.homeDir ?? null, online: isMachineOnline(machine),
+                name: getMachineDisplayName(machine) ?? machineId, homeDir: machine.metadata?.homeDir ?? null, online: isMachineOnline(machine, presenceNowMs),
             } : null; },
             sources: composition.sources, teamName: composition.teamName,
             checkoutFacts: ref => checkoutFacts.get(projectsTreeCheckoutKey({ refId: ref.id, workspaceAddress: workspaceAddressFromRefV1(ref) })) ?? null,
         });
         return { treeProjects: project(groups.projectGroups), hiddenTreeProjects: project(groups.hiddenProjectGroups) };
-    }, [checkoutFacts, composition.sources, composition.teamName, groups.hiddenProjectGroups, groups.projectGroups, machinesById]);
-    const newSessionHere = React.useCallback((ref: WorkspaceRefV1) => {
+    }, [checkoutFacts, composition.sources, composition.teamName, groups.hiddenProjectGroups, groups.projectGroups, machinesById, presenceNowMs]);
+    const newSessionHere = React.useCallback(async (ref: WorkspaceRefV1): Promise<ActionExecuteResult> => {
         const lifetime = captureActiveServerAccountScopeLifetime();
-        if (!lifetime?.isCurrent() || lifetime.scope.serverId !== ref.serverId) return { kind: 'unavailable' as const };
+        const retired = { ok: false as const, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
+        if (!lifetime?.isCurrent() || !areServerProfileIdentifiersEquivalent(lifetime.scope.serverId, ref.serverId)) return retired;
         const target = resolveWorkspaceRefByAddress(treeRefs, workspaceAddressFromRefV1(ref));
-        if (target.kind !== 'resolved') return target;
-        return seedAndOpenNewSession({ seed: { placement: { kind: 'exactTarget', serverId: ref.serverId,
-            machineId: target.ref.machineId, directory: target.ref.rootPath } }, scope: lifetime.scope, isCurrent: lifetime.isCurrent,
-            navigateToNewSession: ({ draftId }) => router.push({ pathname: '/new', params: buildNewSessionLaunchRouteParams({ draftId }) }) });
-    }, [router, treeRefs]);
+        if (target.kind !== 'resolved') return { ok: false, errorCode: 'workspace_ref_unavailable', error: 'workspace_ref_unavailable' };
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        if (!lifetime.isCurrent()) return retired;
+        const result = await createFrontDoorActionExecute(createDefaultActionExecutor())('session.authoring.open', {
+            seed: { placement: { kind: 'exactTarget', serverId: ref.serverId,
+                machineId: target.ref.machineId, directory: target.ref.rootPath },
+                origin: { kind: 'project', accountId: lifetime.scope.accountId,
+                    workspace: workspaceAddressFromRefV1(target.ref), page: 'overview' } },
+        }, { surface: 'ui', authority: 'present_user', serverId: lifetime.scope.serverId,
+            expectedAccountId: lifetime.scope.accountId });
+        if (lifetime.isCurrent()) {
+            const approval = result.ok ? ActionApprovalRequestCreatedResultSchema.safeParse(result.result) : null;
+            if (approval?.success) setProjectActionApproval({ request: approval.data, isCurrent: lifetime.isCurrent });
+        }
+        return result;
+    }, [treeRefs]);
     const saveAsSource = React.useCallback((ref: WorkspaceRefV1, draft?: Parameters<typeof composition.saveAsSource>[1]) => {
         const resolved = resolveWorkspaceRefByAddress(treeRefs, workspaceAddressFromRefV1(ref));
         return resolved.kind === 'resolved' ? composition.saveAsSource(resolved.ref, draft) : Promise.resolve(resolved);

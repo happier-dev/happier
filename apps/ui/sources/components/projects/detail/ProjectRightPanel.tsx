@@ -374,6 +374,7 @@ function ProjectRightPanelContent(props: ProjectRightPanelProps & Readonly<{
             <RightSidebarPaneHeader
                 tabs={rightPanelTabs}
                 activeTabId={activeTab}
+                onClose={deviceType === 'phone' ? props.onRequestClose ?? props.model.pane.closeRight : undefined}
                 testID="project-rightpanel-header"
             />
             <View style={styles.body}>

@@ -1,10 +1,9 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HappierBreadcrumb } from '@happier-dev/plugin-ui/presentation';
 
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
-import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { Popover } from '@/components/ui/popover';
 import { Text } from '@/components/ui/text/Text';
@@ -41,50 +40,29 @@ export const CodeBrowserBar = React.memo(function CodeBrowserBar(props: Readonly
     fileHref?: (path: string) => string | null;
     /** `false` in the Overview widget: Go to file belongs to the Code page. */
     goToFile?: boolean;
+    /** Phone layout keeps nested up navigation above a full-width Go to file field. */
+    compact?: boolean;
 }>) {
     const testID = props.testID ?? 'code-browser-bar';
+    const { theme } = useUnistyles();
     const segments = React.useMemo(() => buildCodeBreadcrumbSegments(props.rootLabel, props.path), [props.path, props.rootLabel]);
     return (
-        <View testID={testID} style={styles.bar}>
-            <View accessibilityRole="header" style={styles.crumbs}>
-                {segments.map((segment, index) => {
+        <View testID={testID} style={[styles.bar, props.compact ? styles.barCompact : null]}>
+            {props.compact && props.path === '' ? null : <HappierBreadcrumb accessibilityRole="header" style={styles.crumbs}
+                separator={<Text style={styles.separator}>/</Text>}
+                linkStyle={styles.crumb}
+                colors={{ focus: theme.colors.border.focus, hover: theme.colors.surface.pressed }}
+                items={segments.map((segment, index) => {
                     const current = index === segments.length - 1;
-                    return (
-                        <React.Fragment key={segment.path || '/'}>
-                            {index > 0 ? <Text style={styles.separator}>/</Text> : null}
-                            {current ? (
-                                <Text testID={`${testID}-current`} numberOfLines={1} style={styles.current}>{segment.label}</Text>
-                            ) : (
-                                <CrumbLink testID={`${testID}-crumb-${index}`} label={segment.label} onPress={() => props.onNavigateFolder(segment.path)} />
-                            )}
-                        </React.Fragment>
-                    );
+                    return { key: segment.path || '/', label: segment.label, testID: current ? `${testID}-current` : `${testID}-crumb-${index}`, onPress: current ? undefined : () => props.onNavigateFolder(segment.path) };
                 })}
-            </View>
-            <View style={styles.grow} />
-            {props.goToFile === false ? null : <CodeGoToFile testID={`${testID}-goto`} scope={props.scope} onOpenFile={props.onOpenFile} onOpenFolder={props.onNavigateFolder} fileHref={props.fileHref} />}
+                renderLabel={(item) => <Text testID={item.onPress ? undefined : item.testID} numberOfLines={1} style={item.onPress ? styles.crumbLabel : styles.current}>{item.label}</Text>}
+            />}
+            {props.compact ? null : <View style={styles.grow} />}
+            {props.goToFile === false ? null : <CodeGoToFile testID={`${testID}-goto`} scope={props.scope} onOpenFile={props.onOpenFile} onOpenFolder={props.onNavigateFolder} fileHref={props.fileHref} compact={props.compact} />}
         </View>
     );
 });
-
-function CrumbLink(props: Readonly<{ testID: string; label: string; onPress: () => void }>) {
-    const { theme } = useUnistyles();
-    return (
-        <HappierPressable
-            testID={props.testID}
-            accessibilityRole="link"
-            accessibilityLabel={props.label}
-            onPress={props.onPress}
-            style={(state) => [
-                styles.crumb,
-                focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
-                state.pressed || state.hovered ? { backgroundColor: theme.colors.surface.pressed } : null,
-            ]}
-        >
-            <Text numberOfLines={1} style={styles.crumbLabel}>{props.label}</Text>
-        </HappierPressable>
-    );
-}
 
 /**
  * Go to file: the workspace file search (`workspace.files.search`'s owner) under a compact field; the
@@ -96,6 +74,7 @@ function CodeGoToFile(props: Readonly<{
     onOpenFile: (path: string) => void;
     onOpenFolder: (path: string) => void;
     fileHref?: (path: string) => string | null;
+    compact?: boolean;
 }>) {
     const { theme } = useUnistyles();
     const anchorRef = React.useRef<View>(null);
@@ -104,7 +83,7 @@ function CodeGoToFile(props: Readonly<{
     const fileQuery = useWorkspaceFileQuery({ scope: props.scope, query, enabled: open, limit: 50 });
     const close = React.useCallback(() => setQuery(''), []);
     return (
-        <View ref={anchorRef} collapsable={false} style={styles.goto}>
+        <View ref={anchorRef} collapsable={false} style={props.compact ? styles.gotoCompact : styles.goto}>
             <CompactSearchField
                 testID={props.testID}
                 value={query}
@@ -153,6 +132,10 @@ const styles = StyleSheet.create((theme) => ({
         flexShrink: 1,
         minWidth: 0,
     },
+    barCompact: {
+        flexDirection: 'column',
+        alignItems: 'stretch',
+    },
     crumb: {
         paddingHorizontal: 4,
         paddingVertical: 2,
@@ -178,5 +161,8 @@ const styles = StyleSheet.create((theme) => ({
     },
     goto: {
         width: 240,
+    },
+    gotoCompact: {
+        width: '100%',
     },
 }));

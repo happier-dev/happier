@@ -43,7 +43,13 @@ export type ProjectSetupConsent = Pick<ProjectSetupConsentRequiredV1, 'code' | '
 function readConsentDetails(error: unknown): ProjectSetupConsentFailureDetailsV1 | null {
   return error && typeof error === 'object' && 'consent' in error ? (error.consent as ProjectSetupConsentFailureDetailsV1) : null;
 }
-type Pending = Readonly<{ key: string }> | null;
+type PendingKeys = Readonly<Record<string, true>>;
+type ManagedCreation = Readonly<{ scopeKey: string; key: string;
+  acquisition: ManagedMachineAcquisitionDraft; progress: ManagedMachineCreationProgress;
+  /** The reviewed recipe's machine name, for the Script row's creation notice. */
+  machineName: string }>;
+const EMPTY_PENDING: PendingKeys = {};
+const EMPTY_CREATIONS: Readonly<Record<string, ManagedCreation>> = {};
 type Failure = Readonly<{ key: string; code: string; workerRefusal?: ProjectWorkerNoAcceptanceFailureDetailsV1 }> | null;
 type RunChoiceRequest = Readonly<{ scopeKey: string; key: string; selection: ProjectScriptSelection }>;
 
@@ -99,7 +105,7 @@ export function useProjectScriptsController(
     (registration: ActionApprovalRegistration) => void
   >(() => {});
   requestApprovalRef.current = approval.requestApproval;
-  const [pending, setPending] = React.useState<Pending>(null);
+  const [pending, setPending] = React.useState<Readonly<{ scopeKey: string; keys: PendingKeys }> | null>(null);
   const [failure, setFailure] = React.useState<Failure>(null);
   const [choiceRequest, setChoiceRequest] = React.useState<RunChoiceRequest | null>(null);
   const [consent, setConsent] = React.useState<
@@ -116,27 +122,39 @@ export function useProjectScriptsController(
   // Local continuation identity, never a worker preference or a second resource store.
   const managedRuns = React.useMemo(() => new Map<string, { draft: ManagedMachineSelectionDraft;
     selection: ProjectScriptSelection; acquisition: ManagedMachineAcquisitionDraft }>(), [lifetime]);
-  const runAbort = React.useRef<AbortController | null>(null);
-  const [managedCreation, setManagedCreation] = React.useState<Readonly<{ scopeKey: string; key: string;
-    acquisition: ManagedMachineAcquisitionDraft; progress: ManagedMachineCreationProgress;
-    /** The reviewed recipe's machine name, for the Script row's creation notice. */
-    machineName: string }> | null>(null);
-  const currentCreation = managedCreation?.scopeKey === scopeKey ? managedCreation : null;
-  const inventoryIds = React.useMemo(() => currentCreation?.acquisition.managedId ? [workspace.serverId] : [],
-    [currentCreation?.acquisition.managedId, workspace.serverId]);
-  const inventory = useManagedMachineInventory(inventoryIds, currentCreation?.acquisition.managedId, execute);
-  const cancelRun = React.useCallback(() => {
-    runAbort.current?.abort(); runAbort.current = null; setPending(null);
-    setManagedCreation(previous => previous ? { ...previous, progress: { kind: 'failed', code: 'continuation_retired',
-      ...(previous.acquisition.managedId ? { managedId: previous.acquisition.managedId } : {}) } } : null);
-  }, []);
+  const runAborts = React.useMemo(() => new Map<string, AbortController>(), [lifetime]);
+  const [creations, setCreations] = React.useState<Readonly<{
+    scopeKey: string; values: Readonly<Record<string, ManagedCreation>>;
+  }> | null>(null);
+  const managedCreations = creations?.scopeKey === scopeKey ? creations.values : EMPTY_CREATIONS;
+  const pendingKeys = pending?.scopeKey === scopeKey ? pending.keys : EMPTY_PENDING;
+  const hasAcquisition = Object.values(managedCreations).some(creation => creation.acquisition.managedId);
+  const inventoryIds = React.useMemo(() => hasAcquisition ? [workspace.serverId] : [], [hasAcquisition, workspace.serverId]);
+  // The existing Home inventory supplies every row's enrollment; rows do not create observers.
+  const inventory = useManagedMachineInventory(inventoryIds, undefined, execute);
+  const cancelRun = React.useCallback((key: string) => {
+    runAborts.get(key)?.abort(); runAborts.delete(key);
+    setPending(previous => {
+      if (previous?.scopeKey !== scopeKey || !previous.keys[key]) return previous;
+      const { [key]: _canceled, ...keys } = previous.keys;
+      return { scopeKey, keys };
+    });
+    setCreations(previous => {
+      const creation = previous?.scopeKey === scopeKey ? previous.values[key] : null;
+      if (!creation || !previous) return previous;
+      return { scopeKey, values: { ...previous.values, [key]: { ...creation,
+        progress: { kind: 'failed', code: 'continuation_retired',
+          ...(creation.acquisition.managedId ? { managedId: creation.acquisition.managedId } : {}) } } } };
+    });
+  }, [runAborts, scopeKey]);
 
   React.useEffect(() => {
     const retirement = binding?.onRetire(() => {
-      lifetime.abort(); cancelRun(); setManagedCreation(null); setPending(null); setFailure(null); setConsent(null); setReviewOpenScope(null); setChoiceRequest(null); setRetained(null);
+      lifetime.abort(); runAborts.forEach(cancellation => cancellation.abort()); runAborts.clear();
+      setCreations(null); setPending(null); setFailure(null); setConsent(null); setReviewOpenScope(null); setChoiceRequest(null); setRetained(null);
     });
-    return () => { retirement?.dispose(); lifetime.abort(); runAbort.current?.abort(); };
-  }, [binding, lifetime, cancelRun]);
+    return () => { retirement?.dispose(); lifetime.abort(); runAborts.forEach(cancellation => cancellation.abort()); runAborts.clear(); };
+  }, [binding, lifetime, runAborts]);
 
   const client = React.useMemo(
     () =>
@@ -156,7 +174,7 @@ export function useProjectScriptsController(
   const dispatch = React.useCallback(
     async <T>(key: string, call: () => Promise<T>, runSelection?: ProjectScriptSelection, signal = lifetime.signal): Promise<T | null> => {
       if (!client || !binding?.isCurrent() || lifetime.signal.aborted) return null;
-      setPending({ key });
+      setPending(previous => ({ scopeKey, keys: { ...(previous?.scopeKey === scopeKey ? previous.keys : {}), [key]: true } }));
       setFailure((current) => (current?.key === key ? null : current));
       try {
         const value = await call();
@@ -178,8 +196,11 @@ export function useProjectScriptsController(
         }
         return null;
       } finally {
-        if (!signal?.aborted)
-          setPending((current) => (current?.key === key ? null : current));
+        if (!signal.aborted) setPending(previous => {
+          if (previous?.scopeKey !== scopeKey || !previous.keys[key]) return previous;
+          const { [key]: _completed, ...keys } = previous.keys;
+          return { scopeKey, keys };
+        });
       }
     },
     [binding, client, lifetime, scopeKey],
@@ -187,12 +208,12 @@ export function useProjectScriptsController(
 
   const run = React.useCallback(
     async (key: string, selection: ProjectScriptSelection, choice?: ProjectExecutionChoiceV1, managed?: ManagedMachineSelectionDraft) => {
-      if (!client || !binding?.isCurrent() || runAbort.current) return;
+      if (!client || !binding?.isCurrent() || lifetime.signal.aborted || runAborts.has(key)) return;
       const cancellation = new AbortController();
-      runAbort.current = cancellation;
+      runAborts.set(key, cancellation);
       const retirement = binding.onRetire(() => cancellation.abort());
       const current = () => binding.isCurrent() && !lifetime.signal.aborted && !cancellation.signal.aborted;
-      setChoiceRequest(null);
+      setChoiceRequest(previous => previous?.key === key ? null : previous);
       const result = await dispatch(key, async () => {
         let destination = choice;
         if (managed) {
@@ -207,8 +228,10 @@ export function useProjectScriptsController(
             acquisition: continuation.acquisition, scope: binding.scope, signal: cancellation.signal, isCurrent: current,
             executeAction: execute, onApprovalPending: registration => requestApprovalRef.current(registration),
             onAcquisitionChange: value => { continuation.acquisition = value; },
-            onProgress: progress => { if (current()) setManagedCreation({ scopeKey, key, acquisition: continuation.acquisition, progress,
-              machineName: continuation.draft.receipt.launch.name }); },
+            onProgress: progress => { if (current()) setCreations(previous => ({ scopeKey,
+              values: { ...(previous?.scopeKey === scopeKey ? previous.values : {}),
+                [key]: { scopeKey, key, acquisition: continuation.acquisition, progress,
+                  machineName: continuation.draft.receipt.launch.name } } })); },
           });
           if (!current() || acquired.kind === 'pending' || acquired.kind === 'delete_requested') return null;
           if (acquired.kind === 'failed') throw Object.assign(new Error(acquired.code), { code: acquired.code });
@@ -219,7 +242,7 @@ export function useProjectScriptsController(
           signal: cancellation.signal, onApprovalPending: registration => requestApprovalRef.current(registration) }).runScript(selection, destination);
       }, selection, cancellation.signal);
       retirement.dispose();
-      if (runAbort.current === cancellation) runAbort.current = null;
+      if (runAborts.get(key) === cancellation) runAborts.delete(key);
       if (!current()) return;
       if (!result) return;
       if ('operation' in result) {
@@ -233,7 +256,7 @@ export function useProjectScriptsController(
           ...(result.consentScope ? { consentScope: result.consentScope } : {}),
         });
     },
-    [binding, client, dispatch, execute, lifetime, managedRuns, scopeKey, workspace],
+    [binding, client, dispatch, execute, lifetime, managedRuns, runAborts, scopeKey, workspace],
   );
 
   const resumeManagedRun = React.useCallback(async (key: string) => {
@@ -243,12 +266,14 @@ export function useProjectScriptsController(
   // The existing push-refreshed inventory owns enrollment observation. No timer or polling owner.
   const enrollment = inventory.entries[workspace.serverId];
   React.useEffect(() => {
-    if (!currentCreation || (currentCreation.progress.kind !== 'enrollment_pending' && currentCreation.progress.kind !== 'setup_pending')
-      || lifetime.signal.aborted || !binding?.isCurrent()) return;
-    if (enrollment?.status === 'ready' && enrollment.machines.some(machine => machine.id === currentCreation.acquisition.managedId
-      && machine.enrolledMachineId && machine.creationState === 'active'
-      && machine.environmentSetup?.state !== 'pending' && machine.environmentSetup?.state !== 'running')) void resumeManagedRun(currentCreation.key);
-  }, [binding, currentCreation, enrollment, lifetime, resumeManagedRun]);
+    if (lifetime.signal.aborted || !binding?.isCurrent() || enrollment?.status !== 'ready') return;
+    for (const creation of Object.values(managedCreations)) {
+      if (creation.progress.kind !== 'enrollment_pending' && creation.progress.kind !== 'setup_pending') continue;
+      if (enrollment.machines.some(machine => machine.id === creation.acquisition.managedId
+        && machine.enrolledMachineId && machine.creationState === 'active'
+        && machine.environmentSetup?.state !== 'pending' && machine.environmentSetup?.state !== 'running')) void resumeManagedRun(creation.key);
+    }
+  }, [binding, managedCreations, enrollment, lifetime, pendingKeys, resumeManagedRun]);
 
   const choiceRequired = choiceRequest?.scopeKey === scopeKey ? choiceRequest : null;
   const dismissChoice = React.useCallback(() => setChoiceRequest(null), []);
@@ -328,14 +353,14 @@ export function useProjectScriptsController(
     client,
     add,
     run,
-    managedCreation: currentCreation,
+    managedCreations,
     resumeManagedRun,
     cancelRun,
     choiceRequired,
     dismissChoice,
     chooseForRun,
     prepare,
-    pendingKey: pending?.key ?? null,
+    pendingKeys,
     failure,
     consent: heldReview && heldOperation ? { ...heldReview, operation: heldOperation }
       : consent?.scopeKey === scopeKey ? consent : null,

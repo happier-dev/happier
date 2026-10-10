@@ -200,7 +200,7 @@ export const WorkspaceSyncConflictDetailsView = React.memo(function WorkspaceSyn
 }>) {
     const { theme } = useUnistyles();
     const router = useRouter();
-    const summaries = useWorkspaceSyncRelationshipSummaries(props.resource.hubWorkspaceRefId);
+    const summaries = useWorkspaceSyncRelationshipSummaries(props.resource.hubWorkspaceRefId, props.resource.serverId ?? undefined);
     const relationshipKey = summaries.map((summary) => [
         summary.relationshipId,
         summary.relationship.controllerMachineId,
