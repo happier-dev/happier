@@ -4,7 +4,7 @@ import { getWorkflowStarterExamplesV1, materializeWorkflowStarterExample } from 
 import { WorkflowStartersResolveInputV1Schema } from '../workflows/builtins/starterActionsV1.js';
 import { resolveReviewEngineInventoryTarget } from './executor/reviewEngineInventoryTarget.js';
 import { MemoryWindowRequestV1Schema } from '../memory/memoryWindow.js';
-import { isWorkflowAuthoringActionId } from './workflowAuthoringAction.js';
+import { isWorkflowAuthoringActionId } from './workflowAuthoringActionIds.js';
 import { BackendTargetKeyV2InputSchema } from '../backends/targets/backendTargetRefV2.js';
 import { PromptDocRevisionV1Schema, PromptDocCreateActionInputV1Schema } from '../prompts/library/promptDocV2.js';
 import { updatePromptLibraryStackV1 } from '../prompts/library/promptLibraryCatalogV1.js';
