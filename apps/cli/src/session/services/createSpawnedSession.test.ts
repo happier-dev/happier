@@ -13,6 +13,7 @@ import { setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotFor
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { configuration } from '@/configuration';
+import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 
 const spawnDaemonSession = vi.hoisted(() => vi.fn());
 const resolveDaemonSpawnSessionByNonce = vi.hoisted(() => vi.fn());
@@ -168,7 +169,7 @@ describe('createSpawnedSession settlement', () => {
     const lead = createSessionRecordFixture({ id: 'context-lead', encryptionMode: 'plain', machineId: 'machine-1',
       metadata: JSON.stringify({ path: '/repo', machineId: 'machine-1', bot: { kind: 'bot' }, createdAsBot: true,
         work: { memoryEnabled: true, promptStack: [instruction, memory] } }),
-      effectiveAccess: { level: 'owner', capabilities: { readTranscript: true, readOwnerMetadata: true } },
+      effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }], capabilities: projectSessionAccessCapabilitiesV1({ owner: true, grants: [] }) },
     });
     fetchSessionById.mockResolvedValue(lead);
     setActiveAccountSettingsSnapshot({ source: 'network', scopeKey: resolveAccountSettingsScopeKey(plainCredentials),
@@ -182,7 +183,7 @@ describe('createSpawnedSession settlement', () => {
         dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 })) };
       throw new Error(`Unexpected inheritance read: ${url}`);
     });
-    const spawn = vi.fn(async () => ({ type: 'success', sessionId: 'context-worker', sessionCreationOutcome: creationOutcome }));
+    const spawn = vi.fn(async (_request: Parameters<NonNullable<CreateSpawnedSessionParams['directTransport']>['spawn']>[0]) => ({ type: 'success', sessionId: 'context-worker', sessionCreationOutcome: creationOutcome }));
     try {
       await createSpawnedSession({ credentials: plainCredentials, directory: '/worker', machineId: 'machine-1',
         accountSettings: {}, backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },

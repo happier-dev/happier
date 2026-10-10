@@ -96,6 +96,7 @@ vi.mock('@/scm/scmBackendCatalog', async (importOriginal) => {
 vi.mock('@/persistence', () => ({
   readCredentials: vi.fn(),
   readStoredCredentials: vi.fn(async () => null),
+  readDaemonState: vi.fn(async () => null),
 }));
 
 vi.mock('@/session/transport/http/sessionsHttp', () => ({
@@ -2597,7 +2598,7 @@ describe('executionRuns session RPC handlers', () => {
       verbosity: 'short',
       transcript: { persistenceMode: 'persistent', epoch: 4 },
     });
-    expect(started.runId).toEqual(expect.any(String));
+    expect(started.runId, JSON.stringify(started)).toEqual(expect.any(String));
 
     // New reader consuming ../remote-dev@0649e4de's prospective writer shape.
     await expect(client.call(SESSION_RPC_METHODS.EXECUTION_RUN_USER_TRANSCRIPT_COMMIT_V1, {
@@ -2647,7 +2648,7 @@ describe('executionRuns session RPC handlers', () => {
       chatModelId: 'chat', commitModelId: 'commit', idleTtlSeconds: 60, initialContext: 'ctx', verbosity: 'short',
       transcript: { persistenceMode: 'persistent', epoch: 4 },
     });
-    expect(started.runId).toEqual(expect.any(String));
+    expect(started.runId, JSON.stringify(started)).toEqual(expect.any(String));
     await expect(client.call(SESSION_RPC_METHODS.EXECUTION_RUN_USER_TRANSCRIPT_COMMIT_V1, {
       runId: started.runId, message: 'Unadmitted user text', localId: 'unadmitted-local-id',
     })).resolves.toMatchObject({ ok: false, errorCode: 'execution_run_not_allowed' });
