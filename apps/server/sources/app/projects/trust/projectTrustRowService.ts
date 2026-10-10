@@ -68,6 +68,6 @@ export async function mutateProjectTrustInTx(tx: Tx, input: Readonly<{ accountId
     });
 }
 
-export async function readProjectTrust(input: Parameters<typeof readProjectTrustInTx>[1]): ReturnType<typeof readProjectTrustInTx> { return await inTx(tx => readProjectTrustInTx(tx, input)); }
-export async function listProjectTrust(input: Parameters<typeof listProjectTrustInTx>[1]): ReturnType<typeof listProjectTrustInTx> { return await inTx(tx => listProjectTrustInTx(tx, input)); }
+export async function readProjectTrust(input: Parameters<typeof readProjectTrustInTx>[1]): ReturnType<typeof readProjectTrustInTx> { return await inTx(tx => readProjectTrustInTx(tx, input), { readOnly: true }); }
+export async function listProjectTrust(input: Parameters<typeof listProjectTrustInTx>[1]): ReturnType<typeof listProjectTrustInTx> { return await inTx(tx => listProjectTrustInTx(tx, input), { readOnly: true }); }
 export async function mutateProjectTrust(input: Parameters<typeof mutateProjectTrustInTx>[1]): ReturnType<typeof mutateProjectTrustInTx> { return await inTx(tx => mutateProjectTrustInTx(tx, input)); }

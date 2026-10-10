@@ -1,4 +1,5 @@
 import axios, { type AxiosResponse } from 'axios';
+import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { randomBytes } from 'node:crypto';
 import {
     PROJECT_TRUST_ACCOUNT_SCOPED_BLOB_KIND_V1, PROJECT_TRUST_ROUTE_V1,
@@ -128,7 +129,10 @@ export function createProjectSetupTrustClient(input: ProjectSetupTrustClientInpu
     }
     async function read(projectInput: QualifiedProjectTrustProjectV1): Promise<OpenedProjectTrustRead> {
         const project = QualifiedProjectTrustProjectV1Schema.parse(projectInput);
-        if (input.authorization && project.serverId !== input.authorization.requesterAccountProjection?.serverId) return fail('project_trust_identity_mismatch');
+        if (input.authorization) {
+            const profileId = input.authorization.requesterAccountProjection?.serverId;
+            if (!profileId || !await isServerProfileHomeIdentity(profileId, project.serverId)) return fail('project_trust_identity_mismatch');
+        }
         const context = await modeContext();
         const parsed = StoredTrustReadResponseSchema.safeParse(await request('read', { project }));
         if (!parsed.success) return fail('project_trust_storage_unavailable');

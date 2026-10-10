@@ -50,6 +50,24 @@ Pinned sessions appear during the first paint of a long list rather than after
 you scroll, which is the point of pinning them. Archiving a session removes it
 from the pinned list and gives the pin quota back.
 
+Development-only 0.3 keeps Session-list pins and Bot rail pins separate. Only a
+Session already marked as a Bot can be added to the rail; pinning never turns
+an ordinary session into a Bot. Each pin is your personal choice, not a change
+to another person's arrangement.
+
+Adding or removing one pin leaves the other alone. Both use one shared order
+and count the session once against the pin limit. Existing pins stay list-only
+after upgrading. Demoting a Bot hides its rail entry but retains the saved
+choice, so promoting it again restores the entry.
+
+In development-only 0.3 the rail has one **Bots** entry. It opens a list of all
+your bots, including inactive ones, with what each is doing now, **Talk** and
+**More** on each row, then **New bot** and **Ask Happier**. Its badge counts
+only the bots that need you. Bots you pin to the rail sit just under that entry;
+when the rail is too short, they move into the rail's More menu. On a phone, or
+when there's no rail, the same list opens as a sheet from the app's
+destinations and the command palette.
+
 ## Selecting several at once
 
 Open a row's menu (right-click on desktop or long-press on touch) and choose
@@ -74,15 +92,15 @@ scope, so the arrangement inside one folder does not disturb another.
 
 Generous, but not unbounded. Each is per account:
 
-| Thing | Limit |
-| --- | --- |
-| Folders | 500 |
-| Tags | 500 |
-| Pinned sessions | 1000 |
-| Session attention choices and reminders | 500 |
-| Workspace and group labels | 1000 |
-| Sessions changed in one bulk action | 500 |
-| Custom order entries per scope | 1000 |
+| Thing                                   | Limit |
+| --------------------------------------- | ----- |
+| Folders                                 | 500   |
+| Tags                                    | 500   |
+| Pinned sessions                         | 1000  |
+| Session attention choices and reminders | 500   |
+| Workspace and group labels              | 1000  |
+| Sessions changed in one bulk action     | 500   |
+| Custom order entries per scope          | 1000  |
 
 These bound the snapshot every client parses on first paint, which is why they
 exist at all. A write past the limit is refused with an explanation rather than

@@ -32,13 +32,16 @@ defines extension-author terms.
 | **Trigger** | A saved rule that starts its configured work when an event or schedule matches. Turning it off prevents future firing; cancelling an observation is a different operation from stopping its work. |
 | **Waiting for your review** | Work has reached a human review point. Inspect the run's offered review/continuation action; an Agent cannot approve on your behalf merely because it can read the request. |
 
-See [Work Boards](/organize/work-boards), [Sharing](/accounts/session-sharing),
+See [Work](/sessions/work), [Roles](/agents/roles),
+[Orchestrator sessions](/sessions/orchestrator),
+[Work Boards](/organize/work-boards), [Sharing](/accounts/session-sharing),
 [sub-agents](/extending/subagents) and [automations](/extras/automations) for the
 corresponding workflows and limits.
 
 ## Status buckets and state words
 
-The five buckets group different kinds of work. A card or row keeps the more
+The shared work overview uses five buckets. A session's Work list instead
+groups its related items into Needs you, Working and Recent. A card or row keeps the more
 specific state word from that item's owner, such as **Completed**, **Failed**,
 **Cancelled** or **Waiting for your review**.
 
@@ -64,10 +67,11 @@ cancel the session or run being observed.
 
 Current 0.3 limits matter when choosing a condition:
 
-- Execution/background runs support terminal waits. Waiting for “needs me”,
-  combined terminal-or-attention conditions and passive watching are unsupported.
-- Workflow runs support a combined terminal-or-needs-attention wait. Separate
-  terminal-only or attention-only selectors and passive watching are unsupported.
+- Execution/background runs support terminal, needs-attention and combined
+  terminal-or-needs-attention waits. Attention reflects outstanding permission
+  requests for the live run. Passive watching uses the same observation owner.
+- Workflow runs support terminal, needs-attention and combined waits, and
+  passive watching of their current owner state.
 - Session observation depends on authorized awareness/turn evidence. Missing
   presence cannot be treated as proof of idle or readiness. Passive Session
   resources are an external MCP projection; the session-host HTTP transport does
@@ -77,6 +81,11 @@ Current 0.3 limits matter when choosing a condition:
 
 An unsupported condition is a refusal, not an empty result or a substitute wait.
 A timeout means the observation ended without a match, not that the work failed.
+Agents and the CLI use the `wait` Action for a qualified target and condition;
+direct run observation uses `execution.run.wait` or `workflow.run.wait`.
+Successful input sending acknowledges admission, not a completed turn. An
+input-aware caller uses `execution.run.get` with `waitForInputId` for its exact
+input, rather than interpreting a send acknowledgement as output.
 See [Happier as an MCP server](/extending/happier-as-mcp-server) for transport and
 subscription details.
 

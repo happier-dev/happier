@@ -194,7 +194,10 @@ describe('Source catalog real SQLite owner', () => {
         await db.artifactAccountGrant.create({ data: { artifactId: dashboardDocument.id, accountId: recipient.id, accessLevel: 'view', createdByAccountId: owner.id } });
         expect(await inTx(tx => updateProjectSourceInTx(tx, owner.id, { serverId, sourceId: row.id, expectedRevision: row.revision,
             patch: { attachment: { kind: 'attach', attachment: { purpose: 'context', entry } } } }))).toEqual({ ok: false, error: 'source_invalid' });
-        await db.projectSource.update({ where: { id: row.id }, data: { attachments: [{ purpose: 'context', entry }, dashboard, { purpose: 'context', entry: entryTwo }] } });
+        await db.projectSource.update({ where: { id: row.id }, data: {
+            audience: [{ principal: { kind: 'account', accountId: recipient.id }, level: 'view' }],
+            attachments: [{ purpose: 'context', entry }, dashboard, { purpose: 'context', entry: entryTwo }],
+        } });
         const budgeted = await inTx(tx => updateProjectSourceInTx(tx, owner.id, { serverId, sourceId: row.id, expectedRevision: row.revision,
             patch: { attachment: { kind: 'budget', attachmentId: entry.id, maxChars: 200 } } }));
         expect(budgeted.ok).toBe(true); if (!budgeted.ok) return;
@@ -207,7 +210,15 @@ describe('Source catalog real SQLite owner', () => {
             patch: { attachment: { kind: 'budget', attachmentId: entry.id, maxChars: null } } }));
         expect(cleared.ok).toBe(true); if (!cleared.ok) return;
         expect(cleared.source.attachments).toEqual([{ purpose: 'context', entry: entryTwo }, { purpose: 'context', entry }, dashboard]);
-        const detached = await inTx(tx => updateProjectSourceInTx(tx, owner.id, { serverId, sourceId: row.id, expectedRevision: cleared.source.revision,
+        const toggleInput = { serverId, sourceId: row.id, expectedRevision: cleared.source.revision,
+            patch: { attachment: { kind: 'set_enabled', attachmentId: entry.id, enabled: false } } };
+        expect(await inTx(tx => updateProjectSourceInTx(tx, recipient.id, toggleInput))).toEqual({ ok: false, error: 'source_access_denied' });
+        const disabled = await inTx(tx => updateProjectSourceInTx(tx, owner.id, toggleInput));
+        expect(disabled).toMatchObject({ ok: true, source: { attachments: [{ purpose: 'context', entry: entryTwo },
+            { purpose: 'context', entry: { ...entry, enabled: false } }, dashboard] } });
+        if (!disabled.ok) return;
+        expect(await inTx(tx => updateProjectSourceInTx(tx, owner.id, toggleInput))).toMatchObject({ ok: false, error: 'source_conflict', current: { revision: disabled.source.revision } });
+        const detached = await inTx(tx => updateProjectSourceInTx(tx, owner.id, { serverId, sourceId: row.id, expectedRevision: disabled.source.revision,
             patch: { attachment: { kind: 'detach', purpose: 'context', attachmentId: entry.id } } }));
         expect(detached.ok).toBe(true); if (!detached.ok) return;
         expect(detached.source.attachments).toEqual([{ purpose: 'context', entry: entryTwo }, dashboard]);

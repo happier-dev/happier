@@ -41,6 +41,12 @@ import nacl from 'tweetnacl';
 import { ApiMachineClient } from '@/api/apiMachine';
 import { reviewProjectSetupEffect } from './projectSetupPreparation';
 import { createProjectSetupSuccessStore } from './projectSetupSuccess';
+import { updateSettings } from '@/persistence';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { withTempDir } from '@/testkit/fs/tempDir';
+import { reloadConfiguration } from '@/configuration';
+import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
+import { readProjectAccountRows } from '@/workspaces/projectAccountRows';
 
 const turn = () => new Promise<void>(resolve => setImmediate(resolve));
 // The Home HTTP boundary publishes this fixture Account identity; it is not caller-supplied Action authority.
@@ -63,13 +69,13 @@ describe('authenticated finite Project Action owner', () => {
     const roots: string[] = [];
     const managers: Array<ReturnType<typeof createTerminalPtySessionManager>> = [];
     afterEach(async () => { managers.splice(0).forEach(manager => manager.dispose()); vi.restoreAllMocks(); await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
-    async function harness(manifest?: unknown, runAtMost: number | null = null, sourceMachineId = 'machine', credentialToken = 'requester') {
+    async function harness(manifest?: unknown, runAtMost: number | null = null, sourceMachineId = 'machine', credentialToken = 'requester', runtimeProfileId = 'home', homeId = 'home') {
         const root = await mkdtemp(join(tmpdir(), 'happier-project-finite-'));
         roots.push(root);
         if (manifest) { await mkdir(join(root, '.happier')); await writeFile(join(root, '.happier/project.json'), JSON.stringify(manifest)); }
         await writeFile(join(root, 'Makefile'), 'check:\n\techo checked\n');
-        const workspace = { id: 'accepted', serverId: 'home', machineId: sourceMachineId, rootPath: root, createdAtMs: 1, projectKey: 'project' };
-        const address = { serverId: 'home', machineId: sourceMachineId, rootPath: root, workspaceId: 'accepted' };
+        const workspace = { id: 'accepted', serverId: homeId, machineId: sourceMachineId, rootPath: root, createdAtMs: 1, projectKey: 'project' };
+        const address = { serverId: homeId, machineId: sourceMachineId, rootPath: root, workspaceId: 'accepted' };
         const workspaceRefs: WorkspaceRefV1[] = [workspace];
         const relationships: WorkspaceSyncRelationshipV1[] = [];
         let trustContent: ProjectTrustContentV1 | null = null;
@@ -83,7 +89,7 @@ describe('authenticated finite Project Action owner', () => {
                 return { status: 200, data: { status: 'updated', revision: 1, cursor: 1 } };
             }
             return { status: 200, data: { status: 'listed', coverage: 'complete', rows: [...workspaceRefs.map(value => {
-                const key = { kind: 'workspace-ref', serverId: 'home', id: value.id };
+                const key = { kind: 'workspace-ref', serverId: homeId, id: value.id };
                 return { key, revision: 1, content: { t: 'plain', v: { key, value } } };
             }), { key: { kind: 'relationship-graph' }, revision: 1,
                 content: { t: 'plain', v: { key: { kind: 'relationship-graph' }, value: { relationships } } } }] } };
@@ -98,7 +104,7 @@ describe('authenticated finite Project Action owner', () => {
         });
         managers.push(terminalSessions);
         let sequence = 0;
-        const operationRuntime = createHostActionOperationRuntime({ machineId: 'machine', custodyBinding: { serverId: 'home', installationId: 'installation' },
+        const operationRuntime = createHostActionOperationRuntime({ machineId: 'machine', custodyBinding: { serverId: homeId, installationId: 'installation' },
             resolveAccountId: async () => 'owner',
             generateOperationId: () => ++sequence === 1 ? 'operation' : `operation-${sequence}` });
         let allowAdHoc = false;
@@ -127,7 +133,7 @@ describe('authenticated finite Project Action owner', () => {
         const holdCopy = () => { copyAllowed = new Promise<void>(resolve => { continueCopy = resolve; }); };
         holdCopy();
         const runtime: ProjectFiniteActionRuntime = {
-            accountId: 'owner', serverId: 'home', machineId: 'machine', credentials: { token: credentialToken, encryption: null }, serverHttpBaseUrl: 'https://home.example',
+            accountId: 'owner', serverId: runtimeProfileId, machineId: 'machine', credentials: { token: credentialToken, encryption: null }, serverHttpBaseUrl: 'https://home.example',
             isCurrent: async () => credentialCurrent,
             terminalSessions, operationRuntime, workerAdmission, resolveWorkspaceExecutionConfig: async () => workspaceExecutionConfig,
             nativeIo: { resolveTool: async (tool, request) => ({ executablePath: nativeExecutableRelativePath
@@ -145,13 +151,13 @@ describe('authenticated finite Project Action owner', () => {
                 return { ...inspection.definition, commands: inspection.commands, environmentExecutionInputs: inspection.environmentExecutionInputs };
             },
             resolveWorkerTarget: async ({ source }) => {
-                const resolved = resolveWorkspaceSyncWorkerTarget({ serverId: 'home', sourceWorkspaceRefId: source.id, targetMachineId: 'machine', workspaceRefs, relationships });
+                const resolved = resolveWorkspaceSyncWorkerTarget({ serverId: homeId, sourceWorkspaceRefId: source.id, targetMachineId: 'machine', workspaceRefs, relationships });
                 if (!resolved.ok) throw Object.assign(new Error(resolved.errorCode), { code: resolved.errorCode });
                 return resolved;
             },
             prepareDequeue: async ({ basis, signal }) => {
                 if (!basis) return;
-                const prepared = await prepareWorkspaceSyncBetween({ serverId: 'home', sourceWorkspaceRefId: basis.source.id,
+                const prepared = await prepareWorkspaceSyncBetween({ serverId: homeId, sourceWorkspaceRefId: basis.source.id,
                     targetWorkspaceRefId: basis.target.id, readCurrent: async () => ({ workspaceRefs, relationships }), signal,
                     // This boundary stands for the external Sync controller's actual file-copy and clean-status response.
                     flush: async relationshipId => {
@@ -168,14 +174,14 @@ describe('authenticated finite Project Action owner', () => {
             },
         };
         const invoke = (actionId: 'projects.prepare' | 'projects.script.run' | 'projects.compute.exec', input: unknown, ingress = context) =>
-            createProjectFiniteAction(runtime, ingress)({ actionId, input, context: { authority: 'account_automation', actionRequestId: ingress.transportRequestId ?? 'request', serverId: 'home' } });
+            createProjectFiniteAction(runtime, ingress)({ actionId, input, context: { authority: 'account_automation', actionRequestId: ingress.transportRequestId ?? 'request', serverId: homeId } });
         const handlers = new Map<string, RpcHandler<unknown, unknown>>();
         const registrar: RpcHandlerRegistrar = { registerHandler<TRequest, TResponse>(method: string, handler: RpcHandler<TRequest, TResponse>) {
             // RPC ingress is untyped; registered production handlers validate the request beneath this boundary.
             handlers.set(method, (request, ingress) => handler(request as TRequest, ingress));
         } };
         let invocationApprovalRequired = false;
-        registerProjectFiniteRpcHandlers(registrar, { serverId: 'home', machineId: 'machine', runtime,
+        registerProjectFiniteRpcHandlers(registrar, { serverId: runtimeProfileId, machineId: 'machine', runtime,
             createActionExecutor: async (current, ingress) => {
                 const { createCliActionExecutorHarness } = await import('@/session/actions/createCliActionExecutorHarness');
                 return createCliActionExecutorHarness({ token: current.credentials.token,
@@ -210,8 +216,8 @@ describe('authenticated finite Project Action owner', () => {
             expect(config.headers).toMatchObject({ Authorization: `Bearer ${credentialToken}` });
             if (config.url === 'https://home.example/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
             expect(config.url).toBe(`https://home.example${WORKSPACE_EXECUTION_CONFIG_ROUTE_V1}/read`);
-            expect(config.data).toEqual({ address: { serverId: 'home', refId: address.workspaceId } });
-            const preference = await workspaceExecutionConfig.get({ workspace: { serverId: 'home', refId: address.workspaceId } });
+            expect(config.data).toEqual({ address: { serverId: homeId, refId: address.workspaceId } });
+            const preference = await workspaceExecutionConfig.get({ workspace: { serverId: homeId, refId: address.workspaceId } });
             if (preference.status !== 'ready') throw new Error('Fixture workspace preference unavailable');
             return { status: 200, data: { status: 'present', revision: 1, content: { t: 'plain', v: { ...preference.preference, services: {} } } } };
         });
@@ -228,7 +234,7 @@ describe('authenticated finite Project Action owner', () => {
                 && handlers.has(PROJECT_FINITE_ACTION_RPC_METHODS_V1['projects.compute.exec']),
             installPreferenceReadHttpBoundary,
             rememberSetup: (reviewedEffectDigest: string) => createProjectSetupTrustClient({ credentials: runtime.credentials,
-                serverHttpBaseUrl: runtime.serverHttpBaseUrl }).approveReviewedEffect({ project: { serverId: 'home', projectId: 'project' },
+                serverHttpBaseUrl: runtime.serverHttpBaseUrl }).approveReviewedEffect({ project: { serverId: homeId, projectId: 'project' },
                 reviewedEffectDigest, currentEffectDigest: reviewedEffectDigest, approvedAtMs: 1, expectedRevision: 'absent', authority: 'present_user' }),
         };
     }
@@ -297,6 +303,45 @@ describe('authenticated finite Project Action owner', () => {
                 try { process.kill(helperPid, 'SIGKILL'); } catch { /* Already proven absent on success. */ }
             }
         }
+    });
+
+    it('admits portable Home script and prepare through the real finite owner and refuses invalid bindings', async () => {
+        await withTempDir('finite-portable-home-', async home => {
+            const scope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID']);
+            const profileId = 'local-finite-profile';
+            const serverId = 'srv_finiteHome';
+            try {
+                scope.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: profileId });
+                reloadConfiguration();
+                const serverUrl = 'https://home.example';
+                const profile = { id: profileId, name: 'Finite Home', serverUrl, webappUrl: serverUrl,
+                    createdAt: 1, updatedAt: 1, lastUsedAt: 1, homeConnectionDescriptorAuthority: 'exact' as const,
+                    homeConnectionDescriptor: HomeConnectionDescriptorV1Schema.parse({ v: 1, homeServerIdentityId: serverId, canonicalServerUrl: serverUrl,
+                        revision: 1, endpoints: [{ kind: 'https', url: serverUrl }] }) };
+                await updateSettings(settings => ({ ...settings, activeServerId: profileId, servers: { [profileId]: profile } }));
+                const h = await harness(undefined, null, 'machine', ownerToken, profileId, serverId);
+                const selection = { kind: 'native', source: { kind: 'native', tool: 'make', file: 'Makefile', target: 'check' } } as const;
+                expect(await h.rpcInvoke('projects.script.run', { workspace: h.address, selection }))
+                    .toMatchObject({ operation: { operationId: 'operation', state: 'accepted', domainRef: { sourceWorkspace: h.address } } });
+                await expect.poll(() => h.spawned.length).toBe(1);
+                h.spawned[0]!.pty.exit(0);
+                await expect.poll(() => h.operationRuntime.store.get({ accountId: 'owner', machineId: 'machine' }, 'operation')?.state).toBe('succeeded');
+                expect(await h.rpcInvoke('projects.prepare', { workspace: h.address, phase: 'setup' },
+                    { ...h.context, transportRequestId: 'portable-prepare' }))
+                    .toMatchObject({ operation: { state: 'accepted' } });
+                expect(await h.rpcInvoke('projects.prepare', { workspace: { ...h.address, serverId: 'wrong-home' }, phase: 'setup' }))
+                    .toMatchObject({ ok: false, errorCode: 'target_mismatch' });
+                for (const scenario of ['ambiguous', 'retired'] as const) {
+                    await updateSettings(settings => ({ ...settings, servers: scenario === 'retired' ? {}
+                        : { [profileId]: profile, duplicate: { ...profile, id: 'duplicate' } } }));
+                    expect(await h.rpcInvoke('projects.prepare', { workspace: h.address, phase: 'setup' }))
+                        .toMatchObject({ ok: false, errorCode: 'target_mismatch' });
+                    expect(await h.rpcInvoke('projects.script.run', { workspace: h.address, selection }))
+                        .toMatchObject({ ok: false, errorCode: 'target_mismatch' });
+                }
+                expect(h.spawned).toHaveLength(1);
+            } finally { scope.restore(); reloadConfiguration(); }
+        });
     });
 
     it('runs a detected native source without importing a manifest and observes the real nonzero process outcome', async () => {
@@ -376,14 +421,31 @@ describe('authenticated finite Project Action owner', () => {
         expect(h.get).not.toHaveBeenCalled(); expect(h.post).not.toHaveBeenCalled(); expect(h.spawned).toEqual([]);
     });
 
-    it.each(['native', 'secret-exec'] as const)('runs an admitted restricted requester on a different custodian without borrowing the owner Account (%s)', async kind => {
+    it.each(['native', 'secret-exec', 'portable Home'] as const)('runs an admitted restricted requester on a different custodian without borrowing the owner Account (%s)', async kind => {
+        const scope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID']);
+        const profileId = kind === 'portable Home' ? 'private-finite-profile' : 'home';
+        const homeId = kind === 'portable Home' ? 'srv_privateFiniteHome' : 'home';
+        try {
+        if (kind === 'portable Home') {
+            const home = await mkdtemp(join(tmpdir(), 'finite-private-home-'));
+            roots.push(home);
+            scope.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: profileId });
+            reloadConfiguration();
+            const serverUrl = 'https://home.example';
+            await updateSettings(settings => ({ ...settings, activeServerId: profileId, servers: { [profileId]: {
+                id: profileId, name: 'Private finite', serverUrl, webappUrl: serverUrl, createdAt: 1, updatedAt: 1, lastUsedAt: 1,
+                homeConnectionDescriptorAuthority: 'exact', homeConnectionDescriptor: HomeConnectionDescriptorV1Schema.parse({ v: 1, homeServerIdentityId: homeId,
+                    canonicalServerUrl: serverUrl, revision: 1, endpoints: [{ kind: 'https', url: serverUrl }] }),
+            } } }));
+        }
         const h = await harness(kind === 'secret-exec' ? { version: 1,
-            environmentVariables: [{ name: 'API_KEY', kind: 'secret', required: true }] } : undefined);
-        const actionId = kind === 'native' ? 'projects.script.run' : 'projects.compute.exec';
+            environmentVariables: [{ name: 'API_KEY', kind: 'secret', required: true }] } : undefined, null, 'machine', 'requester', profileId, homeId);
+        const actionId = kind !== 'secret-exec' ? 'projects.script.run' : 'projects.compute.exec';
+        const serverIdentityId = kind === 'portable Home' ? homeId : 'stable-home';
         h.allowAdHoc();
         const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-proof', binding: {
             accountId: 'bob', principalId: 'bob', credentialId: 'pat', custodianAccountId: 'owner', accountEncryptionMode: 'plain',
-            serverIdentityId: 'stable-home', machineId: 'machine', installationId: 'installation', actionId,
+            serverIdentityId, machineId: 'machine', installationId: 'installation', actionId,
             requestId: 'request', requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'machine' },
             grant: { v: 1, actions: { families: [], ids: [actionId] }, targets: { sessions: [], machines: ['machine'] },
                 approve: false, origins: [], models: null, permissionModes: null, create: null },
@@ -397,7 +459,7 @@ describe('authenticated finite Project Action owner', () => {
             return { status: 200, data: { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
         });
         const admitted = await admitRequesterAccountActionContext({ authorization, credentials: { token: 'bob', encryption: null },
-            serverId: 'home', serverIdentityId: 'stable-home', serverHttpBaseUrl: 'https://home.example', isCurrent: async () => true });
+            serverId: profileId, serverIdentityId, serverHttpBaseUrl: 'https://home.example', isCurrent: async () => true });
         if (!admitted) throw new Error('Requester custody not admitted');
         const keys = nacl.sign.keyPair();
         // Home verification and row IO are HTTP boundaries; custody/crypto/finite logic remain real.
@@ -405,20 +467,33 @@ describe('authenticated finite Project Action owner', () => {
         h.post.mockImplementation(async (url, body, options) => String(url).endsWith('/verify')
             ? { status: 200, data: { ok: true } } : rowPost(url, body, options));
         const carrier = await projectExternalActionRequesterHttpAuthorization({ authorization: admitted.authorization,
-            serverId: 'home', serverIdentityId: 'stable-home', serverHttpBaseUrl: 'https://home.example',
+            serverId: profileId, serverIdentityId, serverHttpBaseUrl: 'https://home.example',
             target: authorization.binding.target, installationId: 'installation', privateKey: keys.secretKey, isCurrent: admitted.isCurrent });
         if (!carrier) throw new Error('Requester HTTP custody not admitted');
+        if (kind === 'portable Home') {
+            expect(carrier.requesterAccountProjection?.serverId).toBe(profileId);
+            expect(carrier.requesterHttpProjection?.serverId).toBe(profileId);
+            await expect.soft(readProjectAccountRows({ authorization: carrier, effectActionId: actionId, serverId: homeId }))
+                .resolves.toMatchObject({ workspaceRefs: [expect.objectContaining({ serverId: homeId })] });
+            const trust = createProjectSetupTrustClient({ authorization: carrier, effectActionId: actionId,
+                serverHttpBaseUrl: 'https://home.example' });
+            await expect.soft(trust.read({ serverId: homeId, projectId: 'project' })).resolves.toEqual({ status: 'absent' });
+            await expect(readProjectAccountRows({ authorization: carrier, effectActionId: actionId, serverId: 'srv_wrongHome' }))
+                .rejects.toMatchObject({ code: 'project_requester_authority_unavailable' });
+            await expect(trust.read({ serverId: 'srv_wrongHome', projectId: 'project' }))
+                .rejects.toMatchObject({ code: 'project_trust_identity_mismatch' });
+        }
         const { credentials: _owner, ...ports } = h.runtime;
         const runtime: ProjectFiniteActionRuntime = { ...ports, accountId: 'bob', accountAuthorization: carrier, isCurrent: admitted.isCurrent };
         const ingress: RpcHandlerContext = { ...h.context, callerInputAuthorization: carrier,
             callerInputConstraints: { models: null, permissionModes: null },
             machineAdmission: { ...h.context.machineAdmission!, actorAccountId: 'bob' } };
         const result = await createProjectFiniteAction(runtime, ingress)({ actionId,
-            input: kind === 'native' ? { workspace: h.address,
+            input: kind !== 'secret-exec' ? { workspace: h.address,
                 selection: { kind: 'native', source: { kind: 'native', tool: 'make', file: 'Makefile', target: 'check' } } }
                 : { workspace: h.address, executable: '/managed/checked', argv: [], cwd: h.root,
                     environmentBindings: { v: 1, bindings: { API_KEY: { ref: 'bob-key' } } } },
-            context: { serverId: 'home', authority: 'account_automation', actionRequestId: 'request' } });
+            context: { serverId: homeId, authority: 'account_automation', actionRequestId: 'request' } });
         expect(result).toMatchObject({ operation: { scope: { accountId: 'bob' } } });
         await admitted.dispose();
         expect(await admitted.isCurrent()).toBe(true);
@@ -430,6 +505,7 @@ describe('authenticated finite Project Action owner', () => {
         h.spawned[0]!.pty.exit(0);
         await expect.poll(() => h.operationRuntime.store.get({ accountId: 'bob', machineId: 'machine' }, 'operation')?.state).toBe('succeeded');
         expect(await admitted.isCurrent()).toBe(false);
+        } finally { scope.restore(); reloadConfiguration(); }
     });
 
     it('uses the installed readiness owner for current bytes and withdraws readiness on requester retirement', async () => {

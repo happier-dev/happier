@@ -13,6 +13,7 @@ import {
     type ProjectSourcesReadOutputV1, type ProjectSourcesListOutputV1, type ProjectSourcesDeleteOutputV1,
 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { isProjectSourceAttachmentKindV1 } from '@happier-dev/protocol/projects/sources/projectSourceAttachmentAdmissionV1';
+import { applyPromptStackIntentV1 } from '@happier-dev/protocol/prompts/library/promptStacksV1';
 import { isTeamPrincipalRoleV1 } from '@happier-dev/protocol/teams';
 import type { Prisma } from '@prisma/client';
 import type { Tx } from '@/storage/inTx';
@@ -167,9 +168,12 @@ async function applyAttachmentInTx(tx: Tx, actorAccountId: string, serverId: str
         const index = attachments.findIndex(attachment => attachment.purpose === 'context' && attachment.entry.id === intent.attachmentId);
         const attachment = attachments[index];
         if (index < 0 || attachment?.purpose !== 'context') return { ok: false as const, failure: invalid() };
-        if (intent.kind === 'budget') {
-            const { maxChars: _oldBudget, ...entry } = attachment.entry;
-            attachments[index] = { ...attachment, entry: { ...entry, ...(intent.maxChars === null ? {} : { maxChars: intent.maxChars }) } };
+        if (intent.kind === 'budget' || intent.kind === 'set_enabled') {
+            const applied = applyPromptStackIntentV1({ promptStack: [attachment.entry] }, intent.kind === 'budget'
+                ? { kind: 'set_budget', entryId: intent.attachmentId, maxChars: intent.maxChars }
+                : { kind: 'set_enabled', entryId: intent.attachmentId, enabled: intent.enabled });
+            if (!applied.ok) return { ok: false as const, failure: invalid() };
+            attachments[index] = { ...attachment, entry: applied.row.promptStack[0]! };
         } else {
             if (intent.beforeId === intent.attachmentId) return { ok: true as const, attachments };
             if (intent.beforeId !== null && !attachments.some(item => item.purpose === 'context' && item.entry.id === intent.beforeId)) return { ok: false as const, failure: invalid() };

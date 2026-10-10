@@ -31,6 +31,7 @@ import { validatePath } from '@/rpc/handlers/pathSecurity';
 import { getPathRemainderWithinBase, resolveSessionHandoffWorkspaceSessionPath } from '@/session/handoff/paths/sessionHandoffPathNormalization';
 import { resolveProjectSetupAcceptedWorkspace } from './projectSetupAcceptedWorkspace';
 import { RequesterWorkAttributionV1Schema } from '@/daemon/lifecycle/requesterWorkAttribution';
+import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { readRequesterAccountActionContext, resolveAdmittedRequesterAccountReadRuntime } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { resolveProjectRequesterSecretEnvironment } from './projectSetupRequesterInputs';
 import { resolveProjectEnvironmentSelection, inspectProjectNativeCommand, resolveProjectNativeCommand, readProjectExecutionInputs } from './projectNativeResolution';
@@ -120,7 +121,11 @@ type Review = Readonly<{ kind: 'reviewed'; invocation: Invocation }> | Readonly<
 
 /** Receiving host adapter. Action invocation approval has already completed at the outer executor. */
 export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, ingress: RpcHandlerContext): NonNullable<ActionExecutorDeps['projectAction']> {
+    const authorityRuntime = runtime;
     return async args => {
+        // Requester custody retains its installed profile; Project refs use the
+        // qualified Home admitted independently for this invocation.
+        let runtime = authorityRuntime;
         const ingressRefusal = readProjectFiniteIngressRefusal(ingress);
         if (ingressRefusal) return ingressRefusal;
         if (args.actionId !== 'projects.prepare' && args.actionId !== 'projects.script.run' && args.actionId !== 'projects.compute.exec') {
@@ -154,9 +159,12 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
         const admission = ingress.machineAdmission;
         if (!admission || !ingress.verifyMachineAdmissionCurrent) return failure('machine_admission_required');
         if (admission.machineId !== runtime.machineId
-            || request.input.workspace.serverId !== runtime.serverId || args.context.serverId && args.context.serverId !== runtime.serverId) return failure('target_mismatch');
-        const requesterRefusal = await readProjectRuntimeRequesterRefusal(runtime, ingress);
+            || !await isServerProfileHomeIdentity(runtime.serverId, request.input.workspace.serverId)
+            || args.context.serverId && args.context.serverId !== runtime.serverId
+                && args.context.serverId !== request.input.workspace.serverId) return failure('target_mismatch');
+        const requesterRefusal = await readProjectRuntimeRequesterRefusal(authorityRuntime, ingress);
         if (requesterRefusal) return requesterRefusal;
+        if (runtime.serverId !== request.input.workspace.serverId) runtime = { ...runtime, serverId: request.input.workspace.serverId };
         const requesterBaseline = Object.freeze(RequesterWorkAttributionV1Schema.parse({ serverId: runtime.serverId,
             accountId: admission.actorAccountId, machineId: admission.machineId, installationId: admission.installationId }));
         const acceptedAttribution = (value: unknown) => {

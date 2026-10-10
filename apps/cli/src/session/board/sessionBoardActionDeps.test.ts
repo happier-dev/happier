@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import fastify from 'fastify';
 import axios from 'axios';
 import {
@@ -33,7 +36,7 @@ import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/creat
 import { createCurrentSessionPresentationService } from '@/session/presentation/currentSessionPresentationService';
 
 const revision = 'ssr1.AAAACHN5c3JlY18xAAAAAQ';
-const item = { v: 1, title: 'Note', frame: 'card', height: { mode: 'auto', fallback: 'regular' },
+const item = { v: 1, destination: 'board', title: 'Note', frame: 'card', height: { mode: 'auto', fallback: 'regular' },
   source: { kind: 'declarative', document: { version: 1, root: { kind: 'markdown', text: 'Hello' } } },
 } as const;
 const installed = { ...item, source: { kind: 'widget', instance: {
@@ -75,6 +78,76 @@ describe('CLI Board Action family', () => {
     });
   });
   afterEach(async () => { restore(); vi.restoreAllMocks(); await app.close(); });
+  it('reads explicit transcript items when Board is disabled without reading layout', async () => {
+    app.get('/v2/sessions/session-one/system-records/record', async request => {
+      expect((request.query as Record<string, string>).kind).toBe('item.v1');
+      return { record: null };
+    });
+    const deps = createSessionBoardActionDeps({ credentials: { token: 'daemon-token', encryption: null },
+      serverHttpBaseUrl: 'http://board.test', serverId: 'home-a',
+      resolveServerFeaturesSnapshot: () => ({ status: 'ready', features: FeaturesResponseSchema.parse({
+        features: { sessions: { enabled: true, board: { enabled: false } } }, capabilities: {},
+      }) }),
+    });
+    await expect(deps.sessionBoardAction!({ actionId: 'session.board.get', context: {}, input: {
+      sessionId: 'session-one', itemIds: ['visual'],
+    } })).resolves.toMatchObject({ layout: null, items: [], incomplete: true });
+  });
+  it('creates transcript content with Board disabled without reading layout and returns a small destination acknowledgement', async () => {
+    app.get('/v2/sessions/session-one/system-records/record', async request => {
+      expect((request.query as Record<string, string>).kind).toBe('item.v1');
+      return { record: null };
+    });
+    let mutation: unknown;
+    app.put('/v2/sessions/session-one/board', async request => {
+      mutation = request.body;
+      return { operation: 'upsert_item', itemId: 'visual', outcome: 'created', itemRevision: revision };
+    });
+    const deps = createSessionBoardActionDeps({ credentials: { token: 'daemon-token', encryption: null },
+      serverHttpBaseUrl: 'http://board.test', serverId: 'home-a',
+      resolveServerFeaturesSnapshot: () => ({ status: 'ready', features: FeaturesResponseSchema.parse({
+        features: { sessions: { enabled: true, board: { enabled: false } }, sharing: { session: { enabled: true } } }, capabilities: {},
+      }) }),
+    });
+    await expect(deps.sessionBoardAction!({ actionId: 'session.board.item.upsert', context: {}, input: {
+      sessionId: 'session-one', itemId: 'visual', expectedItemRevision: null, item,
+    } })).resolves.toEqual({ v: 1, serverId: 'home-a', sessionId: 'session-one', itemDestination: 'transcript', destination: null,
+      result: { operation: 'upsert_item', itemId: 'visual', itemRevision: revision, outcome: 'created' } });
+    expect(mutation).toEqual({ operation: 'upsert_item', itemId: 'visual', expectedItemRevision: null, destination: 'transcript',
+      itemContent: { t: 'plain', v: { ...item, destination: 'transcript' } } });
+  });
+  it('publishes a confined workspace folder through the Session Action without creating an Artifact', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-session-html-'));
+    try {
+      await mkdir(join(directory, 'site'));
+      await writeFile(join(directory, 'site', 'index.html'), '<script src="main.js"></script>');
+      await writeFile(join(directory, 'site', 'main.js'), 'document.body.dataset.loaded="yes"');
+      app.get('/v2/sessions/session-one/system-records/record', async () => ({ record: null }));
+      const writes: unknown[] = [];
+      app.put('/v2/sessions/session-one/board', async (request) => {
+        writes.push(request.body);
+        return { operation: 'upsert_item', itemId: 'result', outcome: 'created', itemRevision: revision };
+      });
+      const deps = createSessionBoardActionDeps({ credentials: { token: 'daemon-token', encryption: null },
+        serverId: 'home-a', serverHttpBaseUrl: 'http://board.test', resolvePublishCaller: async () => ({
+          sessionId: 'session-one', machineId: 'machine', directory,
+        }) });
+      const executor = createActionExecutor(deps);
+      const result = await executor.execute('session.board.item.upsert', { sessionId: 'session-one', itemId: 'result',
+        expectedItemRevision: null, destination: 'transcript', item: { ...item, source: { kind: 'hostedHtml',
+          publicationSource: { path: 'site', entrypoint: 'index.html' } } } }, {
+        surface: 'cli', authority: 'present_user', serverId: 'home-a', defaultSessionId: 'session-one',
+        presentUserConfirmation: { actionId: 'session.board.item.upsert' },
+      });
+      expect(result).toMatchObject({ ok: true, result: { itemDestination: 'transcript', result: { outcome: 'created' } } });
+      expect(writes).toEqual([expect.objectContaining({ itemContent: { t: 'plain', v: {
+        ...item, destination: 'transcript', source: { kind: 'hostedHtml', source: { v: 1, entrypoint: 'index.html', files: {
+          'index.html': { mime: 'text/html', contentBase64: Buffer.from('<script src="main.js"></script>').toString('base64') },
+          'main.js': { mime: 'text/javascript', contentBase64: Buffer.from('document.body.dataset.loaded="yes"').toString('base64') },
+        } } },
+      } } })]);
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  });
   it('refuses a captured layout mismatch before sealing a size upsert to an old view', async () => {
     const movedLayoutRevision = 'ssr1.AAAACHN5c3JlY18xAAAAAg';
     const layout = { v: 1, tabs: [{ id: 'old', title: 'Old', items: [] },

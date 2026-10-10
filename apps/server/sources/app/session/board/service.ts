@@ -3,6 +3,7 @@ import type { z } from "zod";
 import {
     SessionBoardMutationV1Schema, SessionBoardLayoutV1Schema, SessionSurfaceItemV1Schema,
     isSessionSurfaceItemSourceCompatible,
+    sessionBoardMutationUsesLayoutV1,
     type SessionBoardMutationV1, type SessionBoardMutationResultV1, type SessionBoardErrorV1,
     type SessionBoardFeatureGateErrorV1Schema,
 } from "@happier-dev/protocol/sessions/board";
@@ -44,7 +45,8 @@ async function mutateSessionBoardAttempt(
                 }
                 return result.record;
             };
-            const layout = await read(null);
+            const changesLayout = sessionBoardMutationUsesLayoutV1(mutation);
+            const layout = changesLayout ? await read(null) : null;
             const itemLocalId = mutation.operation === "update_layout"
                 ? mutation.itemPlacementParticipant?.itemId ?? null
                 : mutation.itemId;
@@ -90,14 +92,17 @@ async function mutateSessionBoardAttempt(
                 changed = layout?.revision !== next.revision;
             } else if (mutation.operation === "upsert_item") {
                 if (!item && mutation.expectedItemRevision !== null) fail("session_board_item_not_found");
-                if (!item && !mutation.placement) fail("session_board_invalid");
                 validate(mutation.itemId, mutation.itemContent);
                 if (item?.content.t === "plain" && mutation.itemContent.t === "plain") {
                     const previous = SessionSurfaceItemV1Schema.parse(item.content.v);
                     const next = SessionSurfaceItemV1Schema.parse(mutation.itemContent.v);
                     if (!isSessionSurfaceItemSourceCompatible(previous, next)) fail("session_board_source_conflict");
                 }
-                const nextItem = await upsert(mutation.itemId, mutation.itemContent, mutation.expectedItemRevision);
+                const itemContent = !item && mutation.itemContent.t === "plain" && mutation.itemContent.v.destination === undefined
+                    && (mutation.destination !== undefined || mutation.placement === undefined)
+                    ? { t: "plain" as const, v: { ...mutation.itemContent.v, destination: mutation.destination ?? "transcript" as const } }
+                    : mutation.itemContent;
+                const nextItem = await upsert(mutation.itemId, itemContent, mutation.expectedItemRevision);
                 const nextLayout = mutation.placement ? await upsert(null, mutation.placement.layoutContent, mutation.placement.expectedLayoutRevision) : null;
                 if (mutation.placement?.layoutContent.t === "plain") {
                     validate(null, mutation.placement.layoutContent);
@@ -108,19 +113,22 @@ async function mutateSessionBoardAttempt(
                     ...(nextLayout ? { layoutRevision: nextLayout.revision } : {}) };
                 changed = item?.revision !== nextItem.revision || (nextLayout !== null && layout?.revision !== nextLayout.revision);
             } else {
-                validate(null, mutation.layoutContent);
-                if (mutation.layoutContent.t === "plain") {
+                if (mutation.layoutContent) validate(null, mutation.layoutContent);
+                if (mutation.layoutContent?.t === "plain") {
                     const next = SessionBoardLayoutV1Schema.parse(mutation.layoutContent.v);
                     if (next.tabs.some(tab => tab.items.some(placement => placement.itemId === mutation.itemId))) fail("session_board_invalid");
                 }
                 if (!item) {
-                    if (!layout || !isDeepStrictEqual(layout.content, mutation.layoutContent)) return fail("session_board_revision_conflict");
-                    result = { operation: mutation.operation, outcome: "removed", itemId: mutation.itemId, layoutRevision: layout.revision };
+                    if (mutation.layoutContent && (!layout || !isDeepStrictEqual(layout.content, mutation.layoutContent))) return fail("session_board_revision_conflict");
+                    result = { operation: mutation.operation, outcome: "removed", itemId: mutation.itemId,
+                        ...(layout ? { layoutRevision: layout.revision } : {}) };
                 } else {
                     const removed = await records.remove(mutation.itemId, mutation.expectedItemRevision);
                     if (!("ok" in removed) || !removed.ok) fail("session_board_revision_conflict");
-                    const next = await upsert(null, mutation.layoutContent, mutation.expectedLayoutRevision);
-                    result = { operation: mutation.operation, outcome: "removed", itemId: mutation.itemId, layoutRevision: next.revision };
+                    const next = mutation.layoutContent && mutation.expectedLayoutRevision !== undefined
+                        ? await upsert(null, mutation.layoutContent, mutation.expectedLayoutRevision) : null;
+                    result = { operation: mutation.operation, outcome: "removed", itemId: mutation.itemId,
+                        ...(next ? { layoutRevision: next.revision } : {}) };
                     changed = true;
                 }
             }

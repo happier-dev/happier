@@ -7,7 +7,7 @@ import type { StoredCredentials } from '@/persistence';
 import { readProjectAccountRows } from '@/workspaces/projectAccountRows';
 import { resolveWorkspaceRefById } from '@/workspaces/workspaceRefsV1';
 import { readWorkspaceSyncRootObjectIdentity } from '@/workspaces/sync/workspaceSyncRootIdentity';
-import { resolveWorkspaceSyncWorkerTarget } from '@/workspaces/sync/workspaceSyncPreparation';
+import { readWorkspaceSyncWorkerTargetSnapshot, resolveWorkspaceSyncWorkerTarget } from '@/workspaces/sync/workspaceSyncPreparation';
 import type { createProjectWorkerAdmission } from './projectWorkerAdmission';
 import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -53,13 +53,13 @@ export function createProjectWorkerAction(options: Readonly<{
       if (!(service ? options.isServiceExecutionLive?.() : options.isFiniteExecutionLive())) return refused('unsupported');
       try {
         signal?.throwIfAborted();
-        const snapshot = await runWithServerHttpBaseUrl(options.serverHttpBaseUrl,
-          () => readProjectAccountRows({ credentials: options.credentials, serverId: options.serverId, signal })).catch(() => null);
+        const snapshot = await readWorkspaceSyncWorkerTargetSnapshot({ ...options, signal,
+          sourceWorkspaceRefId: request.workspace.refId, targetMachineId: options.machineId }).catch(() => null);
         // A missing Home observation is unknown, not proof that this copy is absent.
         if (!snapshot) return refused('unavailable');
         const basis = resolveWorkspaceSyncWorkerTarget({ serverId: options.serverId,
           sourceWorkspaceRefId: request.workspace.refId, targetMachineId: options.machineId,
-          workspaceRefs: snapshot.workspaceRefs, relationships: snapshot.relationships });
+          workspaceRefs: snapshot.workspaceRefs, relationships: snapshot.relationships, childMachines: snapshot.childMachines });
         if (!basis.ok) {
           if (basis.errorCode === 'worker_copy_missing') {
             const source = resolveWorkspaceRefById(snapshot.workspaceRefs, request.workspace.refId, options.serverId);

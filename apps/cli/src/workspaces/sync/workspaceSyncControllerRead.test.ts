@@ -57,6 +57,7 @@ function stubRootOwnership() {
   return {
     tryAcquire: vi.fn(async (owner) => ({
       owner: { ...owner, rootFingerprint: null },
+      assertCurrentRootIdentity: async () => undefined,
       bindCurrentRootIdentity: vi.fn(async () => undefined),
       release: vi.fn(async () => undefined),
     })),

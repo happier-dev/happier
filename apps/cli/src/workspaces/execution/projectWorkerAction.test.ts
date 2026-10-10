@@ -14,8 +14,22 @@ import { computeWorkspaceSyncPolicyDigest, type ProjectWorkerStatusInputV1 } fro
 import { ProjectAccountRowMutationRequestV1Schema, ProjectAccountRowMutationResponseV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import * as machineRpcTransport from '@/session/transport/rpc/machineRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 
 afterEach(() => vi.restoreAllMocks());
+
+// Current Home HTTP facts are a network boundary; route and admission owners stay real.
+function workerHomeGetData(url: string) {
+  if (url.endsWith('/v2/account/settings')) return { content: { t: 'plain', v: {} }, version: 0 };
+  if (url.includes('/v1/machines/')) {
+    const id = url.slice(url.lastIndexOf('/') + 1);
+    return { machine: { id, active: true, installationId: `${id}-installation`, devcontainerChild: null,
+      dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, metadataVersion: 1, daemonStateVersion: 0, daemonState: null,
+      metadata: encodePlainMachineStoredContent({ host: id, platform: 'linux', homeDir: '/home/coder', username: 'coder',
+        happyCliVersion: 'test', happyHomeDir: '/home/coder/.happier' }) } };
+  }
+  return { mode: 'plain', updatedAt: 0 };
+}
 
 describe('exact target worker status Action', () => {
   it('publishes copy-missing source and Machine facts through the existing passive status Action without acceptance', async () => {
@@ -23,7 +37,7 @@ describe('exact target worker status Action', () => {
     const source = { id: 'source-ref', serverId: 'home', machineId: 'source', rootPath: '/source', createdAtMs: 1 };
     const key = { kind: 'workspace-ref', serverId: 'home', id: source.id };
     vi.spyOn(axios, 'get').mockImplementation(async url => ({ status: 200,
-      data: url.endsWith('/v2/account/settings') ? { content: { t: 'plain', v: {} }, version: 0 } : { mode: 'plain', updatedAt: 0 } }));
+      data: workerHomeGetData(url) }));
     const post = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { status: 'listed', coverage: 'complete',
       rows: [{ key, revision: 0, content: { t: 'plain', v: { key, value: source } } }] } });
     const admission = createProjectWorkerAdmission({ machineId: 'target', admissionDrain: createDaemonAdmissionDrain(),
@@ -108,9 +122,7 @@ describe('exact target worker status Action', () => {
       enabled: true, createdAtMs: 1, updatedAtMs: 1 }];
     const graphKey = { kind: 'relationship-graph' };
     vi.spyOn(axios, 'get').mockImplementation(async url => ({ status: 200,
-      data: url.endsWith('/v2/account/settings')
-        ? { content: { t: 'plain', v: {} }, version: 0 }
-        : { mode: 'plain', updatedAt: 0 },
+      data: workerHomeGetData(url),
     }));
     vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { status: 'listed', coverage: 'complete', rows: [
       ...[source, hub, target].map(value => {
@@ -271,9 +283,7 @@ describe('exact target worker status Action', () => {
     // Home HTTP and telemetry are the system boundaries; row opening, policy,
     // admission, Action parsing and filesystem identity are real owners.
     vi.spyOn(axios, 'get').mockImplementation(async url => ({ status: 200,
-      data: url.endsWith('/v2/account/settings')
-        ? { content: { t: 'plain', v: {} }, version: 0 }
-        : { mode: 'plain', updatedAt: 0 },
+      data: workerHomeGetData(url),
     }));
     let rowsAvailable = true;
     vi.spyOn(axios, 'post').mockImplementation(async () => {

@@ -23,6 +23,7 @@ export type WorkspaceRootOwnership = WorkspaceRootOwnershipRequest & Readonly<{ 
 export type WorkspaceRootOwnershipHandle = Readonly<{
   owner: WorkspaceRootOwnership;
   bindCurrentRootIdentity: () => Promise<void>;
+  assertCurrentRootIdentity: (expectedFingerprint: string) => Promise<void>;
   release: () => Promise<void>;
 }>;
 export type WorkspaceRootOwnershipResult = WorkspaceRootOwnershipHandle | Readonly<{
@@ -223,6 +224,19 @@ export function createWorkspaceRootOwnershipManager(options: Readonly<{
     let released = false;
     return {
       owner: entry.owner,
+      assertCurrentRootIdentity: async (expectedFingerprint) => await exclusive(async () => {
+        const currentRoot = await resolveCanonicalRoot(entry.owner.canonicalRoot);
+        const fingerprint = await computeWorkspaceSyncRootFingerprint(entry.owner.canonicalRoot).catch(() => null);
+        await withInventoryLock(async () => {
+          const snapshot = await readSnapshot(entry.path);
+          if (released || entry.lost || currentRoot !== entry.owner.canonicalRoot
+            || !fingerprint || fingerprint !== expectedFingerprint || fingerprint !== entry.owner.rootFingerprint
+            || !snapshot?.record || !exactRecordOwner(snapshot.record, entry.owner, entry.processOwner)) {
+            entry.lost = true;
+            throw Object.assign(new Error('workspace root ownership lost'), { code: 'workspace_root_ownership_lost' });
+          }
+        });
+      }),
       bindCurrentRootIdentity: async () => await exclusive(async () => {
         if (released || entry.lost) {
           throw Object.assign(new Error('workspace root ownership lost'), { code: 'workspace_root_ownership_lost' });

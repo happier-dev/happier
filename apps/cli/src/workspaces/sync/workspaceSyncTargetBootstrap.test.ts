@@ -600,6 +600,7 @@ describe('workspaceSyncTargetBootstrap', () => {
           acquired = true;
           return {
             owner: { ...owner, rootFingerprint: null },
+            assertCurrentRootIdentity: async () => undefined,
             bindCurrentRootIdentity: async () => undefined,
             renew: async () => undefined,
             release: async () => undefined,
@@ -655,7 +656,7 @@ describe('workspaceSyncTargetBootstrap', () => {
     await rm(fixture, { recursive: true, force: true });
   });
 
-  it('uses only the canonical finite materialization receipt and removes it after commit', async () => {
+  it('retains committed-copy evidence in the canonical materialization receipt after commit', async () => {
     const fixture = await mkdtemp(join(tmpdir(), 'workspace-sync-bootstrap-'));
     const target = join(fixture, 'target');
     const result = await workspaceSyncTargetBootstrap(input({ rootPath: target, materializationDirectory: join(fixture, 'staging'), createIfMissing: true, targetBootstrap: 'materialize_from_source_workspace', materializeSeed: async () => undefined }));
@@ -671,6 +672,7 @@ describe('workspaceSyncTargetBootstrap', () => {
     ]));
     await result.materializationCustody?.commit();
     await expect(readdir(join(fixture, 'staging'))).resolves.toEqual([
+      expect.stringMatching(/^[a-f0-9]{64}\.json$/u),
       expect.stringMatching(/\.ready\.json$/u),
     ]);
     await result.release();
@@ -759,6 +761,7 @@ describe('workspaceSyncTargetBootstrap', () => {
     await restarted?.materializationCustody?.commit();
     expect((await readdir(fixture)).some((name) => name.startsWith('.happier-sync-backup.'))).toBe(false);
     await expect(readdir(materializationDirectory)).resolves.toEqual([
+      expect.stringMatching(/^[a-f0-9]{64}\.json$/u),
       expect.stringMatching(/\.ready\.json$/u),
     ]);
     await restarted?.release();
@@ -813,6 +816,7 @@ describe('workspaceSyncTargetBootstrap', () => {
     await expect(readFile(join(target, 'existing.txt'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
     expect((await readdir(fixture)).some((name) => name.startsWith('.happier-sync-backup.'))).toBe(false);
     await expect(readdir(materializationDirectory)).resolves.toEqual([
+      expect.stringMatching(/^[a-f0-9]{64}\.json$/u),
       expect.stringMatching(/\.ready\.json$/u),
     ]);
     await rm(fixture, { recursive: true, force: true });

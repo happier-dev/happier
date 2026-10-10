@@ -1,0 +1,95 @@
+---
+title: Orchestrator sessions
+description: Lead several sessions and runs from one conversation and receive their outcomes without polling.
+---
+
+Use an Orchestrator session to lead a piece of work across other sessions,
+background runs and workflows. Keep decisions in the lead conversation and
+give each worker a brief it can execute independently.
+
+## Availability and prerequisites
+
+This guide describes **unreleased 0.3 development source**, not stable or
+certified preview availability. Use matching app, daemon and Home versions,
+a reachable machine and a ready Agent. Workflow launches additionally need
+the Home's workflow/automation features. Access to a session remains separate
+from whether it reports to your lead.
+
+## Make a session an orchestrator
+
+Open the session's **Work** tab, open **Role**, and choose **Orchestrator**.
+The session menu also offers **Make this an orchestrator**. Review **Hands-off**
+in the role popover: this role coordinates and reads while workspace writes
+are denied by default. A person can change that setting; an agent cannot
+relax it. See [Roles](/agents/roles).
+
+Describe the outcome, constraints, owners and evidence you expect. Ask for
+Happier-managed workers explicitly when you need separate conversations or
+particular Agents/models. Ordinary delegation otherwise follows the current
+Agent's native subagent facility where it can satisfy the request.
+
+Use Work's **+** menu to start work, or ask the lead to start it through
+Actions. Session roles start conversations; background-run roles start runs.
+Review and Plan have their own launch controls, and **Second opinion** starts
+the read-only role. Existing sessions can join the tree through **Put under**.
+
+## Receive worker outcomes
+
+A reporting worker can publish a result, need input, fail, be cancelled or
+stall. The lead receives a **Worker update** in its transcript, including the
+actual Agent/model when available and a pointer to the source. It is host
+context, not a message attributed to you. Background and workflow runs use
+the same update presentation. A session with a pending turn-end review
+reports settled only after that review finishes.
+
+The host delivers updates at an eligible input boundary; your input has
+priority. An offline lead retains pending work for later delivery. Receiving
+an update does not itself resume an inactive lead. Open the worker's peek
+or run to inspect the full result; a truncated card retains a source pointer.
+
+## Tree and lifecycle limits
+
+**Put under** changes the reporting relation, not access, approval rights,
+credentials or permissions. Both sides must be accessible, in the same Home,
+and pass the relation's input and audience checks. A cycle is refused.
+Reparenting does not lower the recorded work depth.
+
+Stopping the lead leaves workers running. Archiving offers an optional
+**Also archive … sub-sessions** choice; deleting the lead detaches its workers
+as ordinary roots. Review the affected sessions before using either operation.
+
+**Settings → Delegation** controls the work-depth limit, initially four. Agent
+starts and trigger writes enforce the same limit. A `work_depth_exceeded`
+refusal means the agent must do the work itself or ask you to change the
+delegation choices. Human starts are not limited by this agent-depth check.
+Work depth follows the cause of work, rather than the editable reporting tree.
+
+## The same tasks through Actions
+
+`session.role.set` with `roleId: "orchestrator"` backs the role choice.
+Starts use `session.spawn_new`, `execution.run.start`, `review.start`,
+`subagents.plan.start`, `subagents.delegate.start` or `workflow.run.start`.
+The start policy and available role determine what can run; callers cannot
+override a role's admitted engine or exceed their permission ceiling.
+
+Use `session.reports_to.set` for attach/detach/reparent, including the expected
+current lead, and `session.list` with `underSessionId` to read the subtree.
+Agents normally list their own led subtree. `session.message.send` sends
+explicit input; `session.worker.publish` reports from a reporting worker.
+`session.notes.set` updates orchestration notes. `settings.get` and
+`settings.update` reach declared delegation preferences under their normal
+approval rules.
+
+The CLI front door is `happier actions invoke <action-id> --input-json '<json>'`.
+Discover exact fields and surfaces in the
+[host Action reference](/plugins/api/host-actions); neither tool discovery
+nor a reporting relation grants permission to invoke an Action. Waits observe
+existing work and ending a wait does not stop it.
+
+## Related
+
+- [Work](/sessions/work)
+- [Roles](/agents/roles)
+- [Inbox and approvals](/sessions/inbox-and-approvals)
+- [Approval reviewer](/sessions/approval-reviewer)
+- [Workflows and automations](/extras/automations)

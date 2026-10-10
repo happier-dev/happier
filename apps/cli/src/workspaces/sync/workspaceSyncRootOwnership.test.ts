@@ -52,6 +52,28 @@ async function waitForFile(path: string): Promise<void> {
 }
 
 describe('workspace root ownership', () => {
+  it('keeps bytes on release and refuses a replaced root under an existing removal handle', async () => {
+    const fixture = await mkdtemp(join(tmpdir(), 'workspace-root-reviewed-removal-'));
+    try {
+      const root = join(fixture, 'workspace');
+      await mkdir(root);
+      await writeFile(join(root, 'copy.txt'), 'committed');
+      const manager = createWorkspaceRootOwnershipManager({ lockDirectory: join(fixture, 'locks') });
+      const handle = await manager.tryAcquire({ ownerId: 'relationship', canonicalRoot: root, operation: 'bootstrap' });
+      if ('kind' in handle || !handle.owner.rootFingerprint) throw new Error('fixture did not acquire root');
+      await handle.assertCurrentRootIdentity(handle.owner.rootFingerprint);
+      await rename(root, join(fixture, 'old-copy'));
+      await mkdir(root);
+      await writeFile(join(root, 'user.txt'), 'user');
+      await expect(handle.assertCurrentRootIdentity(handle.owner.rootFingerprint)).rejects.toMatchObject({ code: 'workspace_root_ownership_lost' });
+      await handle.release();
+      await expect(readFile(join(root, 'user.txt'), 'utf8')).resolves.toBe('user');
+      await expect(readFile(join(fixture, 'old-copy', 'copy.txt'), 'utf8')).resolves.toBe('committed');
+    } finally {
+      await rm(fixture, { recursive: true, force: true });
+    }
+  });
+
   it.each(['EACCES', 'EIO'])('retains an existing writer when process presence cannot be established (%s)', async (code) => {
     const fixture = await mkdtemp(join(tmpdir(), 'workspace-sync-root-unverifiable-owner-'));
     const lockDirectory = join(fixture, 'locks');

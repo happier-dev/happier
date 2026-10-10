@@ -1,0 +1,138 @@
+---
+title: Roles
+description: Reuse instructions and Agent choices, adjust them for one session or workflow run, and share roles with other people.
+---
+
+Give recurring work a role instead of rewriting the same brief each time. A
+role combines instructions with an Agent, optional model and effort, where
+the work runs, and whether it may change the workspace.
+
+## Availability
+
+This guide describes **unreleased 0.3 development source**. Use matching app,
+daemon and Home versions. Role selection still needs an available Agent and
+any selected profile; a role supplies preferences, not access or credentials.
+
+## Create or adjust a role
+
+Open **Settings → Roles** and select a role, or add your own. Edit its
+instructions, choose an **Engine**, and choose whether it runs as a session or
+a background run. A background run also has an intent. The optional launch
+profile supplies startup configuration; see [Profiles](/agents/profiles).
+Save explicitly. The prompt preview shows the host's rendered role instructions.
+
+Built-in roles give you starting points such as Orchestrator, Builder and
+Reviewer. Editing their defaults saves your own override; **Reset to default** removes
+that override. Your own roles are saved documents. A plugin role keeps its
+plugin-owned source read-only, but you can override it for yourself. A shared
+role with view access can also have a personal override; editing the original
+requires edit or admin access and changes the shared document.
+
+The engine field carries the Agent target, model and optional effort together.
+In the current source the role picker edits Agent and model and preserves an
+existing effort for the same Agent; it does not yet provide a role-effort
+editor. Starting with another Agent clears preferences belonging to the
+previous Agent. Normal [model controls](/agents/model-and-engine-selection)
+and role support remain Agent-dependent.
+
+## Use a role in a session
+
+Open the composer's Agent picker and choose **Roles**, or open the **Role**
+row in [Work](/sessions/work). Selecting a role changes this session's role
+instructions. An engine choice on another Agent is described as **Engine
+applies when starting this role**; choosing the role does not replace the
+Agent already running this conversation.
+
+Work's **Roles** section lists this session's changes and added roles. Use
+**All roles** to see the effective set. Add or change a role for this session
+there; **Use default roles** in Work's menu clears its role overrides and
+session-only roles. Notes are edited separately.
+
+Workers receive a complete copy of the lead's effective roles and notes when
+they start. Later edits do not rewrite that copy. **Apply roles to sessions under
+it** pushes the current set to reporting sessions owned by your Account;
+workers owned by another Account retain their birth copy.
+
+## Hands-off and second opinions
+
+The role popover's **Hands-off** switch forbids workspace writes while keeping
+reads and coordination available. The Orchestrator role starts hands-off.
+An agent can tighten this restriction, including on its own session, but only
+a present user can relax it. This restriction also covers Happier Actions
+that write the workspace; it does not change the session's permission mode or
+grant authority over another session. A start whose Agent cannot enforce it
+is refused with `role_policy_unenforceable`.
+
+The **Second opinion** attribute can encourage a second opinion in the
+instructions. It is not a compulsory PR or completion check. Use Work's
+**Second opinion** launch action for an explicit read-only run, or review the
+optional step in a workflow.
+
+## Roles for this run
+
+When a workflow uses roles, **Run now** offers **Roles for this run**. Review
+each role's Agent/model and session-or-background-run choice before starting.
+**Use your role** removes that run's override. This is also how you rehearse
+a saved workflow with a different model; the rehearsal executes real work.
+
+Each role field resolves in this order: run override, workflow pin, session
+copy or override, then your Account's role and personal override. An unset
+field falls through; choosing only an engine does not erase instructions.
+The accepted run freezes its choices. Repeating it shows those accepted role
+facts; a new invocation can seed choices from the workflow's prior accepted
+run. These choices do not create another role library. See
+[Workflows and automations](/extras/automations).
+
+## Share a role or send a copy
+
+Open a saved user or shared role and choose **Share…** in its header. The document
+share sheet controls recipients and view, edit or admin access, including
+people, Teams and Groups where available. Built-in and plugin sources are
+not shareable role documents; save your own role for that purpose.
+
+Sharing keeps one document whose later edits remain shared. **Send a copy**
+exports a JSON file from the share sheet; it grants no access and does not
+keep future changes synchronized. That file contains the role's instructions
+and preferences, so review it before sending it. Sharing a role does not
+share a referenced profile or its Saved Secrets automatically. Recipients
+need their own usable Agent and access to any referenced profile.
+
+## When a role cannot be used
+
+An unknown or disabled role is refused as `role_target_unavailable`; an
+unavailable Agent is `target_unavailable`. A missing profile remains an
+unavailable profile, not an invitation to apply another one. Restore access,
+enable the source, or choose a usable configuration before starting.
+Disabling or removing a plugin withdraws its source role; a personal override
+cannot recreate it. Existing complete worker copies remain separate snapshots.
+
+## The same tasks through Actions
+
+Agents and the CLI use the same role owners and normal Action approval rules.
+Inspect an Action's current input and surface availability in the
+[host Action reference](/plugins/api/host-actions) before invoking it.
+
+| Task | Action |
+| --- | --- |
+| Read available roles or one role | `roles.list`, `roles.get` |
+| Create, update or delete a user role | `roles.create`, `roles.update`, `roles.delete` |
+| Save or reset a personal source override | `roles.override.set`, `roles.override.reset` |
+| Select a session role | `session.role.set` |
+| Change or clear one session override | `session.roles.override.set`, `session.roles.override.clear` |
+| Add or remove a session-only role | `session.roles.add`, `session.roles.remove` |
+| Apply the role set to your reporting sessions | `session.roles.apply_to_reports` |
+| Start a role | `session.spawn_new` or `execution.run.start`, with `roleId` matching its runs-as choice |
+| Start a workflow with run-local choices | `workflow.run.start`, with `roleOverrides` |
+| Manage live document sharing | `artifact.access.grants.list`, `.set`, `.remove` |
+
+Role-document update/delete uses the revision read for that document. An
+approval request is not a completed edit. Send a copy is a client file-export
+effect: CLI or agent callers read the role with `roles.get` and handle the
+file through their own authorized file tools.
+
+## Related
+
+- [Orchestrator sessions](/sessions/orchestrator)
+- [Work](/sessions/work)
+- [Profiles](/agents/profiles)
+- [Contribute plugin roles](/plugins/guides/roles)

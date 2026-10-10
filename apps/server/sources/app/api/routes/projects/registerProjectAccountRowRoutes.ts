@@ -19,14 +19,14 @@ export function registerProjectAccountRowRoutes(app: Fastify): void {
         preHandler: app.authenticate, config,
         schema: { body: asServerProtocolZod(ProjectAccountRowReadRequestV1Schema), response: { 200: asServerProtocolZod(ProjectAccountRowReadResponseV1Schema), ...errors } },
     }, async (request, reply) => {
-        try { return reply.send(await inTx(tx => readProjectAccountRowInTx(tx, { accountId: request.userId, key: request.body.key }))); }
+        try { return reply.send(await inTx(tx => readProjectAccountRowInTx(tx, { accountId: request.userId, key: request.body.key }), { readOnly: true })); }
         catch { return reply.code(500).send({ error: 'internal' }); }
     });
     app.post(`${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, {
         preHandler: app.authenticate, config,
         schema: { body: asServerProtocolZod(ProjectAccountRowListRequestV1Schema), response: { 200: asServerProtocolZod(ProjectAccountRowListResponseV1Schema), ...errors } },
     }, async (request, reply) => {
-        try { return reply.send(await inTx(tx => listProjectAccountRowsInTx(tx, { accountId: request.userId, ...request.body }))); }
+        try { return reply.send(await inTx(tx => listProjectAccountRowsInTx(tx, { accountId: request.userId, ...request.body }), { readOnly: true })); }
         catch { return reply.code(500).send({ error: 'internal' }); }
     });
     app.post(`${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/mutate`, {

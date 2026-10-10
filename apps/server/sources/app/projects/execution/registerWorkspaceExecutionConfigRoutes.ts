@@ -25,7 +25,7 @@ export function registerWorkspaceExecutionConfigRoutes(app: Fastify): void {
         preHandler: app.authenticate,
         schema: { body: asServerProtocolZod(WorkspaceExecutionConfigReadRequestV1Schema), response: { 200: asServerProtocolZod(WorkspaceExecutionConfigReadResponseV1Schema), ...failureResponses } },
     }, async (request, reply) => {
-        const result = await inTx(tx => readWorkspaceExecutionConfigRowInTx(tx, { accountId: request.userId, address: request.body.address }));
+        const result = await inTx(tx => readWorkspaceExecutionConfigRowInTx(tx, { accountId: request.userId, address: request.body.address }), { readOnly: true });
         if (result.status === 'absent' || result.status === 'deleted') return reply.send(result);
         if (result.status !== 'present') return reply.code(503).send(unavailable);
         return reply.send({ status: 'present', revision: result.revision, content: result.envelope });
@@ -42,7 +42,7 @@ export function registerWorkspaceExecutionConfigRoutes(app: Fastify): void {
         preHandler: app.authenticate,
         schema: { response: { 200: asServerProtocolZod(WorkspaceExecutionConfigListResponseV1Schema), ...failureResponses } },
     }, async (request, reply) => {
-        const result = await inTx(tx => listWorkspaceExecutionConfigRowsInTx(tx, { accountId: request.userId }));
+        const result = await inTx(tx => listWorkspaceExecutionConfigRowsInTx(tx, { accountId: request.userId }), { readOnly: true });
         return result.status === 'listed' ? reply.send({ rows: [...result.rows] }) : reply.code(503).send(unavailable);
     });
 }

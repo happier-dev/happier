@@ -1,4 +1,4 @@
-import { SESSION_METADATA_LAYOUT_VERSION_V1, SessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { SESSION_METADATA_LAYOUT_VERSION_V1, StoredSessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { normalizeSessionMetadataForRead } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
 import type { SessionSharedMetadataV1 } from '@happier-dev/protocol';
 
@@ -40,7 +40,7 @@ function tryParseSessionMetadataLayout(
   }
   if (layoutVersion !== SESSION_METADATA_LAYOUT_VERSION_V1) return null;
 
-  const sharedMetadata = SessionSharedMetadataV1Schema.safeParse(value);
+  const sharedMetadata = StoredSessionSharedMetadataV1Schema.safeParse(value);
   return sharedMetadata.success
     ? {
         layoutVersion,

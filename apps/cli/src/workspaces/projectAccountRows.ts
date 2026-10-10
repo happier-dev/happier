@@ -21,6 +21,7 @@ import { readAccountEncryptionModeOnce } from '@/api/client/accountEncryptionMod
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { configuration } from '@/configuration';
+import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import type { StoredCredentials } from '@/persistence';
 import { AccountSettingsEncryptionMaterialUnavailableError, hasUsableAccountSettingsEncryptionMaterial, requireAccountSettingsEncryptionCredentials } from '@/settings/accountSettings/accountSettingsEncryptionMaterial';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
@@ -89,7 +90,7 @@ async function assertRequesterCurrent(input: ReadInput): Promise<void> {
   const account = input.authorization.requesterAccountProjection;
   const http = input.authorization.requesterHttpProjection;
   if (!account || !http || account.accountId !== input.authorization.binding.accountId || http.accountId !== account.accountId
-    || account.serverId !== http.serverId || input.serverId && input.serverId !== account.serverId
+    || account.serverId !== http.serverId || input.serverId && !await isServerProfileHomeIdentity(account.serverId, input.serverId)
     || http.accountEncryptionMode !== undefined && account.accountEncryptionMode !== http.accountEncryptionMode
     || input.authorization.binding.accountEncryptionMode !== undefined && account.accountEncryptionMode !== input.authorization.binding.accountEncryptionMode
     || !await account.isCurrent() || !await http.isCurrent()) throw rowError('project_requester_authority_unavailable');

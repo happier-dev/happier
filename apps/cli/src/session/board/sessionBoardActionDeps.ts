@@ -1,14 +1,15 @@
 import axios from 'axios';
 import { applySessionBoardItemPlacementV1, applySessionBoardLayoutOperationV1, resolveSessionBoardItemPlacementDestinationV1, removeSessionBoardItemPlacementsV1 } from '@happier-dev/protocol/sessions/board/layoutOperations';
-import { isSessionSurfaceItemSourceCompatible, SessionSurfaceItemV1Schema } from '@happier-dev/protocol/sessions/board/item';
-import { bindSessionBoardMutationRequestV1, classifySessionBoardMutationTransportResultV1, createSessionBoardFailureV1, createSessionBoardOutcomeUnknownFailureV1, projectSessionBoardActionFailureV1, projectSessionBoardAdapterFailureV1, SESSION_BOARD_ACTION_INPUT_SCHEMAS_V1, SessionBoardGetInputV1Schema, SessionBoardItemRemoveInputV1Schema, SessionBoardLayoutUpdateInputV1Schema, SessionBoardItemUpsertInputV1Schema, SessionBoardMutationActionResultV1Schema, projectSessionBoardGetResultV1 } from '@happier-dev/protocol/sessions/board/actions';
+import { isSessionSurfaceItemSourceCompatible, SessionSurfaceItemV1Schema, type SessionSurfaceItemV1 } from '@happier-dev/protocol/sessions/board/item';
+import { bindSessionBoardMutationRequestV1, classifySessionBoardMutationTransportResultV1, createSessionBoardFailureV1, createSessionBoardOutcomeUnknownFailureV1, projectSessionBoardActionFailureV1, projectSessionBoardAdapterFailureV1, SESSION_BOARD_ACTION_INPUT_SCHEMAS_V1, SessionBoardGetInputV1Schema, SessionBoardItemRemoveInputV1Schema, SessionBoardLayoutUpdateInputV1Schema, SessionBoardItemUpsertInputV1Schema, SessionBoardMutationActionResultV1Schema, projectSessionBoardGetResultV1, sessionBoardActionUsesLayoutV1 } from '@happier-dev/protocol/sessions/board/actions';
 import { projectSessionBoardFeatureDecisionFailureV1 } from '@happier-dev/protocol/sessions/board/errors';
 import { SessionBoardLayoutV1Schema } from '@happier-dev/protocol/sessions/board/layout';
 import { SessionBoardMutationV1Schema } from '@happier-dev/protocol/sessions/board/mutations';
 import type { SessionBoardItemPlacementParticipantV1, SessionBoardLayoutV1, SessionBoardReadProjectionEntryV1, SessionBoardActionIdV1 } from '@happier-dev/protocol/sessions/board';
 import { SessionSystemRecordListQuerySchema } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
 import { classifyHomeDomainHttpMutationFailureV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
-import type { ActionExecutorDeps } from '@happier-dev/protocol/actions';
+import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions';
+import { readArtifactWorkspaceFile, type ArtifactWorkspaceCaller } from '@/session/actions/publishArtifactFromWorkspaceFile';
 import type { StoredCredentials } from '@/persistence';
 import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -57,6 +58,8 @@ export function createSessionBoardActionDeps(options: Readonly<{
    * material that does not match the Session's mode still fails closed.
    */
   resolveExactSessionEncryptionMaterial?: (sessionId: string) => SessionTransportEncryptionMaterial | null;
+  /** Reuses the Artifact publication caller's proven local Session workspace authority. */
+  resolvePublishCaller?: (context: ActionExecutorContext) => Promise<ArtifactWorkspaceCaller | null>;
 }> & ExternalActionHomeBinding & SessionBoardActionFixedHome): Pick<ActionExecutorDeps, 'sessionBoardAction'> {
   if (
     (options.serverId === undefined) !== (options.serverHttpBaseUrl === undefined)
@@ -162,7 +165,8 @@ export function createSessionBoardActionDeps(options: Readonly<{
       decision = resolved.decision;
       serverSnapshot = resolved.serverSnapshot;
     }
-    if (decision.state !== 'enabled') return projectSessionBoardFeatureDecisionFailureV1(actionId, decision);
+    const needsBoard = sessionBoardActionUsesLayoutV1(actionId, common);
+    if (needsBoard && decision.state !== 'enabled') return projectSessionBoardFeatureDecisionFailureV1(actionId, decision);
     const rawSession = await fetchSessionById({
       token: options.credentials.token,
       serverUrl,
@@ -189,7 +193,7 @@ export function createSessionBoardActionDeps(options: Readonly<{
     };
     if (actionId === 'session.board.get') {
       const args = SessionBoardGetInputV1Schema.parse(common);
-      const layout = await readLayout();
+      const layout = args.itemIds !== undefined && decision.state !== 'enabled' ? null : await readLayout();
       const page = args.itemIds === undefined ? await listSessionSystemRecordsV1({ ...transport,
         query: SessionSystemRecordListQuerySchema.parse({ owner: 'host', namespace: 'surface', kind: 'item.v1', limit: args.limit, cursor: args.cursor }),
       }) : null;
@@ -213,6 +217,12 @@ export function createSessionBoardActionDeps(options: Readonly<{
     }
     if (actionId === 'session.board.layout.update' || actionId === 'session.board.item.remove') {
       const args = actionId === 'session.board.layout.update' ? SessionBoardLayoutUpdateInputV1Schema.parse(common) : SessionBoardItemRemoveInputV1Schema.parse(common);
+      if ('itemId' in args && args.expectedLayoutRevision === undefined) {
+        const result = await put(actionId, sessionId, { operation: 'remove_item', itemId: args.itemId,
+          expectedItemRevision: args.expectedItemRevision }, args, context, signal);
+        if (!result.ok) return result;
+        return SessionBoardMutationActionResultV1Schema.parse({ v: 1, serverId, sessionId, result: result.result, destination: null });
+      }
       const current = await readLayout();
       if ((current?.revision ?? null) !== args.expectedLayoutRevision) {
         return projectSessionBoardActionFailureV1({
@@ -252,9 +262,24 @@ export function createSessionBoardActionDeps(options: Readonly<{
         currentItemRevision: current?.revision ?? null,
       });
     }
+    let authoredItem: SessionSurfaceItemV1;
+    if (args.item.source.kind === 'hostedHtml' && 'publicationSource' in args.item.source) {
+      const caller = await options.resolvePublishCaller?.(context);
+      if (!caller) return createSessionBoardFailureV1('unsupported_action');
+      const acquired = await readArtifactWorkspaceFile({ caller, ...args.item.source.publicationSource, signal });
+      if (!acquired.bundle) return createSessionBoardFailureV1('session_board_invalid');
+      authoredItem = SessionSurfaceItemV1Schema.parse({ ...args.item, source: {
+        kind: 'hostedHtml', source: acquired.bundle,
+        ...(args.item.source.requestedCapabilities ? { requestedCapabilities: args.item.source.requestedCapabilities } : {}),
+      } });
+    } else {
+      authoredItem = SessionSurfaceItemV1Schema.parse(args.item);
+    }
+    let itemDestination = args.destination;
     if (current) {
       const previous = SessionSurfaceItemV1Schema.parse(openSessionSystemRecord(crypto, current).content);
-      if (!isSessionSurfaceItemSourceCompatible(previous, args.item)) return createSessionBoardFailureV1('session_board_source_conflict');
+      itemDestination = previous.destination ?? 'board';
+      if (!isSessionSurfaceItemSourceCompatible(previous, { ...authoredItem, destination: itemDestination })) return createSessionBoardFailureV1('session_board_source_conflict');
     }
     let layout: SessionBoardLayoutV1 | null = null;
     let expectedLayoutRevision: string | null = null;
@@ -269,18 +294,20 @@ export function createSessionBoardActionDeps(options: Readonly<{
       if (!edited.ok) return createSessionBoardFailureV1(edited.error);
       layout = edited.layout;
     }
-    const itemContent = sealSessionSystemRecordContent(crypto, validateSessionSystemRecordOpenedContent(itemAddress, args.item, 'plugin_session_record_invalid_request'));
+    const item = { ...authoredItem, destination: itemDestination };
+    const itemContent = sealSessionSystemRecordContent(crypto, validateSessionSystemRecordOpenedContent(itemAddress, item, 'plugin_session_record_invalid_request'));
     const request = SessionBoardMutationV1Schema.parse({ operation: 'upsert_item', itemId: args.itemId, expectedItemRevision: args.expectedItemRevision, itemContent,
+      destination: itemDestination,
       ...(layout ? { placement: { expectedLayoutRevision, layoutContent: sealSessionSystemRecordContent(crypto,
         validateSessionSystemRecordOpenedContent(layoutAddress, layout, 'plugin_session_record_invalid_request')) } } : {}),
     });
     const result = await put(actionId, sessionId, request, args, context, signal);
     if (!result.ok) return result;
     return SessionBoardMutationActionResultV1Schema.parse({ v: 1, serverId, sessionId, result: result.result,
+      itemDestination,
       destination: layout && args.placement
         ? resolveSessionBoardItemPlacementDestinationV1(layout, { itemId: args.itemId, placement: args.placement })
         : null,
-      preview: { title: args.item.title, sourceKind: args.item.source.kind },
     });
   };
   return { sessionBoardAction: async (args) => {

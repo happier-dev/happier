@@ -94,6 +94,30 @@ function e2eeCurrentness(credentials: Readonly<{
 }
 
 describe('updateSessionMetadataWithRetry', () => {
+  it('drops persisted extras recursively while applying a real Bot field mutation to an owner tuple', async () => {
+    const credentials = { token: 'token-1', encryption: null };
+    const fields = buildSessionMetadataEnvelopeFields({ credentials, accountEncryptionMode: 'plain', storedContentMode: 'plain',
+      metadata: { path: '/repo', host: 'host', summary: { text: 'Keep', updatedAt: 1 },
+        work: { viewPreferences: { showToolCalls: false } } }, agentState: null });
+    if (fields.ownerMetadata.t !== 'plain') throw new Error('Expected plain owner fixture');
+    const rawSession = { id: 'sess_extras', encryptionMode: 'plain', metadataLayoutVersion: 1,
+      metadata: JSON.stringify({ ...JSON.parse(fields.sharedMetadata.ciphertext), futureShared: { ignored: true } }),
+      ownerMetadata: { ...fields.ownerMetadata, futureEnvelope: true, v: { ...fields.ownerMetadata.v, futureOwner: true,
+        work: { ...fields.ownerMetadata.v.work, futureWork: true, viewPreferences: { showToolCalls: false, futureView: true } } } },
+      metadataVersion: 4, agentState: null, agentStateVersion: 7, dataEncryptionKey: null, effectiveAccess: ownerEffectiveAccess };
+    patchSessionMetadataEnvelopeTupleMock.mockResolvedValue({ success: true, metadataLayoutVersion: 1,
+      sharedMetadata: { version: 5 }, agentState: { version: 8 } });
+    const result = await updateSessionMetadataWithRetry({ token: credentials.token, credentials, sessionId: rawSession.id,
+      accountEncryptionCurrentness: plainCurrentness, rawSession,
+      updater: metadata => writeSessionStateFieldToMetadata(metadata, 'display.bot', { kind: 'bot' }), maxAttempts: 1 });
+    expect(result.metadata).toMatchObject({ bot: { kind: 'bot' }, summary: { text: 'Keep', updatedAt: 1 },
+      work: { viewPreferences: { showToolCalls: false } } });
+    const patch: unknown = patchSessionMetadataEnvelopeTupleMock.mock.calls[0]?.[0].patch;
+    expect(patch).toMatchObject({ mode: 'owner', ownerMetadata: { t: 'plain', v: {
+      work: { bot: { kind: 'bot' }, viewPreferences: { showToolCalls: false } },
+    } } });
+    expect(JSON.stringify(patch)).not.toMatch(/futureShared|futureEnvelope|futureOwner|futureWork|futureView/);
+  });
   it('normalizes additive legacy host metadata at the real tuple-reader boundary before an owner mutation', () => {
     const snapshot = readSessionMetadataTupleWriterSnapshot({
       credentials: { token: 'token-1', encryption: null }, accountEncryptionCurrentness: plainCurrentness,
@@ -1885,6 +1909,15 @@ describe('shared-editor Session metadata authority', () => {
     })).rejects.toMatchObject({
       code: 'metadata_privacy_upgrade_required',
     });
+
+    // Bot changes preserve the prechange memory baseline in owner work. A
+    // shared title editor cannot acquire that owner authority via the marker.
+    await expect(updateSessionMetadataEnvelopeTupleWithRetry({
+      token: 'runtime-token', sessionId: 'sess_shared_editor',
+      authority: { kind: 'shared_editor' }, ...crypto, initialSnapshot,
+      mutation: { kind: 'metadata', update: metadata =>
+        writeSessionStateFieldToMetadata(metadata, 'display.bot', { kind: 'bot' }) },
+    })).rejects.toMatchObject({ code: 'metadata_privacy_upgrade_required' });
 
     await expect(updateSessionMetadataEnvelopeTupleWithRetry({
       token: 'runtime-token',

@@ -1,0 +1,108 @@
+---
+title: Work
+description: Inspect related sessions and runs, organize reporting work, and keep role choices and notes beside the conversation.
+---
+
+Open **Work** to see what a session has started and what reports to it. Keep
+chat focused on the brief while inspecting workers and runs alongside it.
+
+## Availability
+
+This is the **unreleased 0.3 development** Work surface, replacing the earlier
+**Agents** tab. Use matching components. Work needs access to the selected
+session; launch controls additionally need a reachable machine and a ready
+Agent. Workflow features depend on the Home's enabled gates. A list or map
+does not grant access to its items.
+
+## List, map and peek
+
+On wide layouts open **Work** in the session sidebar. On a phone use the
+session's Work destination. **List** groups related work into **Needs you**,
+**Working** and **Recent**. Read the state word on each row: a failed or
+cancelled run is not successful merely because it appears in Recent. A lead
+with outstanding work is not treated as finished.
+
+**Map** shows the same related items and their recorded links. Open a node
+to inspect its session or run. The session header's work counts also open
+the work overview. Use the list when you prefer rows to the map.
+
+A session row opens a peek with its real transcript and, when your access
+permits, its composer. Replies go to that worker session. Run rows open the
+run's own details and available controls. On a phone these open as screens
+rather than squeezing a second conversation beside chat.
+
+A workflow-created step session shows the run it is part of, its available
+progress and **Open run**. Its accepted workflow role is not an invitation
+to launch a second tree from that step.
+
+## Start and organize work
+
+Use **+** to start a conversation, delegate, run a workflow, Review, Plan or
+Second opinion. Choose the target and review the launch configuration before
+starting. A Plan run is separate work, while changing this session's plan
+mode changes its current Agent's behavior.
+
+Use a session row's **Put under** menu to choose its lead; dragging provides
+the same reporting operation where offered. Detach it to make it a root.
+The operation checks the expected current lead, access, Home and cycles.
+It does not move files, change session origin, share content or grant the
+lead permission to approve a worker's tools.
+
+## Roles, notes and triggers
+
+The **Role** row opens the role popover, including **Hands-off**. Work's
+**Roles** section shows only this session's changes and additions; **All
+roles** shows the effective set. **Use default roles** and **Apply roles to sessions
+under it** are in the Work menu. Read the copy-at-start notice on a worker
+before assuming a later edit will propagate. See [Roles](/agents/roles).
+
+Use **Edit notes** in **Notes**, change the text, and **Save**.
+Cancel retains the previous notes. Notes supplement the role instructions;
+they are not another chat message. Workers copy them when they start.
+
+The **Goal** row opens the session goal control. **Triggers** owns this
+session's automatic workflow habits and their history; its own trigger runs
+are not duplicated among unrelated workflow work. See
+[Workflows and automations](/extras/automations) for execution and review rules.
+
+## Updates and unavailable work
+
+**Worker update** cards identify session, background-run and workflow-run
+outcomes and their source. The **Woken by … updates** row explains a host
+wake rather than attributing it to you. Deliverable references open the
+existing result or document; inspect the source when a result is truncated.
+
+**Stalled** means a machine became unavailable while that session had a turn
+in flight. It is not a timer-based judgment that a task took too long.
+Restore the connection and inspect the retained state before retrying work.
+Lost access, an unavailable run or a failed source read is an unavailable
+state, not an empty workstream. Use the offered retry after fixing the cause.
+
+## The same tasks through Actions
+
+The UI uses the same effects an agent or CLI can request:
+
+| Task | Action |
+| --- | --- |
+| List sessions under a lead | `session.list` with `underSessionId` |
+| Put under, detach or reparent | `session.reports_to.set` |
+| Start conversations and runs | `session.spawn_new`, `execution.run.start`, `subagents.delegate.start` |
+| Review, Plan or Second opinion | `review.start`, `subagents.plan.start`, `execution.run.start` with `roleId: "second_opinion"` |
+| Change the selected role or session choices | `session.role.set`, `session.roles.override.set` / `.clear`, `session.roles.add` / `.remove` |
+| Apply the role set to your workers | `session.roles.apply_to_reports` |
+| Save notes | `session.notes.set` |
+| Send input to a worker | `session.message.send` |
+| Read or observe runs | `execution.run.list`, `.get`, `.wait`, or `workflow.run.get` / `.wait` |
+
+List/Map selection and peek placement are client presentation, not a second
+execution Action. Use the [host Action reference](/plugins/api/host-actions)
+for exact input, approval and surface contracts. A run wait timing out means
+observation ended, not that the run failed or stopped.
+
+## Related
+
+- [Orchestrator sessions](/sessions/orchestrator)
+- [Roles](/agents/roles)
+- [Inbox and approvals](/sessions/inbox-and-approvals)
+- [Agents and subagents](/extending/subagents)
+- [Work glossary](/organize/work-glossary)

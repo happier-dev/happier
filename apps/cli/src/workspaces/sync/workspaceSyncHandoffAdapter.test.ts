@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { accountSettingsParse } from '@happier-dev/protocol';
+import { parseProjectAccountSnapshotV1 } from '@happier-dev/protocol/projects/projectAccountSnapshotV1';
 
 import { createWorkspaceSyncHandoffAdapter, type PrepareWorkspaceSyncHandoffInput } from './workspaceSyncHandoffAdapter';
 import { computeWorkspaceSyncPolicyDigest, type ManagedWorkspaceSync, type WorkspaceSyncStatusV1 } from './workspaceSyncTypes';
@@ -414,8 +415,7 @@ describe('WorkspaceSyncHandoffAdapter', () => {
     };
 
     const prepared = await adapter.prepare(handoff);
-    expect(bootstrap).toHaveBeenCalledWith(handoff);
-    expect(prepareBetween).toHaveBeenCalledWith({ sourceWorkspaceRefId: 'workspace-c', targetWorkspaceRefId: 'workspace-b' }, undefined);
+    expect(prepared.traversed).toMatchObject([{ relationshipId: 'source-hub' }, { relationshipId: 'hub-target' }]);
     expect(sync.copyOnce).not.toHaveBeenCalled();
     expect(sync.flush).not.toHaveBeenCalled();
 
@@ -428,6 +428,8 @@ describe('WorkspaceSyncHandoffAdapter', () => {
     await expect(adapter.commit({ operationId: handoff.operationId, prepared })).resolves.toMatchObject({
       kind: 'linked_workspace', traversed: [{ relationshipId: 'source-hub' }, { relationshipId: 'hub-target' }],
     });
+    await expect(adapter.prepareBetween({ sourceWorkspaceRefId: 'workspace-c', targetWorkspaceRefId: 'workspace-b' }))
+      .resolves.toMatchObject({ ok: true, traversed: [{ relationshipId: 'source-hub' }, { relationshipId: 'hub-target' }] });
   });
 
   it('reports the completed upstream link when the final linked route is blocked', async () => {
@@ -497,17 +499,17 @@ describe('WorkspaceSyncHandoffAdapter', () => {
     await Promise.all([mkdir(sourceRootPath), mkdir(targetRootPath)]);
     // Account Settings persistence and the external Mutagen engine are the
     // boundaries; endpoint materialization and physical-root custody are real.
-    let settings = accountSettingsParse({});
+    let settings = parseProjectAccountSnapshotV1({});
     const sync = managedSync();
     const unusedRelationshipOperation = async (): Promise<never> => { throw new Error('copy must not create a relationship'); };
     const relationshipOwner = createWorkspaceSyncRelationshipOwner({
       localMachineId: 'machine-a',
-      readSettings: async () => settings,
-      mutateSettings: async (mutate) => {
-        settings = accountSettingsParse(await mutate(settings));
-        return { status: 'applied', version: 1, settings };
+      readProjectSnapshot: async () => settings,
+      mutateProjectSnapshot: async (mutate) => {
+        settings = parseProjectAccountSnapshotV1(await mutate(settings));
+        return { status: 'applied', version: 1, snapshot: settings };
       },
-      waitForSettingsReconciliation: async () => undefined,
+      waitForProjectReconciliation: async () => undefined,
       ensureRelationship: unusedRelationshipOperation,
       flushRelationship: unusedRelationshipOperation,
       commitRelationshipTarget: unusedRelationshipOperation,
@@ -555,8 +557,8 @@ describe('WorkspaceSyncHandoffAdapter', () => {
       expect(input.targetWorkspaceRefId).toBeUndefined();
       await adapter.finalize({ operationId: input.operationId, prepared });
       expect(sync.copyOnce).toHaveBeenCalledWith(expect.objectContaining({
-        alphaWorkspaceRefId: settings.workspaceRefsV1.find((ref) => ref.machineId === 'machine-a')?.id,
-        betaWorkspaceRefId: settings.workspaceRefsV1.find((ref) => ref.machineId === 'machine-b')?.id,
+        alphaWorkspaceRefId: settings.workspaceRefs.find((ref) => ref.machineId === 'machine-a')?.id,
+        betaWorkspaceRefId: settings.workspaceRefs.find((ref) => ref.machineId === 'machine-b')?.id,
       }), undefined, expect.any(Array));
       await adapter.commit({ operationId: input.operationId, prepared });
     } finally {
@@ -661,6 +663,7 @@ describe('WorkspaceSyncHandoffAdapter', () => {
     const sync = managedSync();
     const ownershipHandles = [{
       owner: { ownerId: 'handoff-copy', canonicalRoot: '/dst', operation: 'handoff' as const, rootFingerprint: null },
+      assertCurrentRootIdentity: async () => undefined,
       bindCurrentRootIdentity: vi.fn(),
       renew: vi.fn(),
       release: vi.fn(),

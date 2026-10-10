@@ -97,6 +97,7 @@ type NativeCommandIntent = Readonly<{
 /** The same static argv intent supplies preview and launch; availability is a separate installed fact. */
 async function selectNativeCommand(input: Readonly<{
     root: string; source: Extract<ProjectNativeRefV1, { kind: 'native' }>; usage: 'script' | 'service' | 'setup';
+    serviceScope?: string;
 }>): Promise<NativeCommandIntent | ProjectNativeRefusal> {
     const source = input.source;
     const fact = await selectedFile(input.root, source.file);
@@ -138,7 +139,12 @@ async function selectNativeCommand(input: Readonly<{
             case 'turbo':
                 if (basename(absoluteFile) !== 'turbo.json') return refuse('unsupported', 'native_configuration_filename_unsupported');
                 args = ['run', source.target]; break;
-            case 'compose': tool = 'docker'; args = ['compose', '--file', absoluteFile, 'up', source.target]; break;
+            case 'compose': {
+                // A stable, requester-scoped native project is recoverable after daemon loss.
+                // The container IDs captured by its lifecycle, not this name alone, own Stop.
+                const project = `happier-${createHash('sha256').update(JSON.stringify([resolve(input.root), fact.file, source.target, input.serviceScope ?? ''])).digest('hex')}`;
+                tool = 'docker'; args = ['compose', '--project-name', project, '--file', absoluteFile, 'up', '--detach', source.target]; break;
+            }
             case 'devbox':
                 if (basename(absoluteFile) !== 'devbox.json') return refuse('unsupported', 'native_configuration_filename_unsupported');
                 args = ['run', '--config', cwd, source.target];
@@ -184,6 +190,7 @@ async function resolveSelectedNativeCommand(intent: NativeCommandIntent, io: Pro
 /** Passive built-in intent and installed-tool facts; no plugin production callback. */
 export async function inspectProjectNativeCommand(input: Readonly<{
     root: string; source: Extract<ProjectNativeRefV1, { kind: 'native' }>; usage: 'script' | 'service' | 'setup'; io: ProjectNativeCommandIo; signal?: AbortSignal;
+    serviceScope?: string;
 }>): Promise<ProjectNativeRefusal | Extract<ProjectNativeCommandResult, { kind: 'resolved' }>> {
     if (input.signal?.aborted) return refuse('cancelled', 'native_resolution_cancelled');
     const intent = await selectNativeCommand(input);
@@ -193,6 +200,7 @@ export async function inspectProjectNativeCommand(input: Readonly<{
 /** Plugin resolution may execute native effects and belongs to admitted execution. */
 export async function resolveProjectNativeCommand(input: Readonly<{
     root: string; source: ProjectNativeRefV1; usage: 'script' | 'service' | 'setup'; io: ProjectNativeCommandIo; signal?: AbortSignal;
+    serviceScope?: string;
     plugin?: Readonly<{ lease: Pick<ProjectNativeAdapterProductionV1, 'resolveCommand' | 'isCurrent'> }>;
 }>): Promise<ProjectNativeCommandResult> {
     const cancelled = () => refuse('cancelled', 'native_resolution_cancelled');

@@ -79,6 +79,165 @@ const handoffOperationId = 'handoff-op-1';
 const relationshipId = deriveWorkspaceSyncRelationshipId(handoffOperationId);
 
 describe('bind-child replacement approval at the physical target owner', () => {
+  it('qualifies an independent installed Project target from its own row without a Parent route', async () => {
+    const [project, actionHeaders, signing, execution, socketSchemas, installedContent] = await Promise.all([
+      import('@happier-dev/protocol/projects/openProjectV1'), import('@happier-dev/protocol/actions/externalActionApi'),
+      import('@happier-dev/protocol/actions/externalActionExecutionAuthorization'), import('@/api/externalActionExecutionAuthorization'),
+      import('@happier-dev/protocol/socketRpc'),
+      import('@/api/rpc/workspaceSyncTargetContent'),
+    ]);
+    const installed = tweetnacl.sign.keyPair();
+    const installedWriter = tweetnacl.sign.keyPair();
+    const targetCredentials = { token: ['header', Buffer.from(JSON.stringify({ sub: 'target-owner' })).toString('base64url'),
+      'fixture-signature'].join('.'), encryption: null };
+    let binding: Readonly<{ root: ReturnType<typeof ExternalActionExecutionAuthorizationV1Schema.parse>;
+      routing: ReturnType<typeof WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse>;
+      packet: ReturnType<typeof socketSchemas.WorkspaceSyncSourceExecutionV1Schema.parse>;
+      admission: ReturnType<typeof SocketRpcMachineAdmissionContextV1Schema.parse>; machineId: string; installationId: string;
+      method: string }> | undefined;
+    let current = true;
+    const fixture = await composeBindChildSourcePhaseTestRuntime({ socketIo, separateTargetParent: true, targetCredentials,
+      readAdditionalHttpPostResponse: async (url, raw) => {
+        if (!url.endsWith('/admission/verify')) return undefined;
+        if (!binding || !raw || typeof raw !== 'object' || !('proof' in raw)) throw new Error('Missing installed admission proof');
+        const isWriter = url === `https://bind-child-home.invalid/v1/machines/${binding.routing.sourceWriter.machineId}/admission/verify`;
+        const proofMachineId = isWriter ? binding.routing.sourceWriter.machineId : binding.machineId;
+        const proofInstallationId = isWriter ? binding.routing.sourceWriter.installationId : binding.installationId;
+        const proofAdmission = isWriter ? binding.routing.source.sourceContext.machineAdmission : binding.admission;
+        expect(url).toBe(`https://bind-child-home.invalid/v1/machines/${proofMachineId}/admission/verify`);
+        expect(raw).toMatchObject({ method: binding.method, context: proofAdmission, callerInputAuthorization: binding.root,
+          workspaceSyncSourceWriterTargetRouting: binding.routing, workspaceSyncSourceExecution: binding.packet });
+        expect(raw).not.toHaveProperty('workspaceSyncTargetRouting');
+        expect(verifyMachineInstallationProof({ publicKey: isWriter ? installedWriter.publicKey : installed.publicKey,
+          proof: MachineInstallationProofV1Schema.parse(raw.proof), payload: { version: 1,
+            machineId: proofMachineId, installationId: proofInstallationId, accountId: isWriter ? 'owner' : 'target-owner',
+            rpcAdmission: { context: proofAdmission, method: binding.method, callerInputAuthorization: binding.root,
+              workspaceSyncSourceWriterTargetRouting: binding.routing, workspaceSyncSourceExecution: binding.packet } } })).toBe(true);
+        return current ? { status: 200, data: { v: 1, ok: true, ...(isWriter ? { destinationInstallation: {
+          machineId: binding.machineId, installationId: binding.installationId,
+          installationPublicKey: Buffer.from(installed.publicKey).toString('base64url') } } : {}) } }
+          : { status: 403, data: { error: 'access_denied' } };
+      } });
+    if (!fixture.targetParent) throw new Error('Independent target runtime was not composed');
+    const machineId = fixture.targetRef.machineId;
+    const installationId = fixture.managedTargetChild.controller.installationId;
+    const operationId = 'independent-project-target-preflight';
+    const input = project.OpenProjectInputV1Schema.parse({ serverId: fixture.serverId, machineId,
+      source: { kind: 'workspace', workspaceId: fixture.childRef.id, checkout: { serverId: fixture.serverId,
+        workspaceId: fixture.childRef.id, machineId: fixture.childRef.machineId, rootPath: fixture.childRef.rootPath } },
+      materialization: { kind: 'sync', targetPath: fixture.targetPath, workspaceAction: fixture.prepareInput.action } });
+    const envelope = actionHeaders.ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: 'original-independent-project',
+      target: { kind: 'machine', machineId }, input });
+    const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-verified-independent-project', binding: {
+      accountId: 'borrower', principalId: 'borrower', credentialId: 'independent-project-pat', grant: API_TOKEN_FULL_GRANT_V1,
+      custodianAccountId: 'target-owner', serverIdentityId: fixture.serverId, machineId, installationId,
+      actionId: 'projects.open', requestId: envelope.requestId, target: envelope.target,
+      requestEnvelopeDigest: signing.computeExternalActionRequestEnvelopeDigestV1(envelope) } });
+    const source = WorkspaceSyncSourceRoutingV1Schema.parse({ v: 1, phase: 'prepare', operationId,
+      accountServerId: fixture.serverId, sourceMachineId: fixture.childRef.machineId, sourceRootPath: fixture.childRef.rootPath,
+      originalActionEnvelope: envelope, sourceContext: { callerAuthority: 'account_automation', workspaceWrites: 'allow',
+        callerInputConstraints: { models: API_TOKEN_FULL_GRANT_V1.models, permissionModes: API_TOKEN_FULL_GRANT_V1.permissionModes },
+        machineAdmission: { actorAccountId: 'borrower', custodianAccountId: 'owner', machineId: fixture.childRef.machineId,
+          installationId: fixture.childInstallationId, role: 'use', encryptionMode: 'plain' } } });
+    const method = `${machineId}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT}`;
+    const packetMethod = `${fixture.sourceRef.machineId}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN}`;
+    const content = installedContent.createWorkspaceSyncTargetContent({ destination: { machineId: fixture.sourceRef.machineId,
+      installationId: fixture.controller.installationId,
+      installationPublicKey: Buffer.from(installedWriter.publicKey).toString('base64url') }, method: packetMethod, routing: source });
+    const packetParams = await socketRpcCodec.encodeParams(content, input, { method: packetMethod, callId: 'a'.repeat(32) });
+    const packet = socketSchemas.WorkspaceSyncSourceExecutionV1Schema.parse({ method: packetMethod, requestId: 'independent-source-packet',
+      params: packetParams, externalActionExecution: execution.createExternalActionMachineRpcExecution({ context: {
+        externalActionExecutionAuthorization: root, externalActionTarget: root.binding.target }, effectActionId: 'projects.open',
+        installationId, method: packetMethod, requestId: 'independent-source-packet', params: packetParams,
+        workspaceSyncSourceRouting: source, privateKey: installed.secretKey }) });
+    const routing = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse({ v: 1, sourceWriter: fixture.controller, source,
+      target: { v: 1, phase: 'preflight', operationId, accountServerId: fixture.serverId,
+        targetMachineId: machineId, targetRootPath: fixture.targetPath } });
+    const admission = SocketRpcMachineAdmissionContextV1Schema.parse({ actorAccountId: 'borrower', custodianAccountId: 'target-owner',
+      machineId, installationId, role: 'use', encryptionMode: 'plain' });
+    binding = { root, routing, packet, admission, machineId, installationId, method };
+    const rpc = new RpcHandlerManager({ scopePrefix: machineId, localMachineId: machineId, encryptionMode: 'plain', logger: () => {},
+      authorizeRequest: request => authorizeMachineRpcRequest(request, { machineId, resolveCustodianAccountId: async () => 'target-owner',
+        resolveInstallationId: () => installationId, verifyMachineAdmission: admitted => verifyMachineRpcAdmissionCurrent({ ...admitted,
+          workspaceSyncSourceWriterTargetReceiver: { machineId, installationId, accountId: 'target-owner' },
+          privateKey: installed.secretKey, daemonToken: targetCredentials.token, serverHttpBaseUrl: 'https://bind-child-home.invalid' }) }) });
+    registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager: rpc, service: fixture.targetParent.workspaceSync });
+    const request = { method, params: { v: 1, operationId, serverId: fixture.serverId, machineId,
+      targetPath: fixture.targetPath, destinationIntent: 'materialize_from_source_workspace' }, machineAdmission: admission,
+      callerInputAuthorization: root, callerAuthority: 'account_automation' as const,
+      callerInputConstraints: source.sourceContext!.callerInputConstraints,
+      workspaceSyncSourceWriterTargetRouting: routing, workspaceSyncSourceExecution: packet };
+    // This signed Home-response boundary is not a claim that the issuer ran.
+    const response = await rpc.handleRequest(request);
+    expect(response).toMatchObject({ type: 'not_required', targetWorkspace: fixture.targetRef });
+    const identity = (writer: boolean) => ({ version: 1 as const, createdAt: 1,
+      installationId: writer ? fixture.controller.installationId : installationId,
+      publicKey: Buffer.from((writer ? installedWriter : installed).publicKey).toString('base64url'),
+      privateKey: Buffer.from((writer ? installedWriter : installed).secretKey).toString('base64url') });
+    const osIdentity = vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue(identity(true));
+    onTestFinished(() => osIdentity.mockRestore());
+    const writer = runWithServerHttpBaseUrl('https://bind-child-home.invalid', () =>
+      new ApiMachineClient(fixture.credentials.token, { id: fixture.sourceRef.machineId, encryptionMode: 'plain',
+        encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'legacy', metadata: null, metadataVersion: 0,
+        daemonState: null, daemonStateVersion: 0 }));
+    Reflect.set(writer, 'socket', createApiSessionSocketStub({ connected: true, emitWithAck: async (_event, raw) => {
+      if (!raw || typeof raw !== 'object' || !('method' in raw) || typeof raw.method !== 'string'
+        || !('requestId' in raw) || typeof raw.requestId !== 'string' || !('params' in raw) || !('externalActionExecution' in raw)) {
+        throw new Error('The installed SOURCE writer did not sign the chosen target request');
+      }
+      const signed = ExternalActionMachineRpcExecutionV1Schema.parse(raw.externalActionExecution);
+      expect(raw.method).toBe(method);
+      expect(raw).toMatchObject({ workspaceSyncSourceWriterTargetRouting: routing, workspaceSyncSourceExecution: packet });
+      expect(raw).not.toHaveProperty('workspaceSyncTargetRouting');
+      expect(verifyExternalActionMachineRpcRequestV1({ authorizationToken: root.token, effectActionId: 'projects.open',
+        target: root.binding.target, installationId: fixture.controller.installationId, event: SOCKET_RPC_EVENTS.CALL,
+        method, requestId: raw.requestId, params: raw.params, workspaceSyncSourceWriterTargetRouting: routing,
+        publicKey: installedWriter.publicKey, signature: signed.machineSignature })).toBe(true);
+      osIdentity.mockReturnValue(identity(false));
+      try { return { ok: true, result: await rpc.handleRequest({ ...raw, machineAdmission: admission, callerInputAuthorization: root,
+        callerAuthority: 'account_automation', callerInputConstraints: source.sourceContext!.callerInputConstraints }) }; }
+      finally { osIdentity.mockReturnValue(identity(true)); }
+    } }));
+    const throughWriter = await writer.callWorkspaceSyncTargetPhase({ machineId,
+      method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT, request: request.params, routing: routing.target,
+      credentials: fixture.credentials, context: buildActionExecutorContextForRpc({ callerInputAuthorization: root,
+        callerAuthority: 'account_automation', callerInputConstraints: source.sourceContext!.callerInputConstraints,
+        machineAdmission: source.sourceContext!.machineAdmission, workspaceSyncSourceRouting: source,
+        workspaceSyncSourceExecution: packet, signal: new AbortController().signal, serverId: fixture.serverId,
+        verifyMachineAdmissionCurrent: async () => await verifyMachineRpcAdmissionCurrent({ context: source.sourceContext!.machineAdmission,
+          method, workspaceSyncSourceWriterTargetRouting: routing, workspaceSyncSourceExecution: packet, callerInputAuthorization: root,
+          workspaceSyncSourceWriterTargetReceiver: { machineId: fixture.sourceRef.machineId,
+            installationId: fixture.controller.installationId, accountId: 'owner', destinationMachineId: machineId },
+          privateKey: installedWriter.secretKey, daemonToken: fixture.credentials.token, serverHttpBaseUrl: 'https://bind-child-home.invalid' }) }) });
+    expect(throughWriter).toMatchObject({ type: 'not_required', targetWorkspace: fixture.targetRef, physicalEndpoint: {
+      machineId, installationId, installationPublicKey: Buffer.from(installed.publicKey).toString('base64url') } });
+    const loan = await fixture.probeTarget();
+    expect(loan).not.toHaveProperty('kind');
+    if (!('kind' in loan)) await loan.release();
+    expect(await rpc.handleRequest({ ...request, params: { ...request.params, targetPath: `${fixture.targetPath}-other` } }))
+      .toMatchObject({ error: expect.any(String) });
+    current = false;
+    expect(await rpc.handleRequest(request)).toMatchObject({ error: expect.any(String) });
+    await expect(stat(fixture.targetPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    current = true;
+    const prepareRouting = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse({ ...routing,
+      target: { ...routing.target, phase: 'prepare' } });
+    const prepareMethod = `${machineId}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE}`;
+    binding = { ...binding, routing: prepareRouting, method: prepareMethod };
+    const prepared = await rpc.handleRequest({ ...request, method: prepareMethod,
+      workspaceSyncSourceWriterTargetRouting: prepareRouting,
+      params: { v: 1, bootstrapOperationId: operationId,
+        owner: { kind: 'copy_once', operation: { v: 1, operationId,
+          controllerMachineId: fixture.sourceRef.machineId, alphaWorkspaceRefId: fixture.sourceRef.id,
+          betaWorkspaceRefId: fixture.targetRef.id, contentPolicy: fixture.prepareInput.action.contentPolicy } },
+        targetWorkspaceRefId: fixture.targetRef.id, endpointRole: 'beta',
+        policyDigest: fixture.prepareInput.action.contentPolicy.policyDigest, createIfMissing: true,
+        targetBootstrap: 'materialize_from_source_workspace' } });
+    expect(prepared).toMatchObject({ state: 'ready', targetWorkspaceRefId: fixture.targetRef.id,
+      targetWorkspace: fixture.targetRef });
+    expect(await fixture.probeTarget()).toMatchObject({ kind: 'overlap' });
+  });
+
   it.each([
     { title: 'prepares through the original chosen TARGET owner without reading its rows from the SOURCE writer', lostAcknowledgement: false },
     { title: 'releases cross-custodian target custody from the preflight endpoint after a completed prepare acknowledgement is lost', lostAcknowledgement: true },

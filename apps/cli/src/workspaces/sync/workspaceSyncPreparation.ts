@@ -8,7 +8,7 @@ import type { WorkspaceSyncStatusV1 } from './workspaceSyncTypes';
 import type { StoredCredentials } from '@/persistence';
 import type { ProjectExecutionChoiceV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { readProjectAccountRows } from '@/workspaces/projectAccountRows';
+import { readProjectAccountRows, type ActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 import { readWorkspaceSyncRootObjectIdentity } from './workspaceSyncRootIdentity';
 import { readWorkspaceSyncChildMachineFacts } from './workspaceSyncTargetAuthority';
 import { managedDevcontainerChildProjectionsEqualV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
@@ -47,6 +47,24 @@ export type WorkspaceSyncWorkerTargetBasis = Readonly<{
   childMachines?: readonly WorkspaceSyncChildMachineFacts[];
 }>;
 
+/** Passive status and execution acquire the same current route inputs. */
+export async function readWorkspaceSyncWorkerTargetSnapshot(input: Readonly<{
+  serverId: string;
+  serverHttpBaseUrl: string;
+  targetMachineId: string;
+  sourceWorkspaceRefId: string;
+  credentials: StoredCredentials;
+  signal?: AbortSignal;
+}>): Promise<ActiveProjectAccountRowsSnapshot & Readonly<{ childMachines: readonly WorkspaceSyncChildMachineFacts[] }>> {
+  return await runWithServerHttpBaseUrl(input.serverHttpBaseUrl, async () => {
+    const snapshot = await readProjectAccountRows({ credentials: input.credentials, serverId: input.serverId, signal: input.signal });
+    const childMachines = await readWorkspaceSyncChildMachineFacts({ ...input,
+      machineIds: snapshot.workspaceRefs.filter(ref => ref.serverId === input.serverId
+        && (ref.id === input.sourceWorkspaceRefId || ref.machineId === input.targetMachineId)).map(ref => ref.machineId) });
+    return { ...snapshot, childMachines };
+  });
+}
+
 /** Installed finite and service consumers share the same exact route and clean preparation. */
 export function createWorkspaceSyncWorkerPreparation(input: Readonly<{
   serverId: string;
@@ -57,14 +75,8 @@ export function createWorkspaceSyncWorkerPreparation(input: Readonly<{
   prepareBetween(request: Readonly<{ sourceWorkspaceRefId: string; targetWorkspaceRefId: string }>, signal: AbortSignal): Promise<WorkspaceSyncPrepareBetweenResultV1>;
 }>) {
   const fail = (code: string): never => { throw Object.assign(new Error(code), { code }); };
-  const readCurrent = async (signal: AbortSignal, sourceWorkspaceRefId: string) => await runWithServerHttpBaseUrl(input.serverHttpBaseUrl,
-    async () => {
-      const snapshot = await readProjectAccountRows({ credentials: input.credentials, serverId: input.serverId, signal });
-      const childMachines = await readWorkspaceSyncChildMachineFacts({ ...input, signal,
-        machineIds: snapshot.workspaceRefs.filter(ref => ref.serverId === input.serverId
-          && (ref.id === sourceWorkspaceRefId || ref.machineId === input.targetMachineId)).map(ref => ref.machineId) });
-      return { ...snapshot, childMachines };
-    });
+  const readCurrent = (signal: AbortSignal, sourceWorkspaceRefId: string) =>
+    readWorkspaceSyncWorkerTargetSnapshot({ ...input, signal, sourceWorkspaceRefId });
   return {
     resolveWorkerTarget: async ({ source, signal }: Readonly<{ source: WorkspaceRefV1; signal: AbortSignal }>): Promise<WorkspaceSyncWorkerTargetBasis> => {
       if (!await input.isCurrent()) fail('project_requester_credentials_unavailable');

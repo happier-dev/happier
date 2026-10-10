@@ -1,0 +1,99 @@
+---
+title: Contribute roles
+description: Offer reusable instructions and execution preferences without owning Session lifecycle.
+---
+
+Give users a reusable role for work your plugin understands. A role supplies
+instructions and execution preferences; Happier resolves it alongside the
+user's Account, Session and workflow choices.
+
+The declarative `roles` family is a **development-source Developer Preview**
+contract. Use it only when your installed SDK's
+[capability matrix](/plugins/manifest/availability) and
+[public surface inventory](/plugins/api/surface) include it. This guide does
+not claim package publication or loaded-client verification.
+
+## Declare a role
+
+Start with a code-defined plugin using `definePlugin(...)`. Add a named role
+to its `roles` map:
+
+```ts
+roles: {
+  'security-reviewer': {
+    name: 'Security reviewer',
+    instructions: 'Review security boundaries and report evidence. Do not edit files.',
+    runsAs: { kind: 'background_run', intent: 'review' },
+    workspaceWrites: 'deny',
+    secondOpinion: 'off',
+    enabled: true,
+  },
+},
+```
+
+Pack projects the declaration into the cold manifest. Roles need no activation
+handler, runtime factory or separate registration. The local key becomes the
+host identity `plugin:<pluginId>/security-reviewer`; the role's name and the
+plugin's display name are what the user sees.
+
+For a hand-authored manifest, the same declaration is an entry in
+`contributes.roles`, including `id: 'security-reviewer'`. Both authoring forms
+pass the contribution catalog's `roles` family into the existing host
+projection; do not register another role source in `activate(api)`.
+
+Use `runsAs: { kind: 'session' }` for an interactive Session. A background-run
+role also declares its intent. Optional `engine` and `profileId` fields supply
+execution preferences; they do not create an Agent or grant permissions. The
+workspace-write setting is a ceiling, not a replacement for the Session's
+permission mode.
+
+## Read and use the role
+
+The SDK's `PluginManifest` contribution descriptor is the public declaration
+type; `definePlugin` infers its local-id-keyed authoring map. The generated
+`RolesActionInputById` and `RolesActionResultById` maps carry the role, engine,
+runs-as and override shapes, for example `RolesActionInputById['roles.create']`.
+Consult the
+[public surface inventory](/plugins/api/surface) for the installed SDK's
+exports rather than importing Protocol schemas into a plugin leaf.
+
+Use the host's typed Actions through your existing SDK Action service.
+`roles.list` and `roles.get` return the canonical role sources, including the
+read-only plugin source. `session.role.set` selects a role for a Session;
+Session overrides and workflow choices remain host-owned. The generated
+[host Action reference](/plugins/api/host-actions) supplies exact input,
+output and availability contracts rather than a second list here.
+
+Starts use `session.spawn_new` or `execution.run.start` with the qualified
+`roleId` and matching runs-as choice. The host resolves engine, profile and
+attributes and applies its normal start policy and permission ceiling. Use
+`session.roles.override.set` / `.clear` for a session-local override and
+`workflow.run.start` with `roleOverrides` for a run-local choice. A typed
+Action does not grant its caller authority; discover its supported plugin
+surface and approval requirements before invocation.
+
+Users can override a plugin role through `roles.override.set` and clear that
+choice with `roles.override.reset`. These change the Account's override, not
+the plugin's source declaration. Direct update or deletion of the plugin
+source returns `role_read_only`.
+
+## Source availability
+
+Disabling, uninstalling or withdrawing the plugin withdraws its role source.
+An Account override alone cannot recreate a missing source; resolution returns
+`role_target_unavailable`. If another source could not be read, an incomplete
+inventory is reported rather than silently treated as empty. Existing complete
+Session snapshots are resolved by the same host role owner.
+
+To change the role's default instructions, edit its declaration and use the
+normal plugin update flow. To change only one user's choice, use the override
+Actions. Do not maintain a plugin-local role catalog or patch Session metadata
+directly.
+
+## Related
+
+- [Code-defined manifest contributions](/plugins/manifest/contributions)
+- [Host Actions](/plugins/api/host-actions)
+- [Add an Agent](/plugins/guides/agent-modes)
+- [Testing plugins](/plugins/testing)
+- [User role guide](/agents/roles)

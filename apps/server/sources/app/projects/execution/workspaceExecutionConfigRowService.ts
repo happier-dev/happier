@@ -77,7 +77,7 @@ export async function mutateWorkspaceExecutionConfigRowInTx(tx: Tx, input: Reado
     });
 }
 export function readWorkspaceExecutionConfigRow(input: Parameters<typeof readWorkspaceExecutionConfigRowInTx>[1]): Promise<ReservedAccountScopedKvRowReadResult<WorkspaceExecutionConfigContentV1>> {
-    return inTx(tx => readWorkspaceExecutionConfigRowInTx(tx, input));
+    return inTx(tx => readWorkspaceExecutionConfigRowInTx(tx, input), { readOnly: true });
 }
 export function mutateWorkspaceExecutionConfigRow(input: Parameters<typeof mutateWorkspaceExecutionConfigRowInTx>[1]): Promise<ReservedAccountScopedKvRowMutationResult> {
     return inTx(tx => mutateWorkspaceExecutionConfigRowInTx(tx, input));

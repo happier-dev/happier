@@ -1,14 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { OpenProjectResultV1Schema, ProjectOpenSyncMaterializationResultV1Schema, type ProjectOpenSyncMaterializationResultV1, type OpenProjectInputV1, type OpenProjectResultV1 } from '@happier-dev/protocol/projects/openProjectV1';
-import axios from 'axios';
-import { ManagedListOutputV1Schema, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { isManagedDevcontainerChildProjectionCurrentV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { readWorkspaceSyncChildMachineFacts } from '@/workspaces/sync/workspaceSyncTargetAuthority';
-import { readProjectManifest } from '@/workspaces/projectSetup/projectManifestFile';
-import { resolveCanonicalAbsolutePath, resolveCanonicalAbsoluteChildPathComparisonIdentity,
-  resolveCanonicalAbsolutePathComparisonIdentity } from '@/utils/path/expandHomeDirPath';
-import { resolveProjectDevcontainerSelection } from '@/workspaces/projectSetup/projectNativeResolution';
-import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
+import { resolveCanonicalAbsolutePathComparisonIdentity } from '@/utils/path/expandHomeDirPath';
 import { resolveWorkspaceSyncEndpoint, resolveWorkspaceSyncTransportAddress } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { WorkspaceAddressV1, WorkspaceProjectFactsV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
@@ -202,85 +196,34 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
         sourceDirectory = sourceRootPath = input.source.path;
       }
       if (sourceProvenance) facts = { ...facts, source: sourceProvenance };
-      const resolveChildNamespace = async (rootPath: string): Promise<OpenProjectResultV1 | null> => {
-        const canonical = resolveCanonicalAbsolutePath(rootPath);
-        if (!canonical) return refused('invalid_directory');
-        const manifest = await readProjectManifest({ root: canonical.path });
-        if (!manifest.document || manifest.document.status !== 'valid' || !manifest.document.manifest.devcontainer) return null;
-        const path = managedMachineActionEndpointPathV1('machines.managed.list');
-        const body = { homeId: runtime.serverId };
-        const requesterHeaders = requester.rows.authorization ? await requester.rows.authorization.requesterHttpProjection!.createRequestHeaders({
-          effectActionId: 'projects.open', method: 'POST', path, body, signal: context.signal }) : null;
-        if (requester.rows.authorization && !requesterHeaders) return refused('requester_authority_unavailable');
-        const response = await axios.post(`${runtime.serverHttpBaseUrl.replace(/\/+$/, '')}${path}`,
-          body, { signal: context.signal,
-            headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), ...(requesterHeaders ?? { Authorization: `Bearer ${credentials!.token}` }) } });
-        const machines = ManagedListOutputV1Schema.parse(response.data).machines;
-        const localChild = machines.filter(machine => machine.homeId === runtime.serverId && machine.enrolledMachineId === runtime.machineId
-          && machine.creationState === 'active' && machine.allocation === 'bound' && machine.resource?.devcontainerObservation);
-        if (localChild.length > 1) return refused('workspace_sync_child_unavailable');
-        const parentRoot = resolveWorkspaceRefForMachineRoot(snapshot.workspaceRefs, { serverId: runtime.serverId,
-          machineId: runtime.machineId, rootPath: canonical.path });
-        const candidates = localChild.length ? localChild : machines.filter(machine => machine.homeId === runtime.serverId
-          && machine.creationState === 'active' && machine.allocation === 'bound' && machine.enrolledMachineId
-          && machine.controller.machineId === runtime.machineId && machine.controller.installationId === admission.installationId
-          && machine.resource?.devcontainerObservation?.storage.kind === 'bind'
-          && (() => { const boundRoot = resolveWorkspaceRefV1(snapshot.workspaceRefs, { serverId: runtime.serverId, machineId: runtime.machineId,
-            rootPath: machine.resource.devcontainerObservation.storage.hostPath });
-            return boundRoot.kind === 'resolved' && boundRoot.ref.id === parentRoot?.id; })());
-        if (candidates.length !== 1) return refused(candidates.length ? 'workspace_sync_child_unavailable' : 'child_required');
-        const childMachineId = candidates[0]!.enrolledMachineId!;
-        const children = await readWorkspaceSyncChildMachineFacts({ serverId: runtime.serverId,
-          serverHttpBaseUrl: runtime.serverHttpBaseUrl, ...(credentials ? { credentials } : {}), machineIds: [childMachineId],
-          ...(requester.rows.authorization ? { authorization: requester.rows.authorization, effectActionId: 'projects.open', externalAction: requester.externalAction } : {}),
-          purpose: 'child_namespace', signal: context.signal });
-        const child = children[0];
-        if (children.length !== 1 || !child || !isManagedDevcontainerChildProjectionCurrentV1({ homeId: runtime.serverId,
-          machineId: childMachineId, projection: child.projection, managedMachine: child.managedMachine })) return refused('workspace_sync_child_unavailable');
-        const selected = await resolveProjectDevcontainerSelection({ root: canonical.path,
-          selection: manifest.document.manifest.devcontainer });
-        if (selected.kind !== 'selected') return refused('child_required');
-        const choices = child.managedMachine.launch.choices;
-        if (!choices || typeof choices !== 'object' || Array.isArray(choices)
-          || typeof choices.workspaceFolder !== 'string' || typeof choices.configPath !== 'string') return refused('child_required');
-        const selectedConfig = resolveCanonicalAbsoluteChildPathComparisonIdentity(choices.workspaceFolder, selected.file);
-        if (!selectedConfig || selectedConfig !== resolveCanonicalAbsolutePathComparisonIdentity(choices.configPath)) return refused('child_required');
-        const observation = child.projection.observation;
-        if (localChild.length) {
-          if (canonical.path !== observation.workspaceFolder) return refused('workspace_sync_child_unavailable');
-          if (observation.storage.kind === 'bind') {
-            const parent = resolveWorkspaceRefV1(snapshot.workspaceRefs, { serverId: runtime.serverId,
-              machineId: child.managedMachine.controller.machineId, rootPath: observation.storage.hostPath });
-            if (parent.kind !== 'resolved') return refused('workspace_sync_child_unavailable');
-            parentWorkspace = workspaceAddressFromRefV1(parent.ref);
-            facts = { ...facts,
-              ...(parent.ref.repositoryIdentity ? { repositoryIdentity: parent.ref.repositoryIdentity } : {}),
-              ...(parent.ref.source ? { source: parent.ref.source } : {}) };
-          }
-          return null;
-        }
-        if (!await context.verifyMachineAdmissionCurrent!() || !await requester.isCurrent()) return refused('project_open_scope_changed');
-        if (!credentials) return refused('requester_account_unavailable');
-        if (requester.rows.authorization && !requester.externalAction) return refused('requester_authority_unavailable');
-        const childResult = OpenProjectResultV1Schema.safeParse(await callExactMachineRpc({ credentials,
-          serverUrl: runtime.serverHttpBaseUrl, machineId: childMachineId, method: RPC_METHODS.PROJECTS_OPEN,
-          ...(requester.externalAction ? { externalAction: requester.externalAction } : {}),
-          request: input.materialization.kind === 'sync'
-            ? { ...input, machineId: childMachineId, materialization: { ...input.materialization, targetPath: observation.workspaceFolder } }
-            : { ...input, machineId: childMachineId, source: { kind: 'folder', path: observation.workspaceFolder }, materialization: { kind: 'attach' } },
-          requireCurrentMachine: true, timeoutMs: null, signal: context.signal }));
-        if (!childResult.success) return outcomeUnknown('Child Open returned an invalid settlement');
-        if (childResult.data.kind === 'outcomeUnknown') return outcomeUnknown('Child Open did not confirm settlement');
-        if (childResult.data.kind === 'refused') return refused(childResult.data.code, childResult.data);
-        return childResult.data;
+      // Native selection/acquisition happens before Open. Qualify only the
+      // caller's chosen Machine; a manifest cannot redirect browse acceptance.
+      const children = await readWorkspaceSyncChildMachineFacts({ serverId: runtime.serverId,
+        serverHttpBaseUrl: runtime.serverHttpBaseUrl, ...(credentials ? { credentials } : {}), machineIds: [runtime.machineId],
+        ...(requester.rows.authorization ? { authorization: requester.rows.authorization, effectActionId: 'projects.open', externalAction: requester.externalAction } : {}),
+        purpose: 'child_namespace', signal: context.signal });
+      const child = children[0];
+      if (child && !isManagedDevcontainerChildProjectionCurrentV1({ homeId: runtime.serverId,
+        machineId: runtime.machineId, projection: child.projection, managedMachine: child.managedMachine })) return refused('workspace_sync_child_unavailable');
+      const acceptsSelectedRoot = (rootPath: string) => {
+        if (!child) return true;
+        const canonical = resolveCanonicalAbsolutePathComparisonIdentity(rootPath);
+        return canonical !== null && canonical === resolveCanonicalAbsolutePathComparisonIdentity(child.projection.observation.workspaceFolder);
       };
+      if (child?.projection.observation.storage.kind === 'bind') {
+        const parent = resolveWorkspaceRefV1(snapshot.workspaceRefs, { serverId: runtime.serverId,
+          machineId: child.managedMachine.controller.machineId, rootPath: child.projection.observation.storage.hostPath });
+        if (parent.kind !== 'resolved') return refused('workspace_sync_child_unavailable');
+        parentWorkspace = workspaceAddressFromRefV1(parent.ref);
+        facts = { ...facts,
+          ...(parent.ref.repositoryIdentity ? { repositoryIdentity: parent.ref.repositoryIdentity } : {}),
+          ...(parent.ref.source ? { source: parent.ref.source } : {}) };
+      }
       if (input.materialization.kind === 'attach' && sourceRootPath) {
-        const childResult = await resolveChildNamespace(sourceRootPath);
-        if (childResult) return childResult;
+        if (!acceptsSelectedRoot(sourceRootPath)) return refused('workspace_sync_child_unavailable');
       }
       if (input.materialization.kind === 'sync') {
-        const childResult = await resolveChildNamespace(input.materialization.targetPath);
-        if (childResult) return childResult;
+        if (!acceptsSelectedRoot(input.materialization.targetPath)) return refused('workspace_sync_child_unavailable');
       }
       let sync: Parameters<typeof materializeProjectCheckout>[0]['sync'];
       let remoteSyncSource: string | undefined;
@@ -385,8 +328,7 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
         selector, ref, subdir, registry: runtime.registry, signal: context.signal, sync,
         onEffectsIssued: () => { effectsIssued = true; },
       });
-      const childResult = await resolveChildNamespace(checkout.rootPath);
-      if (childResult) return childResult;
+      if (!acceptsSelectedRoot(checkout.rootPath)) return refused('workspace_sync_child_unavailable');
       if (checkout.repositoryIdentity) facts = { ...facts, repositoryIdentity: checkout.repositoryIdentity };
       context.signal.throwIfAborted();
       if (!await context.verifyMachineAdmissionCurrent!()) return effectsIssued ? outcomeUnknown('Machine admission changed after materialization') : refused('machine_access_denied');

@@ -10,7 +10,7 @@ import {
   type SessionMetadataTupleMutationSnapshotV1,
   type SessionMetadataTupleMutationV1,
 } from '@happier-dev/cli-common/sessionMetadata';
-import { createPlainSessionOwnerMetadataEnvelopeV1, projectSessionMetadataAgentVocabularyWriteCompatibilityV1, projectSessionOwnerCompatibilityViewV1, SESSION_METADATA_LAYOUT_VERSION_V1, SessionOwnerMetadataEnvelopeV1Schema, SessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { createPlainSessionOwnerMetadataEnvelopeV1, projectSessionMetadataAgentVocabularyWriteCompatibilityV1, projectSessionOwnerCompatibilityViewV1, SESSION_METADATA_LAYOUT_VERSION_V1, StoredSessionOwnerMetadataEnvelopeV1Schema, StoredSessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { openSessionOwnerMetadataEnvelopeV1, sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
 import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
@@ -128,6 +128,7 @@ export type SessionMetadataTupleWriteAuthority =
 export type SessionMetadataMutationCurrentness = Readonly<{
   signal?: AbortSignal;
   assertCurrent?: () => void;
+  verifyCurrent?: () => Promise<boolean>;
 }>;
 
 export function assertSessionMetadataMutationCurrentness(
@@ -135,6 +136,16 @@ export function assertSessionMetadataMutationCurrentness(
 ): void {
   currentness?.assertCurrent?.();
   currentness?.signal?.throwIfAborted();
+}
+
+export async function verifySessionMetadataMutationCurrentness(
+  currentness: SessionMetadataMutationCurrentness | undefined,
+): Promise<void> {
+  assertSessionMetadataMutationCurrentness(currentness);
+  if (currentness?.verifyCurrent && !await currentness.verifyCurrent()) {
+    throw createMetadataUpdateError('Session publisher authority is no longer current', 'session_publisher_authority_lost');
+  }
+  assertSessionMetadataMutationCurrentness(currentness);
 }
 
 async function waitForSessionMetadataRetry(params: Readonly<{
@@ -363,13 +374,13 @@ function readLayout1TupleSnapshot(params: Readonly<{
     ...cryptoContext,
     value: String(params.rawSession.metadata ?? '').trim(),
   });
-  const sharedMetadata = SessionSharedMetadataV1Schema.safeParse(sharedPlaintext);
+  const sharedMetadata = StoredSessionSharedMetadataV1Schema.safeParse(sharedPlaintext);
   const ownerMetadata = tryDecryptSessionOwnerMetadata({
     credentials: params.credentials,
     accountEncryptionMode: params.accountEncryptionCurrentness.mode,
     rawSession: params.rawSession,
   });
-  const ownerMetadataEnvelope = SessionOwnerMetadataEnvelopeV1Schema.safeParse(
+  const ownerMetadataEnvelope = StoredSessionOwnerMetadataEnvelopeV1Schema.safeParse(
     params.rawSession.ownerMetadata,
   );
   if (
@@ -482,7 +493,7 @@ export function readSessionMetadataSharedEditorTupleSnapshot(
   }
   const sharedMetadataCiphertext =
     String(params.rawSession.metadata ?? '').trim();
-  const sharedMetadata = SessionSharedMetadataV1Schema.safeParse(
+  const sharedMetadata = StoredSessionSharedMetadataV1Schema.safeParse(
     decryptStoredSessionPayload({
       ...cryptoContext,
       value: sharedMetadataCiphertext,
@@ -650,6 +661,7 @@ async function updateLegacyMetadataWithHttpRetry(params: Readonly<{
       payload: wireMetadata,
     });
     assertSessionMetadataMutationCurrentness(params.currentness);
+    await verifySessionMetadataMutationCurrentness(params.currentness);
     const result = await patchSessionMetadata({
       token: params.token,
       ...(params.resolveAuthorizationHeaders
@@ -878,6 +890,7 @@ export async function updateSessionMetadataEnvelopeTupleWithRetry(
         if (activitySummaryV1 && (transportPatch.mode === 'owner' || transportPatch.mode === 'owner_migration')) {
           transportPatch = { ...transportPatch, activitySummaryV1 };
         }
+        await verifySessionMetadataMutationCurrentness(params.currentness);
         const result = await patchSessionMetadataEnvelopeTuple({
           token: params.token,
           ...(params.resolveAuthorizationHeaders
@@ -931,7 +944,7 @@ export async function updateSessionMetadataEnvelopeTupleWithRetry(
         return { result: 'conflict' as const };
       },
       refreshAfterConflict: async () => {
-        assertSessionMetadataMutationCurrentness(params.currentness);
+        await verifySessionMetadataMutationCurrentness(params.currentness);
         if (!owner) {
           const sharedRaw = await fetchSessionByIdCompat({
             token: params.token,
@@ -1101,6 +1114,7 @@ export async function updateSessionMetadataWithRetry(params: Readonly<{
   updater: (
     metadata: Record<string, unknown>,
   ) => Record<string, unknown> | Promise<Record<string, unknown>>;
+  expectedMetadataRevision?: number;
   sessionExpectation?:
     SessionMetadataInactiveModelIntentExpectationV1;
   teamCredentialBindings?: SessionTeamCredentialBindingIntentListV1;
@@ -1109,7 +1123,7 @@ export async function updateSessionMetadataWithRetry(params: Readonly<{
   currentness?: SessionMetadataMutationCurrentness;
   maxAttempts?: number;
 }>): Promise<{ version: number; metadata: Record<string, unknown> }> {
-  assertSessionMetadataMutationCurrentness(params.currentness);
+  await verifySessionMetadataMutationCurrentness(params.currentness);
   const accountEncryptionCurrentness = params.accountEncryptionCurrentness
     ?? await fetchAccountEncryptionCurrentness({
       token: params.token,
@@ -1160,6 +1174,7 @@ export async function updateSessionMetadataWithRetry(params: Readonly<{
     teamVisibilityGrantConsent: params.teamVisibilityGrantConsent,
     mutation: {
       kind: 'metadata',
+      ...(params.expectedMetadataRevision !== undefined ? { expectedMetadataRevision: params.expectedMetadataRevision } : {}),
       update: async (metadata) =>
         await params.updater(metadata) as Metadata,
     },
