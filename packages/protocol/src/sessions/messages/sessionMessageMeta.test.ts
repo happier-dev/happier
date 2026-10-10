@@ -1,8 +1,30 @@
 import { describe, expect, it } from 'vitest';
 
 import * as protocol from '../../index.js';
+import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 
 describe('sessionMessages meta', () => {
+  it('retains predecessor Claude execution choices without retaining arbitrary metadata', () => {
+    // ../0.2 HEAD 639a32ec0e832dedb35d5a5809c36717c568225f (clean):
+    // buildClaudeRemoteOutgoingMessageMetaExtras writes this family, and
+    // applyClaudeRemoteMetaState reads it to choose SDK, sources and thinking.
+    const reader = createStoredReadSchema(protocol.SessionMessageMetaSchema);
+    const metadata = {
+      source: 'ui',
+      claudeRemoteAgentSdkEnabled: false,
+      claudeRemoteSettingSourcesV2: ['project'],
+      claudeRemoteSettingSources: 'project',
+      claudeRemoteMaxThinkingTokens: 4096,
+      reasoningEffort: 'low',
+    };
+    expect(reader.parse({ ...metadata, arbitraryMetadata: 'drop' })).toEqual(metadata);
+    expect(reader.parse({ claudeRemoteMaxThinkingTokens: null })).toEqual({ claudeRemoteMaxThinkingTokens: null });
+    expect(reader.safeParse({ claudeRemoteAgentSdkEnabled: 'false' }).success).toBe(false);
+    expect(reader.safeParse({ claudeRemoteSettingSourcesV2: ['unknown'] }).success).toBe(false);
+    expect(reader.safeParse({ claudeRemoteMaxThinkingTokens: '4096' }).success).toBe(false);
+    expect(reader.safeParse({ reasoningEffort: 1 }).success).toBe(false);
+  });
+
   it('parses unknown sentFrom/permissionMode without throwing', () => {
     const parsed = (protocol as any).SessionMessageMetaSchema.parse({
       source: '__future_source__',

@@ -2194,6 +2194,48 @@ describe('Channels settings surface (real source, mounted)', () => {
     expect(findPressableByTestId(renderer, 'channels-binding-pause-binding-2').props.disabled).toBe(false);
   });
 
+  it('keeps conversations joined to the exact bot when provider types differ', async () => {
+    const firstConnection = connectionFixture({
+      providerPluginId: 'example.channel.alpha',
+      integrationPrincipalLabel: 'Alpha Relay',
+    });
+    const firstBinding = bindingFixture();
+    const singleProviderHost = createChannelsHostApi({
+      readResource: async () => connectionResourceContent([firstConnection]),
+      readBindingsResource: async () => bindingResourceContent([firstBinding]),
+    });
+    renderer = await renderChannelsSurface(singleProviderHost.hostApi, createChannelsPageSurfaceContextFixture());
+    expect(findByTestId(renderer, 'channels-page-row-binding-1').length).toBeGreaterThan(0);
+
+    act(() => renderer?.unmount());
+    renderer = null;
+    const secondConnection = connectionFixture({
+      connectionId: 'connection-2',
+      providerPluginId: 'example.channel.beta',
+      integrationPrincipalLabel: 'Beta Relay',
+    });
+    const secondBinding = bindingFixture({
+      bindingId: 'binding-2',
+      connectionId: secondConnection.connectionId,
+      endpoint: { label: 'Build discussion' },
+    });
+    const multiProviderHost = createChannelsHostApi({
+      readResource: async () => connectionResourceContent([firstConnection, secondConnection]),
+      readBindingsResource: async () => bindingResourceContent([firstBinding, secondBinding]),
+    });
+    renderer = await renderChannelsSurface(multiProviderHost.hostApi, createChannelsPageSurfaceContextFixture());
+
+    expect(findByTestId(renderer, 'channels-page-row-binding-1').length).toBeGreaterThan(0);
+    expect(findByTestId(renderer, 'channels-page-row-binding-2').length).toBeGreaterThan(0);
+    renderer = await renderChannelsConversation(multiProviderHost.hostApi, undefined, undefined, undefined, 'binding-1', renderer);
+    expect(JSON.stringify(renderer.toJSON())).toContain('Alpha Relay');
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('Beta Relay');
+    renderer = await renderChannelsConversation(multiProviderHost.hostApi, undefined, undefined, undefined, 'binding-2', renderer);
+    expect(JSON.stringify(renderer.toJSON())).toContain('Beta Relay');
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('Alpha Relay');
+    expect(multiProviderHost.executeAction).not.toHaveBeenCalled();
+  });
+
   it('groups page conversations by provider and bot identity while Settings owns setup', async () => {
     const targetedContributions = channelsProviderTargetedContributions();
     const alpha = 'example.channel.alpha';
@@ -2217,6 +2259,9 @@ describe('Channels settings surface (real source, mounted)', () => {
     for (const providerId of [alpha, beta]) {
       const setup = findPressableByTestId(renderer, `channels-provider-setup-${providerId}-provider`);
       expect(setup.props.accessibilityLabel).toBe(`Set up ${providerId === alpha ? 'Alpha Provider' : 'Beta Provider'}`);
+      expect(findByTestId(renderer, `channels-provider-setup-brand-${providerId}-provider`).some(
+        (instance) => instance.props.accessible === false && instance.props.accessibilityLabel === undefined,
+      )).toBe(true);
     }
     expect(findByTestId(renderer, 'channels-settings-open-channels').length).toBeGreaterThan(0);
     expect(findByTestId(renderer, 'channels-page-row-binding-0')).toHaveLength(0);
@@ -2234,6 +2279,17 @@ describe('Channels settings surface (real source, mounted)', () => {
       expect(brands.renderBrandMark).toHaveBeenCalledWith(expect.objectContaining({ pluginId, externallyLabelled: true }));
     }
     expect(findByTestId(renderer, 'channels-binding-provider-filters')).toHaveLength(0);
+    for (const [index, providerLabel, otherProviderLabel] of [[0, 'Alpha Provider', 'Beta Provider'], [2, 'Beta Provider', 'Alpha Provider']] as const) {
+      const bindingId = bindings[index]!.bindingId;
+      renderer = await renderChannelsConversation(host.hostApi, createChannelsPageSurfaceContextFixture({ targetedContributions }),
+        brands.presentationHost, undefined, bindingId, renderer);
+      expect(JSON.stringify(renderer.toJSON())).toContain(providerLabel);
+      expect(JSON.stringify(renderer.toJSON())).toContain(connections[index]!.integrationPrincipalLabel);
+      expect(JSON.stringify(renderer.toJSON())).not.toContain(otherProviderLabel);
+      expect(findByTestId(renderer, `channels-provider-brand-binding-${bindingId}`).some(
+        (instance) => instance.props.accessible === false && instance.props.accessibilityLabel === undefined,
+      )).toBe(true);
+    }
   });
 
   it('uses neutral provider group labels when no canonical presentation is mounted', async () => {
@@ -2253,9 +2309,19 @@ describe('Channels settings surface (real source, mounted)', () => {
     const rendered = JSON.stringify(renderer.toJSON());
     expect(rendered).not.toContain('Connection-only Alpha label');
     expect(rendered).not.toContain('Connection-only Beta label');
+
+    renderer = await renderChannelsConversation(host.hostApi, undefined, undefined, undefined, 'binding-0', renderer);
+    expect(JSON.stringify(renderer.toJSON())).toContain('Integration provider');
+    expect(JSON.stringify(renderer.toJSON())).toContain(connections[0]!.integrationPrincipalLabel);
+    expect(JSON.stringify(renderer.toJSON())).not.toContain(connections[1]!.integrationPrincipalLabel);
+    renderer = await renderChannelsConversation(host.hostApi, undefined, undefined, undefined, 'binding-1', renderer);
+    expect(JSON.stringify(renderer.toJSON())).toContain('Integration provider');
+    expect(JSON.stringify(renderer.toJSON())).toContain(connections[1]!.integrationPrincipalLabel);
+    expect(JSON.stringify(renderer.toJSON())).not.toContain(connections[0]!.integrationPrincipalLabel);
+    expect(host.executeAction).not.toHaveBeenCalled();
   });
 
-  it('keeps every conversation addressable on the page in a representative large Account', async () => {
+  it('keeps every conversation in a representative large index and exposes its selected pause control', async () => {
     const connection = connectionFixture();
     const bindings = Array.from({ length: 256 }, (_unused, index) => bindingFixture({
       bindingId: `binding-${String(index + 1).padStart(3, '0')}`, revision: index + 1,
@@ -2272,6 +2338,8 @@ describe('Channels settings surface (real source, mounted)', () => {
     act(() => renderer?.unmount());
     renderer = await renderChannelsConversation(host.hostApi, undefined, undefined, undefined, 'binding-001');
     expect(findPressableByTestId(renderer, 'channels-binding-pause-binding-001').props.disabled).toBe(false);
+    expect(findPressableByTestId(renderer, 'channels-binding-pause-binding-001').props.accessibilityLabel).toBeTruthy();
+    expect(host.executeAction).not.toHaveBeenCalled();
   });
 
   it('keeps healthy connection management usable while only the binding Resource fails', async () => {
@@ -4354,7 +4422,7 @@ describe('Channels settings surface (real source, mounted)', () => {
     expect(rendered).not.toContain('provider-message-private');
   });
 
-  it('keeps a timed-out delivery decision locked until an explicit direct custody reread completes', async () => {
+  it('keeps an ambiguous delivery decision locked until an explicit direct custody reread completes', async () => {
     const custodyId = 'P'.repeat(43);
     const deliveryData = createDeliveryResolutionDataClient({
       rows: [deliveryResolutionRow({ custodyId, revision: 7, state: 'partial' })],
@@ -4495,6 +4563,7 @@ describe('Channels settings surface (real source, mounted)', () => {
     });
     const host = createChannelsHostApi({
       readResource: async () => connectionResourceContent([connectionFixture()]),
+      readBindingsResource: async () => bindingResourceContent([bindingFixture()]),
     });
     renderer = await renderChannelsSurface(host.hostApi, surface);
 
@@ -4507,5 +4576,8 @@ describe('Channels settings surface (real source, mounted)', () => {
     expect(hasRenderedAncestor(settingsContent!, 'ScrollView')).toBe(true);
     const scrollers = renderer.root.findAll((instance) => hasRenderedHostType(instance, 'ScrollView'));
     expect(scrollers.some((scroll) => StyleSheet.flatten(scroll.props.contentContainerStyle).padding === surface.theme.spacing.large)).toBe(true);
+    act(() => renderer?.unmount());
+    renderer = await renderChannelsSurface(host.hostApi, createChannelsPageSurfaceContextFixture());
+    expect(findByTestId(renderer, 'channels-page-row-binding-1').length).toBeGreaterThan(0);
   });
 });

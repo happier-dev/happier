@@ -1778,16 +1778,15 @@ async function executeActionBlock(
   // The one-shot call may have returned exact launch ids after this claim was
   // interrupted. Preserve that correspondence before stopping observation.
   const abort = classifyWorkflowAbort(context.signal);
-  if ((abort === 'cancelled' || abort === 'fail_stop') && (completed?.kind === 'failed' || completed?.kind === 'completed')
-    && completed.value !== undefined && row.execution?.kind === 'action') {
-    // The effect has definitively ended; retain its response and close this
-    // leaf's cancellation custody. A lost claim does not authorize this write.
+  if ((abort === 'cancelled' || abort === 'fail_stop') && completed?.kind === 'completed'
+    && row.execution?.kind === 'action') {
+    // A successful immediate reply is definitive; failed native launches may
+    // carry details without proving whether an execution was created.
     row = await context.deps.store.commitFact({ key: row.key, lifecycle: 'cancelled',
-      ...(completed.kind === 'failed' ? { reason: completed.errorCode } : {}),
       execution: { ...row.execution, output: completed.value }, result: completed.value });
   }
-  assertWorkflowAbortSignal(context);
   if (completionState) {
+    assertWorkflowAbortSignal(context);
     if (!workspace) return await fail('outcome_uncertain', 'outcome_uncertain');
     const observationWorkspace = workspace;
     completed = await context.holds.track(() => resumeActionCompletionV1({ actionId: actionId.data,
@@ -1798,6 +1797,14 @@ async function executeActionBlock(
       observeRun: async (run) => await context.deps.action!.observeRun(run, { workspace: observationWorkspace, ...(context.signal ? { signal: context.signal } : {}) }) }));
   }
   if (!completed) return await fail('outcome_uncertain', 'outcome_uncertain');
+  // The command owner confirms cancellation with its exact terminal output.
+  // Native launch failures can carry details while their execution remains unknown.
+  if (actionId.data === 'machines.command.run' && completed.kind === 'failed'
+    && completed.errorCode === 'command_cancelled' && completed.value !== undefined
+    && classifyWorkflowAbort(context.signal) === 'cancelled' && row.execution?.kind === 'action') {
+    await context.deps.store.commitFact({ key: row.key, lifecycle: 'cancelled',
+      reason: completed.errorCode, execution: { ...row.execution, output: completed.value }, result: completed.value });
+  }
   assertWorkflowAbortSignal(context);
   const completionConsent = completed.kind === 'failed'
     ? readWorkflowProjectSetupConsentHold(actionId.data, completed.value) : null;

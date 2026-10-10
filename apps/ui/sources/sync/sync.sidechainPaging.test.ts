@@ -1,26 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Sync imports persistence, which instantiates MMKV. Mock it for deterministic tests.
-const kvStore = vi.hoisted(() => new Map<string, string>());
-vi.mock('react-native-mmkv', () => {
-    class MMKV {
-        getString(key: string) {
-            return kvStore.get(key);
-        }
-        set(key: string, value: string) {
-            kvStore.set(key, value);
-        }
-        delete(key: string) {
-            kvStore.delete(key);
-        }
-        clearAll() {
-            kvStore.clear();
-        }
-    }
-
-    return { MMKV };
-});
-
 const appStateAddListener = vi.hoisted(() => vi.fn(() => ({ remove: vi.fn() })));
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -30,7 +9,8 @@ vi.mock('react-native', async () => {
                                                 OS: 'web',
                                             },
                                             AppState: {
-                                                addEventListener: appStateAddListener as any,
+                                                currentState: 'active',
+                                                addEventListener: appStateAddListener,
                                             },
                                         }
     );
@@ -40,51 +20,62 @@ vi.mock('@/log', () => ({
     log: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock('@/voice/context/voiceHooks', () => ({
-    voiceHooks: {
-        onSessionFocus: vi.fn(),
-        onSessionOffline: vi.fn(),
-        onSessionOnline: vi.fn(),
-        onMessages: vi.fn(),
-        onReady: vi.fn(),
-        reportContextualUpdate: vi.fn(),
-    },
-}));
-
-vi.mock('@/track', () => ({
-    initializeTracking: vi.fn(),
-    tracking: null,
-    trackPaywallPresented: vi.fn(),
-    trackPaywallPurchased: vi.fn(),
-    trackPaywallCancelled: vi.fn(),
-    trackPaywallRestored: vi.fn(),
-    trackPaywallError: vi.fn(),
-}));
+vi.mock('@/track/tracking', () => ({ tracking: null }));
 
 const requestMock = vi.hoisted(() => vi.fn());
-vi.mock('@/sync/api/session/apiSocket', () => ({
-    apiSocket: {
-        request: requestMock,
-        emitWithAck: vi.fn(),
-        send: vi.fn(),
-        onMessage: vi.fn(),
-        onStatusChange: vi.fn(),
-        onReconnected: vi.fn(),
-        disconnect: vi.fn(),
-        initialize: vi.fn(),
-    },
-}));
 
 const machineExternalSessionTranscriptPageMock = vi.hoisted(() => vi.fn());
 const machineExternalSessionTranscriptReadAfterMock = vi.hoisted(() => vi.fn());
-const machineExternalSessionTranscriptRefreshReadAfterMock = vi.hoisted(() => vi.fn());
-vi.mock('@/sync/ops/machineExternalSessions', () => ({
-    machineExternalSessionTranscriptPage: machineExternalSessionTranscriptPageMock,
-    machineExternalSessionTranscriptReadAfter: machineExternalSessionTranscriptReadAfterMock,
-    machineExternalSessionTranscriptRefreshReadAfter: machineExternalSessionTranscriptRefreshReadAfterMock,
-}));
+
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
+
+let accountConnection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
+
+async function restorePagingAccount() {
+    installDisconnectedServerSocketBoundary((socket) => {
+        // Keep real SDK/host RPC codecs and replace only the remote ACK boundary.
+        socket.connected = true;
+        vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event, payload: unknown) => {
+            if (event !== SOCKET_RPC_EVENTS.CALL) return { v: 1, ok: true, admittedSessionIds: [] };
+            if (!payload || typeof payload !== 'object' || !('method' in payload)
+                || typeof payload.method !== 'string' || !('params' in payload)) throw new Error('Malformed test RPC');
+            const method = payload.method.slice(payload.method.indexOf(':') + 1);
+            const result = method === RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_PAGE
+                ? await machineExternalSessionTranscriptPageMock(payload.params)
+                : method === RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_READ_AFTER
+                    ? await machineExternalSessionTranscriptReadAfterMock(payload.params)
+                    : { ok: false, errorCode: 'agent_unavailable', error: 'Unavailable fixture RPC' };
+            return { ok: true, result };
+        });
+    });
+    accountConnection = await restoreServerAccountForTest({
+        serverUrl: 'https://paging.example.test',
+        request: async (input, init) => {
+            const url = new URL(String(input));
+            if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (url.pathname === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            if (url.pathname.startsWith('/v1/machines/')) return Response.json({ machine: { id: 'machine-1', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER } });
+            if (url.pathname.endsWith('/messages')) return requestMock(url.pathname + url.search, init);
+            return Response.json({}, { status: 404 });
+        },
+    });
+}
+
+afterEach(async () => {
+    await accountConnection?.dispose();
+    accountConnection = undefined;
+});
+
+function plainChildContent() {
+    return { t: 'plain' as const, v: { role: 'agent', content: { type: 'acp', agentId: 'claude', data: { type: 'message', message: 'child', sidechainId: 'tool_task_1' } } } };
+}
 
 import { storage } from './domains/state/storage';
+import { getPersistenceStorage } from './domains/state/persistenceStorage';
 import type { Machine, Session } from './domains/state/storageTypes';
 
 const initialStorageState = storage.getState();
@@ -93,6 +84,7 @@ function createSession(params: { sessionId: string }): Session {
     const now = Date.now();
     return {
         id: params.sessionId,
+        encryptionMode: 'plain',
         seq: 0,
         createdAt: now,
         updatedAt: now,
@@ -113,6 +105,7 @@ function createOnlineMachine(machineId: string): Machine {
     const now = Date.now();
     return {
         id: machineId,
+        storageMode: 'plain',
         seq: 0,
         createdAt: now,
         updatedAt: now,
@@ -143,7 +136,7 @@ function createLiveAgentSession(sessionId: string): Session {
                 linkedAtMs: 1,
                 qualifiedIdentity: {
                     v: 1,
-                    agent: { pluginId: 'happier.codex', localId: 'codex' },
+                    agent: { pluginId: 'happier.agent.codex', localId: 'codex' },
                     source: { kind: 'codexHome', contractVersion: 1 },
                 },
             },
@@ -195,36 +188,15 @@ function readSidechainRowCount(sessionId: string, sidechainId: string): number {
 describe('sync sidechain paging', () => {
     beforeEach(async () => {
         storage.setState(initialStorageState, true);
-        kvStore.clear();
+        getPersistenceStorage().clearAll();
         appStateAddListener.mockClear();
         requestMock.mockReset();
 
-        const { sync } = await import('./syncEngine');
-        sync.disconnectServer();
+        await restorePagingAccount();
 
         storage.getState().applySessions([createSession({ sessionId: 's1' })]);
         storage.getState().resetSessionMessages('s1');
 
-        // Provide a minimal decrypt shim; the test only asserts request behavior.
-        (sync as any).encryption = {
-            getSessionEncryption: () => ({
-                decryptMessages: async (messages: any[]) =>
-                    messages.map((m) => ({
-                        id: m.id,
-                        localId: m.localId ?? null,
-                        createdAt: m.createdAt,
-                        seq: m.seq,
-                        content: {
-                            role: 'agent',
-                            content: {
-                                type: 'acp',
-                                agentId: 'claude',
-                                data: { type: 'message', message: 'child', sidechainId: 'tool_task_1' },
-                            },
-                        },
-                    })),
-            }),
-        };
     });
 
     afterEach(() => {
@@ -241,7 +213,7 @@ describe('sync sidechain paging', () => {
                             seq: 123,
                             localId: null,
                             sidechainId: 'tool_task_1',
-                            content: { t: 'encrypted', c: 'cipher' },
+                            content: plainChildContent(),
                             createdAt: 1,
                             updatedAt: 1,
                         },
@@ -278,7 +250,7 @@ describe('sync sidechain paging', () => {
                             seq: 123,
                             localId: null,
                             sidechainId: 'tool_task_1',
-                            content: { t: 'encrypted', c: 'cipher' },
+                            content: plainChildContent(),
                             createdAt: 1,
                             updatedAt: 1,
                         },
@@ -331,7 +303,7 @@ describe('sync sidechain paging', () => {
                                 seq: 200,
                                 localId: null,
                                 sidechainId: 'tool_task_1',
-                                content: { t: 'encrypted', c: 'cipher' },
+                                content: plainChildContent(),
                                 createdAt: 1,
                                 updatedAt: 1,
                             },
@@ -340,7 +312,7 @@ describe('sync sidechain paging', () => {
                                 seq: 51,
                                 localId: null,
                                 sidechainId: 'tool_task_1',
-                                content: { t: 'encrypted', c: 'cipher' },
+                                content: plainChildContent(),
                                 createdAt: 1,
                                 updatedAt: 1,
                             },
@@ -380,20 +352,17 @@ describe('sync sidechain paging', () => {
 describe('sync live-Agent sidechain demand', () => {
     beforeEach(async () => {
         storage.setState(initialStorageState, true);
-        kvStore.clear();
+        getPersistenceStorage().clearAll();
         appStateAddListener.mockClear();
         requestMock.mockReset();
         machineExternalSessionTranscriptPageMock.mockReset();
         machineExternalSessionTranscriptReadAfterMock.mockReset();
-        machineExternalSessionTranscriptRefreshReadAfterMock.mockReset();
 
-        const { sync } = await import('./sync');
-        sync.disconnectServer();
+        await restorePagingAccount();
 
         storage.getState().applyMachines([createOnlineMachine('machine-1')], false);
         storage.getState().applySessions([createLiveAgentSession('s-live')]);
         storage.getState().resetSessionMessages('s-live');
-        (sync as any).encryption = { getSessionEncryption: () => null };
     });
 
     afterEach(() => {

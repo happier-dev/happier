@@ -1,7 +1,7 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { HappyError } from '@/utils/errors/errors';
 import { backoff } from '@/utils/timing/time';
-import { serverFetch } from '@/sync/http/client';
+import { createServerFetchForActiveServer } from '@/sync/http/client';
 
 export async function setAccountIdentityShowOnProfile(params: {
     credentials: AuthCredentials;
@@ -13,8 +13,9 @@ export async function setAccountIdentityShowOnProfile(params: {
         throw new HappyError('Invalid provider', false, { status: 400, kind: 'config' });
     }
 
+    const request = createServerFetchForActiveServer();
     await backoff(async () => {
-        const response = await serverFetch(`/v1/account/identity/${encodeURIComponent(provider)}`, {
+        const response = await request(`/v1/account/identity/${encodeURIComponent(provider)}`, {
             method: 'PATCH',
             headers: {
                 'Authorization': `Bearer ${params.credentials.token}`,

@@ -1,53 +1,31 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol';
 
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 
-const { mockListActionSpecs } = vi.hoisted(() => ({
-  mockListActionSpecs: vi.fn(() => []),
-}));
-
-vi.mock('@happier-dev/protocol', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@happier-dev/protocol')>();
-  return {
-    ...actual,
-    listActionSpecs: mockListActionSpecs,
-  };
-});
+import { listBuiltInHappierTools } from './listBuiltInHappierTools';
 
 describe('Happier built-in tool catalog convergence', () => {
-  beforeEach(() => {
-    vi.resetModules();
-    mockListActionSpecs.mockClear();
-    mockListActionSpecs.mockReturnValue([]);
-  });
-
-  it('does not synthesize execution_run_start as a manual built-in fallback when action specs do not provide it', async () => {
-    const { listBuiltInHappierTools } = await import('./listBuiltInHappierTools');
-
-    const tools = listBuiltInHappierTools({
-      surface: 'cli',
-      registry: createResolvedContributionRegistry({
-        agents: [],
-              }),
+  it.each([
+    { name: 'execution_run_start', actionId: 'execution.run.start', surface: 'cli' },
+    { name: 'plugins_reload', actionId: 'plugins.reload', surface: 'agent' },
+  ] as const)('keeps $name Action-backed and withdraws it when its canonical policy disables it', ({ name, actionId, surface }) => {
+    const registry = createResolvedContributionRegistry({ agents: [] });
+    const enabledTools = listBuiltInHappierTools({
+      surface, registry, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {} }),
     });
-    const names = tools.map((tool) => tool.name);
+    expect(enabledTools.filter((tool) => tool.name === name)).toEqual([
+      expect.objectContaining({ name, actionId }),
+    ]);
 
-    expect(names).toContain('action_execute');
-    expect(names).not.toContain('execution_run_start');
-  });
-
-  it('does not synthesize plugins_reload as a manual built-in fallback when action specs do not provide it', async () => {
-    const { listBuiltInHappierTools } = await import('./listBuiltInHappierTools');
-
-    const tools = listBuiltInHappierTools({
-      surface: 'agent',
-      registry: createResolvedContributionRegistry({
-        agents: [],
+    const disabledTools = listBuiltInHappierTools({
+      surface,
+      registry,
+      actionsSettings: ActionsSettingsV1Schema.parse({
+        v: 1, actions: { [actionId]: { enabled: false } },
       }),
     });
-    const names = tools.map((tool) => tool.name);
-
-    expect(names).toContain('action_execute');
-    expect(names).not.toContain('plugins_reload');
+    expect(disabledTools.map((tool) => tool.name)).toContain('action_execute');
+    expect(disabledTools.map((tool) => tool.name)).not.toContain(name);
   });
 });

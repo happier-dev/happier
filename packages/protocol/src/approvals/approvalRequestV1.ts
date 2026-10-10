@@ -316,7 +316,7 @@ function validateApprovalRequestLifecycle(
   }
   if (value.handoffTargetReplacementApproval !== undefined
     && value.actionId !== 'session.handoff'
-    && value.actionId !== 'workspace.sync.relationship.create') {
+    && !(value.v === 2 && value.actionId === 'workspace.sync.relationship.create')) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['handoffTargetReplacementApproval'], message: 'Workspace target approval evidence belongs only to destination-choosing Actions.' });
   }
   validateConfidentialApprovalRequest(value, ctx);

@@ -820,8 +820,9 @@ export function bundleWorkspacePackagesWithRuntimeDependencies(params: Readonly<
       ...bundle,
       // Source-dev hosts can refresh these packages while daemons, CLIs, or test workers are
       // resolving them. Keep the package path mounted and publish the complete package plus its
-      // runtime dependency tree as one reconciled view.
-      preserveDestinationPath: true,
+      // runtime dependency tree as one reconciled view. Artifact readers instead
+      // require a physical installed tree, detached from workspace source links.
+      preserveDestinationPath: publicationMode === 'live',
       // A resolver can read the previous manifest immediately before publication and open one of
       // its targets afterward. Retain prior targets in ordinary live package trees so that in-flight reads remain valid.
       // Exact artifact publication and explicit exact prepared readers prune compatibility targets

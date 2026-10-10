@@ -4,7 +4,8 @@ import type {
     SessionAgentTransitionRejectedCodeV1,
     SessionAgentTransitionResultV1,
 } from '@happier-dev/protocol';
-import { parsePermissionIntentAlias } from '@happier-dev/agents';
+import { parsePermissionIntentAlias } from '@happier-dev/agents/permissions';
+import type { Metadata } from '@happier-dev/session-core/state';
 
 import { machineCapabilitiesDetect } from '@/sync/ops/capabilities';
 import { runSessionAgentTransitionOnMachine } from '@/sync/ops/sessionAgentTransition';
@@ -46,8 +47,6 @@ export type ArmedAgentContinuationSubmission = ArmedAgentContinuationLabels & Re
      */
     localId: string;
     intent: ComposerAgentContinuationIntentV1;
-    /** Canonical committed intent; the composer's local choice may be newer. */
-    committedPermissionMode?: string | null;
     /** The exact input the composer submitted, already normalized by its owner. */
     input: Readonly<{
         text: string;
@@ -482,10 +481,64 @@ export type ArmedAgentContinuationOutcome = Readonly<{
     disposition: ArmedAgentContinuationDisposition;
 }>;
 
-export async function continueSessionWithArmedAgent(
+export type PreparedArmedAgentContinuation = Readonly<{
+    status: 'ready';
+    submission: ArmedAgentContinuationSubmission;
+}>;
+
+export type ArmedAgentContinuationPreparation = PreparedArmedAgentContinuation | Readonly<{
+    status: 'refused';
+    reason: 'unsupported_permission_intent' | 'permission_support_unavailable';
+    notice: ArmedAgentContinuationNotice;
+}>;
+
+/** Check explicit changed permission intent before the composer retains its first input. */
+export async function prepareArmedAgentContinuation(
     submission: ArmedAgentContinuationSubmission,
+    currentOwnerMetadata: Metadata | null,
+): Promise<ArmedAgentContinuationPreparation> {
+    const authoredMode = submission.input.meta?.permissionMode;
+    if (!Object.prototype.hasOwnProperty.call(submission.input.meta ?? {}, 'permissionMode')) {
+        return { status: 'ready', submission };
+    }
+    const authoredIntent = typeof authoredMode === 'string' ? parsePermissionIntentAlias(authoredMode) : null;
+    const currentMode = currentOwnerMetadata?.permissionMode;
+    const currentIntent = typeof currentMode === 'string' ? parsePermissionIntentAlias(currentMode) : null;
+    // Unknown tokens are not equivalent intent. A capable daemon remains the
+    // authority for validating them; forward the original input without coercion.
+    if (authoredIntent !== null && authoredIntent === currentIntent) {
+        return { status: 'ready', submission };
+    }
+    const capability = await machineCapabilitiesDetect(submission.machineId, {
+        requests: [{ id: 'tool.sessionAgentTransition' }],
+    }, { serverId: submission.serverId });
+    const detected = capability.supported ? capability.response.results['tool.sessionAgentTransition'] : undefined;
+    const support = detected?.ok === true
+        && detected.data !== null && typeof detected.data === 'object'
+        && 'supportsInputPermissionIntent' in detected.data
+        ? detected.data.supportsInputPermissionIntent : undefined;
+    if (support === true) return { status: 'ready', submission };
+    const unsupported = support === false
+        || (detected?.ok === false && detected.error.code === 'unknown-capability')
+        || (!capability.supported && capability.reason === 'not-supported');
+    return {
+        status: 'refused',
+        reason: unsupported ? 'unsupported_permission_intent' : 'permission_support_unavailable',
+        notice: {
+            tone: 'warning',
+            recovery: 'none',
+            message: unsupported
+                ? t('session.agentContinuation.transition.rejected.unsupportedOperation')
+                : t('session.agentContinuation.unavailable.updateOrReconnect'),
+        },
+    };
+}
+
+export async function continueSessionWithArmedAgent(
+    prepared: PreparedArmedAgentContinuation,
     options?: Readonly<{ isCurrent?: () => boolean; onBeforeTransitionDispatch?: () => boolean }>,
 ): Promise<ArmedAgentContinuationOutcome> {
+    const { submission } = prepared;
     const refuseLocally = (message: string | null): ArmedAgentContinuationOutcome => ({
         result: null,
         disposition: {
@@ -493,33 +546,6 @@ export async function continueSessionWithArmedAgent(
             notice: message ? { tone: 'warning', message, recovery: 'none' } : null,
         },
     });
-    const authoredMode = typeof submission.input.meta?.permissionMode === 'string'
-        ? parsePermissionIntentAlias(submission.input.meta.permissionMode)
-        : null;
-    const committedMode = submission.committedPermissionMode
-        ? parsePermissionIntentAlias(submission.committedPermissionMode)
-        : 'default';
-    // Equivalent intent retains the released daemon's latest Session-policy
-    // admission path. Only a changed draft-only intent needs input transfer.
-    if (authoredMode && authoredMode !== committedMode) {
-        const capability = await machineCapabilitiesDetect(submission.machineId, {
-            requests: [{ id: 'tool.sessionAgentTransition' }],
-        }, { serverId: submission.serverId });
-        if (options?.isCurrent?.() === false) return refuseLocally(null);
-        const detected = capability.supported ? capability.response.results['tool.sessionAgentTransition'] : undefined;
-        const data = detected?.ok === true ? detected.data : null;
-        const support = data && typeof data === 'object' && !Array.isArray(data)
-            ? (data as Record<string, unknown>).supportsInputPermissionIntent : undefined;
-        if (support !== true) {
-            const unsupported = capability.supported
-                ? detected?.ok === false && detected.error.code === 'unknown-capability'
-                    || detected?.ok === true && support === false
-                : capability.reason === 'not-supported';
-            return refuseLocally(unsupported
-                ? t('session.agentContinuation.transition.rejected.unsupportedOperation')
-                : t('errors.failedToSendMessage'));
-        }
-    }
     if (options?.isCurrent?.() === false || options?.onBeforeTransitionDispatch?.() === false) return refuseLocally(null);
     const result = await runSessionAgentTransitionOnMachine({
         machineId: submission.machineId,

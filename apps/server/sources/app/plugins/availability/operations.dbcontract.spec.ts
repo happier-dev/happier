@@ -44,6 +44,7 @@ describe("plugin Availability report transaction contract", () => {
 
     afterEach(async () => {
         if (activeAccountId !== null) {
+            await db.machine.deleteMany({ where: { accountId: activeAccountId } });
             await db.account.deleteMany({ where: { id: activeAccountId } });
             activeAccountId = null;
         }

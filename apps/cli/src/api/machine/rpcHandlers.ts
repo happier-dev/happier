@@ -62,6 +62,7 @@ import {
 } from './rpcHandlers.voiceClientMediatedCredentials';
 import { registerMachineSpawnSessionNonceRpcHandlers } from './rpcHandlers.spawnSessionNonce';
 import { registerMachineTerminalRpcHandlers, type MachineTerminalRpcRegistration, type MachineTerminalRpcHandlerDeps } from './rpcHandlers.terminal';
+import { registerMachineAgentSignInRpcHandlers } from './rpcHandlers.agentSignIn';
 import { registerMachineMcpServersRpcHandlers } from './rpcHandlers.mcpServers';
 import {
   registerMachineProviderRpcHandlers,
@@ -681,6 +682,7 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
     machineId: params.deps?.currentMachineId ?? params.deps?.providerRpc?.machineId ?? null,
   });
 
+  registerMachineAgentSignInRpcHandlers({ rpcHandlerManager });
   const operationRuntime = params.deps?.actionOperations;
   const createProjectFiniteRuntime = params.deps?.createProjectFiniteRuntime;
   let projectFiniteIngressClosed = false;

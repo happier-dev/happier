@@ -7,6 +7,33 @@ import {
 } from './nativeServices.js';
 
 describe('createClaudeNativeAgentSdkContext', () => {
+  it('decodes each settled revision from the exact native home without exposing rotation material', async () => {
+    let accessToken = 'old-access';
+    let revision = 0;
+    // Public host ports are the external boundary; exercise the real Claude adapter/parser.
+    const refreshRuntimeAuth = vi.fn(async () => {
+      accessToken = ++revision === 1 ? 'fresh-access' : 'next-access';
+      return { status: 'refreshed' as const, result: { credentialRevision: `revision-${revision}` } };
+    });
+    const readFiles = vi.fn(async (paths: readonly string[]) => Object.fromEntries(paths.map(path => [path,
+      new TextEncoder().encode(JSON.stringify({ claudeAiOauth: { accessToken, refreshToken: 'private-rotation', scopes: ['user:inference'] } })),
+    ])));
+    const context = {
+      services: { logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }, exec: {},
+        sessions: { current: { auth: { services: { refreshRuntimeAuth } } } } },
+      session: { services: { nativeHome: { readFiles } } },
+    } as unknown as AgentSessionRuntimeContext;
+    const native = createClaudeNativeAgentSdkContext(context);
+    const request = { agentId: 'claude', serviceId: 'claude-subscription', reason: 'credential_expired' };
+    await expect(native.sessions.current.auth.services.refreshRuntimeAuth(request)).resolves.toEqual({
+      status: 'refreshed', result: { accessToken: 'fresh-access', credentialRevision: 'revision-1' },
+    });
+    await expect(native.sessions.current.auth.services.refreshRuntimeAuth(request)).resolves.toEqual({
+      status: 'refreshed', result: { accessToken: 'next-access', credentialRevision: 'revision-2' },
+    });
+    expect(readFiles.mock.calls).toEqual([[['.credentials.json']], [['.credentials.json']]]);
+  });
+
   it('preserves committed identities and host refusals through the scoped transcript service', async () => {
     const request = {
       providerSessionId: 'claude-session-1',

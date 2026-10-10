@@ -97,6 +97,7 @@ describe("Session discussion provider contract", () => {
                 },
             })).toBe(1);
 
+            await db.sessionShare.deleteMany({ where: { sessionId: session.id, sharedWithUserId: author.id } });
             await db.account.delete({ where: { id: author.id } });
             expect(await db.sessionDiscussionMessage.count({
                 where: { discussionId: created.value.discussion.id, authorAccountId: null },

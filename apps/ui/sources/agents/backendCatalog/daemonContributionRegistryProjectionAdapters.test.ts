@@ -359,11 +359,6 @@ describe('daemon contribution registry projection adapters', () => {
                 expect.objectContaining({
                     id: 'acme.review.refresh-provider-state',
                     placementBindings: [],
-                    inputSchema: {
-                        type: 'object',
-                        properties: { repository: { type: 'string' } },
-                        additionalProperties: false,
-                    },
                 }),
             ],
             resources: [
@@ -382,6 +377,8 @@ describe('daemon contribution registry projection adapters', () => {
             ],
         }));
         expect(adapted.registryDiagnostics).toEqual([]);
+        // Action schemas are read lazily through the daemon action-schema endpoint.
+        expect(adapted.pluginProjectionById['acme.review']?.actions.find(action => action.id === 'acme.review.refresh-provider-state')).not.toHaveProperty('inputSchema');
         expect(adapted.pluginProjectionById['acme.review']?.resources.find(resource => resource.id === 'live-status')).not.toHaveProperty('path');
     });
 

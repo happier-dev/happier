@@ -379,7 +379,7 @@ test('native UI projects redirect direct and transitive imports across the compl
     write(moduleDeclaration, "import type { bridge } from './desktopActivityOverlayBridge'; export declare const fixtureBridge: typeof bridge;\n");
     write(downstreamImplementation, "export { left as bridge } from '../../../../../left';\n");
     write('flags.json', '{"enabled":true}');
-    write('foundation.ts', "import flags from './flags.json'; import type { UnistylesThemes } from 'react-native-unistyles'; export const label: string = 'ok'; export const enabled = flags.enabled; export function themeColor(theme: UnistylesThemes['light']): string { return theme.colors.primary; }\n");
+    write('foundation.ts', "import flags from './flags.json'; import type { UnistylesThemes } from 'react-native-unistyles'; type Theme = UnistylesThemes[keyof UnistylesThemes]; export const label: string = 'ok'; export const enabled = flags.enabled; export function themeColor(theme: Theme): string { return theme.colors.primary; }\n");
     write('left.ts', "import { label } from './foundation'; import { right } from './right'; export function left(): string { return label + right; }\n");
     write('right.ts', "import { left } from './left'; export const right: number = 'bad'; export const invoke = () => left();\n");
     write('entry.ts', "import { left } from './left'; import { label } from './foundation'; import { fixtureBridge } from './sources/activity/adapters/desktop/runtime/desktopActivityOverlayQaFixtures'; export const value = left() + label + fixtureAmbient + fixtureBridge();\n");
@@ -389,7 +389,7 @@ test('native UI projects redirect direct and transitive imports across the compl
     const foundationText = readFileSync(join(fixtureDir, 'foundation.ts'), 'utf8');
     write('foundation.ts', foundationText.replace("themeColor(theme: UnistylesThemes['light']): string", "themeColor(theme: UnistylesThemes['light']): number"));
     const themeRed = run('foundation');
-    assert.notEqual(themeRed.status, 0);
+    assert.notEqual(themeRed.status, 0, themeRed.stdout + themeRed.stderr);
     assert.match(themeRed.stdout + themeRed.stderr, /foundation\.ts.*TS2322/u);
     write('foundation.ts', foundationText);
     const themeGreen = run('foundation');

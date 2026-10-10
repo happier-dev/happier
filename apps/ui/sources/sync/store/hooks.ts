@@ -3137,6 +3137,7 @@ export function useOpenApprovalSessionReferences(): ReadonlyArray<OpenApprovalSe
     let previousIsDataReady: boolean | null = null;
     let previousArtifacts: StorageState['artifacts'] | null = null;
     let previousReferences: ReadonlyArray<OpenApprovalSessionReference> = emptyOpenApprovalSessionReferences;
+    let previousReferenceSignature = JSON.stringify(previousReferences);
 
     selectorRef.current = (state) => {
       if (state.isDataReady === previousIsDataReady && state.artifacts === previousArtifacts) {
@@ -3145,9 +3146,14 @@ export function useOpenApprovalSessionReferences(): ReadonlyArray<OpenApprovalSe
 
       previousIsDataReady = state.isDataReady;
       previousArtifacts = state.artifacts;
-      previousReferences = state.isDataReady
+      const nextReferences = state.isDataReady
         ? collectOpenApprovalSessionReferenceListFromArtifacts(state.artifacts)
         : emptyOpenApprovalSessionReferences;
+      const nextReferenceSignature = JSON.stringify(nextReferences);
+      if (nextReferenceSignature !== previousReferenceSignature) {
+        previousReferences = nextReferences;
+        previousReferenceSignature = nextReferenceSignature;
+      }
       return previousReferences;
     };
   }

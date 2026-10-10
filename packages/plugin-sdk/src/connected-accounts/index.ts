@@ -94,4 +94,5 @@ export { parseProviderTimestampMs } from '../connectedAccounts.js';
 export { parseRetryAfterHeader } from '../connectedAccounts.js';
 export { requireOauthCredentialRecordWithExpiry } from '../connectedAccounts.js';
 export { requireTokenCredentialRecord } from '../connectedAccounts.js';
+export { resolveConnectedServiceQuotaMeterLabel } from '../connectedAccounts.js';
 export { unsupportedAccountUsage } from '../connectedAccounts.js';

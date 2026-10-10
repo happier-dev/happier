@@ -21,7 +21,7 @@ describe('managed identity-provider Action contracts', () => {
     }
   });
 
-  it('admits provider mutation requests while retaining authenticated human execution authority', () => {
+  it('requires human execution authority for provider mutations while admitting consent requests', () => {
     for (const id of [
       'identity.providers.create',
       'identity.providers.update',

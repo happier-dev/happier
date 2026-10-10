@@ -1,6 +1,7 @@
 import { vi } from 'vitest';
 import type { Socket } from 'socket.io-client';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import type { SessionSystemRecordStored } from '@happier-dev/protocol';
 
 /** Session/record HTTP fixture below the real Sync, authority, repository and codec owners. */
@@ -44,9 +45,8 @@ export async function createSocketIoClientBoundary(importOriginal: <T>() => Prom
         // These replacements belong to this cold external transport for its
         // entire lifetime, including teardown after a test restores its spies.
         socket.connect = vi.fn<typeof socket.connect>(() => socket);
-        // SDK send() delegates to emit(). A configured ready fixture must never
-        // send presence packets through an Engine.IO connection it did not open.
-        socket.emit = vi.fn<typeof socket.emit>(() => socket);
+        // Keep real Socket packet/ACK state; stop Engine.IO packets at its transport boundary.
+        socket.io._packet = vi.fn<typeof socket.io._packet>(() => undefined);
         // This cold SDK fixture never opens an Engine.IO connection or creates
         // namespace/ACK teardown state. Deliver the external disconnect event
         // through the real listeners; Sync and Account lifetime teardown stay real.
@@ -94,11 +94,18 @@ export async function restoreServerAccountForTest(params: Readonly<{
     // Match the app entry: the real implementation publishes the public Sync
     // singleton before connection restoration can hydrate or switch its Home.
     await import('@/sync/syncEngine');
-    const { upsertServerProfileOnly, setActiveServer } = await import('@/sync/domains/server/serverRuntime');
+    // Home-profile mutation itself uses the browser storage lock, before any
+    // credential write or Account restoration can run.
+    const webLocks = typeof globalThis.navigator?.locks?.request === 'function' ? null : installWebLockManagerMock();
+    const { upsertServerProfileOnly, setActiveServer, getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
     const { setServerProfileIdentityForUrl } = await import('@/sync/domains/server/serverProfiles');
     const { TokenStorage } = await import('@/auth/storage/tokenStorage');
     const { setRuntimeFetch, resetRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+    const { loadSyncSingletonForTests } = await import('./syncSingletonLoader');
+    await loadSyncSingletonForTests();
     const { restoreConnectionToActiveServer, disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
+    // Restore is the app's cold Account lifecycle, not a switch over a prior Sync Account.
+    await disconnectActiveServerConnection();
     // Home activation may start readiness immediately; install its HTTP
     // boundary before activation rather than racing a real network request.
     setRuntimeFetch(async (url, init) => {
@@ -106,7 +113,7 @@ export async function restoreServerAccountForTest(params: Readonly<{
         if (requestUrl.origin !== new URL(params.serverUrl).origin) {
             throw new Error(`Unexpected test Home request origin: ${requestUrl.origin}`);
         }
-        if (requestUrl.pathname === '/v1/auth/ping') return new Response('{}', { status: 200 });
+        if (requestUrl.pathname === '/health' || requestUrl.pathname === '/v1/auth/ping') return new Response('{}', { status: 200 });
         return params.request ? params.request(url, init) : new Response('{}', { status: 404 });
     });
     let home = await upsertServerProfileOnly({ serverUrl: params.serverUrl, name: 'Test Home' });
@@ -116,23 +123,28 @@ export async function restoreServerAccountForTest(params: Readonly<{
         home = identifiedHome;
     }
     const credentials = params.credentials ?? { token: `e30.${Buffer.from(JSON.stringify({ sub: params.accountId ?? 'account-a' })).toString('base64url')}.signature` };
-    const { canonicalizeServerUrl } = await import('@/sync/domains/server/url/serverUrlCanonical');
-    const restoredHomeUrl = canonicalizeServerUrl(home.serverUrl);
-    // Activation can start connection readiness immediately. Its first credential
-    // read must see this restoration's Account, not a previously mounted fixture.
-    const credentialBoundary = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async serverUrl => {
-        if (params.credentialScope === 'restored-home' && canonicalizeServerUrl(serverUrl) !== restoredHomeUrl) return null;
-        return credentials;
-    });
+    // Exercise genuine credential custody. Only browser locking is replaced;
+    // other saved Homes retain their own credentials and lookup semantics.
+    const credentialWrite = await TokenStorage.setCredentialsForServerUrlWithRollback(
+        home.serverUrl, { serverId: params.serverIdentityId ?? home.id }, credentials,
+    );
+    if (!credentialWrite) {
+        webLocks?.restore();
+        throw new Error('Test Home credentials could not be persisted');
+    }
+    // Home activation can start a connection immediately; its credentials must already be present.
     await setActiveServer({ serverId: home.id });
     await restoreConnectionToActiveServer(credentials);
     return {
         home,
+        /** Runtime/session scope uses the advertised identity; home.id remains the saved device profile id. */
+        serverId: getActiveServerSnapshot().serverId,
         credentials,
         async dispose() {
             await disconnectActiveServerConnection();
             resetRuntimeFetch();
-            credentialBoundary.mockRestore();
+            await credentialWrite.rollback();
+            webLocks?.restore();
         },
     };
 }

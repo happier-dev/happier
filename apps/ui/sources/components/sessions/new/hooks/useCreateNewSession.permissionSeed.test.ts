@@ -385,7 +385,7 @@ async function createUseCreateNewSessionHarness(accountMode: 'plain' | 'e2ee' = 
     const syncSendMessageSpy = vi.spyOn(sync, 'sendMessage');
     const automationCaptured = {
         get value() {
-            return automationWriteRequests.at(-1) ?? null;
+            return lastCreatedAutomation;
         },
     };
     // The daemon transport is the boundary; Action dispatch and local launch custody stay real.

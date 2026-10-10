@@ -305,7 +305,8 @@
         "ascApiKeyPath": "./.eas/keys/AuthKey_58Q493BG53.p8"
       },
       "android": {
-        "track": "production"
+        "track": "production",
+        "releaseStatus": "completed"
       }
     }
   }

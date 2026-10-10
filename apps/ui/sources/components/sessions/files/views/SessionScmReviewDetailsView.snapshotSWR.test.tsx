@@ -8,6 +8,11 @@ import { createSessionFilesViewFixture, fileViewSnapshot, installSessionFilesVie
 import type { AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
 
 installSessionFilesViewBoundaries();
+// Native recycler geometry is the platform boundary; review composition and scroll persistence remain real.
+vi.mock('@legendapp/list/react-native', async (importOriginal) => {
+    const { createCapturingLegendListMock } = await import('@/dev/testkit/mocks/legendList');
+    return createCapturingLegendListMock({ original: await importOriginal<typeof import('@legendapp/list/react-native')>(), renderItems: true }).module;
+});
 let fixture: Awaited<ReturnType<typeof createSessionFilesViewFixture>>;
 let servedReviewComments: readonly ReviewCommentV1[] = [];
 let servedGrants: PluginPermissionGrantV1[] = [];

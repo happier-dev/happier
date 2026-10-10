@@ -3,7 +3,8 @@ import React from 'react';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
-import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createSessionFixture, createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { SessionCurrentProjectionRecordV1Schema, SessionMetadataTuplePatchV1Schema, SessionMetadataTuplePatchSuccessV1Schema, type SessionMetadataTuplePatchV1 } from '@happier-dev/protocol';
 import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import type { RenderScreenResult } from '@/dev/testkit/render/renderScreen';
 import { act } from 'react-test-renderer';
@@ -12,7 +13,6 @@ import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { IDBFactory } from 'fake-indexeddb';
 import type { ManagedEndpointSupervisor } from '@happier-dev/connection-supervisor';
 import { createSocketIoAckTimeoutError } from '@happier-dev/sync-client';
-import { SessionCurrentProjectionRecordV1Schema, SessionMetadataTuplePatchV1Schema, SessionMetadataTuplePatchSuccessV1Schema, type SessionMetadataTuplePatchV1 } from '@happier-dev/protocol';
 import type { ResumeSessionOptions } from '@/sync/ops/sessions';
 
 // Sync imports persistence, which instantiates MMKV. Mock it for deterministic tests.
@@ -124,6 +124,7 @@ import type { Session } from './domains/state/storageTypes';
 import type { SyncMessageTransport } from './sync';
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { RPC_ERROR_CODES, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { HappyError } from '@/utils/errors/errors';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
@@ -3519,8 +3520,17 @@ installDisconnectedServerSocketBoundary((socket) => {
         accountTransport.emitted(event, ...args);
         return socket;
     });
-    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event: string, payload: unknown) =>
-        accountTransport.ack(event, payload));
+    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event: string, payload: unknown) => {
+        // This external receiver does not implement daemon Session RPC. Refuse
+        // that neighboring protocol without consuming a message admission ACK.
+        if (event === SOCKET_RPC_EVENTS.CALL) return {
+            ok: false, error: 'Session method unavailable', errorCode: 'METHOD_NOT_AVAILABLE',
+        };
+        if (event !== 'message' && event !== 'update-metadata') return {
+            v: 1, ok: true, admittedSessionIds: [],
+        };
+        return accountTransport.ack(event, payload);
+    });
 });
 
 describe('sync.sendMessage rejection and auth through the applied Account', () => {
@@ -3550,28 +3560,30 @@ describe('sync.sendMessage rejection and auth through the applied Account', () =
         });
         if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
         if (path === '/v2/cursor') return Response.json({ cursor: 0, changesFloor: 0 });
-        if (path.startsWith('/v2/sessions/s_account_permission_')) {
-            const sessionId = path.slice('/v2/sessions/'.length);
-            const session = state.getState().sessions[sessionId];
-            if (init?.method === 'PATCH') {
-                const patch = SessionMetadataTuplePatchV1Schema.parse(JSON.parse(String(init.body)));
-                metadataWrites.push(patch);
-                return Response.json(SessionMetadataTuplePatchSuccessV1Schema.parse({
-                    success: true, metadataLayoutVersion: 1,
-                    sharedMetadata: { version: session.metadataVersion + 1 },
-                    agentState: { version: session.agentStateVersion + 1 },
-                }));
+        if (path.startsWith('/v2/sessions/')) {
+            const session = state.getState().sessions[decodeURIComponent(path.slice('/v2/sessions/'.length))];
+            if (session) {
+                if (init?.method === 'PATCH') {
+                    const patch = SessionMetadataTuplePatchV1Schema.parse(JSON.parse(String(init.body)));
+                    if (patch.mode !== 'owner_migration') throw new Error('Expected an owner metadata migration');
+                    metadataWrites.push(patch);
+                    return Response.json(SessionMetadataTuplePatchSuccessV1Schema.parse({
+                        success: true, metadataLayoutVersion: 1,
+                        sharedMetadata: { version: patch.source.metadata.version + 1 },
+                        agentState: { version: patch.source.agentState.version + 1 },
+                    }));
+                }
+                beforeSessionMetadataRead?.();
+                // These metadata-writer cases use a supported legacy Session row;
+                // access negotiation and the tuple snapshot still run through HTTP.
+                const { ownerMetadata: _ownerMetadata, ...wire } = createPlainSessionCurrentProjectionRecordFixture({
+                    id: session.id, active: session.active, metadataVersion: session.metadataVersion,
+                    agentStateVersion: session.agentStateVersion,
+                });
+                return Response.json({ session: SessionCurrentProjectionRecordV1Schema.parse({ ...wire,
+                    metadataLayoutVersion: 0, metadata: JSON.stringify(session.metadata),
+                }) });
             }
-            beforeSessionMetadataRead?.();
-            return Response.json({ session: SessionCurrentProjectionRecordV1Schema.parse({
-                id: sessionId, createdAt: 1, updatedAt: 2, seq: 1,
-                active: true, activeAt: 2, encryptionMode: 'plain', dataEncryptionKey: null,
-                metadataLayoutVersion: 0, metadataVersion: 1,
-                metadata: JSON.stringify(session.metadata), agentStateVersion: session.agentStateVersion, agentState: null, share: null,
-                effectiveAccess: { v: 1, level: session.access!.level, sources: [{ kind: 'owner' }], capabilities: session.access!.capabilities },
-                responsibleAccountId: null, responsibleAccount: null,
-                archivedAt: null, pendingCount: 0, pendingVersion: 0,
-            }) });
         }
         return Response.json({ error: 'not_found' }, { status: 404 });
     };
@@ -3584,6 +3596,7 @@ describe('sync.sendMessage rejection and auth through the applied Account', () =
         vi.doUnmock('@/sync/runtime/orchestration/connectionManager');
         vi.doUnmock('@/sync/runtime/connectivity/serverReachabilityRuntimeFetch');
         vi.doUnmock('@/sync/ops');
+        vi.doUnmock('@/agents/catalog/catalog');
         vi.doUnmock('@/agents/catalog/registryCore');
         vi.doUnmock('@/voice/context/voiceHooks');
         vi.doUnmock('@/log');
@@ -3660,11 +3673,13 @@ describe('sync.sendMessage rejection and auth through the applied Account', () =
             throw new Error(`Unexpected socket event: ${event}`);
         });
 
-        const accountLifetime = (await import('./domains/scope/activeServerAccountScope')).captureActiveServerAccountScopeLifetime();
-        if (!accountLifetime) throw new Error('Expected the restored Account lifetime');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const accountLifetime = captureActiveServerAccountScopeLifetime();
+        expect(accountLifetime).not.toBeNull();
+        const outboundSession = state.getState().sessions[sessionId];
         await runtime.sendMessage(sessionId, 'hello', undefined, {}, {
-            localId: 'frozen-permission', serverId: restored!.home.id, accountLifetime,
-            session: state.getState().sessions[sessionId],
+            localId: 'frozen-permission', accountLifetime: accountLifetime!,
+            serverId: accountLifetime!.scope.serverId, session: outboundSession,
         });
 
         expect(accountTransport.ack).toHaveBeenCalledWith('message', expect.objectContaining({
@@ -3690,11 +3705,13 @@ describe('sync.sendMessage rejection and auth through the applied Account', () =
             throw new Error(`Unexpected socket event: ${event}`);
         });
 
-        const accountLifetime = (await import('./domains/scope/activeServerAccountScope')).captureActiveServerAccountScopeLifetime();
-        if (!accountLifetime) throw new Error('Expected the restored Account lifetime');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const accountLifetime = captureActiveServerAccountScopeLifetime();
+        expect(accountLifetime).not.toBeNull();
+        const outboundSession = state.getState().sessions[sessionId];
         await runtime.sendMessage(sessionId, 'hello', undefined, {}, {
-            localId: 'admitted-permission', serverId: restored!.home.id, accountLifetime,
-            session: state.getState().sessions[sessionId],
+            localId: 'admitted-permission', accountLifetime: accountLifetime!,
+            serverId: accountLifetime!.scope.serverId, session: outboundSession,
         });
 
         expect(metadataWrites).toEqual([expect.objectContaining({ mode: 'owner_migration' })]);
@@ -3796,7 +3813,7 @@ describe('sync.sendMessage rejection and auth through the applied Account', () =
         expect(accountTransport.ack.mock.calls[1]?.[1]).toEqual(expect.objectContaining({
             localId: 'p-retry-auth-probe', sentFrom: 'retry', messageRole: 'user',
         }));
-        expect(authProbeStatuses).toContain(401);
+        await vi.waitFor(() => expect(authProbeStatuses).toContain(401));
         expect(state.getState().sessionPending[sessionId]?.messages.map((message) => message.id)).toEqual(['p-persisted']);
         expect(state.getState().sessions[sessionId].optimisticThinkingAt ?? null).toBeNull();
         expect(state.getState().syncError).toMatchObject({ kind: 'auth', retryable: false });

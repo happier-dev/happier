@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import { ActionIdSchema } from './actionIds.js';
 import { SCM_GIT_ACTION_SPECS } from './scmGitActionSpecs.js';
+import { getActionSpec } from './actionSpecs.js';
+import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
+import { zodSchemaToJsonSchemaObject } from './actionInputJsonSchema.js';
+import { validateWorkflowDefinition } from '../workflows/workflowValidationV1.js';
+import { resolveBuiltinWorkflowDefinitionV1 } from '../workflows/builtins/catalog.js';
 
 const reads = [
   'scm.backend.describe', 'scm.status.snapshot', 'scm.worktrees.enrichment',
@@ -74,8 +79,7 @@ describe('SCM Action parity', () => {
     }
   });
 
-  it('projects every Git read and mutation through the same typed machine Action', async () => {
-    const { getActionSpec } = await import('./actionSpecs.js');
+  it('projects every Git read and mutation through the same typed machine Action', () => {
     for (const id of [...reads, ...mutations]) {
       const spec = getActionSpec(ActionIdSchema.parse(id));
       expect(spec.bindings?.rpcMethod, id).toBe(id);
@@ -87,20 +91,14 @@ describe('SCM Action parity', () => {
     }
   });
 
-  it('keeps force-with-lease on the same centrally approved danger Action as ordinary push', async () => {
-    const { getActionSpec } = await import('./actionSpecs.js');
-    const { resolveActionApprovalRouting } = await import('./actionApprovalPolicy.js');
+  it('keeps force-with-lease on the same centrally approved danger Action as ordinary push', () => {
     const spec = getActionSpec(ActionIdSchema.parse('scm.remote.push'));
     for (const surface of ['agent', 'mcp', 'cli'] as const) {
       expect(resolveActionApprovalRouting({ actionId: spec.id, spec, context: { surface, authority: 'account_automation' } }).required).toBe(true);
     }
   });
 
-  it('advertises the PR workflow leaf input with an optional current-branch head', async () => {
-    const { getActionSpec } = await import('./actionSpecs.js');
-    const { zodSchemaToJsonSchemaObject } = await import('./actionInputJsonSchema.js');
-    const { validateWorkflowDefinition } = await import('../workflows/workflowValidationV1.js');
-    const { resolveBuiltinWorkflowDefinitionV1 } = await import('../workflows/builtins/catalog.js');
+  it('advertises the PR workflow leaf input with an optional current-branch head', () => {
     const spec = getActionSpec('scm.pullRequest.openOrReuse');
     const input = { cwd: '/repo', base: 'main', title: 'A pull request', body: 'Details' };
     expect(spec.inputSchema.safeParse(input).success).toBe(true);
@@ -109,7 +107,7 @@ describe('SCM Action parity', () => {
     expect(validateWorkflowDefinition(resolveBuiltinWorkflowDefinitionV1('open-a-pull-request')?.definition).issues).toEqual([]);
   });
 
-  it('uses the canonical path, history-range and remote-policy schemas instead of a separate Action shape', async () => {
+  it('uses the canonical path, history-range and remote-policy schemas instead of a separate Action shape', () => {
     const schema = (id: string) => {
       const spec = SCM_GIT_ACTION_SPECS.find((row) => row.id === id);
       if (!spec) throw new Error(`Missing SCM Action ${id}`);
@@ -131,8 +129,7 @@ describe('SCM Action parity', () => {
     expect(schema('scm.remote.push').parse({ remote: 'origin', branch: 'main', pushMode: 'force_with_lease', expectedRemoteOid: 'a'.repeat(40) })).toMatchObject({ pushMode: 'force_with_lease', expectedRemoteOid: 'a'.repeat(40) });
   });
 
-  it('keeps source-plugin-owned prepared materialization behind its provenance boundary', async () => {
-    const { getActionSpec } = await import('./actionSpecs.js');
+  it('keeps source-plugin-owned prepared materialization behind its provenance boundary', () => {
     const spec = getActionSpec('scm.reviewWorkspace.materializePrepared');
     expect(spec.surfaces).toMatchObject({ agent: false, mcp: false, cli: false, api: false });
   });

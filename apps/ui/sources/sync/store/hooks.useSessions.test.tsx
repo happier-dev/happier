@@ -26,6 +26,7 @@ import {
 } from '@/sync/domains/state/storage';
 import { buildSessionFolderAssignmentKey } from '@/sync/domains/session/folders/assignmentKeys';
 import { setServerProfileIdentityForUrl, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { setActiveServer } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storageStore';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
@@ -122,7 +123,8 @@ describe('useSession exact Home lookup', () => {
 
             // Selection may publish Home B before Sync retires Home A's carrier.
             await act(async () => {
-                await activatePendingQueueScope({ serverId: 'home-b', accountId: 'account-a' });
+                const homeB = await upsertServerProfile({ serverUrl: 'https://home-b' });
+                await setActiveServer({ serverId: homeB.id, scope: 'device' });
             });
             expect(hook.getCurrent()).toEqual({ homeA: null, homeB: null });
 
@@ -292,6 +294,7 @@ describe('useSessionServerId', () => {
             storage.setState((state) => ({
                 ...state,
                 sessions: {},
+                ordinarySessionListMembershipByServerId: { 'active-server': ['session-1'] },
                 sessionListRowsByServerId: {
                     'active-server': {
                         'session-1': renderable,
@@ -333,6 +336,7 @@ describe('useSessionServerId', () => {
             storage.setState((state) => ({
                 ...state,
                 sessions: {},
+                ordinarySessionListMembershipByServerId: { 'active-server': ['session-1'] },
                 sessionListRowsByServerId: {
                     'active-server': {
                         'session-1': renderable,
@@ -562,6 +566,7 @@ describe('mobile cockpit surface local-setting selectors', () => {
             storage.setState((state) => ({
                 ...state,
                 profileScope: { serverId: 'active-server', accountId: 'account-a' },
+                ordinarySessionListMembershipByServerId: { 'active-server': ['session-1'] },
                 localSettings: {
                     ...state.localSettings,
                     sessionLastMobileSurfaceBySessionId: {
@@ -607,6 +612,7 @@ describe('mobile cockpit surface local-setting selectors', () => {
             storage.setState((state) => ({
                 ...state,
                 profileScope: { serverId: 'active-server', accountId: 'account-a' },
+                ordinarySessionListMembershipByServerId: { 'active-server': ['session-1'] },
                 localSettings: {
                     ...state.localSettings,
                     sessionLastMobileSurfaceBySessionId: {
@@ -687,6 +693,7 @@ describe('mobile cockpit surface local-setting selectors', () => {
             storage.setState((state) => ({
                 ...state,
                 profileScope: { serverId: 'active-server', accountId: 'account-a' },
+                ordinarySessionListMembershipByServerId: { 'active-server': ['session-1'] },
                 localSettings: {
                     ...state.localSettings,
                     sessionLastMobileSurfaceBySessionId: {

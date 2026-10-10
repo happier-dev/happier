@@ -13,9 +13,13 @@ const ROOT_TYPE_TEST_COMMAND = {
   ],
 } as const satisfies CommandSuiteEntry;
 
-export const ROOT_TYPECHECK_COMMANDS = [
+const ROOT_TYPECHECK_PREPARATION_COMMANDS = [
   { id: 'build-packages', args: ['-s', 'build:packages'] },
   { id: 'prepare-workspaces', args: ['-s', 'prepare:typecheck:workspaces'] },
+] as const satisfies readonly CommandSuiteEntry[];
+
+export const ROOT_TYPECHECK_COMMANDS = [
+  ...ROOT_TYPECHECK_PREPARATION_COMMANDS,
   {
     id: 'public-sdk',
     args: [
@@ -46,7 +50,6 @@ export const ROOT_TYPECHECK_COMMANDS = [
 ] as const satisfies readonly CommandSuiteEntry[];
 
 const ROOT_COMPILER_TYPECHECK_COMMANDS: readonly CommandSuiteEntry[] = [
-  ...ROOT_TYPECHECK_COMMANDS.slice(0, 2),
   ROOT_TYPE_TEST_COMMAND,
   ...[
     'packages/plugin-sdk/tsconfig.json',
@@ -65,6 +68,8 @@ const ROOT_COMPILER_TYPECHECK_COMMANDS: readonly CommandSuiteEntry[] = [
       ? ['--cwd', 'apps/ui', '-s', 'typecheck']
       : project === 'apps/cli/tsconfig.json'
         ? ['--cwd', 'apps/cli', '-s', 'typecheck']
+      : project === 'apps/server/tsconfig.json'
+        ? ['--cwd', 'apps/server', '-s', 'typecheck']
       : project === 'packages/tests/tsconfig.json'
         ? ['--cwd', 'packages/tests', '-s', 'typecheck']
       : ['tsc', '-p', project, '--noEmit'],
@@ -83,12 +88,24 @@ export async function runRootTypecheck(
 ): Promise<readonly CommandSuiteEntry[]> {
   const rootDir = options.rootDir ?? process.cwd();
   const commands = options.commands ?? (options.compilerOnly ? ROOT_COMPILER_TYPECHECK_COMMANDS : ROOT_TYPECHECK_COMMANDS);
-  return runCommandSuite({
+  const runCommand = options.runCommand ?? ((command) => runYarnCommand(command, rootDir));
+  const prepared = options.compilerOnly && !options.commands
+    ? await runCommandSuite({
+      commands: ROOT_TYPECHECK_PREPARATION_COMMANDS,
+      maxConcurrent: 1,
+      suiteName: 'Root typecheck preparation',
+      runCommand,
+    })
+    : [];
+  // Consumer diagnostics are meaningful only after current declarations have
+  // published successfully; retain complete failure collection within each phase.
+  const checked = await runCommandSuite({
     commands,
     maxConcurrent: 1,
     suiteName: 'Root typecheck suite',
-    runCommand: options.runCommand ?? ((command) => runYarnCommand(command, rootDir)),
+    runCommand,
   });
+  return [...prepared, ...checked];
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {

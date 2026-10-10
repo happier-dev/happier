@@ -19,7 +19,7 @@ const operations = [
 ] as const;
 
 describe('Account API-token Action admission', () => {
-  it('keeps lifecycle operations on the Account server transport and trusted UI/CLI surfaces', () => {
+  it('keeps lifecycle operations on the Account transport with automation request surfaces and no public API', () => {
     for (const [id, authority, path] of operations) {
       const spec = getActionSpec(id as ActionId);
       expect(spec.requiredAuthority).toBe(authority);

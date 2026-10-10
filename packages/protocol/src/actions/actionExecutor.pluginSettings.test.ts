@@ -130,8 +130,16 @@ describe('createActionExecutor (plugin Settings administration)', () => {
       },
     } as const;
     const mutationActionIds = Object.keys(inputs) as Array<keyof typeof inputs>;
+    const withoutApprovalCustody = createActionExecutor({ pluginSettingsAdministrationAction,
+      isActionApprovalRequired: () => false,
+    } as ActionExecutorDeps);
 
     for (const actionId of mutationActionIds) {
+      await expect(withoutApprovalCustody.execute(actionId, inputs[actionId], {
+        surface: 'plugin', authority: 'account_automation',
+        actionCaller: { kind: 'plugin', pluginId: 'acme.settings' },
+      })).resolves.toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+
       await expect(executor.execute(actionId, inputs[actionId], {
         surface: 'api',
         authority: 'account_automation',

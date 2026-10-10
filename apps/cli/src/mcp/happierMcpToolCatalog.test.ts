@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { ActionsSettingsV1Schema, getActionSpec, listActionSpecs } from '@happier-dev/protocol';
+import { RUNTIME_ACTION_IDS_V1 } from '@happier-dev/protocol/actions';
 
 import { listBuiltInHappierTools } from '@/agent/tools/happierTools/listBuiltInHappierTools';
 import { HAPPIER_MCP_TOOL_CATALOG, HAPPIER_MCP_TOOL_CATALOG_NAMES } from './happierMcpToolCatalog';
@@ -51,7 +52,7 @@ describe('HAPPIER_MCP_TOOL_CATALOG_NAMES', () => {
     expect(directSessionAgentNames).not.toContain('subagents_delegate_start');
   });
 
-  it('projects backed Local Services operations and keeps answering-client Copy/Open out of headless MCP tools', () => {
+  it('projects backed Local Services operations and does not synthesize undeclared runtime MCP tools', () => {
     const mcpToolNames = new Set(HAPPIER_MCP_TOOL_CATALOG_NAMES);
     const directMcpToolNames = new Set(listBuiltInHappierTools({
       surface: 'mcp',
@@ -73,6 +74,19 @@ describe('HAPPIER_MCP_TOOL_CATALOG_NAMES', () => {
       expect(mcpToolNames.has(name)).toBe(false);
       expect(directMcpToolNames.has(name)).toBe(false);
     }
+    const closedRuntimeActions = RUNTIME_ACTION_IDS_V1.filter((id) => getActionSpec(id).surfaces.mcp === false);
+    expect(closedRuntimeActions.length).toBeGreaterThan(0);
+    for (const runtimeActionId of closedRuntimeActions) {
+      const spec = getActionSpec(runtimeActionId);
+      if (spec.bindings?.mcpToolName) {
+        expect(directMcpToolNames.has(spec.bindings.mcpToolName), runtimeActionId).toBe(false);
+      }
+    }
+    const navigate = getActionSpec('browser.navigate');
+    expect(navigate.surfaces.mcp).toBe(false);
+    expect(navigate.bindings?.mcpToolName).toBeUndefined();
+    expect(directMcpToolNames.has('browser_navigate')).toBe(false);
+    expect(mcpToolNames.has('browser_navigate')).toBe(false);
   });
 
   it('reuses ActionSpec inputSchema objects for mcp start actions (no schema drift)', () => {

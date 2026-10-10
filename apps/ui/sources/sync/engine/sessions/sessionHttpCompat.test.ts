@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { V2SessionRecordSchema, type SessionListQueryV1 } from '@happier-dev/protocol';
+import type { SessionListQueryV1 } from '@happier-dev/protocol';
 
 import {
     fetchSessionListPageCompat,
@@ -8,23 +8,8 @@ import {
 } from './sessionHttpCompat';
 
 /**
- * `coerceLegacySessionRecord` refuses outright any row that carries `ownerMetadata`
- * (a layout-1 owner envelope), so that field can never appear on a coerced record.
- * Every other declared field must have a carrier — see the KEYSTONE test below.
- */
-const COERCION_STRUCTURALLY_ABSENT_FIELDS: ReadonlySet<string> = new Set([
-    'ownerMetadata',
-    'viewer',
-    // Legacy rows cannot prove the capability-complete access projection or
-    // the authenticated viewer's named-collaborator signal. Omitting both is
-    // the fail-closed compatibility contract.
-    'effectiveAccess',
-    'hasOtherNamedCollaborator',
-]);
-
-/**
- * A row that carries every declared field but fails the v2 schema (object `metadata`
- * instead of a string), which is exactly what routes it through the legacy coercion.
+ * A populated layout-0 row with legacy object content, routed through coercion.
+ * Optional current-only projections are not facts this legacy producer supplied.
  */
 function buildFullyPopulatedLegacyRow() {
     return {
@@ -133,14 +118,15 @@ describe('legacy session record coercion', () => {
         expect(parseCompatSessionByIdResponse({ session: withoutMode })).not.toBeNull();
     });
 
-    it('KEYSTONE: rebuilds a carrier for every field the protocol record schema declares', () => {
+    it('preserves the supplied legacy record facts while normalizing object content', () => {
+        const source = buildFullyPopulatedLegacyRow();
         const record = coerceFullyPopulatedLegacyRow();
 
-        const missing = Object.keys(V2SessionRecordSchema.shape)
-            .filter((field) => !COERCION_STRUCTURALLY_ABSENT_FIELDS.has(field))
-            .filter((field) => record[field] === undefined);
-
-        expect(missing).toEqual([]);
+        expect(record).toMatchObject({
+            ...source,
+            metadata: JSON.stringify(source.metadata),
+            agentState: JSON.stringify(source.agentState),
+        });
     });
 
     it('carries the attention edge facts the placement key depends on', () => {

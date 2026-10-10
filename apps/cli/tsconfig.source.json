@@ -555,6 +555,7 @@
     "../../packages/protocol/src/json/storedReadSchema.ts",
     "../../packages/protocol/src/lazyZodSchema.ts",
     "../../packages/protocol/src/plugins/actions/internalProtocolZodAdapter.ts",
+    "../../packages/protocol/src/plugins/actions/jsonSchemaCompiler.ts",
     "../../packages/protocol/src/plugins/actions/jsonSchemaValidation.ts",
     "../../packages/protocol/src/plugins/actions/protocolComposableSchema.ts",
     "../../packages/protocol/src/plugins/contributionIdentity.ts",

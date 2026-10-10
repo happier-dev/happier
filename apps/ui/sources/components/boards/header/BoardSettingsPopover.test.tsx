@@ -5,6 +5,8 @@ import { buildWorkBoardItemKeyV1, createWorkBoardV1 } from '@happier-dev/protoco
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import type { BoardCard } from '../model/boardCards';
 import { BoardSettingsButton } from './BoardSettingsPopover';
+import { Switch } from '@/components/ui/forms/Switch';
+import { act } from 'react-test-renderer';
 
 afterEach(() => {
     standardCleanup();
@@ -26,10 +28,11 @@ describe('Board settings picked items', () => {
         });
         const remove = vi.fn();
         vi.useFakeTimers();
+        const dispatch = vi.fn();
         const screen = await renderScreen(<BoardSettingsButton
             board={{ ...createWorkBoardV1({ id: 'board', name: 'Board' }), source: { picked: cards.map(card => card.ref) } }}
             homes={{ activeServerId: null, mountedServerIds: [], isHomeMounted: () => false }}
-            pickedCards={cards} canvasAvailable dispatch={() => {}} onRemoveItem={remove}
+            pickedCards={cards} canvasAvailable dispatch={dispatch} onRemoveItem={remove}
             onDeleted={() => {}} open onOpenChange={() => {}} onAddByHand={() => {}}
         />, layout);
         expect(Boolean(screen.findHostByTestId('board-settings.name'))).toBe(true);
@@ -39,8 +42,17 @@ describe('Board settings picked items', () => {
         // Advance the real Deferred clock boundary before inspecting its switches.
         await flushHookEffects({ cycles: 1, runOnlyPendingTimers: true });
         vi.useRealTimers();
-        expect(screen.findHostByTestId('board-settings.snap')).not.toBeNull();
-        expect(screen.findHostByTestId('board-settings.pin')).not.toBeNull();
+        const switches = screen.findAllByType(Switch);
+        const snap = switches.find(node => node.props.testID === 'board-settings.snap');
+        const pin = switches.find(node => node.props.testID === 'board-settings.pin');
+        expect(snap).toBeDefined();
+        expect(pin).toBeDefined();
+        await act(async () => {
+            snap!.props.onValueChange(false);
+            pin!.props.onValueChange(true);
+        });
+        expect(dispatch).toHaveBeenCalledWith({ kind: 'update', boardId: 'board', patch: { snap: false } });
+        expect(dispatch).toHaveBeenCalledWith({ kind: 'update', boardId: 'board', patch: { pinnedInSessions: true } });
         expect(screen.findHostByTestId('board-settings.delete')).not.toBeNull();
         await screen.pressByTestIdAsync('board-settings.picks:settings:option:picks');
         await screen.pressByTestIdAsync(`board-settings.remove.${cards[39]!.key}`);

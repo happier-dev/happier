@@ -16,6 +16,7 @@ import { createFakeRouteApp } from "@/app/api/testkit/routeHarness";
 import type { Fastify } from "@/app/api/types";
 import {
     createSessionAccessProjectionRelations,
+    machineFindFirst,
     resetSessionRouteMocks,
     sessionFindUnique,
 } from "@/app/api/routes/session/sessionRoutes.testkit";
@@ -147,8 +148,10 @@ describe("registerApiRoutes", () => {
         expect(app.routes.has("POST /v2/auth/api-tokens/create")).toBe(false);
         for (const actionId of ACTION_ID_FAMILIES_V1.account_security) {
             const spec = getActionSpec(actionId);
-            const transport = `${spec.serverTransport?.method} ${spec.serverTransport?.path}`;
-            expect(app.routes.has(transport)).toBe(true);
+            // Device-owned encryption recovery Actions have no server transport.
+            if (!spec.serverTransport) continue;
+            const transport = `${spec.serverTransport.method} ${spec.serverTransport.path}`;
+            expect(app.routes.has(transport), actionId).toBe(true);
         }
 
         // Machine Pool Actions use explicit domain routes mounted through the
@@ -247,6 +250,17 @@ describe("registerApiRoutes", () => {
 
     it("routes API requests on preview hosts to registered API handlers before local preview fallback", async () => {
         resetSessionRouteMocks();
+        machineFindFirst.mockImplementation(async ({ where }) =>
+            where.accountId === "u1" && where.id === "machine_1"
+                ? {
+                    id: "machine_1",
+                    accountId: "u1",
+                    revokedAt: null,
+                    replacedByMachineId: null,
+                    operationProtocolCapabilities: null,
+                    operationProtocolCapabilitiesRevision: null,
+                }
+                : null);
         sessionFindUnique.mockResolvedValue({
             ...createSessionAccessProjectionRelations(),
             id: "session_1",

@@ -256,6 +256,7 @@ function eventRun() {
         causeSourceSessionId: null,
         causeSourceTurnId: null,
         causeRunLifecycleEvidenceJson: null,
+        causeOriginRunId: null,
         causeSessionLifecycleRequestId: null,
         causeSessionLifecycleRequestKind: null,
         causeSessionLifecyclePolicyKind: null,

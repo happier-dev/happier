@@ -129,6 +129,8 @@ export function decodeAutomationRunCause(row: CauseRow): AutomationRunCause | nu
             evidence: {
                 event,
                 sourceSessionId: required(row.causeSourceSessionId, "causeSourceSessionId"),
+                ...(event === "sessionArchived" && row.causeOriginRunId !== null
+                    ? { originRunId: row.causeOriginRunId } : {}),
                 ...(event === "sessionStarted" || event === "sessionArchived" ? {} : {
                     sourceTurnId: required(row.causeSourceTurnId, "causeSourceTurnId"),
                 }),
@@ -186,6 +188,7 @@ export function encodeAutomationRunCause(causeInput: AutomationRunCause) {
             causeSourceSessionId: null,
             causeSourceTurnId: null,
             causeRunLifecycleEvidenceJson: null,
+            causeOriginRunId: null,
             causeSessionLifecycleRequestId: null,
             causeSessionLifecycleRequestKind: null,
             causeSessionLifecyclePolicyKind: null,
@@ -208,6 +211,7 @@ export function encodeAutomationRunCause(causeInput: AutomationRunCause) {
             causeSourceSessionId: null,
             causeSourceTurnId: null,
             causeRunLifecycleEvidenceJson: null,
+            causeOriginRunId: null,
             causeSessionLifecycleRequestId: null,
             causeSessionLifecycleRequestKind: null,
             causeSessionLifecyclePolicyKind: null,
@@ -222,6 +226,8 @@ export function encodeAutomationRunCause(causeInput: AutomationRunCause) {
         causeTriggerKind: cause.triggerKind,
         causeTriggerRevision: cause.triggerRevision,
         causeRunLifecycleEvidenceJson: cause.triggerKind === "runLifecycle" ? JSON.stringify(cause.evidence) : null,
+        causeOriginRunId: cause.triggerKind === "sessionLifecycle" && cause.evidence.event === "sessionArchived"
+            ? cause.evidence.originRunId ?? null : null,
         causeOccurredAt: new Date(cause.occurredAt),
         causeScheduledFor: cause.triggerKind === "schedule" ? new Date(cause.evidence.scheduledFor) : null,
         causeEventPluginId: cause.triggerKind === "pluginEvent"

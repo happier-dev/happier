@@ -13,7 +13,7 @@ function createLocalCommandDeps() {
     const handlers = new Map<string, RpcHandler>();
     registerBashHandler({ registerHandler: (method, handler) => handlers.set(method, handler) }, process.cwd());
     return createCliActionDeps({
-        token: 'unused-local-token', sessionId: 'cli-global', serverId: 'home', serverHttpBaseUrl: 'https://home.example.test', mode: 'plain', ctx: null,
+        token: 'unused-local-token', sessionId: 'cli-global', serverId: 'home', serverHttpBaseUrl: 'https://home.invalid', mode: 'plain', ctx: null,
         machineActionDirectTargetTransport: {
             machineId: 'run-machine',
             invoke: async (method, request, options) => {
@@ -86,7 +86,7 @@ describe('CLI command Action host', () => {
         const rpc = vi.spyOn(machineRpc, 'callMachineRpc').mockResolvedValue({ success: true, exitCode: 0, stdout: 'finished', stderr: '' });
         try {
             const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32) } };
-            const deps = createCliActionDeps({ token: 'token', credentials, sessionId: 'cli-global', serverId: 'home', serverHttpBaseUrl: 'https://home.example.test', mode: 'plain', ctx: null });
+            const deps = createCliActionDeps({ token: 'token', credentials, sessionId: 'cli-global', serverId: 'home', serverHttpBaseUrl: 'https://home.invalid', mode: 'plain', ctx: null });
             const signal = new AbortController().signal;
             await expect(deps.machineCommandRun!({ command: 'fixed command', env: { VALUE: 'data' } }, { surface: 'cli', authority: 'present_user', serverId: 'home', signal,
                 externalActionTarget: { kind: 'machine', machineId: 'run-machine', project: { machineId: 'run-machine', directory: '/workspace' } },
@@ -97,6 +97,14 @@ describe('CLI command Action host', () => {
             await expect(deps.machineCommandRun!({ command: 'fixed command' }, { surface: 'cli', authority: 'present_user', serverId: 'home',
                 externalActionTarget: { kind: 'machine', machineId: 'run-machine', project: { machineId: 'run-machine', directory: '/workspace' } },
             })).resolves.toMatchObject({ ok: false, errorCode: 'command_failed', details: { exitCode: 0, stdout: 'partial', stderr: '' } });
+            rpc.mockResolvedValueOnce({ success: true, exitCode: 0, stdout: '', stderr: '' });
+            await expect(deps.machineCommandRun!({ command: 'fixed command' }, { surface: 'cli', authority: 'present_user', serverId: 'home',
+                externalActionTarget: { kind: 'machine', machineId: 'run-machine', project: { machineId: 'run-machine', directory: '/workspace' } },
+            })).resolves.toEqual({ exitCode: 0, stdout: '', stderr: '' });
+            rpc.mockResolvedValueOnce({ success: false, error: 'Path is not authorized' });
+            await expect(deps.machineCommandRun!({ command: 'fixed command' }, { surface: 'cli', authority: 'present_user', serverId: 'home',
+                externalActionTarget: { kind: 'machine', machineId: 'run-machine', project: { machineId: 'run-machine', directory: '/workspace' } },
+            })).resolves.toMatchObject({ ok: false, errorCode: 'command_failed', details: { exitCode: -1, stdout: '', stderr: '' } });
         } finally {
             rpc.mockRestore();
         }
@@ -105,6 +113,8 @@ describe('CLI command Action host', () => {
     it.each([null,
         { success: true, exitCode: 0, stdout: 17, stderr: '' },
         { success: true, exitCode: 0, stdout: null, stderr: '' },
+        { success: true, exitCode: 0, stdout: '', stderr: null },
+        { success: true, exitCode: 0, stdout: '' },
         { success: true, exitCode: 0 },
     ])(
         'keeps a malformed post-execution response uncertain (%j)', async (response) => {
@@ -113,7 +123,7 @@ describe('CLI command Action host', () => {
             const rpc = vi.spyOn(machineRpc, 'callMachineRpc').mockResolvedValue(response);
             try {
                 const credentials = { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array(32) } };
-                const deps = createCliActionDeps({ token: 'token', credentials, sessionId: 'cli-global', serverId: 'home', serverHttpBaseUrl: 'https://home.example.test', mode: 'plain', ctx: null });
+                const deps = createCliActionDeps({ token: 'token', credentials, sessionId: 'cli-global', serverId: 'home', serverHttpBaseUrl: 'https://home.invalid', mode: 'plain', ctx: null });
                 await expect(deps.machineCommandRun!({ command: 'already executed' }, { surface: 'cli', authority: 'present_user', serverId: 'home',
                     externalActionTarget: { kind: 'machine', machineId: 'run-machine', project: { machineId: 'run-machine', directory: '/workspace' } },
                 })).resolves.toMatchObject({ ok: false, errorCode: 'action_failed' });

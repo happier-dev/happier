@@ -81,7 +81,7 @@ test('native mobile artifact names distinguish environment, platform, and effect
 
 test('build-ui-mobile-local workflow delegates local builds to ui-mobile-release pipeline command', () => {
   const src = fs.readFileSync(path.join(repoRoot, '.github', 'workflows', 'build-ui-mobile-local.yml'), 'utf8');
-  assert.match(src, /node scripts\/pipeline\/run\.mjs ui-mobile-release/);
+  assert.match(src, /node \.mobile-control\/scripts\/pipeline\/run\.mjs ui-mobile-release/);
   assert.match(src, /--native-build-mode local/);
   assert.match(src, /--action "\$\{\{\s*inputs\.action == 'build_and_submit' && 'native_submit' \|\| 'native'\s*\}\}"/);
   assert.match(src, /--publish-apk-release false/);

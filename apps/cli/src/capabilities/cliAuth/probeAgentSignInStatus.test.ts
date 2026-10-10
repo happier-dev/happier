@@ -2,25 +2,23 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { delimiter, join } from 'node:path';
 import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
 import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
-import { registerMachineTerminalRpcHandlers } from '@/api/machine/rpcHandlers.terminal';
+import { registerMachineAgentSignInRpcHandlers } from '@/api/machine/rpcHandlers.agentSignIn';
 import type { RpcHandler } from '@/api/rpc/types';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 
 describe('on-demand native sign-in status', () => {
   const directories: string[] = [];
-  const registrations: Array<ReturnType<typeof registerMachineTerminalRpcHandlers>> = [];
   const probeAgentSignInStatus = async (agentId: string) => {
     const handlers = new Map<string, RpcHandler>();
-    registrations.push(registerMachineTerminalRpcHandlers({ rpcHandlerManager: {
+    registerMachineAgentSignInRpcHandlers({ rpcHandlerManager: {
       registerHandler: (method, handler) => { handlers.set(method, handler); },
-    } }));
+    } });
     const handler = handlers.get('daemon.agents.signIn.status');
     expect(handler, 'the native on-demand status operation must be registered').toBeTypeOf('function');
     return await handler!({ agentId });
   };
   afterEach(() => {
-    for (const registration of registrations.splice(0)) registration.dispose();
     vi.unstubAllEnvs();
     for (const dir of directories.splice(0)) removeTempDirSync(dir);
   });
@@ -57,9 +55,9 @@ describe('on-demand native sign-in status', () => {
   });
   it('prefers a declared connected service and refuses unsupported native or undeclared service login', async () => {
     const handlers = new Map<string, RpcHandler>();
-    registrations.push(registerMachineTerminalRpcHandlers({ rpcHandlerManager: {
+    registerMachineAgentSignInRpcHandlers({ rpcHandlerManager: {
       registerHandler: (method, handler) => { handlers.set(method, handler); },
-    } }));
+    } });
     const prepare = handlers.get('daemon.agents.signIn.prepare');
     expect(prepare).toBeTypeOf('function');
     expect(await prepare!({ agentId: 'gemini' })).toMatchObject({ method: 'connected', command: {

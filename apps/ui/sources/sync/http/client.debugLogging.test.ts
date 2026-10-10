@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
@@ -13,6 +12,7 @@ afterEach(async () => {
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
+    vi.clearAllMocks();
 });
 
 describe('serverFetch debug logging', () => {
@@ -33,6 +33,7 @@ describe('serverFetch debug logging', () => {
         const combined = logSpy.mock.calls.map((c) => c.map(String).join(' ')).join('\n');
         expect(combined).toContain('serverFetch');
         expect(combined).toContain('http://localhost:53288/v1/health');
+
     });
 
     it('templates public-share capabilities when debug request logging is enabled', async () => {

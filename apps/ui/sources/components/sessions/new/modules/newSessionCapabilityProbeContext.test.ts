@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol';
+import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
 

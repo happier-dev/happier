@@ -28,6 +28,7 @@ import {
   createClaudeAgentSdkTurnOperations as createClaudeAgentSdkProviderOperations,
 } from './session.js';
 import { createClaudeNativeSessionRuntimeFromOperations } from '../../nativeRuntime.js';
+import { createClaudeNativeAgentSdkContext } from '../../nativeServices.js';
 import {
   computeClaudeSubscriptionAccessTokenFingerprint,
 } from '../../../auth/services/cloud/refreshBridge.js';
@@ -2610,19 +2611,25 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
     const terminalHost = createTerminalHostFixture();
     const events = createEventsFixture();
     const exec = createSdkExecFixture();
-    const refreshRuntimeAuth = vi.fn()
-      .mockResolvedValueOnce({
-        status: 'refreshed' as const,
-        result: { accessToken: 'fresh-claude-access-token' },
-      })
-      .mockResolvedValueOnce({
-        status: 'refreshed' as const,
-        result: { accessToken: 'second-fresh-claude-access-token' },
-      });
+    let refreshCount = 0;
+    let nativeAccessToken = 'initial-access-token';
+    // The public host auth/native-home ports are boundaries; the real native adapter and SDK
+    // callback consume proof-only replies and native credential bytes end to end.
+    const refreshRuntimeAuth = vi.fn(async (_request: Readonly<{ refreshAttemptId?: string }>, _options?: unknown) => {
+      nativeAccessToken = ++refreshCount === 1 ? 'fresh-claude-access-token' : 'second-fresh-claude-access-token';
+      return { status: 'refreshed' as const, result: { credentialRevision: `revision-${refreshCount}` } };
+    });
+    const native = createClaudeNativeAgentSdkContext({
+      services: { logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }, exec: {},
+        sessions: { current: { auth: { services: { refreshRuntimeAuth } } } } },
+      session: { services: { nativeHome: { readFiles: async () => ({ '.credentials.json': new TextEncoder().encode(
+        JSON.stringify({ claudeAiOauth: { accessToken: nativeAccessToken, refreshToken: 'private-rotation', scopes: ['user:inference'] } }),
+      ) }) } } },
+    } as unknown as AgentSessionRuntimeContext);
     const ctx = createPluginContextFixture(terminalHost.service, events.service, {
       exec: exec.service,
       sessionAuth: {
-        services: { refreshRuntimeAuth },
+        services: native.sessions.current.auth.services,
       },
     });
     const selection = {
@@ -2660,7 +2667,6 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
       });
 
       expect(refreshRuntimeAuth).toHaveBeenCalledWith({
-        agentId: 'claude',
         serviceId: 'claude-subscription',
         targetId: 'happy-session-1',
         selection,
@@ -2691,7 +2697,6 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
       });
 
       expect(refreshRuntimeAuth).toHaveBeenLastCalledWith({
-        agentId: 'claude',
         serviceId: 'claude-subscription',
         targetId: 'happy-session-1',
         selection,
@@ -2704,6 +2709,11 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
       }));
       expect(refreshRuntimeAuth.mock.calls[1]?.[0].refreshAttemptId)
         .not.toBe(refreshRuntimeAuth.mock.calls[0]?.[0].refreshAttemptId);
+      await vi.waitFor(() => expect(exec.written).toContainEqual({
+        type: 'control_response', response: { subtype: 'success', request_id: 'oauth-refresh-2',
+          response: { accessToken: 'second-fresh-claude-access-token' } },
+      }));
+      expect(JSON.stringify(exec.written)).not.toContain('private-rotation');
     } finally {
       await runtime.resetOrDisposeRuntime().catch(() => undefined);
     }

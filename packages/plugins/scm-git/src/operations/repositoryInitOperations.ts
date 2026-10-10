@@ -58,6 +58,7 @@ function invalidInitialBranchResponse(error: string, stdout?: string, stderr?: s
 }
 
 async function validateInitialBranch(
+    cwd: string,
     initialBranch: string | undefined,
 ): Promise<ScmRepositoryInitResponse | null> {
     if (initialBranch === undefined) return null;
@@ -67,7 +68,7 @@ async function validateInitialBranch(
 
     const checkBranch = await runScmCommand({
         bin: 'git',
-        cwd: process.cwd(),
+        cwd,
         args: ['check-ref-format', '--branch', initialBranch],
         timeoutMs: GIT_REPOSITORY_INIT_CHECK_TIMEOUT_MS,
         env: buildScmNonInteractiveEnv(),
@@ -97,7 +98,7 @@ export async function gitRepositoryInit(input: {
         };
     }
 
-    const branchValidation = await validateInitialBranch(input.request.initialBranch);
+    const branchValidation = await validateInitialBranch(input.context.cwd, input.request.initialBranch);
     if (branchValidation) return branchValidation;
 
     const init = await runScmCommand({

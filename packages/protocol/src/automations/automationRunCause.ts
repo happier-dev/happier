@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
+import { WorkflowRunIdV1Schema } from '../workflows/workflowIdsV1.js';
 import { AutomationRunLifecycleConfigurationSchema, type AutomationRunLifecycleSource } from './automationRunLifecycle.js';
 
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
@@ -85,9 +86,15 @@ const AutomationSessionLifecycleRunCauseSchema = lazyZodSchema(() => z.object({
       policy: AutomationSessionLifecyclePolicySnapshotSchema,
     }).strict(),
     z.object({
-      event: z.enum(['sessionStarted', 'sessionArchived']),
+      event: z.literal('sessionStarted'),
       sourceSessionId: IDENTIFIER_SCHEMA,
       policy: AutomationSessionLifecyclePolicySnapshotSchema,
+    }).strict(),
+    z.object({
+      event: z.literal('sessionArchived'),
+      sourceSessionId: IDENTIFIER_SCHEMA,
+      policy: AutomationSessionLifecyclePolicySnapshotSchema,
+      originRunId: WorkflowRunIdV1Schema.optional(),
     }).strict(),
     z.object({
       event: z.literal('userActionRequired'),
@@ -167,9 +174,14 @@ export type AutomationRunCause = Readonly<
       sourceTurnId: string;
       policy: AutomationSessionLifecyclePolicySnapshot;
     }> | Readonly<{
-      event: 'sessionStarted' | 'sessionArchived';
+      event: 'sessionStarted';
       sourceSessionId: string;
       policy: AutomationSessionLifecyclePolicySnapshot;
+    }> | Readonly<{
+      event: 'sessionArchived';
+      sourceSessionId: string;
+      policy: AutomationSessionLifecyclePolicySnapshot;
+      originRunId?: string;
     }> | Readonly<{
       event: 'userActionRequired';
       sourceSessionId: string;
@@ -252,7 +264,16 @@ export type AutomationRunCauseDeclarationV1 = Readonly<
         | Readonly<{ kind: 'nextMatches'; count: number }>
         | Readonly<{ kind: 'everyMatch' }>;
     }> | Readonly<{
-      event: 'sessionStarted' | 'sessionArchived';
+      event: 'sessionStarted';
+      sourceSessionId: string;
+      policy:
+        | Readonly<{ kind: 'currentTurn' }>
+        | Readonly<{ kind: 'firstMatch' }>
+        | Readonly<{ kind: 'nextMatches'; count: number }>
+        | Readonly<{ kind: 'everyMatch' }>;
+    }> | Readonly<{
+      event: 'sessionArchived';
+      originRunId?: string;
       sourceSessionId: string;
       policy:
         | Readonly<{ kind: 'currentTurn' }>

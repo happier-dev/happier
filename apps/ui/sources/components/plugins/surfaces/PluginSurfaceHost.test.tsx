@@ -1,7 +1,6 @@
 import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import * as React from 'react';
-// Hosted guests select real browser persistence; IndexedDB is the OS boundary.
-import 'fake-indexeddb/auto';
+import { IDBFactory } from 'fake-indexeddb';
 import NodeModule from 'node:module';
 import { WidgetSurface } from '@/components/widgets/surface/WidgetSurface';
 import { act } from 'react-test-renderer';
@@ -10,6 +9,9 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 import {
     AUTHORING_MEMORY_ROUTE_V1,
     AccountProfileSchema,
+    AuthoringMemoryListResponseV1Schema,
+    CurrentCursorResponseSchema,
+    CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
     encodeBase64,
     MACHINE_PLAIN_DATA_KEY_MARKER,
     buildQualifiedPluginContributionKey,
@@ -25,6 +27,8 @@ import {
     PluginProjectedActionV2Schema,
     PluginDeclarativeProjectedModelV1Schema,
     PluginProjectionV2Schema,
+    SessionCurrentProjectionRecordV1Schema,
+    V2SessionByIdNotFoundSchema,
     type DaemonPluginUiTargetedSurfaceMountV1,
     type DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1,
     type BrowserLocalServicePreviewTargetV1,
@@ -107,6 +111,7 @@ import { createTestMessageChannel } from '@/dev/testkit/mocks/messageChannel';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime, type ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -128,15 +133,18 @@ import {
 } from '@/sync/domains/plugins/ui/projection';
 import type { MachinePluginUiResourceWatchNextResult } from '@/sync/ops/machineContributionRegistryProjection';
 import {
+    areServerProfileIdentifiersEquivalent,
     setServerProfileIdentityForUrl,
     upsertServerProfile,
 } from '@/sync/domains/server/serverProfiles';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import {
     type PluginAccountAvailabilitySnapshot,
 } from '@/sync/domains/plugins/availability/reader';
-import { clearPluginAccountAvailabilityProjection, replacePluginAccountAvailabilityProjection } from '@/sync/domains/plugins/availability/projection';
+import { clearPluginAccountAvailabilityProjection, readPluginAccountAvailability, replacePluginAccountAvailabilityProjection } from '@/sync/domains/plugins/availability/projection';
 import { recordAccountStoredContentServerRequirements } from '@/sync/http/accountStoredContentCompatibility';
+import { readRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
 
 const directDeclarativeTestEnvironment = Object.freeze({
     theme: projectPluginUiTheme(lightTheme),
@@ -158,6 +166,11 @@ const directDeclarativeTestEnvironment = Object.freeze({
 }) satisfies HappierUiEnvironment;
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+// The real browser-record owner caches its database connection. Keep one device
+// IndexedDB boundary for this suite and clear its records while Home is disconnected.
+const deviceIndexedDB = new IDBFactory();
+vi.stubGlobal('indexedDB', deviceIndexedDB);
 
 const GENERATED_DESTINATION_UNAVAILABLE_HOST_METHODS = new Set<PluginUiHostMethodV1>([
     'statOpenableContent',
@@ -254,60 +267,131 @@ const pluginSurfaceConnectivity = vi.hoisted(() => ({
 // Only the disconnected Socket and Home's HTTP responses leave this process.
 const usedAccountScopes = new Map<string, Readonly<{ serverId: string; accountId: string }>>();
 let surfaceConnection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
+const surfaceHttpRequests: string[] = [];
 const pluginSurfaceAccountLifetime = {
     value: null as ActiveServerAccountScopeLifetime | null,
-    async setScope(scope: Readonly<{ serverId: string; accountId: string }>, request?: (path: string, init?: RequestInit) => Response | undefined) {
+    async setScope(scope: Readonly<{ serverId: string; accountId: string }>, options: Readonly<{
+        serverIdentityId?: string;
+        credentials?: Parameters<typeof restoreServerAccountForTest>[0]['credentials'];
+        request?: Parameters<typeof restoreServerAccountForTest>[0]['request'];
+    }> = {}) {
         await surfaceConnection?.dispose();
+        // A cold fixture replaces its physical Home connection. Drain the
+        // prior reachability lifecycle before its HTTP boundary is replaced;
+        // global test cleanup otherwise resets HTTP before afterAll drains it.
+        await (await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool'))
+            .resetServerReachabilitySupervisors();
         surfaceConnection = await restoreServerAccountForTest({
             serverUrl: `https://${scope.serverId}`, accountId: scope.accountId,
+            serverIdentityId: options.serverIdentityId ?? 'srv_server_a',
+            credentials: options.credentials,
             request: async (url, init) => {
                 const path = new URL(String(url)).pathname;
-                const served = request?.(path, init);
-                if (served) return served;
+                surfaceHttpRequests.push(path);
                 if (path === '/health') return Response.json({});
                 if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
                 if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture({ version: 1, updatedAt: 1 }));
                 if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
-                if (path === AUTHORING_MEMORY_ROUTE_V1) return Response.json({ rows: [] });
-                if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse({
-                    features: { plugins: { enabled: true, ui: { enabled: true,
-                        hostedWeb: { enabled: true }, reactNativeBundles: { enabled: true } } } },
-                }));
+                if (path === '/v1/features') {
+                    return options.request ? options.request(url, init) : Response.json(createRootLayoutFeaturesResponse({
+                        features: { plugins: { enabled: true, ui: { enabled: true,
+                            hostedWeb: { enabled: true }, reactNativeBundles: { enabled: true } } } },
+                    }));
+                }
+                if ((init?.method ?? 'GET') === 'GET' && path === '/v2/cursor') {
+                    return Response.json(CurrentCursorResponseSchema.parse({ cursor: 0, changesFloor: 0 }));
+                }
+                if ((init?.method ?? 'GET') === 'GET' && path === AUTHORING_MEMORY_ROUTE_V1) {
+                    return Response.json(AuthoringMemoryListResponseV1Schema.parse({ rows: [] }));
+                }
                 if (realResourceTransport.request && path.startsWith('/v1/machines/')) {
                     return Response.json({ machine: {
                         id: decodeURIComponent(path.slice('/v1/machines/'.length)),
                         dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
                     } });
                 }
-                // Sync may read other Home domains concurrently. Only plugin HTTP
-                // leaves belong to this boundary; an unsupported domain answers
-                // 404 rather than falsely reporting a transport outage.
-                if (pluginDataTransport.enabled
-                    && (path.startsWith('/v1/plugins/data/')
-                        || path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.uiArtifact.browserFrame.issue']
-                        || path.startsWith('/v1/account/plugin-storage/'))) {
-                    return pluginDataTransport.request(path, init);
-                }
+                if (options.request) return options.request(url, init);
+                // Plugin-specific responses must not receive Sync's neighboring
+                // Account reads. A normal missing HTTP route is a 404, whereas
+                // throwing here tells the real reachability owner Home is down.
+                if (pluginDataTransport.enabled && (
+                    path.startsWith('/v1/plugins/data/')
+                    || path.startsWith('/v1/account/plugin-storage/')
+                    || path === PluginAvailabilityActionHttpPathsV1[
+                        'account.plugins.availability.uiArtifact.browserFrame.issue'
+                    ]
+                )) return pluginDataTransport.request(path, init);
                 return Response.json({ error: 'not_found' }, { status: 404 });
             },
         });
         if (surfaceConnection.home.id !== scope.serverId) throw new Error('Fixture Home identity must match its routed mount.');
-        const { storage } = await import('@/sync/domains/state/storage');
-        // A scoped request admits the endpoint's actual readiness, independently
-        // of the intentionally disconnected logical Socket used by this fixture.
-        await waitForHomeGovernance(() => expect(storage.getState().endpointStatus).toBe('online'));
-        storage.setState({ profileScope: scope });
         this.value = captureActiveServerAccountScopeLifetime();
-        if (!this.value) throw new Error('Expected an applied fixture Account lifetime.');
-        usedAccountScopes.set(serverAccountScopeKeySuffix(scope), scope);
+        if (!this.value || this.value.scope.accountId !== scope.accountId
+            || !areServerProfileIdentifiersEquivalent(this.value.scope.serverId, scope.serverId)) {
+            throw new Error('Expected the requested Home and Account to have an applied fixture lifetime.');
+        }
+        usedAccountScopes.set(serverAccountScopeKeySuffix(this.value.scope), this.value.scope);
         accountEncryptionModeCredentials.value = surfaceConnection.credentials;
     },
     scopesUsed() { return [...usedAccountScopes.values()]; },
+    async assertRequestAuthority() {
+        const lifetime = this.value;
+        if (!lifetime || !surfaceConnection) throw new Error('Expected an applied fixture Account before requesting authority.');
+        const { captureServerRequestAuthorityForServerAccountScope } = await import(
+            '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope'
+        );
+        const { apiSocket } = await import('@/sync/api/session/apiSocket');
+        let authority: Awaited<ReturnType<typeof captureServerRequestAuthorityForServerAccountScope>> | null = null;
+        try {
+            authority = await captureServerRequestAuthorityForServerAccountScope({
+                scope: lifetime.scope,
+                activeRequest: (path, init) => apiSocket.request(path, init),
+            });
+            expect(authority.scope).toEqual(lifetime.scope);
+            expect(authority.context.credentials).toEqual(surfaceConnection.credentials);
+        } catch (error) {
+            throw new Error(`Fixture Account request authority unavailable: ${JSON.stringify({
+                scope: lifetime.scope,
+                accountCurrent: lifetime.isCurrent(),
+                endpointStatus: readRegisteredStorageState()?.endpointStatus,
+                endpointReason: readRegisteredStorageState()?.endpointReason,
+                endpointError: readRegisteredStorageState()?.endpointLastErrorMessage,
+                homeHttp: surfaceHttpRequests,
+                cause: error instanceof Error ? error.message : String(error),
+            })}`, { cause: error });
+        } finally {
+            await authority?.release();
+        }
+    },
     retire() {
         retireActiveServerAccountScopeLifetime();
         this.value = null;
     },
 };
+
+function surfaceFixtureDiagnostics(screen: Awaited<ReturnType<typeof renderScreen>>, pluginId: string): string {
+    const home = getActiveServerSnapshot();
+    const lifetime = pluginSurfaceAccountLifetime.value;
+    return JSON.stringify({
+        home: { serverId: home.serverId, generation: home.generation },
+        account: lifetime?.scope ?? null,
+        accountCurrent: lifetime?.isCurrent() ?? false,
+        endpointStatus: readRegisteredStorageState()?.endpointStatus,
+        endpointReason: readRegisteredStorageState()?.endpointReason,
+        endpointError: readRegisteredStorageState()?.endpointLastErrorMessage,
+        accountData: lifetime
+            ? readPluginAccountAvailability(lifetime.scope).readCurrentAccountDataCapability({ pluginId })
+            : null,
+        http: pluginDataTransport.request.mock.calls.map(([path, init]) => ({ path, method: init?.method ?? 'GET' })),
+        homeHttp: surfaceHttpRequests,
+        resourceReads: resourceReadMock.mock.calls.length,
+        resourceWatchOpens: resourceWatchOpenMock.mock.calls.length,
+        resourceWatchPolls: resourceWatchNextMock.mock.calls.length,
+        diagnostics: screen.findAll((node) => typeof node.props.testID === 'string'
+            && (node.props.testID.includes('unavailable') || node.props.testID.includes('diagnostic')))
+            .map((node) => node.props.testID),
+    });
+}
 
 /**
  * The SDK fixture is authored in an independently compiled package and imports
@@ -318,7 +402,7 @@ const pluginSurfaceAccountLifetime = {
  */
 describe('external targeted source products through the bound surface host', () => {
     beforeEach(async () => {
-        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' }, { serverIdentityId: 'srv_server_1' });
     });
 
     const targetPluginId = 'fixture.physical-copy-target';
@@ -1004,7 +1088,7 @@ const resourceWatchNextMock = vi.hoisted(() => vi.fn<(...args: unknown[]) => Pro
         };
     },
 ));
-const resourceWatchCloseMock = vi.hoisted(() => vi.fn(async () => undefined));
+const resourceWatchCloseMock = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<void>>(async () => undefined));
 const realResourceTransport = vi.hoisted(() => ({
     request: null as ((method: string, payload: unknown) => Promise<unknown>) | null,
 }));
@@ -1293,10 +1377,15 @@ vi.mock('@/components/appShell/currentUiContext/CurrentUiContextProvider', async
 });
 
 afterEach(async () => {
+    vi.useRealTimers();
+    standardCleanup();
     await surfaceConnection?.dispose();
     surfaceConnection = null;
     realResourceTransport.request = null;
     vi.useRealTimers();
+    await (await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool'))
+        .resetServerReachabilitySupervisors();
+    await (await import('@/sync/domains/state/browserRecordStorage')).clearBrowserRecords();
     act(() => {
         surfaceEnvironment.appState = 'active';
         for (const listener of surfaceEnvironment.appStateListeners) listener(surfaceEnvironment.appState);
@@ -1353,6 +1442,9 @@ afterEach(async () => {
 });
 
 beforeEach(async () => {
+    surfaceHttpRequests.length = 0;
+    vi.stubGlobal('indexedDB', deviceIndexedDB);
+    await (await import('@/sync/domains/state/browserRecordStorage')).clearBrowserRecords();
     await loadSyncSingletonForTests();
     resourceReadMock.mockReset();
     resourceReadMock.mockResolvedValue({
@@ -1765,10 +1857,11 @@ function createGeneratedHostedWebArtifactProjection(input: Readonly<{
     });
 }
 
-function prepareGeneratedHostedWebArtifactFrame(): void {
+async function prepareGeneratedHostedWebArtifactFrame(): Promise<void> {
+    await pluginSurfaceAccountLifetime.assertRequestAuthority();
     const { graph, pluginId, contributionId, platform, releaseVersion } = generatedHostedWebArtifactFixture;
     replacePluginAccountAvailabilityProjection({
-        scope: { serverId: 'server-a', accountId: 'account-a' },
+        scope: pluginSurfaceAccountLifetime.value!.scope,
         snapshot: {
             availabilityCursor: 11,
             materializations: [],
@@ -3332,7 +3425,7 @@ describe('PluginSurfacePlacementHost', () => {
         );
 
         await vi.waitFor(() => {
-            expect(screen.getTextContent()).toContain('Adopted dashboard');
+            expect(screen.getTextContent(), surfaceFixtureDiagnostics(screen, 'acme.live-dashboard')).toContain('Adopted dashboard');
         });
         await vi.waitFor(() => {
             expect(pendingInvalidations.size).toBeGreaterThan(0);
@@ -3954,7 +4047,7 @@ describe('PluginSurfacePlacementHost', () => {
             contractDigest: accountCollectionContract.contractDigest,
         };
         replacePluginAccountAvailabilityProjection({
-            scope: { serverId: 'server-a', accountId: 'account-a' },
+            scope: pluginSurfaceAccountLifetime.value!.scope,
             snapshot: {
                 availabilityCursor: 1,
                 materializations: [],
@@ -4006,7 +4099,7 @@ describe('PluginSurfacePlacementHost', () => {
             requirements: {
                 v: 1,
                 minimumProtocolVersion: 2,
-                currentProtocolVersion: 3,
+                currentProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
                 declarationTransport: 'http-header-and-socket-auth-v1',
             },
         });
@@ -4054,6 +4147,7 @@ describe('PluginSurfacePlacementHost', () => {
         // contract through its authenticated HTTP boundary. The Data-owned
         // pager remains opaque to this host test after that handoff.
         createActivePluginCollectionUiQueryPagerMock.mockReturnValue(accountCollectionPager);
+        await pluginSurfaceAccountLifetime.assertRequestAuthority();
         const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
         const placement = (occurrenceId: string) => ({
             id: 'surfacePlacement:acme.forms:recovery', pluginId: 'acme.forms', occurrenceId, contributionKind: 'surfacePlacement', descriptorId: 'recovery', generatedV2: true,
@@ -4097,7 +4191,8 @@ describe('PluginSurfacePlacementHost', () => {
             </PluginSurfaceFocusEligibilityProvider>
         );
         const screen = await renderScreen(renderPlacement('generation-1'));
-        await vi.waitFor(() => expect(createActivePluginCollectionUiQueryPagerMock).toHaveBeenCalledTimes(1));
+        await vi.waitFor(() => expect(createActivePluginCollectionUiQueryPagerMock,
+            surfaceFixtureDiagnostics(screen, 'acme.forms')).toHaveBeenCalledTimes(1));
         expect(declarativeSettingsGetMock).not.toHaveBeenCalled();
         expect(screen.findByTestId('plugin-declarative-field:root.children[0]')?.props.editable).toBe(false);
         expect(screen.findByTestId('plugin-declarative-action:acme.forms/save')?.props.disabled).toBe(true);
@@ -4672,7 +4767,8 @@ describe('PluginSurfacePlacementHost', () => {
                         : null,
                 },
             );
-            await vi.waitFor(() => expect(screen.root.findAllByType('iframe')).toHaveLength(1));
+            await vi.waitFor(() => expect(screen.root.findAllByType('iframe'),
+                surfaceFixtureDiagnostics(screen, 'acme.browser')).toHaveLength(1));
             expect(screen.root.findAll((node) => typeof node.props.testID === 'string'
                 && node.props.testID.startsWith('plugin-surface-unavailable-diagnostic-'))
                 .map((node) => node.props.testID)).toEqual([]);
@@ -4905,6 +5001,7 @@ describe('PluginSurfacePlacementHost', () => {
             expect(iframeSource.postMessage).not.toHaveBeenCalled();
         } finally {
             await mountedScreen?.unmount();
+            standardCleanup();
             (globalThis as any).window = previousWindow;
         }
     });
@@ -4995,7 +5092,7 @@ describe('PluginSurfacePlacementHost', () => {
         (globalThis as any).window = hostWindow;
         (globalThis as any).location = { origin: hostOrigin };
         try {
-            prepareGeneratedHostedWebArtifactFrame();
+            await prepareGeneratedHostedWebArtifactFrame();
             const generatedProjection = createGeneratedHostedWebArtifactProjection({
                 requiredHostMethods: [],
                 allowedMessageKinds: ['ready', 'hostApi'],
@@ -5024,9 +5121,8 @@ describe('PluginSurfacePlacementHost', () => {
                     ),
                 },
             );
-            await vi.waitFor(() => expect(screen.root.findAllByType('iframe'), JSON.stringify(screen.findAll(node =>
-                typeof node.props.testID === 'string' && node.props.testID.includes('diagnostic-'))
-                .map(node => node.props.testID))).toHaveLength(1));
+            await vi.waitFor(() => expect(screen.root.findAllByType('iframe'),
+                surfaceFixtureDiagnostics(screen, 'acme.browser')).toHaveLength(1));
             await act(async () => {
                 screen.root.findByType('iframe').props.onLoad?.();
                 await Promise.resolve();
@@ -5201,6 +5297,7 @@ describe('PluginSurfacePlacementHost', () => {
             } else {
                 Reflect.deleteProperty(globalThis, bootstrapKey);
             }
+            standardCleanup();
             (globalThis as any).window = previousWindow;
             (globalThis as any).location = previousLocation;
         }
@@ -5208,7 +5305,7 @@ describe('PluginSurfacePlacementHost', () => {
 
     it('installs the generated hosted-web canonical bootstrap binding on the existing frame bridge', async () => {
         const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
-        prepareGeneratedHostedWebArtifactFrame();
+        await prepareGeneratedHostedWebArtifactFrame();
         surfaceEnvironment.dark = true;
         surfaceEnvironment.rtl = true;
         surfaceEnvironment.fontScale = 1.5;
@@ -5272,7 +5369,8 @@ describe('PluginSurfacePlacementHost', () => {
                 pendingTarget.resolve(exactTargetResponse);
                 await pendingTarget.promise;
             });
-            await vi.waitFor(() => expect(screen.root.findAllByType('iframe'), JSON.stringify(screen.root.findAll(node => typeof node.props.testID === 'string' && node.props.testID.includes('diagnostic')).map(node => node.props.testID))).toHaveLength(1));
+            await vi.waitFor(() => expect(screen.root.findAllByType('iframe'),
+                surfaceFixtureDiagnostics(screen, 'acme.browser')).toHaveLength(1));
             const frame = screen.root.findByType('iframe');
             await act(async () => {
                 frame.props.onLoad?.();
@@ -5371,6 +5469,7 @@ describe('PluginSurfacePlacementHost', () => {
             expect(handleRequest).not.toHaveBeenCalled();
         } finally {
             await mountedScreen?.unmount();
+            standardCleanup();
             (globalThis as any).window = previousWindow;
             (globalThis as any).location = previousLocation;
         }
@@ -5378,7 +5477,7 @@ describe('PluginSurfacePlacementHost', () => {
 
     it('advertises the mount\'s installed methods, not the declared requirement (UI-D02)', async () => {
         const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
-        prepareGeneratedHostedWebArtifactFrame();
+        await prepareGeneratedHostedWebArtifactFrame();
         const iframeSource = { postMessage: vi.fn() } as unknown as WindowProxy;
         const previousWindow = (globalThis as any).window;
         const previousLocation = (globalThis as any).location;
@@ -5415,7 +5514,8 @@ describe('PluginSurfacePlacementHost', () => {
                     ),
                 },
             );
-            await vi.waitFor(() => expect(screen.root.findAllByType('iframe')).toHaveLength(1));
+            await vi.waitFor(() => expect(screen.root.findAllByType('iframe'),
+                surfaceFixtureDiagnostics(screen, 'acme.browser')).toHaveLength(1));
             await act(async () => {
                 screen.root.findByType('iframe').props.onLoad?.();
                 await Promise.resolve();
@@ -5489,6 +5589,7 @@ describe('PluginSurfacePlacementHost', () => {
 
         } finally {
             await mountedScreen?.unmount();
+            standardCleanup();
             (globalThis as any).window = previousWindow;
             (globalThis as any).location = previousLocation;
         }
@@ -5499,7 +5600,7 @@ describe('PluginSurfacePlacementHost', () => {
         // Generated V2 renderers must carry their real Artifact admission
         // facts. A hand-built generated descriptor with no Artifact is rejected
         // before host-method negotiation, which cannot prove watchContext.
-        prepareGeneratedHostedWebArtifactFrame();
+        await prepareGeneratedHostedWebArtifactFrame();
         const mountedProjection = createGeneratedHostedWebArtifactProjection({
             requiredHostMethods: ['context', 'readResource'],
             allowedMessageKinds: ['hostApi'],
@@ -5546,7 +5647,8 @@ describe('PluginSurfacePlacementHost', () => {
             // The exact generated Artifact reaches the frame only when the
             // mount's own push transport admits watchContext.
             expect(watchContextScreen.findByTestId('plugin-surface-unavailable')).toBeNull();
-            expect(watchContextScreen.root.findAllByType('iframe')).toHaveLength(1);
+            expect(watchContextScreen.root.findAllByType('iframe'),
+                surfaceFixtureDiagnostics(watchContextScreen, 'acme.browser')).toHaveLength(1);
         });
 
         // The renderer requires the daemon-served snapshot authority; this mount
@@ -5630,7 +5732,7 @@ describe('PluginSurfacePlacementHost', () => {
         // is not itself an offline rendering grant: this current release has no
         // admitted Account Collection contract to read or mutate.
         replacePluginAccountAvailabilityProjection({
-            scope: { serverId: 'server-a', accountId: 'account-a' },
+            scope: pluginSurfaceAccountLifetime.value!.scope,
             snapshot: {
                 availabilityCursor: 1,
                 materializations: [],
@@ -5815,6 +5917,9 @@ describe('PluginSurfacePlacementHost', () => {
     });
 
     it('retries and reissues an exact browser Artifact capability without remounting the surface', async () => {
+        await pluginSurfaceAccountLifetime.assertRequestAuthority();
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-08-14T10:00:00.000Z'));
         const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
         const previousWindow = (globalThis as any).window;
         const previousLocation = (globalThis as any).location;
@@ -5864,7 +5969,7 @@ describe('PluginSurfacePlacementHost', () => {
         const replacementExpiresAt = Date.now() + 60_000;
         const releaseVersion = '1.2.3';
         replacePluginAccountAvailabilityProjection({
-            scope: { serverId: 'server-a', accountId: 'account-a' },
+            scope: pluginSurfaceAccountLifetime.value!.scope,
             snapshot: {
                 availabilityCursor: 1,
                 materializations: [],
@@ -5976,8 +6081,7 @@ describe('PluginSurfacePlacementHost', () => {
             const screen = await renderBrowserArtifactFrame();
 
             await waitForHomeGovernance(() => expect(screen.findByTestId('plugin-hosted-web-unavailable-action')).toBeTruthy());
-            expect(pluginDataTransport.request).toHaveBeenCalledTimes(1);
-            vi.useFakeTimers();
+            expect(pluginDataTransport.request, surfaceFixtureDiagnostics(screen, 'acme.docs')).toHaveBeenCalledTimes(1);
             await act(async () => {
                 screen.pressByTestId('plugin-hosted-web-unavailable-action');
                 await Promise.resolve();
@@ -6073,6 +6177,7 @@ describe('PluginSurfacePlacementHost', () => {
             await flushHookEffects({ cycles: 6 });
             expect(screen.root.findAllByType('iframe')).toHaveLength(0);
         } finally {
+            standardCleanup();
             (globalThis as any).window = previousWindow;
             (globalThis as any).location = previousLocation;
         }
@@ -6207,7 +6312,7 @@ describe('PluginSurfacePlacementHost', () => {
             screen.findByTestId('plugin-rn-account-author-rows')?.props.accessibilityLabel
         );
 
-        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' }, { serverIdentityId: 'srv_server_1' });
         const screen = await renderScreen(host(), { flushOptions: { cycles: 0 } });
         await vi.waitFor(() => {
             expect(readAuthorRows()).toBe('account-a-private-binding');
@@ -6224,7 +6329,7 @@ describe('PluginSurfacePlacementHost', () => {
 
         // Account B's read never settles, so only a retired author tree can
         // clear Account A's rows.
-        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-b' });
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-b' }, { serverIdentityId: 'srv_server_1' });
         await screen.update(host());
         await vi.waitFor(() => {
             expect(readAuthorRows()).toBe('no-rows-yet');
@@ -6232,7 +6337,7 @@ describe('PluginSurfacePlacementHost', () => {
         expect(authorMounts).toBe(2);
 
         currentAccountRow = 'account-a-private-binding';
-        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' }, { serverIdentityId: 'srv_server_1' });
         await screen.update(host());
         await vi.waitFor(() => {
             expect(readAuthorRows()).toBe('account-a-private-binding');
@@ -6242,7 +6347,7 @@ describe('PluginSurfacePlacementHost', () => {
     });
 
     it('withholds a generated mount and Host API context until the current Account mode resolves', async () => {
-        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' }, { serverIdentityId: 'srv_server_1' });
         reactNativeSurfaceProps.length = 0;
         let resolveAccountEncryptionMode!: (value: AccountEncryptionModeResult) => void;
         const accountEncryptionModePending = new Promise<AccountEncryptionModeResult>((resolve) => {
@@ -6368,7 +6473,7 @@ describe('PluginSurfacePlacementHost', () => {
     });
 
     it('mounts generated RNW with the canonical SDK render context and no invented Re.Pack identity', async () => {
-        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' }, { serverIdentityId: 'srv_server_1' });
         reactNativeSurfaceProps.length = 0;
         surfaceEnvironment.dark = true;
         surfaceEnvironment.rtl = true;
@@ -6465,7 +6570,7 @@ describe('PluginSurfacePlacementHost', () => {
         } as unknown as PluginUiProjectionModel;
         const cache = getInstalledPluginReactNativeBundleCache();
         const persistentIdentity = {
-            accountScope: { serverId: 'server_1', accountId: 'account-a' },
+            accountScope: pluginSurfaceAccountLifetime.value!.scope,
             releaseVersion: '3.2.1',
             pluginId: generatedIdentity.pluginId,
             contributionId: generatedIdentity.contributionId,
@@ -6490,7 +6595,7 @@ describe('PluginSurfacePlacementHost', () => {
             bytes: entryBytes,
         }));
         const generatedAccountAvailability = {
-            scope: { serverId: 'server_1', accountId: 'account-a' },
+            scope: pluginSurfaceAccountLifetime.value!.scope,
             snapshot: {
                 availabilityCursor: 44,
                 materializations: [],
@@ -6912,8 +7017,12 @@ describe('PluginSurfacePlacementHost', () => {
 
         const renderedSurfaceCountBeforeAccountRetirement = reactNativeSurfaceProps.length;
         await act(async () => {
+            // This keeper observes A's retirement before any successor Account
+            // starts. Use the connection owner's actual disconnect/reset, as
+            // signing B in here would admit a new B mount in the same host.
             await surfaceConnection!.dispose();
             surfaceConnection = null;
+            pluginSurfaceAccountLifetime.value = null;
         });
         // Daemon-offline retention is same-Account continuity. Account
         // retirement is instead a disclosure boundary: the Account-A plugin
@@ -6966,7 +7075,7 @@ describe('PluginSurfacePlacementHost', () => {
             contractDigest: contract.contractDigest,
         };
         const admittingAvailability = {
-            scope: { serverId: 'server-a', accountId: 'account-a' },
+            scope: pluginSurfaceAccountLifetime.value!.scope,
             snapshot: {
                 availabilityCursor: 1,
                 materializations: [],
@@ -7018,7 +7127,7 @@ describe('PluginSurfacePlacementHost', () => {
             requirements: {
                 v: 1,
                 minimumProtocolVersion: 2,
-                currentProtocolVersion: 3,
+                currentProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
                 declarationTransport: 'http-header-and-socket-auth-v1',
             },
         });
@@ -7114,7 +7223,7 @@ describe('PluginSurfacePlacementHost', () => {
             version: '3.2.1',
         });
         const projection = exactTarget.projection;
-        const custodyScope = { serverId: 'server-a', accountId: 'account-a' };
+        const custodyScope = pluginSurfaceAccountLifetime.value!.scope;
         const retainedProjection = PluginProjectionV2Schema.parse({
             v: 2,
             generation: 91,
@@ -7287,7 +7396,7 @@ describe('PluginSurfacePlacementHost', () => {
         // while every daemon is offline; an empty Collection inventory cannot
         // erase that separate public storage surface.
         replacePluginAccountAvailabilityProjection({
-            scope: { serverId: 'server-a', accountId: 'account-a' },
+            scope: pluginSurfaceAccountLifetime.value!.scope,
             snapshot: {
                 availabilityCursor: 2,
                 materializations: [],
@@ -7419,7 +7528,7 @@ describe('PluginSurfacePlacementHost', () => {
     });
 
     it('keeps structurally admitted RN Host API methods stable across reconnect without remounting it', async () => {
-        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' }, { serverIdentityId: 'srv_server_1' });
         reactNativeSurfaceProps.length = 0;
         const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
         const renderMethodSets: string[] = [];
@@ -7502,7 +7611,7 @@ describe('PluginSurfacePlacementHost', () => {
     });
 
     it('EU-5a: carries openSurface launch input into the canonical render context and replaces it on reopen', async () => {
-        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' }, { serverIdentityId: 'srv_server_1' });
         reactNativeSurfaceProps.length = 0;
         const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
         const { getInstalledPluginReactNativeBundleCache } = await import('@/components/plugins/reactNative/bundleCache');
@@ -7640,7 +7749,7 @@ describe('PluginSurfacePlacementHost', () => {
     });
 
     it('RN-2: does not revive the retired devHotReload executable source', async () => {
-        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' }, { serverIdentityId: 'srv_server_1' });
         reactNativeSurfaceProps.length = 0;
         const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
         const devUrl = 'http://127.0.0.1:8082/index.bundle?platform=ios&dev=true';
@@ -7719,7 +7828,7 @@ describe('PluginSurfacePlacementHost', () => {
     });
 
     it('RN-2: does not build a dev load path for a denied devHotReload projection (no dev URL / fallback)', async () => {
-        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' }, { serverIdentityId: 'srv_server_1' });
         reactNativeSurfaceProps.length = 0;
         const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
         const targetedFixture = primeExactTargetedContributions({
@@ -7767,7 +7876,7 @@ describe('PluginSurfacePlacementHost', () => {
     });
 
     it('keeps the declared RN renderer when its runtime is unavailable', async () => {
-        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' }, { serverIdentityId: 'srv_server_1' });
         reactNativeSurfaceProps.length = 0;
         const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
         const targetedFixture = primeExactTargetedContributions({
@@ -7835,7 +7944,7 @@ describe('PluginSurfacePlacementHost', () => {
     });
 
     it('fails closed when the exact RN binding cannot install projected Host API requirements', async () => {
-        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' }, { serverIdentityId: 'srv_server_1' });
         reactNativeSurfaceProps.length = 0;
         const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
         const targetedFixture = primeExactTargetedContributions({
@@ -8182,7 +8291,7 @@ describe('PluginSurfacePlacementHost', () => {
  */
 describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => {
     beforeEach(async () => {
-        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' }, { serverIdentityId: 'srv_server_1' });
     });
 
     const generatedArtifactEntry = `react-native/${reactNativeCacheIdentity.artifactId}/entry.cjs.bundle`;
@@ -8257,7 +8366,7 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
     it('forgets app-page A current UI before focus can restore it after navigation', async () => {
         reactNativeSurfaceProps.length = 0;
         await primeGeneratedArtifact();
-        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' }, { serverIdentityId: 'srv_server_1' });
 
         type PublishedRecord = Readonly<{
             entityLabel: string | undefined;
@@ -8469,21 +8578,27 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
         await primeGeneratedArtifact();
         const publishLabels: string[] = [];
         const observedActivities: boolean[] = [];
-        const publicationClear = vi.fn();
+        let publicationClear = vi.fn();
         const publications: CurrentUiContextMountPublication[] = [];
         currentUiContextMountPublisher.value = Object.freeze({
             createMount: vi.fn(() => {
+                // A publication is one mount's disposable capability. A prior
+                // establishment mount cannot dispose the succeeding mount's
+                // handle just because this transport fixture reused it.
+                const clear = vi.fn();
+                const dispose = vi.fn();
+                publicationClear = clear;
                 const publication = Object.freeze({
                     publish: vi.fn((enrichment: CurrentUiContextMountedEnrichment | null): boolean => {
                         if (enrichment === null) {
-                            publicationClear();
+                            clear();
                             return true;
                         }
                         publishLabels.push(enrichment.entity?.label ?? '');
                         return true;
                     }),
-                    clear: publicationClear,
-                    dispose: vi.fn(),
+                    clear,
+                    dispose,
                 }) satisfies CurrentUiContextMountPublication;
                 publications.push(publication);
                 return publication;
@@ -8742,7 +8857,7 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
         const { clearDaemonMergedProjectionCacheForTests } = await import(
             '@/agents/backendCatalog/loadDaemonMergedProjectionInputs'
         );
-        const custodyScope = { serverId: 'server-a', accountId: 'account-a' };
+        const custodyScope = pluginSurfaceAccountLifetime.value!.scope;
         forgetPluginUiProjectionAdmissionSnapshots(custodyScope);
 
         const mountedTarget = {
@@ -8856,9 +8971,10 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
             loadPluginUiProjectionWarmCacheEntries,
             PluginUiProjectionCacheEntryV1Schema,
         } = await import('@/sync/domains/state/warmCachePersistence');
-        const persistedEntry = loadPluginUiProjectionWarmCacheEntries('server-a', 'account-a')[
+        const persistedEntry = loadPluginUiProjectionWarmCacheEntries(custodyScope.serverId, custodyScope.accountId)[
             pluginUiProjectionAdmissionTargetKey({ serverId: 'server-a', machineId: 'machine_1' })
         ];
+        expect(persistedEntry).toBeDefined();
         const reparsedEntry = PluginUiProjectionCacheEntryV1Schema.safeParse(
             JSON.parse(JSON.stringify(persistedEntry)),
         );
@@ -9564,7 +9680,7 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
         const expiresAt = Date.now() + 60_000;
         const releaseVersion = artifactProjection.pluginVersion;
         replacePluginAccountAvailabilityProjection({
-            scope: { serverId: 'server-a', accountId: 'account-a' },
+            scope: pluginSurfaceAccountLifetime.value!.scope,
             snapshot: {
                 availabilityCursor: 1,
                 materializations: [],
@@ -9639,6 +9755,7 @@ describe('mounted plugin surface context (§3.2, §3.3, UI-D11/D12/D13)', () => 
                 headers: { 'Content-Type': 'application/json' },
             });
         });
+        await pluginSurfaceAccountLifetime.assertRequestAuthority();
         const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
         const parent = await renderScreen(
             <PluginSurfacePlacementHost
@@ -11926,7 +12043,7 @@ describe('Composer physical surface mount', () => {
         let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
 
         try {
-            prepareGeneratedHostedWebArtifactFrame();
+            await prepareGeneratedHostedWebArtifactFrame();
             const { PluginSurfaceHost } = await import('./PluginSurfaceHost');
             screen = await renderScreen(React.createElement(PluginSurfaceHost as unknown as React.ComponentType<
                 Readonly<Record<string, unknown>>
@@ -11974,12 +12091,11 @@ describe('installed Session widget through the mounted plugin controller', () =>
     it('renders an inputless authored body when the app projection has no unique machine scope', async () => {
         const { WidgetDefinitionV1Schema } = await import('@happier-dev/protocol/widgets');
         const { storage } = await import('@/sync/domains/state/storage');
-        const scope = { serverId: 'server_1', accountId: 'account-a', owner: { kind: 'home' as const } };
         const previous = storage.getState();
         onTestFinished(() => { storage.setState(previous, true); });
-        await pluginSurfaceAccountLifetime.setScope(scope);
-        storage.setState({ profileScope: { serverId: scope.serverId, accountId: scope.accountId },
-            profile: AccountProfileSchema.parse({ id: scope.accountId }) });
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' }, { serverIdentityId: 'srv_server_1' });
+        const scope = { ...pluginSurfaceAccountLifetime.value!.scope, owner: { kind: 'home' as const } };
+        storage.setState({ profile: AccountProfileSchema.parse({ id: scope.accountId }) });
         const definition = WidgetDefinitionV1Schema.parse({ v: 1, id: 'qa-e-semantic-sizes', name: 'QA E semantic sizes',
             inputs: { fields: [] }, inputSchema: { type: 'object', additionalProperties: false },
             body: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'QA constant body' } } },
@@ -12025,7 +12141,6 @@ describe('installed Session widget through the mounted plugin controller', () =>
         }));
         const candidate = readWidgetDescriptor(projection, surface);
         if (!candidate) throw new Error('Canonical viewer-input widget must be admitted');
-        const scope = { serverId: 'server_1', accountId: 'account-a', owner: { kind: 'home' as const } };
         const saved = { service: { pluginId: surface.pluginId, localId: 'cloud' }, accountId: 'my-connection' };
         const previous = storage.getState();
         onTestFinished(() => { storage.setState(previous, true); });
@@ -12034,10 +12149,17 @@ describe('installed Session widget through the mounted plugin controller', () =>
         const emptyPurposes = ConnectedAccountCatalogRowReadResponseV1Schema.parse({ status: 'present', revision: 1,
             content: sealConnectedAccountCatalogContentV1({ mode: 'plain', material: null,
                 record: emptyConnectedAccountCatalogRecordV1('purposes') }) });
-        await pluginSurfaceAccountLifetime.setScope(scope, (path, init) => path === `${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/purposes`
-            && (!init?.method || init.method === 'GET') ? Response.json(emptyPurposes) : undefined);
-        storage.setState({ profileScope: { serverId: scope.serverId, accountId: scope.accountId },
-            profile: AccountProfileSchema.parse({ id: scope.accountId }) });
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' }, {
+            serverIdentityId: 'srv_server_1',
+            request: async (url, init) => {
+                const path = new URL(String(url)).pathname;
+                if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+                if (path === `${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/purposes` && (!init?.method || init.method === 'GET')) return Response.json(emptyPurposes);
+                return Response.json({ error: 'not_found' }, { status: 404 });
+            },
+        });
+        const scope = { ...pluginSurfaceAccountLifetime.value!.scope, owner: { kind: 'home' as const } };
+        storage.setState({ profile: AccountProfileSchema.parse({ id: scope.accountId }) });
         contributionProjectionDescribeMock.mockClear();
         resourceReadMock.mockClear();
         reactNativeSurfaceProps.length = 0;
@@ -12147,23 +12269,26 @@ describe('installed Session widget through the mounted plugin controller', () =>
         });
         reactNativeSurfaceRuntime.enabled = true;
         reactNativeSurfaceRuntime.module = { renderSurface };
-        if (deniedBeforeMount || (repair !== 'none' && repair !== 'lost')) {
-            await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' });
-        }
         resourceReadMock.mockResolvedValue({ supported: true, result: {
             ok: true, contentType: 'text/plain', digest: `sha256:${'0'.repeat(64)}`,
             bytesBase64: encodeBase64(new TextEncoder().encode('Ready for the public widget review')),
         } });
         declarativeActionExecuteMock.mockResolvedValue({ supported: true, result: { ok: true, result: { summary: 'Reviewed' } } });
-        const runtime = {
-            pluginUiProjection: model, pluginBrowserProjection: null,
-            phase: 'current' as const, interactionEnabled: true,
-            machineId: 'machine_1', serverId: 'server_1', platform: 'web' as const,
+        // The real exact-Session hydration owner may refresh a cached row after
+        // Sync has fetched membership. Serve the canonical wire shape, not only
+        // a consumer-owned storage projection; absence is a current-route 404.
+        const wireSessions = new Map<string, ReturnType<typeof SessionCurrentProjectionRecordV1Schema.parse>>();
+        const readWidgetSession = (path: string): Response | null => {
+            const sessionId = path.match(/^\/v2\/sessions\/([^/]+)$/)?.[1];
+            if (!sessionId) return null;
+            const wire = wireSessions.get(sessionId);
+            return wire ? Response.json({ session: wire })
+                : Response.json(V2SessionByIdNotFoundSchema.parse({ error: 'Session not found' }), { status: 404 });
         };
         const { createSessionAccessFixture, createSessionListRenderableSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
-        const session = createSessionFixture({ id: 'session-widget-b', serverId: 'server_1', metadata: { path: '/workspace/b', host: 'machine-b', machineId: 'machine_1' },
+        const session = createSessionFixture({ id: 'session-widget-b', serverId: 'srv_server_1', metadata: { path: '/workspace/b', host: 'machine-b', machineId: 'machine_1' },
             access: createSessionAccessFixture('owner', { readTranscript: !deniedBeforeMount }) });
-        const ambient = createSessionFixture({ id: 'session-widget-a', serverId: 'server_1', metadata: { path: '/workspace/a', host: 'machine-a', machineId: 'machine_a' } });
+        const ambient = createSessionFixture({ id: 'session-widget-a', serverId: 'srv_server_1', metadata: { path: '/workspace/a', host: 'machine-a', machineId: 'machine_a' } });
         const availableSessions = repair === 'lost' ? [ambient] : [session, ambient];
         const publicWidgetRequests: string[] = [];
         if (!deniedBeforeMount && (repair === 'none' || repair === 'lost')) {
@@ -12178,10 +12303,8 @@ describe('installed Session widget through the mounted plugin controller', () =>
             const { resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
             resetServerFeaturesClientForTests();
             const { createHomeHubArtifactHttpBoundary } = await import('@/dev/testkit/harness/homeHubArtifactHttpBoundary');
-            const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
             const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
             const credentials = { token: createAccountTokenForTests('account-a') };
-            accountEncryptionModeCredentials.value = credentials;
             accountEncryptionModeFetch.mockResolvedValue({ mode: 'plain', updatedAt: 0 });
             const http = createHomeHubArtifactHttpBoundary('account-a');
             const { SessionListQueryResponseV1Schema, SessionCurrentProjectionRecordV1Schema } = await import('@happier-dev/protocol/sessions/listing/response');
@@ -12197,9 +12320,8 @@ describe('installed Session widget through the mounted plugin controller', () =>
                     follow: { follows: false, notificationLevel: 'none' }, notification: { level: 'none', source: 'preference' } },
                 responsibleAccountId: null, responsibleAccount: null,
             }));
-            await surfaceConnection?.dispose();
-            surfaceConnection = null;
-            const connection = await restoreServerAccountForTest({ serverUrl: 'https://server_1', credentials,
+            await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' }, {
+                serverIdentityId: 'srv_server_1', credentials,
                 request: (url, init) => {
                     const path = new URL(String(url)).pathname;
                     publicWidgetRequests.push(path);
@@ -12222,36 +12344,62 @@ describe('installed Session widget through the mounted plugin controller', () =>
                     }
                     if (path === `/v2/sessions/session-widget-a/system-records/record`) return Promise.resolve(Response.json({ record: null }));
                     if (path === `/v2/sessions/session-widget-a/system-records`) return Promise.resolve(Response.json({ records: [], nextCursor: null, hasNext: false }));
+                    const sessionResponse = readWidgetSession(path);
+                    if (sessionResponse) return Promise.resolve(sessionResponse);
                     return http.request(url, init);
-                } });
-            expect(connection.home.id).toBe('server_1');
-            surfaceConnection = connection;
-            pluginSurfaceAccountLifetime.value = captureActiveServerAccountScopeLifetime();
-            usedAccountScopes.set(serverAccountScopeKeySuffix({ serverId: 'server_1', accountId: 'account-a' }), { serverId: 'server_1', accountId: 'account-a' });
-            await waitForHomeGovernance(() => expect(storage.getState().endpointStatus, storage.getState().endpointLastErrorMessage ?? '').toBe('online'));
+                },
+            });
+        } else {
+            await pluginSurfaceAccountLifetime.setScope({ serverId: 'server_1', accountId: 'account-a' }, {
+                serverIdentityId: 'srv_server_1',
+                request: async url => {
+                    const path = new URL(String(url)).pathname;
+                    if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+                    return readWidgetSession(path) ?? Response.json({ error: 'not_found' }, { status: 404 });
+                },
+            });
+        }
+        const widgetAccountScope = pluginSurfaceAccountLifetime.value!.scope;
+        const runtime = {
+            pluginUiProjection: model, pluginBrowserProjection: null,
+            phase: 'current' as const, interactionEnabled: true,
+            machineId: 'machine_1', serverId: widgetAccountScope.serverId, platform: 'web' as const,
+        };
+        for (const entry of repair === 'lost' ? [ambient] : [session, ambient]) {
+            wireSessions.set(entry.id, SessionCurrentProjectionRecordV1Schema.parse({
+                ...entry, metadataLayoutVersion: 0, metadata: JSON.stringify(entry.metadata),
+                effectiveAccess: { v: 1, level: entry.access!.level, sources: [{ kind: 'owner' }], capabilities: entry.access!.capabilities },
+                responsibleAccountId: null, responsibleAccount: null, share: null,
+                archivedAt: null, agentState: null, dataEncryptionKey: null, pendingCount: 0, pendingVersion: 0,
+            }));
         }
         const previous = storage.getState();
         onTestFinished(() => { storage.setState(previous, true); });
-        storage.setState({ profileScope: { serverId: 'server_1', accountId: 'account-a' },
+        storage.setState({
             sessions: { ...(repair === 'lost' ? {} : { [session.id]: session }), [ambient.id]: ambient },
-            sessionListRowsByServerId: { server_1: Object.fromEntries(availableSessions.map(entry => {
+            sessionListRowsByServerId: { [widgetAccountScope.serverId]: Object.fromEntries(availableSessions.map(entry => {
                 if (!entry.metadata) throw new Error('Expected widget Session metadata');
                 return [entry.id, createSessionListRenderableSessionFixture({ id: entry.id, updatedAt: entry.updatedAt, active: entry.active,
                     presence: entry.presence, encryptionMode: entry.encryptionMode,
                     encryptedContentAvailability: entry.encryptedContentAvailability,
                     metadata: { ...entry.metadata, summaryText: entry.id } })];
             })) },
-            ordinarySessionListMembershipByServerId: { server_1: availableSessions.map(entry => entry.id) },
-            sessionListIndexByServerId: { server_1: availableSessions.map(entry => ({ type: 'session', sessionId: entry.id, serverId: 'server_1', serverName: 'Home' })) },
-            machineListByServerId: { server_1: [createMachineFixture({ id: 'machine_1', active: true }), createMachineFixture({ id: 'machine_a', active: true })] } });
+            ordinarySessionListMembershipByServerId: { [widgetAccountScope.serverId]: availableSessions.map(entry => entry.id) },
+            sessionListIndexByServerId: { [widgetAccountScope.serverId]: availableSessions.map(entry => ({ type: 'session', sessionId: entry.id, serverId: widgetAccountScope.serverId, serverName: 'Home' })) },
+            machineListByServerId: { [widgetAccountScope.serverId]: [createMachineFixture({ id: 'machine_1', active: true }), createMachineFixture({ id: 'machine_a', active: true })] } });
+        if (repair === 'lost') {
+            // Missing hydration is not Session retirement: publish the same
+            // known deletion that the real Session input owner observes.
+            storage.getState().deleteSession(session.id, widgetAccountScope.serverId);
+        }
         const descriptor = readWidgetDescriptor(model, { pluginId, localId: declaration.id });
         const onRepairInputs = vi.fn();
         const render = (current = runtime) => <WidgetSurface
-            scope={{ serverId: 'server_1', accountId: 'account-a', owner: { kind: 'sessionBoard', sessionId: ambient.id } }}
-            providedContext={{ session: [{ serverId: 'server_1', sessionId: ambient.id }] }}
+            scope={{ ...widgetAccountScope, owner: { kind: 'sessionBoard', sessionId: ambient.id } }}
+            providedContext={{ session: [{ serverId: widgetAccountScope.serverId, sessionId: ambient.id }] }}
             instance={{ v: 1, id: 'configured-b', definition: { kind: 'installed', surface: { pluginId, localId: declaration.id } },
                 bindings: {
-                    ...(repair === 'missing' ? {} : { session: { kind: 'value' as const, value: repair === 'invalid' ? 'not-a-session-ref' : { serverId: 'server_1', sessionId: session.id } } }),
+                    ...(repair === 'missing' ? {} : { session: { kind: 'value' as const, value: repair === 'invalid' ? 'not-a-session-ref' : { serverId: widgetAccountScope.serverId, sessionId: session.id } } }),
                     view: { kind: 'value', value: 'detail' },
                 } }}
             descriptor={descriptor} recordRevision="item-revision-1"
@@ -12275,14 +12423,28 @@ describe('installed Session widget through the mounted plugin controller', () =>
         const screen = await renderScreen(render());
         await flushHookEffects();
         if (repair !== 'none') {
+            if (repair === 'lost') {
+                await vi.waitFor(async () => {
+                    await flushHookEffects();
+                    expect(screen.findByTestId('public-widget-state-diagnostic-widget_session_unavailable'),
+                        surfaceFixtureDiagnostics(screen, pluginId)).not.toBeNull();
+                });
+            }
             await waitForHomeGovernance(async () => {
                 await flushHookEffects();
                 expect(screen.findByTestId('public-widget-inputs-repair')).not.toBeNull();
             });
             const action = screen.findByTestId('public-widget-inputs-repair');
             await act(async () => { action!.props.onPress(); });
+            const expected = repair === 'missing'
+                ? { status: 'selection_required', reasonCode: 'widget_input_missing' }
+                : repair === 'invalid'
+                    ? { status: 'invalid', reasonCode: 'widget_input_schema_invalid' }
+                    : { status: 'unavailable', reasonCode: 'widget_session_unavailable' };
+            expect(screen.findByTestId(`public-widget-state-diagnostic-${expected.reasonCode}`)).not.toBeNull();
             expect(onRepairInputs).toHaveBeenCalledWith(expect.objectContaining({
-                kind: repair === 'lost' ? 'session_unavailable' : 'input', field: expect.objectContaining({ path: 'session' }),
+                kind: repair === 'lost' ? 'session_unavailable' : 'input',
+                field: expect.objectContaining({ path: 'session' }),
             }));
             if (repair === 'lost') expect(publicWidgetRequests).toContain(`/v2/sessions/${session.id}`);
             expect(contributionProjectionDescribeMock).not.toHaveBeenCalled();
@@ -12302,9 +12464,7 @@ describe('installed Session widget through the mounted plugin controller', () =>
         }
         await waitForHomeGovernance(async () => {
             await flushHookEffects();
-            expect(reactNativeSurfaceProps.length, JSON.stringify(screen.findAll(node =>
-                typeof node.props.testID === 'string' && node.props.testID.startsWith('public-widget'))
-                .map(node => node.props.testID))).toBeGreaterThan(0);
+            expect(reactNativeSurfaceProps.length, surfaceFixtureDiagnostics(screen, pluginId)).toBeGreaterThan(0);
         });
         const context = (reactNativeSurfaceProps.at(-1) as { renderContext: RenderContext }).renderContext;
         if (!resourceGranted) {
@@ -12324,15 +12484,15 @@ describe('installed Session widget through the mounted plugin controller', () =>
         // `detail` must reach the author component, whose summary view truncates
         // this same Resource to three lines.
         expect(statusText!.props.numberOfLines).toBeUndefined();
-        expect(context.launchInput).toEqual({ session: { serverId: 'server_1', sessionId: session.id }, view: 'detail' });
+        expect(context.launchInput).toEqual({ session: { serverId: widgetAccountScope.serverId, sessionId: session.id }, view: 'detail' });
         expect(context.surface.mount).toMatchObject({ kind: 'embedded', role: 'widget', presentation: 'content' });
         expect(context.surface.target).toMatchObject({ kind: 'session', sessionId: session.id });
         expect(resourceReadMock).toHaveBeenCalledWith('machine_1', expect.objectContaining({
-            serverId: 'server_1', callerPluginId: pluginId, expectedCallerOccurrenceId: occurrenceId,
+            serverId: widgetAccountScope.serverId, callerPluginId: pluginId, expectedCallerOccurrenceId: occurrenceId,
             resource: { pluginId, localId: 'review-session-status' },
         }));
         await vi.waitFor(() => expect(resourceWatchOpenMock).toHaveBeenCalledWith('machine_1', expect.objectContaining({
-            serverId: 'server_1', callerPluginId: pluginId, expectedCallerOccurrenceId: occurrenceId,
+            serverId: widgetAccountScope.serverId, callerPluginId: pluginId, expectedCallerOccurrenceId: occurrenceId,
             resource: { pluginId, localId: 'review-session-status' },
         })));
         const summarize = screen.findAll((node) => (node.props.role === 'button' || node.props.accessibilityRole === 'button')
@@ -12361,7 +12521,7 @@ describe('installed Session widget through the mounted plugin controller', () =>
 
 describe('canonical action dispatch reaches every mounted placement (EU-2)', () => {
     beforeEach(async () => {
-        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server-1', accountId: 'account-a' });
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server-1', accountId: 'account-a' }, { serverIdentityId: 'srv_server_dash_1' });
     });
 
     const crossPathEntry = `react-native/${reactNativeCacheIdentity.artifactId}/entry.cjs.bundle`;
@@ -12409,7 +12569,7 @@ describe('canonical action dispatch reaches every mounted placement (EU-2)', () 
                 localId: 'refresh-index',
                 machineId: 'machine_1',
                 materializationId: 'materialization-cross-path-current',
-                serverIdentityId: 'srv_server_1',
+                serverIdentityId: 'srv_server_dash_1',
             }),
         } satisfies PluginProjectionV2['actionsById'];
         const targetFixture = primeExactTargetedContributions({
@@ -12446,7 +12606,7 @@ describe('canonical action dispatch reaches every mounted placement (EU-2)', () 
                                 binding.destination.pluginId,
                                 'machine_1',
                                 'materialization-cross-path-current',
-                                'srv_server_1',
+                                'srv_server_dash_1',
                             ),
                             renderer: { kind: 'reactNative', contributionId: binding.renderer.localId },
                             display: { titleKey: 'crossPath.title', developerFallback: 'Cross-path panel' },
@@ -12704,6 +12864,16 @@ describe('canonical action dispatch reaches every mounted placement (EU-2)', () 
             observation.dispose();
 
             unregister();
+            // Removing the visual target retains the current Account's persisted
+            // Session draft. Only actual Session retirement closes that ref.
+            await expect(hostApi.readComposer(composerRef)).resolves.toMatchObject({
+                status: 'ready',
+                snapshot: { text: '', state: { editable: false, submittable: false } },
+            });
+            const { storage } = await import('@/sync/domains/state/storage');
+            const scope = captureActiveServerAccountScopeLifetime()?.scope;
+            if (!scope) throw new Error('Expected the Composer fixture Account to remain current');
+            act(() => storage.getState().deleteSession(composerRef.sessionId, scope.serverId));
             await expect(hostApi.readComposer(composerRef)).resolves.toEqual({
                 status: 'unavailable',
                 reason: 'scopeClosed',

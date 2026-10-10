@@ -143,7 +143,9 @@ describe("SessionSystemRecord native CONTRACT database behavior", () => {
 
             const converted = await invoke(plainFixture, { operation: "upsert_item", itemId: "note",
                 itemContent: { ...initialItem, v: { ...initialItem.v,
-                    source: { kind: "installedSurface", surface: { pluginId: "com.acme.test", localId: "dashboard" } } } },
+                    source: { kind: "widget", instance: { v: 1, id: "note",
+                        definition: { kind: "installed", surface: { pluginId: "com.acme.test", localId: "dashboard" } },
+                        bindings: {} } } } },
                 expectedItemRevision: created.result.itemRevision });
             expect(converted).toEqual({ ok: false, result: { error: "session_board_source_conflict" } });
 

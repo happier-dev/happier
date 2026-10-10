@@ -4036,6 +4036,8 @@ describe('runPermissionModePromptLoop', () => {
       structuredInput: {
         v: 1,
         skillMentions: [{
+          id: 'vendor:codex:review',
+          idSource: 'generated',
           name: 'review',
           path: '/w/.codex/skills/review/SKILL.md',
           displayName: 'Review',

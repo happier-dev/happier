@@ -99,6 +99,7 @@ describe("Session message author provider contract", () => {
             })).toEqual({ authorAccountId: null, inputAdmissionReceipt: receipt });
             expect((await backfillSessionMessageAuthorProjection({ batchSize: 2 })).filled).toBe(0);
         } finally {
+            await db.sessionMessage.deleteMany({ where: { sessionId: { in: sessionIds } } });
             await db.session.deleteMany({ where: { id: { in: sessionIds } } });
             await db.account.deleteMany({ where: { id: { in: [ownerId, authorId] } } });
         }

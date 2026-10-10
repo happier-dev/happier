@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -185,6 +184,7 @@ describe('SettingsView pets entry', () => {
         shared.petsCompanionEnabled = false;
 
         const { SettingsView } = await import('./SettingsView');
+        const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
         const screen = await renderSettingsView(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>);
 
         expect(screen.findRow('settings-pets-row')).toBeNull();
@@ -194,6 +194,7 @@ describe('SettingsView pets entry', () => {
         shared.petsCompanionEnabled = true;
 
         const { SettingsView } = await import('./SettingsView');
+        const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
         const screen = await renderSettingsView(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>);
 
         expect(screen.findRow('settings-pets-row')).not.toBeNull();
@@ -203,6 +204,7 @@ describe('SettingsView pets entry', () => {
         shared.petsCompanionEnabled = true;
 
         const { SettingsView } = await import('./SettingsView');
+        const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
         const screen = await renderSettingsView(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>);
 
         await act(async () => {
@@ -215,6 +217,7 @@ describe('SettingsView pets entry', () => {
 
     it('projects General rows from the resolved Settings catalog rather than a hand-written overview list', async () => {
         const { SettingsView } = await import('./SettingsView');
+        const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
         const screen = await renderSettingsView(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>);
 
         const keyboard = screen.findRow('settings-catalog-page-item.keyboard');

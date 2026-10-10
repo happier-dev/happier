@@ -300,7 +300,10 @@ function pushProjectGroupsToList(params: Readonly<{
                 }),
                 machine: group.machine,
                 ...(workspace ? { workspace } : {}),
-                subtitle: machineNames.get(group.machine.id) ?? getMachineDisplayName(group.machine),
+                // A machine missing from the inventory has no name to show; its id is the only identity.
+                subtitle: params.machines[group.machine.id]
+                    ? machineNames.get(group.machine.id) ?? getMachineDisplayName(group.machine)
+                    : group.machine.id,
             },
             sessions: group.sessions,
             workspacesBySessionId: new Map(workspace ? group.sessions.map(session => [session.id, workspace]) : []),

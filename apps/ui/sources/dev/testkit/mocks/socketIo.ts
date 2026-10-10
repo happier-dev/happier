@@ -2,7 +2,12 @@ import { vi } from 'vitest';
 
 type SocketListener = (...args: unknown[]) => void;
 
-class SocketIoManagerBoundaryStub {
+export interface SocketIoManagerBoundary {
+    timeout(): number | false;
+    timeout(value: number | false): SocketIoManagerBoundary;
+}
+
+class SocketIoManagerBoundaryStub implements SocketIoManagerBoundary {
     // socket.io-client's Manager defaults to 20 seconds before caller configuration.
     private timeoutMs: number | false = 20_000;
 
@@ -16,7 +21,7 @@ class SocketIoManagerBoundaryStub {
 }
 
 /** Mirror Manager's connection-attempt timeout, distinct from Socket's ACK timeout. */
-export function createSocketIoManagerBoundaryStub() {
+export function createSocketIoManagerBoundaryStub(): SocketIoManagerBoundary {
     return new SocketIoManagerBoundaryStub();
 }
 

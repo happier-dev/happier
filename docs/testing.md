@@ -276,6 +276,8 @@ Run a source integration slice through the canonical wrapper, for example:
 
 The wrapper recognizes this exact CLI source configuration and retains normal validation admission and installed-dependency readiness. Other custom configurations retain workspace preparation.
 
+In current 0.3 development, routed test commands default their dependency preparation to the existing `qa-runtime` build mode. Source-only lanes still skip workspace publication; runtime consumers prepare their required outputs, with the workspace build owner reporting any last-green fallback. Explicit `HAPPIER_WORKSPACE_BUILD_MODE` preferences remain authoritative. Build, typecheck and unknown commands retain strict preparation, and publication lifecycle entry points always force strict compilation. Runtime preparation is not compiler proof; the owning typecheck/build lanes remain required.
+
 Collect one complete reachable failure set, fix deterministic clusters locally, then rerun affected lanes. Use one final required hosted profile for the coherent source, not a full graph per test edit. Reuse successful evidence when source, dependencies, configuration, command, and environment remain applicable. New source or a previously unreachable candidate boundary can legitimately expose another failure.
 
 Moving-source feature QA ends at source, integration, and the loaded development

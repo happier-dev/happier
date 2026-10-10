@@ -15,9 +15,7 @@ describe('session terminal Action contract', () => {
     const headless = createActionExecutor({} as ActionExecutorDeps);
     expect(await headless.execute('session.terminals.list', { scopeId: 'home:session' }, { surface: 'agent' }))
       .toMatchObject({ ok: false, errorCode: 'unsupported_action' });
-    expect(await headless.execute('session.terminals.list', { scopeId: 'home:session' }, { surface: 'cli' }))
-      .toMatchObject({ ok: false, errorCode: 'unsupported_action' });
     expect(await executor.execute('session.terminals.list', { scopeId: 'home:session' }, { surface: 'cli' }))
-      .toMatchObject({ ok: false, errorCode: 'terminal_target_unavailable' });
+      .toMatchObject({ ok: false, errorCode: 'action_disabled', details: { reason: 'unsupported_surface', surface: 'cli' } });
   });
 });

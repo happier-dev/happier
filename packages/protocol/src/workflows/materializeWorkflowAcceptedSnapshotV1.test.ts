@@ -3,9 +3,9 @@ import { admitAgentStartV1, type AgentStartContextV1 } from '../account/settings
 import { DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1 } from '../account/settings/sessionAgentSpawnPolicyV1.js';
 import { AutomationRunCauseSchema } from '../automations/automationRunCause.js';
 import type { ActionCaller } from '../actions/executor/types.js';
+import { actionSpecToActionDefinitionV1 } from '../actions/actionCatalog.js';
 import { getActionSpec } from '../actions/actionSpecs.js';
-import { zodSchemaToJsonSchemaObject } from '../actions/actionInputJsonSchema.js';
-import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
+import { compilePluginJsonSchema } from '../plugins/actions/jsonSchemaValidation.js';
 import { LaunchProfileV2Schema } from '../profiles/v2/schema.js';
 import { REVIEW_AND_CONVERGE_WORKFLOW_V1 } from './builtins/reviewAndConverge.js';
 import { PLAN_WITH_A_PANEL_WORKFLOW_V1 } from './builtins/planWithAPanel.js';
@@ -32,9 +32,10 @@ function finiteInput(actionId: 'projects.script.run' | 'projects.compute.exec') 
 async function finiteContract(actionId: 'projects.script.run' | 'projects.compute.exec') {
   const spec = getActionSpec(actionId);
   if (!spec.outputSchema) throw new Error('finite work requires its canonical result contract');
+  const published = actionSpecToActionDefinitionV1(spec);
   return {
-    inputSchema: StrictJsonValueSchema.parse(zodSchemaToJsonSchemaObject(spec.inputSchema, { target: 'draft-7' })),
-    outputSchema: StrictJsonValueSchema.parse(zodSchemaToJsonSchemaObject(spec.outputSchema, { target: 'draft-7' })),
+    inputSchema: published.inputSchema,
+    outputSchema: published.outputSchema ?? {},
   };
 }
 function materialize(overrides: Partial<MaterializeWorkflowAcceptedSnapshotV1Input> = {}) {
@@ -461,6 +462,39 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
       { ...DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, allowAgentModeOverride: false }, { kind: 'workflow_run_leaf', leaf }, {
         ...policyContext, baseline: { ...policyContext.baseline, configuration: { ...policyContext.baseline.configuration, agentModeId: 'code' } },
       }) } })).toMatchObject({ ok: false, error: { code: 'policy_denied_field', field: 'agentModeId', blockId: 'work' } });
+  });
+
+  it('accepts and replays the published native Action contract rather than substituting today\'s schema', async () => {
+    const published = actionSpecToActionDefinitionV1(getActionSpec('session.goal.set'));
+    const contract = { inputSchema: published.inputSchema, outputSchema: published.outputSchema ?? {} };
+    // The first-party Action projection is not an extension of the plugin draft-07 ABI.
+    expect(() => compilePluginJsonSchema(contract.inputSchema)).toThrow();
+    const authored = { version: 1, blocks: [{ kind: 'action', id: 'goal', actionId: published.id,
+      input: { sessionId: { kind: 'literal', value: 'origin' }, objective: { kind: 'literal', value: 'Finish' } } }] };
+    const original = await materialize({ definition: authored,
+      effects: { resolveTargetAvailability: available, readActionContract: async () => contract } });
+    expect(original, JSON.stringify(original)).toMatchObject({ ok: true,
+      snapshot: { materializedLeaves: [{ actionInput: { sessionId: 'origin', objective: 'Finish' }, actionContract: contract }] } });
+    if (!original.ok) throw new Error(original.error.code);
+    const replay = await materialize({ definition: original.snapshot.definition, replay: { snapshot: original.snapshot },
+      effects: { resolveTargetAvailability: available, readActionContract: async () => {
+        throw new Error('Replay must retain the accepted published contract');
+      } } });
+    expect(replay, JSON.stringify(replay)).toMatchObject({ ok: true,
+      snapshot: { materializedLeaves: original.snapshot.materializedLeaves } });
+  });
+
+  it('refuses a native-invalid goal against its published Action contract', async () => {
+    const spec = getActionSpec('session.goal.set');
+    const published = actionSpecToActionDefinitionV1(spec);
+    const input = { sessionId: 'origin', objective: '' };
+    expect(spec.inputSchema.safeParse(input).success).toBe(false);
+    const result = await materialize({ definition: { version: 1, blocks: [{ kind: 'action', id: 'goal', actionId: published.id,
+      input: { sessionId: { kind: 'literal', value: input.sessionId }, objective: { kind: 'literal', value: input.objective } } }] },
+      effects: { resolveTargetAvailability: available, readActionContract: async () => ({
+        inputSchema: published.inputSchema, outputSchema: published.outputSchema ?? {},
+      }) } });
+    expect(result).toMatchObject({ ok: false, error: { code: 'invalid_input', blockId: 'goal' } });
   });
 
   it('validates literal Action payloads even when their JSON contains unresolved-shaped data', async () => {

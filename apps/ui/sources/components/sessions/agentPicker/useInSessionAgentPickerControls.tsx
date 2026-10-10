@@ -947,7 +947,8 @@ export function useInSessionAgentPickerControls(
                         const current = getConnectedAccountCatalogValue(accountScope, 'purposes');
                         return buildSessionAgentPickerDetailContent({
                         backendTarget: entry.backendTarget,
-                        runtimeCarrierAgentId: entry.agentId as never,
+                        agentCatalogEntry: entry.agentCatalogEntry,
+                        runtimeCarrierAgentId: entry.agentId,
                         selectedMachineId: params.detail.machineId,
                         capabilityServerId: params.detail.capabilityServerId,
                         cwd: params.detail.cwd,

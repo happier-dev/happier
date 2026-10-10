@@ -50,6 +50,7 @@ import {
   AutomationSessionLifecycleRequestKindSchema,
 } from './automationSessionLifecycle.js';
 import { AutomationRunLifecycleOccurrenceEvidenceV1Schema } from './automationRunLifecycle.js';
+import { WorkflowRunIdV1Schema } from '../workflows/workflowIdsV1.js';
 
 export {
   AutomationSourceSelectorIdV1JsonSchema,
@@ -196,7 +197,13 @@ export const AutomationSessionLifecycleOccurrenceEvidenceV1Schema = lazyZodSchem
   }).strict(),
   z.object({
     ...SESSION_LIFECYCLE_OCCURRENCE_SHAPE,
-    event: z.enum(['sessionStarted', 'sessionArchived']),
+    event: z.literal('sessionStarted'),
+  }).strict(),
+  z.object({
+    ...SESSION_LIFECYCLE_OCCURRENCE_SHAPE,
+    event: z.literal('sessionArchived'),
+    /** Supplied only after the archive owner authenticates the Run publisher. */
+    originRunId: WorkflowRunIdV1Schema.optional(),
   }).strict(),
 ]));
 export type AutomationSessionLifecycleOccurrenceEvidenceV1 = z.infer<

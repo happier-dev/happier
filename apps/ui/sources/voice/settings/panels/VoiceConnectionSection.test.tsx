@@ -12,7 +12,7 @@ import {
 import { VoiceConnectionSection } from './VoiceConnectionSection';
 
 describe('VoiceConnectionSection', () => {
-  it('edits the request timeout in seconds and keeps it inside the setting’s admitted range', async () => {
+  it('edits the request timeout in seconds without a sixty-second ceiling', async () => {
     const setVoice = vi.fn();
     const screen = await renderScreen(<VoiceConnectionSection voice={voiceSettingsDefaults} setVoice={setVoice} />);
     const field = () => screen.findByTestId('settings.voice.local.networkTimeoutMs.field');
@@ -20,7 +20,7 @@ describe('VoiceConnectionSection', () => {
 
     await act(async () => { field()!.props.onChangeText('90'); });
     await act(async () => { field()!.props.onBlur(); });
-    expect(readLocalConversationVoiceSettings(setVoice.mock.lastCall![0] as VoiceSettings).networkTimeoutMs).toBe(60000);
+    expect(readLocalConversationVoiceSettings(setVoice.mock.lastCall![0] as VoiceSettings).networkTimeoutMs).toBe(90000);
 
     await act(async () => { field()!.props.onChangeText('7'); });
     await act(async () => { field()!.props.onBlur(); });

@@ -99,7 +99,9 @@ export { HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1 } from '../../externalSessions.js
 export { HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1 } from '../../externalSessions.js';
 export { compareExternalSessionCandidatePrecedence } from '../external.js';
 export { createAgentExternalSessionsProducerOverflowFailure } from '../../externalSessions.js';
+export { createExternalSessionContentMatchSnippet } from '../external.js';
 export { deriveExternalSessionActivity } from '../external.js';
+export { findExternalSessionContentMatchRange } from '../external.js';
 export { getAgentExternalSessionsInvocationFailure } from '../../externalSessions.js';
 export { isAgentExternalSessionsFailureCode } from '../../externalSessions.js';
 export { isAgentExternalSessionsResultWithinByteBudget } from '../../externalSessions.js';

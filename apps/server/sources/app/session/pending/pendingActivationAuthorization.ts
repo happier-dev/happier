@@ -12,6 +12,7 @@ import { getActivePrismaRuntime } from '@/storage/db';
 import { resolveManagedWakeTargetInTx } from '@/app/machines/managed/managedWake';
 import { markAccountChanged } from '@/app/changes/markAccountChanged';
 import { readStoredSessionInputAdmissionReceipt, isCurrentSessionInputMachineTargetInTx } from '@/app/session/messages/sessionInputAdmission';
+import type { EffectiveSessionAccess } from '@/app/session/access/sessionAccess';
 
 export type PendingActivationTarget = Readonly<{ accountId: string; requestId: string;
     machinePublication?: Readonly<{ target: SessionInputMachineTargetV1; custodianAccountId: string; requestedAt: number }>;
@@ -106,9 +107,14 @@ export async function armPendingActivationAuthorizationInTx(params: Readonly<{
     tx: Tx;
     sessionId: string;
     requestId: string;
+    /** Access resolved for this mutation's credential in the same transaction. */
+    currentAccess: Pick<EffectiveSessionAccess, 'accountId' | 'sessionId' | 'level'>;
     now?: Date;
     resumeWhenAvailable?: true;
 }>): Promise<PendingActivationTarget | undefined> {
+    // Immutable input provenance is not current mutation authority. An editor
+    // may change an owner's queued input without borrowing its owner activation.
+    if (params.currentAccess.level !== 'owner' || params.currentAccess.sessionId !== params.sessionId) return undefined;
     const eligible = await params.tx.sessionPendingMessage.findUnique({
         where: { sessionId_localId: { sessionId: params.sessionId, localId: params.requestId }, targetExecutionRunId: null },
         select: {
@@ -143,6 +149,7 @@ export async function armPendingActivationAuthorizationInTx(params: Readonly<{
         where: { id: params.sessionId },
         select: AUTHORIZATION_SELECT,
     });
+    if (session.accountId !== params.currentAccess.accountId) return undefined;
     const ownerAdmission = readPendingOwnerInputAdmission({ sessionId: params.sessionId, accountId: session.accountId, pending: eligible });
     if (!ownerAdmission) return undefined;
     const admittedTarget = ownerAdmission.admittedTarget;

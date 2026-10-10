@@ -8,6 +8,7 @@ import test from 'node:test';
 import { prepareRemoteValidationWorkspace } from './remote_validation_preparation.mjs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { inspectDependencyRefresh, SCRIPTLESS_DEPENDENCY_INSTALL_MODE, withDependencyRefresh } from '../proc/dependency_refresh.mjs';
+import { resolveRemoteCommandPolicy } from './remote_commands.mjs';
 import { ensureWorkspacePackagesBuiltForComponent, inspectWorkspaceQaStalePackages, WORKSPACE_BUILD_MODE_ENV } from '../../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
 import { resolveTypeScriptCliInvocation } from '../../../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs';
 import {
@@ -126,15 +127,16 @@ process.exitCode = result.status ?? 1;
   await writeFile(source, 'export const value: string = 1;\n');
   // Installed dependency admission is separate from package compilation. The
   // real bootstrap, Stack package-manager adapter and compiler all run below it.
-  const env = { ...process.env, HAPPIER_STACK_SKIP_REFRESH_DEPS: '1', [WORKSPACE_BUILD_MODE_ENV]: 'qa-runtime' };
-  const bootstrap = (extraEnv = {}) => bootstrapRemoteDependencies({ repoDir, componentRelativeDir: 'apps/stack', env: { ...env, ...extraEnv } });
+  const env = { ...process.env, HAPPIER_STACK_SKIP_REFRESH_DEPS: '1' };
+  delete env[WORKSPACE_BUILD_MODE_ENV];
+  const bootstrap = (extraEnv = {}) => bootstrapRemoteDependencies({ repoDir, componentRelativeDir: 'apps/stack', defaultBuildMode: 'qa-runtime', env: { ...env, ...extraEnv } });
   await bootstrap();
   const stale = await inspectWorkspaceQaStalePackages(repoDir, ['@fixture/emitted']);
   assert.equal(stale.length, 1);
   assert.equal(stale[0].lastGreenBuildRecord.fingerprint, greenRecord.fingerprint);
   assert.match(stale[0].diagnosticSummary, /TS2322/);
   assert.match(await readFile(join(packageDir, 'dist/index.js'), 'utf8'), /green/);
-  await ensureWorkspacePackagesBuiltForComponent(join(repoDir, 'apps/stack'), { env, quiet: false });
+  await ensureWorkspacePackagesBuiltForComponent(join(repoDir, 'apps/stack'), { env: { ...env, [WORKSPACE_BUILD_MODE_ENV]: 'qa-runtime' }, quiet: false });
   assert.match(await readFile(join(packageDir, 'dist/index.js'), 'utf8'), /green/,
     'the default package-manager adapter applies the same verbose QA contract');
   await assert.rejects(bootstrap({ [WORKSPACE_BUILD_MODE_ENV]: 'strict' }));
@@ -331,10 +333,12 @@ if (args[0] === '--version') {
     await writeFile(executablePath, packageManagerFixture);
     await chmod(executablePath, 0o755);
   }
-  await bootstrapRemoteDependencies({
+  const uiUnitPolicy = resolveRemoteCommandPolicy(['hstack-exec', '--heavyweight-admission',
+    '--class=targeted-validation', '--', 'corepack', 'yarn', '--cwd', 'apps/ui', '-s', 'test:unit']);
+  const bootstrapOptions = {
     repoDir,
-    validationKind: 'source-test',
-    componentRelativeDir: 'apps/ui',
+    validationKind: uiUnitPolicy.kind,
+    componentRelativeDir: uiUnitPolicy.component,
     env: {
       ...process.env,
       PATH: `${binDir}${delimiter}${process.env.PATH ?? ''}`,
@@ -344,7 +348,9 @@ if (args[0] === '--version') {
       HAPPIER_TEST_UI_PATCH_INPUT: patchInputDir,
       HAPPIER_TEST_UI_PATCH_OUTPUT: requiredOutputPath,
     },
-  });
+  };
+  assert.equal(bootstrapOptions.validationKind, 'source-test', 'the public UI unit owner must reach source preparation');
+  await bootstrapRemoteDependencies(bootstrapOptions);
 
   // This is the payload's dependency read after bootstrap returns, not a
   // postinstall call-count assertion or a separately repaired fixture.
@@ -355,6 +361,15 @@ if (args[0] === '--version') {
   })).required, false);
   assert.equal((await inspectDependencyRefresh({ installDir: repoDir })).required, true,
     'UI source-test preparation must not claim a full runtime dependency install');
+  // A subsequent package-manager link can remove installed patch output while
+  // the authored inputs and existing dependency admission remain unchanged.
+  await rm(requiredOutputPath);
+  assert.equal((await inspectDependencyRefresh({
+    installDir: repoDir, installMode: SCRIPTLESS_DEPENDENCY_INSTALL_MODE,
+  })).required, false);
+  await bootstrapRemoteDependencies(bootstrapOptions);
+  assert.equal(await readFile(requiredOutputPath, 'utf8'), preparedModule,
+    'warm preparation must verify and repair the actual module the UI loads');
   await assert.rejects(stat(join(repoDir, 'packages', 'cli-common', 'dist')), { code: 'ENOENT' },
     'source-test preparation must not compile the Stack dependency-owner closure');
 });

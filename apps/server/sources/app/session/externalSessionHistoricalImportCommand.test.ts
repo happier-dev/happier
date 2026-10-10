@@ -3,9 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeExternalSessionHistoricalImportBatchIdV1 } from "@happier-dev/protocol";
 import type { Tx } from "@/storage/inTx";
 
-const inTx = vi.hoisted(() => vi.fn());
+const transaction = vi.hoisted(() => vi.fn());
 
-vi.mock("@/storage/inTx", () => ({ inTx }));
+// Prisma is the database boundary; the transaction and after-commit owners stay real.
+vi.mock("@/storage/db", () => ({ db: { $transaction: transaction } }));
 
 import { executeExternalSessionHistoricalImportCommand } from "./externalSessionHistoricalImportCommand";
 import { deriveSessionSystemRecordAddressKeys } from "./systemRecords/sessionSystemRecordAddressKeys";
@@ -107,7 +108,7 @@ describe("external Session historical import create-race settlement", () => {
     it("rejects source timestamps beyond the JavaScript Date ceiling before a transaction", async () => {
         const localId = "history:invalid-source-timestamp";
         const invalidTimestampMs = 8_640_000_000_000_001;
-        inTx.mockReset();
+        transaction.mockReset();
 
         for (const item of [
             {
@@ -141,14 +142,14 @@ describe("external Session historical import create-race settlement", () => {
                 kind: "error",
                 errorCode: "invalid_state",
             });
-            expect(inTx).not.toHaveBeenCalled();
+            expect(transaction).not.toHaveBeenCalled();
         }
     });
 
     it("retries the whole transaction once and adopts the exact winning job", async () => {
         const first = createTx({ findResults: [null, null] });
         const second = createTx({ findResults: [storedWinner()] });
-        inTx
+        transaction
             .mockImplementationOnce(async (operation: (tx: Tx) => Promise<unknown>) => await operation(first.tx))
             .mockImplementationOnce(async (operation: (tx: Tx) => Promise<unknown>) => await operation(second.tx));
 
@@ -162,7 +163,7 @@ describe("external Session historical import create-race settlement", () => {
             claim,
             revision: 0,
         });
-        expect(inTx).toHaveBeenCalledTimes(2);
+        expect(transaction).toHaveBeenCalledTimes(2);
         expect(first.sessionSystemRecordCreate).toHaveBeenCalledTimes(1);
         expect(second.sessionSystemRecordCreate).not.toHaveBeenCalled();
     });
@@ -170,7 +171,7 @@ describe("external Session historical import create-race settlement", () => {
     it("bounds a second create race to two complete transaction attempts", async () => {
         const first = createTx({ findResults: [null, null] });
         const second = createTx({ findResults: [null, null] });
-        inTx
+        transaction
             .mockImplementationOnce(async (operation: (tx: Tx) => Promise<unknown>) => await operation(first.tx))
             .mockImplementationOnce(async (operation: (tx: Tx) => Promise<unknown>) => await operation(second.tx));
 
@@ -180,7 +181,7 @@ describe("external Session historical import create-race settlement", () => {
             command,
             limits,
         })).rejects.toThrow("Historical import job creation raced another command.");
-        expect(inTx).toHaveBeenCalledTimes(2);
+        expect(transaction).toHaveBeenCalledTimes(2);
         expect(first.sessionSystemRecordCreate).toHaveBeenCalledTimes(1);
         expect(second.sessionSystemRecordCreate).toHaveBeenCalledTimes(1);
     });
@@ -197,6 +198,7 @@ describe("external Session historical import create-race settlement", () => {
             },
             seq: 1,
             createdAt: new Date("2026-08-05T00:00:00.000Z"),
+            updatedAt: new Date("2026-08-05T00:00:00.000Z"),
             sourceCreatedAt: null,
             sourceUpdatedAt: null,
             transcriptObservationProvenance: {
@@ -233,7 +235,7 @@ describe("external Session historical import create-race settlement", () => {
                 update: vi.fn(),
             },
         } as unknown as Tx;
-        inTx.mockImplementationOnce(async (operation: (transaction: Tx) => Promise<unknown>) => (
+        transaction.mockImplementationOnce(async (operation: (transaction: Tx) => Promise<unknown>) => (
             await operation(tx)
         ));
 
@@ -288,7 +290,7 @@ describe("external Session historical import create-race settlement", () => {
                 update,
             },
         } as unknown as Tx;
-        inTx.mockImplementationOnce(async (operation: (transaction: Tx) => Promise<unknown>) => (
+        transaction.mockImplementationOnce(async (operation: (transaction: Tx) => Promise<unknown>) => (
             await operation(tx)
         ));
 
@@ -370,7 +372,7 @@ describe("external Session historical import create-race settlement", () => {
             },
             machineSessionPublisher: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
         } as unknown as Tx;
-        inTx.mockImplementationOnce(async (operation: (transaction: Tx) => Promise<unknown>) => (
+        transaction.mockImplementationOnce(async (operation: (transaction: Tx) => Promise<unknown>) => (
             await operation(tx)
         ));
 
@@ -414,7 +416,7 @@ describe("external Session historical import create-race settlement", () => {
                 update: vi.fn(),
             },
         } as unknown as Tx;
-        inTx.mockImplementationOnce(async (operation: (transaction: Tx) => Promise<unknown>) => (
+        transaction.mockImplementationOnce(async (operation: (transaction: Tx) => Promise<unknown>) => (
             await operation(tx)
         ));
 
@@ -474,7 +476,7 @@ describe("external Session historical import create-race settlement", () => {
                 update: vi.fn(),
             },
         } as unknown as Tx;
-        inTx.mockImplementationOnce(async (operation: (transaction: Tx) => Promise<unknown>) => (
+        transaction.mockImplementationOnce(async (operation: (transaction: Tx) => Promise<unknown>) => (
             await operation(tx)
         ));
 

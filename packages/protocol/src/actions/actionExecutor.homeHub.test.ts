@@ -50,10 +50,17 @@ describe('Home layout Account Actions', () => {
         };
         const executor = createActionExecutor(deps as unknown as ActionExecutorDeps);
         expect(getActionSpec('home.hub.layout.update')).toMatchObject({ executionPlacement: 'account', surfaces: { cli: true, rpc: true } });
+        const beforeAdd = await port.read();
+        const unwired = createActionExecutor({ homeHubArtifacts: port });
+        expect(await unwired.execute('home.hub.layout.update', { intent: { kind: 'widget_add', instance } }, { surface: 'cli' }))
+            .toMatchObject({ ok: false, errorCode: 'widget_scope_unavailable' });
+        expect(await port.read()).toEqual(beforeAdd);
         expect(await executor.execute('home.hub.layout.update', { intent: { kind: 'widget_add', instance } }, { surface: 'cli' })).toMatchObject({ ok: true });
         expect(await executor.execute('home.hub.layout.update', { intent: { kind: 'setup_visibility', stepId: 'addPhone', hidden: true } }, { surface: 'agent' })).toMatchObject({ ok: true });
         expect(await executor.execute('home.hub.layout.update', { intent: { kind: 'widget_size', instanceId: 'copy', size: 'full' } }, { surface: 'cli' })).toMatchObject({ ok: true });
-        const otherClient = createActionExecutor(deps as unknown as ActionExecutorDeps);
+        const otherClient = createActionExecutor({ ...deps,
+            homeHubArtifacts: createHomeHubArtifactPortV1(boundary.forAccount(accountId), { accountId }),
+        });
         expect(await otherClient.execute('home.hub.layout.get', {}, { surface: 'mcp' })).toMatchObject({ ok: true, result: {
             layout: { items: [{ kind: 'widget', instance, size: 'full' }] }, hiddenSetupStepIds: ['addPhone'],
             sections: expect.arrayContaining([{ kind: 'widget', id: 'copy', instance, size: 'full', hidden: false, hideable: true }]),

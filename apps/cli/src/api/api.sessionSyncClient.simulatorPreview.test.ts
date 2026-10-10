@@ -12,6 +12,8 @@ import { createPluginActionCallerMaterializationFixture } from '../plugins/runti
 import { createCliActionExecutor } from '../session/actions/createCliActionExecutor';
 import { createBrowserAutomationReverseDispatcher } from '../daemon/browser/automation/reverseDispatch';
 import { createBrowserDaemonControlBroker } from '../daemon/browser/control/broker';
+import { createBrowserDaemonControlRoutes } from '../daemon/browser/control/routes';
+import type { BrowserDaemonControlAdapter } from '../daemon/browser/control/types';
 
 const apiSessionClientConstructorMock = vi.hoisted(() => vi.fn());
 
@@ -150,6 +152,7 @@ describe('ApiClient sessionSyncClient runtime-action routes', () => {
             viewTargets: { enabled: true },
             internal: { enabled: true },
             sidecar: { enabled: true },
+            automation: { enabled: true },
           },
         },
       }),
@@ -168,7 +171,19 @@ describe('ApiClient sessionSyncClient runtime-action routes', () => {
       adapterKind: 'chromiumSidecar' as const,
       events: [],
     }));
-    let currentRoutes = { dispatchCommand: firstDispatch, listViews: () => [] };
+    function routesForChromium(dispatchCommand: BrowserDaemonControlAdapter['dispatchCommand']) {
+      const broker = createBrowserDaemonControlBroker();
+      // Chromium's physical command adapter is the external boundary. The
+      // declared feature decision, current routes and view broker remain real.
+      broker.registerAdapter({
+        adapterKind: 'chromiumSidecar',
+        ownsView: ({ browserSessionId, viewId }) => browserSessionId === 'browser-session-1' && viewId === 'view-1',
+        supportsOpenView: () => false,
+        dispatchCommand,
+      });
+      return createBrowserDaemonControlRoutes({ broker });
+    }
+    let currentRoutes = routesForChromium(firstDispatch);
     api.setBrowserDaemonControlRoutesProvider(() => currentRoutes);
     const execute = api.createBrowserRuntimeActionExecutor();
     const input = {
@@ -188,7 +203,7 @@ describe('ApiClient sessionSyncClient runtime-action routes', () => {
       },
     })).resolves.toMatchObject({ status: 'dispatched' });
 
-    currentRoutes = { dispatchCommand: secondDispatch, listViews: () => [] };
+    currentRoutes = routesForChromium(secondDispatch);
     await expect(execute({
       actionId: 'browser.navigate',
       input: { ...input, commandId: 'command-2' },

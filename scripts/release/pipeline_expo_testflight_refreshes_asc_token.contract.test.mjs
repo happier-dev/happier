@@ -8,7 +8,7 @@ import test from 'node:test';
 
 const repoRoot = path.resolve(import.meta.dirname, '..', '..');
 
-test('TestFlight distribution mints a fresh App Store Connect token for every request', () => {
+test('TestFlight distribution normalizes processed build state and mints a fresh App Store Connect token for every request', () => {
   const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-testflight-token-refresh-'));
   const preloadPath = path.join(fixtureRoot, 'mock-asc.mjs');
   const observedTokensPath = path.join(fixtureRoot, 'observed-tokens.jsonl');
@@ -43,7 +43,7 @@ globalThis.fetch = async (url, init = {}) => {
       data: [{
         type: 'builds',
         id: 'build-1',
-        attributes: { version: '271', uploadedDate: '2026-08-04T17:00:00Z', processingState: 'VALID' },
+        attributes: { version: '271', uploadedDate: '2026-08-04T17:00:00Z', processingState: ' VALID ' },
         relationships: { preReleaseVersion: { data: { type: 'preReleaseVersions', id: 'version-1' } } },
       }],
       included: [{ type: 'preReleaseVersions', id: 'version-1', attributes: { version: '0.2.10' } }],
@@ -67,7 +67,8 @@ globalThis.fetch = async (url, init = {}) => {
         '--external-groups=78315e16-c539-43ae-a65e-4f465dccaf68',
         '--build-number=271',
         '--app-version=0.2.10',
-        '--wait-processing=false',
+        '--wait-processing=true',
+        '--processing-timeout-seconds=1',
         '--submit-beta-review=true',
       ],
       {

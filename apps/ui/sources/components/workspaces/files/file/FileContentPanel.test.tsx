@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { findTestInstanceByTypeContainingText, renderScreen } from '@/dev/testkit';
 import { installSessionFileViewCommonModuleMocks } from './sessionFileViewTestHelpers';
@@ -56,6 +56,7 @@ const codeLinesViewPropsState: { current: any | null } = { current: null };
 const markdownViewPropsState: { current: any | null } = { current: null };
 
 describe('FileContentPanel', () => {
+    afterEach(() => vi.useRealTimers());
     const theme = {
         colors: {
             textSecondary: '#999',
@@ -287,6 +288,7 @@ describe('FileContentPanel', () => {
     });
 
     it('lets saved markdown review comments be edited from the markdown source range', async () => {
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
         const { FileContentPanel } = await import('./FileContentPanel');
         const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
 
@@ -333,6 +335,7 @@ describe('FileContentPanel', () => {
 
         expect(savedComment.findHostByTestId('review-comment-draft-edit:markdown-draft-1')).toBeNull();
         await savedComment.pressByTestIdAsync('review-comment-draft-menu:markdown-draft-1');
+        await act(async () => { await vi.advanceTimersByTimeAsync(0); });
         const menu = savedComment.findByType(DropdownMenu);
         expect(menu.props.open).toBe(true);
         expect(menu.props.items).toEqual(expect.arrayContaining([

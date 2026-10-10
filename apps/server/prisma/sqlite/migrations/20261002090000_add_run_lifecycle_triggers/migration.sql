@@ -174,6 +174,7 @@ CREATE TABLE "new_AutomationRun" (
     "causeSourceSessionId" TEXT,
     "causeSourceTurnId" TEXT,
     "causeRunLifecycleEvidenceJson" TEXT,
+    "causeOriginRunId" TEXT,
     "causeSessionLifecycleRequestId" TEXT,
     "causeSessionLifecycleRequestKind" TEXT,
     "causeSessionLifecyclePolicyKind" TEXT,
@@ -222,6 +223,13 @@ CREATE TABLE "new_AutomationRun" (
     CONSTRAINT "AutomationRun_accountId_fkey" FOREIGN KEY ("accountId") REFERENCES "Account" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT "AutomationRun_claimedByMachineId_fkey" FOREIGN KEY ("claimedByMachineId") REFERENCES "Machine" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
     CONSTRAINT "AutomationRun_producedSessionId_fkey" FOREIGN KEY ("producedSessionId") REFERENCES "Session" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
+    CONSTRAINT "AutomationRun_archive_origin_arm_check" CHECK (
+        "causeOriginRunId" IS NULL OR (
+            "originKind" = 'automation' AND "causeKind" IS NOT NULL AND "causeKind" = 'trigger'
+            AND "causeTriggerKind" IS NOT NULL AND "causeTriggerKind" = 'sessionLifecycle'
+            AND "causeSessionLifecycleEvent" IS NOT NULL AND "causeSessionLifecycleEvent" = 'sessionArchived'
+        )
+    ),
     CONSTRAINT "AutomationRun_state_check" CHECK ("state" IN ('queued', 'claimed', 'running', 'succeeded', 'failed', 'cancelled', 'expired', 'dispatch_failed', 'skipped', 'missed', 'outcome_uncertain', 'pause_requested', 'paused', 'interrupted', 'waiting_for_review')),
     CONSTRAINT "AutomationRun_origin_kind_check" CHECK (
         ("originKind" = 'automation' AND "automationId" IS NOT NULL AND "causeKind" IS NOT NULL)

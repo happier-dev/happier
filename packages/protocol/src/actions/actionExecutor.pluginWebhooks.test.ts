@@ -147,6 +147,48 @@ describe('createActionExecutor (plugin webhook endpoints)', () => {
       },
     } as const;
 
+    it('fails closed without approval support for plugin-driven endpoint read and retarget', async () => {
+      const pluginWebhookAction = vi.fn(async () => ({}));
+      const executor = createActionExecutor({
+        pluginWebhookAction,
+        isActionApprovalRequired: () => false,
+      } as ActionExecutorDeps);
+
+      await expect(executor.execute('plugin.webhook.endpoint.read', {
+        webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAA',
+      }, {
+        surface: 'plugin',
+        authority: 'account_automation',
+        actionCaller: pluginCaller,
+      })).resolves.toEqual({
+        ok: false,
+        errorCode: 'approvals_not_supported',
+        error: 'approvals_not_supported',
+      });
+
+      await expect(executor.execute('plugin.webhook.endpoint.retarget', {
+        webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAA',
+        expectedRevision: 4,
+        targetMaterialization: {
+          machineId: 'machine-2',
+          materializationId: 'materialization-2',
+          pluginId: 'happier.channels',
+        },
+        idempotencyKey: 'xfer.connection-1.5.webhook',
+      }, {
+        surface: 'plugin',
+        authority: 'account_automation',
+        actionCaller: pluginCaller,
+      })).resolves.toEqual({
+        ok: false,
+        errorCode: 'approvals_not_supported',
+        error: 'approvals_not_supported',
+      });
+
+      expect(pluginWebhookAction).not.toHaveBeenCalled();
+    });
+
+
     it('requests approval for plugin-driven endpoint read and retarget before any endpoint effect', async () => {
       const pluginWebhookAction = vi.fn(async () => ({}));
       const executor = createActionExecutor({

@@ -1,32 +1,36 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { StorageState } from '@/sync/store/types';
 import { fromRecord, toRecord } from './pendingTerminalConnect.shared';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
-async function importFresh() {
-    vi.resetModules();
+// Collect the real Account/Sync graph before the persistence cases begin;
+// cold transformation is not part of the pending-capture contract.
+installDisconnectedServerSocketBoundary();
+await loadSyncSingletonForTests();
+
+const accountConnections: Array<Awaited<ReturnType<typeof import('@/dev/testkit/harness/serverAccountConnectionHarness').restoreServerAccountForTest>>> = [];
+
+async function importPendingOwner(options: Readonly<{ restart?: boolean }> = {}) {
+    // Ordinary cases exercise one live Sync/Account lifecycle. Only the
+    // persistence-reload contract needs a cold module graph.
+    if (options.restart) vi.resetModules();
     return await import('./pendingTerminalConnect');
 }
 
 async function activateServerAccount(serverUrl: string, accountId: string) {
-    const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
-    const { createServerAccountScope } = await import('@/sync/domains/scope/serverAccountScope');
-    const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
-
-    const server = await upsertAndActivateServer({
-        serverUrl,
-        source: 'manual',
-        scope: 'device',
-        replaceEquivalentStoredUrl: true,
-    });
-    const scope = createServerAccountScope(server.id, accountId);
-    expect(scope).not.toBeNull();
-    registerStorageStateReader(() => ({ profileScope: scope } as unknown as StorageState));
+    const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+    installDisconnectedServerSocketBoundary();
+    const connection = await restoreServerAccountForTest({ serverUrl, accountId });
+    accountConnections.push(connection);
+    const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
+    expect(getActiveServerAccountScope()).toEqual({ serverId: connection.serverId, accountId });
 }
 
 describe('pendingTerminalConnect', () => {
     afterEach(async () => {
-        const { clearPendingTerminalConnect } = await importFresh();
+        const { clearPendingTerminalConnect } = await import('./pendingTerminalConnect');
         clearPendingTerminalConnect();
+        for (const connection of accountConnections.splice(0).reverse()) await connection.dispose();
         vi.restoreAllMocks();
     });
 
@@ -65,7 +69,7 @@ describe('pendingTerminalConnect', () => {
     });
 
     it('captures before authentication and promotes only to the target server account on native storage', async () => {
-        const { setPendingTerminalConnect, getPendingTerminalConnect } = await importFresh();
+        const { setPendingTerminalConnect, getPendingTerminalConnect } = await importPendingOwner();
         setPendingTerminalConnect({
             publicKeyB64Url: 'native-pre-auth-key',
             serverUrl: 'https://native-target.example.test',
@@ -81,7 +85,7 @@ describe('pendingTerminalConnect', () => {
     });
 
     it('cancels a native pre-auth capture before any account can claim it', async () => {
-        const { setPendingTerminalConnect, getPendingTerminalConnect, clearPendingTerminalConnect } = await importFresh();
+        const { setPendingTerminalConnect, getPendingTerminalConnect, clearPendingTerminalConnect } = await importPendingOwner();
         setPendingTerminalConnect({
             publicKeyB64Url: 'cancel-native-key',
             serverUrl: 'https://cancel-native.example.test',
@@ -97,7 +101,7 @@ describe('pendingTerminalConnect', () => {
             setPendingTerminalConnect,
             getPendingTerminalConnect,
             retargetPendingTerminalConnectToServerUrl,
-        } = await importFresh();
+        } = await importPendingOwner();
         setPendingTerminalConnect({
             publicKeyB64Url: 'native-retarget-key',
             serverUrl: 'https://native-old.example.test',
@@ -112,7 +116,7 @@ describe('pendingTerminalConnect', () => {
     });
 
     it('keeps a failed native promotion claimed to its first account', async () => {
-        const pending = await importFresh();
+        const pending = await importPendingOwner();
         const { MMKV } = await import('react-native-mmkv');
         const originalSet = MMKV.prototype.set;
         const setSpy = vi.spyOn(MMKV.prototype, 'set').mockImplementation(function (this: InstanceType<typeof MMKV>, key, value) {
@@ -136,7 +140,7 @@ describe('pendingTerminalConnect', () => {
     });
 
     it('invalidates a native unclaimed capture when persisting its account claim fails', async () => {
-        const pending = await importFresh();
+        const pending = await importPendingOwner();
         const { MMKV } = await import('react-native-mmkv');
         const originalSet = MMKV.prototype.set;
         const setSpy = vi.spyOn(MMKV.prototype, 'set').mockImplementation(function (this: InstanceType<typeof MMKV>, key, value) {
@@ -157,13 +161,13 @@ describe('pendingTerminalConnect', () => {
             setSpy.mockRestore();
         }
 
-        const reloaded = await importFresh();
+        const reloaded = await importPendingOwner({ restart: true });
         await activateServerAccount('https://native-claim-write-failed.example.test', 'account-b');
         expect(reloaded.getPendingTerminalConnect()).toBeNull();
     });
 
     it('keeps owner operations nonthrowing when native persistence reads fail', async () => {
-        const pending = await importFresh();
+        const pending = await importPendingOwner();
         const { MMKV } = await import('react-native-mmkv');
         const originalGetString = MMKV.prototype.getString;
         const getSpy = vi.spyOn(MMKV.prototype, 'getString').mockImplementation(function (this: InstanceType<typeof MMKV>, key) {
@@ -179,7 +183,7 @@ describe('pendingTerminalConnect', () => {
     });
 
     it('round-trips a pending terminal connect payload', async () => {
-        const { setPendingTerminalConnect, getPendingTerminalConnect } = await importFresh();
+        const { setPendingTerminalConnect, getPendingTerminalConnect } = await importPendingOwner();
 
         await activateServerAccount('https://stack.example.test', 'account-a');
         expect(getPendingTerminalConnect()).toBeNull();
@@ -249,7 +253,7 @@ describe('pendingTerminalConnect', () => {
     it('expires stale pending payloads', async () => {
         const now = 1_700_000_000_000;
         vi.spyOn(Date, 'now').mockReturnValue(now);
-        const { setPendingTerminalConnect, getPendingTerminalConnect } = await importFresh();
+        const { setPendingTerminalConnect, getPendingTerminalConnect } = await importPendingOwner();
 
         await activateServerAccount('https://stack.example.test', 'account-a');
         setPendingTerminalConnect({
@@ -268,7 +272,7 @@ describe('pendingTerminalConnect', () => {
     });
 
     it('keeps pending payloads isolated by active server', async () => {
-        const { setPendingTerminalConnect, getPendingTerminalConnect, clearPendingTerminalConnect } = await importFresh();
+        const { setPendingTerminalConnect, getPendingTerminalConnect, clearPendingTerminalConnect } = await importPendingOwner();
 
         await activateServerAccount('https://server-a.example.test', 'account-a');
         clearPendingTerminalConnect();
@@ -302,7 +306,7 @@ describe('pendingTerminalConnect', () => {
     });
 
     it('keeps pending payloads isolated by active account on the same server', async () => {
-        const { setPendingTerminalConnect, getPendingTerminalConnect, clearPendingTerminalConnect } = await importFresh();
+        const { setPendingTerminalConnect, getPendingTerminalConnect, clearPendingTerminalConnect } = await importPendingOwner();
 
         await activateServerAccount('https://shared.example.test', 'account-a');
         clearPendingTerminalConnect();
@@ -340,10 +344,10 @@ describe('pendingTerminalConnect', () => {
             getPendingTerminalConnect,
             migratePendingTerminalConnectScopes,
             setPendingTerminalConnect,
-        } = await importFresh();
+        } = await importPendingOwner();
         const { createServerAccountScope } = await import('@/sync/domains/scope/serverAccountScope');
         const { setServerProfileIdentityForUrl } = await import('@/sync/domains/server/serverProfiles');
-        const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
+        const { storage } = await import('@/sync/domains/state/storage');
 
         await activateServerAccount('https://identity-terminal.example.test', 'account-a');
         setPendingTerminalConnect({
@@ -357,16 +361,19 @@ describe('pendingTerminalConnect', () => {
         const identityScope = createServerAccountScope('srv_identity_terminal', 'account-a');
         expect(legacyScope).not.toBeNull();
         expect(identityScope).not.toBeNull();
-        registerStorageStateReader(() => ({ profileScope: identityScope } as unknown as StorageState));
+        if (!legacyScope || !identityScope) throw new Error('Terminal migration fixture must have both Account scopes');
+        storage.getState().activateProfileScope(identityScope);
+        expect(storage.getState().profileScope).toEqual(identityScope);
 
-        migratePendingTerminalConnectScopes(identityScope!, [legacyScope!]);
+        migratePendingTerminalConnectScopes(identityScope, [legacyScope]);
 
         expect(getPendingTerminalConnect()).toEqual({
             publicKeyB64Url: 'key-identity',
             serverUrl: 'https://identity-terminal.example.test',
             serverIdentityId: 'srv_identity_terminal',
         });
-        registerStorageStateReader(() => ({ profileScope: legacyScope } as unknown as StorageState));
+        storage.getState().activateProfileScope(legacyScope);
+        expect(storage.getState().profileScope).toEqual(legacyScope);
         expect(getPendingTerminalConnect()).toBeNull();
     });
 

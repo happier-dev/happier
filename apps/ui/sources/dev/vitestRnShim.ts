@@ -24,6 +24,24 @@ type NodeRequireWithCache = {
     cache: Record<string, NodeCachedModule | undefined>;
 };
 
+function createNodeCacheRestorer(
+    nodeRequire: NodeRequireWithCache,
+    filename: string,
+    cached: NodeCachedModule,
+    previous: NodeCachedModule | undefined,
+): () => void {
+    // A suite hook may retain this handle after retirement. Keep the module
+    // namespace only in releasable state, not in the handle's lexical closure.
+    let state: Readonly<{ cached: NodeCachedModule; previous: NodeCachedModule | undefined }> | null = { cached, previous };
+    return () => {
+        const current = state;
+        if (!current || nodeRequire.cache[filename] !== current.cached) return;
+        state = null;
+        if (current.previous) nodeRequire.cache[filename] = current.previous;
+        else delete nodeRequire.cache[filename];
+    };
+}
+
 type NodeBuiltinPath = Readonly<{
     dirname: (path: string) => string;
     isAbsolute: (path: string) => boolean;
@@ -92,11 +110,7 @@ export async function loadVitestModuleForNodeRequire<T>(
     nodeRequire.cache[filename] = cached;
     return {
         module: namespace,
-        dispose: () => {
-            if (nodeRequire.cache[filename] !== cached) return;
-            if (previous) nodeRequire.cache[filename] = previous;
-            else delete nodeRequire.cache[filename];
-        },
+        dispose: createNodeCacheRestorer(nodeRequire, filename, cached, previous),
     };
 }
 

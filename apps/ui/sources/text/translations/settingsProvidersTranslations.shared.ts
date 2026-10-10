@@ -73,7 +73,6 @@ export function withProviderSharedFields<T extends {
     const localTranslationFields: Parts['localTranslations'] = parts.localTranslations;
     const providerLocalFields: Parts['providerSharedFieldTranslations']['local'] = parts.providerSharedFieldTranslations.local;
     const managedDeploymentTranslations: Parts['providerManagedDeploymentTranslations'] = parts.providerManagedDeploymentTranslations;
-
     return {
         ...translation,
         ...parts.providerAvailabilityTranslations,

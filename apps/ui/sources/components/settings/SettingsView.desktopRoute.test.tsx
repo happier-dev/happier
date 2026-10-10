@@ -159,6 +159,7 @@ describe('SettingsView desktop route', () => {
 
     it('renders the desktop settings entry and routes to the desktop settings page', async () => {
         const { SettingsView } = await import('./SettingsView');
+        const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
         const screen = await renderSettingsView(<InjectedAuthProvider credentials={null}><SettingsView /></InjectedAuthProvider>);
 
         // The System group renders in a deferred overview stage (`SettingsBelowFoldSections`).

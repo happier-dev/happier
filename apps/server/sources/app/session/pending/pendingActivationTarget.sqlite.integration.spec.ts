@@ -122,7 +122,8 @@ describe('exact requester pending activation target (real SQLite)', () => {
         if (loss === 'installation') await db.machine.update({ where: { id: f.selectedMachine.id }, data: { installationId: randomUUID() } });
         if (loss === 'requester') await db.account.update({ where: { id: f.requester.id }, data: { status: 'suspended' } });
         if (loss === 'home') process.env.HAPPIER_SERVER_IDENTITY_ID = 'srv_11234567890123456789012345678901';
-        expect(await inTx(tx => armPendingActivationAuthorizationInTx({ tx, sessionId: f.session.id, requestId: f.input.localId }))).toBeUndefined();
+        expect(await inTx(tx => armPendingActivationAuthorizationInTx({ tx, sessionId: f.session.id, requestId: f.input.localId,
+            currentAccess: { accountId: f.requester.id, sessionId: f.session.id, level: 'owner' } }))).toBeUndefined();
         expect(await loadPendingActivationPublication(f.session.id)).not.toHaveProperty('admittedTarget');
         const row = await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: f.session.id, localId: f.input.localId } } });
         expect(row.inputAdmissionReceipt).toMatchObject({ admittedTarget: f.target });

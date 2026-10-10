@@ -33,6 +33,7 @@ describe('deleteSessionTree', () => {
             accessKey: { deleteMany: vi.fn(async () => ({ count: 0 })) },
             ephemeralRunnerActivation: { findFirst: vi.fn(async () => null) },
             sessionFollowEdge: createEmptySessionFollowEdgeTransactionModel(),
+            sessionReportsTo: { findMany: vi.fn(async () => []) },
         } as unknown as Tx, {
             sessionId: 'voice-history-session',
             sessionUpdatedAt: new Date('2026-07-01T00:00:00.000Z'),

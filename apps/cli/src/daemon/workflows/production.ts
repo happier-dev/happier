@@ -685,11 +685,16 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
       const exactImmediateOutput = actionLaunch?.output !== undefined && actionLaunch.awaitedRuns === undefined && actionLaunch.awaitedOperations === undefined
         && fact.result !== undefined && sameStrictJsonValue(fact.result, actionLaunch.output)
         && matchesActionRequest(current.execution) && matchesActionRequest(refreshed?.execution);
+      const exactCancelledCommand = fact.execution === undefined && fact.reason === 'command_cancelled'
+        && fact.result !== undefined && current.execution?.kind === 'action'
+        && current.execution.actionId === 'machines.command.run';
       if (current.lifecycle === 'admitting' && fact.lifecycle === 'cancelled'
-        && refreshed?.lifecycle === 'cancel_requested' && exactImmediateOutput) {
-        // An immediate Action's definitive reply closes its exact stopped
-        // leaf. Merge into current bytes under the same claim/row CAS; unlike
-        // native launch acceptance, no child observation remains outstanding.
+        && refreshed?.lifecycle === 'cancel_requested'
+        && refreshed.recordId === current.recordId && refreshed.attempt === current.attempt
+        && sameStrictJsonValue(refreshed.execution, current.execution)
+        && (exactImmediateOutput || exactCancelledCommand)) {
+        // Retain the definitive reply for the exact stopped row and attempt,
+        // merging into its refreshed content under the existing custody CAS.
         return await this.commitFactNow(fact);
       }
       if (refreshed?.lifecycle === 'cancel_requested' || refreshed?.lifecycle === 'cancelled') {

@@ -140,19 +140,20 @@ export async function materializeQualifiedConnectedAccountLaunchUses(input: Read
   }
 
   if (environmentKeysByMaterializedId.size > 0) {
+    const { credentialFileOwner, credentialFileScope, retainCredentialFileCleanup } = input;
     if (
-      !input.credentialFileOwner
-      || !input.credentialFileScope
-      || !input.retainCredentialFileCleanup
+      !credentialFileOwner
+      || !credentialFileScope
+      || !retainCredentialFileCleanup
     ) {
       throw new Error('Connected Account credential-file authority is unavailable');
     }
     input.signal.throwIfAborted();
     const writeArtifacts = input.writeArtifacts ?? (async <T>(write: () => Promise<T>) => await write());
-    const credentialFiles = await writeArtifacts(() => input.credentialFileOwner!.materialize({
-      scope: input.credentialFileScope!,
+    const credentialFiles = await writeArtifacts(() => credentialFileOwner.materialize({
+      scope: credentialFileScope,
       files: Object.freeze(files),
-      retainCleanup: input.retainCredentialFileCleanup!,
+      retainCleanup: retainCredentialFileCleanup,
     }));
     for (const [materializedId, environmentKey] of environmentKeysByMaterializedId) {
       const path = credentialFiles.pathsByFileId[materializedId];

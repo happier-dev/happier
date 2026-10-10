@@ -13,6 +13,13 @@ export async function installNativeAdmissionFixture({ root, admissionRoot = join
   const proc = join(checkout, 'apps/stack/scripts/utils/proc');
   const targets = join(checkout, 'apps/stack/scripts/utils/dev_targets');
   await Promise.all([mkdir(bin, { recursive: true }), mkdir(proc, { recursive: true }), mkdir(targets, { recursive: true })]);
+  // This is physical filesystem input, not an installed SDK or readiness fact.
+  // The real disk owner measures these owned bytes with du/df; without any
+  // dependency footprint it rejects before the CPU/memory contract is reached.
+  const footprint = join(checkout, 'node_modules');
+  await mkdir(footprint, { recursive: true });
+  await writeFile(join(footprint, 'native-admission-disk-input.fixture'),
+    'Owned filesystem bytes for native admission resource observations only.\n');
   const launcher = join(bin, 'hstack-exec');
   await Promise.all([
     copyFile(join(sourceRoot, 'apps/stack/bin/hstack-exec'), launcher),
@@ -29,21 +36,32 @@ export async function installNativeAdmissionFixture({ root, admissionRoot = join
   // Replace only OS enumeration; real RSS/ancestry for explicitly included
   // fixture processes and the production observer's domain logic stay real.
   const observer = pathToFileURL(join(sourceRoot, 'apps/stack/scripts/utils/proc/service_memory.mjs')).href;
-  const diskObserver = pathToFileURL(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/worker_disk_budget.mjs')).href;
-  await writeFile(join(targets, 'worker_disk_budget.mjs'), `import { runWorkerDiskBudgetCommand } from ${JSON.stringify(diskObserver)}; await runWorkerDiskBudgetCommand();\n`);
+  // Disk admission shares the same physical worker's process observation.
+  // Keep the real disk owner, remapping only its adjacent modules and the
+  // existing isolated OS process boundary rather than observing the runner.
+  const diskObserver = await readFile(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/worker_disk_budget.mjs'), 'utf8');
+  await writeFile(join(targets, 'worker_disk_budget.mjs'), diskObserver
+    .replace("'./historical_temp_roots.mjs'", JSON.stringify(pathToFileURL(join(sourceRoot, 'apps/stack/scripts/utils/dev_targets/historical_temp_roots.mjs')).href))
+    .replace("'../proc/package_manager_cache.mjs'", JSON.stringify(pathToFileURL(join(sourceRoot, 'apps/stack/scripts/utils/proc/package_manager_cache.mjs')).href)));
   await writeFile(join(proc, 'service_memory.mjs'), `
 import { readFileSync } from 'node:fs';
-import { readLinuxWorkerProcesses, readWorkerMemoryReservations, renderWorkerMemoryReservationRows } from ${JSON.stringify(observer)};
+import { pathToFileURL } from 'node:url';
+import { readLinuxWorkerProcesses, readWorkerMemoryReservations as readReservations, renderWorkerMemoryReservationRows } from ${JSON.stringify(observer)};
 const observedPidsPath = ${JSON.stringify(observedPidsPath)};
 const selected = observedPidsPath ? new Set(JSON.parse(readFileSync(observedPidsPath, 'utf8'))) : new Set();
 const processes = selected.size ? new Map([...readLinuxWorkerProcesses()].filter(([pid]) => selected.has(pid))) : new Map();
-const argument = process.argv.slice(2).find(value => value.startsWith('--admission-root='));
-let previousProgress = null;
-if (process.argv.includes('--include-owner-progress')) {
-  try { previousProgress = JSON.parse(readFileSync(0, 'utf8')); } catch {}
+export function readWorkerMemoryReservations(options) {
+  return readReservations({ ...options, readProcesses: () => processes });
 }
-const sample = readWorkerMemoryReservations({ admissionRoot: argument?.slice('--admission-root='.length), readProcesses: () => processes, includeAdmittedRss: process.argv.includes('--include-admitted-rss'), includeOwnerProgress: process.argv.includes('--include-owner-progress'), previousProgress });
-process.stdout.write(renderWorkerMemoryReservationRows(sample));
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const argument = process.argv.slice(2).find(value => value.startsWith('--admission-root='));
+  let previousProgress = null;
+  if (process.argv.includes('--include-owner-progress')) {
+    try { previousProgress = JSON.parse(readFileSync(0, 'utf8')); } catch {}
+  }
+  const sample = readWorkerMemoryReservations({ admissionRoot: argument?.slice('--admission-root='.length), includeAdmittedRss: process.argv.includes('--include-admitted-rss'), includeOwnerProgress: process.argv.includes('--include-owner-progress'), previousProgress });
+  process.stdout.write(renderWorkerMemoryReservationRows(sample));
+}
 `);
   return { launcher, admissionRoot };
 }

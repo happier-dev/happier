@@ -1,7 +1,7 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { HappyError } from '@/utils/errors/errors';
 import { backoff } from '@/utils/timing/time';
-import { createServerFetchAtEndpoint, serverFetch, type ServerFetch } from '@/sync/http/client';
+import { createServerFetchAtEndpoint, createServerFetchForActiveServer, type ServerFetch } from '@/sync/http/client';
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';
 import { invalidateAccountEncryptionModeCache } from './apiAccountEncryptionMode';
 import {
@@ -34,9 +34,7 @@ export async function migrateAccountEncryptionMode(
   }> = {},
 ): Promise<import('@happier-dev/protocol').AccountEncryptionMigrateSuccessResponse> {
   if (options.scope) assertAccountEncryptionMigrationScopeCurrent(options.scope);
-  const migrateOnce = async () => {
-    if (options.scope) assertAccountEncryptionMigrationScopeCurrent(options.scope);
-    const targetRequest = options.target
+  const targetRequest = options.request ?? (options.target
       ? createServerFetchAtEndpoint({
           endpointUrl: options.target.serverUrl,
           ...(options.target.runtimeOrigin ? { runtimeOrigin: options.target.runtimeOrigin } : {}),
@@ -44,8 +42,10 @@ export async function migrateAccountEncryptionMode(
           credentials,
           serverId: options.target.serverId,
         })
-      : serverFetch;
-    const response = await (options.request ?? targetRequest)(
+      : createServerFetchForActiveServer());
+  const migrateOnce = async () => {
+    if (options.scope) assertAccountEncryptionMigrationScopeCurrent(options.scope);
+    const response = await targetRequest(
       '/v1/account/encryption/migrate',
       {
         method: 'POST',

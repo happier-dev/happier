@@ -128,18 +128,28 @@ async function installPublicAuthoringFixture() {
       kind: 'registerExplicit',
       rootPath: fileURLToPath(publicAuthoringEntry),
     });
-    expect(registration.kind).toBe('status');
+    // Explicit source trust does not approve the example's host access. The
+    // development control reports the pending installation review as unavailable
+    // until the present-user decision below admits that exact candidate.
+    expect(
+      registration,
+      registration.kind === 'failed' ? `${registration.code}: ${registration.message}` : undefined,
+    ).toMatchObject({ kind: 'failed', code: 'plugin_dev_reviewRequired' });
     const pending = await owner.changeService.listPendingPluginChanges();
     expect(pending.changes).toHaveLength(1);
     const review = pending.changes[0];
     if (!review || review.kind !== 'reviewRequired' || review.reviewKind !== 'installation') {
       throw new Error('Expected the public example host-access installation review');
     }
-    await expect(owner.changeService.decidePluginChange({
+    const approval = await owner.changeService.decidePluginChange({
       pendingChangeId: review.pendingChangeId,
       decision: 'installAndTrust',
       optionalSelections: [],
-    })).resolves.toMatchObject({ kind: 'committed', pluginId });
+    });
+    expect(
+      approval,
+      approval.kind === 'failed' ? `${approval.code}: ${approval.message}` : undefined,
+    ).toMatchObject({ kind: 'committed', pluginId });
     const sourceCustody = runtime.controller.readCurrentPluginSourceCustody?.(pluginId);
     expect(sourceCustody).toMatchObject({ kind: 'development' });
     expect(runtime.controller.readCurrentPluginOccurrenceId?.(pluginId)).toEqual(expect.any(String));
@@ -189,9 +199,9 @@ describe('public declarative voice model-pack authoring integration fixture', ()
           }),
         }),
       ]);
-      expect(enabled.registry.settings).toEqual([
-        expect.objectContaining({ pluginId, definition: expect.objectContaining({ id: 'preferences' }) }),
-      ]);
+      expect(enabled.registry.settings
+        ?.filter(entry => entry.pluginId === pluginId)
+        .map(entry => entry.definition)).toEqual(manifest.contributes.settings);
       expect(enabled.projection.settingsById).toHaveProperty(qualifiedSettingsId);
       expect(enabled.projection.familiesById.voiceModelPacks?.entriesById).toHaveProperty(qualifiedPackId);
       expect(enabled.catalog).toEqual([

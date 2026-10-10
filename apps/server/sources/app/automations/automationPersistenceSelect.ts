@@ -93,6 +93,7 @@ export const automationRunCauseSelect = {
     causeEventPluginId: true, causeEventLocalId: true, causeScheduledFor: true,
     causeSessionLifecycleEvent: true, causeSourceSessionId: true, causeSourceTurnId: true,
     causeRunLifecycleEvidenceJson: true,
+    causeOriginRunId: true,
     causeSessionLifecycleRequestId: true, causeSessionLifecycleRequestKind: true,
     causeSessionLifecyclePolicyKind: true, causeSessionLifecycleConfiguredCount: true,
     occurrenceKey: true, causeSourceSelectorId: true, createdAt: true,

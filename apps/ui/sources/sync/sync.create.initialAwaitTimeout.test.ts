@@ -208,12 +208,18 @@ describe('sync.create initial awaits', () => {
         network.httpRequests.length = 0;
         authPing = 'ready';
 
+        // Explicit invalidations coalesce for 250 ms at the reachability owner.
+        await flushHookEffects({ cycles: 1, turns: 2, advanceTimersMs: 250 });
         await invalidateAllServerReachabilitySupervisors();
         await flushHookEffects({ cycles: 8, turns: 2 });
 
         expect(storage.getState().endpointStatus).toBe('online');
         expect(resume).toHaveBeenCalledWith('server-reachable');
         const recovered = resume.mock.calls.findIndex(([reason]) => reason === 'server-reachable');
+        // Resume also awaits bounded ancillary queues; their clock must keep
+        // advancing even though this test only serves the core Home routes.
+        const { loadSyncTuning } = await import('@/sync/runtime/syncTuning');
+        await flushHookEffects({ cycles: 1, turns: 2, advanceTimersMs: loadSyncTuning().resumeQuickInvalidateTimeoutMs });
         await resume.mock.results[recovered]?.value;
         expect(network.httpRequests.map(({ url }) => new URL(url).pathname)).toContain('/v2/changes');
     });
@@ -231,7 +237,9 @@ describe('sync.create initial awaits', () => {
         expect(getTrackingAnonymousUserId()).toBeNull();
         expect(sync.getCredentials()).toEqual({ token: home.token });
         expect(network.socketBoundaries.some(({ token }) => token === home.token)).toBe(true);
-        expect(network.httpRequests.some(({ url, token }) => new URL(url).pathname === '/v1/account/encryption/currentness' && token === `Bearer ${home.token}`)).toBe(true);
+        expect(network.httpRequests.map(({ url, token }) => ({ path: new URL(url).pathname, token }))).toContainEqual({
+            path: '/v1/account/encryption', token: `Bearer ${home.token}`,
+        });
     });
 
     it.each(['socket-reconnect', 'app-foreground'] as const)('refreshes an unavailable Account mode subscription on %s', async (reason) => {

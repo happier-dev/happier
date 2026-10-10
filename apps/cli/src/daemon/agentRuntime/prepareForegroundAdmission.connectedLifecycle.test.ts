@@ -1,14 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parseConnectedAccountRequestAuthCapabilityDocument } from '@happier-dev/agents/request-auth';
 import type { AgentConnectedAccountLaunchContributionV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 
-import { createConnectedAccountRequestAuthSubjectRegistry } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
-import { createConnectedAccountRequestAuthService } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthService';
-import { resolvePurposeTeamCredentialBindingIntentsFromHome } from '@/session/services/spawnConnectedServicesDefaults';
-import { withRealForegroundAdmissionFixture } from './foregroundAdmission.testkit';
-import { createExternalConnectedAccountForegroundFixture } from './prepareForegroundAdmission.connectedServices.testkit';
+let createConnectedAccountRequestAuthSubjectRegistry: typeof import('@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry').createConnectedAccountRequestAuthSubjectRegistry;
+let createConnectedAccountRequestAuthService: typeof import('@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthService').createConnectedAccountRequestAuthService;
+let resolvePurposeTeamCredentialBindingIntentsFromHome: typeof import('@/session/services/spawnConnectedServicesDefaults').resolvePurposeTeamCredentialBindingIntentsFromHome;
+let withRealForegroundAdmissionFixture: typeof import('./foregroundAdmission.testkit').withRealForegroundAdmissionFixture;
+let createExternalConnectedAccountForegroundFixture: typeof import('./prepareForegroundAdmission.connectedServices.testkit').createExternalConnectedAccountForegroundFixture;
 
 const nativeHomeLaunch: AgentConnectedAccountLaunchContributionV1 = {
   stateSharingDescriptor: {
@@ -26,6 +26,17 @@ const claimInput = {
 } as const;
 
 describe('foreground Connected Account custody through real authored Agent activation', () => {
+  beforeEach(async () => {
+    // Disposal permanently closes a real daemon controller. Each case owns a
+    // fresh module graph, including both its runtime and Account producers.
+    vi.resetModules();
+    ({ createConnectedAccountRequestAuthSubjectRegistry } = await import('@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry'));
+    ({ createConnectedAccountRequestAuthService } = await import('@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthService'));
+    ({ resolvePurposeTeamCredentialBindingIntentsFromHome } = await import('@/session/services/spawnConnectedServicesDefaults'));
+    ({ withRealForegroundAdmissionFixture } = await import('./foregroundAdmission.testkit'));
+    ({ createExternalConnectedAccountForegroundFixture } = await import('./prepareForegroundAdmission.connectedServices.testkit'));
+  });
+
   it.each([
     { label: 'a novel service', service: { pluginId: 'acme.connected-account', localId: 'credential' } },
     { label: 'a legacy-mapped service', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' } },
@@ -49,10 +60,10 @@ describe('foreground Connected Account custody through real authored Agent activ
         ...account.dependencies, connectedServicesMaterializationBaseDir: join(fixture.directory, 'materialized'),
         connectedAccountRequestAuthRegistry: registry, resolveConnectedAccountRequestAuthHttpPort: () => 43123,
       });
-      expect(admitted.ok).toBe(true);
+      expect(admitted.ok, admitted.ok ? undefined : `request-auth admission: ${admitted.error.code}`).toBe(true);
       if (!admitted.ok) throw new Error(admitted.error.code);
       const claimed = await admitted.prepared.claim(claimInput);
-      expect(claimed.ok).toBe(true);
+      expect(claimed.ok, claimed.ok ? undefined : `request-auth claim: ${claimed.error.code}`).toBe(true);
       if (!claimed.ok) throw new Error(claimed.error.code);
       const capabilityPath = claimed.environment.HAPPIER_CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH;
       expect(capabilityPath).toContain('qualified-request-auth');
@@ -119,7 +130,7 @@ describe('foreground Connected Account custody through real authored Agent activ
         } : {}),
       });
       const admitted = await admit('attempt-team-slot', [resource]);
-      expect(admitted.ok).toBe(true);
+      expect(admitted.ok, admitted.ok ? undefined : `Team admission: ${admitted.error.code}`).toBe(true);
       if (!admitted.ok) throw new Error(admitted.error.code);
       expect(admitted.prepared.teamCredentialBindings).toEqual([{
         v: 1, slot: { kind: 'connected_service_purpose', purpose: account.purpose },
@@ -157,10 +168,10 @@ describe('foreground Connected Account custody through real authored Agent activ
         ...account.dependencies, connectedServicesMaterializationBaseDir: baseDir,
       });
       const admitted = await admit('attempt-native-home');
-      expect(admitted.ok).toBe(true);
+      expect(admitted.ok, admitted.ok ? undefined : `native-home admission: ${admitted.error.code}`).toBe(true);
       if (!admitted.ok) throw new Error(admitted.error.code);
       const claimed = await admitted.prepared.claim({ ...claimInput, nativeHomeSourceEnvironmentValue: sourceRoot });
-      expect(claimed.ok).toBe(true);
+      expect(claimed.ok, claimed.ok ? undefined : `native-home claim: ${claimed.error.code}`).toBe(true);
       if (!claimed.ok) throw new Error(claimed.error.code);
       const targetRoot = claimed.environment.ACME_NATIVE_HOME;
       expect(targetRoot).toBeTruthy();
@@ -173,7 +184,7 @@ describe('foreground Connected Account custody through real authored Agent activ
 
       replaceDuringMaterialization = true;
       const invalidated = await admit('attempt-native-home-invalidated');
-      expect(invalidated.ok).toBe(true);
+      expect(invalidated.ok, invalidated.ok ? undefined : `invalidated native-home admission: ${invalidated.error.code}`).toBe(true);
       if (!invalidated.ok) throw new Error(invalidated.error.code);
       await expect(invalidated.prepared.claim({ ...claimInput, nativeHomeSourceEnvironmentValue: sourceRoot })).resolves.toMatchObject({
         ok: false, error: { code: 'provider_agent_runtime_unsupported' },
@@ -184,10 +195,10 @@ describe('foreground Connected Account custody through real authored Agent activ
       replaceDuringMaterialization = false;
       await account.store.update(() => ({ v: 1, bindings: [] }));
       const unbound = await admit('attempt-native-unbound');
-      expect(unbound.ok).toBe(true);
+      expect(unbound.ok, unbound.ok ? undefined : `unbound native-home admission: ${unbound.error.code}`).toBe(true);
       if (!unbound.ok) throw new Error(unbound.error.code);
       const unboundClaim = await unbound.prepared.claim(claimInput);
-      expect(unboundClaim.ok).toBe(true);
+      expect(unboundClaim.ok, unboundClaim.ok ? undefined : `unbound native-home claim: ${unboundClaim.error.code}`).toBe(true);
       if (!unboundClaim.ok) throw new Error(unboundClaim.error.code);
       expect(unboundClaim.environment).not.toHaveProperty('ACME_NATIVE_HOME');
       await unbound.prepared.cleanup();

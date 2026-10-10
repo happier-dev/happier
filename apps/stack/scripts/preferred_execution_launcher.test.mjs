@@ -15,6 +15,8 @@ import { renderMutagenProject, resolveMutagenSessionName } from './utils/dev_tar
 
 const repoRoot = resolve(import.meta.dirname, '..', '..', '..');
 const launcher = join(repoRoot, 'apps', 'stack', 'bin', 'hstack-exec');
+// Measured cksum fixture key for `probe-command  ` (empty build target/components).
+const probeCommandCacheKey = '1086556756';
 const repoToken = repoRoot.split('/').at(-1)
   .toLowerCase()
   .replace(/[^a-z0-9-]+/g, '-')
@@ -225,6 +227,11 @@ async function runtimeAdmissionTransportFixture(t) {
   const workers = {};
   for (const name of ['starved', 'roomy']) {
     workers[name] = await installNativeAdmissionFixture({ root: join(fixture.root, name) });
+    // A physical runtime worker has an installed dependency footprint; the
+    // real disk owner measures these bytes before its admission can succeed.
+    const dependencies = resolve(workers[name].launcher, '../../../../node_modules');
+    await mkdir(dependencies, { recursive: true });
+    await writeFile(join(dependencies, 'runtime-fixture'), 'installed dependency');
     workers[name].sample = join(fixture.root, `${name}-sample`);
     await writeFile(workers[name].sample, `8 ${name === 'starved' ? '0.1' : '12'} 0.3 22000000 20 0 9437184 28311552 0 0 0 0 0 0 0 linux\n`);
   }
@@ -1518,7 +1525,7 @@ test('explicit local execution is selected per invocation without consulting tar
 test('explicit local execution preserves placement while applying the adaptive nested-worker budget', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-explicit-local-budget-'));
   const { launcher } = await installNativeAdmissionFixture({ root });
-  const repoRoot = join(root, 'native-owner');
+  const repoRoot = resolve(launcher, '../../../..');
   const binDir = join(root, 'bin');
   const storageDir = join(root, 'stacks');
   t.after(async () => await rm(root, { recursive: true, force: true }));
@@ -2616,7 +2623,7 @@ test('native launcher governs nested Vitest workers when automatic placement sel
   const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-local-governor-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const { launcher } = await installNativeAdmissionFixture({ root });
-  const repoRoot = join(root, 'native-owner');
+  const repoRoot = resolve(launcher, '../../../..');
   const binDir = join(root, 'bin');
   const storageDir = join(root, 'stacks');
   const stackDir = join(storageDir, `repo-${repoToken}-native`);
@@ -2914,6 +2921,9 @@ test('native launcher preserves a successful remote command when the login shell
   const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-remote-exit-hook-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const native = await installNativeAdmissionFixture({ root });
+  const workerRepo = resolve(native.launcher, '../../../..');
+  const exitHook = join(root, 'bash-exit-hook');
+  await writeFile(exitHook, 'trap false EXIT\n');
   const binDir = join(root, 'bin');
   const storageDir = join(root, 'stacks');
   const stackDir = join(storageDir, `repo-${repoToken}-native`);
@@ -2938,6 +2948,7 @@ test('native launcher preserves a successful remote command when the login shell
     "target_1_ssh='linux-host'",
     "target_1_ssh_config=''",
     `target_1_repo_dir='${remoteRepo}'`,
+    `target_1_executor_repo_dir='${workerRepo}'`,
     `target_1_cli_home='${remoteHome}'`,
     "target_1_remote_path='/usr/bin:/bin'",
     '',
@@ -2955,7 +2966,7 @@ test('native launcher preserves a successful remote command when the login shell
     '  *-MNf*|*-O\\ exit*) exit 0 ;;',
     '  *)',
     '    remote_command=; for ssh_argument in "$@"; do remote_command=$ssh_argument; done',
-    '    /bin/bash -c "trap \'exit 41\' EXIT; $remote_command"',
+    '    BASH_ENV="$EXIT_HOOK" /bin/sh -c "$remote_command"',
     '    ;;',
     'esac',
     '',
@@ -2966,6 +2977,7 @@ test('native launcher preserves a successful remote command when the login shell
     env: {
       ...executionNeutralEnv,
       HOME: root,
+      EXIT_HOOK: exitHook,
       HAPPIER_STACK_STORAGE_DIR: storageDir,
       PATH: `${binDir}:/usr/bin:/bin`,
       TMPDIR: root,
@@ -4026,7 +4038,7 @@ test('native launcher cache writes and reservations survive reused sandbox proce
   await writeFile(join(stackDir, 'dev-targets.json'), '{}\n');
   const cachedAt = Math.floor(Date.now() / 1_000);
   await writeFile(join(cacheDir, 'remote.cache'), `${cachedAt} 1 0.125000 8\n`);
-  await writeFile(join(cacheDir, 'remote.command.2560848116.cache'), `${cachedAt} 1\n`);
+  await writeFile(join(cacheDir, `remote.command.${probeCommandCacheKey}.cache`), `${cachedAt} 1 ready \n`);
   await writeNativeProjectionFixture(join(stackDir, 'dev-target-exec-v1.sh'), [
     "HSTACK_EXEC_PROJECTION_VERSION='2'",
     `projection_repo_root='${repoRoot}'`,
@@ -5060,7 +5072,7 @@ test('native launcher exact target blocks dispatch when a clean cached probe is 
   await writeFile(join(stackDir, 'dev-targets.json'), '{}\n');
   const cachedAt = Math.floor(Date.now() / 1_000);
   await writeFile(join(cacheDir, 'linux.cache'), `${cachedAt} 1 0.000000 4\n`);
-  await writeFile(join(cacheDir, 'linux.command.2560848116.cache'), `${cachedAt} 1\n`);
+  await writeFile(join(cacheDir, `linux.command.${probeCommandCacheKey}.cache`), `${cachedAt} 1 ready \n`);
   await writeNativeProjectionFixture(join(stackDir, 'dev-target-exec-v1.sh'), [
     "HSTACK_EXEC_PROJECTION_VERSION='2'",
     `projection_repo_root='${repoRoot}'`,
@@ -5154,7 +5166,7 @@ test('startup and explicit sync share the command dispatch barrier and preserve 
   await writeFile(sourceBytes, 'X\n');
   const cachedAt = Math.floor(Date.now() / 1_000);
   await writeFile(join(cacheDir, 'linux.cache'), `${cachedAt} 1 0.000000 4\n`);
-  await writeFile(join(cacheDir, 'linux.command.2560848116.cache'), `${cachedAt} 1\n`);
+  await writeFile(join(cacheDir, `linux.command.${probeCommandCacheKey}.cache`), `${cachedAt} 1 ready \n`);
   await writeNativeProjectionFixture(join(stackDir, 'dev-target-exec-v1.sh'), [
     "HSTACK_EXEC_PROJECTION_VERSION='2'",
     `projection_repo_root='${repoRoot}'`,
@@ -5291,9 +5303,9 @@ test('native launcher flushes an automatically selected mirror and retries anoth
   await writeFile(join(cacheDir, 'provenance.jsonl'), '');
   const cachedAt = Math.floor(Date.now() / 1_000);
   await writeFile(join(cacheDir, 'linux.cache'), `${cachedAt} 1 0.000000 4\n`);
-  await writeFile(join(cacheDir, 'linux.command.2560848116.cache'), `${cachedAt} 1\n`);
+  await writeFile(join(cacheDir, `linux.command.${probeCommandCacheKey}.cache`), `${cachedAt} 1 ready \n`);
   await writeFile(join(cacheDir, 'mac2.cache'), `${cachedAt} 1 0.500000 4\n`);
-  await writeFile(join(cacheDir, 'mac2.command.2560848116.cache'), `${cachedAt} 1\n`);
+  await writeFile(join(cacheDir, `mac2.command.${probeCommandCacheKey}.cache`), `${cachedAt} 1 ready \n`);
   await writeNativeProjectionFixture(join(stackDir, 'dev-target-exec-v1.sh'), [
     "HSTACK_EXEC_PROJECTION_VERSION='2'",
     `projection_repo_root='${repoRoot}'`,
@@ -5433,7 +5445,7 @@ test('native launcher exact target flushes the selected Mutagen session before r
   // payload execution requires the source flush, not the SSH tool preflight.
   const cachedAt = Math.floor(Date.now() / 1_000);
   await writeFile(join(cacheDir, 'linux.cache'), `${cachedAt} 1 0.000000 4\n`);
-  await writeFile(join(cacheDir, 'linux.command.2560848116.cache'), `${cachedAt} 1\n`);
+  await writeFile(join(cacheDir, `linux.command.${probeCommandCacheKey}.cache`), `${cachedAt} 1 ready \n`);
   await writeNativeProjectionFixture(join(stackDir, 'dev-target-exec-v1.sh'), [
     "HSTACK_EXEC_PROJECTION_VERSION='2'",
     `projection_repo_root='${repoRoot}'`,
@@ -6484,6 +6496,7 @@ test('native launcher backs off heavyweight lock acquisition under contention', 
 test('native launcher scopes admitted Linux work only when the systemd user slice is ready', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-heavyweight-scope-'));
   const { launcher } = await installNativeAdmissionFixture({ root });
+  const repoRoot = resolve(launcher, '../../../..');
   const readyBin = join(root, 'ready-bin');
   const fallbackBin = join(root, 'fallback-bin');
   const scopedMarker = join(root, 'scoped-command');

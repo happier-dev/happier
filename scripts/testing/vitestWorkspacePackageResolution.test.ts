@@ -3,6 +3,8 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
+import { loadConfigFromFile } from 'vite';
 
 import {
     createWorkspacePackageSourcesPlugin,
@@ -226,23 +228,32 @@ function firstPartyAliases(config: { resolve?: { alias?: unknown } }): readonly 
 }
 
 test('ordinary workspace-source Vitest configs use the canonical resolver instead of package aliases', async () => {
+    const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
     const [
-        { default: uiArtifactCacheConfig },
-        { default: pluginSdkFacadeCurrentConfig },
-        { default: pluginSdkSourceConfig },
-        { default: piRealOwnersConfig },
-        { default: piSpawnedRealOwnersConfig },
-        { default: qaFixturesConfig },
-        { default: voiceModelpacksDirectSourceConfig },
+        uiArtifactCacheConfig,
+        pluginSdkFacadeCurrentConfig,
+        pluginSdkSourceConfig,
+        piRealOwnersConfig,
+        piSpawnedRealOwnersConfig,
+        qaFixturesConfig,
+        voiceModelpacksDirectSourceConfig,
     ] = await Promise.all([
-        import('../../apps/ui/vitest.artifact-cache.config.ts'),
-        import('../../packages/plugin-sdk/vitest.facade-current.config.ts'),
-        import('../../packages/plugin-sdk/vitest.source.config.ts'),
-        import('../../packages/plugins/pi/vitest.realOwners.config.ts'),
-        import('../../packages/plugins/pi/vitest.spawnedRealOwners.config.ts'),
-        import('../../packages/tests/vitest.qa-fixtures.config.ts'),
-        import('../../packages/voice-modelpacks/vitest.direct-source.config.ts'),
-    ]);
+        'apps/ui/vitest.artifact-cache.config.ts',
+        'packages/plugin-sdk/vitest.facade-current.config.ts',
+        'packages/plugin-sdk/vitest.source.config.ts',
+        'packages/plugins/pi/vitest.realOwners.config.ts',
+        'packages/plugins/pi/vitest.spawnedRealOwners.config.ts',
+        'packages/tests/vitest.qa-fixtures.config.ts',
+        'packages/voice-modelpacks/vitest.direct-source.config.ts',
+    ].map(async (configPath) => {
+        // Authored Vitest configs are evaluated by Vite, including their source
+        // policy dependencies; native Node imports are not that loading contract.
+        const loaded = await loadConfigFromFile(
+            { command: 'serve', mode: 'test' }, resolve(repoRoot, configPath), repoRoot,
+        );
+        assert.ok(loaded, `Vite did not load ${configPath}`);
+        return loaded.config;
+    }));
     for (const { config, pluginName, importId, expectedSourcePath, additionalImports = [] } of [
         {
             config: uiArtifactCacheConfig,

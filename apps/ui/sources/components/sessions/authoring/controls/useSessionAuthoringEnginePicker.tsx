@@ -74,6 +74,7 @@ export function useSessionAuthoringEnginePicker(params: Readonly<{
                 closeOnSelectImmediate: false,
                 onSelectImmediate: () => apply(readSelection()),
                 renderDetailContent: () => buildSessionAgentPickerDetailContent({
+                    agentCatalogEntry: entry.agentCatalogEntry,
                     backendTarget, runtimeCarrierAgentId: option.agentId,
                     selectedMachineId: context?.machineId ?? null,
                     capabilityServerId: context?.serverId ?? '', cwd: context?.directory ?? null,

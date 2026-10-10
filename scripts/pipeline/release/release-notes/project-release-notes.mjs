@@ -2,7 +2,7 @@
 // @ts-check
 
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,6 +22,29 @@ export const APPROVED_PROJECTION_MAX_LENGTHS = Object.freeze({
   playStore: 500,
   storyDeck: 280,
 });
+
+/** Consume store text only from the approved release projection bound to this binary's source/version. */
+export function readBoundStoreNotes({ bundlePath, sourceSha, releaseId, appVersion, platform }) {
+  const invalidBinding = () => Object.assign(new Error('Store release notes must match the exact release, source SHA and UI version.'), {
+    code: 'invalid_release_notes_binding',
+  });
+  if (!bundlePath || !/^[a-f0-9]{40}$/u.test(sourceSha) || !releaseId || !appVersion || !['ios', 'android'].includes(platform)) {
+    throw invalidBinding();
+  }
+  let bundle;
+  try { bundle = JSON.parse(readFileSync(bundlePath, 'utf8')); } catch { throw invalidBinding(); }
+  if (bundle?.kind !== RELEASE_NOTES_BUNDLE_KIND || bundle?.schemaVersion !== 2 ||
+      bundle.release?.id !== releaseId || bundle.release?.sourceSha !== sourceSha ||
+      bundle.release?.components?.ui !== appVersion) throw invalidBinding();
+  const projection = platform === 'ios' ? 'appStore' : 'playStore';
+  try {
+    return validateApprovedProjection(bundle.projections?.[projection]?.whatsNew, `${projection}.whatsNew`, APPROVED_PROJECTION_MAX_LENGTHS[projection]);
+  } catch {
+    throw Object.assign(new Error(`Production publication requires approved ${projection}.whatsNew in the bound projection.`), {
+      code: 'missing_store_release_notes',
+    });
+  }
+}
 
 const APPROVED_PROJECTION_MARKER = '<!-- happier-release-note-projections:v1';
 const SOURCE_SHA_PATTERN = /^[0-9a-f]{40}$/u;

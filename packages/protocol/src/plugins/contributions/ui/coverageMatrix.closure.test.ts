@@ -8,6 +8,7 @@ import {
   type RuntimeActionIdV1,
 } from '../../../actions/actionIds.js';
 import { getActionSpec } from '../../../actions/actionSpecs.js';
+import { canRequestPresentUserApprovalForActionInputV1 } from '../../../actions/decisionAuthority.js';
 import {
   isAgentInitiatedApprovalRequiredByDefault,
   resolveActionApprovalRouting,
@@ -566,7 +567,7 @@ const DESTINATION_REACHABILITY_SOURCE_PROOFS_V1 = [
     stage: 'decidingTest',
     ref: 'AppScopeRightSidebar',
     sourcePath: 'apps/ui/sources/components/appShell/rightSidebar/AppScopeRightSidebar.test.tsx',
-    codeIdentifier: "expect(screen.findByTestId('plugin-host-renderer-descriptor-panel')).toBeTruthy();",
+    codeIdentifier: "expect(latestMountFor('app-panel')).toBeTruthy();",
     supportedSlotKeys: ['rightSidebarTab:app'],
   },
   {
@@ -580,7 +581,7 @@ const DESTINATION_REACHABILITY_SOURCE_PROOFS_V1 = [
     stage: 'decidingTest',
     ref: 'ProjectRightPanelRightSidebarRegistry',
     sourcePath: 'apps/ui/sources/components/projects/detail/ProjectRightPanel.rightSidebarRegistry.test.tsx',
-    codeIdentifier: "expect(host.props.placement.descriptorId).toBe('project-review-panel');",
+    codeIdentifier: "expect(host.props).toMatchObject({ machineId: 'm1', serverId: runtime.serverId });",
     supportedSlotKeys: ['rightSidebarTab:project'],
   },
   {
@@ -668,7 +669,7 @@ const MAINTAINED_AUTHORED_DESTINATION_DECLARATIONS_V1 = [
   {
     slotKey: 'appPage:app',
     sourcePath: 'packages/plugin-sdk/examples/public-authoring/definition.ts',
-    codeIdentifier: ["                container: 'appPage',", "                target: { kind: 'app' },"].join('\n'),
+    codeIdentifier: ["                id: 'review-panel',", "                container: 'appPage',"].join('\n'),
   },
   {
     slotKey: 'settingsPage:app',
@@ -784,9 +785,10 @@ const DESTINATION_SLOTS_WITHOUT_MAINTAINED_AUTHORED_DECLARATION = [] as const sa
  * `browserPanel:browser` was authored in `packages/plugins/inspector` while the
  * ceiling below still claimed nobody authored it, and the GAIN half could not
  * fail. Anything after `kind` up to the target's own closing brace is skipped.
+ * App-page declarations may place their widget-area schema before the target.
  */
 const AUTHORED_DESTINATION_TUPLE_PATTERN =
-  /container:\s*'([A-Za-z]+)'(?:\s+as\s+const)?,\s*target:\s*\{\s*kind:\s*'([A-Za-z]+)'(?:\s+as\s+const)?(?:\s*,[^{}]*)?\s*\}/gu;
+  /container:\s*'([A-Za-z]+)'(?:\s+as\s+const)?,\s*(?:widgetAreas:[\s\S]*?\]\s*,\s*)?target:\s*\{\s*kind:\s*'([A-Za-z]+)'(?:\s+as\s+const)?(?:\s*,[^{}]*)?\s*\}/gu;
 
 /**
  * Every destination slot a maintained producer AUTHORS TODAY, re-derived from
@@ -1025,6 +1027,7 @@ describe('coverage matrix — Stage A (inventory)', () => {
     // Sanity: the runtime universe equals the union of its families (catches an
     // id added to a family but dropped from RUNTIME_ACTION_IDS_V1).
     const fromFamilies = new Set<string>([
+      ...ACTION_ID_FAMILIES_V1.computer,
       ...ACTION_ID_FAMILIES_V1.browser_control,
       ...ACTION_ID_FAMILIES_V1.browser_diagnostics,
       ...ACTION_ID_FAMILIES_V1.browser_context,
@@ -1286,6 +1289,12 @@ describe('coverage matrix — Stage B (enforcement)', () => {
         source,
         `${declaration.slotKey} claims a maintained author at ${declaration.sourcePath}, but that declaration is gone`,
       ).toContain(declaration.codeIdentifier);
+      if (declaration.slotKey !== 'settingsPage:app') {
+        AUTHORED_DESTINATION_TUPLE_PATTERN.lastIndex = 0;
+        const authoredInSource = [...source.matchAll(AUTHORED_DESTINATION_TUPLE_PATTERN)]
+          .map((match) => `${match[1]}:${match[2]}`);
+        expect(authoredInSource, `${declaration.sourcePath} must author ${declaration.slotKey}`).toContain(declaration.slotKey);
+      }
     }
 
     // The GAIN half. Everything above can only notice a pinned declaration that
@@ -1452,8 +1461,8 @@ describe('coverage matrix — historical UI surface disposition', () => {
 //   2. Floor reachability + PRESERVE-THE-CONSENT-FLOOR — EVERY surfaced runtime
 //      action, driven through the REAL `resolveActionApprovalRouting` front door
 //      on `agent` with no settings, is approval-required IFF it is in the
-//      derived danger/egress floor; the same id on `ui` is NEVER required
-//      (user-initiated never prompts). In particular every surfaced danger /
+//      derived danger/egress floor or requests present-user execution authority;
+//      ordinary UI callers retain the dangerous default. Every surfaced danger /
 //      mutating-browser / launcher / terminate / recording / eval id stays
 //      floored, and safe reads are NOT over-gated (full features).
 //   3. Reason-aware deferral guard — every remaining allowlist entry waits on an
@@ -1486,7 +1495,8 @@ describe('coverage matrix — Stage C (executor-backed coverage + consent floor)
     expect(surfacedRuntimeActionIds.length).toBeGreaterThan(0);
     for (const id of surfacedRuntimeActionIds) {
       const spec = getActionSpec(id);
-      const flooredByPolicy = isAgentInitiatedApprovalRequiredByDefault(id);
+      const flooredByPolicy = isAgentInitiatedApprovalRequiredByDefault(id)
+        || canRequestPresentUserApprovalForActionInputV1(spec);
       const agentRouting = resolveActionApprovalRouting({
         actionId: id,
         spec,
@@ -1528,9 +1538,10 @@ describe('coverage matrix — Stage C (executor-backed coverage + consent floor)
     }
   });
 
-  it('does not over-gate surfaced safe reads (no consent on non-danger non-egress verbs)', () => {
+  it('does not over-gate surfaced safe reads without present-user execution authority', () => {
     const safeReadsSurfaced = surfacedRuntimeActionIds.filter(
-      (id) => !isAgentInitiatedApprovalRequiredByDefault(id),
+      (id) => !isAgentInitiatedApprovalRequiredByDefault(id)
+        && !canRequestPresentUserApprovalForActionInputV1(getActionSpec(id)),
     );
     expect(safeReadsSurfaced.length).toBeGreaterThan(0);
     for (const id of safeReadsSurfaced) {

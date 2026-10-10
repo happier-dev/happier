@@ -2,46 +2,42 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { fetchChanges, fetchCurrentChangesCursor } from './apiChanges';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { isServerFetchConnectivityProbeRequest } from '@/dev/testkit/mocks/serverFetch';
 
-vi.mock('@/sync/domains/server/serverRuntime', () => ({
-    getActiveServerSnapshot: () => ({
-        serverId: 'test',
-        serverUrl: 'https://api.test.com',
-        kind: 'custom',
-        generation: 1,
-    }),
-}));
-
-const credentials: AuthCredentials = { token: 't', secret: 's' };
+const credentials: AuthCredentials = { token: createAccountTokenForTests('changes-account'), secret: 's' };
+const endpointFetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>();
 
 function okJson(payload: unknown) {
-    return {
-        ok: true,
-        status: 200,
-        json: vi.fn().mockResolvedValue(payload),
-    };
+    return Response.json(payload);
 }
 
 function errorJson(status: number, payload: unknown) {
-    return {
-        ok: false,
-        status,
-        json: vi.fn().mockResolvedValue(payload),
-    };
+    return Response.json(payload, { status });
 }
 
 describe('apiChanges', () => {
-    beforeEach(() => {
-        vi.clearAllMocks();
-        global.fetch = vi.fn() as unknown as typeof fetch;
+    beforeEach(async () => {
+        endpointFetch.mockReset();
+        await upsertAndActivateServer({ serverUrl: 'https://api.test.com', name: 'Changes Home' });
+        vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            if (isServerFetchConnectivityProbeRequest(input)) return Response.json({});
+            return await endpointFetch(input, init);
+        }));
     });
 
-    afterEach(() => {
+    afterEach(async () => {
+        const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+        await resetServerReachabilitySupervisors();
+        const { stopAllEndpointSupervisorsForTests } = await import('@/sync/runtime/connectivity/endpointSupervisorPool');
+        await stopAllEndpointSupervisorsForTests();
+        vi.unstubAllGlobals();
         vi.restoreAllMocks();
     });
 
     it('returns ok + nextCursor on success', async () => {
-        (global.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(
+        endpointFetch.mockResolvedValue(
             okJson({
                 changes: [{ cursor: 2, kind: 'session', entityId: 's1', changedAt: 1, hint: null }],
                 nextCursor: 2,
@@ -61,11 +57,11 @@ describe('apiChanges', () => {
         const requestInit = call?.[1] as RequestInit | undefined;
         expect(requestInit).toBeDefined();
         expect(requestInit?.headers).toBeInstanceOf(Headers);
-        expect((requestInit!.headers as Headers).get('Authorization')).toBe('Bearer t');
+        expect((requestInit!.headers as Headers).get('Authorization')).toBe(`Bearer ${credentials.token}`);
     });
 
     it('returns cursor-gone for 410 responses', async () => {
-        (global.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(
+        endpointFetch.mockResolvedValue(
             errorJson(410, { error: 'cursor-gone', currentCursor: 9 }),
         );
 
@@ -74,32 +70,28 @@ describe('apiChanges', () => {
     });
 
     it('returns error when /v2/changes is missing (e.g. old server 404)', async () => {
-        (global.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(errorJson(404, { error: 'not-found' }));
+        endpointFetch.mockResolvedValue(errorJson(404, { error: 'not-found' }));
 
         const res = await fetchChanges({ credentials, afterCursor: '0', limit: 200 });
         expect(res).toEqual({ status: 'error' });
     });
 
     it('returns cursor-gone with fallback cursor when 410 body is invalid', async () => {
-        (global.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
-            ok: false,
-            status: 410,
-            json: vi.fn().mockRejectedValue(new Error('invalid json')),
-        });
+        endpointFetch.mockResolvedValue(new Response('invalid json', { status: 410 }));
 
         const res = await fetchChanges({ credentials, afterCursor: '5', limit: 200 });
         expect(res).toEqual({ status: 'cursor-gone', currentCursor: '0' });
     });
 
     it('returns error when fetch throws (network failure)', async () => {
-        (global.fetch as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('network down'));
+        endpointFetch.mockRejectedValue(new Error('network down'));
 
         const res = await fetchChanges({ credentials, afterCursor: '1', limit: 200 });
         expect(res).toEqual({ status: 'error' });
     });
 
     it('normalizes invalid afterCursor and clamps limit', async () => {
-        (global.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(
+        endpointFetch.mockResolvedValue(
             okJson({
                 changes: [],
                 nextCursor: 0,
@@ -111,7 +103,7 @@ describe('apiChanges', () => {
     });
 
     it('returns the current cursor from /v2/cursor', async () => {
-        (global.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(okJson({ cursor: 42, changesFloor: 7 }));
+        endpointFetch.mockResolvedValue(okJson({ cursor: 42, changesFloor: 7 }));
 
         const res = await fetchCurrentChangesCursor({ credentials });
 
@@ -122,11 +114,11 @@ describe('apiChanges', () => {
         const requestInit = call?.[1] as RequestInit | undefined;
         expect(requestInit).toBeDefined();
         expect(requestInit?.headers).toBeInstanceOf(Headers);
-        expect((requestInit!.headers as Headers).get('Authorization')).toBe('Bearer t');
+        expect((requestInit!.headers as Headers).get('Authorization')).toBe(`Bearer ${credentials.token}`);
     });
 
     it('returns error when /v2/cursor payload is invalid', async () => {
-        (global.fetch as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(okJson({ cursor: -1, changesFloor: 0 }));
+        endpointFetch.mockResolvedValue(okJson({ cursor: -1, changesFloor: 0 }));
 
         const res = await fetchCurrentChangesCursor({ credentials });
 
@@ -134,7 +126,7 @@ describe('apiChanges', () => {
     });
 
     it('returns error when /v2/cursor fetch throws', async () => {
-        (global.fetch as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('network down'));
+        endpointFetch.mockRejectedValue(new Error('network down'));
 
         const res = await fetchCurrentChangesCursor({ credentials });
 

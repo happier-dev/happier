@@ -1,8 +1,10 @@
 import {
   existsSync,
+  lstatSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -18,6 +20,7 @@ import {
   bundleInstalledPackageWithRuntimeDependencies,
   bundleWorkspacePackage,
   bundleWorkspacePackageWithRuntimeDependencies,
+  bundleWorkspacePackagesWithRuntimeDependencies,
   hasBundledWorkspacePackagesHealthy,
   materializePrepublicationWorkspacePackageRoots,
   resolveWorkspaceBundlesFromPackageJson,
@@ -194,7 +197,7 @@ describe('sanitizeBundledPackageJson', () => {
 });
 
 describe('bundleWorkspacePackageWithRuntimeDependencies', () => {
-  it('preserves conditional package imports and their package-root runtime targets', () => {
+  it.each(['live', 'artifact'] as const)('preserves conditional package imports and their package-root runtime targets for %s publication', (publicationMode) => {
     const root = createTempRoot('workspace-package-imports-');
     const sourceDir = join(root, 'packages', 'sdk');
     const destinationDir = join(root, 'apps', 'cli', 'node_modules', '@happier-dev', 'sdk');
@@ -203,18 +206,37 @@ describe('bundleWorkspacePackageWithRuntimeDependencies', () => {
       '#fs': 'fs',
       '#disabled': null,
     };
-    writePackage(sourceDir, {
+    const sourceManifest = {
       name: '@happier-dev/sdk', version: '0.0.0', type: 'module',
       exports: { '.': './dist/connect.js' }, imports,
-    }, {
+      scripts: { build: 'authored package compiler' },
+    };
+    const sourceFiles = {
       'dist/connect.js': 'import { transport } from "#http"; import { existsSync } from "#fs"; export const selected = transport + ":" + typeof existsSync;\n',
       'dist/fetch.js': 'export const transport = "fetch";\n',
       'runtime/node.js': 'export const transport = "node";\n',
+      'src/authored.ts': 'export const authoredSource = true;\n',
+    };
+    writePackage(sourceDir, sourceManifest, sourceFiles);
+    const authoredManifestBytes = readFileSync(join(sourceDir, 'package.json'));
+    // Live readers retain their installed mount; artifact publication must detach
+    // a package-manager workspace link without writing through the authored root.
+    const linkedRoot = publicationMode === 'artifact' ? sourceDir : join(root, 'mounted', 'sdk');
+    if (publicationMode === 'live') writePackage(linkedRoot, sourceManifest, sourceFiles);
+    mkdirSync(dirname(destinationDir), { recursive: true });
+    symlinkSync(linkedRoot, destinationDir, process.platform === 'win32' ? 'junction' : 'dir');
+    bundleWorkspacePackagesWithRuntimeDependencies({
+      publicationMode,
+      bundles: [{
+        packageName: '@happier-dev/sdk', srcDir: sourceDir, destDir: destinationDir,
+        dereferenceRootDir: root,
+      }],
     });
-    bundleWorkspacePackageWithRuntimeDependencies({
-      packageName: '@happier-dev/sdk', srcDir: sourceDir, destDir: destinationDir,
-      dereferenceRootDir: root,
-    });
+
+    expect(lstatSync(destinationDir).isSymbolicLink()).toBe(publicationMode === 'live');
+    if (publicationMode === 'live') expect(realpathSync(destinationDir)).toBe(realpathSync(linkedRoot));
+    expect(readFileSync(join(sourceDir, 'package.json'))).toEqual(authoredManifestBytes);
+    expect(readFileSync(join(sourceDir, 'src/authored.ts'), 'utf8')).toBe(sourceFiles['src/authored.ts']);
 
     // Real Node resolution observes the published manifest, not Vitest's resolver.
     expect(execFileSync(process.execPath, ['--input-type=module', '-e',

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { afterAll, vi } from 'vitest';
-import { AccountProfileSchema, AccountSettingsV2GetResponseSchema, MACHINE_PLAIN_DATA_KEY_MARKER, ScmWorkingSnapshotSchema } from '@happier-dev/protocol';
+import { AccountProfileSchema, AccountSettingsV2GetResponseSchema, AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryListResponseV1Schema, MACHINE_PLAIN_DATA_KEY_MARKER, ScmWorkingSnapshotSchema } from '@happier-dev/protocol';
 import { createScmCapabilities } from '@happier-dev/protocol/scm/capabilities';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -8,6 +8,7 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { createAuthoringMemoryHttpBoundary } from '@/dev/testkit/mocks/authoringMemoryHttp';
 import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
+import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 
 export type FileViewRpcRequest = Readonly<{ targetId: string; method: string; payload: unknown }>;
 type FileViewTransport = Readonly<{
@@ -115,13 +116,17 @@ export async function createSessionFilesViewFixture(input: Readonly<{
     const machineRow = { ...machine, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
         metadata: encodePlainMachineStoredContent(machine.metadata),
         daemonState: machine.daemonState ? encodePlainMachineStoredContent(machine.daemonState) : null };
+    const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'alice', encryptionMode: 'plain' });
     const homeRequest: NonNullable<Parameters<typeof restoreServerAccountForTest>[0]['request']> = async (url, init) => {
-        const path = new URL(String(url)).pathname;
+        const requestUrl = new URL(String(url));
+        const path = requestUrl.pathname;
         const handled = await input.request?.(url, init);
         if (handled && handled.status !== 404) return handled;
         const memoryResponse = await authoringMemory.handle(url, init);
         if (memoryResponse) return memoryResponse;
         if (path === '/v1/account/project-rows/list') return Response.json(createPlainProjectAccountRowListFixture());
+        const artifactResponse = artifacts.handle(path + requestUrl.search, init);
+        if (artifactResponse) return artifactResponse;
         if (path === '/health') return Response.json({ status: 'ok' });
         if (path === '/v1/features') return Response.json(features);
         if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
@@ -129,6 +134,7 @@ export async function createSessionFilesViewFixture(input: Readonly<{
         if (path === '/v1/account/profile') return Response.json(AccountProfileSchema.parse({ id: 'alice' }));
         if (path === '/v2/cursor') return Response.json({ cursor: 0, changesFloor: 0 });
         if (path === '/v2/account/settings') return Response.json(AccountSettingsV2GetResponseSchema.parse({ content: { t: 'plain', v: {} }, version: 0 }));
+        if (path === AUTHORING_MEMORY_ROUTE_V1) return Response.json(AuthoringMemoryListResponseV1Schema.parse({ rows: [] }));
         if (path.endsWith('/messages')) return Response.json({ messages: [], hasMore: false });
         if (path === `/v1/machines/${machine.id}`) return Response.json({ machine: machineRow });
         if (path === '/v1/machines') return Response.json([machineRow]);

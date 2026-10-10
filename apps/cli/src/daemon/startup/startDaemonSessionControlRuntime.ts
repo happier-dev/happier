@@ -7150,6 +7150,7 @@ export async function startDaemonSessionControlRuntime(
   let foregroundAgentRuntimeHttpPort: number | null = null;
   const foregroundAgentRuntimeAdmission =
     createForegroundAgentRuntimeAdmissionOwner({
+      connectedServiceRuntimeRegistry,
       prepare: async (request) => {
         let context: RequesterSessionRuntimeContext | null = null;
         const releaseUnadoptedContext = async () => {

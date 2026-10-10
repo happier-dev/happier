@@ -350,13 +350,14 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
     const diagnostics: ConnectedServicesMaterializationDiagnostic[] = [];
     const stateSharingDescriptor =
       await catalogEntry?.getConnectedServiceStateSharingDescriptor?.() ?? null;
+    const nativeHome = stateSharingDescriptor?.nativeHome;
     if (params.nativeHomeOnly && (!stateSharingDescriptor?.nativeHome
       || stateSharingDescriptor.providerSupportStatus !== 'supported')) {
       throw new Error('agent_native_home_unavailable');
     }
     if (
       stateSharingDescriptor?.providerSupportStatus === 'supported'
-      && stateSharingDescriptor.nativeHome
+      && nativeHome
     ) {
       const allowNativeState = params.allowNativeAccountState !== false;
       const sourceEnvironment = Object.freeze(Object.fromEntries(
@@ -378,7 +379,7 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
           // Foreign requester materialization has no authority over the
           // custodian's native home. Only its already-owned target is reachable.
           sourceRoot: allowNativeState ? resolveConnectedServiceNativeHomeRoot({
-            nativeHome: stateSharingDescriptor.nativeHome!,
+            nativeHome,
             sourceEnvironment,
             homeDir: homedir(),
           }) : params.previousMaterializedRoot!,
@@ -396,7 +397,7 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
         providerLabel: params.agentId,
       }));
       Object.assign(env, stateSharing.envOverrides, {
-        [stateSharingDescriptor.nativeHome.environmentKey]: params.rootDir,
+        [nativeHome.environmentKey]: params.rootDir,
       });
       diagnostics.push(...stateSharing.diagnostics);
 

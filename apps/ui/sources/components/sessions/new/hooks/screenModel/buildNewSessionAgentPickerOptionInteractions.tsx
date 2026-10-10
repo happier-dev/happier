@@ -66,6 +66,7 @@ export function buildNewSessionAgentPickerOptionInteractions(
             const selection = params.getEngineSelectionForTargetKey(params.entry.backendTargetKey);
             return buildSessionAgentPickerDetailContent({
                 backendTarget: params.entry.backendTarget,
+                agentCatalogEntry: params.entry.agentCatalogEntry,
                 // The OPERATIONAL Agent identity, not the closed built-in
                 // `catalogAgentId` backing (which is `null` for every
                 // plugin-contributed Agent). Every probe in the expanded detail

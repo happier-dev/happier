@@ -28,6 +28,7 @@ import {
   buildSshWorkerArgs,
   classifyRemoteCommand,
   resolveRemoteCommandPolicy,
+  resolveRemoteValidationComponentRelativeDir,
   resolveRemoteValidationKind,
   resolveRemoteStackStatePaths,
   requiresRemoteDependencyBootstrap,
@@ -621,6 +622,60 @@ test('source-test classification follows the configured resolver contract rather
     ['vitest', 'run', '--config=vitest.integration.config.ts'],
     { cwd: 'packages/plugins/triage' },
   ), 'runtime');
+});
+
+test('explicit admission retains UI and CLI payload preparation and its declared resource class', () => {
+  for (const [component, script, resourceClass, heavyClass] of [
+    ['apps/ui', 'vitest', 'targeted-validation', 'validation'],
+    ['apps/cli', 'typecheck', 'compilation', 'compilation'],
+  ]) {
+    const payload = ['corepack', 'yarn', '--cwd', component, '-s', script];
+    const wrapped = ['apps/stack/bin/hstack-exec', '--heavyweight-admission',
+      `--class=${resourceClass}`, '--no-wait', '--', ...payload];
+    const policy = resolveRemoteCommandPolicy(wrapped);
+    assert.equal(policy.bootstrap, '1', `${component} preparation must precede the admitted payload`);
+    assert.equal(policy.component, component);
+    assert.equal(policy.kind, resolveRemoteValidationKind(payload));
+    assert.equal(policy.commandClass, 'targeted-validation');
+    assert.equal(policy.heavyClass, heavyClass);
+    assert.equal(requiresRemoteWorkspacePreparation(wrapped), true);
+  }
+  for (const options of [['--unsupported-option'], []]) {
+    const wrapped = ['hstack-exec', '--heavyweight-admission', ...options,
+      '--class=targeted-validation', '--', 'bash', '-c', 'corepack yarn --cwd apps/ui vitest'];
+    const policy = resolveRemoteCommandPolicy(wrapped);
+    assert.equal(policy.bootstrap, '0', 'arbitrary shell bodies are not preparation inputs');
+    assert.equal(policy.component, '.');
+    assert.equal(policy.commandClass, 'full-validation');
+    assert.equal(policy.heavyClass, 'validation');
+  }
+  const unsupported = resolveRemoteCommandPolicy(['hstack-exec', '--heavyweight-admission',
+    '--unsupported-option', '--class=targeted-validation', '--',
+    'corepack', 'yarn', '--cwd', 'apps/ui', '-s', 'vitest']);
+  assert.equal(unsupported.bootstrap, '0', 'unsupported wrapper flags cannot admit a payload');
+  assert.equal(unsupported.component, '.');
+});
+
+test('public source shard entrypoints retain source preparation through admission and cwd expansion', () => {
+  for (const [payload, cwd, component] of [
+    [['corepack', 'yarn', '--cwd', 'apps/ui', '-s', 'test:unit'], '.', 'apps/ui'],
+    [['corepack', 'yarn', '--cwd', 'apps/cli', '-s', 'test:unit:vitest'], '.', 'apps/cli'],
+    [['node', 'apps/ui/scripts/runVitestShards.mjs', '--config', 'vitest.config.ts'], '.', 'apps/ui'],
+    [['node', './scripts/runVitestShards.mjs', '--config', 'vitest.config.ts'], 'apps/cli', 'apps/cli'],
+    [['corepack', 'yarn', '--cwd', 'apps/ui', '-s', 'node', './scripts/runVitestShards.mjs', '--config', 'vitest.config.ts'], '.', 'apps/ui'],
+  ]) {
+    const args = ['apps/stack/bin/hstack-exec', '--heavyweight-admission',
+      '--class=targeted-validation', '--', ...payload];
+    assert.equal(resolveRemoteValidationKind(args, { cwd }), 'source-test', payload.join(' '));
+    assert.equal(resolveRemoteValidationComponentRelativeDir(args, { cwd }), component);
+    assert.equal(requiresRemoteDependencyBootstrap(args, { cwd }), true);
+  }
+  for (const [args, cwd] of [
+    [['corepack', 'yarn', '--cwd', 'apps/cli', '-s', 'test:unit'], '.'],
+    [['node', 'scripts/runVitestShards.mjs', '--config', 'vitest.integration.config.ts'], 'apps/ui'],
+    [['node', 'custom/runVitestShards.mjs', '--config', 'vitest.config.ts'], 'apps/ui'],
+    [['node', 'scripts/runVitestShards.mjs'], 'apps/stack'],
+  ]) assert.equal(resolveRemoteValidationKind(args, { cwd }), 'runtime', args.join(' '));
 });
 
 test('remote command classification admits declaration preparation for package-manager component cwd', () => {

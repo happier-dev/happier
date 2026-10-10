@@ -2,12 +2,18 @@ import * as React from 'react';
 
 import type { PersistedBackendTargetRefV2, SessionModelSelectionV1 } from '@happier-dev/protocol';
 import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
+import {
+    projectAgentConnectedAccountPurposeDefaultsToSessionBindings,
+    resolveAgentConnectedAccountPurposeDefaults,
+} from '@happier-dev/protocol/account/settings/connected-services';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { ResolvedAgentCatalogEntry } from '@/agents/backendCatalog/agentCatalogProjection';
 
 import {
     NewSessionEngineOptionDetail,
     type NewSessionEngineOptionDetailProps,
 } from '@/components/sessions/new/components/NewSessionEngineOptionDetail';
-import { resolveNewSessionCapabilityProbeContext } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
+import { resolveNewSessionModelCapabilityProbeContext } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import type { OptionPickerProbeState } from '@/components/sessions/pickers/OptionPickerOverlay';
 import type { FavoriteModelSelectionV1 } from '@/sync/domains/models/favoriteModelSelections';
 import type { Settings } from '@/sync/domains/settings/settings';
@@ -35,6 +41,7 @@ export type SessionAgentPickerSelection = Readonly<{
 
 export function buildSessionAgentPickerDetailContent(params: Readonly<{
     backendTarget: PersistedBackendTargetRefV2;
+    agentCatalogEntry: ResolvedAgentCatalogEntry;
     runtimeCarrierAgentId?: string | null;
     selectedMachineId: string | null;
     capabilityServerId: string;
@@ -59,11 +66,21 @@ export function buildSessionAgentPickerDetailContent(params: Readonly<{
     experimentalConfirmation?: SessionModelPickerExperimentalConfirmationController;
     onSelectionChange: (selection: SessionAgentPickerSelection) => void;
 }>): React.ReactElement {
-    const capabilityProbeContext = resolveNewSessionCapabilityProbeContext({
+    const consumer = params.agentCatalogEntry.identity
+        ?? parseQualifiedPluginContributionKey(params.agentCatalogEntry.qualifiedId);
+    const connectedServices = consumer
+        ? projectAgentConnectedAccountPurposeDefaultsToSessionBindings(resolveAgentConnectedAccountPurposeDefaults({
+            settings: params.settings,
+            agentId: params.agentCatalogEntry.agentId,
+            consumer,
+            declarations: params.agentCatalogEntry.connectedAccounts,
+        }))
+        : null;
+    const capabilityProbeContext = resolveNewSessionModelCapabilityProbeContext({
         backendTarget: params.backendTarget,
         settings: params.settings,
         runtimeCarrierAgentId: params.runtimeCarrierAgentId ?? null,
-        connectedServices: params.connectedServices,
+        connectedServices: 'connectedServices' in params ? params.connectedServices : connectedServices,
     });
 
     return (

@@ -32,7 +32,7 @@ import { runtimeTargetOwnsConnectedServiceRuntimeAuthRefreshSelection } from '..
 import type { ConnectedServiceRuntimeTarget } from '../runtimeRegistry/target';
 import type { ConnectedServiceRuntimeRegistry } from '../runtimeRegistry/registry';
 import type { RequesterSessionRuntimeContext } from '../../sessionEncryption/requesterSessionCredentials';
-import { ConnectedServiceCredentialRevisionV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { ConnectedServiceCredentialRevisionV1Schema, type ConnectedServiceCredentialRevisionV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import type { ConnectedServiceAuthGroupSwitchCoordinator } from '../accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
 import type { QualifiedConnectedAccountServiceRef } from '@happier-dev/protocol';
 import {
@@ -1141,24 +1141,29 @@ export function createExecutionRunConnectedServicesBridge(
             || (request.selection.kind === 'profile' && (current.selection.kind !== 'profile'
                 || current.selection.profileId !== request.selection.profileId))) return refused;
         if (!deps.resolveDaemonAuthBridge) return { status: 'unavailable', reason: 'connected_service_daemon_auth_bridge_unavailable' };
+        const acceptSettledCredentialRevision = (revision: ConnectedServiceCredentialRevisionV1) => {
+            if (!hasCurrentAuthority() || !target) return null;
+            const accepted = deps.resolveRunCredentialRevisionTarget?.({ runKey: request.runId, target,
+                serviceId: request.serviceId, expectedCredentialRevision: current.credentialRevision,
+                credentialRevision: revision });
+            if (!hasCurrentAuthority() || !accepted) return null;
+            target = accepted;
+            return accepted;
+        };
         // Do not hold the materialization mutex across provider I/O: release revokes this exact
         // activation while the shared core rechecks authority before disclosing its settlement.
         try {
             const result = await refreshConnectedServiceRuntimeAuthForTarget({ target, request,
                 scope: { runId: request.runId }, authority: entry, isCurrent, resolveDaemonAuthBridge: deps.resolveDaemonAuthBridge,
-                acceptSettledCredentialRevision: (revision) => {
-                    if (!hasCurrentAuthority() || !target) return null;
-                    const accepted = deps.resolveRunCredentialRevisionTarget?.({ runKey: request.runId, target,
-                        serviceId: request.serviceId, expectedCredentialRevision: current.credentialRevision,
-                        credentialRevision: revision });
-                    if (!hasCurrentAuthority() || !accepted) return null;
-                    target = accepted;
-                    return accepted;
-                } });
+                acceptSettledCredentialRevision });
             if (result.ok && result.result.status === 'refreshed'
                 && Object.prototype.hasOwnProperty.call(result.result.result, 'credentialRevision')) {
                 const revision = ConnectedServiceCredentialRevisionV1Schema.safeParse(result.result.result.credentialRevision);
                 if (!revision.success) return { status: 'failed', reason: 'runtime_auth_refresh_invalid_bridge_result' };
+                // A coalesced peer may adopt this proven revision after the shared
+                // core returns, before this Run continuation resumes. Reaccept
+                // only its exact transition under the captured activation.
+                if (!isCurrent()) acceptSettledCredentialRevision(revision.data);
                 if (!isCurrent()) return refused;
                 const updated = deps.adoptRunCredentialRevision?.({ runKey: request.runId, target,
                     serviceId: request.serviceId, expectedCredentialRevision: resolveCurrentRefreshSelection({ target,

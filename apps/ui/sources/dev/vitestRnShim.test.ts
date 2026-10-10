@@ -42,6 +42,7 @@ describe('vitestRnShim', () => {
             expect(require('./vitestRnShim.fixture')).toBe(loaded);
         } finally {
             bridge.dispose();
+            bridge.dispose();
         }
         expect(() => require('./vitestRnShim.fixture.ts')).toThrow();
     });
@@ -53,6 +54,23 @@ describe('vitestRnShim', () => {
         )).rejects.toThrow('fixture evaluation failed');
 
         expect(() => require('./vitestRnShim.failure.fixture.ts')).toThrow();
+    });
+
+    it('does not retire a later bridge and can restore its own entry after that bridge retires', async () => {
+        const moduleUrl = new NodeURL('./vitestRnShim.fixture.ts', import.meta.url);
+        const first = await loadVitestModuleForNodeRequire(moduleUrl, () => import('./vitestRnShim.fixture'));
+        const second = await loadVitestModuleForNodeRequire(moduleUrl, () => import('./vitestRnShim.fixture'));
+        try {
+            first.dispose();
+            expect(require('./vitestRnShim.fixture.ts')).toBe(second.module);
+            second.dispose();
+            expect(require('./vitestRnShim.fixture.ts')).toBe(first.module);
+            first.dispose();
+            expect(() => require('./vitestRnShim.fixture.ts')).toThrow();
+        } finally {
+            second.dispose();
+            first.dispose();
+        }
     });
 
     it('bridges a browser-realm file URL to the real Node module cache', async () => {

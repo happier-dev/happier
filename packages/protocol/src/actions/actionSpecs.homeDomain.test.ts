@@ -65,8 +65,8 @@ describe('Home runtime Action parity', () => {
 /**
  * The Home family is one consumed Action dependency over one exact Home. These
  * tests hold the contract that makes that possible: every declared intent has a
- * real domain schema pair and a declared POST transport, and none of them can be
- * reached without the Account authority floor the Home transaction rechecks.
+ * real domain schema pair and a declared transport. Lane 01's governance and
+ * Team intents retain the Account authority floor the Home transaction rechecks.
  */
 /**
  * The complete Lane 01 catalog. Enumerating it here rather than deriving it from
@@ -284,10 +284,19 @@ describe('Home and Teams Action family', () => {
   });
 
   /**
-   * A contributed family may be REST-shaped and reuse one path under different
-   * methods. Session organization also intentionally shares a snapshot read
-   * and each resource's upsert route between create and rename intents.
+   * Lane 01's intent-shaped routes identify their operation by method and path.
+   * Other families may share an addressed command route that carries the intent
+   * in the request, so route uniqueness is not a transport-family invariant.
    */
+  it('gives each Lane 01 intent its own V1 method and path', () => {
+    const addresses = LANE_01_ACTION_IDS.map((actionId) => {
+      const transport = homeDomainActionTransportV1(actionId);
+      expect(transport.path.startsWith('/v1/'), actionId).toBe(true);
+      return `${transport.method} ${transport.path}`;
+    });
+    expect(new Set(addresses).size).toBe(addresses.length);
+  });
+
   it('shares method and path only for the existing Session organization snapshot and upserts', () => {
     const byAddress = new Map<string, string[]>();
     for (const actionId of HOME_DOMAIN_ACTION_IDS_V1) {
@@ -432,8 +441,9 @@ describe('Home and Teams Action family', () => {
   });
 
   /**
-   * Sharing the exact-Home HTTP carrier does not change the execution owner:
-   * mutations targeting one Session retain Session placement.
+   * Placement and authority belong to each domain owner. Lane 01's governance
+   * and Team transactions are Account-placed; the shared transport family also
+   * carries intents answered by Session or client owners.
    */
   it('retains Session placement for exact Session mutations and Account placement for Home resources', () => {
     const sessionMutations = new Set(['session.delete', 'session.folder.set', 'session.tags.set']);

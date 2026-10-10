@@ -227,6 +227,15 @@ it('carries Home-issued invocation authority only in the trusted daemon dispatch
     .toMatchObject({ accountId: 'account-1', custodianAccountId: 'custodian-1', installationId: 'installation-1' });
   const { custodianAccountId: _custodian, ...missingCustodian } = executionAuthorization.binding;
   expect(externalActionApi.ExternalActionExecutionAuthorizationBindingV1Schema.safeParse(missingCustodian).success).toBe(false);
+  expect(externalActionApi.ExternalActionDaemonDispatchRequestSchema.safeParse({
+    actionId: 'session.title.set', envelope, principal: { ...principal, grant: undefined },
+    placement: { machineId: 'machine-1', target }, executionAuthorization,
+  }).success).toBe(false);
+  expect(externalActionApi.ExternalActionDaemonDispatchRequestSchema.safeParse({
+    actionId: 'session.title.set', envelope, principal,
+    placement: { machineId: 'machine-1', target },
+    executionAuthorization: { ...executionAuthorization, binding: { ...executionAuthorization.binding, grant: undefined } },
+  }).success).toBe(false);
 });
 
 import {
@@ -479,6 +488,7 @@ describe('External Action API envelope v1', () => {
         principalId: 'principal-1',
         credentialId: 'credential-1',
         authority: 'account_automation',
+        grant: API_TOKEN_FULL_GRANT_V1,
       },
       placement: {
         machineId: 'machine-1',

@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import { createActionExecutor, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent, ARTIFACT_PLAIN_DATA_KEY_MARKER, ArtifactBlobWriteV1Schema, readLegacyRolesV1, type ArtifactPublicLinkIssuedV1 } from '@happier-dev/protocol';
 import { buildHomeHubArtifactIdV1, HOME_HUB_ARTIFACT_KIND_V1, HomeHubLayoutV1Schema } from '@happier-dev/protocol/home';
 import { buildWidgetDefinitionArtifactHeaderV1, type WidgetDefinitionV1 } from '@happier-dev/protocol/widgets';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import * as persistence from '@/persistence';
 import { configuration } from '@/configuration';
 import { V2SessionByIdResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
@@ -43,6 +45,17 @@ describe('Account Artifact Actions through the real CLI host composition', () =>
       sessionId: 'session', mode: 'plain', ctx: null,
       rawSession: { machineId: 'local-machine', path: join(root, 'workspace'),
         metadata: JSON.stringify({ machineId: 'local-machine', path: join(root, 'workspace') }) } });
+  }
+  function workspaceArtifactExecutor(host: ReturnType<typeof createCliActionDeps>) {
+    // These source-custody fixtures model Account-waived Agent operations, not
+    // a CLI confirmation that could override authenticated Session identity.
+    const settings = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: {
+      'artifact.create': ['agent'], 'artifact.update': ['agent'], 'artifact.publish_from_file': ['agent'],
+    } });
+    return createActionExecutor({ ...host,
+      isActionApprovalRequired: (actionId, context, input) =>
+        isApprovalRequiredByActionsSettings(actionId, settings, context, undefined, undefined, input),
+    });
   }
   it('creates the same host-derived editable guide starter through CLI Action admission without caller provenance', async () => {
     const accountId = 'cli-guide-starter';
@@ -285,8 +298,9 @@ describe('Account Artifact Actions through the real CLI host composition', () =>
         headerVersion: version, bodyVersion: version, seq: version, createdAt: 1, updatedAt: version };
       return { status: 200, data: { ...row, success: true } };
     });
-    const executor = createActionExecutor({ ...deps(), isActionApprovalRequired: () => false });
-    const context = { surface: 'cli' as const, actionCaller: { kind: 'session' as const, sessionId: 'session', starterDepth: 0, turnDepth: 0 }, defaultSessionId: 'session' };
+    const executor = workspaceArtifactExecutor(deps());
+    const context = { surface: 'cli' as const,
+      actionCaller: { kind: 'session' as const, sessionId: 'session', starterDepth: 0, turnDepth: 0 }, defaultSessionId: 'session' };
     await expect(executor.execute('artifact.create', { artifactId, header: { kind: 'html' }, body: '<h1>Private HTML</h1>' },
       { ...context, presentUserConfirmation: { actionId: 'artifact.create' } })).resolves.toEqual({ ok: true, result: { artifactId, revision: { headerVersion: 1, bodyVersion: 1 } } });
     await expect(executor.execute('artifact.update', { artifactId, expectedRevision: { headerVersion: 1, bodyVersion: 1 },
@@ -326,7 +340,7 @@ describe('Account Artifact Actions through the real CLI host composition', () =>
       publication = readCarrierMutation(wire);
       return { status: 200, data: { id: publication.id, headerVersion: 1, bodyVersion: 1 } };
     });
-    const executor = createActionExecutor({ ...deps(), isActionApprovalRequired: () => false });
+    const executor = workspaceArtifactExecutor(deps());
     const context = { surface: 'cli', actionCaller: { kind: 'session', sessionId: 'session', starterDepth: 0, turnDepth: 0 },
       defaultSessionId: 'session', presentUserConfirmation: { actionId: 'artifact.publish_from_file' } } as const;
     const result = await executor.execute('artifact.publish_from_file', { path: 'site', entrypoint: 'pages/index.html', title: 'Experiment' }, context);
@@ -355,9 +369,9 @@ describe('Account Artifact Actions through the real CLI host composition', () =>
     http.delete.mockResolvedValue({ status: 200, data: { success: true } });
     http.post.mockResolvedValue({ status: 200, data: { publicShare, isolatedOrigin: 'https://public.example.test' } });
     const executor = createActionExecutor(deps());
-    const context = { surface: 'cli' as const, authority: 'present_user' as const };
-    await expect(executor.execute('artifact.public_link.list', { artifactId },
-      { ...context, presentUserConfirmation: { actionId: 'artifact.public_link.list' } })).resolves.toEqual({ ok: true, result: { publicShares: [publicShare] } });
+    const context = { surface: 'cli' as const, authority: 'present_user' as const,
+      presentUserConfirmation: { actionId: 'artifact.public_link.list' as const } };
+    await expect(executor.execute('artifact.public_link.list', { artifactId }, context)).resolves.toEqual({ ok: true, result: { publicShares: [publicShare] } });
     await expect(executor.execute('artifact.public_link.revoke', { artifactId, shareId: 'share-1' },
       { ...context, presentUserConfirmation: { actionId: 'artifact.public_link.revoke' } })).resolves.toMatchObject({ ok: true, result: { revoked: true } });
     await expect(executor.execute('artifact.public_link.create', { artifactId },
@@ -452,11 +466,11 @@ describe('Account Artifact Actions through the real CLI host composition', () =>
         headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
       return { status: 200, data: { ...row, success: true } };
     });
-    const executor = createActionExecutor({ ...deps(), isActionApprovalRequired: () => false });
-    const caller = { surface: 'cli' as const, actionCaller: { kind: 'session' as const, sessionId: 'session', starterDepth: 0, turnDepth: 0 }, defaultSessionId: 'session' };
-    const created = await executor.execute('artifact.create', { artifactId, header: {}, uploadPath: 'image.png', mime: 'image/png' },
-      { ...caller, presentUserConfirmation: { actionId: 'artifact.create' } });
-    expect(created, JSON.stringify(created)).toMatchObject({ ok: true });
+    const executor = workspaceArtifactExecutor(deps());
+    const caller = { surface: 'cli' as const,
+      actionCaller: { kind: 'session' as const, sessionId: 'session', starterDepth: 0, turnDepth: 0 }, defaultSessionId: 'session' };
+    await expect(executor.execute('artifact.create', { artifactId, header: {}, uploadPath: 'image.png', mime: 'image/png' },
+      { ...caller, presentUserConfirmation: { actionId: 'artifact.create' } })).resolves.toMatchObject({ ok: true });
     expect(row.blob).toMatchObject({ content: { t: 'plain', v: bytes.toString('base64') } });
     await expect(executor.execute('artifact.update', { artifactId, header: {}, expectedRevision: { headerVersion: 1, bodyVersion: 1 },
       uploadPath: 'image.png', mime: 'image/png' }, { ...caller, presentUserConfirmation: { actionId: 'artifact.update' } }))
@@ -472,15 +486,21 @@ describe('Account Artifact Actions through the real CLI host composition', () =>
     http.get.mockResolvedValue({ status: 200, data: { mode: 'plain', updatedAt: 1 } });
     http.post.mockImplementation(async (_url: string, value: { id: string }) => ({ status: 200,
       data: { id: value.id, headerVersion: 1, bodyVersion: 1 } }));
-    const host = deps();
-    const executor = createActionExecutor({ ...host, isActionApprovalRequired: () => false });
-    const context = { surface: 'cli' as const, actionCaller: { kind: 'session' as const, sessionId: 'session', starterDepth: 0, turnDepth: 0 },
-      defaultSessionId: 'session', runtimeAccountId: 'owner', runtimeRunId: 'run', presentUserConfirmation: { actionId: 'artifact.publish_from_file' as const } };
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+    const host = createCliActionDeps({ token, credentials: { token, encryption: null },
+      sessionId: 'session', mode: 'plain', ctx: null,
+      rawSession: { machineId: 'local-machine', path: join(root, 'workspace'),
+        metadata: JSON.stringify({ machineId: 'local-machine', path: join(root, 'workspace') }) } });
+    const executor = workspaceArtifactExecutor(host);
+    const context = { surface: 'cli' as const,
+      actionCaller: { kind: 'session' as const, sessionId: 'session', starterDepth: 0, turnDepth: 0 },
+      defaultSessionId: 'session', runtimeRunId: 'run', presentUserConfirmation: { actionId: 'artifact.publish_from_file' as const } };
     await expect(executor.execute('artifact.publish_from_file', { path: 'result.txt' }, context)).resolves.toMatchObject({ ok: true });
-    const publication = readCarrierMutation(http.post.mock.calls[0]?.[1]);
-    const header = decodePlainArtifactStoredContent(publication.header as string);
-    expect(header).not.toHaveProperty('source');
-    expect(decodePlainArtifactStoredContent(publication.provenance as string)).toMatchObject({ provenance: {
+    const written = readCarrierMutation(http.post.mock.calls[0]?.[1]);
+    expect(decodePlainArtifactStoredContent(String(written.header))).not.toHaveProperty('source');
+    expect(decodePlainArtifactStoredContent(String(written.body))).toEqual({ body: 'result' });
+    expect(decodePlainArtifactStoredContent(String(written.provenance))).toMatchObject({ provenance: {
+      savedBy: { kind: 'agent', accountId: 'owner', sessionId: 'session' },
       source: { sessionId: 'session', runId: 'run', machineId: 'local-machine', path: 'result.txt' },
     } });
     http.post.mockClear();
@@ -488,7 +508,7 @@ describe('Account Artifact Actions through the real CLI host composition', () =>
       .resolves.toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
     await expect(host.artifactAction?.({ actionId: 'artifact.publish_from_file', input: { path: 'result.txt' },
       context: { ...context, defaultSessionId: 'foreign' } })).resolves.toMatchObject({ ok: false, errorCode: 'artifact_source_unavailable' });
-    const foreign = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null },
+    const foreign = createCliActionDeps({ token, credentials: { token, encryption: null },
       sessionId: 'session', mode: 'plain', ctx: null,
       rawSession: { machineId: 'remote-machine', path: join(root, 'workspace') } });
     await expect(foreign.artifactAction?.({ actionId: 'artifact.publish_from_file', input: { path: 'result.txt' }, context }))

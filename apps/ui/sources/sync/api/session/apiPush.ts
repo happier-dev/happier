@@ -2,7 +2,7 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { backoff } from '@/utils/timing/time';
 import { HappyError } from '@/utils/errors/errors';
-import { serverFetch } from '@/sync/http/client';
+import { createServerFetchForActiveServer, serverFetch } from '@/sync/http/client';
 import { runtimeFetchWithServerReachability } from '@/sync/runtime/connectivity/serverReachabilityRuntimeFetch';
 import { z } from 'zod';
 import { PushTokenSchema, PushTokenRegisterResponseSchema, PushTokensResponseSchema, PushTokensRemoteAlertProjectionV2Schema, type PushTokensRemoteAlertProjectionV2 } from '@happier-dev/protocol/push/pushTokenRegistration';
@@ -17,6 +17,8 @@ export async function registerPushToken(
     const CLIENT_SERVER_URL = (opts.clientServerUrl ?? '').trim().replace(/\/+$/, '');
     const RUNTIME_ORIGIN = (opts.runtimeOrigin ?? '').trim().replace(/\/+$/, '');
     const path = '/v1/push-tokens';
+    // Explicit endpoint registrations retain their target-scoped credential recovery.
+    const focusedRequest = API_ENDPOINT ? null : createServerFetchForActiveServer();
 
     const run = async () => {
         const endpointCredentials = (() => {
@@ -37,7 +39,7 @@ export async function registerPushToken(
                 ...(RUNTIME_ORIGIN ? { runtimeOrigin: RUNTIME_ORIGIN } : {}),
                 init,
             })
-            : (p: string, init: RequestInit) => serverFetch(p, init, { includeAuth: false });
+            : (p: string, init: RequestInit) => focusedRequest!(p, init, { includeAuth: false });
 
         const response = await doFetch(path, {
             method: 'POST',

@@ -296,7 +296,7 @@ test('native command decision artifact is current and executes the canonical cla
     { args: ['node', '--test', 'scripts/generateActionTypeMap.test.mjs'], cwd: 'packages/plugin-sdk' },
     { args: ['node', '--test', 'apps/ui/scripts/generateBundledPluginUiArtifacts.test.mjs'] },
     { args: ['node', '--test', 'packages/plugin-sdk/scripts/generateActionTypeMap.test.mjs', 'apps/ui/scripts/generateBundledPluginUiArtifacts.test.mjs'] },
-    { args: ['node', '--test', 'apps/stack/scripts/config.test.mjs'] },
+    { args: ['node', '--test', 'apps/stack/scripts/config.test.mjs'], expectedPreparationBuildMode: 'qa-runtime' },
     { args: ['nodejs', '--test', 'owner.test.mjs'], cwd: 'apps/stack2' },
     { args: ['node', '-e', 'console.log("control")'] },
     { args: ['yarn', '--cwd', 'apps/cli', '-s', 'vitest:local', 'run', '--config=vitest.source.integration.config.ts'] },
@@ -308,19 +308,32 @@ test('native command decision artifact is current and executes the canonical cla
     { args: ['apps/stack/bin/hstack-exec', '--heavyweight-admission', '--', 'node', '-e', 'console.log("validation")', '--class=compilation'], expectedHeavyClass: 'validation' },
     { args: ['apps/stack/bin/hstack-exec', '--heavyweight-admission', '--class=targeted-validation', '--', 'node', '-e', 'console.log("focused")'], expectedHeavyClass: 'validation' },
     { args: ['apps/stack/bin/hstack-exec', '--heavyweight-admission', '--class=unclassified-build', '--', 'node', '-e', 'console.log("build")'], expectedHeavyClass: 'compilation' },
+    { args: ['apps/stack/bin/hstack-exec', '--heavyweight-admission', '--class=targeted-validation', '--no-wait', '--', 'corepack', 'yarn', '--cwd', 'apps/ui', '-s', 'vitest'], expectedComponent: 'apps/ui', expectedBootstrap: '1', expectedHeavyClass: 'validation' },
+    { args: ['apps/stack/bin/hstack-exec', '--heavyweight-admission', '--class=compilation', '--', 'corepack', 'yarn', '--cwd', 'apps/cli', '-s', 'typecheck'], expectedComponent: 'apps/cli', expectedBootstrap: '1', expectedHeavyClass: 'compilation' },
+    { args: ['hstack-exec', '--heavyweight-admission', '--unsupported-option', '--class=targeted-validation', '--', 'corepack', 'yarn', '--cwd', 'apps/ui', '-s', 'vitest'], expectedComponent: '.', expectedBootstrap: '0', expectedHeavyClass: 'validation' },
+    { args: ['hstack-exec', '--heavyweight-admission', '--class=targeted-validation', '--', 'bash', '-c', 'corepack yarn --cwd apps/ui vitest'], expectedComponent: '.', expectedBootstrap: '0', expectedHeavyClass: 'validation' },
+    { args: ['hstack-exec', '--heavyweight-admission', '--class=targeted-validation', '--', 'corepack', 'yarn', '--cwd', 'apps/ui', '-s', 'test:unit'], expectedComponent: 'apps/ui', expectedBootstrap: '1', expectedKind: 'source-test' },
+    { args: ['corepack', 'yarn', '--cwd', 'apps/cli', '-s', 'test:unit:vitest'], expectedKind: 'source-test' },
+    { args: ['node', 'apps/ui/scripts/runVitestShards.mjs', '--config', 'vitest.config.ts'], expectedComponent: 'apps/ui', expectedKind: 'source-test' },
+    { args: ['node', './scripts/runVitestShards.mjs', '--config', 'vitest.config.ts'], cwd: 'apps/cli', expectedKind: 'source-test' },
+    { args: ['corepack', 'yarn', '--cwd', 'apps/ui', '-s', 'node', './scripts/runVitestShards.mjs', '--config', 'vitest.config.ts'], expectedKind: 'source-test' },
+    { args: ['corepack', 'yarn', '--cwd', 'apps/cli', '-s', 'test:unit'], expectedKind: 'runtime' },
+    { args: ['node', 'scripts/runVitestShards.mjs', '--config', 'vitest.integration.config.ts'], cwd: 'apps/ui', expectedKind: 'runtime' },
+    { args: ['node', 'custom/runVitestShards.mjs'], cwd: 'apps/ui', expectedKind: 'runtime' },
+    { args: ['node', 'scripts/runVitestShards.mjs'], cwd: 'apps/stack', expectedKind: 'runtime' },
     { args: ['node', '--experimental-strip-types', 'apps/cli/scripts/build-owned/generateBundledPluginEntries.ts', '--mode', 'check'] },
     { args: ['node', '--experimental-strip-types', 'apps/cli/scripts/build-owned/generateBundledPluginEntries.ts', '--mode=write'] },
     { args: ['node', '--experimental-strip-types', 'other/generateBundledPluginEntries.ts', '--mode=check'] },
     { args: ['tsc', '-p', 'apps/cli/tsconfig.json'], expectedHeavyClass: 'compilation-cli' },
     { args: ['tsc', '-p', 'apps\\cli\\tsconfig.json'] },
     { args: ['node', 'scripts/workspaces/runTypeScriptCli.mjs', '--project=apps/cli/tsconfig.json'], expectedHeavyClass: 'compilation-cli' },
-    { args: ['corepack', 'yarn', '--cwd', 'apps/ui', '-s', 'typecheck'], expectedHeavyClass: 'compilation-ui' },
+    { args: ['corepack', 'yarn', '--cwd', 'apps/ui', '-s', 'typecheck'], expectedHeavyClass: 'compilation-ui', expectedPreparationBuildMode: 'strict' },
     { args: ['corepack', 'yarn', '--cwd', `${root}/apps/ui`, '-s', 'typecheck'], expectedHeavyClass: 'compilation-ui' },
     { args: ['node', 'scripts/workspaces/runTypeScriptCli.mjs', '-p', `${root}/apps/ui/tsconfig.json`], expectedHeavyClass: 'compilation-ui' },
     { args: ['node', 'scripts/workspaces/runTypeScriptCli.mjs', '-papps/ui/tsconfig.json'], expectedHeavyClass: 'compilation-ui' },
     { args: ['node', 'scripts/workspaces/runTypeScriptCli.mjs', '-p', 'apps/ui/tsconfig.json', '-p', 'apps/cli/tsconfig.json'], expectedHeavyClass: 'compilation' },
     { args: ['node', 'scripts/workspaces/runTypeScriptCli.mjs', '-p', 'apps/cli/tsconfig.source.json', '-p', './apps/cli/tsconfig.test.json'], expectedHeavyClass: 'compilation-cli' },
-    { args: ['--script=build:local'], expectedHeavyClass: 'compilation' },
+    { args: ['--script=build:local'], expectedHeavyClass: 'compilation', expectedPreparationBuildMode: 'strict' },
     { args: ['node', 'apps/stack/scripts/build/remote_runtime_build.mjs', '--worker-request=/request.json'], expectedHeavyClass: 'runtime-build' },
     { args: ['node', '--import=data:text/javascript;base64,ZXhwb3J0IHt9Ow==', 'apps/stack/scripts/build/remote_runtime_build.mjs', '--worker-request=stdin'], expectedHeavyClass: 'runtime-build' },
     { args: ['nodejs', '--import', '/tmp/runtime-sampler.mjs', 'apps/stack/scripts/build/remote_runtime_build.mjs', '--worker-request=stdin'], expectedHeavyClass: 'runtime-build' },
@@ -375,10 +388,14 @@ test('native command decision artifact is current and executes the canonical cla
     { args: ['yarn', 'install'] },
     { args: ['nodejs', 'node_modules\\vitest\\vitest.mjs', 'run'], cwd: 'apps/cli' },
   ];
-  for (const { args, cwd = '.', expectedHeavyClass, expectedPlacement } of cases) {
+  for (const { args, cwd = '.', expectedHeavyClass, expectedPlacement, expectedPreparationBuildMode, expectedComponent, expectedBootstrap, expectedKind } of cases) {
     const policy = resolveRemoteCommandPolicy(args, { cwd });
     if (expectedHeavyClass !== undefined) assert.equal(policy.heavyClass, expectedHeavyClass, args.join(' '));
     if (expectedPlacement) assert.equal(policy.placement, expectedPlacement, args.join(' '));
+    if (expectedPreparationBuildMode) assert.equal(policy.preparationBuildMode, expectedPreparationBuildMode, args.join(' '));
+    if (expectedComponent) assert.equal(policy.component, expectedComponent, args.join(' '));
+    if (expectedBootstrap) assert.equal(policy.bootstrap, expectedBootstrap, args.join(' '));
+    if (expectedKind) assert.equal(policy.kind, expectedKind, args.join(' '));
     const keys = Object.keys(policy);
     const artifactWord = "'" + fileURLToPath(artifact).replaceAll("'", "'\"'\"'") + "'";
     const body = 'repo_root=$1; invoked_cwd="$1/$2"; shift 2; . ' + artifactWord

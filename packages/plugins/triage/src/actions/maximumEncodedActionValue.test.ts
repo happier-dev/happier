@@ -24,7 +24,12 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 
 import { PLUGIN_MANIFEST } from '../manifest.js';
-import { TriageMountedUiInputV1Schema, TriageMountedUiResultV1Schema } from './mountedUiProtocol.js';
+import {
+    TriageMountedSourceInsertInputV1Schema,
+    TriageMountedSourceRevealInputV1Schema,
+    TriageMountedUiInputV1Schema,
+    TriageMountedUiResultV1Schema,
+} from './mountedUiProtocol.js';
 import { TriageRunConfiguredActionInputV1Schema, TriageRunConfiguredActionResultV1Schema } from './configuredActionRunProtocol.js';
 import {
     TriageAdministerActionInputV1Schema,
@@ -177,6 +182,9 @@ const structurallyUnboundedSchemas = {
     runConfiguredActionResult: TriageRunConfiguredActionResultV1Schema,
     // The mounted owner admits exact selections without a product count quota.
     mountedUiInput: TriageMountedUiInputV1Schema,
+    // Mounted source operations retain exact, unbounded owner occurrence identities.
+    mountedSourceRevealInput: TriageMountedSourceRevealInputV1Schema,
+    mountedSourceInsertInput: TriageMountedSourceInsertInputV1Schema,
     // PR status walks source-owned rows without a product count ceiling.
     readPullRequestStatusResult: TriagePullRequestStatusResultV1Schema,
     startEntrySessionInput: TriageStartEntrySessionInputV1Schema,

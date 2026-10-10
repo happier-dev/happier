@@ -9,11 +9,6 @@ vi.mock('react-native', async () => {
     return createReactNativeWebMock();
 });
 
-vi.mock('@/components/ui/text/Text', async () => {
-    const { createUiTextModuleMock } = await import('@/dev/testkit/mocks/uiText');
-    return createUiTextModuleMock();
-});
-
 describe('StatusPill', () => {
     it('uses readable text ink for the label and count while preserving the status dot', async () => {
         const { StatusPill } = await import('./StatusPill');

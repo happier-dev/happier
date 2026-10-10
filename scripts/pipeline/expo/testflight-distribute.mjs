@@ -1,12 +1,10 @@
 // @ts-check
 
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
+import { AscApiError, createAscRequest, resolveAscBuildIdentity, ascListAll, buildAscBaseUrl, loadExpoIosSubmitProfile, resolveBuildIdentityFromEas, resolveBuildIdentityFromLocalArtifact } from './asc-api.mjs';
 
-import { normalizeAscPrivateKeyPem } from './ensure-asc-api-key-file.mjs';
 import {
   MOBILE_STORE_SUBMIT_ENVIRONMENT_CHOICES,
   formatMobileReleaseEnvironment,
@@ -14,10 +12,7 @@ import {
   normalizeMobileReleaseProfile,
   supportsMobileNativeSubmit,
 } from './mobile-release-environments.mjs';
-import { buildAscBuildsListUrl } from './testflight-asc-builds-url.mjs';
-import { buildEasBuildViewArgs } from './testflight-eas-cli-args.mjs';
 import { resolveExternalGroupSelections } from './testflight-group-resolution.mjs';
-import { readIosIpaMetadata } from './read-ios-ipa-metadata.mjs';
 import { ensureBetaReviewSubmission } from './testflight-beta-review.mjs';
 import { readTestflightBuildDetails } from './testflight-build-request.mjs';
 
@@ -44,80 +39,6 @@ function splitCsv(value) {
     .split(',')
     .map((entry) => entry.trim())
     .filter(Boolean);
-}
-
-function createJwt({ issuerId, keyId, privateKeyPem }) {
-  const nowSeconds = Math.floor(Date.now() / 1000);
-  const header = { alg: 'ES256', kid: keyId, typ: 'JWT' };
-  const payload = {
-    iss: issuerId,
-    aud: 'appstoreconnect-v1',
-    exp: nowSeconds + 19 * 60,
-  };
-  const encode = (value) =>
-    Buffer.from(JSON.stringify(value))
-      .toString('base64')
-      .replace(/\+/g, '-')
-      .replace(/\//g, '_')
-      .replace(/=+$/g, '');
-  const signingInput = `${encode(header)}.${encode(payload)}`;
-  const signature = crypto
-    .sign('sha256', Buffer.from(signingInput), { key: privateKeyPem, dsaEncoding: 'ieee-p1363' })
-    .toString('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/g, '');
-  return `${signingInput}.${signature}`;
-}
-
-class AscApiError extends Error {
-  /**
-   * @param {{ status: number; method: string; url: string; body?: any }} input
-   */
-  constructor(input) {
-    const messages = Array.isArray(input.body?.errors)
-      ? input.body.errors
-          .map((error) =>
-            [error?.status, error?.code, error?.title, error?.detail].map((part) => String(part ?? '').trim()).filter(Boolean).join(' '),
-          )
-          .filter(Boolean)
-      : [];
-    super(
-      [`App Store Connect API ${input.method} ${input.url} failed (${input.status}).`, ...messages]
-        .filter(Boolean)
-        .join('\n'),
-    );
-    this.name = 'AscApiError';
-    this.status = input.status;
-    this.body = input.body;
-  }
-}
-
-/**
- * @param {{ token: string; method?: string; url: string; body?: unknown }} input
- */
-async function ascRequest(input) {
-  const response = await fetch(input.url, {
-    method: input.method ?? 'GET',
-    headers: {
-      Accept: 'application/json',
-      Authorization: `Bearer ${input.token}`,
-      ...(input.body ? { 'Content-Type': 'application/json' } : {}),
-    },
-    body: input.body ? JSON.stringify(input.body) : undefined,
-  });
-
-  const text = await response.text();
-  const body = text ? JSON.parse(text) : null;
-  if (!response.ok) {
-    throw new AscApiError({
-      status: response.status,
-      method: input.method ?? 'GET',
-      url: input.url,
-      body,
-    });
-  }
-  return body;
 }
 
 function isTransientAscReadError(error) {
@@ -169,106 +90,6 @@ async function ascRequestWithReadRetry({ request, input }) {
   throw new Error('Unreachable App Store Connect read retry state.');
 }
 
-/**
- * @param {{ request: (input: { method?: string; url: string; body?: unknown }) => Promise<any>; url: string }} input
- * @returns {Promise<any[]>}
- */
-async function ascListAll(input) {
-  const rows = [];
-  let nextUrl = input.url;
-  while (nextUrl) {
-    const body = await input.request({ url: nextUrl });
-    rows.push(...(Array.isArray(body?.data) ? body.data : []));
-    nextUrl = String(body?.links?.next ?? '').trim();
-  }
-  return rows;
-}
-
-function buildAscBaseUrl(pathname) {
-  return new URL(pathname, 'https://api.appstoreconnect.apple.com').toString();
-}
-
-function loadExpoIosSubmitProfile({ repoRoot, submitProfile }) {
-  const easPath = path.join(repoRoot, 'apps', 'ui', 'eas.json');
-  if (!fs.existsSync(easPath)) fail(`Missing apps/ui/eas.json at ${easPath}`);
-  const easJson = JSON.parse(fs.readFileSync(easPath, 'utf8'));
-  const ios = easJson?.submit?.[submitProfile]?.ios ?? null;
-  const ascAppId = String(ios?.ascAppId ?? '').trim();
-  const ascApiKeyId = String(ios?.ascApiKeyId ?? '').trim();
-  const ascApiKeyIssuerId = String(ios?.ascApiKeyIssuerId ?? '').trim();
-  if (!ascAppId || !ascApiKeyId || !ascApiKeyIssuerId) {
-    fail(
-      [
-        `apps/ui/eas.json is missing submit.${submitProfile}.ios App Store Connect configuration.`,
-        'Required: ascAppId, ascApiKeyId, ascApiKeyIssuerId.',
-      ].join('\n'),
-    );
-  }
-  return { ascAppId, ascApiKeyId, ascApiKeyIssuerId };
-}
-
-function readEasBuildIdentity(buildPayload) {
-  const buildNumberCandidates = [
-    buildPayload?.appBuildVersion,
-    buildPayload?.buildVersion,
-    buildPayload?.buildNumber,
-    buildPayload?.version,
-    buildPayload?.metadata?.buildNumber,
-    buildPayload?.metadata?.appBuildVersion,
-    buildPayload?.artifacts?.buildNumber,
-  ];
-  const appVersionCandidates = [
-    buildPayload?.appVersion,
-    buildPayload?.applicationVersion,
-    buildPayload?.metadata?.appVersion,
-    buildPayload?.metadata?.applicationVersion,
-    buildPayload?.artifacts?.appVersion,
-  ];
-  const buildNumber = buildNumberCandidates.map((value) => String(value ?? '').trim()).find(Boolean) ?? '';
-  const appVersion = appVersionCandidates.map((value) => String(value ?? '').trim()).find(Boolean) ?? '';
-  return { buildNumber, appVersion };
-}
-
-function runCapture(cmd, args, opts = {}) {
-  return execFileSync(cmd, args, {
-    cwd: opts.cwd ? path.resolve(opts.cwd) : process.cwd(),
-    env: { ...process.env, ...(opts.env ?? {}) },
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-    timeout: opts.timeoutMs ?? 5 * 60_000,
-  }).trim();
-}
-
-function resolveBuildIdentityFromEas({ repoRoot, easBuildId, easCliVersion }) {
-  const uiDir = path.join(repoRoot, 'apps', 'ui');
-  const raw = runCapture('npx', buildEasBuildViewArgs({ easBuildId, easCliVersion }), { cwd: uiDir });
-  const parsed = JSON.parse(raw);
-  const { buildNumber, appVersion } = readEasBuildIdentity(parsed);
-  if (!buildNumber) {
-    fail(`Unable to resolve iOS build number from EAS build ${easBuildId}.`);
-  }
-  return { buildNumber, appVersion };
-}
-
-function resolveBuildIdentityFromLocalArtifact({ artifactPath, env }) {
-  const absolutePath = path.resolve(artifactPath);
-  const metadata = readIosIpaMetadata({ ipaPath: absolutePath, env });
-  if (!metadata?.buildNumber) {
-    fail(`Unable to resolve iOS build number from local artifact ${absolutePath}.`);
-  }
-  return { buildNumber: metadata.buildNumber, appVersion: metadata.version };
-}
-
-function getIncludedMap(collection, type) {
-  const map = new Map();
-  for (const item of Array.isArray(collection) ? collection : []) {
-    if (String(item?.type ?? '').trim() !== type) continue;
-    const id = String(item?.id ?? '').trim();
-    if (id) map.set(id, item);
-  }
-  return map;
-}
-
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -281,34 +102,12 @@ function readNonNegativeInteger(value, fallback) {
 async function resolveBuildForDistribution({ request, ascAppId, buildNumber, appVersion, waitProcessing, timeoutSeconds }) {
   const deadline = Date.now() + timeoutSeconds * 1000;
   while (true) {
-    const url = buildAscBuildsListUrl({ ascAppId, limit: 200 });
-    const body = await request({ url });
-    const builds = Array.isArray(body?.data) ? body.data : [];
-    const included = Array.isArray(body?.included) ? body.included : [];
-    const preReleaseVersions = getIncludedMap(included, 'preReleaseVersions');
-
-    const matches = builds
-      .map((build) => {
-        const buildId = String(build?.id ?? '').trim();
-        const candidateBuildNumber = String(build?.attributes?.version ?? '').trim();
-        const uploadedDate = String(build?.attributes?.uploadedDate ?? '').trim();
-        const processingState = String(build?.attributes?.processingState ?? '').trim();
-        const preReleaseVersionId = String(build?.relationships?.preReleaseVersion?.data?.id ?? '').trim();
-        const candidateAppVersion = String(preReleaseVersions.get(preReleaseVersionId)?.attributes?.version ?? '').trim();
-        return {
-          build,
-          buildId,
-          buildNumber: candidateBuildNumber,
-          appVersion: candidateAppVersion,
-          uploadedDate,
-          processingState,
-        };
-      })
-      .filter((candidate) => candidate.buildId && candidate.buildNumber === buildNumber)
-      .filter((candidate) => !appVersion || candidate.appVersion === appVersion)
-      .sort((left, right) => Date.parse(right.uploadedDate || '1970-01-01T00:00:00Z') - Date.parse(left.uploadedDate || '1970-01-01T00:00:00Z'));
-
-    const match = matches[0] ?? null;
+    const build = await resolveAscBuildIdentity({ request, ascAppId, buildNumber, appVersion });
+    const match = build ? {
+      build,
+      buildId: String(build.id ?? '').trim(),
+      processingState: String(build.attributes?.processingState ?? '').trim(),
+    } : null;
     if (match && (!waitProcessing || match.processingState === 'VALID')) {
       return match.build;
     }
@@ -534,14 +333,10 @@ async function main() {
 
   if (dryRun) return;
 
-  const ascCredentials = {
+  const rawRequest = createAscRequest({
     issuerId: ascApiKeyIssuerId,
     keyId: ascApiKeyId,
-    privateKeyPem: normalizeAscPrivateKeyPem(privateKeyRaw),
-  };
-  const rawRequest = (input) => ascRequest({
-    ...input,
-    token: createJwt(ascCredentials),
+    privateKeyPem: privateKeyRaw,
   });
   const request = (input) => ascRequestWithReadRetry({ request: rawRequest, input });
   const groups = await resolveExternalGroups({ request, ascAppId, externalGroupNames: externalGroups });

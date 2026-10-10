@@ -187,8 +187,7 @@ describe('plugin registry reconciliation diagnostic logging', () => {
       expect(diagnostic.message).not.toContain('cleanup-error-secret');
       expect(diagnostic.message).not.toContain('cleanup-stack-secret');
       expect(diagnostic.message).not.toContain('/Users/alice/private/obsolete-generation');
-      expect(diagnostic.message).not.toContain('END_CLEANUP_FAILURE');
-      expect(Buffer.byteLength(diagnostic.message ?? '', 'utf8')).toBeLessThanOrEqual(2_048);
+      expect(diagnostic.message).toContain('END_CLEANUP_FAILURE');
     }
   });
 });

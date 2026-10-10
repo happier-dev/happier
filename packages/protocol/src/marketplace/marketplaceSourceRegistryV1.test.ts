@@ -1,4 +1,5 @@
 import { resolve } from 'node:path';
+import { runInNewContext } from 'node:vm';
 
 import { build } from 'vite';
 import { describe, expect, it } from 'vitest';
@@ -211,36 +212,28 @@ describe('marketplaceSourceRegistryV1 schemas', () => {
       .toBe('marketplace:eb6d4c94505d');
   });
 
-  it('bundles the public marketplace source projection without Node built-ins', async () => {
+  it('runs the bundled marketplace source projection without Node built-ins', async () => {
     const marketplaceEntry = resolve(import.meta.dirname, 'index.ts');
-    const moduleIds = new Set<string>();
-    const nodeImports = new Set<string>();
-    const browserExternalImporters = new Set<string>();
+    let browserBundle: string | undefined;
 
     await build({
       configFile: false,
       logLevel: 'silent',
       plugins: [{
         name: 'marketplace-source-registry-browser-projection',
-        resolveId(id, importer) {
-          if (id.startsWith('node:')) {
-            nodeImports.add(`${id} from ${importer ?? '<entry>'}`);
-          }
+        resolveId(id) {
           return id === 'virtual:marketplace-source-registry-browser-projection' ? `\0${id}` : null;
         },
         load(id) {
           if (id !== '\0virtual:marketplace-source-registry-browser-projection') return null;
           return `export { ${MARKETPLACE_BROWSER_EXPORTS.join(', ')} } from ${JSON.stringify(marketplaceEntry)};`;
         },
-        generateBundle() {
-          for (const id of this.getModuleIds()) {
-            moduleIds.add(id);
-            if (id.includes('__vite-browser-external')) {
-              for (const importer of this.getModuleInfo(id)?.importers ?? []) {
-                browserExternalImporters.add(importer);
-              }
-            }
-          }
+        generateBundle(_options, bundle) {
+          const chunks = Object.values(bundle).filter((entry) => entry.type === 'chunk');
+          expect(chunks).toHaveLength(1);
+          expect(chunks[0]!.imports).toEqual([]);
+          expect(chunks[0]!.dynamicImports).toEqual([]);
+          browserBundle = chunks[0]!.code;
         },
       }],
       build: {
@@ -250,16 +243,27 @@ describe('marketplaceSourceRegistryV1 schemas', () => {
         rollupOptions: {
           input: 'virtual:marketplace-source-registry-browser-projection',
           preserveEntrySignatures: 'strict',
-          output: { format: 'es', inlineDynamicImports: true },
+          output: { format: 'iife', name: 'MarketplaceBrowserProjection', inlineDynamicImports: true },
         },
       },
     });
 
-    expect({
-      nodeImports: [...nodeImports],
-      browserExternalImporters: [...browserExternalImporters],
-      forbiddenModuleIds: [...moduleIds].filter((id) => id.startsWith('node:') || id.includes('__vite-browser-external')),
-    }).toEqual({ nodeImports: [], browserExternalImporters: [], forbiddenModuleIds: [] });
+    expect(browserBundle).toBeTypeOf('string');
+    // Execute emitted bytes with browser globals and no Node process, require,
+    // or Buffer. Vite may load a harmless browser stub while building the graph.
+    // The emitted module is an untyped VM boundary, scoped to these public exports.
+    const browserExports = runInNewContext(`${browserBundle}; MarketplaceBrowserProjection;`, {
+      URL, TextEncoder, TextDecoder,
+    }) as Pick<typeof import('./index.js'), typeof MARKETPLACE_BROWSER_EXPORTS[number]>;
+    const source = browserExports.createMarketplaceSourceV1({
+      sourceUrl: COMPLETE_PERSISTED_SOURCE.sourceUrl,
+      title: 'Browser source',
+    });
+    expect(source.id).toBe('marketplace:eb6d4c94505d');
+    expect(browserExports.resolvePreferredMarketplaceSource([source])).toEqual(source);
+    expect(browserExports.MarketplaceIndexQueryResultV1Schema.parse({
+      revision: 1, items: [], nextCursor: null, sources: [], diagnostics: [],
+    })).toEqual({ revision: 1, items: [], nextCursor: null, sources: [], diagnostics: [] });
   }, 60_000);
 
   it('normalizes blank marketplace source descriptions to null', () => {

@@ -13,7 +13,13 @@ import { registerMachineMcpServersRpcHandlers } from './rpcHandlers.mcpServers';
 
 describe('rpcHandlers.mcpServers (detect)', () => {
   let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
-  beforeAll(async () => { runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController }); });
+  beforeAll(async () => {
+    runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController });
+    // File discovery is the contract here, not cold graph transformation under
+    // the discovery deadline. Activate the actual admitted declarations first.
+    await runtime.registry.activateContributionsOnDemand((runtime.registry.contributes.mcpDiscoverySources ?? []).flatMap(source =>
+      source.pluginId ? [{ pluginId: source.pluginId, family: 'mcp.discoverySources' as const, localId: source.definition.id }] : []));
+  });
   afterAll(async () => { await runtime?.dispose(); });
 
   function createDetectionClient(env?: NodeJS.ProcessEnv) {
@@ -22,7 +28,7 @@ describe('rpcHandlers.mcpServers (detect)', () => {
     });
   }
 
-  it('detects Codex MCP servers from CODEX_HOME config.toml without returning secrets', async () => {
+  it('keeps Codex executable MCP configuration out of endpoint discovery', async () => {
     const prevCodexHome = process.env.CODEX_HOME;
     const dir = await mkdtemp(join(tmpdir(), 'happier-mcp-detect-'));
     try {
@@ -52,16 +58,9 @@ describe('rpcHandlers.mcpServers (detect)', () => {
       expect(out.warnings ?? []).toEqual([]);
 
       if (!out.ok) throw new Error(out.error);
-      const servers = out.servers;
-      expect(servers.length).toBeGreaterThan(0);
-
-      const ctx7 = servers.find((s) => s.provider === 'codex' && s.name === 'context7');
-      expect(ctx7).toBeTruthy();
-      if (!ctx7) throw new Error('Expected current Agent discovery result');
-      expect(ctx7.transport).toBe('stdio');
-      expect(ctx7.stdio).toEqual({ command: 'npx', args: ['-y', '@context7/mcp'] });
-      expect(ctx7.envKeys).toEqual([]);
-      expect(ctx7.remote).toBeUndefined();
+      // The current Codex declaration deliberately publishes no endpoint
+      // descriptors; local executable configuration is not a remote endpoint.
+      expect(out.servers).toEqual([]);
     } finally {
       if (typeof prevCodexHome === 'string') process.env.CODEX_HOME = prevCodexHome;
       else delete process.env.CODEX_HOME;
@@ -80,9 +79,11 @@ describe('rpcHandlers.mcpServers (detect)', () => {
           {
             mcpServers: {
               context7: {
-                command: 'npx',
-                args: ['-y', '@context7/mcp'],
-                env: { API_KEY: 'supersecret' },
+                url: 'https://mcp.example.test/context7',
+                headers: { Authorization: 'supersecret' },
+              },
+              executable: {
+                command: 'npx', args: ['-y', '@context7/mcp'], env: { API_KEY: 'supersecret' },
               },
             },
           },
@@ -103,10 +104,12 @@ describe('rpcHandlers.mcpServers (detect)', () => {
       const ctx7 = servers.find((s) => s.provider === 'claude' && s.name === 'context7');
       expect(ctx7).toBeTruthy();
       if (!ctx7) throw new Error('Expected the discovered Context7 server');
-      expect(ctx7.transport).toBe('stdio');
-      expect(ctx7.stdio).toEqual({ command: 'npx', args: ['-y', '@context7/mcp'] });
-      expect(ctx7.envKeys).toEqual(['API_KEY']);
-      expect(JSON.stringify(ctx7)).not.toContain('supersecret');
+      expect(ctx7.transport).toBe('http');
+      expect(ctx7.remote).toEqual({ url: 'https://mcp.example.test/context7', headers: [] });
+      expect(ctx7.envKeys).toEqual([]);
+      expect(ctx7.stdio).toBeUndefined();
+      expect(servers.some(server => server.name === 'executable')).toBe(false);
+      expect(JSON.stringify(out)).not.toContain('supersecret');
     } finally {
       if (typeof prevClaudeConfigDir === 'string') process.env.CLAUDE_CONFIG_DIR = prevClaudeConfigDir;
       else delete process.env.CLAUDE_CONFIG_DIR;
@@ -127,9 +130,11 @@ describe('rpcHandlers.mcpServers (detect)', () => {
           {
             mcpServers: {
               localtool: {
-                command: 'node',
-                args: ['server.js'],
-                env: { TOKEN: 'supersecret' },
+                url: 'https://mcp.example.test/localtool',
+                headers: { Authorization: 'supersecret' },
+              },
+              executable: {
+                command: 'node', args: ['server.js'], env: { TOKEN: 'supersecret' },
               },
             },
           },
@@ -150,10 +155,12 @@ describe('rpcHandlers.mcpServers (detect)', () => {
       const s = servers.find((entry) => entry.provider === 'opencode' && entry.name === 'localtool');
       expect(s).toBeTruthy();
       if (!s) throw new Error('Expected current Agent discovery result');
-      expect(s.transport).toBe('stdio');
-      expect(s.stdio).toEqual({ command: 'node', args: ['server.js'] });
-      expect(s.envKeys).toEqual(['TOKEN']);
-      expect(JSON.stringify(s)).not.toContain('supersecret');
+      expect(s.transport).toBe('http');
+      expect(s.remote).toEqual({ url: 'https://mcp.example.test/localtool', headers: [] });
+      expect(s.envKeys).toEqual([]);
+      expect(s.stdio).toBeUndefined();
+      expect(servers.some(server => server.name === 'executable')).toBe(false);
+      expect(JSON.stringify(out)).not.toContain('supersecret');
     } finally {
       if (typeof prevXdgConfigHome === 'string') process.env.XDG_CONFIG_HOME = prevXdgConfigHome;
       else delete process.env.XDG_CONFIG_HOME;

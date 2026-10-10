@@ -36,18 +36,23 @@ import {
 } from './index.js';
 
 describe('rpc wire compatibility', () => {
-  it('pins negotiation literals used by mixed-version daemon and ui clients', () => {
+  it('pins the current negotiation and Session access refusal literals', () => {
     expect(RPC_ERROR_CODES).toEqual({
+      UPDATE_REQUIRED: 'RPC_UPDATE_REQUIRED',
       METHOD_NOT_AVAILABLE: 'RPC_METHOD_NOT_AVAILABLE',
       METHOD_NOT_FOUND: 'RPC_METHOD_NOT_FOUND',
       FORBIDDEN: 'RPC_FORBIDDEN',
       SESSION_MACHINE_CONTROL_UNAVAILABLE: 'RPC_SESSION_MACHINE_CONTROL_UNAVAILABLE',
+      TEAM_AUTHENTICATION_REQUIRED: 'RPC_TEAM_AUTHENTICATION_REQUIRED',
+      TEAM_AUTHENTICATION_UNAVAILABLE: 'RPC_TEAM_AUTHENTICATION_UNAVAILABLE',
     });
     expect(RPC_ERROR_MESSAGES).toEqual({
       METHOD_NOT_AVAILABLE: 'RPC method not available',
       METHOD_NOT_FOUND: 'Method not found',
       FORBIDDEN: 'Forbidden',
       SESSION_MACHINE_CONTROL_UNAVAILABLE: 'Session machine control unavailable',
+      TEAM_AUTHENTICATION_REQUIRED: 'Team authentication required',
+      TEAM_AUTHENTICATION_UNAVAILABLE: 'Team authentication unavailable',
     });
   });
 

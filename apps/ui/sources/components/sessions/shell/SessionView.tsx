@@ -331,6 +331,7 @@ import { resolveSessionComposerStateFromAuthoringContext } from '@/components/se
 import {
     buildArmedAgentContinuationTransitionInput,
     continueSessionWithArmedAgent,
+    prepareArmedAgentContinuation,
     reconcileArmedAgentContinuationDisposition,
     type ArmedAgentContinuationCanonicalFacts,
     type ArmedAgentContinuationInputCustody,
@@ -3778,9 +3779,9 @@ function SessionViewLoadedContent({
     // closure, so this is the gate — not a second interpretation beside it. It is
     // read once, here, and handed to the one owner that can arm a switch.
     // Scoped to THIS Session's server, not the sidebar's selection. The switch
-    // runs on the Session's machine against its own server, and neither the
-    // daemon nor the server re-gates the transition, so this decision's scope is
-    // the whole gate: an aggregate over other selected servers would let an
+    // runs on the Session's machine against its own server; the daemon and
+    // server enforce the current decision again before effects. An aggregate
+    // over other selected servers would let an
     // unrelated server's setting decide whether this Session may switch Agent.
     const agentSwitchingDecision = useFeatureDecision('sessions.agentSwitching', {
         scopeKind: 'spawn',
@@ -3876,8 +3877,15 @@ function SessionViewLoadedContent({
             catalogEntry.backendTargetKey === inSessionAgentPicker.agentPickerSelectedOptionId
             && catalogEntry.agentId === intent.selection.agentId
         ));
+        const agentCatalogEntry = entry?.agentCatalogEntry;
+        const identity = agentCatalogEntry?.identity ?? (agentCatalogEntry ? parseQualifiedPluginContributionKey(agentCatalogEntry.qualifiedId) : null);
         return {
             agentId: intent.selection.agentId,
+            authoringTarget: agentCatalogEntry && identity ? {
+                agentId: agentCatalogEntry.agentId,
+                agentIdentity: identity,
+                connectedAccounts: agentCatalogEntry.connectedAccounts,
+            } : null,
             backendTargetKey: inSessionAgentPicker.agentPickerSelectedOptionId ?? undefined,
             label: entry?.title ?? intent.selection.agentId,
             agentCatalogEntry: entry?.agentCatalogEntry ?? null,
@@ -7691,7 +7699,7 @@ function SessionViewLoadedContent({
             machineId: controlMachineTarget?.machineId ?? null,
             serverId: sessionRouteServerId,
             connectedAccounts: currentSessionAgentCatalogEntry?.connectedAccounts ?? [],
-            armedContinuationAgent: armedContinuationTarget,
+            armedAuthoringTarget: armedContinuationTarget ? armedContinuationTarget.authoringTarget : undefined,
             agentIdentity: currentSessionAgentCatalogEntry
                 ? parseQualifiedPluginContributionKey(currentSessionAgentCatalogEntry.qualifiedId)
                 : null,
@@ -9276,9 +9284,6 @@ function SessionViewLoadedContent({
                                 sessionId,
                                 localId: destination.localId,
                                 intent: destination.intent,
-                                committedPermissionMode: resolvePermissionIntentFromSessionMetadata(
-                                    readSessionOwnerMetadataView(storage.getState().sessions[sessionId]),
-                                )?.intent ?? 'default',
                                 input: {
                                     text: outboundForTransition.text,
                                     ...(outboundForTransition.displayText !== undefined
@@ -9301,10 +9306,8 @@ function SessionViewLoadedContent({
                             const transitionInput = existingSubmission?.localId === destination.localId
                                 ? existingSubmission.input
                                 : buildArmedAgentContinuationTransitionInput(transitionSubmission);
-                            // A matching localId is not content protection: the
-                            // server may reconcile it onto a later payload. A
-                            // retry therefore dispatches the first exact nested
-                            // input rather than an edited composer projection.
+                            // A retry uses the retained input, not newly authored
+                            // composer values. Preparation must precede first custody.
                             const submissionForDispatch = existingSubmission?.localId === destination.localId
                                 ? {
                                     ...transitionSubmission,
@@ -9314,8 +9317,22 @@ function SessionViewLoadedContent({
                                     },
                                 }
                                 : transitionSubmission;
+                            const prepared = await prepareArmedAgentContinuation(submissionForDispatch, readSessionOwnerMetadataView(storage.getState().sessions[sessionId]));
                             if (!outboundAccountLifetime.isCurrent()) return { status: 'rejected' };
-                            const { disposition, result } = await continueSessionWithArmedAgent(submissionForDispatch, {
+                            if (prepared.status === 'refused') {
+                                setArmedContinuationOutcome({
+                                    kind: 'refusal',
+                                    scopeKey: sessionAccountScopeKey,
+                                    message: prepared.notice.message,
+                                });
+                                return { status: 'rejected' };
+                            }
+                            // A matching localId is not content protection: the
+                            // server may reconcile it onto a later payload. A
+                            // retry therefore dispatches the first exact nested
+                            // input rather than an edited composer projection.
+                            if (!outboundAccountLifetime.isCurrent()) return { status: 'rejected' };
+                            const { disposition, result } = await continueSessionWithArmedAgent(prepared, {
                                 isCurrent: () => outboundAccountLifetime.isCurrent(),
                                 onBeforeTransitionDispatch: () => inSessionAgentPicker.recordArmedContinuationSubmission({
                                     localId: destination.localId,

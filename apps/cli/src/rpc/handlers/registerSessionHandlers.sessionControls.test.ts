@@ -12,27 +12,12 @@ import {
   SessionPendingMessageComposerAdmissionPrepareRequestV1Schema,
   SessionUsageLimitRecoveryV1Schema,
 } from '@happier-dev/protocol';
-
-vi.mock('./capabilities', () => ({ registerCapabilitiesHandlers: vi.fn() }));
-vi.mock('./previewEnv', () => ({ registerPreviewEnvHandler: vi.fn() }));
-vi.mock('./bash', () => ({ registerBashHandler: vi.fn() }));
-vi.mock('./workspaceFileList', () => ({ registerWorkspaceFileListHandler: vi.fn() }));
-vi.mock('./difftastic', () => ({ registerDifftasticHandler: vi.fn() }));
-vi.mock('./daemonContributionRegistryProjection', () => ({ registerDaemonContributionRegistryProjectionHandler: vi.fn() }));
-vi.mock('./spawnRuntimeSelection', () => ({
-  readCanonicalSpawnRuntimeSelection: vi.fn(() => ({})),
-  readSpawnRuntimeDescriptorV1: vi.fn(() => undefined),
-}));
-vi.mock('@/persistence', () => ({ readCredentials: vi.fn(async () => null) }));
-vi.mock('@/session/actions/createCliActionExecutorFromCredentials', () => ({
-  createCliActionExecutorFromCredentials: vi.fn(),
-}));
+import { registerSessionHandlers } from './registerSessionHandlers';
 
 async function loadRegisterSessionHandlers() {
-  const module = await import('./registerSessionHandlers');
   // This harness represents a Session client; machine registration has its own scope contract test.
-  return (...[registrar, workingDirectory, options]: Parameters<typeof module.registerSessionHandlers>) =>
-    module.registerSessionHandlers(registrar, workingDirectory, {
+  return (...[registrar, workingDirectory, options]: Parameters<typeof registerSessionHandlers>) =>
+    registerSessionHandlers(registrar, workingDirectory, {
       ...options,
       sessionId: options?.sessionId ?? 'session-1',
     });
@@ -348,7 +333,7 @@ describe('registerSessionHandlers session controls', () => {
     });
 
     expect(applyConnectedServiceAuthGeneration).toHaveBeenCalledWith({
-      serviceId: 'openai-codex',
+      serviceId: 'happier.agent.codex/openai-codex',
       reason: 'usage_limit',
       expected: { profileId: 'work', groupId: 'happier', generation: '42' },
       authGeneration: {
@@ -357,7 +342,7 @@ describe('registerSessionHandlers session controls', () => {
       },
     });
     expect(readConnectedServiceRuntimeIdentity).toHaveBeenCalledWith({
-      serviceId: 'openai-codex',
+      serviceId: 'happier.agent.codex/openai-codex',
       reason: 'same_provider_account_exhausted',
       requireExactProof: true,
       expected: { generation: 42 },

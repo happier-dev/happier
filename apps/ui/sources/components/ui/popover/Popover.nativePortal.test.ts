@@ -35,7 +35,7 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
 const INITIAL_POSITIONING_TICKS = 3;
 
 async function flushInitialPositioning() {
-    await flushHookEffects({ cycles: 1, turns: INITIAL_POSITIONING_TICKS });
+    await flushHookEffects({ cycles: 2, turns: INITIAL_POSITIONING_TICKS, frames: 1 });
 }
 
 vi.mock('@/components/ui/popover', () => ({

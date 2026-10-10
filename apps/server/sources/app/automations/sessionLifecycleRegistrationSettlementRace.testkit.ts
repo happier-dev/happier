@@ -167,7 +167,7 @@ async function createSessionLifecycleRaceFixture(label: string) {
             kind: "newSession",
             spawn: {
                 executionTarget: { serverId: `server-${suffix}`, machineId: `machine-${suffix}` },
-                directory: `/tmp/session-lifecycle-${label}`,
+                directory: { kind: "path", path: `/tmp/session-lifecycle-${label}` },
                 agentTarget: { kind: "agent", identity: { pluginId: "happier.agent.codex", localId: "codex" } },
             },
         },

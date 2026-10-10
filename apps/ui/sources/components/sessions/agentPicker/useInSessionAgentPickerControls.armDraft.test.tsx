@@ -23,7 +23,8 @@ import type {
     SessionAgentContinuationMachineTarget,
     SessionAgentContinuationSourceState,
 } from './resolveSessionAgentContinuationEligibility';
-import { continueSessionWithArmedAgent } from '@/sync/domains/session/input/continueSessionWithArmedAgent';
+import { prepareArmedAgentContinuation } from '@/sync/domains/session/input/continueSessionWithArmedAgent';
+import { MetadataSchema } from '@happier-dev/session-core/state';
 
 const announceAccessibilityMessage = vi.hoisted(() => vi.fn());
 const machineRpcWithServerScope = vi.hoisted(() => vi.fn());
@@ -283,17 +284,18 @@ describe('useInSessionAgentPickerControls arm draft', () => {
         machineRpcWithServerScope.mockResolvedValueOnce({ protocolVersion: 1, results: {
             'tool.sessionAgentTransition': { ok: false, checkedAt: 1, error: { code: 'unknown-capability', message: 'Unknown capability' } },
         } });
-        const outcome = await continueSessionWithArmedAgent({
+        const outcome = await prepareArmedAgentContinuation({
             sessionId: 'session-1', serverId: 'server-1', machineId: 'machine-1', localId,
             intent: armedIntentFor('codex'), sourceAgentLabel: 'Claude', targetAgentLabel: 'Codex',
-            committedPermissionMode: 'default', input: { text: 'still editable', meta: { permissionMode: 'yolo' } },
-        }, {
-            onBeforeTransitionDispatch: () => first.getCurrent().recordArmedContinuationSubmission({
+            input: { text: 'still editable', meta: { permissionMode: 'yolo' } },
+        }, MetadataSchema.parse({ path: '/repo', host: 'host', permissionMode: 'default' }));
+        if (outcome.status === 'ready') {
+            first.getCurrent().recordArmedContinuationSubmission({
                 localId, input: { localId, text: 'still editable', meta: { permissionMode: 'yolo' } },
                 currentness: { text: 'still editable', mentions: [], composerAttachments: [], attachmentDraftIds: [] },
-            }),
-        });
-        expect(outcome.result).toBeNull();
+            });
+        }
+        expect(outcome).toMatchObject({ status: 'refused', reason: 'unsupported_permission_intent' });
         expect(readPersistedArm()).toMatchObject({ intent: armedIntentFor('codex') });
         expect(readPersistedArm()?.submission).toBeUndefined();
         await first.unmount();

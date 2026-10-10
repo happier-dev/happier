@@ -17,10 +17,14 @@ describe('CLI Board Actions through the Artifact owner', () => {
         const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
         const credentials = { token, encryption: mode === 'plain' ? null
             : { type: 'dataKey' as const, machineKey: secret, publicKey: x25519.getPublicKey(secret) } };
+        const privateRevisionMetadata = {
+            provenance: z.string().nullable().optional(),
+            provenanceDataEncryptionKey: z.string().nullable().optional(),
+        };
         const createSchema = z.object({ id: z.string(), header: z.string(), body: z.string(), dataEncryptionKey: z.string(),
-            provenance: z.string().optional(), provenanceDataEncryptionKey: z.string().optional() });
+            ...privateRevisionMetadata }).strict();
         const updateSchema = z.object({ header: z.string(), body: z.string(), expectedHeaderVersion: z.number(), expectedBodyVersion: z.number(),
-            provenance: z.string().optional(), provenanceDataEncryptionKey: z.string().optional() });
+            ...privateRevisionMetadata }).strict();
         const rows = new Map<string, z.infer<typeof createSchema> & { headerVersion: number; bodyVersion: number; seq: number; createdAt: number; updatedAt: number;
             ownerAccountId: string; access: 'owner'; encryptionMode: 'plain' | 'e2ee' }>();
         const homeArtifactId = buildHomeHubArtifactIdV1('owner');
@@ -48,8 +52,9 @@ describe('CLI Board Actions through the Artifact owner', () => {
             }
             if (path.endsWith('/access/recipients') && row) return { status: 200, data: {
                 artifactId: row.id, ownerAccountId: row.ownerAccountId, access: row.access, encryptionMode: mode,
-                dataEncryptionKey: row.dataEncryptionKey, callerDataEncryptionKey: row.dataEncryptionKey, recipients: [],
-                provenanceDataEncryptionKey: row.provenanceDataEncryptionKey, callerProvenanceDataEncryptionKey: row.provenanceDataEncryptionKey,
+                dataEncryptionKey: row.dataEncryptionKey, callerDataEncryptionKey: row.dataEncryptionKey,
+                provenanceDataEncryptionKey: row.provenanceDataEncryptionKey ?? null,
+                callerProvenanceDataEncryptionKey: row.provenanceDataEncryptionKey ?? null, recipients: [],
             } };
             if (path.endsWith('/access/grants') && row) return { status: 200, data: {
                 artifactId: row.id, ownerAccountId: row.ownerAccountId, access: row.access, grants: [],
@@ -71,7 +76,10 @@ describe('CLI Board Actions through the Artifact owner', () => {
             const row = rows.get(artifactId)!;
             const next = updateSchema.parse(input);
             expect(next.expectedHeaderVersion).toBe(row.headerVersion); expect(next.expectedBodyVersion).toBe(row.bodyVersion);
-            const updated = { ...row, ...next, headerVersion: row.headerVersion + 1, bodyVersion: row.bodyVersion + 1 };
+            const updated = { ...row, header: next.header, body: next.body,
+                ...(next.provenance === undefined ? {} : { provenance: next.provenance }),
+                ...(next.provenanceDataEncryptionKey === undefined ? {} : { provenanceDataEncryptionKey: next.provenanceDataEncryptionKey }),
+                headerVersion: row.headerVersion + 1, bodyVersion: row.bodyVersion + 1 };
             rows.set(row.id, updated);
             return { status: 200, data: { success: true, headerVersion: updated.headerVersion, bodyVersion: updated.bodyVersion } };
         });

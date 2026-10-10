@@ -90,14 +90,14 @@ describe('continuation target account discovery', () => {
             sessionId: 'qualified-account-discovery', accountScope,
             currentAgentId: 'claude', currentAgentLabel: 'Claude', projectionCurrent: true,
             entries: getResolvedBackendCatalogEntries({
-                enabledAgentIds: ['claude', 'codex'],
-                acpCatalogSnapshot: { status: 'ready', revision: 1, record: { v: 1, definitions: [] } },
-                mergedProviderProjectionById: {
-                    codex: {
-                        agentId: 'codex', identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
-                        connectedAccounts: [{ purpose: 'primary', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, required: false }],
-                    },
-                },
+                enabledAgentIds: ['claude', 'codex'], acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
+                // The real Codex manifest declares this qualified launch purpose;
+                // a bare bundled presentation fallback has no daemon declarations.
+                mergedProviderProjectionById: { codex: {
+                    agentId: 'codex', qualifiedId: 'happier.agent.codex/codex',
+                    identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+                    connectedAccounts: [{ purpose: 'primary', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' } }],
+                } },
             }),
             featureDecision: { state: 'enabled' },
             source: { currentBackendTargetKey: 'agent:happier.agent.claude/claude', storageKind: 'persisted', canEditSession: true, machinePresence: 'online', hasConversationToCarry: true },
@@ -115,7 +115,7 @@ describe('continuation target account discovery', () => {
             return;
         }
         expect(option?.disabled).not.toBe(true);
-        const detail = option?.renderDetailContent?.({ onRequestClose: () => {} });
+        const detail = option?.renderDetailContent?.({ onRequestClose: vi.fn() });
         if (!React.isValidElement(detail)) throw new Error('Expected target Agent detail content');
         screen = await renderScreen(detail);
         await act(async () => { await Promise.resolve(); });

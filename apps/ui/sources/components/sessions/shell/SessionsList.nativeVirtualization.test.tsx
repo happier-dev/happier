@@ -83,8 +83,6 @@ let sessionListOrderingModeV1: 'custom' | 'created' | 'updated' = 'custom';
 let sessionListIdentityDisplay: 'avatar' | 'agentLogo' | 'none' = 'avatar';
 const setSessionListOrderingModeV1 = vi.fn();
 let workspacePathDisplayModeV1: 'name' | 'path' | null = null;
-let workspaceRefsV1: any[] = [];
-const setWorkspaceRefsV1 = vi.fn();
 let collapsedGroupKeysV1: Record<string, boolean> = {};
 const setCollapsedGroupKeysV1 = vi.fn();
 const virtualizedListState = vi.hoisted(() => ({
@@ -395,6 +393,7 @@ vi.mock('@/modal', async () => {
 vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
         const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
         const { buildMachineDisplayRenderableFromMachine } = await import('@/sync/domains/machines/machineDisplayRenderable');
+        const actual = await importOriginal<typeof import('@/sync/domains/state/storage')>();
         return createStorageModuleMock({
             importOriginal,
             overrides: {
@@ -405,6 +404,8 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
                     if (key === 'sessionListIdentityDisplay') return sessionListIdentityDisplay;
                     if (key === 'sessionTagsEnabled') return true;
                     if (key === 'sessionListOrderingModeV1') return sessionListOrderingModeV1;
+                    // This touched contract subscribes to the real Account setting owner.
+                    if (key === 'workspaceRefsV1') return actual.useSetting('workspaceRefsV1');
                     if (key === 'workspacePathDisplayModeV1') return workspacePathDisplayModeV1;
                     return null;
                 } }),
@@ -691,11 +692,9 @@ describe('SessionsList (native virtualization)', () => {
         pinnedSessionKeysV1 = [];
         sessionMruOrderV1 = [];
         sessionTagsV1 = {};
-        workspaceRefsV1 = [];
         collapsedGroupKeysV1 = {};
         setSessionMruOrderV1.mockClear();
         setSessionListOrderingModeV1.mockClear();
-        setWorkspaceRefsV1.mockClear();
         setCollapsedGroupKeysV1.mockClear();
         navigateToSessionSpy.mockClear();
         routerPushSpy.mockClear();
@@ -733,6 +732,7 @@ describe('SessionsList (native virtualization)', () => {
         home.answer(homeA, pinPath, { body: { pin: { sessionId: 'sess_a', sortKey: null, pinnedAt: 1 } } });
         home.answer(homeA, tagsPath, { body: { sessionId: 'sess_a', tagIds: ['fixture-tag-2'] } });
         realStorage.setState({ sessionListRowsByServerId: storageState.sessionListRowsByServerId });
+        realStorage.getState().applySettingsLocal({ workspaceRefsV1: [] });
         resetServerFeaturesClientForTests();
         const ordinaryFeatures = createRootLayoutFeaturesResponse({
                 // This fixture is the ordinary, unfiltered pane producer. The
@@ -1928,7 +1928,7 @@ describe('SessionsList (native virtualization)', () => {
     });
 
     it('shows an Open project action for project headers with a resolvable WorkspaceRef', async () => {
-        workspaceRefsV1 = [
+        realStorage.getState().applySettingsLocal({ workspaceRefsV1: [
             {
                 id: 'wr_1',
                 serverId: 'srv_server_a',
@@ -1938,7 +1938,7 @@ describe('SessionsList (native virtualization)', () => {
                 createdAtMs: 1,
                 lastOpenedAtMs: null,
             },
-        ];
+        ] });
         mockVisibleSessionListViewData = [
             {
                 type: 'header',
@@ -1954,6 +1954,10 @@ describe('SessionsList (native virtualization)', () => {
         const screen = await renderSessionsList();
         const items = findFirstDropdownMenuItems(screen);
         expect(items.some((item) => item?.id === 'openProject')).toBe(true);
+        await act(async () => {
+            realStorage.getState().applySettingsLocal({ workspaceRefsV1: [] });
+        });
+        expect(findFirstDropdownMenuItems(screen).some((item) => item?.id === 'openProject')).toBe(false);
     });
 
     it('does not expose project rename actions without a workspace scope hint', async () => {

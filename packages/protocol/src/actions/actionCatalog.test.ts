@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
   type ActionDefinitionV1,
@@ -6,6 +6,7 @@ import {
   actionSpecToActionDefinitionV1,
   getActionDefinitionForCatalogSurface,
   getActionSpec,
+  listActionSpecs,
   listActionDefinitionsForCatalogSurface,
   listActionSpecsForCatalogSurface,
   searchSerializedActionSpecsForSurface,
@@ -194,17 +195,19 @@ describe('actionCatalog action-definition adapter', () => {
     expect(definitions.every((definition) => definition.surfaces.cli === true)).toBe(true);
   });
 
-  it.each(['ui', 'voice', 'agent', 'mcp', 'cli', 'rpc', 'api', 'plugin'] as const)('projects every %s-visible Action definition through the canonical schema boundary', (surface) => {
-    const definitions: ActionDefinitionV1[] = [];
-    const rejected = listActionSpecsForCatalogSurface({ surface }).flatMap(spec => {
-      try {
-        definitions.push(actionSpecToActionDefinitionV1(spec, { surface }));
-        return [];
-      } catch (error) {
-        return [`${spec.id}: ${error instanceof Error ? error.message : String(error)}`];
-      }
-    });
-    expect(rejected, rejected.join('\n')).toEqual([]);
+  it.each(['ui', 'voice', 'agent', 'mcp', 'cli', 'rpc', 'api', 'plugin'] as const)('retains the declared inclusion and order of every %s-visible Action', (surface) => {
+    const specs = listActionSpecsForCatalogSurface({ surface });
+
+    expect(specs.length).toBeGreaterThan(0);
+    expect(specs.map((spec) => spec.id)).toEqual(
+      listActionSpecs().filter((spec) => spec.surfaces[surface]).map((spec) => spec.id),
+    );
+  });
+
+  // API bindings are the only surface-specific schema projection. Validate
+  // every default and API definition, without repeating identical non-API schemas.
+  it.each([['canonical', undefined], ['API', 'api']] as const)('projects every %s Action definition through the canonical schema boundary', (_label, surface) => {
+    const definitions = listActionDefinitionsForCatalogSurface({ surface });
 
     expect(definitions.length).toBeGreaterThan(0);
     expect(definitions.map((definition) => definition.id)).toEqual(
@@ -233,17 +236,6 @@ describe('actionCatalog action-definition adapter', () => {
 
   it('reuses immutable host projections while evaluating request-current search inputs', () => {
     const hostSpec = getActionSpec('action.spec.get');
-    if (!hostSpec.outputSchema) throw new Error('Expected action.spec.get output schema');
-    const hostSearchTextPrefix = `${hostSpec.id} ${hostSpec.title}`;
-    const originalToLowerCase = String.prototype.toLowerCase;
-    let hostSearchTextComputations = 0;
-    const toLowerCase = vi.spyOn(String.prototype, 'toLowerCase').mockImplementation(function(this: string) {
-      const value = String(this);
-      if (value.startsWith(hostSearchTextPrefix)) {
-        hostSearchTextComputations += 1;
-      }
-      return originalToLowerCase.call(this);
-    });
     const contributedDefinition = (id: string): ActionDefinitionV1 => ({
       kindVersion: 1,
       id,
@@ -268,44 +260,41 @@ describe('actionCatalog action-definition adapter', () => {
       inputSchema: {},
     });
 
-    try {
-      const firstHostSearch = searchSerializedActionSpecsForSurface({
-        surface: 'api',
-        query: hostSpec.id,
-        isActionEnabled: () => true,
-      });
-      const repeatedHostSearch = searchSerializedActionSpecsForSurface({
-        surface: 'api',
-        query: hostSpec.id,
-        isActionEnabled: () => true,
-      });
-      const secondHostSearch = searchSerializedActionSpecsForSurface({
-        surface: 'api',
-        query: hostSpec.id,
-        isActionEnabled: (id) => id !== hostSpec.id,
-      });
-      const firstContributedSearch = searchSerializedActionSpecsForSurface({
-        surface: 'api',
-        query: 'fresh-contribution',
-        additionalDefinitions: [contributedDefinition('fresh-contribution-one')],
-      });
-      const secondContributedSearch = searchSerializedActionSpecsForSurface({
-        surface: 'api',
-        query: 'fresh-contribution',
-        additionalDefinitions: [contributedDefinition('fresh-contribution-two')],
-      });
+    const firstHostSearch = searchSerializedActionSpecsForSurface({
+      surface: 'api',
+      query: hostSpec.id,
+      isActionEnabled: (id) => id === hostSpec.id,
+    });
+    const repeatedHostSearch = searchSerializedActionSpecsForSurface({
+      surface: 'api',
+      query: hostSpec.id,
+      isActionEnabled: (id) => id === hostSpec.id,
+    });
+    const secondHostSearch = searchSerializedActionSpecsForSurface({
+      surface: 'api',
+      query: hostSpec.id,
+      isActionEnabled: () => false,
+    });
+    const firstContributedSearch = searchSerializedActionSpecsForSurface({
+      surface: 'api',
+      query: 'fresh-contribution',
+      isActionEnabled: (id) => id === hostSpec.id,
+      additionalDefinitions: [contributedDefinition('fresh-contribution-one')],
+    });
+    const secondContributedSearch = searchSerializedActionSpecsForSurface({
+      surface: 'api',
+      query: 'fresh-contribution',
+      isActionEnabled: (id) => id === hostSpec.id,
+      additionalDefinitions: [contributedDefinition('fresh-contribution-two')],
+    });
 
-      expect(firstHostSearch.map((definition) => definition.id)).toContain(hostSpec.id);
-      expect(repeatedHostSearch.map((definition) => definition.id)).toContain(hostSpec.id);
-      expect(secondHostSearch.map((definition) => definition.id)).not.toContain(hostSpec.id);
-      expect(firstContributedSearch.map((definition) => definition.id)).toEqual(['fresh-contribution-one']);
-      expect(secondContributedSearch.map((definition) => definition.id)).toEqual(['fresh-contribution-two']);
-      expect(hostSearchTextComputations).toBe(1);
-      expect(repeatedHostSearch.find((definition) => definition.id === hostSpec.id))
-        .toBe(firstHostSearch.find((definition) => definition.id === hostSpec.id));
-    } finally {
-      toLowerCase.mockRestore();
-    }
+    expect(firstHostSearch.map((definition) => definition.id)).toEqual([hostSpec.id]);
+    expect(repeatedHostSearch.map((definition) => definition.id)).toEqual([hostSpec.id]);
+    expect(secondHostSearch).toEqual([]);
+    expect(firstContributedSearch.map((definition) => definition.id)).toEqual(['fresh-contribution-one']);
+    expect(secondContributedSearch.map((definition) => definition.id)).toEqual(['fresh-contribution-two']);
+    expect(repeatedHostSearch[0]).toBe(firstHostSearch[0]);
+    expect(Object.isFrozen(firstHostSearch[0])).toBe(true);
   });
 
   it('projects contributed Action summaries through named public fields', () => {

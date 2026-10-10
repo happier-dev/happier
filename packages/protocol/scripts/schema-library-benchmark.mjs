@@ -16,7 +16,7 @@ const specs = ['valibot@1.5.0', '@valibot/to-json-schema@1.8.0', 'arktype@2.2.7'
 if (process.argv[2] === 'post-slice') {
   console.log(JSON.stringify({event:'post-slice-basis',host:hostname(),node:process.version}));
   const tasks = [
-    ['scratch-guard',['--test','packages/protocol/scripts/schemaLibraryScratch.test.mjs']],
+    ['scratch-guard',['node_modules/vitest/vitest.mjs','run','packages/protocol/scripts/schemaLibraryScratch.test.mjs','--config','vitest.config.ts','--maxWorkers=1']],
     ['slice-typecheck',['packages/protocol/scripts/schema-library-census-codemod.mjs','slice-typecheck','packages/protocol/src/plugins/actions/internalProtocolZodAdapter.ts','packages/protocol/src/plugins/actions/internalProtocolZodAdapter.test.ts']],
     ['protocol-root',['--experimental-transform-types','--expose-gc','packages/protocol/scripts/schema-library-benchmark.mjs','bridge-census']],
     ['browser-protocol-contribution',['packages/protocol/scripts/profile-schema-browser-bundle.mjs']],

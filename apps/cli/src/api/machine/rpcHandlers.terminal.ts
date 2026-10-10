@@ -1,6 +1,5 @@
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { DaemonTerminalCloseRequestSchema, DaemonTerminalEnsureRequestSchema, DaemonTerminalListRequestV1Schema, DaemonTerminalListResponseV1Schema, DaemonTerminalInputRequestSchema, DaemonTerminalResizeRequestSchema, DaemonTerminalRestartRequestSchema, DaemonTerminalStreamReadRequestSchema } from '@happier-dev/protocol/daemon/terminal';
-import { AGENT_SIGN_IN_PREPARE_RPC_METHOD, AGENT_SIGN_IN_STATUS_RPC_METHOD, AgentSignInPrepareRequestSchema, AgentSignInStatusRequestSchema } from '@happier-dev/protocol/daemon/agentSignIn';
 import { TerminalStreamAckRequestSchema, TerminalStreamAckResponseSchema, TerminalStreamReadRequestSchema, TerminalStreamReadResponseSchema } from '@happier-dev/protocol/terminal/stream';
 import { TerminalStreamInputRequestSchema, TerminalStreamInputResponseSchema } from '@happier-dev/protocol/terminal/input';
 import type { DaemonTerminalErrorCode, TerminalStreamAckRequest, TerminalStreamAckResponse, TerminalStreamInputRequest, TerminalStreamInputResponse, TerminalStreamReadRequest, TerminalStreamReadResponse } from '@happier-dev/protocol';
@@ -14,7 +13,6 @@ import { readOwnSessionMachineWorkspace } from '@/session/machineControlLocality
 
 import type { RpcHandlerContext, RpcHandlerRegistrar } from '../rpc/types';
 import type { DaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
-import { prepareAgentSignIn, probeAgentSignInStatus } from '@/capabilities/cliAuth/agentSignIn';
 import { authorizeFilesystemPath } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemPathAuthorization';
 import { expandHomeDirPath, resolveHomeDirFromEnvironment } from '@/utils/path/expandHomeDirPath';
 import { discoverLocalServiceRunTargets } from '@/daemon/local/services/launch/runTargets';
@@ -140,15 +138,6 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
 }>): MachineTerminalRpcRegistration {
   const { rpcHandlerManager } = params;
   const env = params.deps?.env ?? process.env;
-  if (!params.deps?.requiredSessionId) {
-    rpcHandlerManager.registerHandler(AGENT_SIGN_IN_STATUS_RPC_METHOD, async (raw) => {
-      const request = AgentSignInStatusRequestSchema.parse(raw);
-      return await probeAgentSignInStatus(request.agentId);
-    });
-    rpcHandlerManager.registerHandler(AGENT_SIGN_IN_PREPARE_RPC_METHOD, (raw) =>
-      prepareAgentSignIn(AgentSignInPrepareRequestSchema.parse(raw)));
-  }
-
   const config = readDaemonTerminalPtyConfig(env);
   const workingDirectory =
     params.deps?.workingDirectory

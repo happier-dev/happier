@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
+import { defineStoredReadProjection } from '../../json/storedReadSchema.js';
 import {
   PluginContributionIdentityV1Schema,
   resolveAgentIdFromPersistedContributionIdentityV1,
@@ -99,17 +100,20 @@ function normalizeDeployedRuntimeDescriptorV1(value: unknown): unknown {
 }
 
 function createRuntimeDescriptorAgentSchema(zod: typeof z) {
-  return zod.object({
+  const schema = zod.object({
     agentExtra: createRuntimeDescriptorAgentExtraV1Schema(zod).optional(),
   }).passthrough();
+  // This is Agent-owned recovery data, not a generic Session-domain projection.
+  return defineStoredReadProjection(schema, () => schema);
 }
 
 function createRuntimeDescriptorAgentExtraV1Schema(zod: typeof z) {
-  return zod.object({
+  const schema = zod.object({
     owner: zod.string().min(1),
     schemaId: zod.string().min(1),
     v: zod.number().int().min(1),
   }).passthrough();
+  return defineStoredReadProjection(schema, () => schema);
 }
 
 export function createRuntimeDescriptorV1Schema(zod: typeof z) {

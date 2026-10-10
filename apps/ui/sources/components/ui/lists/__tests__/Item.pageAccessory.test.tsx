@@ -215,13 +215,14 @@ describe('Item leading mark on a page', () => {
             && node.props.accessibilityElementsHidden === true);
         expect(reserved, 'the leading reservation remains beside the label').toBeDefined();
     });
-    async function leadingBox(presentation: 'page' | 'grouped') {
+    async function leadingBox(presentation: 'page' | 'grouped', iconBoxSize?: number) {
         const { Item } = await import('../Item');
         const { ListPresentationProvider } = await import('../listPresentation');
         const { View } = await import('react-native');
         const screen = await renderScreen(
             <ListPresentationProvider value={presentation}>
-                <Item title="Ada Lovelace" leftElement={<View testID="avatar" style={{ width: 36, height: 36 }} />} />
+                <Item title="Ada Lovelace" iconBoxSize={iconBoxSize}
+                    leftElement={<View testID="avatar" style={{ width: 36, height: 36 }} />} />
             </ListPresentationProvider>,
         );
         return flattenTestStyle(nearestHostView(hostByTestID(screen, 'avatar')).props.style);
@@ -235,7 +236,14 @@ describe('Item leading mark on a page', () => {
         expect(box.minWidth as number).toBeLessThan(36);
     });
 
-    it('keeps the fixed glyph box outside page presentation (menus, pickers)', async () => {
+    it('fits an oversized identity mark outside page presentation when its caller declares the leading slot size', async () => {
+        vi.resetModules();
+        const box = await leadingBox('grouped', 36);
+        expect(box.width).toBe(36);
+        expect(box.height).toBe(36);
+    });
+
+    it('keeps the fixed glyph box outside page presentation when no slot size is declared', async () => {
         vi.resetModules();
         const box = await leadingBox('grouped');
         const { ITEM_ICON_BOX_SIZE } = await import('../itemDensityMetrics');

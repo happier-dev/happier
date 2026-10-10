@@ -66,6 +66,7 @@ export async function bootstrapRemoteDependencies({
   validationKind = 'runtime',
   toolsOnly = false,
   componentRelativeDir = '.',
+  defaultBuildMode = validationKind === 'runtime' ? 'source-dev' : 'strict',
   env = process.env,
   packageExists = existsSync,
   installInitialDependencies: installInitialDependenciesImpl = installInitialDependencies,
@@ -76,7 +77,7 @@ export async function bootstrapRemoteDependencies({
   // Runtime preparation emits executable prerequisites. Semantic checking is
   // owned by explicit strict/publication callers and the separate check lane.
   env = { ...env, [WORKSPACE_BUILD_MODE_ENV]: resolveWorkspaceBuildMode({
-    buildMode: env[WORKSPACE_BUILD_MODE_ENV] ?? (validationKind === 'runtime' ? 'source-dev' : 'strict'), env,
+    buildMode: env[WORKSPACE_BUILD_MODE_ENV] ?? defaultBuildMode, env,
   }) };
   const componentDir = join(repoDir, 'apps', 'stack');
   const componentPath = posix.normalize(String(componentRelativeDir).replaceAll('\\', '/'));
@@ -152,10 +153,12 @@ if (entryPath && pathToFileURL(resolve(entryPath)).href === import.meta.url) {
   const kind = process.argv.slice(2).find(value => value.startsWith('--validation-kind='));
   const component = process.argv.slice(2).find(value => value.startsWith('--component-relative-dir='));
   const repo = process.argv.slice(2).find(value => value.startsWith('--repo-dir='));
+  const buildMode = process.argv.slice(2).find(value => value.startsWith('--default-build-mode='));
   await bootstrapRemoteDependencies({
     ...(repo ? { repoDir: resolve(repo.slice('--repo-dir='.length)) } : {}),
     toolsOnly: process.argv.includes('--tools-only'),
     validationKind: kind?.slice('--validation-kind='.length) ?? 'runtime',
     componentRelativeDir: component?.slice('--component-relative-dir='.length) ?? '.',
+    ...(buildMode ? { defaultBuildMode: buildMode.slice('--default-build-mode='.length) } : {}),
   });
 }

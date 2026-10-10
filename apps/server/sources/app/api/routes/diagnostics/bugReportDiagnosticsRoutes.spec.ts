@@ -11,8 +11,8 @@ const resetEnv = createEnvReset();
 
 /**
  * The legacy diagnostics entitlement now additionally requires the listed
- * Account to be active, so the database is the only boundary these route tests
- * stand in for.
+ * Account to be active. An empty persisted Home configuration leaves the environment
+ * authoritative, so the database is the only boundary these route tests stand in for.
  */
 const accountFindUnique = vi.hoisted(() => vi.fn());
 vi.mock("@/storage/db", () => {

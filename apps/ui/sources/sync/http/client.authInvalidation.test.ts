@@ -1,14 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+// The real Sync lifecycle also reaches browser record storage; replace only IndexedDB.
+import 'fake-indexeddb/auto';
 import { ACCOUNT_ENCRYPTION_FIRST_KEY_PENDING_TTL_MS, TokenStorage } from '@/auth/storage/tokenStorage';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
-import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createDeferred } from '@/dev/testkit';
+import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance, type HomeGovernanceHarness } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppRuntimeHarness';
+import { isServerFetchConnectivityProbeRequest } from '@/dev/testkit/mocks/serverFetch';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { subscribeAuthCredentialsInvalidation, type AuthCredentialsInvalidationEvent } from '@/sync/runtime/orchestration/authCredentialsInvalidation';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
 installTokenStorageWebPlatformMocks();
+await initializeRealAppRuntimeForTests();
 
 const rejectedToken = createAccountTokenForTests('auth-account');
 // Renewed credentials retain the same Account while changing the opaque bearer.
@@ -17,6 +23,7 @@ let storageBoundary: ReturnType<typeof installLocalStorageMock>;
 let locksBoundary: ReturnType<typeof installWebLockManagerMock>;
 let unsubscribe: () => void;
 const events: AuthCredentialsInvalidationEvent[] = [];
+let preparedHomeHarness: HomeGovernanceHarness | null = null;
 
 beforeEach(async () => {
     storageBoundary = installLocalStorageMock();
@@ -27,6 +34,8 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+    await preparedHomeHarness?.reset();
+    preparedHomeHarness = null;
     const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
     await resetServerReachabilitySupervisors();
     const { stopAllEndpointSupervisorsForTests } = await import('@/sync/runtime/connectivity/endpointSupervisorPool');
@@ -42,13 +51,27 @@ function installRejectedBearerBoundary(onRequest?: (init?: RequestInit) => Promi
     const requests: (RequestInit & { path: string })[] = [];
     setRuntimeFetch(async (input, init) => {
         const path = new URL(String(input)).pathname;
-        if (path === '/health') return Response.json({ status: 'ok' });
-        if (path === '/v1/auth/ping') return Response.json({});
+        if (isServerFetchConnectivityProbeRequest(input)) return Response.json({});
         if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
         requests.push({ ...init, path, headers: new Headers(init?.headers) });
         return onRequest ? await onRequest(init) : new Response(null, { status: 401 });
     });
     return requests;
+}
+
+async function restorePreparedSocketHome() {
+    const harness = createHomeGovernanceHarness();
+    preparedHomeHarness = harness;
+    installHomeGovernanceBoundaries(harness);
+    const serverUrl = 'http://localhost:3012';
+    const serverId = await harness.addHome({
+        name: 'Authentication Home', serverUrl, accountId: 'auth-account',
+        credentials: { token: rejectedToken },
+    });
+    const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
+    await restoreConnectionToActiveServer({ token: rejectedToken });
+    const { apiSocket } = await import('@/sync/api/session/apiSocket');
+    return { harness, serverId, serverUrl, apiSocket };
 }
 
 describe('serverFetch auth invalidation', () => {
@@ -93,7 +116,7 @@ describe('serverFetch auth invalidation', () => {
 
         expect(await TokenStorage.setCredentials({ token: replacementToken, secret: 'secret-a' })).toBe(true);
         expect((await serverFetch('/v1/machines')).status).toBe(200);
-        expect((await serverFetch('/v1/machines', { headers: { Authorization: `Bearer ${rejectedToken}` } }, { includeAuth: false, retry: 'none' })).status).toBe(401);
+        expect((await serverFetch('/v1/machines', { method: 'POST', headers: { Authorization: `Bearer ${rejectedToken}` } }, { includeAuth: false, retry: 'none' })).status).toBe(401);
         expect((await serverFetch('/v1/machines', undefined, { retry: 'none' })).status).toBe(200);
         expect(new Headers(requests[3]?.headers).get('authorization')).toBe(`Bearer ${replacementToken}`);
         expect(new Headers(requests[5]?.headers).get('authorization')).toBe(`Bearer ${replacementToken}`);
@@ -122,24 +145,25 @@ describe('serverFetch auth invalidation', () => {
         expect(events).toMatchObject([{ kind: 'credentials_removed', serverId, serverUrl }]);
     });
 
-    it('retries idempotent requests once with refreshed credentials after invalidating a rejected token', async () => {
+    it('retries idempotent requests once with a refreshed credential without invalidating its replacement', async () => {
         await TokenStorage.setCredentials({ token: rejectedToken });
         let requestCount = 0;
-        const requests = installRejectedBearerBoundary(async () => new Response(null, { status: ++requestCount === 1 ? 401 : 200 }));
-        // The device credential boundary publishes a concurrently refreshed bearer
-        // when the real client re-reads after removing the rejected credential.
-        const readCredentials = TokenStorage.getCredentialsForServerUrl.bind(TokenStorage);
-        const refreshed = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementationOnce(async (...args) => {
-            await TokenStorage.setCredentials({ token: replacementToken });
-            return await readCredentials(...args);
+        const requests = installRejectedBearerBoundary(async () => {
+            if (++requestCount === 1) {
+                // A response arrives after another sign-in has published its real
+                // credential; conditional invalidation must retain that replacement.
+                await TokenStorage.setCredentials({ token: replacementToken });
+                return new Response(null, { status: 401 });
+            }
+            return new Response(null, { status: 200 });
         });
-        try {
-            const { serverFetch } = await import('./client');
-            expect((await serverFetch('/v1/account/profile', { method: 'GET', headers: { Authorization: `Bearer ${rejectedToken}` } }, { includeAuth: false })).status).toBe(200);
-            expect(requests).toHaveLength(2);
-            expect(new Headers(requests[1]?.headers).get('authorization')).toBe(`Bearer ${replacementToken}`);
-            expect(events).toHaveLength(1);
-        } finally { refreshed.mockRestore(); }
+        const { serverFetch } = await import('./client');
+        expect((await serverFetch('/v1/account/profile', { method: 'GET', headers: { Authorization: `Bearer ${rejectedToken}` } }, { includeAuth: false })).status).toBe(200);
+        expect(requests).toHaveLength(2);
+        expect(new Headers(requests[0]?.headers).get('authorization')).toBe(`Bearer ${rejectedToken}`);
+        expect(new Headers(requests[1]?.headers).get('authorization')).toBe(`Bearer ${replacementToken}`);
+        expect(await TokenStorage.getCredentials()).toEqual({ token: replacementToken });
+        expect(events).toHaveLength(0);
     });
 
     it('emits an auth-credential invalidation notification when a bearer token is rejected', async () => {
@@ -163,5 +187,51 @@ describe('serverFetch auth invalidation', () => {
         expect(events).toHaveLength(0);
         expect(requests.map(request => new Headers(request.headers).get('authorization')))
             .toEqual([`Bearer ${rejectedToken}`, `Bearer ${replacementToken}`]);
+    });
+
+    it('does not retire replacement credentials when a write rejects an explicit old bearer', async () => {
+        await TokenStorage.setCredentials({ token: replacementToken });
+        const requests = installRejectedBearerBoundary(async (init) => new Response(null, {
+            status: new Headers(init?.headers).get('authorization') === `Bearer ${replacementToken}` ? 200 : 401,
+        }));
+        const { serverFetch } = await import('./client');
+        expect((await serverFetch('/v1/machines', { method: 'POST', headers: { Authorization: `Bearer ${rejectedToken}` } }, { includeAuth: false })).status).toBe(401);
+        const { serverId, serverUrl } = getActiveServerSnapshot();
+        expect(await TokenStorage.getCredentialsForServerUrl(serverUrl, { serverId })).toEqual({ token: replacementToken });
+        expect(events).toHaveLength(0);
+        expect(requests.map(request => new Headers(request.headers).get('authorization'))).toEqual([`Bearer ${rejectedToken}`]);
+    });
+
+    it('preserves an empty prepared write 401 after its own rejected credential is retired', async () => {
+        const { harness, serverId, serverUrl, apiSocket } = await restorePreparedSocketHome();
+        const path = '/v1/account/encryption/migrate';
+        harness.answer(serverId, `POST ${path}`, { status: 401, body: { rejectedBody: 'must not escape retired authority' } });
+
+        const response = await apiSocket.request(path, { method: 'POST', body: '{}' }, { retry: 'none' });
+        expect(response.status).toBe(401);
+        expect(await response.text()).toBe('');
+        expect(await TokenStorage.getCredentialsForServerUrl(serverUrl, { serverId })).toBeNull();
+        expect(harness.requestsFor(path)).toHaveLength(1);
+        expect(events).toMatchObject([{ kind: 'credentials_removed', serverId, serverUrl }]);
+    });
+
+    it('rejects a prepared write after replacement credentials retire its captured authority', async () => {
+        const { harness, serverId, serverUrl, apiSocket } = await restorePreparedSocketHome();
+        const path = '/v1/account/encryption/migrate';
+        const responseReady = createDeferred<void>();
+        harness.answer(serverId, `POST ${path}`, { status: 401, body: { rejectedBody: 'old authority' }, respondAfter: responseReady.promise });
+        const pending = apiSocket.request(path, { method: 'POST', body: '{}' }, { retry: 'none' });
+        const rejected = expect(pending).rejects.toMatchObject({ name: 'StaleServerGenerationError', retryable: false });
+        try {
+            await waitForHomeGovernance(() => expect(harness.requestsFor(path)).toHaveLength(1));
+            expect(await TokenStorage.setCredentialsForServerUrl(serverUrl, { serverId }, { token: replacementToken })).toBe(true);
+            responseReady.resolve();
+            await rejected;
+            expect(await TokenStorage.getCredentialsForServerUrl(serverUrl, { serverId })).toEqual({ token: replacementToken });
+            expect(harness.requestsFor(path)).toHaveLength(1);
+            expect(events).toHaveLength(0);
+        } finally {
+            responseReady.resolve();
+        }
     });
 });

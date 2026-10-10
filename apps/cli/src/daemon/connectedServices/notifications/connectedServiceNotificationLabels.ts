@@ -1,4 +1,7 @@
-import { ConnectedServiceIdSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
+import {
+  ConnectedServiceIdSchema,
+  readBuiltInLegacyConnectedServiceIdForQualifiedService,
+} from '@happier-dev/protocol/connect/connected-service-bindings';
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { ConnectedAccountServiceKey, ConnectedServiceId } from '@happier-dev/protocol';
 
@@ -45,6 +48,14 @@ export function resolveConnectedServiceNotificationDisplayName(
   );
 }
 
+/** Read the retained scalar profile/quota ports without changing the notification's qualified identity. */
+export function readLegacyConnectedServiceNotificationServiceId(value: string): ConnectedServiceId | null {
+  const legacy = ConnectedServiceIdSchema.safeParse(value);
+  if (legacy.success) return legacy.data;
+  const service = parseQualifiedPluginContributionKey(value);
+  return service ? readBuiltInLegacyConnectedServiceIdForQualifiedService(service) : null;
+}
+
 export async function loadConnectedServiceNotificationProfilesById(input: Readonly<{
   serviceId: string;
   listConnectedServiceProfiles(input: Readonly<{ serviceId: ConnectedServiceId }>): Promise<Readonly<{
@@ -52,10 +63,10 @@ export async function loadConnectedServiceNotificationProfilesById(input: Readon
     profiles: ReadonlyArray<ConnectedServiceNotificationProfileSummary>;
   }>>;
 }>): Promise<ReadonlyMap<string, ConnectedServiceNotificationProfileSummary>> {
-  const serviceIdParsed = ConnectedServiceIdSchema.safeParse(input.serviceId);
-  if (!serviceIdParsed.success) return new Map();
+  const serviceId = readLegacyConnectedServiceNotificationServiceId(input.serviceId);
+  if (!serviceId) return new Map();
   try {
-    const result = await input.listConnectedServiceProfiles({ serviceId: serviceIdParsed.data });
+    const result = await input.listConnectedServiceProfiles({ serviceId });
     return new Map(result.profiles.map((profile) => [profile.profileId, profile]));
   } catch {
     return new Map();

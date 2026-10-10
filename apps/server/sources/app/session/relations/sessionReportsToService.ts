@@ -109,7 +109,9 @@ async function mutateSessionReportsToInTx(tx: Tx, input: SessionReportsToSetInpu
     if (!admission.ok) return admission;
     if ((existing?.leadSessionId ?? null) !== input.expectedLeadSessionId) return { ok: false, error: 'reports_to_cas_conflict' };
     if ((existing?.leadSessionId ?? null) === input.leadSessionId) {
-        return { ok: true, sessionId: input.sessionId, leadSessionId: input.leadSessionId, attachedAt: existing?.attachedAt.getTime() ?? null };
+        return existing
+            ? { ok: true, sessionId: input.sessionId, leadSessionId: existing.leadSessionId, attachedAt: existing.attachedAt.getTime() }
+            : { ok: true, sessionId: input.sessionId, leadSessionId: null, attachedAt: null };
     }
     if (!createdChild && input.leadSessionId !== null && await reportsToWouldCycleInTx(tx, input.sessionId, input.leadSessionId)) return { ok: false, error: 'reports_to_cycle' };
     // The Session's existing projection timestamp also separates detach/reattach
@@ -129,7 +131,9 @@ async function mutateSessionReportsToInTx(tx: Tx, input: SessionReportsToSetInpu
     }
     await invalidateSessionRelationProjectionsInTx(tx, [input.sessionId,
         ...(existing ? [existing.leadSessionId] : []), ...(input.leadSessionId ? [input.leadSessionId] : [])]);
-    return { ok: true, sessionId: input.sessionId, leadSessionId: input.leadSessionId, attachedAt: input.leadSessionId === null ? null : changedAt.getTime() };
+    return input.leadSessionId === null
+        ? { ok: true, sessionId: input.sessionId, leadSessionId: null, attachedAt: null }
+        : { ok: true, sessionId: input.sessionId, leadSessionId: input.leadSessionId, attachedAt: changedAt.getTime() };
 }
 
 export async function setSessionReportsToInTx(tx: Tx, input: SessionReportsToSetInput): Promise<SessionReportsToSetResult> {

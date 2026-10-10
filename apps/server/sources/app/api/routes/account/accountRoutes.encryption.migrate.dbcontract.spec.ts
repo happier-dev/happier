@@ -40,13 +40,12 @@ import {
     initDbPostgres,
 } from "@/storage/db";
 import { initEncrypt } from "@/modules/encrypt";
+import { auth } from "@/app/auth/auth";
+import { enableAuthentication } from "@/app/api/utils/enableAuthentication";
 import { enableErrorHandlers } from "@/app/api/utils/enableErrorHandlers";
 import {
     deriveAccountEncryptionMigrationKeyFingerprints,
 } from "@/app/encryption/accountEncryptionTransition";
-import {
-    captureAccountStoredContentCompatibilityForHttpRequest,
-} from "@/app/clientCompatibility/accountStoredContentCompatibility";
 import {
     mutateConnectedServiceCredential,
 } from "../connect/credentials/mutation";
@@ -165,65 +164,8 @@ function createTestApp() {
     });
     app.setValidatorCompiler(validatorCompiler);
     app.setSerializerCompiler(serializerCompiler);
-    const typed =
-        app.withTypeProvider<ZodTypeProvider>() as any;
-
-    typed.decorate(
-        "authenticate",
-        async (request: any, reply: any) => {
-            const userId =
-                request.headers["x-test-user-id"];
-            if (
-                typeof userId !== "string"
-                || userId.length === 0
-            ) {
-                return reply
-                    .code(401)
-                    .send({ error: "Unauthorized" });
-            }
-            request.userId = userId;
-            captureAccountStoredContentCompatibilityForHttpRequest(request);
-        },
-    );
-    typed.addHook(
-        "preValidation",
-        async (request: any) => {
-            if (
-                request.method !== "POST"
-                || request.url
-                    !== "/v1/account/encryption/migrate"
-                || !request.body
-                || typeof request.body !== "object"
-                || !("machines" in request.body)
-                || "expectedAccountVersion" in request.body
-            ) {
-                return;
-            }
-            const accountId =
-                request.headers["x-test-user-id"];
-            if (typeof accountId !== "string") return;
-            const account =
-                await db.account.findUniqueOrThrow({
-                    where: { id: accountId },
-                    select: {
-                        seq: true,
-                        publicKey: true,
-                        contentPublicKey: true,
-                    },
-                });
-            const fingerprints =
-                deriveAccountEncryptionMigrationKeyFingerprints(
-                    account,
-                );
-            Object.assign(request.body, {
-                expectedAccountVersion: account.seq,
-                expectedSigningKeyFingerprint:
-                    fingerprints.signingKeyFingerprint,
-                expectedContentKeyFingerprint:
-                    fingerprints.contentKeyFingerprint,
-            });
-        },
-    );
+    const typed = app.withTypeProvider<ZodTypeProvider>();
+    enableAuthentication(typed);
     enableErrorHandlers(typed);
     registerAccountEncryptionMigrateRoutes(typed);
     return typed;
@@ -556,7 +498,7 @@ async function createMigrationFixture() {
             settings: SOURCE_SETTINGS,
             settingsVersion: 0,
         },
-        select: { id: true, publicKey: true },
+        select: { id: true, publicKey: true, contentPublicKey: true },
     });
     createdAccountIds.add(account.id);
 
@@ -774,10 +716,6 @@ async function createMigrationFixture() {
         data: {
             accountId: account.id,
             name: "Native DB migration automation",
-            scheduleKind: "interval",
-            everyMs: 60_000,
-            timezone: null,
-            scheduleExpr: null,
             targetType: "new_session",
             templateCiphertext:
                 SOURCE_AUTOMATION_TEMPLATE,
@@ -839,8 +777,12 @@ function buildMigrationRequest(
     fixture: MigrationFixture,
     staleFence?: StaleFence,
 ) {
+    const fingerprints = deriveAccountEncryptionMigrationKeyFingerprints(fixture.account);
     return {
         toMode: "plain" as const,
+        expectedAccountVersion: fixture.sourceAccountVersion,
+        expectedSigningKeyFingerprint: fingerprints.signingKeyFingerprint,
+        expectedContentKeyFingerprint: fingerprints.contentKeyFingerprint,
         expectedSettingsVersion: 0,
         settingsContent: {
             t: "plain" as const,
@@ -1197,14 +1139,15 @@ async function readFixtureState(
 async function injectMigration(
     app: ReturnType<typeof createTestApp>,
     accountId: string,
-    payload: unknown,
+    payload: Record<string, unknown>,
 ) {
+    const token = await auth.createToken(accountId, undefined, { kind: "account", authority: "present_user" });
     return await app.inject({
         method: "POST",
         url: "/v1/account/encryption/migrate",
         headers: {
             "content-type": "application/json",
-            "x-test-user-id": accountId,
+            authorization: `Bearer ${token}`,
             ...buildAccountStoredContentCompatibilityHttpHeadersV1(
                 CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
             ),
@@ -1328,6 +1271,7 @@ describe(
             }
             await db.$connect();
             dbConnected = true;
+            await auth.init();
             app = createTestApp();
             await app.ready();
         });
@@ -1899,13 +1843,15 @@ describe(
         );
 
         it(
-            "rejects an oversized complete request before any database read or mutation",
+            "rejects an authenticated oversized complete request before migration mutation",
             async () => {
+                const account = await db.account.create({ data: { publicKey: null, encryptionMode: "plain" } });
+                createdAccountIds.add(account.id);
                 const templateCiphertext =
                     "x".repeat(220_000);
                 const response = await injectMigration(
                     app,
-                    "missing-native-db-oversized-account",
+                    account.id,
                     {
                         toMode: "plain",
                         expectedAccountVersion: 0,
@@ -1964,6 +1910,7 @@ describe(
                 expect(response.json()).toEqual({
                     error: "migration_too_large",
                 });
+                expect(await db.account.findUniqueOrThrow({ where: { id: account.id } })).toEqual(account);
             },
         );
     },

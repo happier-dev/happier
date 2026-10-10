@@ -80,7 +80,9 @@ describe('dispatchConnectedServiceAccountSwitchNotificationAsync', () => {
             source: {
                 sessionId: 'session-1',
                 sessionTitle: 'Fix checkout flow',
-                serviceId: 'openai-codex',
+                // Daemon event ingress qualifies the source before dispatch;
+                // quota snapshots and the released profile-list port stay scalar.
+                serviceId: 'happier.agent.codex/openai-codex',
                 groupId: 'main',
                 fromProfileId: 'primary',
                 toProfileId: 'backup',
@@ -105,6 +107,42 @@ describe('dispatchConnectedServiceAccountSwitchNotificationAsync', () => {
                 toUsagePercent: 20,
             }),
             { sound: 'happier_soft.wav', priority: 'high', androidSoundId: 'soft' },
+        );
+    });
+
+    it('does not read bundled account labels for an unrelated qualified service with the same local id', async () => {
+        const sendToAllDevicesAsync = vi.fn(async () => true);
+        const listConnectedServiceProfiles = vi.fn(async () => ({
+            serviceId: 'openai-codex' as const,
+            profiles: [{ profileId: 'primary', providerEmail: 'private@example.test' }],
+        }));
+        await dispatchConnectedServiceAccountSwitchNotificationAsync({
+            settings: accountSettingsParse({}),
+            expoPushSender: { sendToAllDevicesAsync },
+            settingsSecretsReadKeys: [],
+            runtimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
+            listConnectedServiceProfiles,
+            source: {
+                sessionId: 'session-custom',
+                serviceId: 'acme.custom/openai-codex',
+                groupId: 'main',
+                fromProfileId: 'primary',
+                toProfileId: 'backup',
+                reason: 'usage_limit',
+            },
+            dedupeWindowMs: 0,
+        });
+        expect(listConnectedServiceProfiles).not.toHaveBeenCalled();
+        expect(sendToAllDevicesAsync).toHaveBeenCalledWith(
+            expect.any(String),
+            expect.not.stringContaining('private@example.test'),
+            expect.objectContaining({
+                serviceId: 'acme.custom/openai-codex',
+                fromProfileLabel: 'primary',
+                fromUsagePercent: null,
+                toUsagePercent: null,
+            }),
+            expect.anything(),
         );
     });
 

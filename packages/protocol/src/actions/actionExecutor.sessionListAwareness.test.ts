@@ -7,6 +7,7 @@ import { getActionSpec } from './actionSpecs.js';
 import type { SessionAwarenessProjectionV1 } from '../sessions/awareness/projectionV1.js';
 import { encodeV2SessionListCursorV1 } from '../sessions/listing/cursor.js';
 import { projectSessionAwarenessV1 } from '../sessions/awareness/projectV1.js';
+import type { WidgetCatalogSourceEntryV1 } from '../widgets/actionsV1.js';
 
 function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
   return createActionExecutor({
@@ -149,6 +150,32 @@ describe('session.list execution', () => {
     expect(sessionList).not.toHaveBeenCalled();
   });
 
+  it('requires the actual Session-list grant even when the consuming widget descriptor is granted', async () => {
+    const sessionList = vi.fn(async () => buildSessionAwarenessListResultV1({ sessions: [], nextCursor: null, hasNext: false }));
+    const surface = { serverId: 'home-current', accountId: 'viewer', owner: { kind: 'home' as const } };
+    const definition = { kind: 'builtin' as const, id: 'checks' };
+    let descriptorRead = false;
+    const executor = createExecutor({ sessionList,
+      widgetAccountScope: () => ({ serverId: 'home-current', accountId: 'viewer' }),
+      widgetCatalog: { list: async () => {
+        descriptorRead = true;
+        return [{ definition, title: 'Checks', availability: 'available', instanceCount: 0,
+          sizeDeclaration: { sizes: ['medium'], defaultSize: 'medium' },
+          fields: [{ path: 'session', title: 'Session', widget: 'select', optionsSourceId: 'sessions' }] } satisfies WidgetCatalogSourceEntryV1];
+      } },
+    });
+    await expect(executor.execute('action.options.resolve', {
+      consumer: { kind: 'widget', surface, definition }, fieldPath: 'session',
+    }, {
+      surface: 'api', authority: 'account_automation', serverId: 'home-current',
+      externalActionCredential: { accountId: 'viewer', principalId: 'token', credentialId: 'token', grant: {
+        v: 1, actions: { families: [], ids: ['widgets.catalog.list'] }, targets: null,
+        approve: false, origins: [], models: null, permissionModes: null, create: null,
+      } },
+    })).resolves.toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+    expect(descriptorRead).toBe(true);
+    expect(sessionList).not.toHaveBeenCalled();
+  });
   it('does not invent a Home identity for Session choices when the host has no selected Home', async () => {
     const sessionList = vi.fn(async () => buildSessionAwarenessListResultV1({ sessions: [], nextCursor: null, hasNext: false }));
     await expect(createExecutor({ sessionList }).execute('action.options.resolve', { optionsSourceId: 'sessions' }, {

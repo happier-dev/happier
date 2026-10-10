@@ -24,6 +24,7 @@ const DEFAULT_COMMAND_POLICY = Object.freeze({
   workerArguments: '0', runnerKnown: '0', componentOverride: '',
   generator: '0', generatorCheck: '0', componentFromNative: '0',
   localCompile: '0', requiredTools: '',
+  preparationBuildMode: 'strict',
 });
 const validation = { validation: '1', bootstrap: '1', heavyClass: 'validation' };
 // Available-memory envelopes, not process limits or fixed concurrency slots.
@@ -95,6 +96,10 @@ const COMMAND_RULES = [
   { when: { command: ['node', 'nodejs', 'tsx'], entry: ['vitest.mjs'] }, set: { ...validation, runnerKnown: '1', workerTool: 'vitest', workerArguments: '1' } },
   { when: { command: ['node', 'nodejs'], entry: ['runVitestShards.mjs'], component: ['apps/cli'] }, set: { ...validation, runnerKnown: '1', workerTool: 'vitest' } },
   { when: { managerNode: ['1'], entry: ['run-vitest-with-heartbeat.mjs'] }, set: { ...validation, runnerKnown: '1', workerTool: 'vitest', workerArguments: '1' } },
+  ...['apps/ui', 'apps/cli'].flatMap(componentOverride => [
+    { when: { command: ['node', 'nodejs'], entryPath: [`${componentOverride}/scripts/runVitestShards.mjs`] }, set: { ...validation, runnerKnown: '1', workerTool: 'vitest', workerArguments: '1', componentOverride } },
+    { when: { managerNode: ['1'], entryPath: [`${componentOverride}/scripts/runVitestShards.mjs`] }, set: { ...validation, runnerKnown: '1', workerTool: 'vitest', workerArguments: '1', componentOverride } },
+  ]),
   { when: { script: REMOTE_COMMAND_CLASSIFICATION.sourceTestScripts }, set: { runnerKnown: '1' } },
   // Unknown native suites may consume emitted workspace packages. Only proven
   // source-resolving suites skip publication; all runners admit dependencies.
@@ -116,6 +121,18 @@ const COMMAND_RULES = [
   { when: { script: ['check:first-party-plugins:finite', 'check:first-party-plugins:finite:local', 'plugins:aggregate:finite', 'test:migration:bundled-plugin-projections', 'test:migration:governance'] }, set: { ...validation, generatorCheck: '1', componentOverride: 'apps/cli' } },
 ];
 const FINAL_COMMAND_RULES = [
+  { when: { command: ['node', 'nodejs'], entryPath: ['scripts/runVitestShards.mjs'], component: ['apps/ui', 'apps/cli'] }, set: { ...validation, runnerKnown: '1', workerTool: 'vitest', workerArguments: '1' } },
+  { when: { managerNode: ['1'], entryPath: ['scripts/runVitestShards.mjs'], component: ['apps/ui', 'apps/cli'] }, set: { ...validation, runnerKnown: '1', workerTool: 'vitest', workerArguments: '1' } },
+  // These public package scripts expand to the authored source shard runners.
+  // CLI test:unit also runs native consumers and deliberately stays runtime.
+  { when: { component: ['apps/ui'], script: ['test:unit', 'test:unit:local'] }, set: { runnerKnown: '1' } },
+  { when: { component: ['apps/cli'], script: ['test:unit:vitest', 'test:unit:vitest:local'] }, set: { runnerKnown: '1' } },
+  { when: { admissionWrapper: ['1'] }, set: { validation: '1' } },
+  // Test consumers need runtime outputs; their own compiler lanes retain
+  // responsibility for strict checking. Artifact/build consumers stay strict.
+  { when: { nativeTest: ['1'] }, set: { preparationBuildMode: 'qa-runtime' } },
+  { when: { runnerKnown: ['1'] }, set: { preparationBuildMode: 'qa-runtime' } },
+  { when: { family: ['test', 'vitest'] }, set: { preparationBuildMode: 'qa-runtime' } },
   // CLI Vitest global setup compiles the process-custody component with Go.
   { when: { component: ['apps/cli'], workerTool: ['vitest'], generatorCheck: ['0'] }, set: { requiredTools: 'go' } },
   { when: { script: ['types:check'], component: ['apps/docs'] }, set: { ...validation, kind: 'typecheck', workerTool: 'typescript-native' } },
@@ -150,11 +167,11 @@ const FINAL_COMMAND_RULES = [
   { when: { command: ['node', 'nodejs'], entry: ['buildTypeScriptPackageDist.mjs'], component: ['packages/protocol', 'packages/sdk'], project: ['tsconfig.json', './tsconfig.json'], mixedProjects: ['0'] }, set: { heavyClass: 'runtime-build' } },
   { when: { command: ['node', 'nodejs'], entry: ['buildTypeScriptPackageDist.mjs'], noCheck: ['1'] }, set: { heavyClass: 'package-dist' } },
   // Carry the explicit envelope into placement before its payload starts.
-  { when: { command: ['hstack-exec'], entry: ['--heavyweight-admission'] }, set: { heavyClass: 'compilation' } },
+  { when: { admissionWrapper: ['1'] }, set: { heavyClass: 'compilation' } },
   ...Object.keys(HEAVYWEIGHT_MEMORY_KIB).map(heavyClass => ({
-    when: { command: ['hstack-exec'], admissionClass: [heavyClass] }, set: { heavyClass },
+    when: { admissionWrapper: ['1'], admissionClass: [heavyClass] }, set: { heavyClass },
   })),
-  { when: { command: ['hstack-exec'], admissionClass: ['targeted-validation', 'full-validation'] }, set: { heavyClass: 'validation' } },
+  { when: { admissionWrapper: ['1'], admissionClass: ['targeted-validation', 'full-validation'] }, set: { heavyClass: 'validation' } },
   // CLI unit aliases use the same source resolver as direct Vitest. Runtime
   // preparation would build the emitted closure and escalate their parent
   // validation reservation for the rest of the test run.
@@ -193,9 +210,28 @@ function normalizeCommandArguments(commandArgs, cwd) {
   if (args[0] === '--') args = args.slice(1);
   if (args[0]?.startsWith('--script=')) args = ['corepack', 'yarn', '-s', args[0].slice(9), ...args.slice(1)];
   const command = commandBasename(args[0]);
+  if (command === 'hstack-exec' && args[1] === '--heavyweight-admission') {
+    let admissionClass = 'validation';
+    for (let index = 2; index < args.length; index += 1) {
+      const argument = args[index];
+      if (argument === '--') {
+        if (index + 1 < args.length) {
+          const payload = normalizeCommandArguments(args.slice(index + 1), cwd);
+          // Admission owns resources, not the payload's preparation contract.
+          // Only commands the existing policy admits dependencies for are transparent.
+          if (resolveCommandPolicyFacts(payload).bootstrap === '1') {
+            return { ...payload, admissionWrapper: '1', admissionClass };
+          }
+        }
+        break;
+      }
+      if (argument.startsWith('--class=')) admissionClass = argument.slice(8);
+      else if (!/^(?:--(?:admission-root|machine|failure-id)=|--(?:no-wait|exec-admitted)$)/u.test(argument)) break;
+    }
+  }
   const managerIndex = command === 'corepack' ? 1 : 0;
   const manager = commandBasename(args[managerIndex]);
-  let script = '', entry = commandBasename(args[1]), managerCwd = '', managerNode = '0', workspace = '';
+  let script = '', entry = commandBasename(args[1]), managerCwd = '', managerNode = '0', workspace = '', managerEntryIndex = 1;
   if (REMOTE_COMMAND_CLASSIFICATION.packageManagerCommands.includes(manager)) {
     for (let index = managerIndex + 1; index < args.length; index += 1) {
       const arg = args[index];
@@ -204,13 +240,13 @@ function normalizeCommandArguments(commandArgs, cwd) {
       if (arg === 'workspace' && manager === 'yarn') { workspace = args[++index] ?? ''; continue; }
       if (arg === 'run' || arg.startsWith('-')) continue;
       script = arg;
-      if (arg === 'node') { managerNode = '1'; entry = commandBasename(args[index + 1]); }
+      if (arg === 'node') { managerNode = '1'; managerEntryIndex = index + 1; entry = commandBasename(args[managerEntryIndex]); }
       break;
     }
   }
   let stripTypes = args[1] === '--experimental-strip-types' ? '1' : '0';
   let sourceCondition = '0';
-  let entryIndex = stripTypes === '1' ? 2 : 1;
+  let entryIndex = managerNode === '1' ? managerEntryIndex : stripTypes === '1' ? 2 : 1;
   if (command === 'node' || command === 'nodejs') {
     stripTypes = '0';
     entryIndex = 1;
@@ -276,6 +312,7 @@ function normalizeCommandArguments(commandArgs, cwd) {
   }
   return {
     command, script, family: script.split(':', 1)[0], entry, entryPath, managerNode, admissionClass, workspace,
+    admissionWrapper: command === 'hstack-exec' && args[1] === '--heavyweight-admission' ? '1' : '0',
     noCheck,
     hasScript: script ? '1' : '0', nativeTest: args.includes('--test') ? '1' : '0',
     stripTypes, sourceCondition, mode, config: normalizeCommandPath(config), resolverOverride,
@@ -287,8 +324,8 @@ function normalizeCommandArguments(commandArgs, cwd) {
       || args.some(arg => /(?:^|\/)apps\/stack\//u.test(arg.replaceAll('\\', '/'))) ? '1' : '0',
   };
 }
-export function resolveRemoteCommandPolicy(commandArgs, { cwd = '.' } = {}) {
-  const facts = normalizeCommandArguments(commandArgs, cwd);
+function resolveCommandPolicyFacts(inputFacts) {
+  const facts = { ...inputFacts };
   const policy = applyCommandRules(facts, COMMAND_RULES, { ...DEFAULT_COMMAND_POLICY });
   if (facts.managerCwd) {
     const managerCwd = facts.managerCwd.replaceAll('\\', '/');
@@ -306,6 +343,9 @@ export function resolveRemoteCommandPolicy(commandArgs, { cwd = '.' } = {}) {
   facts.packageComponent = facts.component.startsWith('packages/') ? '1' : '0';
   applyCommandRules(facts, FINAL_COMMAND_RULES, policy);
   return { ...policy, component: normalizeCommandPath(facts.component) };
+}
+export function resolveRemoteCommandPolicy(commandArgs, { cwd = '.' } = {}) {
+  return resolveCommandPolicyFacts(normalizeCommandArguments(commandArgs, cwd));
 }
 export function classifyRemoteCommand(commandArgs, options = {}) {
   const policy = resolveRemoteCommandPolicy(commandArgs, options);
@@ -353,7 +393,7 @@ export function renderNativeCommandPolicy() {
     renderShellCommandRules(COMMAND_RULES), '}',
     'native_command_policy_finish() {', renderShellCommandRules(FINAL_COMMAND_RULES), '}',
     'native_package_manager() { case "$1" in ' + REMOTE_COMMAND_CLASSIFICATION.packageManagerCommands.join('|') + ') return 0 ;; *) return 1 ;; esac; }',
-    NATIVE_COMMAND_NORMALIZATION, '',
+    NATIVE_COMMAND_NORMALIZATION,
   ].join('\n');
 }
 
@@ -411,10 +451,44 @@ $native_project_path"
   if [ -z "$native_project_scope" ]; then native_project_scope=$native_scope
   elif [ "$native_project_scope" != "$native_scope" ]; then policy_mixedProjects=1; fi
 }
+native_resolve_admission_payload() {
+  shift
+  resolve_native_command_policy "$@"
+}
+native_try_admission_payload() {
+  shift 2
+  native_wrapper_class=validation
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --class=*) native_wrapper_class=\${1#--class=} ;;
+      --admission-root=*|--machine=*|--failure-id=*|--no-wait|--exec-admitted) ;;
+      --)
+        shift
+        [ "$#" -gt 0 ] || return 1
+        # Positional custody preserves this wrapper's class through recursion.
+        set -- "$native_wrapper_class" "$@"
+        native_resolve_admission_payload "$@"
+        [ "$policy_bootstrap" = 1 ] || return 1
+        policy_admissionWrapper=1
+        policy_admissionClass=$1
+        native_command_policy_finish
+        return 0
+        ;;
+      *) return 1 ;;
+    esac
+    shift
+  done
+  return 1
+}
 resolve_native_command_policy() {
   [ "\${1-}" = -- ] && shift
   case "\${1-}" in --script=*) native_script=\${1#--script=}; shift; [ "\${1-}" = -- ] && shift; set -- corepack yarn -s "$native_script" "$@" ;; esac
   native_command_basename "\${1-}"; policy_command=$native_basename
+  if [ "$policy_command" = hstack-exec ] && [ "\${2-}" = --heavyweight-admission ]; then
+    if native_try_admission_payload "$@"; then return; fi
+    # An unsupported payload retains the original wrapper's policy.
+    native_command_basename "\${1-}"; policy_command=$native_basename
+  fi
   native_command_basename "\${2-}"; policy_entry=$native_basename
   policy_script=; policy_hasScript=0; policy_managerNode=0; policy_stripTypes=0; policy_sourceCondition=0; policy_workspace=
   native_manager_cwd=; native_project=; policy_mode=write
@@ -422,7 +496,9 @@ resolve_native_command_policy() {
   policy_project=; policy_projectPaths=; policy_workerRequest=0
   policy_noCheck=0
   policy_admissionClass=
+  policy_admissionWrapper=0
   if [ "$policy_command" = hstack-exec ] && [ "\${2-}" = --heavyweight-admission ]; then
+    policy_admissionWrapper=1
     policy_admissionClass=validation
     for native_arg in "$@"; do
       case "$native_arg" in --) break ;; --class=*) policy_admissionClass=\${native_arg#--class=} ;; esac
@@ -503,12 +579,14 @@ resolve_native_command_policy() {
         --cwd=*) native_manager_cwd=\${1#--cwd=}; shift ;;
         workspace) if [ "$native_manager" = yarn ]; then shift; policy_workspace=\${1-}; [ "$#" -gt 0 ] && shift; else policy_script=$1; break; fi ;;
         -*) shift ;;
-        *) policy_script=$1; if [ "$1" = node ]; then policy_managerNode=1; native_command_basename "\${2-}"; policy_entry=$native_basename; fi; break ;;
+        *) policy_script=$1; if [ "$1" = node ]; then policy_managerNode=1; native_entry_path=\${2-}; native_command_basename "$native_entry_path"; policy_entry=$native_basename; fi; break ;;
       esac
     done
   fi
   [ -n "$policy_script" ] && policy_hasScript=1
   policy_family=\${policy_script%%:*}
+  native_normalize_path "$native_entry_path"; policy_entryPath=$native_result
+  case "$policy_entryPath" in "$repo_root"/*) policy_entryPath=\${policy_entryPath#"$repo_root"/} ;; esac
   native_command_policy_base
   if [ -n "$native_manager_cwd" ]; then
     case "$native_manager_cwd" in /*) native_normalize_path "$native_manager_cwd" ;; *) native_normalize_path "$policy_component/$native_manager_cwd" ;; esac
@@ -619,13 +697,14 @@ export function buildRemoteExecCommand(
   if (target.platform !== 'windows' && (preparation || admissionClass)) {
     const repoDir = requireRemoteRelativeWorkingDirectory(target, '.');
     const body = ['set -euo pipefail', `cd -- ${posixQuote(repoDir)}`];
+    const defaultBuildMode = preparation?.defaultBuildMode ?? resolveRemoteCommandPolicy(commandArgs, { cwd }).preparationBuildMode;
     const cacheEnv = `env ${posixQuote(`HAPPIER_STACK_PM_CACHE_BASE_DIR=${String(target.cliHomeDir).replace(/[\\/]+$/, '')}/cache`)}`;
     if (preparation?.bootstrap) {
-      body.push(`${cacheEnv} node ./apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.mjs ${posixQuote(`--validation-kind=${preparation.validationKind}`)} ${posixQuote(`--component-relative-dir=${preparation.bootstrapComponentRelativeDir ?? '.'}`)}`);
+      body.push(`${cacheEnv} node ./apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.mjs ${posixQuote(`--validation-kind=${preparation.validationKind}`)} ${posixQuote(`--component-relative-dir=${preparation.bootstrapComponentRelativeDir ?? '.'}`)} ${posixQuote(`--default-build-mode=${defaultBuildMode}`)}`);
     }
     if (preparation?.componentRelativeDir != null) {
       requireRemoteRelativeWorkingDirectory(target, preparation.componentRelativeDir);
-      body.push(`${cacheEnv} node ./apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs ${posixQuote(`--component-relative-dir=${preparation.componentRelativeDir}`)} ${posixQuote(`--validation-kind=${preparation.validationKind}`)}`);
+      body.push(`${cacheEnv} node ./apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs ${posixQuote(`--component-relative-dir=${preparation.componentRelativeDir}`)} ${posixQuote(`--validation-kind=${preparation.validationKind}`)} ${posixQuote(`--default-build-mode=${defaultBuildMode}`)}`);
     }
     if (admissionClass) {
       // Dependency/build lock holders can need admission themselves. Only

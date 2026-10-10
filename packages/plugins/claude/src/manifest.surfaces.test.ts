@@ -50,6 +50,7 @@ describe('Claude session surface declarations', () => {
         expect(getClaudeBackend().surfaces?.externalSession?.sources).toEqual([
             {
                 sourceKind: 'claudeConfig',
+                contentSearch: true,
                 schema: {
                     fields: [
                         { name: 'kind', kind: 'literal', value: 'claudeConfig' },

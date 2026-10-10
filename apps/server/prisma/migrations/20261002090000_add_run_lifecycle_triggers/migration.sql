@@ -5,6 +5,14 @@ ALTER TABLE "AutomationTrigger" ADD COLUMN "sourceRunId" TEXT,
   ADD COLUMN "sourceRunMachineId" TEXT, ADD COLUMN "runLifecycleConfigurationJson" TEXT;
 CREATE INDEX "AutomationTrigger_run_lifecycle_lookup_idx" ON "AutomationTrigger"("sourceRunId", "kind", "deletedAt");
 ALTER TABLE "AutomationRun" ADD COLUMN "causeRunLifecycleEvidenceJson" TEXT;
+ALTER TABLE "AutomationRun" ADD COLUMN "causeOriginRunId" TEXT;
+ALTER TABLE "AutomationRun" ADD CONSTRAINT "AutomationRun_archive_origin_arm_check" CHECK (
+  "causeOriginRunId" IS NULL OR (
+    "originKind" = 'automation' AND "causeKind" IS NOT NULL AND "causeKind" = 'trigger'
+    AND "causeTriggerKind" IS NOT NULL AND "causeTriggerKind" = 'sessionLifecycle'
+    AND "causeSessionLifecycleEvent" IS NOT NULL AND "causeSessionLifecycleEvent" = 'sessionArchived'
+  )
+);
 
 ALTER TABLE "AutomationTrigger" DROP CONSTRAINT "AutomationTrigger_arm_check";
 ALTER TABLE "AutomationTrigger" ADD CONSTRAINT "AutomationTrigger_arm_check" CHECK (((

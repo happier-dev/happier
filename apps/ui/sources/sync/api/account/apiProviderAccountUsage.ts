@@ -1,6 +1,6 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import {
-    serverFetch,
+    createServerFetchForActiveServer,
     type ExpectedActiveServerFetchBasis,
 } from '@/sync/http/client';
 import { HappyError } from '@/utils/errors/errors';
@@ -200,8 +200,9 @@ export async function getProviderAccountUsageSnapshotPlain(
     }>,
 ): Promise<ProviderAccountUsageSnapshotV1 | null> {
     const recordId = parseRecordId(params.recordId);
+    const request = createServerFetchForActiveServer(opts?.expectedActiveServer);
     return await backoff(async () => {
-        const response = await serverFetch(
+        const response = await request(
             `/v4/connect/qualified/provider-account-usage/record?recordId=${encodeURIComponent(recordId)}`,
             {
                 method: 'GET',
@@ -257,8 +258,9 @@ export async function getProviderAccountUsageSnapshotSealed(
     }>,
 ): Promise<EncryptedQualifiedProviderAccountUsageRecordResponse | null> {
     const recordId = parseRecordId(params.recordId);
+    const request = createServerFetchForActiveServer(opts?.expectedActiveServer);
     return await backoff(async () => {
-        const response = await serverFetch(
+        const response = await request(
             `/v4/connect/qualified/provider-account-usage/record?recordId=${encodeURIComponent(recordId)}`,
             {
                 method: 'GET',
@@ -308,8 +310,9 @@ export async function requestProviderAccountUsageSnapshotRefresh(
     }>,
 ): Promise<boolean> {
     const recordId = parseRecordId(params.recordId);
+    const request = createServerFetchForActiveServer(opts?.expectedActiveServer);
     return await backoff(async () => {
-        const response = await serverFetch(
+        const response = await request(
             '/v4/connect/qualified/provider-account-usage/record/refresh',
             {
                 method: 'POST',

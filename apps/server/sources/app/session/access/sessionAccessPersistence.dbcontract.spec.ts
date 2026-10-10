@@ -444,7 +444,7 @@ describe("Session access persistence provider contract", () => {
         const suffix = randomUUID();
         const [owner, collaborator] = await Promise.all([
             db.account.create({ data: { publicKey: `restricted-owner-${suffix}`, encryptionMode: "plain" } }),
-            db.account.create({ data: { publicKey: `restricted-collaborator-${suffix}`, encryptionMode: "plain" } }),
+            db.account.create({ data: { publicKey: `restricted-collaborator-${suffix}`, encryptionMode: "e2ee" } }),
         ]);
         const teamIds: string[] = [];
         let sessionId: string | null = null;

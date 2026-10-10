@@ -106,6 +106,7 @@ import { createBestEffortCleanupDirectory } from '@/daemon/connectedServices/mat
 import { isLegacyServiceKeyedCompatibilityCatalogAgent } from '@/agent/catalog/registry';
 import {
   HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT_ENV_KEY,
+  HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY,
 } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 import {
   applyConnectedServiceStateSharingDescriptor,
@@ -779,6 +780,7 @@ export async function prepareForegroundAgentRuntimeAdmission(
       activeProviderLaunch
         ? activeProviderLaunch.connectedServices
         : request.connectedServices ?? null;
+    let materializedConnectedServices = effectiveConnectedServices;
     const legacyConnectedServiceCatalogAgent =
       isLegacyServiceKeyedCompatibilityCatalogAgent(
         lease.registry.contributes.catalogEntriesById[request.agentId],
@@ -931,6 +933,8 @@ export async function prepareForegroundAgentRuntimeAdmission(
         });
       const daemonSpawnHooks =
         await dependencies.resolveDaemonSpawnHooks!(request.agentId);
+      materializedConnectedServices = connectedServiceAuth?.connectedServicesBindings
+        ?? effectiveConnectedServices;
       const childEnvironment = await resolveSpawnChildEnvironment({
         happyHomeDir: configuration.happyHomeDir,
         pluginRuntimeRegistry: lease.registry,
@@ -1777,6 +1781,18 @@ export async function prepareForegroundAgentRuntimeAdmission(
               unsetEnvironmentVariableNames:
                 mergedEnvironment.unsetEnvironmentVariableNames,
               sensitiveEnvironmentVariableNames,
+              ...(materializedConnectedServices && sessionPurposeBindingLease
+                ? {
+                    connectedServiceRuntimeTarget: {
+                      materializationKey: request.sessionId,
+                      connectedServicesBindingsRaw: materializedConnectedServices,
+                      connectedServiceSelectionsEnvRaw:
+                        connectedServiceEnvironment[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY],
+                      sessionDirectory: request.directory,
+                      exactPurposeBindingSubjectId: sessionPurposeBindingLease.subjectId,
+                    },
+                  }
+                : {}),
               invocationContext: Object.freeze({
                 cwd: request.directory,
                 environment: Object.freeze({}),

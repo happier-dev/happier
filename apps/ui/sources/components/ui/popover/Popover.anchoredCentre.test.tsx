@@ -73,7 +73,7 @@ async function renderCentredPopover(anchor: AnchorRect, content: Readonly<{ widt
         </PopoverPortalTargetContextProvider>,
     );
     await act(async () => {
-        await flushHookEffects({ cycles: 1, turns: 6, frames: 1 });
+        await flushHookEffects({ cycles: 2, turns: 6, frames: 1 });
     });
     const contentView = findPopoverContentView(screen, 'TooltipBubble');
     expect(contentView).toBeTruthy();
@@ -82,7 +82,7 @@ async function renderCentredPopover(anchor: AnchorRect, content: Readonly<{ widt
         contentView?.props?.onLayout?.({
             nativeEvent: { layout: { x: 0, y: 0, width: content.width + padding * 2, height: content.height + padding * 2 } },
         });
-        await flushHookEffects({ cycles: 1, turns: 6, frames: 1 });
+        await flushHookEffects({ cycles: 2, turns: 6, frames: 1 });
     });
     const style = flattenStyle(findPopoverContentView(screen, 'TooltipBubble')?.props?.style);
     const visualLeft = readNumber(style, 'left') + padding;

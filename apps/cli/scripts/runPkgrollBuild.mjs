@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -221,6 +222,33 @@ function isDeclarationOutputPath(inputPath) {
   return /\.d\.(?:c|m)?ts$/i.test(inputPath);
 }
 
+function supplyEsmCommonJsDirname(outputDirectory, includeJs) {
+  const prelude = [
+    "import { dirname as __happierPkgrollPathDirname } from 'node:path';",
+    "import { fileURLToPath as __happierPkgrollFileURLToPath } from 'node:url';",
+    'const __happierPkgrollDirname = __happierPkgrollPathDirname(__happierPkgrollFileURLToPath(import.meta.url));',
+    '',
+  ].join('\n');
+  for (const entry of readdirSync(outputDirectory, { withFileTypes: true })) {
+    const outputPath = join(outputDirectory, entry.name);
+    if (entry.isDirectory()) {
+      supplyEsmCommonJsDirname(outputPath, includeJs);
+      continue;
+    }
+    if (!entry.isFile() || !(entry.name.endsWith('.mjs') || (includeJs && entry.name.endsWith('.js')))) continue;
+    const source = readFileSync(outputPath, 'utf8');
+    if (!source.includes('__happierPkgrollDirname')) continue;
+    const newline = source.indexOf('\n');
+    const headerEnd = source.startsWith('#!') ? (newline < 0 ? source.length : newline + 1) : 0;
+    const header = source.slice(0, headerEnd);
+    if (source.slice(headerEnd).startsWith(prelude)) continue;
+    // Pkgroll shares code across entries: supply the binding in the actual
+    // generated chunks, not just the declared entry modules. Keep hashbangs
+    // first and retain the documented Node 20.0 floor.
+    writeFileSync(outputPath, header + (header && !header.endsWith('\n') ? '\n' : '') + prelude + source.slice(headerEnd));
+  }
+}
+
 export function resolvePkgrollCliPath() {
   return require.resolve('pkgroll/dist/cli.mjs');
 }
@@ -298,10 +326,18 @@ async function runPkgrollBuildInStage(options = {}) {
   const physicalStagingDir = realpathSync.native(stagingDir);
   const stageManifestPath = join(physicalStagingDir, 'package.json');
   const srcdist = `${toSlashNormalizedRelativePath(physicalStagingDir, sourceDir)}:.`;
+  const runtimeInputs = inputPaths.filter((inputPath) => !isDeclarationOutputPath(inputPath));
+  const bundlesPasswordSodium = Object.prototype.hasOwnProperty.call(
+    buildManifest.devDependencies ?? {}, 'libsodium-wrappers-sumo',
+  );
+  const esmInputs = bundlesPasswordSodium ? runtimeInputs.filter((inputPath) =>
+    inputPath.endsWith('.mjs') || (inputPath.endsWith('.js') && buildManifest.type === 'module'),
+  ) : [];
   const inputGroups = [
-    inputPaths.filter((inputPath) => !isDeclarationOutputPath(inputPath)),
-    // Runtime consumers need executable bytes. Public package publication
-    // retains declaration generation and its TypeScript inference/diagnostics.
+    ...(bundlesPasswordSodium
+      ? [esmInputs, runtimeInputs.filter((inputPath) => !esmInputs.includes(inputPath))]
+      : [runtimeInputs]),
+    // Runtime consumers need executable bytes. Public package publication retains declarations.
     ...(resolveWorkspaceBuildMode({ env }) === 'strict'
       ? [inputPaths.filter(isDeclarationOutputPath)]
       : []),
@@ -313,6 +349,12 @@ async function runPkgrollBuildInStage(options = {}) {
     manifestWritten = true;
     for (const inputGroup of inputGroups) {
       const pkgrollArgs = [pkgrollCliPath, '--packagejson=false', '--srcdist', srcdist];
+      if (inputGroup === esmInputs) {
+        // Inlined sodium uses CommonJS's module-local directory. Pkgroll
+        // already shims require, but leaves this global unresolved in ESM.
+        // Keep CJS's native directory semantics untouched.
+        pkgrollArgs.push('--define.__dirname=__happierPkgrollDirname');
+      }
       for (const inputPath of inputGroup) {
         pkgrollArgs.push('--input', inputPath);
       }
@@ -336,6 +378,9 @@ async function runPkgrollBuildInStage(options = {}) {
       }
       if (result.status !== 0) {
         throw new Error(`pkgroll exited without success (status=${result.status ?? 'null'})`);
+      }
+      if (inputGroup === esmInputs) {
+        supplyEsmCommonJsDirname(physicalStagingDir, buildManifest.type === 'module');
       }
     }
   } finally {

@@ -605,6 +605,7 @@ describe('ActionSpec-generated plugin action types', () => {
     expect(PublicActionIdSchema.safeParse('ui.current_context.read').success).toBe(true);
     expect(PublicActionIdSchema.safeParse('devices.simulator.input.orientation').success).toBe(false);
     expect(PublicActionIdSchema.safeParse('approval.request.decide').success).toBe(true);
+    expect(PublicActionIdSchema.safeParse('session.permission.respond').success).toBe(true);
     expect(PublicActionIdSchema.safeParse('plugins.install').success).toBe(false);
     expect(SignedRootActionIdSchema.safeParse('approval.request.decide').success).toBe(true);
     expect(SignedRootActionIdSchema.safeParse('plugins.install').success).toBe(true);
@@ -625,7 +626,10 @@ describe('ActionSpec-generated plugin action types', () => {
     expectTypeOf<Extract<PublicActionId, 'sessions.external.materialize.start'>>().toEqualTypeOf<never>();
     expectTypeOf<Extract<PublicActionId, 'plugins.permissions.grants.revoke'>>().toEqualTypeOf<never>();
     expectTypeOf<Extract<PublicActionId, 'devices.simulator.input.orientation'>>().toEqualTypeOf<never>();
-    expectTypeOf<Extract<PublicActionId, 'approval.request.decide'>>().toEqualTypeOf<'approval.request.decide'>();
+    expectTypeOf<Extract<PublicActionId, 'approval.request.decide'>>()
+      .toEqualTypeOf<'approval.request.decide'>();
+    expectTypeOf<Extract<PublicActionId, 'session.permission.respond'>>()
+      .toEqualTypeOf<'session.permission.respond'>();
     expectTypeOf<Extract<PublicActionId, 'plugins.install'>>().toEqualTypeOf<never>();
     expectTypeOf<Extract<PublicActionId, 'identity.providers.create'>>().toEqualTypeOf<never>();
     expectTypeOf<Extract<PublicActionId, 'identity.providers.list'>>()
@@ -653,9 +657,9 @@ describe('ActionSpec-generated plugin action types', () => {
       ...apiSpawnInput,
       executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
     }).success).toBe(false);
-    // @ts-expect-error API callers cannot supply host-owned execution placement.
     const callerSuppliedTarget: PublicActionInputById['session.spawn_new'] = {
       ...apiSpawnInput,
+      // @ts-expect-error API callers cannot supply host-owned execution placement.
       executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
     };
     // @ts-expect-error CLI and other canonical Action callers still supply executionTarget.

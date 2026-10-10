@@ -34,6 +34,59 @@ describe('TokenStorage (web) server-scoped credentials', () => {
         else process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = previousStorageScope;
     });
 
+    it('restores the previous exact credential bytes after an admitted write', async () => {
+        const local = installLocalStorageMock();
+        restoreLocalStorage = local.restore;
+        const { TokenStorage } = await import('./tokenStorage');
+        const endpoint = 'https://rollback-storage.test';
+        const target = { serverId: 'srv_rollback_storage' };
+        expect(await TokenStorage.setCredentialsForServerUrl(endpoint, target, { token: 'previous' })).toBe(true);
+        const before = new Map(local.store);
+        const receipt = await TokenStorage.setCredentialsForServerUrlWithRollback(endpoint, target, { token: 'candidate' });
+        if (!receipt) throw new Error('Expected admitted credential write');
+        expect(await receipt.rollback()).toBe(true);
+        expect(local.store).toEqual(before);
+    });
+
+    it.each(['read', 'remove', 'restore'] as const)('surfaces an actual rollback storage %s failure', async (operation) => {
+        const local = installLocalStorageMock();
+        restoreLocalStorage = local.restore;
+        const { TokenStorage } = await import('./tokenStorage');
+        const endpoint = 'https://rollback-storage-failure.test';
+        const target = { serverId: 'srv_rollback_storage_failure' };
+        if (operation === 'restore') {
+            expect(await TokenStorage.setCredentialsForServerUrl(endpoint, target, { token: 'previous' })).toBe(true);
+        }
+        const receipt = await TokenStorage.setCredentialsForServerUrlWithRollback(endpoint, target, { token: 'candidate' });
+        if (!receipt) throw new Error('Expected admitted credential write');
+        const beforeRollback = new Map(local.store);
+        const failure = new Error('Device credential storage unavailable');
+        if (operation === 'read') local.getItemMock.mockImplementation(() => { throw failure; });
+        if (operation === 'remove') local.removeItemMock.mockImplementation(() => { throw failure; });
+        if (operation === 'restore') local.setItemMock.mockImplementation(() => { throw failure; });
+        await expect(receipt.rollback()).rejects.toBe(failure);
+        expect(local.store).toEqual(beforeRollback);
+    });
+
+    it('does not write during rollback when a newer same-scope writer owns the credential', async () => {
+        const local = installLocalStorageMock();
+        restoreLocalStorage = local.restore;
+        const { TokenStorage } = await import('./tokenStorage');
+        const endpoint = 'https://rollback-successor.test';
+        const target = { serverId: 'srv_rollback_successor' };
+        const receipt = await TokenStorage.setCredentialsForServerUrlWithRollback(endpoint, target, { token: 'candidate' });
+        if (!receipt) throw new Error('Expected admitted credential write');
+        expect(await TokenStorage.setCredentialsForServerUrl(endpoint, target, { token: 'successor' })).toBe(true);
+        const beforeRollback = new Map(local.store);
+        local.setItemMock.mockClear();
+        local.removeItemMock.mockClear();
+        await receipt.rollback();
+        expect(local.store).toEqual(beforeRollback);
+        expect(local.setItemMock).not.toHaveBeenCalled();
+        expect(local.removeItemMock).not.toHaveBeenCalled();
+        expect(await TokenStorage.getCredentialsForServerUrl(endpoint, target)).toEqual({ token: 'successor' });
+    });
+
     it('keeps credentials separate per server URL', async () => {
         restoreLocalStorage = installLocalStorageMock().restore;
 

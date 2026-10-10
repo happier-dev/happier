@@ -1,12 +1,16 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createStore } from 'zustand/vanilla';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
-import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
-import { createMessagesDomain } from './messages';
+import { storage } from '@/sync/domains/state/storageStore';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { activatePendingQueueScope } from '../../engine/pending/pendingQueueV2.testHelpers';
 
 let activeServerId = '';
+// Keep one real Sync bridge for this store suite; cases reset state, not the
+// process module graph.
+await loadSyncSingletonForTests();
 
 function withSessionListRows(rows: Record<string, unknown>) {
     return {
@@ -16,28 +20,8 @@ function withSessionListRows(rows: Record<string, unknown>) {
 }
 
 function createHarness(initial: any) {
-    const state: any = {
-        sessions: {},
-        sessionPending: {},
-        sessionMessages: {},
-        ...withSessionListRows({
-            }),
-        sessionListRowsByServerId: {},
-        sessionListIndexByServerId: {},
-        concurrentSessionListCacheByServerId: {},
-        machines: {},
-        machineDisplayById: {},
-        profile: { id: 'account_a' },
-        settings: {},
-        getProjectForSession: () => null,
-        ...initial,
-    };
-
-    const store = createStore<typeof state>(() => state);
-    const get = store.getState;
-    const domain = createMessagesDomain({ get, set: store.setState });
-    store.setState({ ...domain, ...initial });
-    return { get, domain };
+    storage.setState(initial);
+    return { get: storage.getState, domain: storage.getState() };
 }
 
 function buildStreamSegmentMeta(updatedAtMs: number) {
@@ -54,9 +38,14 @@ function buildStreamSegmentMeta(updatedAtMs: number) {
 }
 
 beforeEach(async () => {
-    await upsertAndActivateServer({ serverUrl: 'https://example.com', name: 'Message Home' });
+    storage.setState(storage.getInitialState(), true);
+    await activatePendingQueueScope({ serverId: 'server-active', accountId: 'account_a' });
     activeServerId = getActiveServerSnapshot().serverId;
     syncPerformanceTelemetry.configure({ enabled: false });
+});
+afterEach(() => {
+    syncPerformanceTelemetry.configure({ enabled: false });
+    storage.setState(storage.getInitialState(), true);
 });
 
 describe('messages domain: ordering', () => {
@@ -634,7 +623,8 @@ describe('messages domain: ordering', () => {
         const thinkingId = get().sessionMessages.s1.latestThinkingMessageId;
         expect(typeof thinkingId).toBe('string');
         expect(thinkingId).not.toHaveLength(0);
-        const thinkingMessage = get().sessionMessages.s1.messagesById[thinkingId!] as any;
+        if (thinkingId === null) throw new Error('Thinking message must have a stable id');
+        const thinkingMessage = get().sessionMessages.s1.messagesById[thinkingId] as any;
         expect(thinkingMessage?.kind).toBe('agent-text');
         expect(thinkingMessage?.isThinking).toBe(true);
         expect(get().sessionMessages.s1.latestThinkingMessageActivityAtMs).toBe(1_000);
@@ -687,8 +677,10 @@ describe('messages domain: ordering', () => {
         expect(get().sessionMessages.s1.latestThinkingMessageId).toBe(thinkingId);
         expect(get().sessionMessages.s1.latestThinkingMessageActivityAtMs).toBe(3_000);
         expect(get().sessionMessages.s1.messagesById).not.toBe(beforeRevision);
-        expect(beforeRevision[thinkingId]).toBe(thinkingMessage);
-        expect(beforeRevision[thinkingId].text).toBe('step 1');
+        const previousThinkingMessage = beforeRevision[thinkingId];
+        expect(previousThinkingMessage).toBe(thinkingMessage);
+        if (previousThinkingMessage.kind !== 'agent-text') throw new Error('Thinking message must remain agent text');
+        expect(previousThinkingMessage.text).toBe('step 1');
 
         nowSpy.mockRestore();
     });
@@ -837,6 +829,7 @@ describe('messages domain: ordering', () => {
             }),
         });
 
+        syncPerformanceTelemetry.configure({ enabled: true });
         domain.applyMessages('s1', [
             {
                 id: 'm1001',
@@ -857,6 +850,8 @@ describe('messages domain: ordering', () => {
         expect(existingIds).toHaveLength(messageCount);
         expect(messagesById).not.toHaveProperty(appendedId);
         for (const id of existingIds) expect(transcript.messagesById[id]).toBe(messagesById[id]);
+        const indexEvent = syncPerformanceTelemetry.snapshot().events.find((candidate) => candidate.name === 'sync.store.messages.index');
+        expect(indexEvent?.fields.processed).toBe(1);
     });
 
     it('keeps transcript store references stable for empty message updates without agent state', () => {

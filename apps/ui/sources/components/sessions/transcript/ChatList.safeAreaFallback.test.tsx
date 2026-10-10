@@ -2,8 +2,10 @@ import * as React from 'react';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
+import { createSessionFixture, createTestSessionTranscriptSource, renderWithSessionTranscriptSource, standardCleanup } from '@/dev/testkit';
 import { installTranscriptCommonModuleMocks, resetTranscriptCommonModuleMockState } from './transcriptTestHelpers';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -30,30 +32,9 @@ function unwrapStyle(style: unknown): Record<string, unknown> | null {
     return typeof style === 'object' ? (style as Record<string, unknown>) : null;
 }
 
-function extractFirstNumericHeight(node: unknown): number | null {
-    if (!node || typeof node !== 'object') return null;
-    const element = node as { type?: unknown; props?: any };
-    const style = unwrapStyle(element.props?.style);
-    const height = style?.height;
-    if (typeof height === 'number') return height;
-    const children = React.Children.toArray(element.props?.children ?? []);
-    for (const child of children) {
-        const found = extractFirstNumericHeight(child);
-        if (typeof found === 'number') return found;
-    }
-    return null;
-}
-
 function renderReactElementCandidate(candidate: unknown): React.ReactNode {
-    if (!candidate || typeof candidate !== 'object') return candidate as any as React.ReactNode;
-    const element = candidate as any;
-    if (typeof element.type === 'function') {
-        return element.type(element.props) as React.ReactNode;
-    }
-    if (typeof element.type === 'object' && typeof element.type.type === 'function') {
-        return element.type.type(element.props) as React.ReactNode;
-    }
-    return candidate as React.ReactNode;
+    if (typeof candidate === 'function') return React.createElement(candidate as React.ComponentType);
+    return React.isValidElement(candidate) ? candidate : null;
 }
 
 installTranscriptCommonModuleMocks({
@@ -68,26 +49,7 @@ installTranscriptCommonModuleMocks({
             ActivityIndicator: () => React.createElement('ActivityIndicator'),
         });
     },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            useSession: () => null,
-            useSessionTranscriptIds: () => ({ ids: [], isLoaded: true }),
-            useSessionMessagesById: () => ({}),
-            useForkedTranscriptSnapshot: () => null,
-            useSessionPendingMessages: () => ({ messages: [], discarded: [], isLoaded: true }),
-            useSessionActionDrafts: () => ([]),
-            useSessionLatestThinkingMessageId: () => null,
-            useSessionLatestThinkingMessageActivityAtMs: () => null,
-            useMessage: () => null,
-            useSetting: () => undefined,
-        });
-    },
 });
-
-vi.mock('@/utils/platform/responsive', () => ({
-    useHeaderHeight: () => 40,
-}));
 
 vi.mock('@legendapp/list/react-native', () => ({
     LegendList: React.forwardRef((props: any, ref: any) => {
@@ -108,16 +70,10 @@ vi.mock('@legendapp/list/react-native', () => ({
         };
         if (typeof ref === 'function') ref(instance);
         else if (ref && typeof ref === 'object') ref.current = instance;
-        // The visual-top slot on a newest-first frame is ListHeaderComponent; probe both slots
-        // for the transcript gutter spacer height.
-        for (const slot of [props.ListHeaderComponent, props.ListFooterComponent]) {
-            const rendered = renderReactElementCandidate(slot ?? null);
-            const height = extractFirstNumericHeight(rendered);
-            if (typeof height === 'number' && capturedHeaderSpacerHeight === null) {
-                capturedHeaderSpacerHeight = height;
-            }
-        }
-        return React.createElement('LegendList', props);
+        // Render the native recycler's supplied slots normally: they may own hooks.
+        return React.createElement('LegendList', props,
+            renderReactElementCandidate(props.ListHeaderComponent),
+            renderReactElementCandidate(props.ListFooterComponent));
     }),
 }));
 
@@ -126,36 +82,8 @@ vi.mock('react-native-safe-area-context', () => ({
     initialWindowMetrics: { insets: { top: 22, bottom: 0, left: 0, right: 0 } },
 }));
 
-vi.mock('@/components/sessions/chatListItems', () => ({
-    buildChatListItems: () => [],
-    buildChatListItemsCached: () => ({ cache: null, items: [] }),
-}));
-
-vi.mock('./ChatFooter', () => ({
-    ChatFooter: () => React.createElement('ChatFooter'),
-}));
-
-vi.mock('./MessageView', () => ({
-    MessageView: () => React.createElement('MessageView'),
-    MessageViewWithSessionCommon: () => React.createElement('MessageView'),
-}));
-
-vi.mock('@/components/sessions/transcript/turns/TurnView', () => ({
-    TurnView: () => React.createElement('TurnView'),
-    TurnViewWithSessionCommon: () => React.createElement('TurnView'),
-}));
-
-vi.mock('@/components/sessions/pending/PendingMessagesTranscriptBlock', () => ({
-    PendingMessagesTranscriptBlock: () => React.createElement('PendingMessagesTranscriptBlock'),
-}));
-
-vi.mock('@/components/sessions/actions/SessionActionDraftCard', () => ({
-    SessionActionDraftCard: () => React.createElement('SessionActionDraftCard'),
-}));
-
-vi.mock('@/sync/domains/state/agentStateCapabilities', () => ({
-    getPermissionsInUiWhileLocal: () => ({}),
-}));
+installDisconnectedServerSocketBoundary();
+await loadSyncSingletonForTests();
 
 describe('ChatList safe area', () => {
     beforeEach(() => {
@@ -163,24 +91,23 @@ describe('ChatList safe area', () => {
     });
 
     afterEach(() => {
+        standardCleanup();
         resetTranscriptCommonModuleMockState();
     });
 
     it('uses a compact transcript gutter instead of chrome-safe area inside the list header', async () => {
         const { ChatList } = await import('./ChatList');
 
-        const session = {
-            id: 'session-1',
-            metadata: null,
-            accessLevel: null,
-            canApprovePermissions: true,
-            active: true,
-            presence: null,
-            agentState: null,
-            thinking: null,
-        } as any;
-
-        await renderScreen(<ChatList session={session} sessionSurfaceKey={JSON.stringify(['test-server', 'session-1'])} />);
+        const session = createSessionFixture({ id: 'session-1', metadata: null, active: true });
+        const screen = await renderWithSessionTranscriptSource(
+            <ChatList session={session} sessionSurfaceKey={JSON.stringify(['test-server', 'session-1'])} />,
+            createTestSessionTranscriptSource({ sessionId: session.id, serverId: 'test-server' }),
+        );
+        const list = screen.findByType('LegendList');
+        const spacer = list.findAll(node => typeof node.type === 'string'
+            && typeof unwrapStyle(node.props.style)?.height === 'number')[0];
+        capturedHeaderSpacerHeight = typeof unwrapStyle(spacer?.props.style)?.height === 'number'
+            ? unwrapStyle(spacer?.props.style)!.height as number : null;
         expect(capturedHeaderSpacerHeight).toBe(12);
     });
 });

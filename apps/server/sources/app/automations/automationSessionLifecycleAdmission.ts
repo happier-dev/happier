@@ -48,6 +48,8 @@ function buildLifecycleCause(params: Readonly<{
         evidence: {
             event: occurrence.event,
             sourceSessionId: occurrence.sourceSessionId,
+            ...(occurrence.event === "sessionArchived" && occurrence.originRunId !== undefined
+                ? { originRunId: occurrence.originRunId } : {}),
             ...("sourceTurnId" in occurrence ? { sourceTurnId: occurrence.sourceTurnId } : {}),
             ...(occurrence.event === "userActionRequired"
                 ? { requestId: occurrence.requestId, requestKind: occurrence.requestKind }

@@ -123,11 +123,24 @@ describe('Codex session handoff production reachability', () => {
           home: 'user',
           homePath: codexHome,
         },
+        runtimeDescriptorV1: {
+          v: 1,
+          agentId: 'codex',
+          agent: {
+            backendMode: 'appServer',
+            providerSessionId: 'thread-reachable',
+          },
+        },
         resume: {
           directory: '/repo',
           agent: 'codex',
           resume: 'thread-reachable',
-          codexBackendMode: 'appServer',
+          agentTarget: {
+            kind: 'agent',
+            identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+          },
+          transcriptStorage: 'direct',
+          approvedNewDirectoryCreation: true,
           environmentVariables: {
             CODEX_HOME: codexHome,
           },

@@ -1,147 +1,171 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import http from 'node:http';
+import { resolve } from 'node:path';
 
-import type { CommandContext } from './commandRegistry';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const { authHandlerSpy, homeHandlerSpy, pluginsHandlerSpy, setupHandlerSpy } = vi.hoisted(() => ({
-  authHandlerSpy: vi.fn(async (_context: CommandContext) => {}),
-  homeHandlerSpy: vi.fn(async (_context: CommandContext) => {}),
-  pluginsHandlerSpy: vi.fn(async (_context: CommandContext) => {}),
-  setupHandlerSpy: vi.fn(async (_context: CommandContext) => {}),
-}));
-
-vi.mock('@/cli/commandRegistry', () => ({
-  commandRegistry: {
-    auth: authHandlerSpy,
-    home: homeHandlerSpy,
-    plugins: pluginsHandlerSpy,
-    setup: setupHandlerSpy,
-  },
-  ensureMergedAgentCommandRegistryLoaded: vi.fn(async () => {}),
-  findCommandDispatchDescriptor: vi.fn((command: string) => {
-    const handler = command === 'auth'
-      ? authHandlerSpy
-      : command === 'home'
-        ? homeHandlerSpy
-        : command === 'plugins'
-          ? pluginsHandlerSpy
-          : command === 'setup'
-            ? setupHandlerSpy
-            : null;
-    if (!handler) return null;
-    return {
-      id: command,
-      command,
-      handler,
-    };
-  }),
-  resolveAdmittedActionCliCommand: vi.fn(async () => null),
-  resolvePluginCommandTmuxMode: vi.fn(() => null),
-}));
+import { configuration } from '@/configuration';
+import {
+  withConfiguredDaemonTestHome,
+  writeDaemonStateFixture,
+} from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
+import { PLUGIN_DEVELOPMENT_CONTROL_PATH } from '@/plugins/daemon/controlRoutes';
+import type { DaemonPluginDevelopmentControlResult } from '@/plugins/daemon/developmentRoots';
 
 import { dispatchCli } from './dispatch';
 
-describe('dispatchCli plugins dev cancellation', () => {
-  beforeEach(() => {
-    authHandlerSpy.mockClear();
-    homeHandlerSpy.mockClear();
-    pluginsHandlerSpy.mockClear();
-    setupHandlerSpy.mockClear();
-  });
-
-  it('owns an interrupt signal for the long-running static development command', async () => {
-    const sigintListenersBefore = process.listenerCount('SIGINT');
-    const sigtermListenersBefore = process.listenerCount('SIGTERM');
-    pluginsHandlerSpy.mockImplementationOnce(async (context) => {
-      if (!context?.signal || context.signal.aborted) return;
-      await new Promise<void>((resolveAbort) => {
-        context.signal?.addEventListener('abort', () => resolveAbort(), { once: true });
-      });
-    });
-    let settled = false;
-    const command = dispatchCli({
-      args: ['plugins', 'dev', '.'],
-      rawArgv: ['happier', 'plugins', 'dev', '.'],
-      terminalRuntime: null,
-    }).then(() => {
-      settled = true;
-    });
-
-    try {
-      await vi.waitFor(() => expect(pluginsHandlerSpy).toHaveBeenCalled());
-      await Promise.resolve();
-      expect(settled).toBe(false);
-      process.emit('SIGINT');
-      await expect(command).resolves.toBeUndefined();
-      expect(settled).toBe(true);
-      expect(process.listenerCount('SIGINT')).toBe(sigintListenersBefore);
-      expect(process.listenerCount('SIGTERM')).toBe(sigtermListenersBefore);
-    } finally {
-      if (!settled) {
-        process.emit('SIGINT');
-        await command;
+// Only the daemon's HTTP peer is simulated. Dispatch, command admission,
+// persisted daemon discovery and the development command remain real.
+async function withDevelopmentDaemon(
+  run: (context: { registeredRoots: string[] }) => Promise<void>,
+): Promise<void> {
+  await withConfiguredDaemonTestHome({ prefix: 'happier-dispatch-development-' }, async ({ homeDir }) => {
+    const registeredRoots: string[] = [];
+    const token = 'development-control-fixture';
+    const server = http.createServer(async (request, response) => {
+      if (request.method !== 'POST' || request.headers['x-happier-daemon-token'] !== token) {
+        response.writeHead(401).end();
+        return;
       }
+      response.setHeader('content-type', 'application/json');
+      if (request.url === '/ping') {
+        response.end(JSON.stringify({ ok: true }));
+        return;
+      }
+      if (request.url === PLUGIN_DEVELOPMENT_CONTROL_PATH) {
+        const chunks: Buffer[] = [];
+        for await (const chunk of request) chunks.push(Buffer.from(chunk));
+        const body: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        if (!body || typeof body !== 'object' || !('kind' in body) || body.kind !== 'registerExplicit'
+          || !('rootPath' in body) || typeof body.rootPath !== 'string') {
+          response.writeHead(400).end(JSON.stringify({ error: 'invalid development request' }));
+          return;
+        }
+        registeredRoots.push(body.rootPath);
+        const result = { kind: 'status', status: { roots: [], plugins: [] } } satisfies DaemonPluginDevelopmentControlResult;
+        response.end(JSON.stringify(result));
+        return;
+      }
+      response.writeHead(404).end();
+    });
+    try {
+      await new Promise<void>((ready, reject) => {
+        server.once('error', reject);
+        server.listen(0, '127.0.0.1', ready);
+      });
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Missing daemon fixture address');
+      await writeDaemonStateFixture(homeDir, configuration.activeServerId, {
+        pid: process.pid,
+        httpPort: address.port,
+        startedWithCliVersion: configuration.currentCliVersion,
+        controlToken: token,
+      });
+      await run({ registeredRoots });
+    } finally {
+      await new Promise<void>((closed, reject) => server.close((error) => error ? reject(error) : closed()));
     }
   });
+}
 
-  it.each([
-    ['auth', authHandlerSpy],
-    ['setup', setupHandlerSpy],
-    ['home', homeHandlerSpy],
-  ] as const)('owns and cleans up an interrupt signal for %s commands', async (root, handler) => {
-    const sigintListenersBefore = process.listenerCount('SIGINT');
-    const sigtermListenersBefore = process.listenerCount('SIGTERM');
-    handler.mockImplementationOnce(async (context) => {
-      await new Promise<void>((resolveAbort) => {
-        context.signal?.addEventListener('abort', () => resolveAbort(), { once: true });
+describe('dispatchCli command cancellation', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each(['SIGINT', 'SIGTERM'] as const)('stops the real development command on %s and releases its listeners', async (interrupt) => {
+    const before = { SIGINT: process.listenerCount('SIGINT'), SIGTERM: process.listenerCount('SIGTERM') };
+    await withDevelopmentDaemon(async ({ registeredRoots }) => {
+      let settled = false;
+      let resolveOutput!: () => void;
+      const printed = new Promise<void>((ready) => { resolveOutput = ready; });
+      vi.spyOn(console, 'log').mockImplementation(() => {
+        if (registeredRoots.length > 0) resolveOutput();
+      });
+      const command = dispatchCli({
+        args: ['plugins', 'dev', '.'],
+        rawArgv: ['happier', 'plugins', 'dev', '.'],
+        terminalRuntime: null,
+      }).then(() => { settled = true; });
+      try {
+        await Promise.race([printed, command.then(() => { throw new Error('Development command stopped before waiting'); })]);
+        expect(registeredRoots).toEqual([resolve('.')]);
+        expect(settled).toBe(false);
+        process.emit(interrupt);
+        await expect(command).resolves.toBeUndefined();
+        expect(process.listenerCount('SIGINT')).toBe(before.SIGINT);
+        expect(process.listenerCount('SIGTERM')).toBe(before.SIGTERM);
+      } finally {
+        if (!settled) {
+          process.emit(interrupt);
+          await command;
+        }
+      }
+    });
+  });
+
+  it.each(['auth', 'setup', 'home'] as const)('owns interrupt listeners while the real %s command runs and releases them', async (root) => {
+    const before = { SIGINT: process.listenerCount('SIGINT'), SIGTERM: process.listenerCount('SIGTERM') };
+    let observedOwnedListeners = false;
+    vi.spyOn(console, 'log').mockImplementation(() => {
+      observedOwnedListeners ||= process.listenerCount('SIGINT') > before.SIGINT
+        && process.listenerCount('SIGTERM') > before.SIGTERM;
+    });
+    await withConfiguredDaemonTestHome({ prefix: 'happier-dispatch-command-help-' }, async () => {
+      await dispatchCli({
+        args: [root, '--help'],
+        rawArgv: ['happier', root, '--help'],
+        terminalRuntime: null,
       });
     });
-    const command = dispatchCli({
-      args: [root],
-      rawArgv: ['happier', root],
-      terminalRuntime: null,
-    });
-
-    await vi.waitFor(() => expect(handler).toHaveBeenCalledOnce());
-    const context = handler.mock.calls[0]?.[0];
-    expect(context?.signal).toBeDefined();
-    expect(context?.signal?.aborted).toBe(false);
-    process.emit('SIGTERM');
-
-    await expect(command).resolves.toBeUndefined();
-    expect(context?.signal?.aborted).toBe(true);
-    expect(process.listenerCount('SIGINT')).toBe(sigintListenersBefore);
-    expect(process.listenerCount('SIGTERM')).toBe(sigtermListenersBefore);
+    expect(observedOwnedListeners).toBe(true);
+    expect(process.listenerCount('SIGINT')).toBe(before.SIGINT);
+    expect(process.listenerCount('SIGTERM')).toBe(before.SIGTERM);
   });
 
-  it('preserves an explicit parent signal without installing process listeners', async () => {
-    const sigintListenersBefore = process.listenerCount('SIGINT');
-    const sigtermListenersBefore = process.listenerCount('SIGTERM');
+  it('uses the parent signal to stop development without installing process listeners', async () => {
+    const before = { SIGINT: process.listenerCount('SIGINT'), SIGTERM: process.listenerCount('SIGTERM') };
     const caller = new AbortController();
-
-    await dispatchCli({
-      args: ['auth'],
-      rawArgv: ['happier', 'auth'],
-      terminalRuntime: null,
-      signal: caller.signal,
+    await withDevelopmentDaemon(async ({ registeredRoots }) => {
+      let settled = false;
+      let resolveOutput!: () => void;
+      const printed = new Promise<void>((ready) => { resolveOutput = ready; });
+      vi.spyOn(console, 'log').mockImplementation(() => {
+        if (registeredRoots.length > 0) resolveOutput();
+      });
+      const command = dispatchCli({
+        args: ['plugins', 'dev', '.'],
+        rawArgv: ['happier', 'plugins', 'dev', '.'],
+        terminalRuntime: null,
+        signal: caller.signal,
+      }).then(() => { settled = true; });
+      try {
+        await Promise.race([printed, command.then(() => { throw new Error('Development command stopped before waiting'); })]);
+        expect(registeredRoots).toEqual([resolve('.')]);
+        expect(settled).toBe(false);
+        expect(process.listenerCount('SIGINT')).toBe(before.SIGINT);
+        expect(process.listenerCount('SIGTERM')).toBe(before.SIGTERM);
+        caller.abort();
+        await expect(command).resolves.toBeUndefined();
+      } finally {
+        caller.abort();
+        await command;
+      }
     });
-
-    expect(authHandlerSpy).toHaveBeenCalledWith(expect.objectContaining({ signal: caller.signal }));
-    expect(process.listenerCount('SIGINT')).toBe(sigintListenersBefore);
-    expect(process.listenerCount('SIGTERM')).toBe(sigtermListenersBefore);
   });
 
-  it('cleans up owned interrupt listeners when a command fails', async () => {
-    const sigintListenersBefore = process.listenerCount('SIGINT');
-    const sigtermListenersBefore = process.listenerCount('SIGTERM');
-    authHandlerSpy.mockRejectedValueOnce(new Error('auth failed'));
-
-    await expect(dispatchCli({
-      args: ['auth'],
-      rawArgv: ['happier', 'auth'],
-      terminalRuntime: null,
-    })).rejects.toThrow('auth failed');
-
-    expect(process.listenerCount('SIGINT')).toBe(sigintListenersBefore);
-    expect(process.listenerCount('SIGTERM')).toBe(sigtermListenersBefore);
+  it('cleans up owned listeners when the real command exits unsuccessfully', async () => {
+    const before = { SIGINT: process.listenerCount('SIGINT'), SIGTERM: process.listenerCount('SIGTERM') };
+    const exit = new Error('fixture process exit');
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(process, 'exit').mockImplementation(() => { throw exit; });
+    await withConfiguredDaemonTestHome({ prefix: 'happier-dispatch-command-failure-' }, async () => {
+      await expect(dispatchCli({
+        args: ['auth', 'unknown-fixture-command'],
+        rawArgv: ['happier', 'auth', 'unknown-fixture-command'],
+        terminalRuntime: null,
+      })).rejects.toBe(exit);
+    });
+    expect(process.exit).toHaveBeenCalledWith(1);
+    expect(process.listenerCount('SIGINT')).toBe(before.SIGINT);
+    expect(process.listenerCount('SIGTERM')).toBe(before.SIGTERM);
   });
 });

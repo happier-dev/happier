@@ -118,6 +118,7 @@ const sessionDbMocks = createDbMocks({
     homeSettings: ["findUnique"],
     homeGovernancePolicy: ["findUnique"],
     account: ["findMany", "findUnique"],
+    machine: ["findFirst"],
     session: ["findMany", "findFirst", "findUnique", "update", "updateMany"],
     sessionPin: ["count", "findMany"],
     sessionFolderAssignment: ["findMany"],
@@ -138,7 +139,8 @@ const sessionDbMocks = createDbMocks({
 
 const txDbMocks = createDbMocks({
     automationRun: ["groupBy"],
-    sessionReportsTo: ["findMany"],
+    automationTrigger: ["findMany"],
+    sessionReportsTo: ["findMany", "findUnique"],
     homeSettings: ["findUnique"],
     homeGovernancePolicy: ["findUnique"],
     identityProviderInstance: ["findMany"],
@@ -258,6 +260,7 @@ export const sessionFindMany = sessionDbMocks.db.session.findMany;
 export const sessionFindFirst = sessionDbMocks.db.session.findFirst;
 export const sessionFindUnique = sessionDbMocks.db.session.findUnique;
 export const accountFindUnique = sessionDbMocks.db.account.findUnique;
+export const machineFindFirst = sessionDbMocks.db.machine.findFirst;
 export const accountFindMany = sessionDbMocks.db.account.findMany;
 export const sessionUpdate = sessionDbMocks.db.session.update;
 export const sessionUpdateMany = sessionDbMocks.db.session.updateMany;
@@ -565,11 +568,14 @@ export function resetSessionRouteMocks(): void {
     // List/detail projections read these persisted relations even when a
     // fixture has neither pending review runs nor Reports-to edges.
     txDb.automationRun.groupBy.mockResolvedValue([]);
+    txDb.automationTrigger.findMany.mockResolvedValue([]);
     txDb.sessionReportsTo.findMany.mockResolvedValue([]);
+    txDb.sessionReportsTo.findUnique.mockResolvedValue(null);
     txDb.teamMembership.findMany.mockResolvedValue([]);
     // No persisted Home overrides: exercise the real deployment-inheriting overlay.
     sessionDbMocks.db.homeSettings.findUnique.mockResolvedValue(null);
     sessionDbMocks.db.homeGovernancePolicy.findUnique.mockResolvedValue(null);
+    sessionDbMocks.db.machine.findFirst.mockResolvedValue(null);
     txDb.homeSettings.findUnique.mockResolvedValue(null);
     txDb.homeGovernancePolicy.findUnique.mockResolvedValue(null);
     txDb.identityProviderInstance.findMany.mockResolvedValue([]);

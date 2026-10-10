@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { join } from 'node:path';
 
 import type { DaemonRunningInspection } from '@/daemon/controlClient';
@@ -8,6 +8,9 @@ import { writeTextFile } from '@/testkit/fs/fileHelpers';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { captureConsoleText, captureStdoutJsonOutput } from '@/testkit/logger/captureOutput';
 import { waitForDaemonRunningWithinBudget } from '@/daemon/waitForDaemonRunningWithinBudget';
+import { AuthTokenProvenanceSchema } from '@happier-dev/protocol/auth/authToken';
+import { reloadConfiguration } from '@/configuration';
+import { handleDaemonCliCommand } from './daemon';
 
 const { checkIfDaemonRunningMock, inspectDaemonRunningStateMock, getLatestDaemonLogMock, restartDaemonAndWaitMock } = vi.hoisted(() => ({
   checkIfDaemonRunningMock: vi.fn(async () => true),
@@ -20,12 +23,12 @@ async function runDaemonStartAndCapture(expectedExitCode: number): Promise<strin
   const output = captureConsoleText();
 
   try {
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((code) => {
       throw new Error(`exit:${code ?? ''}`);
-    }) as any);
+    });
 
     try {
-      const { handleDaemonCliCommand } = await import('./daemon');
+      reloadConfiguration();
       await handleDaemonCliCommand({ args: ['daemon', 'start'], rawArgv: [], terminalRuntime: null });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -52,7 +55,15 @@ async function runDaemonStartAndCapture(expectedExitCode: number): Promise<strin
 
 function buildJwtWithSub(sub: string): string {
   const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
-  const payload = Buffer.from(JSON.stringify({ sub })).toString('base64url');
+  // This output-only fixture exercises the real stored-credential reader, not
+  // server signature verification. An Account bearer is intentionally retired;
+  // the CLI stores a terminal credential after interactive enrollment.
+  const provenance = AuthTokenProvenanceSchema.parse({
+    v: 1,
+    kind: 'terminal',
+    authority: 'account_automation',
+  });
+  const payload = Buffer.from(JSON.stringify({ sub, provenance })).toString('base64url');
   return `${header}.${payload}.x`;
 }
 
@@ -65,7 +76,7 @@ vi.mock('@/daemon/runtime/spawnDetachedDaemonStartSync', () => ({
 }));
 
 vi.mock('@/daemon/controlClient', async (importOriginal) => {
-  const actual = await importOriginal<any>();
+  const actual = await importOriginal<typeof import('@/daemon/controlClient')>();
   return {
     ...actual,
     checkIfDaemonRunningAndCleanupStaleState: () => checkIfDaemonRunningMock(),
@@ -91,6 +102,13 @@ describe('happier daemon start output', () => {
     getLatestDaemonLogMock.mockResolvedValue(null);
     restartDaemonAndWaitMock.mockReset();
     restartDaemonAndWaitMock.mockResolvedValue(true);
+    spawnDetachedDaemonStartSyncMock.mockReset();
+    spawnDetachedDaemonStartSyncMock.mockResolvedValue({ unref: () => {} });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    reloadConfiguration();
   });
 
   it('honors HAPPIER_DAEMON_START_WAIT_TIMEOUT_MS to bound polling (fail-closed)', async () => {
@@ -127,7 +145,6 @@ describe('happier daemon start output', () => {
     const tmp = await createTempDir('happier-daemon-start-');
 
     try {
-      vi.resetModules();
       envScope.patch({
         HAPPIER_HOME_DIR: tmp,
         HAPPIER_SERVER_URL: 'http://localhost:4321',
@@ -174,7 +191,6 @@ describe('happier daemon start output', () => {
     const tmp = await createTempDir('happier-daemon-start-json-');
 
     try {
-      vi.resetModules();
       envScope.patch({
         HAPPIER_HOME_DIR: tmp,
         HAPPIER_SERVER_URL: 'http://localhost:4321',
@@ -203,11 +219,11 @@ describe('happier daemon start output', () => {
         relayId: string;
         account?: string;
       }>();
-      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((code) => {
         throw new Error(`exit:${code ?? ''}`);
-      }) as any);
+      });
       try {
-        const { handleDaemonCliCommand } = await import('./daemon');
+        reloadConfiguration();
         await expect(handleDaemonCliCommand({
           args: ['daemon', 'start', '--json'],
           rawArgv: [],
@@ -234,10 +250,9 @@ describe('happier daemon start output', () => {
   it('marks the start step failed when the daemon cannot be spawned', async () => {
     vi.useRealTimers();
     spawnDetachedDaemonStartSyncMock.mockRejectedValueOnce(new Error('spawn EACCES'));
-    vi.resetModules();
     const output = captureConsoleText();
     try {
-      const { handleDaemonCliCommand } = await import('./daemon');
+      reloadConfiguration();
       await expect(handleDaemonCliCommand({ args: ['daemon', 'start'], rawArgv: [], terminalRuntime: null }))
         .rejects.toThrow('spawn EACCES');
       expect(output.text()).toContain('- [x] Starting daemon');
@@ -253,7 +268,6 @@ describe('happier daemon start output', () => {
 
     const envScope = createEnvKeyScope(['HAPPIER_DAEMON_START_WAIT_TIMEOUT_MS']);
     try {
-      vi.resetModules();
       envScope.patch({ HAPPIER_DAEMON_START_WAIT_TIMEOUT_MS: '1' });
 
       const stdout = await runDaemonStartAndCapture(1);
@@ -282,7 +296,6 @@ describe('happier daemon start output', () => {
 
     const envScope = createEnvKeyScope(['HAPPIER_DAEMON_START_WAIT_TIMEOUT_MS']);
     try {
-      vi.resetModules();
       envScope.patch({ HAPPIER_DAEMON_START_WAIT_TIMEOUT_MS: '1' });
 
       const stdout = await runDaemonStartAndCapture(0);
@@ -320,7 +333,6 @@ describe('happier daemon start output', () => {
     const tmp = await createTempDir('happier-daemon-starting-json-');
 
     try {
-      vi.resetModules();
       envScope.patch({
         HAPPIER_HOME_DIR: tmp,
         HAPPIER_SERVER_URL: 'http://localhost:4321',
@@ -336,11 +348,11 @@ describe('happier daemon start output', () => {
         relayId: string;
         latestDaemonLogPath?: string;
       }>();
-      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((code) => {
         throw new Error(`exit:${code ?? ''}`);
-      }) as any);
+      });
       try {
-        const { handleDaemonCliCommand } = await import('./daemon');
+        reloadConfiguration();
         await expect(handleDaemonCliCommand({
           args: ['daemon', 'start', '--json'],
           rawArgv: [],
@@ -377,7 +389,6 @@ describe('happier daemon start output', () => {
     ]);
 
     try {
-      vi.resetModules();
       envScope.patch({
         HAPPIER_SERVER_URL: 'http://localhost:4321',
         HAPPIER_WEBAPP_URL: 'http://localhost:9999',
@@ -398,11 +409,11 @@ describe('happier daemon start output', () => {
         relayId: string;
         latestDaemonLogPath?: string;
       }>();
-      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((code) => {
         throw new Error(`exit:${code ?? ''}`);
-      }) as any);
+      });
       try {
-        const { handleDaemonCliCommand } = await import('./daemon');
+        reloadConfiguration();
         await expect(handleDaemonCliCommand({
           args: ['daemon', 'restart', '--json'],
           rawArgv: [],

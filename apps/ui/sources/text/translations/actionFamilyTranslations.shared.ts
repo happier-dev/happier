@@ -33,6 +33,7 @@ export const surfaceFamilyLabels = {
     list_reorder: 'Pending input and todos',
     todo_session_link: 'Todo sessions',
     widgets: 'Widgets',
+    workflow_effects: 'Workflow effects',
     workflow_authoring: 'Workflow authoring',
     command_palette: 'Search',
     find: 'Find',

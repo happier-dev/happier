@@ -21,7 +21,7 @@ describe('Team identity Action contracts', () => {
     }
   });
 
-  it('distinguishes autonomous Team operations from human-decided Agent/MCP requests', () => {
+  it('distinguishes Team automation execution from human-decided mutation requests', () => {
     const automation = new Set([
       'teams.identity.connections.list',
       'teams.identity.connections.remove.preview',
@@ -34,6 +34,7 @@ describe('Team identity Action contracts', () => {
       expect(spec.requiredAuthority).toBe(automation.has(id) ? 'account_automation' : 'present_user');
       expect(spec.surfaces.agent, id).toBe(true);
       expect(spec.surfaces.mcp, id).toBe(!automation.has(id));
+      expect(spec.surfaces.api, id).toBe(automation.has(id));
     }
   });
 
@@ -82,7 +83,7 @@ describe('Team identity Action contracts', () => {
     expect(JSON.stringify(portalProjection)).not.toContain('portal-secret');
   });
 
-  it('keeps identity removal present-user-only while publishing the approved directory removal SDK action', () => {
+  it('requires human authority to execute identity removal while publishing the approved directory removal SDK action', () => {
     const preview = getActionSpec('teams.identity.connections.remove.preview');
     expect(preview.safety).toBe('safe');
     expect(preview.requiredAuthority).toBe('account_automation');

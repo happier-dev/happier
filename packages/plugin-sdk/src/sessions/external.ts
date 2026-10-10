@@ -1,4 +1,8 @@
 /** @moduleRealm daemon */
+export {
+    createExternalSessionContentMatchSnippet,
+    findExternalSessionContentMatchRange,
+} from '@happier-dev/protocol/sessions/external/contentSearchMatch';
 import {
     deriveExternalSessionActivity as deriveAgentsExternalSessionActivity,
 } from '@happier-dev/agents';

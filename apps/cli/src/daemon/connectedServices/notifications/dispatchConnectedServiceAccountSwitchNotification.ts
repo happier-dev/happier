@@ -2,7 +2,6 @@ import type {
   AccountSettings,
   ConnectedServiceId,
 } from '@happier-dev/protocol';
-import { ConnectedServiceIdSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
 
 import { dispatchActivityNotificationAsync } from '@/notifications/activity/dispatchActivityNotification';
@@ -11,6 +10,7 @@ import type { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from '../acco
 import { isBackgroundConnectedServiceSwitchReason } from '../connectedServiceSwitchEventVisibility';
 import {
   loadConnectedServiceNotificationProfilesById,
+  readLegacyConnectedServiceNotificationServiceId,
   resolveConnectedServiceNotificationDisplayName,
   resolveConnectedServiceNotificationProfileLabel,
   type ConnectedServiceNotificationProfileSummary,
@@ -42,10 +42,10 @@ function resolveUsagePercent(input: Readonly<{
   profileId: string | null;
 }>): number | null {
   if (!input.profileId) return null;
-  const serviceIdParsed = ConnectedServiceIdSchema.safeParse(input.serviceId);
-  if (!serviceIdParsed.success) return null;
+  const serviceId = readLegacyConnectedServiceNotificationServiceId(input.serviceId);
+  if (!serviceId) return null;
   const snapshot = input.runtimeQuotaSnapshots.getSnapshot({
-    serviceId: serviceIdParsed.data,
+    serviceId,
     groupId: input.groupId,
     profileId: input.profileId,
   });

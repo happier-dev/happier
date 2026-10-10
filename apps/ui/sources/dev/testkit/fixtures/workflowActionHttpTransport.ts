@@ -7,6 +7,9 @@ import {
 } from '@happier-dev/protocol';
 import type { Artifact } from '@/sync/domains/artifacts/artifactTypes';
 import type { RuntimeFetch } from '@/utils/system/runtimeFetch';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
+import { AccountSettingsV2GetResponseSchema, AccountSettingsV2UpdateRequestSchema, AccountSettingsV2UpdateResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { parseToken } from '@/utils/auth/parseToken';
 import { createPlainAccountEncryptionCurrentnessFixture } from './accountEncryptionCurrentness';
 import { createRootLayoutFeaturesResponse } from './featureFixtures';
 import { createWorkflowDefinitionFixture } from './workflowRunFixtures';
@@ -34,6 +37,7 @@ export function createWorkflowActionHttpTransport(params: Readonly<{
             declarationTransport: 'http-header-and-socket-auth-v1' } },
     });
     let artifacts: readonly Artifact[] = [];
+    const settingsByAccount = new Map<string, ReturnType<typeof AccountSettingsV2GetResponseSchema.parse>>();
     let automations: ReturnType<typeof AutomationDefinitionListResponseSchema.parse> = { automations: [], nextCursor: null };
     const reply = async (actionId: string, input: Record<string, unknown>) => {
         const response = record(await params.fixtureResponse(actionId, input));
@@ -42,11 +46,30 @@ export function createWorkflowActionHttpTransport(params: Readonly<{
     };
     const fetch: RuntimeFetch = async (url, init) => {
         const target = new URL(String(url));
-        const requestAccountId = params.accountId();
         if (target.pathname === '/health' || target.pathname === '/v1/auth/ping') return json({});
         if (target.pathname === '/v1/features' || target.pathname === '/v1/features/authenticated') return json(features);
+        const authorization = new Headers(init?.headers).get('authorization');
+        let requestAccountId: string | null = null;
+        try { requestAccountId = authorization?.startsWith('Bearer ') ? parseToken(authorization.slice(7)) : null; } catch { /* Invalid bearer remains unauthenticated. */ }
+        if (!requestAccountId) return json({ error: 'Not authenticated' }, 401);
+        if (target.pathname === '/v1/account/profile') return json(AccountProfileSchema.parse({ id: requestAccountId }));
         if (target.pathname === '/v1/account/encryption') return json({ mode: 'plain', updatedAt: 0 });
-        if (target.pathname === '/v2/account/settings') return json({ content: { t: 'plain', v: {} }, version: 1 });
+        if (target.pathname === '/v2/account/settings') {
+            let settings = settingsByAccount.get(requestAccountId);
+            if (!settings) {
+                settings = AccountSettingsV2GetResponseSchema.parse({ content: { t: 'plain', v: {} }, version: 1 });
+                settingsByAccount.set(requestAccountId, settings);
+            }
+            if (init?.method !== 'POST') return json(settings);
+            const update = AccountSettingsV2UpdateRequestSchema.safeParse(JSON.parse(String(init.body)));
+            if (!update.success || update.data.content?.t !== 'plain') return json({}, 400);
+            if (update.data.expectedVersion !== settings.version) return json(AccountSettingsV2UpdateResponseSchema.parse({
+                success: false, error: 'version-mismatch', currentVersion: settings.version, currentContent: settings.content,
+            }));
+            settings = { content: update.data.content, version: settings.version + 1 };
+            settingsByAccount.set(requestAccountId, settings);
+            return json(AccountSettingsV2UpdateResponseSchema.parse({ success: true, version: settings.version }));
+        }
         if (target.pathname === '/v1/account/encryption/currentness') return json(createPlainAccountEncryptionCurrentnessFixture({ updatedAt: 0 }));
         if (target.pathname.startsWith('/v1/machines/')) return json({ machine: {
             id: decodeURIComponent(target.pathname.slice('/v1/machines/'.length)), dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
@@ -63,7 +86,7 @@ export function createWorkflowActionHttpTransport(params: Readonly<{
                     (_, ordinal) => ({ ...seed.blocks[0]!, id: `fixture-step-${ordinal}` }),
                 ) });
                 return {
-                    id: item.definitionId, ownerAccountId: item.ownerAccountId, access: item.access, encryptionMode: 'plain', publicAudience: 'none',
+                    id: item.definitionId, ownerAccountId: item.ownerAccountId ?? requestAccountId, access: item.access ?? 'owner', encryptionMode: 'plain', publicAudience: 'none',
                     dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
                     header: encodePlainArtifactStoredContent('contentUnavailableReason' in item && item.contentUnavailableReason === 'invalid_header'
                         ? { kind: item.kind } : { kind: item.kind, definitionId: item.definitionId,

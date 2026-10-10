@@ -12,10 +12,12 @@ describe('Action SDK method-name validation', () => {
     expect(() => assertPublicActionSdkMethodNames([
       { id: 'plugins.install', bindings: { sdkMethod: 'execute' } },
     ], publicActionIds)).not.toThrow();
-
     expect(() => assertPublicActionSdkMethodNames([
       { id: 'session.permission.respond', bindings: { sdkMethod: 'execute' } },
     ], publicActionIds)).toThrow(/invalid SDK method path/u);
+    expect(() => assertPublicActionSdkMethodNames([
+      { id: 'sessions.subagents.upsert', bindings: { sdkMethod: 'execute' } },
+    ], publicActionIds)).not.toThrow();
 
     expect(() => assertPublicActionSdkMethodNames([
       { id: 'teams.directory.sourceSetup.list', bindings: { sdkMethod: 'execute' } },
@@ -23,11 +25,12 @@ describe('Action SDK method-name validation', () => {
 
     expect(() => assertPublicActionSdkMethodNames([
       { id: 'plugins.install', bindings: { sdkMethod: 'session.open' } },
+      { id: 'sessions.subagents.upsert', bindings: { sdkMethod: 'session.open' } },
       { id: 'teams.directory.sourceSetup.list', bindings: { sdkMethod: 'session.open' } },
     ], publicActionIds)).not.toThrow();
 
     expect(() => assertPublicActionSdkMethodNames([
-      { id: 'teams.directory.sources.list', bindings: { sdkMethod: 'session.open' } },
+      { id: 'session.permission.respond', bindings: { sdkMethod: 'session.open' } },
       { id: 'teams.directory.sourceSetup.list', bindings: { sdkMethod: 'session.open' } },
     ], publicActionIds)).toThrow(/share SDK method path/u);
   });

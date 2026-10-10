@@ -2,7 +2,10 @@ import { realpathSync } from 'node:fs';
 import { lstat, realpath } from 'node:fs/promises';
 import { dirname, relative, resolve, sep } from 'node:path';
 
-import type { PreparedPluginDevelopmentActivationGraph } from '@/plugins/authoring/sourceModule';
+import {
+    resolvePluginAuthorStagingModule,
+    type PreparedPluginDevelopmentActivationGraph,
+} from '@/plugins/authoring/sourceModule';
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 
 import { resolvePluginStorePaths } from '../store/paths';
@@ -55,6 +58,14 @@ export function createPluginActivationSourceResolver(deps: Readonly<{
                 kind: 'prepared',
                 module: development.module,
                 sourceAuthority: development.sourceAuthority,
+                resolveRelativeModule: async (module) => await resolvePluginAuthorStagingModule({
+                    graph: {
+                        rootPath: development.rootPath,
+                        entryPath: development.entryPath,
+                        generationScope: development.candidateScope,
+                    },
+                    module,
+                }),
             };
         }
         const bundled = deps.resolveBundledActivationSource(target);

@@ -11,9 +11,7 @@ import { describe, expect, it } from 'vitest';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { executeExternalSessionCandidateQuery } from '@/session/actions/externalSessions/candidateQuery';
-import { createResolvedContributionRegistry } from '../../../plugins/projection/registry/createResolvedContributionRegistry';
-import { resolveBuiltInContributions } from '../../../plugins/projection/registry/resolveBuiltInContributions';
-import { resolveExecutablePluginRuntimeRegistry } from '../../../plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { resolveBackendEngineAdapterResolution } from './engineRegistry';
 
 const ANTIGRAVITY_AGENT_ID = 'antigravity';
@@ -56,19 +54,13 @@ describe('engineRegistry (Antigravity External Sessions)', () => {
 
       const envScope = createEnvKeyScope(['HOME', 'USERPROFILE']);
       envScope.patch({ HOME: home, USERPROFILE: undefined });
-      let runtimeRegistry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+      let fixture: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | null = null;
       try {
-        runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({
-          contributes: createResolvedContributionRegistry(resolveBuiltInContributions()),
+        fixture = await createAdmittedPluginRuntimeFixture({
           happyHomeDir: join(directory, 'happier-home'),
-          pluginIds: [ANTIGRAVITY_PLUGIN_ID],
-          resolveDevelopmentSourceAuthority: ({ pluginId, rootPath }) => ({
-            kind: 'development',
-            registeredRootId: `antigravity-external-sessions:${pluginId}`,
-            canonicalRoot: rootPath,
-            observedRevision: 1,
-          }),
+          runtimeOptions: { pluginIds: [ANTIGRAVITY_PLUGIN_ID] },
         });
+        const runtimeRegistry = fixture.registry;
 
         expect(runtimeRegistry.targetActivationFacts).toEqual(expect.arrayContaining([
           expect.objectContaining({
@@ -146,10 +138,12 @@ describe('engineRegistry (Antigravity External Sessions)', () => {
           },
           remoteSessionId: conversationId,
         });
-        // The transcript revision is canonical on the resolved source; projecting it as
-        // vendor metadata would be rejected by the session-metadata owner allow-list.
+        // The resolved source and external link data carry the same revision;
+        // it must not leak into the unrelated vendor metadata namespace.
         expect(linked.vendorMetadata).toEqual({});
-        expect(linked.externalSessionMetadata).toEqual({ linkData: {} });
+        expect(linked.externalSessionMetadata).toEqual({
+          linkData: { sourceRevision: candidate.linkData.sourceRevision },
+        });
 
         const page = await externalSession.pageTranscript!({
           source: linked.source,
@@ -227,16 +221,15 @@ describe('engineRegistry (Antigravity External Sessions)', () => {
             'utf8',
           );
         }));
+        const sourceCustody = runtimeRegistry.readPluginSourceCustody?.(ANTIGRAVITY_PLUGIN_ID);
+        if (!sourceCustody) throw new Error('Expected admitted Antigravity source custody');
         const directQuery = (cursor?: string) => executeExternalSessionCandidateQuery({
           activeServerDir: join(directory, 'active-server'),
           agentIdentity: {
             pluginId: ANTIGRAVITY_PLUGIN_ID,
             localId: ANTIGRAVITY_AGENT_ID,
           },
-          agentSourceCustody: {
-            kind: 'development',
-            registeredRootId: 'antigravity-external-sessions-fixture',
-          },
+          agentSourceCustody: sourceCustody,
           source,
           limit: 5,
           ...(cursor ? { cursor } : {}),
@@ -246,7 +239,14 @@ describe('engineRegistry (Antigravity External Sessions)', () => {
             ...(request.cursor ? { cursor: request.cursor } : {}),
           }),
         });
-        const firstDirectPage = await directQuery();
+        let firstDirectPage = await directQuery();
+        expect(firstDirectPage).toMatchObject({
+          candidates: [], nextCursor: null,
+          preparation: { kind: 'building_candidate_index' },
+        });
+        // Browse repeats the same root query while the canonical index owner
+        // reports preparation; only a complete index admits page cursors.
+        while (firstDirectPage.preparation) firstDirectPage = await directQuery();
         expect(firstDirectPage).toMatchObject({
           candidates: expect.arrayContaining([
             expect.objectContaining({
@@ -278,7 +278,7 @@ describe('engineRegistry (Antigravity External Sessions)', () => {
           'indexes',
         ))).rejects.toMatchObject({ code: 'ENOENT' });
       } finally {
-        await runtimeRegistry?.dispose();
+        await fixture?.dispose();
         envScope.restore();
       }
     });

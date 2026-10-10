@@ -113,6 +113,7 @@ const GITHUB_SOURCE_CONFIG_SCHEMA = {
 
 const caller = {
     pluginId: PLUGIN_ID,
+    occurrenceId: "occurrence-automation-event-admission",
     machineId: MACHINE_ID,
     machineInstallationId: MACHINE_INSTALLATION_ID,
     materializationId: MATERIALIZATION_ID,
@@ -620,7 +621,7 @@ function eventAdmissionSpawnTarget() {
         kind: "newSession" as const,
         spawn: {
             executionTarget: { serverId: "server-event-admission", machineId: MACHINE_ID },
-            directory: "/tmp/event-admission",
+            directory: { kind: "path" as const, path: "/tmp/event-admission" },
             agentTarget: {
                 kind: "agent" as const,
                 identity: { pluginId: "happier.agent.codex", localId: "codex" },
@@ -882,7 +883,7 @@ async function plainHostEvidence() {
 
 async function admitAutomationEventV1Raw(params: Readonly<{
     accountId: string;
-    caller: Parameters<typeof admitAutomationEventV1Impl>[0]["caller"];
+    caller: Parameters<typeof admitAutomationEventV1Impl>[0]["caller"] & Readonly<{ occurrenceId: string }>;
     input: unknown;
     hostEvidence?: unknown;
 }>) {
@@ -897,6 +898,7 @@ async function admitAutomationEventV1Raw(params: Readonly<{
                 v: 1,
                 caller: {
                     pluginId: params.caller.pluginId,
+                    occurrenceId: params.caller.occurrenceId,
                     sourceCustody: params.caller.sourceCustody,
                     materialization: {
                         pluginId: params.caller.pluginId,
@@ -910,6 +912,7 @@ async function admitAutomationEventV1Raw(params: Readonly<{
                 v: 1,
                 caller: {
                     pluginId: params.caller.pluginId,
+                    occurrenceId: params.caller.occurrenceId,
                     sourceCustody: params.caller.sourceCustody,
                     materialization: {
                         pluginId: params.caller.pluginId,
@@ -1404,8 +1407,8 @@ describe("Automation Event admission", () => {
                 occurrenceId: GITHUB_OCCURRENCE_ID,
                 sourceCustody: GITHUB_SOURCE_CUSTODY,
                 transport: { kind: "checkpointedPull" },
-                generationSignal: new AbortController().signal,
-                isGenerationCurrent: () => true,
+                occurrenceSignal: new AbortController().signal,
+                isOccurrenceCurrent: () => true,
                 revalidateCallerMaterialization,
                 revalidateCallerOccurrence: async () => true,
                 readStoredDefinitions: async (request: DynamicRecord) => {
@@ -4018,8 +4021,8 @@ describe("Automation Event admission", () => {
                 occurrenceId: GITHUB_OCCURRENCE_ID,
                 sourceCustody: GITHUB_SOURCE_CUSTODY,
                 transport: { kind: "checkpointedPull" },
-                generationSignal: new AbortController().signal,
-                isGenerationCurrent: () => true,
+                occurrenceSignal: new AbortController().signal,
+                isOccurrenceCurrent: () => true,
                 revalidateCallerMaterialization,
                 revalidateCallerOccurrence: async () => true,
                 readStoredDefinitions: async (params: DynamicRecord) => {

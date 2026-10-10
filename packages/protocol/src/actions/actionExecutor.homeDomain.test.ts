@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { ApprovalRequestV2Schema, type ApprovalRequest } from '../approvals/approvalRequestV1.js';
-import { decideApprovalRequestTransition } from '../approvals/approvalRequestTransition.js';
+import { decideApprovalRequestTransition, settleApprovalRequestActionArgs } from '../approvals/approvalRequestTransition.js';
 import type { HomeAccountRowV1 } from '../home/governance/accounts.js';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { ENCRYPTED_DATA_KEY_ENVELOPE_V1_BYTES } from '../crypto/encryptedDataKeyEnvelopeFormatV1.js';
@@ -199,8 +199,9 @@ describe('createActionExecutor (Home governance and Teams)', () => {
     expect(JSON.stringify(storedRequest)).not.toContain(encryptedDataKey);
   });
 
-  it('scrubs a rejected deferred GitHub App approval input to the Action observation projection',
-    async () => {
+  it.each(['reject', 'canceled'] as const)(
+    'scrubs a %s deferred approval input to the Action observation projection',
+    async (outcome) => {
       const privateKey = 'BEGIN-RSA-PRIVATE-KEY-material';
       const input = {
         owner: { kind: 'home' as const },
@@ -212,22 +213,23 @@ describe('createActionExecutor (Home governance and Teams)', () => {
       const persisted: ApprovalRequest[] = [];
       let stored: ApprovalRequest | null = null;
       const homeDomainAction = vi.fn(async () => ({}));
+      const approvalsUpdate = async ({ request }: { request: ApprovalRequest }) => {
+        const transition = transitionStoredApproval(stored, request);
+        if (!transition.ok) return transition;
+        stored = ApprovalRequestV2Schema.parse(request);
+        persisted.push(stored);
+        return { ok: true as const };
+      };
       const executor = createActionExecutor({
         homeDomainAction,
         isActionApprovalRequired: (actionId: string) => actionId === 'identity.githubApps.create',
         approvalsCreate: async ({ request }: { request: ApprovalRequest }) => {
           stored = ApprovalRequestV2Schema.parse(request);
           persisted.push(stored);
-          return { artifactId: 'approval-blocking-github-app' };
+          return { artifactId: 'approval-github-app' };
         },
         approvalsGet: async () => stored,
-        approvalsUpdate: async ({ request }: { request: ApprovalRequest }) => {
-          const transition = transitionStoredApproval(stored, request);
-          if (!transition.ok) return transition;
-          stored = ApprovalRequestV2Schema.parse(request);
-          persisted.push(stored);
-          return { ok: true as const };
-        },
+        approvalsUpdate,
         isApprovalExecutionOriginCurrent: async () => true,
       } as unknown as ActionExecutorDeps);
 
@@ -236,28 +238,38 @@ describe('createActionExecutor (Home governance and Teams)', () => {
         authority: 'present_user',
         serverId: 'home-1',
         runtimeAccountId: 'account-1',
-        actionRequestId: 'request-blocking-github-app',
+        actionRequestId: 'request-github-app',
         actionCaller: { kind: 'host' },
       })).resolves.toMatchObject({
         ok: true,
-        result: { kind: 'approval_request_created', artifactId: 'approval-blocking-github-app' },
+        result: { kind: 'approval_request_created', artifactId: 'approval-github-app' },
       });
 
       expect(persisted.at(-1)?.actionArgs).toMatchObject({ secrets: { privateKey } });
-      await expect(executor.execute('approval.request.decide', {
-        artifactId: 'approval-blocking-github-app',
-        decision: 'reject',
-      }, {
-        surface: 'ui',
-        authority: 'present_user',
-        serverId: 'home-1',
-        runtimeAccountId: 'account-1',
-        actionCaller: { kind: 'host' },
-      })).resolves.toMatchObject({ ok: true });
 
       expect(homeDomainAction).not.toHaveBeenCalled();
+      expect(persisted[0]?.status).toBe('open');
+      expect(persisted[0]?.actionArgs).toEqual(input);
+      expect(JSON.stringify(persisted[0]?.preview)).not.toContain(privateKey);
+      if (outcome === 'reject') {
+        expect(await executor.execute('approval.request.decide', {
+          artifactId: 'approval-github-app', decision: 'reject',
+        }, { surface: 'ui', authority: 'present_user', serverId: 'home-1',
+          runtimeAccountId: 'account-1', actionCaller: { kind: 'host' },
+        })).toMatchObject({ ok: true, result: { status: 'rejected' } });
+      } else {
+        // Cancellation has no separate Action front door. The Artifact transition owner
+        // rejects a cancellation retaining raw input, then admits its canonical settlement.
+        const open = persisted[0];
+        if (!open) throw new Error('Expected persisted GitHub approval');
+        const canceled = { ...open, status: 'canceled' as const, updatedAtMs: open.updatedAtMs + 1 };
+        expect(await approvalsUpdate({ request: canceled })).toMatchObject({ ok: false, errorCode: 'subject_mismatch' });
+        expect(await approvalsUpdate({ request: { ...canceled, actionArgs: settleApprovalRequestActionArgs(open) } }))
+          .toMatchObject({ ok: true });
+      }
+      expect(homeDomainAction).not.toHaveBeenCalled();
       const settled = persisted.at(-1);
-      expect(settled?.status).toBe('rejected');
+      expect(settled?.status).toBe(outcome === 'reject' ? 'rejected' : 'canceled');
       expect(settled?.actionArgs).toEqual({
         owner: { kind: 'home' },
         githubHost: 'https://github.com',
@@ -265,6 +277,7 @@ describe('createActionExecutor (Home governance and Teams)', () => {
         githubClientId: 'Iv1.client',
       });
       expect(JSON.stringify(settled)).not.toContain(privateKey);
+      expect(JSON.stringify(settled)).not.toContain(input.secrets.clientSecret);
     },
   );
 

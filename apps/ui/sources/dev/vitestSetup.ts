@@ -311,7 +311,6 @@ vi.mock('react-native', async () => await import('./reactNativeStub'));
 
 // Vitest runs in Node; `react-native-mmkv` depends on React Native internals and can fail to parse.
 // Provide a minimal in-memory implementation for tests.
-const store = new Map<string, unknown>();
 const asyncStorageBacking = new Map<string, string>();
 const secureStoreBacking = new Map<string, string>();
 const localStorageBacking = new Map<string, string>();
@@ -339,7 +338,7 @@ vi.mock('@react-native-async-storage/async-storage', () => {
     return { default: asyncStorage };
 });
 
-beforeEach(() => {
+beforeEach(async () => {
     // Some test files enable fake timers and forget to restore them. Force real timers at the start
     // of every test to avoid cross-test leakage (Vitest workers may execute multiple test files).
     vi.useRealTimers();
@@ -351,7 +350,9 @@ beforeEach(() => {
     // shape before each test so server seeding/runtime heuristics stay deterministic.
     restoreDomGlobalsToOriginal();
 
-    store.clear();
+    // Reset this shared physical backing only; native SDK overrides need not
+    // implement a test-only export that the real MMKV package does not expose.
+    (await vi.importActual<typeof import('./reactNativeMmkvStub')>('./reactNativeMmkvStub')).resetMmkvStoresForTests();
     asyncStorageBacking.clear();
     secureStoreBacking.clear();
     localStorageBacking.clear();
@@ -431,41 +432,7 @@ afterAll(async () => {
     await dumpWhyIsNodeRunning('afterAll');
 });
 
-vi.mock('react-native-mmkv', () => {
-    class MMKV {
-        getString(key: string) {
-            const value = store.get(key);
-            if (value == null) return undefined;
-            return typeof value === 'string' ? value : undefined;
-        }
-
-        getNumber(key: string) {
-            const value = store.get(key);
-            if (value == null) return undefined;
-            if (typeof value === 'number') return value;
-            return undefined;
-        }
-
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        set(key: string, value: any) {
-            store.set(key, value);
-        }
-
-        delete(key: string) {
-            store.delete(key);
-        }
-
-        getAllKeys() {
-            return [...store.keys()];
-        }
-
-        clearAll() {
-            store.clear();
-        }
-    }
-
-    return { MMKV };
-});
+vi.mock('react-native-mmkv', async () => await import('./reactNativeMmkvStub'));
 
 // Many UI components depend on `@expo/vector-icons`, but the package's internal entrypoints
 // are not reliably resolvable in Vitest's node environment. Provide a minimal stub for tests.

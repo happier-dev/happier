@@ -83,13 +83,6 @@ vi.mock('@/modal', async () => {
     }).module;
 });
 
-// Icons render a native glyph package; the view's behaviour never depends on it.
-vi.mock('@/components/ui/icons/Icon', () => ({
-    ICON_SIZE: { sm: 16, md: 20, lg: 24 },
-    Icon: (props: Record<string, unknown>) => React.createElement('Icon', props),
-}));
-
-
 const SERVICE = { pluginId: 'acme.accounts', localId: 'openai-codex' } as const;
 
 function accountRef(accountId: string): QualifiedConnectedAccountRef {
@@ -588,6 +581,9 @@ describe('QualifiedPoolDetailView', () => {
 
     it('names a member by its personal label, native name or email, never the raw account id', async () => {
         const { screen } = await renderPoolDetail({}, {
+            accounts: ACCOUNTS.map((account) => account.ref.accountId === 'work'
+                ? { ...account, displayName: undefined }
+                : account),
             memberQuotaByAccountId: quota({ work: snapshot('work', [{ id: '5h', label: '5-hour', left: 40, resetsInMs: 60 * MIN }]) }),
         });
         // A real native name wins over email; the distinct email remains beside it.

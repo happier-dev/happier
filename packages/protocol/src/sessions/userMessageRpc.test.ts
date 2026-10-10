@@ -357,8 +357,8 @@ describe('SessionUserMessageSendRequestSchema', () => {
       ? (parsed.data.meta as Record<string, unknown>).happierStructuredInputV1 as Record<string, unknown>
       : null;
     expect(envelope?.skillMentions).toEqual([
-      { id: '/skills/good/SKILL.md', name: 'good', path: '/skills/good/SKILL.md', origin: 'vendor' },
-      { id: '/skills/other/SKILL.md', name: 'unreadable-origin', path: '/skills/other/SKILL.md' },
+      { id: '/skills/good/SKILL.md', idSource: 'generated', name: 'good', path: '/skills/good/SKILL.md', origin: 'vendor' },
+      { id: '/skills/other/SKILL.md', idSource: 'generated', name: 'unreadable-origin', path: '/skills/other/SKILL.md' },
     ]);
     expect(envelope?.vendorPluginMentions).toEqual([
       { vendorPluginRef: 'plugin://gmail@openai-curated', label: 'Gmail' },

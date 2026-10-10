@@ -210,6 +210,7 @@ vi.mock('@/components/settings/machines/hooks/useActiveSelectionMachineGroups', 
 }));
 
 const { SettingsView } = await import('./SettingsView');
+const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 
 describe('SettingsView (web)', () => {
     afterEach(() => {

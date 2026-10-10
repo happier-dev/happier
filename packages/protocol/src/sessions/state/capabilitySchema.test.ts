@@ -44,6 +44,8 @@ describe('SessionStateCapabilitiesV1Schema', () => {
       'identity.runtimeDescriptor',
       'identity.providerSessionId',
       'intent.model',
+      'intent.role',
+      'intent.sessionRoles',
       'intent.permissionMode',
       'intent.acpSessionMode',
       'intent.acpConfigOption',

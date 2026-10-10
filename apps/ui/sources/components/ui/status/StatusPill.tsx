@@ -156,7 +156,7 @@ export function StatusPill(props: StatusPillProps): React.ReactElement {
             testID={props.testID}
             accessibilityLabel={props.accessibilityLabel ?? props.label}
             color={foregroundColor}
-            backgroundColor={plain ? 'transparent' : state.background}
+            backgroundColor={plain ? 'transparent' : 'background' in state ? state.background : undefined}
             shape={props.shape}
             {...(plain ? { horizontalPadding: 0, verticalPadding: 0 } : {})}
             // Core's RN style prop crosses into the portable badge style at this one adapter boundary.

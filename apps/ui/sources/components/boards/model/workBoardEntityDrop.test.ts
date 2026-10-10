@@ -108,7 +108,11 @@ describe('WorkBoard shared entity owner', () => {
                 const { WorkBoardIntentV1Schema } = await import('@happier-dev/protocol');
                 const outcome = await store.queue.dispatch(WorkBoardIntentV1Schema.parse(input.intent));
                 if (outcome.status === 'pending') throw new Error('The Artifact boundary cannot request approval.');
-                return outcome.status === 'applied' ? { status: 'applied' } : { status: outcome.status, reason: { code: outcome.code, message: outcome.code } };
+                if (outcome.status === 'applied') return { status: 'applied' };
+                return {
+                    status: outcome.status === 'refused' ? 'refused' : 'unknown',
+                    reason: { code: outcome.code, message: outcome.code },
+                };
             } });
         const carry = runtime.begin('session')!;
         carry.move({ x: 50, y: 50 });

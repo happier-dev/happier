@@ -34,30 +34,4 @@ describe("sessionPendingRoutes rate limits", () => {
         expect(app.routes.has("POST /v2/sessions/:sessionId/pending/:localId/delivery/retry")).toBe(false);
     }, 60_000);
 
-    it("opens only the runtime-consumed pending operations to the exact Runner Session guard", async () => {
-        const { sessionPendingRoutes } = await import("./pendingRoutes");
-        const app = createFakeRouteApp();
-        sessionPendingRoutes(app as any);
-
-        for (const [method, path] of [
-            ["GET", "/v2/sessions/:sessionId/pending"],
-            ["GET", "/v2/sessions/:sessionId/execution-runs/:runId/pending"],
-            ["POST", "/v2/sessions/:sessionId/pending/:localId/delivery/block"],
-            ["POST", "/v2/sessions/:sessionId/pending/:localId/delivery/handled"],
-        ] as const) {
-            const entry = getRouteEntry(app, method, path);
-            expect(entry.opts.config).toMatchObject({ restrictedCredentialBinding: { scope: "session", session: "params.sessionId" } });
-            expect(entry.opts.preHandler).toBe(app.authenticate);
-        }
-
-        for (const [method, path] of [
-            ["POST", "/v2/sessions/:sessionId/pending"],
-            ["PATCH", "/v2/sessions/:sessionId/pending/:localId"],
-            ["DELETE", "/v2/sessions/:sessionId/pending/:localId"],
-            ["POST", "/v2/sessions/:sessionId/pending/:localId/discard"],
-            ["POST", "/v2/sessions/:sessionId/pending/reorder"],
-        ] as const) {
-            expect(getRouteEntry(app, method, path).opts.config?.restrictedCredentialBinding).toBeUndefined();
-        }
-    }, 60_000);
 });

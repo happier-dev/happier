@@ -41,6 +41,7 @@ describe('Codex B.5 surface declarations', () => {
     expect(getCodexBackend().surfaces?.externalSession?.sources).toEqual([
       {
         sourceKind: 'codexHome',
+        contentSearch: true,
         schema: {
           fields: [
             { name: 'kind', kind: 'literal', value: 'codexHome' },

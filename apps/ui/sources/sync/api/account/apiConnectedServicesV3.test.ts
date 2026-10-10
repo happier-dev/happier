@@ -2,7 +2,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 
-afterEach(() => {
+afterEach(async () => {
+        const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+        await resetServerReachabilitySupervisors();
+        const { stopAllEndpointSupervisorsForTests } = await import('@/sync/runtime/connectivity/endpointSupervisorPool');
+        await stopAllEndpointSupervisorsForTests();
   vi.unstubAllGlobals();
   vi.resetModules();
 });
@@ -11,7 +15,7 @@ const credentials: AuthCredentials = { token: 't', secret: 's' };
 
 async function activateTestHome() {
     const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
-    await upsertAndActivateServer({ serverUrl: 'https://api.example.test', scope: 'tab' });
+    await upsertAndActivateServer({ serverUrl: 'https://api.example.test', scope: 'device' });
 }
 
 describe('apiConnectedServicesV3 legacy read compatibility', () => {

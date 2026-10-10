@@ -5,7 +5,7 @@ import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { AgentExternalSessionsInvocation } from '@happier-dev/plugin-sdk/sessions/external';
 import { searchCodexExternalTranscript } from './transcriptSource.js';
 import { raceWithTimeout } from '@happier-dev/plugin-sdk/async';
-import { findExternalSessionContentMatchRange } from '@happier-dev/protocol/sessions/external/contentSearchMatch';
+import { findExternalSessionContentMatchRange } from '@happier-dev/plugin-sdk/sessions/external';
 import { createExternalSessionContentSearchControl, ExternalSessionContentSearchYield } from '@happier-dev/plugin-sdk/sessions/file-stores';
 
 import {

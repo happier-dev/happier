@@ -44,15 +44,13 @@ describe('engineRegistry (gemini runtimeCore)', () => {
         backendId,
         pluginId: entry.pluginId,
       })),
-      diagnostics: runtimeRegistry.pluginDiagnosticsByPluginId,
+      diagnostics: runtimeRegistry.pluginDiagnosticsByPluginId[GEMINI_PLUGIN_ID],
     }).toEqual({
       engines: [{
         backendId: GEMINI_BACKEND_ID,
         pluginId: GEMINI_PLUGIN_ID,
       }],
-      diagnostics: {
-        [GEMINI_PLUGIN_ID]: [],
-      },
+      diagnostics: [],
     });
 
     const resolution = await resolveBackendEngineAdapterResolution(GEMINI_BACKEND_ID, {
@@ -97,7 +95,6 @@ describe('engineRegistry (gemini runtimeCore)', () => {
       kind: 'hostSessionRuntimePlan',
       agentId: GEMINI_BACKEND_ID,
       config: {
-        providerName: 'Gemini CLI',
         agentMessageType: 'gemini',
       },
     });
@@ -105,6 +102,8 @@ describe('engineRegistry (gemini runtimeCore)', () => {
 
     const executionRunRuntime = resolution!.engineAdapter.runtimeCore.createExecutionRunBackend({
       scope: 'detached',
+      runId: 'gemini-runtime-owner',
+      start: { intent: 'review', profileId: 'review' },
       backendId: GEMINI_BACKEND_ID,
       cwd: '/tmp/gemini',
       permissionMode: 'read_only',

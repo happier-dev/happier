@@ -1,6 +1,8 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import type { AccountApiTokenSummaryV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 
 installDisconnectedServerSocketBoundary();
 
@@ -19,7 +21,11 @@ const token = {
     expiresAt: '2026-11-20T12:00:00.000Z',
     hasEncryptionAccess: false,
     hasUnattendedTeamAccess: false,
-} as const;
+    grant: API_TOKEN_FULL_GRANT_V1,
+    parentTokenId: null,
+    activeChildCount: 0,
+    embedConfig: null,
+} as const satisfies AccountApiTokenSummaryV1;
 
 const created = {
     token: `hap_v1_${token.tokenId}_${'A'.repeat(43)}`,

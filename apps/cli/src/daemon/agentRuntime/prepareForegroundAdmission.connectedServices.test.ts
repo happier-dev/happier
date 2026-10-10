@@ -25,6 +25,7 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { ForegroundAgentRuntimeAdmissionRequestV1Schema } from './foregroundAdmissionContract';
 import { prepareForegroundAgentRuntimeAdmission } from './prepareForegroundAdmission';
+import { installForegroundAgentCliFixture } from './foregroundAdmission.testkit';
 
 describe('foreground Connected Account admission through the applied plugin runtime', () => {
   afterEach(() => vi.restoreAllMocks());
@@ -36,6 +37,7 @@ describe('foreground Connected Account admission through the applied plugin runt
       const nativeHome = join(root, 'persistent-codex-home');
       let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | null = null;
       let cleanupAdmission: (() => void | Promise<void>) | null = null;
+      let restoreAgentCliEnvironment: (() => void) | null = null;
       const materializationCleanup: { current: (() => void | Promise<void>) | null } = { current: null };
       try {
         await mkdir(nativeHome, { recursive: true });
@@ -144,6 +146,7 @@ describe('foreground Connected Account admission through the applied plugin runt
             networkDependencies: { resolveNetworkAddresses: async () => ['1.1.1.1'] },
           },
         });
+        restoreAgentCliEnvironment = await installForegroundAgentCliFixture(runtime.registry, root);
         const admittedSourceCustody = PluginSourceCustodyV1Schema.parse(
           runtime.registry.readPluginSourceCustody?.('happier.agent.codex'),
         );
@@ -168,9 +171,11 @@ describe('foreground Connected Account admission through the applied plugin runt
           purpose: { consumer: { pluginId: 'happier.agent.codex', localId: 'codex' }, purpose: 'primary' },
           target: { kind: 'account', account: { service, accountId: 'work' } },
         }]);
+        const reachedPhases: string[] = [];
         const admitted = await prepareForegroundAgentRuntimeAdmission({ ...wireRequest, machineId: 'machine-1' }, {
           activateSessionPurposeBindings: owner.activateSessionPurposeBindings,
           resolveConnectedServiceAuthForSpawn: async (input) => {
+            reachedPhases.push('materialization_started');
             const materialized = await resolveConnectedServiceAuthForSpawn({
               ...input, credentials, api, activeServerDir: configuration.activeServerDir, baseDir: join(root, 'materialized'),
               activateQualifiedPurposeBindings: (projection) => owner.activatePurposeBindings({
@@ -182,16 +187,19 @@ describe('foreground Connected Account admission through the applied plugin runt
               await materialized.cleanupOnExit?.();
               await materialized.materializationPurposeLease?.dispose();
             } : null;
+            reachedPhases.push(`materialization_completed:present=${Boolean(materialized)};purposeSnapshot=${Boolean(materialized?.qualifiedPurposeBindingSnapshot)};requestAuthUses=${materialized?.qualifiedPurposeBindingSnapshot?.requestAuthUses?.length ?? 0};requestAuthBindings=${materialized?.requestAuthPurposeBindings?.length ?? 0};requestAuthRoot=${Boolean(materialized?.requestAuthMaterializedRoot)}`);
             return materialized;
           },
           resolveDaemonSpawnHooks: async (agentId) => {
             const entry = await runtime!.registry.acquireAgentCatalogEntry?.(agentId);
-            return await entry?.getDaemonSpawnHooks?.() ?? null;
+            const hooks = await entry?.getDaemonSpawnHooks?.() ?? null;
+            reachedPhases.push(`spawn_hooks_resolved:present=${Boolean(hooks)}`);
+            return hooks;
           },
           connectedAccountRequestAuthRegistry: createConnectedAccountRequestAuthSubjectRegistry(),
           resolveConnectedAccountRequestAuthHttpPort: () => 43122,
         });
-        expect(admitted, admitted.ok ? undefined : admitted.error.code).toMatchObject({ ok: true });
+        expect(admitted, admitted.ok ? undefined : `${admitted.error.code}; phases=${reachedPhases.join(',')}`).toMatchObject({ ok: true });
         if (!admitted.ok) throw new Error(admitted.error.code);
         const cleanup = admitted.prepared.cleanup;
         if (!cleanup) throw new Error('Expected admitted foreground runtime to own bootstrap cleanup');
@@ -216,6 +224,7 @@ describe('foreground Connected Account admission through the applied plugin runt
             }
           }
         } finally {
+          restoreAgentCliEnvironment?.();
           env.restore();
           reloadConfiguration();
         }

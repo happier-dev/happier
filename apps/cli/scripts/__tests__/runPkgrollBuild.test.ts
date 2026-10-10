@@ -7,7 +7,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { spawn as spawnChildProcess } from 'node:child_process';
+import { spawn as spawnChildProcess, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,9 +15,45 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createTempDirSync } from '../../src/testkit/fs/tempDir';
-import { collectPkgrollInputPaths, runPkgrollBuild } from '../runPkgrollBuild.mjs';
+import { collectPkgrollInputPaths, resolvePkgrollCliPath, runPkgrollBuild } from '../runPkgrollBuild.mjs';
 
 const cliPackageRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+async function runRealPkgrollSource(source: string, format: 'esm' | 'cjs' = 'esm') {
+  const fixtureParent = join(cliPackageRoot, '.project', 'tmp');
+  mkdirSync(fixtureParent, { recursive: true });
+  // Keep the actual CLI package-local and hoisted dependency resolution ancestry.
+  const packageRoot = createTempDirSync('pkgroll-runtime-resolution-', fixtureParent);
+  const packageJsonPath = join(packageRoot, 'package.json');
+  const cliManifest = JSON.parse(readFileSync(join(cliPackageRoot, 'package.json'), 'utf8'));
+  const outputDir = 'dist.staging.test';
+  const outputFile = format === 'esm' ? 'index.mjs' : 'index.cjs';
+  try {
+    writeFileSync(packageJsonPath, JSON.stringify({
+      ...cliManifest,
+      name: '@happier-dev/pkgroll-runtime-resolution-fixture',
+      main: `./dist/${outputFile}`,
+      module: undefined,
+      types: undefined,
+      exports: { '.': `./dist/${outputFile}`, './secondary': `./dist/secondary.${format === 'esm' ? 'mjs' : 'cjs'}` },
+      imports: undefined,
+      bin: undefined,
+    }), 'utf8');
+    mkdirSync(join(packageRoot, 'src'));
+    writeFileSync(join(packageRoot, 'src', 'index.ts'), source, 'utf8');
+    // The real CLI has several entries in each format. Exercise any shared
+    // Pkgroll chunks rather than accepting a single-entry-only repair.
+    writeFileSync(join(packageRoot, 'src', 'secondary.ts'), source, 'utf8');
+    await runPkgrollBuild({ packageJsonPath, outputDir, pkgrollCliPath: resolvePkgrollCliPath() });
+    return spawnSync(process.execPath, [join(packageRoot, outputDir, outputFile)], {
+      cwd: packageRoot,
+      env: { ...process.env, NODE_PATH: '' },
+      encoding: 'utf8',
+    });
+  } finally {
+    rmSync(packageRoot, { recursive: true, force: true });
+  }
+}
 
 function writeIsolatedPkgrollRepo(prefix: string) {
   const repoRoot = createTempDirSync(prefix);
@@ -147,6 +183,29 @@ describe('runPkgrollBuild', () => {
     }
   });
 
+  // Artifact callers settle the canonical workspace publication before Pkgroll.
+  // The composed preparation recipe runs that expensive phase once outside this
+  // keeper's budget; raw linked source layouts are characterized separately.
+  it('preserves the artifact-prepared SDK package-private HTTP transport through the real ESM prebundle', async () => {
+    const result = await runRealPkgrollSource(`
+import { connect } from '@happier-dev/sdk';
+console.log(typeof connect);
+`);
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe('function');
+  });
+
+  it.each(['esm', 'cjs'] as const)('preserves the password sodium public CommonJS export through the real %s prebundle', async (format) => {
+    const sodiumBoundary = join(cliPackageRoot, 'src', 'auth', 'passwordSodium.cjs');
+    const result = await runRealPkgrollSource(`
+import sodium from ${JSON.stringify(sodiumBoundary)};
+void sodium.ready.then(() => console.log(typeof sodium.crypto_pwhash));
+`, format);
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe('function');
+  });
   it('converges a directory symlink or junction alias on the physical package stage', async () => {
     await runPhysicalPackageAlias('directory');
   }, 20_000);

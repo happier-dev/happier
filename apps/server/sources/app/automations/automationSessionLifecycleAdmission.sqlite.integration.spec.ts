@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import tweetnacl from "tweetnacl";
 import {
     MAX_NON_TERMINAL_EVENT_CONVERSATION_RUNS_PER_ACCOUNT,
     serializeAutomationStoredDefinitionExecutionRecipeV1,
@@ -6,6 +7,7 @@ import {
     sealWorkflowCheckpointStoredEnvelopeV1,
     AutomationRunCauseSchema,
     deriveAutomationManualOccurrenceKeyV1,
+    PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1,
     createCanonicalJsonSigningInput,
 } from "@happier-dev/protocol";
 import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
@@ -20,6 +22,7 @@ import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { createSignedPluginInstallationPublisherHeader } from "@/testkit/pluginInstallationPublisherTestkit";
 import { withAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 import { registerSessionArchiveRoutes } from "@/app/api/routes/session/registerSessionArchiveRoutes";
 import { deleteOwnedSession } from "@/app/session/delete/deleteOwnedSession";
@@ -32,9 +35,9 @@ import { claimAutomationRun } from "./automationClaimService";
 import { admitDueAutomationScheduleTriggerTx } from "./automationRunQueueService";
 import { failAutomationRun } from "./automationRunService";
 import { validateSessionLifecycleTriggerRegistrationTx } from "./automationSessionLifecycleRegistration";
-import { encodeAutomationRunCause } from "./automationRunCauseCodec";
+import { decodeAutomationRunCause, encodeAutomationRunCause } from "./automationRunCauseCodec";
 import { clearAutomationRunHistory, deleteAutomationTrigger } from "./automationCrudService";
-import { isAutomationOriginRunPublisherTx } from "./automationTriggerCauseChain";
+import { isAutomationOriginRunPublisherTx, readAutomationOriginTriggerIdsTx } from "./automationTriggerCauseChain";
 
 const authentication = createPresentUserSessionAccessAuthentication();
 
@@ -448,8 +451,50 @@ describe("Session lifecycle Automation admission on SQLite", () => {
             .toMatchObject({ id: newest.id, lastSucceededRun: { runId: active.run!.id, checkpointEnvelope } });
     });
 
-    // Session-lifecycle CHECKs prohibit persisted archive actors without a storage amendment.
-    it.todo("suppresses authenticated archive actors and retains unrelated descendant ancestry");
+    it("suppresses signed host archive origin, retains ancestry for unrelated triggers, and refuses an unsigned origin claim", async () => {
+        const current = await source();
+        const own = await trigger({ ...current, workflow: true, policy: { kind: "firstMatch" } });
+        const unrelated = await trigger({ ...current, workflow: true, policy: { kind: "firstMatch" } });
+        await db.automationTrigger.updateMany({ where: { id: { in: [own.id, unrelated.id] } },
+            data: { sessionLifecycleEventsJson: '["sessionArchived"]' } });
+        const root = await db.automationRun.create({ data: { accountId: current.accountId, automationId: own.automationId,
+            state: "running", scheduledAt: new Date(), dueAt: new Date(), workflowCustodyState: "pending",
+            workflowAcceptedSnapshotEnvelope: "{}", ...encodeAutomationRunCause(AutomationRunCauseSchema.parse({
+                kind: "trigger", triggerKind: "schedule", triggerId: own.id, triggerRevision: 1, occurredAt: 100,
+                evidence: { scheduledFor: 100 }, occurrenceKey: deriveAutomationManualOccurrenceKeyV1({
+                    automationId: own.automationId, idempotencyKey: randomUUID(),
+                }),
+            })) } });
+        const assignment = await db.automationAssignment.findFirstOrThrow({ where: { automationId: own.automationId } });
+        const keyPair = tweetnacl.sign.keyPair();
+        const installationId = randomUUID();
+        await db.machine.update({ where: { id: assignment.machineId },
+            data: { installationId, installationPublicKey: new Uint8Array(keyPair.publicKey) } });
+        await db.automationRunAssignment.create({ data: { runId: root.id, machineId: assignment.machineId } });
+        await withAuthenticatedTestApp(registerSessionArchiveRoutes, async (app) => {
+            const url = `/v2/sessions/${current.sessionId}/archive`;
+            const body = { originRunId: root.id };
+            const headers = { "x-test-user-id": current.accountId };
+            expect((await app.inject({ method: "POST", url, payload: body, headers })).statusCode).toBe(403);
+            expect((await db.session.findUniqueOrThrow({ where: { id: current.sessionId } })).archivedAt).toBeNull();
+            const signed = createSignedPluginInstallationPublisherHeader({ keyPair, machineId: assignment.machineId,
+                installationId, path: url, body });
+            expect((await app.inject({ method: "POST", url, payload: body,
+                headers: { ...headers, [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: signed } })).statusCode).toBe(200);
+            expect(await db.automationRun.count({ where: { triggerId: own.id } })).toBe(1);
+            expect((await db.automationTrigger.findUniqueOrThrow({ where: { id: own.id } })).remainingOccurrences).toBe(1);
+            const descendant = await db.automationRun.findFirstOrThrow({ where: { triggerId: unrelated.id } });
+            expect(decodeAutomationRunCause(descendant)).toMatchObject({
+                kind: "trigger", triggerKind: "sessionLifecycle",
+                evidence: { event: "sessionArchived", originRunId: root.id },
+            });
+            expect(descendant.triggerEvidenceEnvelope).toBeNull();
+            expect(await inTx((tx) => readAutomationOriginTriggerIdsTx(tx, {
+                v: 1, kind: "sessionLifecycle", event: "sessionArchived", sourceSessionId: current.sessionId,
+                occurredAt: Date.now(), originRunId: descendant.id,
+            }))).toEqual(new Set([unrelated.id, own.id]));
+        });
+    });
 
     it("admits archive triggers only on archive transitions through the HTTP owner and rolls back archive when admission fails", async () => {
         const current = await source();
@@ -457,6 +502,7 @@ describe("Session lifecycle Automation admission on SQLite", () => {
         await db.automationTrigger.update({ where: { id: attached.id }, data: { sessionLifecycleEventsJson: '["sessionArchived"]' } });
         await withAuthenticatedTestApp(registerSessionArchiveRoutes, async (app) => {
             const post = (action: string) => app.inject({ method: "POST", url: `/v2/sessions/${current.sessionId}/${action}`,
+                ...(action === "archive" ? { payload: {} } : {}),
                 headers: { "x-test-user-id": current.accountId } });
             const restore = failRunCreate(attached.automationId);
             try {

@@ -216,7 +216,6 @@ describe('tracked session handoff coordinator', () => {
     expect(deps.abort).toHaveBeenCalledOnce();
     expect(deps.resumeTarget).not.toHaveBeenCalled();
   });
-
   it('stops before target preparation when the final linked route blocks after source quiescence', async () => {
     const linkStatus = {
       relationshipId: 'source-hub', controllerMachineId: 'hub-machine', state: 'watching' as const,

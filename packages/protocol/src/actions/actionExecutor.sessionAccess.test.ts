@@ -86,7 +86,7 @@ describe('createActionExecutor (Session access)', () => {
       .toThrow();
   });
 
-  it('preserves the strict credential condition and the domain grant constraints', () => {
+  it('preserves the strict credential condition through the logical and physical grant schemas', () => {
     const input = {
       sessionId: 'session-1', subject: { kind: 'team', teamId: 'team-1' },
       accessLevel: 'edit', canApprovePermissions: false,
@@ -97,6 +97,7 @@ describe('createActionExecutor (Session access)', () => {
     for (const patch of [
       { accessLevel: 'view', canApprovePermissions: true },
       { requiredTeamCredential: { ...input.requiredTeamCredential, expectedResourceRevision: -1 } },
+      { requiredTeamCredential: { ...input.requiredTeamCredential, deliveryMode: 'both' } },
       { requiredTeamCredential: { ...input.requiredTeamCredential, unchecked: true } },
     ]) {
       expect(() => bindSessionAccessActionHttpRequestV1('session.access.grant.set', { ...input, ...patch })).toThrow();

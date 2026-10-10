@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { resolveEphemeralRunnerMachineRpcAuthority } from '@happier-dev/protocol/rpc';
 import { AGENT_SIGN_IN_PREPARE_RPC_METHOD, AGENT_SIGN_IN_STATUS_RPC_METHOD } from '@happier-dev/protocol/daemon/agentSignIn';
-import { LocalServicePreviewResourceV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
@@ -13,6 +12,7 @@ import { createLocalServicesDaemonRuntime } from '@/daemon/local/services/runtim
 import { createTerminalPtySessionManager } from '@/terminal/pty/sessions';
 import type { PtyProcess } from '@/terminal/pty/provider';
 import { createEncryptedTransferChunkEnvelope } from '@happier-dev/transfers/node';
+import { LocalServicePreviewResourceV1Schema, LocalServicePreviewSnapshotRowV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
 
 import { registerRestrictedRunnerMachineServices } from './registerRestrictedRunnerMachineServices';
 import { createRestrictedRunnerLocalServicesRoutes } from './restrictedRunnerLocalServices';
@@ -309,15 +309,26 @@ describe('restricted Runner ordinary Machine services', () => {
     const localServicesRuntime = createLocalServicesDaemonRuntime({
       machineId: 'runner-machine',
       accountId: 'runner-account',
-      // Home HTTP is the external boundary; Session scoping, preview binding,
-      // inventory and lifecycle use the real ordinary service owners.
-      previewServer: { token: 'runner-token', serverBaseUrl: 'https://home.example.test', http: {
-        async post(_url, body) {
-          const resource = LocalServicePreviewResourceV1Schema.parse(body);
-          return { data: { resource, accessUrl: `https://${resource.previewId}.preview.example.test/?previewToken=admitted`, expiresAt: Date.now() + 60_000 } };
+      previewServer: {
+        token: 'runner-token',
+        serverBaseUrl: 'https://home.example.test',
+        http: {
+          post: async (url, body, options) => {
+            expect(url).toBe('https://home.example.test/v1/local-services/preview');
+            expect(options.headers.Authorization).toBe('Bearer runner-token');
+            const resource = LocalServicePreviewResourceV1Schema.parse(body);
+            expect(resource).toMatchObject({ machineId: 'runner-machine', sessionId: 'runner-session' });
+            return { data: LocalServicePreviewSnapshotRowV1Schema.parse({
+              previewId: resource.previewId,
+              resource,
+              accessUrl: 'https://preview.example.test/',
+              expiresAt: Date.now() + 60_000,
+              diagnostics: [],
+            }) };
+          },
+          delete: async () => ({ data: { ok: true } }),
         },
-        async delete() { return { data: { ok: true } }; },
-      } },
+      },
       inventoryEnabled: () => true,
       startLoop: false,
       inventoryAnnotations: { read: () => null, write: () => undefined },

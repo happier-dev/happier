@@ -87,6 +87,8 @@ describe('AgentInput armed continuation controls', () => {
         expect(permission).not.toBeNull();
         expect(permission?.findAll((node) => node.props.children === getPermissionModeBadgeLabelForAgentType('claude', 'yolo')).length).toBeGreaterThan(0);
         expect(onModeChange).not.toHaveBeenCalled();
+        await screen.update(<AgentInput {...props} />);
+        expect(screen.findByTestId('agent-input-session-mode-chip-label:build')).not.toBeNull();
         await screen.unmount();
     });
 });

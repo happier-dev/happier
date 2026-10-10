@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chmod, mkdir, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdtempSync } from 'node:fs';
@@ -9,17 +9,24 @@ import type {
     ScmWorktreesEnrichmentRequest,
 } from '@happier-dev/protocol/scm';
 import { createScmCapabilitiesFromBackendCapabilities } from '@happier-dev/protocol/scm';
+import { derivePluginDaemonContributionRegistrationRights } from '@happier-dev/protocol/plugins/contributions/catalog';
 import type {
     BackendRuntimeHandlerInput as ScmBackendRuntimeHandlerInput,
     BackendRuntimeRegistration as ScmBackendRuntimeRegistration,
 } from '@happier-dev/plugin-sdk/scm/backend';
 import { readCurrentBackendRuntimeServices as readCurrentScmBackendRuntimeServices } from '@happier-dev/plugin-sdk/scm/backend';
 import { readCurrentHostingProviderRuntimeServices as readCurrentScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting';
+import { createPluginRegistrationScope } from '@happier-dev/plugin-sdk/host/registration';
+import { PLUGIN_MANIFEST as GIT_PLUGIN_MANIFEST } from '@happier-dev/plugins-scm-git';
+import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
+import { listDirectoryEntries } from '@/rpc/handlers/fileSystem/directoryListing/listDirectoryEntries';
 
 import { createRegisteredScmBackendRegistry } from './registeredScmBackendRegistry';
 import { createRegisteredScmBackendAdapter } from './registeredScmBackendAdapter';
 import { createGitBackend, createGitScmBackendRuntimeRegistration } from '../../../../../packages/plugins/scm-git/src/backend';
 import type { ScmBackend } from '../types';
+import { createScmBackendRegistry } from '../registry';
+import { createLocalScmRepositoryFixture, runScmExecutable } from '../contracts/scmBackendContractFixtures';
 
 const TEST_LAST_ACTIVITY_AT_MS = Date.UTC(2026, 4, 13, 4, 0, 0);
 
@@ -261,6 +268,92 @@ describe('registered SCM backend registry', () => {
         expect(description.capabilities).toEqual(adapter.getCapabilities({ mode }));
         expect(adapter.getCapabilities({ mode, executableAvailable: false }))
             .toEqual(createGitBackend().getCapabilities({ mode, executableAvailable: false }));
+    });
+
+    it('retains real Git commit publication, undo and ignore classification through public SDK registration', async () => {
+        const manifest = normalizePluginManifestV2(GIT_PLUGIN_MANIFEST);
+        const definition = manifest.contributes.scmBackends.find((entry) => entry.id === 'git');
+        if (!definition) throw new Error('Git manifest must declare its backend');
+        const scope = createPluginRegistrationScope({
+            pluginId: manifest.id,
+            target: { realm: 'daemon' },
+            rights: derivePluginDaemonContributionRegistrationRights(manifest.contributes),
+        });
+        let fixture: ReturnType<typeof createLocalScmRepositoryFixture> | undefined;
+        try {
+            const authored = createGitScmBackendRuntimeRegistration();
+            scope.api.scm.registerBackend(definition.id, {
+                runtime: authored.runtime,
+                handlers: authored.handlers,
+            });
+            const [captured] = scope.commit();
+            if (captured?.family !== 'scmBackends') throw new Error('Expected captured Git backend registration');
+            const resolved = createRegisteredScmBackendRegistry({
+                definitions: [{ pluginId: manifest.id, contributionId: definition.id, definition }],
+                registrations: [{ pluginId: manifest.id, registration: {
+                    id: captured.localId,
+                    ...captured.value,
+                } }],
+            });
+            expect(resolved.diagnostics).toEqual([]);
+            const backend = resolved.backends.find((entry) => entry.id === 'happier.scm.backend.git/git');
+            if (!backend) throw new Error('Public SDK registration must admit the declared Git backend');
+            if (!backend.commitResolveOutcome || !backend.commitUndoLast) {
+                throw new Error('Registered Git must retain commit outcome resolution and undo');
+            }
+            fixture = createLocalScmRepositoryFixture({
+                executable: 'git', repoMode: '.git', prefix: 'happier-scm-sdk-commit-contract-',
+            });
+            const listing = await listDirectoryEntries({
+                directoryPath: fixture.rootPath,
+                includeFiles: true,
+                maxEntries: null,
+                statConcurrency: 4,
+                includeGitIgnore: true,
+                scmRegistry: createScmBackendRegistry(resolved.backends),
+            });
+            expect(listing.gitIgnoreAvailable).toBe(true);
+            const { ignoredPath, trackedPath } = fixture;
+            expect(listing.entries.find((entry) => entry.name === ignoredPath))
+                .toMatchObject({ type: 'file', gitIgnored: true });
+            expect(listing.entries.find((entry) => entry.name === trackedPath))
+                .toMatchObject({ type: 'file', gitIgnored: false });
+            const context = {
+                cwd: fixture.rootPath,
+                projectKey: `${backend.id}:${fixture.rootPath}`,
+                detection: await backend.detectRepo({ cwd: fixture.rootPath }),
+            };
+            if (!backend.commitCaptureTarget) throw new Error('Registered Git must retain its commit admission witness');
+            const expectedRef = `refs/heads/${fixture.branchName}`;
+            expect(await backend.commitCaptureTarget({ context })).toEqual({
+                success: true,
+                target: {
+                    headOid: fixture.headCommit,
+                    ref: expectedRef,
+                    baseTreeOid: runScmExecutable(fixture.rootPath, 'git', ['rev-parse', 'HEAD^{tree}']),
+                },
+            });
+            await writeFile(join(fixture.rootPath, fixture.trackedPath), 'registered commit change\n');
+            const committed = await backend.commitCreate({ context, request: {
+                message: 'registered publication', expectedHeadOid: fixture.headCommit, expectedRef,
+                scope: { kind: 'all-pending' },
+            } });
+            expect(committed).toMatchObject({ success: true, publication: { state: 'published' } });
+            if (!committed.commitSha) throw new Error('Registered Git must publish a commit object');
+            expect(runScmExecutable(fixture.rootPath, 'git', ['rev-parse', 'HEAD'])).toBe(committed.commitSha);
+            expect(await backend.commitResolveOutcome({ context, request: {
+                candidateOid: committed.commitSha, expectedHeadOid: fixture.headCommit, expectedRef,
+            } })).toMatchObject({
+                success: true,
+                publication: { state: 'published', candidateOid: committed.commitSha },
+            });
+            expect(await backend.commitUndoLast({ context, request: { expectedHeadOid: committed.commitSha } }))
+                .toMatchObject({ success: true });
+            expect(runScmExecutable(fixture.rootPath, 'git', ['rev-parse', 'HEAD'])).toBe(fixture.headCommit);
+        } finally {
+            await scope.dispose();
+            if (fixture) await rm(fixture.rootPath, { recursive: true, force: true });
+        }
     });
 
     it('activates a workspace-transfer backend that registers only the combined resolver', () => {

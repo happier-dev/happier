@@ -25,7 +25,7 @@ import {
 } from '../../../../../apps/cli/src/agent/executionRuns/profiles/review/hostActionMaterializer';
 import { createCliReviewCommentActionExecutorFromCredentials } from '../../../../../apps/cli/src/agent/reviews/comments/executor';
 import { signPluginInstallationPublisherHeader } from '../../../../../apps/cli/src/plugins/installations/publisherProof';
-import { getSharedBlockingApprovalCoordinator } from '../../../../../apps/cli/src/session/actions/approvals/blockingApprovalCoordinator';
+import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
 import { createExecutionRunHostActionCurrentIntentAdapter } from '../../../../../apps/cli/src/session/actions/approvals/executionRunHostActionCurrentIntent';
 import { createTestAuth } from '../auth';
 import { fetchJson } from '../http';

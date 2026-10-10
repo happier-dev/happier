@@ -607,7 +607,7 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
     return resolved.ok ? { ...resolved.target, backendTargetParam: target ?? resolved.target.backendTargetParam } : null;
   };
 
-  const resolveSessionMachineId = (sessionId: string, serverId?: string): string => {
+  const resolveSessionMachineId = (sessionId: string, serverId?: string | null): string => {
     const exactServerId = String(serverId ?? '').trim();
     return readMachineControlTargetForSession(exactServerId
       ? { sessionId, serverId: exactServerId }

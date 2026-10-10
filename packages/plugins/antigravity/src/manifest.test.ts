@@ -78,6 +78,7 @@ describe('Antigravity plugin manifest', () => {
             },
             sources: [expect.objectContaining({
               sourceKind: 'antigravityCliPrint',
+              contentSearch: false,
               schema: {
                 fields: [
                   { kind: 'literal', name: 'kind', value: 'antigravityCliPrint' },

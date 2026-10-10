@@ -13172,9 +13172,9 @@ settingsSession: {
       mediatorVerbosityShort: "Breve",
       mediatorVerbosityBalanced: "Bilanciato",
       mediatorIdleTtl: "TTL inattività mediatore",
-      mediatorIdleTtlSubtitle: "Arresto automatico dopo inattività (60–21600s)",
-      mediatorIdleTtlDescription: "Inserisci un numero tra 60 e 21600.",
-      mediatorIdleTtlInvalid: "Inserisci un numero tra 60 e 21600.",
+      mediatorIdleTtlSubtitle: "Arresto automatico dopo inattività",
+      mediatorIdleTtlDescription: "Inserisci un numero intero positivo di secondi.",
+      mediatorIdleTtlInvalid: "Inserisci un numero intero positivo di secondi.",
       mediatorChatModelSource: "Origine modello (chat)",
       mediatorChatModelSourceSubtitle:
         "Usa il modello della sessione o un modello veloce personalizzato",

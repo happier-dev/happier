@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { ApprovalRequestV1 } from '../approvals/approvalRequestV1.js';
+import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import type {
   PluginPermissionGrantRequestV1,
   PluginPermissionGrantV1,
@@ -178,15 +178,15 @@ describe('createActionExecutor (plugin permission grants)', () => {
     expect(pluginPermissionGrantAction).toHaveBeenCalledTimes(2);
   });
 
-  it('preserves host-stamped plugin identity through blocking approval replay', async () => {
+  it('preserves host-stamped plugin identity and descriptive provenance through deferred approval replay', async () => {
     const pluginPermissionGrantAction = vi.fn(async () => ({ grant: revokedGrant }));
-    let storedRequest: ApprovalRequestV1 | null = null;
-    const approvalsCreate = vi.fn(async ({ request }: { request: ApprovalRequestV1 }) => {
+    let storedRequest: ApprovalRequest | null = null;
+    const approvalsCreate = vi.fn(async ({ request }: { request: ApprovalRequest }) => {
       storedRequest = request;
       return { artifactId: 'approval-1' };
     });
     const approvalsGet = vi.fn(async () => storedRequest);
-    const approvalsUpdate = vi.fn(async ({ request }: { request: ApprovalRequestV1 }) => {
+    const approvalsUpdate = vi.fn(async ({ request }: { request: ApprovalRequest }) => {
       storedRequest = request;
       return { ok: true as const };
     });
@@ -266,6 +266,15 @@ describe('createActionExecutor (plugin permission grants)', () => {
         sourceCustody: { kind: 'development' as const, registeredRootId: 'voice-root-1' },
       },
     };
+
+    const withoutApprovalCustody = createActionExecutor({ pluginPermissionGrantAction,
+      isActionApprovalRequired: () => false,
+    } as ActionExecutorDeps);
+    for (const actionId of ['plugins.permissions.grants.grant', 'plugins.permissions.grants.dismissRequest'] as const) {
+      await expect(withoutApprovalCustody.execute(actionId, { requestId: 'request-1' }, pluginContext))
+        .resolves.toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+    }
+    expect(pluginPermissionGrantAction).not.toHaveBeenCalled();
 
     await expect(executor.execute('plugins.permissions.grants.grant', {
       requestId: 'request-1',

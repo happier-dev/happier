@@ -17,6 +17,15 @@ function extractOptionalPodspecAssignment(podspec, property) {
   return match?.[1] ?? "";
 }
 
+test("Android JNI library requests 16 KB LOAD and RELRO page alignment", () => {
+  const cmake = readFileSync(path.join(packageRoot, "android", "src", "main", "cpp", "CMakeLists.txt"), "utf8");
+  const linkOptions = cmake.match(/target_link_options\(happier_sherpa_jni\s+PRIVATE([\s\S]*?)\)/);
+
+  assert.ok(linkOptions, "sherpa JNI target must configure Android linker page alignment");
+  assert.match(linkOptions[1], /"-Wl,-z,max-page-size=16384"/);
+  assert.match(linkOptions[1], /"-Wl,-z,common-page-size=16384"/);
+});
+
 test("native library acquisition rejects an override that disagrees with the pinned header version", () => {
   const packageJson = JSON.parse(readFileSync(path.join(packageRoot, "package.json"), "utf8"));
   const gradle = readFileSync(path.join(packageRoot, "android", "build.gradle"), "utf8");

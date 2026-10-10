@@ -685,6 +685,12 @@ describe('Channels core activation', () => {
             ? ['cli', 'ui', 'agent', 'mcp']
             : ['cli', 'ui'],
         );
+        if (id === CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingRead) {
+          // Association discovery is a read of the admitted Account binding,
+          // not connection setup or disclosure of provider credentials.
+          expect(manifestAction.dangerLevel).toBe('safe');
+          expect(manifestAction.hostAccess).toEqual(['account-storage']);
+        }
         const serializedInputSchema = JSON.parse(JSON.stringify(declaration.inputSchema));
         const serializedResultSchema = JSON.parse(JSON.stringify(declaration.resultSchema));
         expect(serializedInputSchema).not.toBe(declaration.inputSchema);

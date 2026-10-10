@@ -10,14 +10,14 @@ function readRepoFile(relPath) {
   return fs.readFileSync(path.join(repoRoot, relPath), 'utf8');
 }
 
-test('ui-mobile-release native_submit submits explicit build ids and does not wait for submission completion', () => {
+test('ui-mobile-release submits explicit build ids and retains asynchronous submissions outside production Android', () => {
   const src = readRepoFile('scripts/pipeline/run.mjs');
 
-  // Cloud native_submit should submit by explicit build id (not --latest) and avoid blocking.
+  // Cloud native_submit uses exact build ids; non-production Android submissions can remain asynchronous.
   assert.match(src, /explicitId[^]*\['--id', explicitId\]/, "expected native_submit to pass '--id <buildId>' to expo submit");
   assert.match(src, /'--wait'[^]*'false'/, "expected native_submit to pass '--wait false' to expo submit");
 
-  // Local native_submit should also avoid blocking.
+  // Local non-production Android submissions can remain asynchronous as well.
   assert.match(src, /'--path'[^]*'--wait'[^]*'false'/, "expected local native_submit to pass '--wait false' to expo submit");
 });
 

@@ -2394,6 +2394,10 @@ test('CLI-root-only source dist admission consumes the current build result', as
 test('startLocalDaemonWithAuth requires daemon control ping before accepting running daemon state', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-ping-ready-'));
   let fixturePid = null;
+  let shouldShutdown = false;
+  let startPromise = null;
+  let stateInspection = null;
+  let cleanupDaemon = async () => {};
   try {
     const { internalServerUrl, publicServerUrl } = await reserveLoopbackServerUrls();
     const cliDir = join(tmp, 'apps', 'cli');
@@ -2421,36 +2425,69 @@ test('startLocalDaemonWithAuth requires daemon control ping before accepting run
       HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
     });
 
-    await assert.rejects(
-      () =>
-        startLocalDaemonWithAuth({
-          cliBin,
-          cliHomeDir,
-          internalServerUrl,
-          publicServerUrl,
-          isShuttingDown: () => false,
-          forceRestart: true,
-          env,
-          stackName: 'dev',
-          cliIdentity: 'default',
-        }),
-      /Failed to start daemon|daemon failed to start/i,
-    );
-    fixturePid = await readDaemonPid(join(cliHomeDir, 'daemon.state.json'));
-
-    await stopLocalDaemon({
-      cliBin,
-      internalServerUrl,
-      cliHomeDir,
-      env,
+    cleanupDaemon = async () => {
+      fixturePid ??= await readDaemonPid(join(cliHomeDir, 'daemon.state.json')).catch(() => null);
+      await stopLocalDaemon({ cliBin, internalServerUrl, cliHomeDir, env });
+      if (fixturePid) {
+        assert.equal(await waitForProcessExit(fixturePid), true, `expected fixture daemon pid ${fixturePid} to exit`);
+        fixturePid = null;
+      }
+    };
+    let resolveUnreadyState;
+    let rejectUnreadyState;
+    const unreadyState = new Promise((resolve, reject) => {
+      resolveUnreadyState = resolve;
+      rejectUnreadyState = reject;
     });
-    assert.equal(await waitForProcessExit(fixturePid), true, `expected fixture daemon pid ${fixturePid} to exit`);
-    fixturePid = null;
+    startPromise = startLocalDaemonWithAuth({
+      cliBin,
+      cliHomeDir,
+      internalServerUrl,
+      publicServerUrl,
+      isShuttingDown: () => {
+        // Observe the real process/control boundary on the existing startup
+        // loop; a live PID alone must not settle startup as ready.
+        if (!shouldShutdown && !stateInspection) {
+          stateInspection = checkDaemonStatePingAware(cliHomeDir, { serverUrl: internalServerUrl, env })
+            .then((state) => {
+              if (state.status === 'unreachable') {
+                fixturePid = state.pid;
+                resolveUnreadyState(state);
+              }
+            })
+            .catch(rejectUnreadyState)
+            .finally(() => { stateInspection = null; });
+        }
+        return shouldShutdown;
+      },
+      forceRestart: true,
+      env,
+      stackName: 'dev',
+      cliIdentity: 'default',
+    });
+    const observation = await Promise.race([
+      unreadyState.then((state) => ({ status: 'unready', state })),
+      startPromise.then(
+        () => ({ status: 'ready' }),
+        (error) => ({ status: 'failed', error }),
+      ),
+    ]);
+    assert.equal(observation.status, 'unready', 'PID-only daemon must remain unready until control ping succeeds');
+    assert.equal(observation.state.reason, 'missing_http_port');
+    shouldShutdown = true;
+    await assert.rejects(startPromise, /startup was cancelled before readiness/i);
   } finally {
-    if (fixturePid) {
-      try { process.kill(fixturePid, 'SIGKILL'); } catch {}
+    shouldShutdown = true;
+    try {
+      await startPromise?.catch(() => {});
+      await stateInspection;
+      await cleanupDaemon();
+    } finally {
+      if (fixturePid) {
+        try { process.kill(fixturePid, 'SIGKILL'); } catch {}
+      }
+      await rm(tmp, { recursive: true, force: true });
     }
-    await rm(tmp, { recursive: true, force: true });
   }
 });
 

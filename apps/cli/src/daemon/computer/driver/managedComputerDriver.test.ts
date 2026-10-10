@@ -482,8 +482,8 @@ describe.skipIf(process.platform !== 'linux')('managed native computer driver (X
     const now = Date.now();
     const relay = createMachineLiveStreamRelayTerminator({ machineId: 'machine_source', captureAdapter: source.adapter,
       nowMs: () => Date.now(), emitEnvelope: envelope => envelopes.push(envelope) });
-    const receivedFrames = () => envelopes.filter(envelope => envelope.message.kind === 'frame'
-      && envelope.message.frame.payloadKind === 'image_keyframe');
+    const receivedFrames = () => envelopes.flatMap(envelope => envelope.message.kind === 'frame' ? [envelope.message.frame] : []);
+    const receivedImages = () => receivedFrames().filter(frame => frame.payloadKind === 'image_keyframe');
     try {
       const started = await relay.start({ v: 1, streamId: 'stream', streamFamily: 'screen', routeKind: 'server_relay',
         sourceMachineId: 'machine_source', targetMachineId: 'machine_target', codecId: 'image.frame.v1',
@@ -494,12 +494,18 @@ describe.skipIf(process.platform !== 'linux')('managed native computer driver (X
       });
       if (!started.ok) throw new Error(started.reasonCode);
       await vi.advanceTimersByTimeAsync(25);
-      expect(receivedFrames()).toHaveLength(1);
+      expect(receivedImages()).toMatchObject([{ payloadBase64: png }]);
+      const metadata = receivedFrames().filter(frame => frame.payloadKind === 'metadata');
+      expect(metadata).toHaveLength(1);
+      expect(JSON.parse(Buffer.from(metadata[0].payloadBase64, 'base64').toString('utf8'))).toMatchObject({ target, sourceId: source.sourceId });
+      const captureCount = native.tools.filter(tool => tool.name === 'get_window_state').length;
+      expect(captureCount).toBe(1);
       expect(relay.applyControl({ v: 1, sourceMachineId: 'machine_source', targetMachineId: 'machine_target',
-        message: { kind: 'control', control: { v: 1, streamId: 'stream', kind: 'ack', nextSequence: 3, windowFrames: 1 } } }))
+        message: { kind: 'control', control: { v: 1, streamId: 'stream', kind: 'ack', nextSequence: receivedFrames().at(-1)!.sequence + 1, windowFrames: 1 } } }))
         .toEqual({ ok: true });
       await vi.advanceTimersByTimeAsync(25);
-      expect(receivedFrames()).toHaveLength(2);
+      expect(receivedImages()).toMatchObject([{ payloadBase64: png }, { payloadBase64: png }]);
+      expect(native.tools.filter(tool => tool.name === 'get_window_state')).toHaveLength(captureCount + 1);
     } finally { await relay.dispose(); await source.close(); }
   });
 

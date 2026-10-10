@@ -848,7 +848,8 @@ async function extractTarArchiveToDirectory(params: Readonly<{
   );
   const unpackOptions: BoundedTarOptions = {
     cwd: params.extractDir,
-    filter: (_path, entry) => 'meta' in entry ? validateEntry.accept(entry) : true,
+    filter: (_path, entry) => !params.abortContext.signal.aborted
+      && ('meta' in entry ? validateEntry.accept(entry) : true),
     maxDecompressionRatio: params.limits.maxCompressionRatio,
     maxMetaEntrySize: MAX_TAR_METADATA_ENTRY_BYTES,
     // Every accepted path and entry type has already passed the canonical
@@ -860,6 +861,9 @@ async function extractTarArchiveToDirectory(params: Readonly<{
     strict: true,
   };
   const unpack = tar.x(unpackOptions);
+  const unpackFinished = new Promise<void>((resolveFinished) => {
+    unpack.once('finish', resolveFinished);
+  });
   attachTarMetadataBudget({ parser: unpack, budget, abort: params.abortContext.abort });
 
   try {
@@ -890,6 +894,13 @@ async function extractTarArchiveToDirectory(params: Readonly<{
     params.abortContext.throwIfAborted();
     validateEntry.assertValid();
     throw error;
+  } finally {
+    // Pipeline synthesizes close for node-tar's legacy stream on failure;
+    // that does not drain its pending filesystem callbacks. End the stopped
+    // parser and await Unpack's finish (which includes those callbacks) before
+    // the caller removes staging. Rejected entries never reach the filesystem.
+    unpack.end();
+    await unpackFinished;
   }
 }
 

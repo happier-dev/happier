@@ -1,14 +1,15 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { backoff } from '@/utils/timing/time';
-import { serverFetch } from '@/sync/http/client';
+import { createServerFetchForActiveServer } from '@/sync/http/client';
 import { HappyError } from '@/utils/errors/errors';
 
 export async function setAccountUsername(
     credentials: AuthCredentials,
     username: string,
 ): Promise<{ username: string }> {
+    const request = createServerFetchForActiveServer();
     return await backoff(async () => {
-        const response = await serverFetch('/v1/account/username', {
+        const response = await request('/v1/account/username', {
             method: 'POST',
             headers: {
                 Authorization: `Bearer ${credentials.token}`,

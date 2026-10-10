@@ -12797,9 +12797,9 @@ settingsSession: {
       mediatorVerbosityShort: "Коротко",
       mediatorVerbosityBalanced: "Сбалансированно",
       mediatorIdleTtl: "TTL бездействия медиатора",
-      mediatorIdleTtlSubtitle: "Авто-остановка после бездействия (60–21600с)",
-      mediatorIdleTtlDescription: "Введите число от 60 до 21600.",
-      mediatorIdleTtlInvalid: "Введите число от 60 до 21600.",
+      mediatorIdleTtlSubtitle: "Авто-остановка после бездействия",
+      mediatorIdleTtlDescription: "Введите положительное целое число секунд.",
+      mediatorIdleTtlInvalid: "Введите положительное целое число секунд.",
       mediatorChatModelSource: "Источник модели медиатора (чат)",
       mediatorChatModelSourceSubtitle:
         "Использовать модель сессии или свою быструю модель",

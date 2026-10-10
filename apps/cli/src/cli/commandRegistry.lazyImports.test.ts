@@ -64,17 +64,14 @@ describe('commandRegistry import laziness', () => {
     });
   });
 
-  it('registers every first-class session command as a lazy nested delegation', async () => {
+  it('registers dedicated first-class session commands as lazy nested delegations', async () => {
     const { findCommandDispatchDescriptor } = await import('./commandRegistry');
     const firstClassSessionCommands = [
       ['spawn', ['create']],
-      ['list', ['list']],
-      ['ls', ['list']],
-      // `send` is a compiled `session.message.send` command, not a nested
-      // session delegation; its ownership is asserted beside the compiler.
+      // list/ls, send, wait and stop are compiled Action commands, not
+      // dedicated session delegations. Their real dispatch is covered by the
+      // Action CLI entrypoint and compiler suites.
       ['history', ['history']],
-      ['wait', ['wait']],
-      ['stop', ['stop']],
       ['delegate', ['delegate', 'start']],
     ] as const;
 

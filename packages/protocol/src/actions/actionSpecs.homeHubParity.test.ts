@@ -9,10 +9,10 @@ describe('Home hub customization Action parity', () => {
     for (const id of ids) {
       expect(ActionIdSchema.safeParse(id).success, id).toBe(true);
       const spec = listActionSpecs().find((row) => row.id === id)!;
-      const isDeviceLocal = id === 'home.reachNudge.dismiss';
-      expect(spec.executionPlacement).toBe(isDeviceLocal ? 'client' : 'account');
-      // Artifact layout is Account-owned; the reachability dismissal remains local.
-      expect(spec.surfaces).toMatchObject({ ui: true, agent: true, mcp: true, cli: !isDeviceLocal, api: true });
+      const deviceLocal = id === 'home.reachNudge.dismiss';
+      expect(spec.executionPlacement).toBe(deviceLocal ? 'client' : 'account');
+      // Account customization is available headlessly; reachability dismissal belongs to this device.
+      expect(spec.surfaces).toMatchObject({ ui: true, agent: true, mcp: true, cli: !deviceLocal, rpc: !deviceLocal, api: true });
       expect(actionSpecToActionDefinitionV1(spec, { surface: 'agent' }).id).toBe(id);
       expect(searchSerializedActionSpecsForSurface({ query: id, surface: 'agent', isActionEnabled: (candidate) => ids.includes(candidate) }).some((row) => row.id === id)).toBe(true);
     }

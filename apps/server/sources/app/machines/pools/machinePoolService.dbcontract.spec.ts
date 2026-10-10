@@ -66,6 +66,7 @@ describe("Machine Pool aggregate provider contract", () => {
     afterAll(async () => {
         if (!connected) return;
         await db.team.deleteMany({ where: { id: teamId } });
+        await db.machine.deleteMany({ where: { accountId } });
         await db.account.deleteMany({ where: { id: accountId } });
         await db.$disconnect();
     });

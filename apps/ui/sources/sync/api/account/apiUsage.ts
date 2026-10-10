@@ -1,7 +1,7 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { backoff } from '@/utils/timing/time';
 import { HappyError } from '@/utils/errors/errors';
-import { serverFetch, type ServerFetch } from '@/sync/http/client';
+import { createServerFetchForActiveServer, type ServerFetch } from '@/sync/http/client';
 import { UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import type {
     UsageAnalyticsQueryRequest,
@@ -94,6 +94,7 @@ export async function queryUsage(
     params: UsageQueryParams = {},
     options?: Readonly<{ request?: ServerFetch; signal?: AbortSignal; analyticsRequest?: UsageAnalyticsQueryRequest }>,
 ): Promise<UsageResponse> {
+    const requestUsage = options?.request ?? createServerFetchForActiveServer();
     const read = async () => {
         options?.signal?.throwIfAborted();
         const request: UsageAnalyticsQueryRequest = options?.analyticsRequest ?? {
@@ -133,7 +134,7 @@ export async function queryUsage(
             topLimit: 20,
         };
 
-        const response = await (options?.request ?? serverFetch)('/v2/usage/query', {
+        const response = await requestUsage('/v2/usage/query', {
             method: 'POST',
             signal: options?.signal,
             headers: {
@@ -153,7 +154,7 @@ export async function queryUsage(
             }
 
             if (response.status === 404 && !options?.analyticsRequest && !params.focus && message !== 'Session not found') {
-                return await queryLegacyUsage(credentials, params);
+                return await queryLegacyUsage(credentials, params, requestUsage);
             }
             if (response.status === 404 && params.sessionId) {
                 throw new HappyError('Session not found', false, { status: 404, kind: 'config' });
@@ -187,9 +188,10 @@ export async function queryUsageAnalytics(
 async function queryLegacyUsage(
     credentials: AuthCredentials,
     params: UsageQueryParams,
+    request: ServerFetch,
 ): Promise<UsageDataPoint[]> {
     const legacyGroupBy: UsageLegacyPeriodGranularity = params.groupBy === 'hour' ? 'hour' : 'day';
-    const response = await serverFetch('/v1/usage/query', {
+    const response = await request('/v1/usage/query', {
         method: 'POST',
         headers: {
             'Authorization': `Bearer ${credentials.token}`,

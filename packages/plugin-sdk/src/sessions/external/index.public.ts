@@ -115,3 +115,7 @@ export { validateAgentExternalSessionTakeoverContribution } from '../externalSes
 export { validateAgentExternalSessionTakeoverLaunchPlan } from '../externalSessionTakeover.js';
 export { validateAgentExternalSessionTakeoverResolveLaunchRequest } from '../externalSessionTakeover.js';
 export { validateAgentExternalSessionTakeoverResolveLaunchResult } from '../externalSessionTakeover.js';
+export {
+    createExternalSessionContentMatchSnippet,
+    findExternalSessionContentMatchRange,
+} from '../external.js';

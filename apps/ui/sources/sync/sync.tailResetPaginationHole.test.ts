@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Tail-reset discontinuity (live defect 2026-07-12): a large catch-up gap resolves
 // `tail_reset_latest_page`, which merges ONLY the newest page on top of the previously
@@ -12,30 +12,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // walk so only tail-contiguous content is displayed, and when the walk bridges the old
 // prefix the walk closes and the preserved prefix cursor resumes (no skipped ranges, no
 // redundant refetch of the prefix).
-
-// Sync imports persistence, which instantiates MMKV. Mock it for deterministic tests.
-const kvStore = vi.hoisted(() => new Map<string, string>());
-vi.mock('react-native-mmkv', () => {
-    class MMKV {
-        getString(key: string) {
-            return kvStore.get(key);
-        }
-        set(key: string, value: string) {
-            kvStore.set(key, value);
-        }
-        delete(key: string) {
-            kvStore.delete(key);
-        }
-        getAllKeys() {
-            return [...kvStore.keys()];
-        }
-        clearAll() {
-            kvStore.clear();
-        }
-    }
-
-    return { MMKV };
-});
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -52,56 +28,20 @@ vi.mock('@/log', () => ({
     log: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock('@/voice/context/voiceHooks', () => ({
-    voiceHooks: {
-        onSessionFocus: vi.fn(),
-        onSessionOffline: vi.fn(),
-        onSessionOnline: vi.fn(),
-        onMessages: vi.fn(),
-        onReady: vi.fn(),
-        reportContextualUpdate: vi.fn(),
-    },
-}));
-
-vi.mock('@/track', () => ({
-    initializeTracking: vi.fn(),
-    tracking: null,
-    trackPaywallPresented: vi.fn(),
-    trackPaywallPurchased: vi.fn(),
-    trackPaywallCancelled: vi.fn(),
-    trackPaywallRestored: vi.fn(),
-    trackPaywallError: vi.fn(),
-}));
+vi.mock('@/track/tracking', () => ({ tracking: null }));
 
 const requestMock = vi.hoisted(() => vi.fn());
-vi.mock('@/sync/api/session/apiSocket', () => ({
-    apiSocket: {
-        request: requestMock,
-        emitWithAck: vi.fn(),
-        send: vi.fn(),
-        onMessage: vi.fn(),
-        onStatusChange: vi.fn(),
-        onReconnected: vi.fn(),
-        disconnect: vi.fn(),
-        initialize: vi.fn(),
-    },
-}));
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+let accountConnection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 
 import { storage } from './domains/state/storage';
+import { getPersistenceStorage } from './domains/state/persistenceStorage';
 import {
     markSessionSurfaceVisible,
     resetSessionSurfaceVisibilityForTests,
 } from './domains/session/sessionSurfaceVisibility';
 import type { Session } from './domains/state/storageTypes';
-
-type SyncTailResetTestAccess = {
-    encryption: {
-        getSessionEncryption: (sessionId: string) => unknown;
-    };
-    activeServerSessionIds: Set<string>;
-    hasFetchedSessionsSnapshotForActiveServer: boolean;
-    isForeground: boolean;
-};
 
 const initialStorageState = storage.getState();
 
@@ -111,6 +51,7 @@ function createSession(sessionId: string, seq: number): Session {
     const now = Date.now();
     return {
         id: sessionId,
+        encryptionMode: 'plain',
         seq,
         createdAt: now,
         updatedAt: now,
@@ -131,7 +72,7 @@ type ApiPageMessage = {
     id: string;
     seq: number;
     localId: null;
-    content: { t: 'encrypted'; c: string };
+    content: { t: 'plain'; v: { role: 'agent'; content: { type: 'acp'; agentId: 'claude'; data: { type: 'message'; message: string } } } };
     createdAt: number;
     updatedAt: number;
 };
@@ -145,7 +86,7 @@ function buildPageMessages(fromSeq: number, toSeq: number): ApiPageMessage[] {
             id: `m${seq}`,
             seq,
             localId: null,
-            content: { t: 'encrypted', c: 'cipher' },
+            content: { t: 'plain', v: { role: 'agent', content: { type: 'acp', agentId: 'claude', data: { type: 'message', message: `msg-${seq}` } } } },
             createdAt: seq,
             updatedAt: seq,
         });
@@ -184,34 +125,7 @@ function olderRequestBeforeSeqs(): number[] {
 
 async function seedSessionWithHole(): Promise<{ sync: typeof import('./sync').sync }> {
     const { sync } = await import('./syncEngine');
-    const syncForTest = sync as unknown as SyncTailResetTestAccess;
-    sync.disconnectServer();
-
     storage.getState().applySessions([createSession(SESSION_ID, 410)]);
-
-    syncForTest.encryption = {
-        getSessionEncryption: () => ({
-            decryptMessages: async (messages: ApiPageMessage[]) =>
-                messages.map((m) => ({
-                    id: m.id,
-                    localId: null,
-                    createdAt: m.createdAt,
-                    seq: m.seq,
-                    content: {
-                        role: 'agent',
-                        content: {
-                            type: 'acp',
-                            agentId: 'claude',
-                            provider: 'claude',
-                            data: { type: 'message', message: `msg-${m.seq}` },
-                        },
-                    },
-                })),
-        }),
-    };
-    syncForTest.activeServerSessionIds = new Set<string>([SESSION_ID]);
-    syncForTest.hasFetchedSessionsSnapshotForActiveServer = true;
-    syncForTest.isForeground = true;
     markSessionSurfaceVisible(SESSION_ID);
 
     // Yesterday's state: the initial load materializes seqs 401..410 with the older
@@ -245,11 +159,27 @@ async function seedSessionWithHole(): Promise<{ sync: typeof import('./sync').sy
 }
 
 describe('sync tail-reset pagination hole (discontinuity walk)', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
         storage.setState(initialStorageState, true);
-        kvStore.clear();
+        getPersistenceStorage().clearAll();
         requestMock.mockReset();
         resetSessionSurfaceVisibilityForTests();
+        installDisconnectedServerSocketBoundary();
+        accountConnection = await restoreServerAccountForTest({
+            serverUrl: 'https://tail-paging.example.test',
+            request: async (input, init) => {
+                const url = new URL(String(input));
+                if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+                if (url.pathname === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+                if (url.pathname.endsWith('/messages')) return requestMock(url.pathname + url.search, init);
+                return Response.json({}, { status: 404 });
+            },
+        });
+    });
+
+    afterEach(async () => {
+        await accountConnection?.dispose();
+        accountConnection = undefined;
     });
 
     it('opens a tail discontinuity on the snapshot and publishes the display floor', async () => {

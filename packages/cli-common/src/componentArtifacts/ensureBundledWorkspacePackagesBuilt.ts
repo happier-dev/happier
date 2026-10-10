@@ -32,6 +32,7 @@ type CliBundledWorkspaceArtifactBuildOwner = (
     options: Readonly<{
         repoRoot: string;
         publicationMode: 'live' | 'artifact';
+        deferPluginBuildToGenerator: true;
         ensureWorkspacePackagesBuiltByNameImpl?: EnsureWorkspacePackagesBuiltByName;
     }>,
 ) => Promise<unknown>;
@@ -81,6 +82,7 @@ export async function buildCliBundledWorkspaceArtifactClosure(params: Readonly<{
     await build({
         repoRoot: params.repoRoot,
         publicationMode: params.publicationMode ?? 'artifact',
+        deferPluginBuildToGenerator: true,
         ...(params.ensureWorkspacePackagesBuiltByName
             ? { ensureWorkspacePackagesBuiltByNameImpl: params.ensureWorkspacePackagesBuiltByName }
             : {}),

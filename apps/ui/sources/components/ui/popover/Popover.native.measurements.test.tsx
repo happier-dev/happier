@@ -83,7 +83,7 @@ describe('Popover (native measurements)', () => {
         );
 
         await act(async () => {
-            await flushHookEffects({ cycles: 1, turns: 6, frames: 1 });
+            await flushHookEffects({ cycles: 2, turns: 6, frames: 1 });
         });
 
         const contentView = findPopoverContentView(screen);
@@ -140,7 +140,7 @@ describe('Popover (native measurements)', () => {
         );
 
         await act(async () => {
-            await flushHookEffects({ cycles: 1, turns: 6, frames: 1 });
+            await flushHookEffects({ cycles: 2, turns: 6, frames: 1 });
         });
 
         const contentView = findPopoverContentView(screen);
@@ -196,7 +196,7 @@ describe('Popover (native measurements)', () => {
         );
 
         await act(async () => {
-            await flushHookEffects({ cycles: 1, turns: 6, frames: 1 });
+            await flushHookEffects({ cycles: 2, turns: 6, frames: 1 });
         });
 
         const contentView = findPopoverContentView(screen);
@@ -253,7 +253,7 @@ describe('Popover (native measurements)', () => {
         );
 
         await act(async () => {
-            await flushHookEffects({ cycles: 1, turns: 6, frames: 1 });
+            await flushHookEffects({ cycles: 2, turns: 6, frames: 1 });
         });
 
         const contentView = findPopoverContentView(screen);

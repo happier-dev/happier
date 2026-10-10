@@ -359,6 +359,8 @@ describe('SessionDataKeyEnvelopeErrorCodeV1', () => {
       'invalid_cursor',
       'session_not_found',
       'forbidden',
+      'session_access_authentication_required',
+      'session_access_authentication_unavailable',
       'data_key_not_required',
       'recipient_envelope_required',
       'recipient_changed',

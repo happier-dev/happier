@@ -550,7 +550,7 @@ describe('target action executor', () => {
     });
   });
 
-  it('projects scoped target-action failure text through the bounded diagnostics owner', async () => {
+  it('retains ordinary scoped target-action failure text through the diagnostics owner', async () => {
     const scopedMessage = `scoped failure ${'🚫'.repeat(700)}`;
     const executor = createExecutor({
       resolve: () => resolved(),
@@ -572,7 +572,7 @@ describe('target action executor', () => {
       code: 'plugin_action_execution_failed',
       message: projectPluginFailureText(new Error(scopedMessage)),
     });
-    expect(new TextEncoder().encode(result.message).byteLength).toBeLessThanOrEqual(2_048);
+    expect(result.message).toBe(scopedMessage);
   });
 
   it('falls back when a scoped failure code is not a bounded stable taxonomy', async () => {

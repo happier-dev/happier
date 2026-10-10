@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import Ajv2020 from 'ajv/dist/2020.js';
+import addFormats from 'ajv-formats';
 import { z } from 'zod';
 
 import { RPC_ERROR_CODES } from '../rpc/index.js';
@@ -11,6 +13,7 @@ import type { ActionExecutorDeps } from './executor/types.js';
 import type { ResolvedRolesSnapshotV1 } from '../prompts/roles/rolesV1.js';
 import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
 import { DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1 } from '../account/settings/sessionAgentSpawnPolicyV1.js';
+import { ActionDefinitionV1Schema } from './actionDefinitionV1.js';
 
 const canonicalInput = {
   creationKey: 'plugin-operation-7',
@@ -666,41 +669,11 @@ describe('session.spawn_new canonical execution', () => {
       limit: 1,
     }, context);
 
-    // Reused schema nodes may be local references after the trigger contract
-    // reaches this catalog. Assert the advertised directory shape, not Zod's
-    // choice to inline or reuse that shape.
-    const discovery = z.object({ result: z.object({ actionSpec: z.object({ inputSchema: z.object({
-      properties: z.object({ directory: z.record(z.string(), z.unknown()) }),
-      $defs: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
-    }) }) }) }).parse(getResult);
-    const advertisedSchema = discovery.result.actionSpec.inputSchema;
-    const reference = advertisedSchema.properties.directory.$ref;
-    if (typeof reference === 'string') expect(reference).toMatch(/^#\/\$defs\/[^/]+$/u);
-    const directorySchema = typeof reference === 'string'
-      ? advertisedSchema.$defs?.[reference.slice('#/$defs/'.length)]
-      : advertisedSchema.properties.directory;
-    expect(directorySchema).toMatchObject({
-      oneOf: expect.arrayContaining([
-        expect.objectContaining({ type: 'object', properties: expect.objectContaining({
-          kind: expect.objectContaining({ const: 'path' }),
-          path: expect.objectContaining({ type: 'string', minLength: 1 }),
-        }) }),
-        expect.objectContaining({ type: 'object', properties: expect.objectContaining({
-          kind: expect.objectContaining({ const: 'managed' }),
-        }) }),
-      ]),
-    });
-
-    expect(getResult, JSON.stringify(getResult)).toMatchObject({
+    expect(getResult).toMatchObject({
       ok: true,
       result: {
         actionSpec: {
           kindVersion: 1,
-          inputSchema: {
-            properties: {
-              directory: expect.any(Object),
-            },
-          },
           inputHints: {
             fields: expect.arrayContaining([
               expect.objectContaining({ path: 'directory' }),
@@ -709,6 +682,21 @@ describe('session.spawn_new canonical execution', () => {
         },
       },
     });
+    if (!getResult.ok) throw new Error('Action discovery failed');
+    const { actionSpec: definition } = z.object({ actionSpec: ActionDefinitionV1Schema }).parse(getResult.result);
+    const projectedInput = z.object({
+      properties: z.record(z.string(), z.unknown()),
+      $defs: z.record(z.string(), z.unknown()).optional(),
+    }).parse(definition.inputSchema);
+    const directorySchema = z.record(z.string(), z.unknown()).parse(projectedInput.properties.directory);
+    const ajv = new Ajv2020({ strict: false });
+    addFormats(ajv);
+    // Validate this field's advertised semantics whether Zod emits it inline or by reference.
+    const validate = ajv.compile({ ...directorySchema, $defs: projectedInput.$defs });
+    expect(validate(apiSpawnInput.directory)).toBe(true);
+    expect(validate({ kind: 'managed' })).toBe(true);
+    expect(validate({ kind: 'path', path: '' })).toBe(false);
+    expect(validate({ kind: 'unknown' })).toBe(false);
     expect(getResult).not.toMatchObject({
       result: {
         actionSpec: {
@@ -738,7 +726,7 @@ describe('session.spawn_new canonical execution', () => {
         },
       },
     });
-    expect(searchResult, JSON.stringify(searchResult)).toMatchObject({
+    expect(searchResult).toMatchObject({
       ok: true,
       result: {
         actionSpecs: [expect.objectContaining({

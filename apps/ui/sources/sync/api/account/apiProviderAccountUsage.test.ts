@@ -17,8 +17,7 @@ const credentials: AuthCredentials = { token: 't', secret: 's' };
 
 async function activateTestHome() {
     const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
-    // This node harness has no browser sessionStorage; use the durable selection.
-    await upsertAndActivateServer({ serverUrl: 'https://api.example.test', scope: 'device' });
+    await upsertAndActivateServer({ serverUrl: 'https://api.example.test' });
 }
 
 function makeSnapshot(): ProviderAccountUsageSnapshotV1 {
