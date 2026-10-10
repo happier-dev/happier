@@ -19,11 +19,11 @@ export async function handleUiBrowserAutomationDispatchRequest(
   if (!parsed.success || !parsed.data || typeof parsed.data !== 'object') return invalid;
   const target = parsed.data as Readonly<{ browserSessionId?: unknown; viewId?: unknown }>;
   if (target.browserSessionId !== view.browserSessionId || target.viewId !== view.viewId) return unavailable;
-  const control = readRegisteredBrowserRuntimeControlAdapter(view.browserSessionId);
+  const control = readRegisteredBrowserRuntimeControlAdapter(view.browserSessionId, view.viewId);
   if (!control) return unavailable;
   const currentView = control.readState()?.viewsById[view.viewId];
   if (!currentView || currentView.browserSessionId !== view.browserSessionId) return unavailable;
-  const automation = readRegisteredBrowserRuntimeAutomationAdapter(view.browserSessionId);
+  const automation = readRegisteredBrowserRuntimeAutomationAdapter(view.browserSessionId, view.viewId);
   if (!automation?.controlService) return unavailable;
   if (options?.signal?.aborted) return unavailable;
   const execute = createBrowserRuntimeActionExecutor({ control, automation });
