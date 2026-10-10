@@ -2,6 +2,8 @@ import React from 'react';
 import { readTranscriptBrowserActionIdentity } from '@/components/sessions/transcript/references/transcriptBrowserActionReference';
 import { useAiLaunchProfiles } from './useAiLaunchProfiles';
 import type { AuthoringMemory } from './domains/authoringMemory';
+import type { ProfileRecordV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
+import { applyProfileSecretBindingSelectionV1 } from '@happier-dev/protocol/profiles/profileOperations';
 import type { SessionMessagesTailBoundary } from '@/sync/runtime/sessionMessagesTailDiscontinuity';
 import { isPendingMessageForRecipient } from '@/sync/domains/pending/pendingMessageRecipient';
 import { useShallow } from 'zustand/react/shallow';
@@ -42,10 +44,9 @@ import {
 import { countEnabledAutomationDefinitionsLinkedToSession } from '../domains/automations/automationSessionLink';
 import type { LocalSettings } from '../domains/settings/localSettings';
 import {
-    buildRealmQualifiedMobileSurfaceStorageKey,
     readRealmQualifiedMobileSurface,
     readSessionMobileSurfaceWithPredecessor,
-    resolveMobileSurfacePersistenceScope,
+    resolveProjectMobileSurfaceStorageKey,
     resolveSessionMobileSurfacePersistenceKeys,
     type SessionMobileSurfacePersistenceKeys,
 } from '../domains/settings/mobileSurfacePersistence';
@@ -60,11 +61,7 @@ import type {
   WritableSettingsKey,
 } from '../domains/settings/settings';
 import { settingsDefaults } from '../domains/settings/settings';
-import {
-  mergeCurrentSecretBindingsIntoRawBindings,
-  readRetainedSecretBindingsByProfileId,
-  projectCurrentSecretBindingsByProfileId,
-} from '../domains/settings/secretBindings';
+import { projectCurrentSecretBindingsByProfileId, type CurrentSecretBindingsByProfileId } from '../domains/settings/secretBindings';
 import {
   deriveSessionListRenderableHasUnreadMessagesFromSession,
   isSessionListRenderableWarmCacheProgressOnlyChange,
@@ -100,7 +97,8 @@ import {
   useApplyLocalSettings,
   useApplyFavoriteModelSelectionReplacementIntent,
   useApplyRememberedEngineSelectionReplacementIntent,
-  useApplyRetainedSecretBindingsByProfileId,
+  requireUpdatedProfileOperation,
+  useProfileOperations,
   useApplySettings,
 } from './settingsWriters';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -177,6 +175,34 @@ import { resolveVisibleMachinesForActiveServerFromState } from './domains/machin
 import { isMachineVisibleForSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
 import type { SessionsDomainSlice, StorageState } from './types';
 import { createFriendRequestCountSelector } from './friendRequestCount';
+import {
+  readProjectWorkspaceRefs,
+  readCurrentProjectAccountRows,
+  EMPTY_PINNED_WORKSPACE_REF_IDS,
+  EMPTY_WORKSPACE_RELATIONSHIPS,
+  EMPTY_PROJECT_ORGANIZATIONS,
+} from './domains/projectAccountRows';
+
+/** Opened row projections are scoped by the sync owner's captured Account/Home. */
+export function useProjectAccountRows() {
+  return getStorage()(readCurrentProjectAccountRows);
+}
+
+export function useWorkspaceRefs() {
+  return getStorage()(readProjectWorkspaceRefs);
+}
+
+export function useProjectOrganizations() {
+  return getStorage()((state) => readCurrentProjectAccountRows(state)?.organizations ?? EMPTY_PROJECT_ORGANIZATIONS);
+}
+
+export function useWorkspaceSyncRelationships() {
+  return getStorage()((state) => readCurrentProjectAccountRows(state)?.relationships ?? EMPTY_WORKSPACE_RELATIONSHIPS);
+}
+
+export function usePinnedWorkspaceRefIds() {
+  return getStorage()((state) => readCurrentProjectAccountRows(state) ? state.pinnedWorkspaceRefIds : EMPTY_PINNED_WORKSPACE_REF_IDS);
+}
 
 export { useAccountSettingsScope } from './settingsWriters';
 export type { MessageStoreRef } from './messageSelection';
@@ -491,11 +517,8 @@ export function useSessionMachineId(sessionId: string): string | null {
  * key, read through the owner view, and a surface that only names its root must not re-render for
  * every unrelated metadata push. `null` while the session is unknown here.
  */
-export function useSessionDirectoryKind(sessionId: string): 'path' | 'managed' | null {
-  return getStorage()((state) => {
-    const session = state.sessions[sessionId];
-    return session ? readSessionDirectoryKind(readSessionOwnerMetadataView(session)) : null;
-  });
+export function useSessionDirectoryKind(sessionId: string, serverId?: string | null): 'path' | 'managed' | null {
+  return useSessionSelector(sessionId, serverId ?? undefined, (session) => session ? readSessionDirectoryKind(readSessionOwnerMetadataView(session)) : null);
 }
 
 export type SessionInteractionSource = Readonly<{
@@ -1094,7 +1117,7 @@ type SessionOrganizationProjectionCacheEntry = Readonly<{
 
 const sessionOrganizationProjectionCacheByServerId = new Map<string, SessionOrganizationProjectionCacheEntry>();
 
-function readSessionOrganizationProjectionCached(
+export function readSessionOrganizationProjectionCached(
   state: StorageState,
   serverId: string,
 ): SessionOrganizationProjection {
@@ -1169,15 +1192,6 @@ export function useSessionOrganizationProjections(
     return Object.keys(projections).length > 0
       ? projections
       : EMPTY_SESSION_ORGANIZATION_PROJECTIONS_BY_SERVER_ID;
-  }));
-}
-
-const EMPTY_SESSION_ORGANIZATION_PINNED_SESSION_KEYS: readonly string[] = [];
-
-export function useSessionOrganizationPinnedSessionKeys(): readonly string[] {
-  return getStorage()(useShallow((state) => {
-    const keys = Object.keys(state.sessionOrganizationPinsBySessionKey);
-    return keys.length > 0 ? keys : EMPTY_SESSION_ORGANIZATION_PINNED_SESSION_KEYS;
   }));
 }
 
@@ -1300,36 +1314,27 @@ function resolveSessionCompanionPreferenceStorageKeyFromState(
 }
 
 function resolveProjectLastMobileSurfaceStorageKeyFromState(
-  state: Pick<StorageState, 'profileScope' | 'settings'>,
+  state: Pick<StorageState, 'profileScope' | 'projectAccountRows'>,
   workspaceRefId: string,
   activeServerId: string | null | undefined,
+  explicitServerId?: string | null,
 ): string | null {
-  const normalizedWorkspaceRefId = normalizeTrimmedString(workspaceRefId);
-  if (!normalizedWorkspaceRefId) return null;
-  const activeScope = state.profileScope ?? null;
-  const workspaceRef = activeScope
-    ? state.settings.workspaceRefsV1.find((candidate) => (
-      candidate.id === normalizedWorkspaceRefId
-      && areServerProfileIdentifiersEquivalent(candidate.serverId, activeScope.serverId)
-    )) ?? null
-    : null;
-  const scope = resolveMobileSurfacePersistenceScope({
-    activeScope,
+  return resolveProjectMobileSurfaceStorageKey({
+    workspaceRefs: readProjectWorkspaceRefs(state),
+    workspaceRefId,
+    activeScope: state.profileScope,
     activeServerId,
-    targetServerId: workspaceRef?.serverId ?? null,
+    targetServerId: explicitServerId,
   });
-  return scope
-    ? buildRealmQualifiedMobileSurfaceStorageKey('project', scope, normalizedWorkspaceRefId)
-    : null;
 }
 
 function selectProjectLastMobileSurfacesByWorkspaceRefId(
-  state: Pick<StorageState, 'localSettings' | 'profileScope' | 'settings'>,
+  state: Pick<StorageState, 'localSettings' | 'profileScope' | 'projectAccountRows'>,
   activeServerId: string | null | undefined,
 ): Readonly<Record<string, LocalSettings['projectLastMobileSurfaceByWorkspaceRefId'][string]>> {
   const persisted = state.localSettings.projectLastMobileSurfaceByWorkspaceRefId;
   const result: Record<string, LocalSettings['projectLastMobileSurfaceByWorkspaceRefId'][string]> = {};
-  for (const workspaceRef of state.settings.workspaceRefsV1) {
+  for (const workspaceRef of readProjectWorkspaceRefs(state)) {
     const storageKey = resolveProjectLastMobileSurfaceStorageKeyFromState(
       state,
       workspaceRef.id,
@@ -2119,13 +2124,23 @@ export function useSettingsVersion(): number | null {
 
 export function useSettingMutable<K extends WritableSettingsKey>(
   name: K
-): [Settings[K], (value: Settings[K]) => void] {
+): [Settings[K], (value: Settings[K] | ((current: Settings[K]) => Settings[K] | null)) => void] {
   const applySettings = useApplySettings();
   const setValue = React.useCallback(
-    (value: Settings[K]) => {
-      const delta: SettingsWriteDelta = {};
-      delta[name] = value;
-      applySettings(delta);
+    (value: Settings[K] | ((current: Settings[K]) => Settings[K] | null)) => {
+      const delta = (next: Settings[K]): SettingsWriteDelta => {
+        const result: SettingsWriteDelta = {};
+        result[name] = next;
+        return result;
+      };
+      if (typeof value === 'function') {
+        applySettings(current => {
+          const next = value(current[name]);
+          return next === null ? null : delta(next);
+        });
+      } else {
+        applySettings(delta(value));
+      }
     },
     [applySettings, name]
   );
@@ -2134,31 +2149,41 @@ export function useSettingMutable<K extends WritableSettingsKey>(
 }
 
 /**
- * Runtime profile consumers edit only current maps; the Protocol-owned raw
- * root retains opaque carriers for later writeback.
+ * Profile bindings are the admitted entity/resource projection. Edits apply
+ * only changed keys to the private row, never copy shared defaults or Settings.
  */
 export function useCurrentSecretBindingsByProfileIdMutable(): [
-  Settings['currentSecretBindingsByProfileId'],
-  (value: Settings['currentSecretBindingsByProfileId']) => void,
+  CurrentSecretBindingsByProfileId,
+  (value: CurrentSecretBindingsByProfileId) => Promise<void>,
 ] {
-  const applyRetainedBindings = useApplyRetainedSecretBindingsByProfileId();
-  const rawBindings = getStorage()(useShallow((state) => (
-    readRetainedSecretBindingsByProfileId(state.settings ?? settingsDefaults)
-  )));
-  const profiles = useAiLaunchProfiles(useSetting('profiles'));
-  const secrets = useSetting('secrets');
-  const currentBindings = React.useMemo(() => projectCurrentSecretBindingsByProfileId({
-    profiles: [], secrets, secretBindingsByProfileId: rawBindings,
-  }, profiles), [profiles, secrets, rawBindings]);
+  const operations = useProfileOperations();
+  const profiles = useAiLaunchProfiles();
+  const currentBindings = React.useMemo(() => projectCurrentSecretBindingsByProfileId(profiles), [profiles]);
   const setCurrentBindings = React.useCallback(
-    (nextBindings: Settings['currentSecretBindingsByProfileId']) => {
-      applyRetainedBindings(mergeCurrentSecretBindingsIntoRawBindings({
-        rawBindings,
-        currentBindings,
-        nextBindings,
-      }));
+    async (nextBindings: CurrentSecretBindingsByProfileId) => {
+      if (!operations) throw new Error('Profile Account is unavailable');
+      for (const id of new Set([...Object.keys(currentBindings), ...Object.keys(nextBindings)])) {
+        const before = currentBindings[id] ?? {};
+        const next = nextBindings[id] ?? {};
+        const changedNames = [...new Set([...Object.keys(before), ...Object.keys(next)])]
+          .filter(name => before[name] !== next[name]);
+        if (changedNames.length === 0) continue;
+        const admitted = operations.read({ id });
+        if (admitted.status !== 'present' && !(admitted.status === 'invalid' && admitted.reason === 'profile-not-found')) {
+          throw new Error(admitted.status === 'unavailable' || admitted.status === 'invalid' ? admitted.reason : 'profile_binding_membership_unavailable');
+        }
+        let bindings: ProfileRecordV1['secretBindings'] = admitted.status === 'present' && 'record' in admitted
+          ? { ...admitted.record.secretBindings } : {};
+        for (const name of changedNames) {
+          const reference = next[name];
+          bindings = applyProfileSecretBindingSelectionV1(bindings, name,
+            reference === undefined ? { kind: 'none' } : { kind: 'reference', reference });
+        }
+        requireUpdatedProfileOperation(await operations.setSecretBindings({ id, secretBindings: bindings,
+          expectedRevision: profiles.find(profile => profile.id === id)?.profileRecordRevision ?? 'absent' }));
+      }
     },
-    [applyRetainedBindings, currentBindings, rawBindings],
+    [operations, currentBindings, profiles],
   );
   return [currentBindings, setCurrentBindings];
 }
@@ -2371,14 +2396,18 @@ export function useMachineListStatusByServerId(enabled = true): Record<string, '
 }
 
 /**
- * Whether the active Home's machine list has been read and applied, so a machine absent from it has
+ * Whether this Home's machine list has been read and applied, so a machine absent from it has
  * really left. App data readiness (sessions) can arrive before the machine list does.
  */
-export function useIsActiveMachineListSettled(): boolean {
-  const activeServerId = useActiveServerSnapshot().serverId;
-  return getStorage()((state) => Object.entries(state.machineListStatusByServerId ?? {}).some(([serverId, status]) => (
-    status === 'idle' && areServerProfileIdentifiersEquivalent(serverId, activeServerId)
+export function useIsMachineListSettled(serverId: string | null | undefined): boolean {
+  return getStorage()((state) => Boolean(serverId) && Object.entries(state.machineListStatusByServerId ?? {}).some(([inventoryServerId, status]) => (
+    status === 'idle' && areServerProfileIdentifiersEquivalent(inventoryServerId, serverId)
+    && Array.isArray(state.machineListByServerId?.[inventoryServerId])
   )));
+}
+
+export function useIsActiveMachineListSettled(): boolean {
+  return useIsMachineListSettled(useActiveServerSnapshot().serverId);
 }
 
 export function useMachineListStatusForServer(serverId: string): 'idle' | 'loading' | 'signedOut' | 'error' {
@@ -2432,24 +2461,39 @@ type MachineCliDetectionTargetCacheEntry = Readonly<{
 
 const machineCliDetectionTargetCache = new Map<string, MachineCliDetectionTargetCacheEntry>();
 
-function getStableMachineCliDetectionTarget(machineId: string, machine: Machine | null): MachineCliDetectionTarget {
+function getStableMachineCliDetectionTarget(
+  machineId: string,
+  machine: Machine | null,
+  serverId: string | null = null,
+): MachineCliDetectionTarget {
   const daemonStateVersion = machine?.daemonStateVersion ?? 0;
   const isOnline = machine ? isMachineOnline(machine) : false;
   const signature = `${daemonStateVersion}:${isOnline ? 'online' : 'offline'}`;
-  const cached = machineCliDetectionTargetCache.get(machineId);
+  // The same machine ID can have different facts on independently observed Homes.
+  const cacheKey = JSON.stringify([serverId, machineId]);
+  const cached = machineCliDetectionTargetCache.get(cacheKey);
   if (cached?.signature === signature) {
     return cached.target;
   }
   const target = { daemonStateVersion, isOnline };
-  machineCliDetectionTargetCache.set(machineId, { signature, target });
+  machineCliDetectionTargetCache.set(cacheKey, { signature, target });
   return target;
 }
 
-export function useMachineCliDetectionTarget(machineId: string | null): MachineCliDetectionTarget {
+export function useMachineCliDetectionTarget(
+  machineId: string | null,
+  serverId?: string | null,
+): MachineCliDetectionTarget {
+  const normalizedMachineId = String(machineId ?? '').trim();
+  const exactServerId = String(serverId ?? '').trim() || null;
+  const cacheServerId = exactServerId
+    ? resolveServerProfileScopeIdForIdentifier(exactServerId)
+    : null;
   return getStorage()((state) => {
-    const normalizedMachineId = String(machineId ?? '').trim();
-    const machine = normalizedMachineId ? state.machines[normalizedMachineId] ?? null : null;
-    return getStableMachineCliDetectionTarget(normalizedMachineId, machine);
+    const machine = !normalizedMachineId ? null
+      : exactServerId ? resolveServerScopedMachine(state, exactServerId, normalizedMachineId)
+        : state.machines[normalizedMachineId] ?? null;
+    return getStableMachineCliDetectionTarget(normalizedMachineId, machine, cacheServerId);
   });
 }
 
@@ -2997,7 +3041,7 @@ export function useMutateSessionCompanionPreference(): (
   }, [activeServer.serverId, applyLocalSettings]);
 }
 
-export function useProjectLastMobileSurface(workspaceRefId: string | null): LocalSettings['projectLastMobileSurfaceByWorkspaceRefId'][string] | null {
+export function useProjectLastMobileSurface(workspaceRefId: string | null, explicitServerId?: string | null): LocalSettings['projectLastMobileSurfaceByWorkspaceRefId'][string] | null {
   const activeServer = useActiveServerSnapshot();
   return getStorage()(useShallow((state) => {
     if (!workspaceRefId) return null;
@@ -3005,6 +3049,7 @@ export function useProjectLastMobileSurface(workspaceRefId: string | null): Loca
       state,
       workspaceRefId,
       activeServer.serverId,
+      explicitServerId,
     );
     return readRealmQualifiedMobileSurface(
       state.localSettings.projectLastMobileSurfaceByWorkspaceRefId,
@@ -3023,15 +3068,17 @@ export function useProjectLastMobileSurfacesByWorkspaceRefId(): Readonly<Record<
 export function usePersistProjectLastMobileSurface(): (
   workspaceRefId: string,
   surface: LocalSettings['projectLastMobileSurfaceByWorkspaceRefId'][string],
+  serverId?: string | null,
 ) => void {
   const applyLocalSettings = useApplyLocalSettings();
   const activeServer = useActiveServerSnapshot();
-  return React.useCallback((workspaceRefId, surface) => {
+  return React.useCallback((workspaceRefId, surface, serverId) => {
     const state = getStorage().getState();
     const storageKey = resolveProjectLastMobileSurfaceStorageKeyFromState(
       state,
       workspaceRefId,
       activeServer.serverId,
+      serverId,
     );
     if (!storageKey) return;
     const current = state.localSettings.projectLastMobileSurfaceByWorkspaceRefId ?? {};

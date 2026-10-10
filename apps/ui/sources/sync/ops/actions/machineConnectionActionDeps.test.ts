@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createActionExecutor, computeHomeQrBindingProofV2, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { encodeBase64 } from '@/encryption/base64';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
@@ -25,7 +27,13 @@ vi.mock('@/modal', async () => {
     return createModalModuleMock().module;
 });
 const { createMachineConnectionActionDeps } = await import('./machineConnectionActionDeps');
-const makeExecutor = () => createActionExecutor(createMachineConnectionActionDeps() as unknown as ActionExecutorDeps);
+const makeExecutor = () => createActionExecutor({
+    ...createMachineConnectionActionDeps(),
+    // The terminal adapter does not own policy; compose the real host policy port.
+    isActionApprovalRequired: (actionId, context, input) => isApprovalRequiredByActionsSettings(
+        actionId, normalizeActionsSettingsV1(context.actionsSettings), context, undefined, undefined, input,
+    ),
+} satisfies Partial<ActionExecutorDeps> as unknown as ActionExecutorDeps);
 
 describe('UI machine connection Actions', () => {
     beforeEach(async () => { await harness.reset(); boundary.rpc.mockReset(); });
@@ -34,19 +42,20 @@ describe('UI machine connection Actions', () => {
         const serverId = await harness.addHome({ name: 'Shell Home', serverUrl: 'https://shell.example', accountId: 'alice' });
         const signal = new AbortController().signal;
         boundary.rpc.mockResolvedValueOnce({ ok: true, terminals: [] });
-        expect(await makeExecutor().execute('machines.terminal.list', { machineId: 'machine' }, { surface: 'ui', authority: 'present_user', serverId, signal }))
+        expect(await makeExecutor().execute('machines.terminal.list', { machineId: 'machine', serverId }, { surface: 'ui', authority: 'present_user', serverId, signal }))
             .toEqual({ ok: true, result: { ok: true, terminals: [] } });
         expect(boundary.rpc).toHaveBeenLastCalledWith(expect.objectContaining({ machineId: 'machine', serverId, signal, method: 'daemon.terminal.list', payload: {} }));
         boundary.rpc.mockRejectedValueOnce({ rpcErrorCode: 'RPC_METHOD_NOT_AVAILABLE' });
-        expect(await makeExecutor().execute('machines.terminal.list', { machineId: 'machine' }, { surface: 'ui', authority: 'present_user', serverId }))
+        expect(await makeExecutor().execute('machines.terminal.list', { machineId: 'machine', serverId }, { surface: 'ui', authority: 'present_user', serverId }))
             .toEqual({ ok: true, result: null });
     });
-    it('opens a terminal on the requested Home and retains the daemon handle', async () => {
+    it('opens a terminal with a configured UI waiver on the requested Home and retains the daemon handle', async () => {
         const serverId = await harness.addHome({ name: 'Shell Home', serverUrl: 'https://shell.example', accountId: 'alice' });
         const signal = new AbortController().signal;
         boundary.rpc.mockResolvedValueOnce({ ok: true, terminalId: 'pty', reused: true });
-        expect(await makeExecutor().execute('machines.terminal.open', { machineId: 'machine', terminalKey: 'shell', cwd: '/project' }, {
+        expect(await makeExecutor().execute('machines.terminal.open', { machineId: 'machine', serverId, terminalKey: 'shell', cwd: '/project' }, {
             surface: 'ui', authority: 'present_user', serverId, signal,
+            actionsSettings: { v: 1, actions: {}, approvalWaivedSurfaces: { 'machines.terminal.open': ['ui'] } },
         })).toEqual({ ok: true, result: { ok: true, terminalId: 'pty', reused: true } });
         expect(boundary.rpc).toHaveBeenLastCalledWith(expect.objectContaining({ serverId, machineId: 'machine', signal,
             method: RPC_METHODS.DAEMON_TERMINAL_ENSURE, payload: { terminalKey: 'shell', cwd: '/project' } }));

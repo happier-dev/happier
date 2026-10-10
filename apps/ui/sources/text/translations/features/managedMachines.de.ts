@@ -375,7 +375,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             setupHelp: "Läuft einmal, nach den Werkzeugen. sudo funktioniert nur, wo das Image es erlaubt.",
             setupLines: ({ count }: { count: number }) => (count === 1 ? `1 Zeile` : `${count} Zeilen`),
             secrets: "Secrets für die Einrichtung",
-            secretsHelp: "Gespeicherte Secrets, die das Skript als Umgebungsvariablen lesen kann. Sitzungen sehen sie nie.",
+            secretsHelp: "Gespeicherte Secrets werden dem Einrichtungsprozess als Umgebungsvariablen übergeben. Das Skript kann sie lesen oder speichern.",
             addSecret: "Secret hinzufügen…",
             secretName: "Variablenname",
             secretNameHelp: "Der Name, unter dem das Skript es liest.",
@@ -384,7 +384,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             removeSecret: ({ name }: { name: string }) => `${name} entfernen`,
             apply: "Mit einer Vorlage einrichten…",
             applyTitle: "Mit einer Vorlage einrichten",
-            applyDescription: ({ machine }: { machine: string }) => `Führt die Werkzeuge und das Skript einer Vorlage auf ${machine} als deren Happier-Benutzer aus. Sonst ändert sich nichts auf ${machine}.`,
+            applyDescription: ({ machine }: { machine: string }) => `Führt die Werkzeuge und das Skript einer Vorlage systemweit auf ${machine} als deren Happier-Benutzer aus. Dabei können Werkzeuge, Dateien und Dienste geändert werden, auf die dieser Benutzer zugreifen kann.`,
             applyEmpty: "Noch keine Vorlage richtet etwas ein. Füge einer Vorlage unter Maschinen eine Umgebung hinzu.",
             applyFailed: ({ machine }: { machine: string }) => `Die Einrichtung konnte auf ${machine} nicht starten.`,
             toolchainPlaceholder: "[tools]\nnode = \"22\"",
@@ -397,6 +397,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         },
     },
     managedPower: {
+        asleep: "Schlafend",
         unsupported: ({ provider, effect }: { provider: string; effect: string }) => `${provider} unterstützt ${effect} für diese Ressource nicht.`,
         stopPending: "Stoppen angefordert. Das Stoppen wurde noch nicht bestätigt.",
         stoppedStorage: "Gestoppt · Speicher bleibt erhalten",
@@ -430,6 +431,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         pending: "Eine Anbieteraktion kann noch abgeschlossen werden, nachdem du die Verwaltung verschoben hast. Es können weiter Kosten anfallen.",
     },
     managedCleanup: {
+        archiveTitle: "Archiv",
         consoleHelp: "Prüfe diese Ressource direkt in der Konsole deines Anbieters.",
         reviewTitle: "Verwaltete Ressourcen prüfen",
         removalReview: "Das Entfernen dieser Verbindung oder Daten löscht diese Ressourcen nicht. Es können weiter Anbieterkosten anfallen.",
@@ -461,6 +463,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         terminalNotice: ({ owner, machine }: { owner: string; machine: string }) => `Befehle laufen als Maschinenbenutzer von ${owner} auf ${machine}.`,
     },
     machineWork: {
+        counts: ({ active }: { active: number }) => `Von anderen genutzt · ${active} aktiv`,
         title: "Von anderen genutzt",
         description: ({ machine }: { machine: string }) => `Wer gerade auf ${machine} arbeitet. Ihre Sitzungen bleiben ihre; Happier zeigt nur, wer und wie viel.`,
         empty: ({ machine }: { machine: string }) => `Gerade arbeiten keine Teammitglieder auf ${machine}.`,
@@ -471,7 +474,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         refreshFailed: ({ machine }: { machine: string }) => `Arbeit auf ${machine} konnte nicht aktualisiert werden.`,
         sessions: ({ count }: { count: number }) => (count === 1 ? `1 Sitzung` : `${count} Sitzungen`),
         scripts: ({ count }: { count: number }) => (count === 1 ? `1 Skript` : `${count} Skripte`),
-        tasks: ({ count }: { count: number }) => (count === 1 ? `1 Aufgabe` : `${count} Aufgaben`),
+        tasks: ({ count }: { count: number }) => (count === 1 ? `1 aktive Arbeit` : `${count} aktive Arbeiten`),
         terminals: ({ count }: { count: number }) => (count === 1 ? `1 Terminal` : `${count} Terminals`),
     },
 };

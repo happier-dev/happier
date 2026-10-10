@@ -375,7 +375,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             setupHelp: "ツールの後に 1 回実行されます。sudo はイメージが許す場合のみ使えます。",
             setupLines: ({ count }: { count: number }) => (count === 1 ? `1 行` : `${count} 行`),
             secrets: "セットアップ用シークレット",
-            secretsHelp: "セットアップスクリプトが環境変数として読める保存済みシークレット。セッションからは見えません。",
+            secretsHelp: "保存済みシークレットは環境変数としてセットアッププロセスに渡されます。スクリプトはそれらを読み取ったり保存したりできます。",
             addSecret: "シークレットを追加…",
             secretName: "変数名",
             secretNameHelp: "スクリプトが読み取るときの名前。",
@@ -384,7 +384,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             removeSecret: ({ name }: { name: string }) => `${name} を削除`,
             apply: "プリセットからセットアップ…",
             applyTitle: "プリセットからセットアップ",
-            applyDescription: ({ machine }: { machine: string }) => `プリセットのツールとセットアップスクリプトを ${machine} の Happier ユーザーとして実行します。${machine} のほかの部分は変わりません。`,
+            applyDescription: ({ machine }: { machine: string }) => `プリセットのツールとセットアップスクリプトを ${machine} の Happier ユーザーとしてシステム全体に適用します。そのユーザーがアクセスできるツール、ファイル、サービスを変更することがあります。`,
             applyEmpty: "まだ何かを用意するプリセットはありません。マシンでプリセットに環境を追加してください。",
             applyFailed: ({ machine }: { machine: string }) => `${machine} でセットアップを開始できませんでした。`,
             toolchainPlaceholder: "[tools]\nnode = \"22\"",
@@ -397,6 +397,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         },
     },
     managedPower: {
+        asleep: "スリープ中",
         unsupported: ({ provider, effect }: { provider: string; effect: string }) => `${provider} はこのリソースの ${effect} に対応していません。`,
         stopPending: "停止をリクエストしました。停止はまだ確認されていません。",
         stoppedStorage: "停止中 · ストレージは保持",
@@ -430,6 +431,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         pending: "管理を移動した後も、プロバイダーの操作が完了する場合があります。料金が発生し続けることがあります。",
     },
     managedCleanup: {
+        archiveTitle: "アーカイブ",
         consoleHelp: "プロバイダーのコンソールで、このリソースを直接確認してください。",
         reviewTitle: "管理対象リソースを確認",
         removalReview: "この接続やデータを削除しても、これらのリソースは削除されません。提供元の料金が引き続き発生する場合があります。",
@@ -461,6 +463,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         terminalNotice: ({ owner, machine }: { owner: string; machine: string }) => `コマンドは ${machine} 上で ${owner} さんのマシンユーザーとして実行されます。`,
     },
     machineWork: {
+        counts: ({ active }: { active: number }) => `他のユーザーが使用中 · ${active} 件がアクティブ`,
         title: "他のユーザーが使用中",
         description: ({ machine }: { machine: string }) => `現在 ${machine} で作業している人です。セッションは各自のものです。Happier は誰がどれだけ使っているかのみを表示します。`,
         empty: ({ machine }: { machine: string }) => `現在 ${machine} で作業しているチームメイトはいません。`,
@@ -471,7 +474,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         refreshFailed: ({ machine }: { machine: string }) => `${machine} の作業を更新できませんでした。`,
         sessions: ({ count }: { count: number }) => (count === 1 ? `1 件のセッション` : `${count} 件のセッション`),
         scripts: ({ count }: { count: number }) => (count === 1 ? `1 件のスクリプト` : `${count} 件のスクリプト`),
-        tasks: ({ count }: { count: number }) => `${count} 件のタスク`,
+        tasks: ({ count }: { count: number }) => `${count} 件のアクティブな作業`,
         terminals: ({ count }: { count: number }) => (count === 1 ? `1 個のターミナル` : `${count} 個のターミナル`),
     },
 };

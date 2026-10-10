@@ -27,12 +27,17 @@ import { createProjectManifestActionClient } from '@/components/projects/project
 import * as React from 'react';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { encodeTerminalStreamBytes } from '@happier-dev/protocol/terminal/stream';
 
 // Component probes retain the real controller/Actions; only native rendering is substituted.
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
+const clipboard = vi.hoisted(() => ({ write: vi.fn(async (_text: string) => {}) }));
+// System clipboard only; Copy retains the real UI, Action policy, scope check and byte decoder.
+vi.mock('expo-clipboard', () => ({ setStringAsync: clipboard.write }));
 
 const foreignDisclosure = vi.hoisted(() => vi.fn(async () => true));
 vi.mock('@/modal', async () => {
@@ -133,6 +138,7 @@ function answerExplicitScriptWorkerPlacement(): void {
     });
 }
 beforeEach(async () => {
+    clipboard.write.mockClear();
     installDisconnectedServerSocketBoundary(configureRelay);
     await homes.reset(); await loadSyncSingletonForTests(); calls.length = 0; rpcResponses.clear(); consumeAcknowledgement = undefined;
     foreignDisclosure.mockReset().mockResolvedValue(true);
@@ -159,6 +165,36 @@ beforeEach(async () => {
 afterEach(async () => { restoreHttpReplyDecoder?.(); restoreHttpReplyDecoder = undefined; await homes.reset(); });
 
 describe('Project finite delivery through the default UI Action host', () => {
+    it('copies retained output from the toolbar through the registered Action and actual execution target', async () => {
+        const disposeExecutor = await installRealActionExecutorModuleLoader();
+        const { ProjectCommandOutputPane } = await import('@/components/inbox/actionOperations/ProjectCommandOutputPane');
+        const operation = ActionOperationGetV1ResponseSchema.parse({ kind: 'found', operation: {
+            version: 1, operationId: 'copy-output', revision: 1, actionId: 'projects.script.run', state: 'succeeded',
+            scope: { accountId: 'requester', machineId: 'source' }, title: 'Check', createdAt: 1, startedAt: 1, settledAt: 2, cancellation: 'supported',
+            domainRef: { kind: 'projectCommand', purpose: 'script', serverId, machineId: 'selected-worker',
+                workspaceRefId: 'worker-copy', cwd: '/worker/repo', terminalId: 'retained-terminal' },
+        } });
+        if (operation.kind !== 'found') throw new Error('Expected retained operation');
+        rpcResponses.set(`source:${ACTION_OPERATION_RPC_METHODS_V2.get}`, operation);
+        const bytes = new TextEncoder().encode('checked ✓\n');
+        rpcResponses.set(`selected-worker:${RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES}`, {
+            ok: true, terminalId: 'retained-terminal', frames: [{ t: 'bytes', terminalId: 'retained-terminal', seq: 0,
+                byteOffset: 0, byteLength: bytes.length, encoding: 'base64', data: encodeTerminalStreamBytes(bytes) }],
+            nextByteOffset: bytes.length, availableByteOffset: bytes.length, droppedBeforeByteOffset: 0, done: true,
+        });
+        const screen = await renderScreen(React.createElement(ProjectCommandOutputPane, { operation: { serverId, snapshot: operation.operation,
+            observation: 'available', isUnavailableProjection: false }, title: 'Check' }));
+        try {
+            expect(screen.findByTestId('project-command-output.copy')).not.toBeNull();
+            await screen.pressByTestIdAsync('project-command-output.copy');
+            await vi.waitFor(() => expect(clipboard.write).toHaveBeenCalledWith('checked ✓\n'));
+            expect(calls.find(call => call.request.method === `source:${ACTION_OPERATION_RPC_METHODS_V2.get}`)?.request.params)
+                .toMatchObject({ operationId: 'copy-output' });
+            expect(calls.find(call => call.request.method === `selected-worker:${RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES}`)?.request.params)
+                .toMatchObject({ terminalId: 'retained-terminal', byteOffset: 0 });
+            expect(calls.some(call => /terminal\.(ensure|close)/.test(call.request.method))).toBe(false);
+        } finally { await screen.unmount(); disposeExecutor(); }
+    });
     it.each([true, false])('projects the named override and effective declared demand into the Script row (workspace enabled: %s)', async enabled => {
         const disposeExecutor = await installRealActionExecutorModuleLoader();
         const { ProjectScriptsBody } = await import('@/components/projects/projectSetup/ProjectScriptsBody');
@@ -304,11 +340,13 @@ describe('Project finite delivery through the default UI Action host', () => {
             installationPublicKey: encodeBase64(controllerInstallation.publicKey),
             access: { custodian: { accountId: 'carol', displayName: 'Carol' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } };
         homes.answer(exactHome, `/v1/machines/${machineId}`, { body: { machine } });
-        homes.answer(exactHome, '/v1/machines', { body: managedWake ? [machine, controller] : [machine] });
-        if (controllerChanged) foreignDisclosure.mockImplementation(async () => {
-            homes.answer(exactHome, '/v1/machines', { body: [machine, { ...controller, installationId: 'replacement-controller-installation' }] });
-            return true;
-        });
+        let machineReads = 0;
+        homes.answer(exactHome, '/v1/machines', { select: () => {
+            machineReads += 1;
+            return { body: managedWake ? [machine, controllerChanged && machineReads > 2
+                ? { ...controller, installationId: 'replacement-controller-installation' } : controller] : [machine] };
+        } });
+        foreignDisclosure.mockResolvedValue(false);
         homes.answer(exactHome, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
         const workspace = { serverId: capturedServerId, workspaceId: 'alice-workspace', machineId, rootPath: '/repo' };
         const input = actionId === 'projects.prepare' ? { workspace, phase: 'setup' }
@@ -326,7 +364,7 @@ describe('Project finite delivery through the default UI Action host', () => {
         let forwarded = 0;
         homes.answer(exactHome, `/v1/actions/${actionId}/execution-authorization`, { select: body => {
             const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
-            expect(foreignDisclosure).toHaveBeenCalledTimes(guestOwned ? 0 : 1);
+            expect(foreignDisclosure).not.toHaveBeenCalled();
             expect(request.machineId).toBe(machineId);
             expect(request.envelope).toMatchObject({ requestId, input, target: { kind: 'machine', machineId } });
             mintedEnvelope = request.envelope;
@@ -351,7 +389,7 @@ describe('Project finite delivery through the default UI Action host', () => {
                 purpose: { kind: 'external_action' }, machineId, installationId: machine.installationId,
                 serverIdentityId: homeId, installationPrivateKey: installation.secretKey })).toEqual(guestOwned ? null : { token });
             if (managedWake) {
-                expect(foreignDisclosure).toHaveBeenCalledTimes(guestOwned ? 1 : 2);
+                expect(foreignDisclosure).not.toHaveBeenCalled();
                 expect(request.executionAuthorization).toMatchObject({ token: 'home-signed-project-root',
                     binding: { machineId, installationId: machine.installationId, requestId,
                         requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope) },
@@ -381,14 +419,14 @@ describe('Project finite delivery through the default UI Action host', () => {
         const result = await createDefaultActionExecutor().execute(actionId, input, { serverId: capturedServerId,
             expectedAccountId: 'bob', surface: 'ui', authority: 'present_user', actionRequestId: requestId });
         if (controllerChanged) {
-            expect(foreignDisclosure).toHaveBeenCalledOnce();
+            expect(foreignDisclosure).not.toHaveBeenCalled();
             expect(mintedEnvelope).toBeDefined();
             expect(forwarded).toBe(0);
             expect(calls).toEqual([]);
             expect(result).toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
             return;
         }
-        expect(foreignDisclosure).toHaveBeenCalledTimes((guestOwned ? 0 : 1) + (managedWake ? 1 : 0));
+        expect(foreignDisclosure).not.toHaveBeenCalled();
         expect(calls).toEqual([]);
         const privateRequests = homes.requests.filter(request => request.path.startsWith(`/v1/actions/${actionId}`));
         expect(privateRequests).toHaveLength(2);
@@ -399,18 +437,6 @@ describe('Project finite delivery through the default UI Action host', () => {
         }
         // Prove the real boxed front door was reached before judging receipt projection.
         expect(result).toEqual({ ok: true, result: approval });
-        // Real localization renders words, not translation keys. The disclosure
-        // must identify the actual target/custodian without exposing credentials.
-        const disclosure = JSON.stringify(foreignDisclosure.mock.calls);
-        if (!guestOwned) {
-            expect(disclosure).toContain(machineId);
-            expect(disclosure).toContain('Alice');
-        }
-        if (managedWake) {
-            expect(disclosure).toContain(controller.id);
-            expect(disclosure).toContain('Carol');
-        }
-        expect(disclosure).not.toContain(token);
     });
 
     it.each([

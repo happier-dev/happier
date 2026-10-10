@@ -1,4 +1,5 @@
 import React from 'react';
+import { presentSessionRouteChip, resolveSessionRoutePresentation, projectProviderRouteSignInPurposes, readProviderConnectionDisclosureSource, providerConnectionSourceLabel, type RouteSelection, type ProviderRouteSource, type SessionRoutePresentationInput } from '@/providers/session/resolveSessionRoutePresentation';
 import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 
 import { t } from '@/text';
@@ -24,7 +25,8 @@ import type { AgentCore } from '@happier-dev/agents';
 import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { projectAgentConnectedAccountPurposeDefaultsToSessionBindings, resolveAgentConnectedAccountPurposeDefaults, type ConnectedServicesDefaultAuthByAgentIdV1 } from '@happier-dev/protocol/account/settings/connected-services';
 import type { ConnectedAccountServiceKey, ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
-import type { PluginProjectedAgentConnectedAccountPurposeV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type { PluginProjectedAgentConnectedAccountPurposeV2, PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type { ProviderSettingsV1 } from '@happier-dev/protocol/providers/settings/v1';
 import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams';
 
 import { NewSessionConnectedServicesSelectionContent } from '@/components/sessions/new/components/NewSessionConnectedServicesSelectionContent';
@@ -43,7 +45,7 @@ import {
   teamResourceConnectedServiceSelectionKey,
   type ConnectedServicesServiceBinding,
 } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
-import { getQualifiedConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { getQualifiedConnectedServiceRegistryEntry, projectConnectedServiceRegistryEntries } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import {
   applyProjectedCredentialKindRestrictions,
   buildQualifiedConnectedAccountGroupOptionsByServiceId,
@@ -52,6 +54,7 @@ import {
 } from '@/sync/domains/connectedServices/qualifiedConnectedAccountServiceOptions';
 import {
   buildConnectedServicesBindingsPayload,
+  projectSessionCredentialSignInPurposes,
 } from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
 import { parseConnectedServicesBindingsByServiceIdFromAgentOptionState } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
 import { projectMachineAgentForCredential } from '@/agents/machineAgents/machineAgentModel';
@@ -59,6 +62,8 @@ import type { MachineAgent } from '@/agents/machineAgents/machineAgentTypes';
 import type { AttentionBannerAction } from '@/components/ui/lists/AttentionBanner';
 
 export type NewSessionConnectedServicesResult = Readonly<{
+  routePresentation: ReturnType<typeof resolveSessionRoutePresentation>;
+  requesterSignInPurposes: readonly string[];
   connectedAccountDefaultsStatus: 'loading' | 'ready' | 'unavailable';
   requireConnectedAccountDefaultsReady: () => void;
   connectedServicesBindingsPayload: ConnectedServiceBindingsV2 | null;
@@ -75,6 +80,11 @@ function resolveDefaultAuthWarningLabel(warningCode: ConnectedServicesAuthWarnin
 
 
 export function useNewSessionConnectedServices(params: Readonly<{
+  modelSelection?: RouteSelection;
+  providerSources?: readonly ProviderRouteSource[];
+  modelRouteTeamSources?: SessionRoutePresentationInput['teamSources'];
+  providerSettings?: Pick<ProviderSettingsV1, 'connections' | 'secretBindingsByConnectionId'>;
+  providerProjection?: PluginProjectionV2 | null;
   /** Bundled Agent core when the selection targets a bundled Agent; null for installed external Agents. */
   agentCore: Pick<AgentCore, 'id' | 'connectedServices'> | null;
   /**
@@ -127,7 +137,11 @@ export function useNewSessionConnectedServices(params: Readonly<{
   const { agentCore, connectedAccounts, agentOptionState, settings, targetServerId, router, setAgentOptionStateForCurrentAgent } = params;
   const accountProfile = useProfile();
   const activeScope = useActiveServerAccountScope();
-  const purposeScope = selectActiveServerAccountScopeForServer(activeScope, targetServerId);
+  const { binding } = useServerCredentialAccountScopeBinding(connectedAccounts.length > 0 ? targetServerId : null);
+  const focusedPurposeScope = selectActiveServerAccountScopeForServer(activeScope, targetServerId);
+  const purposeScope = binding?.isCurrent()
+    && (!focusedPurposeScope || areServerAccountScopesEqual(focusedPurposeScope, binding.scope))
+    ? binding.scope : null;
   const defaultAuthAgentId = params.defaultAuthAgentId?.trim() ?? agentCore?.id.trim() ?? '';
   const defaultAuthConsumer = params.defaultAuthConsumer ?? null;
   const authoredContextKey = JSON.stringify([activeScope, targetServerId, defaultAuthAgentId, defaultAuthConsumer]);
@@ -152,17 +166,17 @@ export function useNewSessionConnectedServices(params: Readonly<{
       throw new ConnectedAccountCatalogOperationError('connected_account_purpose_catalog_unavailable');
     }
     if (!inheritsPurposeDefaults) return;
-    const currentScope = selectActiveServerAccountScopeForServer(getActiveServerAccountScope(), targetServerId);
+    const currentFocusedScope = selectActiveServerAccountScopeForServer(getActiveServerAccountScope(), targetServerId);
     const current = getConnectedAccountCatalogValue(purposeScope, 'purposes');
     if (connectedAccountDefaultsStatus !== 'ready'
-      || !areServerAccountScopesEqual(currentScope, purposeScope)
+      || !binding?.isCurrent()
+      || (currentFocusedScope && !areServerAccountScopesEqual(currentFocusedScope, purposeScope))
       || current.status !== 'ready' || current.stale || !current.value
       || current.revision !== purposeCatalog.revision || current.value !== purposeCatalog.value) {
       throw new ConnectedAccountCatalogOperationError('connected_account_purpose_catalog_unavailable');
     }
-  }, [activeScope, hasOptimisticBindings, inheritsPurposeDefaults, purposeScope, purposeCatalog.revision,
+  }, [activeScope, binding, hasOptimisticBindings, inheritsPurposeDefaults, purposeScope, purposeCatalog.revision,
     purposeCatalog.value, connectedAccountDefaultsStatus, targetServerId]);
-  const { binding } = useServerCredentialAccountScopeBinding(connectedAccounts.length > 0 ? targetServerId : null);
   const labelsByKey = useConnectedMetadataCatalog(connectedAccounts.length === 0 ? null
     : targetServerId ? binding?.scope ?? null : undefined, selectConnectedMetadataLabels);
   const { present } = useConnectedAccountIdentityPrivacy();
@@ -477,25 +491,60 @@ export function useNewSessionConnectedServices(params: Readonly<{
     targetServerId,
   ]);
 
+  const nativeAuthSource = connectedAccountDefaultsStatus !== 'ready' ? 'unknown' as const
+    : authLabel.connectedCount === 0 ? 'native' as const
+    : authLabel.connectedCount === supportedConnectedServiceIds.length ? 'connected' as const : 'mixed' as const;
+  const routePresentation = React.useMemo(() => resolveSessionRoutePresentation({
+    phase: 'draft', selection: params.modelSelection ?? null, sources: params.providerSources,
+    native: { label: authLabel.label, connectedCount: authLabel.connectedCount, authSource: nativeAuthSource },
+    teamSources: params.modelRouteTeamSources,
+  }), [params.modelSelection, params.providerSources, params.modelRouteTeamSources, authLabel, nativeAuthSource]);
+
+  const requesterSignInPurposes = React.useMemo(() => {
+    if (connectedAccountDefaultsStatus !== 'ready') return [];
+    const targetRegistry = { entries: projectConnectedServiceRegistryEntries({ scopeKey: targetServerId ?? '', status: 'ready',
+      descriptors: Object.values(params.providerProjection?.familiesById.connectedAccounts?.entriesById ?? {}),
+      conflicts: [], errorReason: null }) };
+    const resolveTitle = (service: PluginContributionIdentityV1) => resolveQualifiedConnectedServiceRegistryDisplayName(targetRegistry, service, t);
+    const route = routePresentation.applied;
+    if (route.kind === 'team') return route.deliveryMode === 'direct' && route.sourceLabel ? [route.sourceLabel] : [];
+    const connection = route.kind === 'provider'
+      ? params.providerSettings?.connections.find(connection => connection.id === route.connectionId) : null;
+    const source = connection ? readProviderConnectionDisclosureSource({ connection, projection: params.providerProjection,
+      machineId: params.sourceMachineId ?? '', resolveServiceTitle: resolveTitle }) : null;
+    const providerPurposes = source && route.kind === 'provider' ? projectProviderRouteSignInPurposes({
+      route: { ...route, sourceLabel: route.sourceLabel ?? providerConnectionSourceLabel(source.source) },
+      machineId: params.sourceMachineId ?? '', secretBindings: params.providerSettings?.secretBindingsByConnectionId[route.connectionId],
+      credentialSlotId: source.credentialSlotId, managedSignInPurposes: source.managedSignInPurposes,
+    }) : [];
+    const selectedSource = route.kind === 'provider'
+      ? params.providerSources?.find(source => source.connectionId === route.connectionId) : null;
+    const nativePurposes = route.kind === 'provider' && !selectedSource ? [] : projectSessionCredentialSignInPurposes({ declarations: connectedAccounts,
+      bindings: connectedServicesBindingsPayload, resolveServiceTitle: resolveTitle,
+      formatNativeTitle: service => t('machineRequester.nativeSignInPurpose', { service }),
+      // A Provider replaces native authentication only through its Agent adapter's actual suppression projection.
+      suppressedServiceIds: selectedSource?.suppressedConnectedServiceIds,
+    });
+    return [...new Set([...providerPurposes, ...nativePurposes])];
+  }, [connectedAccountDefaultsStatus, connectedAccounts, connectedServicesBindingsPayload,
+    params.providerProjection, params.providerSettings, params.providerSources, params.sourceMachineId, routePresentation, targetServerId]);
+
   const connectedServicesAuthChip = React.useMemo<AgentInputExtraActionChip | null>(() => {
         if (supportedConnectedServiceIds.length === 0) return null;
+        // "Runs through …" names the route the draft would start with; while account defaults load,
+        // the incumbent loading/unavailable label stays rather than a guessed route.
+        const routeChip = presentSessionRouteChip(routePresentation, { label: authLabel.label, authSource: nativeAuthSource });
         return createConnectedServicesAuthActionChip({
-            label: connectedAccountDefaultsStatus !== 'ready' && authLabel.connectedCount === 0
+            label: routeChip?.label ?? (connectedAccountDefaultsStatus !== 'ready' && authLabel.connectedCount === 0
                 ? t(connectedAccountDefaultsStatus === 'loading' ? 'common.loading' : 'common.unavailable')
-                : authLabel.label,
+                : authLabel.label),
             connectedCount: authLabel.connectedCount,
-            authSource: connectedAccountDefaultsStatus !== 'ready'
-                ? 'unknown'
-                : authLabel.connectedCount === 0
-                ? 'native'
-                : authLabel.connectedCount === supportedConnectedServiceIds.length
-                    ? 'connected'
-                    : 'mixed',
+            authSource: nativeAuthSource,
             popoverContent: connectedServicesAuthPopoverContent,
             maxHeightCap: 560,
             maxWidthCap: 560,
         });
-    }, [authLabel, connectedAccountDefaultsStatus, connectedServicesAuthPopoverContent, supportedConnectedServiceIds]);
+    }, [authLabel, connectedAccountDefaultsStatus, connectedServicesAuthPopoverContent, nativeAuthSource, routePresentation, supportedConnectedServiceIds]);
 
   const selectedCredentialMachineAgent = React.useMemo(() => projectMachineAgentForCredential(params.machineAgent, {
     credentialBindings: connectedServicesBindingsPayload,
@@ -519,6 +568,6 @@ export function useNewSessionConnectedServices(params: Readonly<{
   }, [connectedAccountDefaultsStatus, selectedCredentialMachineAgent, connectedServicesBindingsPayload, supportedConnectedServiceIds,
     params.machineAgent, connectedServiceProfileOptionsByServiceId, resolveServiceTitle, setBindingForService]);
 
-  return { connectedAccountDefaultsStatus, requireConnectedAccountDefaultsReady, connectedServicesBindingsPayload, connectedServicesModelProbeCacheIdentity, connectedServicesAuthChip,
+  return { routePresentation, requesterSignInPurposes, connectedAccountDefaultsStatus, requireConnectedAccountDefaultsReady, connectedServicesBindingsPayload, connectedServicesModelProbeCacheIdentity, connectedServicesAuthChip,
     selectedCredentialMachineAgent, connectedServicesRecoveryAction };
 }

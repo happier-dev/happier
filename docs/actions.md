@@ -54,6 +54,156 @@ Home ownership do not supply present-user authority.
 
 ## SDK Action declarations (0.3 development source)
 
+### Remote hosts (development)
+
+`remote_hosts.*` is declared by the Protocol Remote host family and executes
+through the existing Account Action owner. Catalog reads and mutations address
+the invocation's captured Account; client SSH tasks resolve SavedSecret
+references only inside that captured task admission. Add/edit presentation
+requires the addressed Account to remain applied and cannot silently open an
+editor for another Home.
+
+Save, delete, credential changes and destructive SSH operations retain the
+canonical configurable dangerous-Action approval policy (Ask first by default).
+Save uses live-only approval input custody: a prepared Plain SavedSecret packet
+may contain credential material, while persisted observations contain only
+host/task identity, revision and status. Sealed Resource creation and the host
+reference mutation belong to the existing SavedSecret transaction owner, not
+independent Resource writes. Metadata-only writes retain Account-automation
+admission; a packet that creates Resources also requires the incumbent
+SavedSecret present-user admission before any resource or catalog effect. See
+[the catalog encryption owner](encryption.md#private-remote-host-catalog-03-development).
+
+These are development-source contracts. Collection/editor entry-point cutover,
+retained-source cleanup and composed loaded-runtime validation remain in
+progress; registration does not establish published availability or completed
+UI parity.
+
+### Usage snapshots and explicit exports (development)
+
+`usage.query` reads a batch of independently resolved personal `UsageQuery`
+values. The shared input adapts the canonical accounting clauses rather than
+declaring another filter grammar. Home, Account credentials and access belong
+to the captured invocation, not the query. Scope and cost-basis fields may
+follow context independently through the general input-field contract; metric
+and breakdown remain own values.
+
+The deterministic page aggregation keys the complete normalized query and
+names requested and shown meaning separately. Accounting, allowance and local
+detail retain their source authorities and status; unavailable facts are not
+zero. A bounded comparison names the exact preceding range with the same
+filters, basis and timezone. The Resource lifecycle, rather than an Action
+stream or a widget-local cache, owns invalidation and progressive rereads.
+
+Personal calendar buckets use the query's fixed offset in minutes east of UTC;
+weeks start Monday. The shared Protocol bucket owner supplies accounting,
+activity and interval boundaries. This is not historical IANA/DST reconstruction.
+How-you-work consumes only admitted opened Session detail: absent permission,
+accepted-input or lifecycle evidence remains unknown, rather than zero. Known
+busy intervals exclude witnessed permission, user and child waits; missing ends
+are partial and never filled to now. Sum of agent time, elapsed busy union and
+concurrent elapsed time are separate values. Exact work identity, not a parent
+label alone, controls duplicate representations. An explicit night-hour window
+uses recorded activity and witnessed busy duration, never inferred human presence.
+
+`usage.recap.compose` returns a strict private selected-field preview from that
+same authorized query slice. One result supports Daybreak (default), Sigil,
+Editorial, Glass, Holo, Skyline and Terminal, with square, story and
+link-preview formats. These choices do not change the admitted facts. Names
+and dollars are excluded by default; unselected identities, paths and money
+do not enter the preview. Exact period, timezone, as-of and coverage remain
+explicit, and missing Work, parallel, night or Coach evidence stays unavailable.
+Supplied closed intervals do not imply complete private history.
+An explicitly supplied night window can retain recorded native activity even
+when private lifecycle facts are unavailable; its busy duration remains null.
+No default night window or zero busy time is inferred.
+Explicitly selected dollars preserve the canonical reported, estimated,
+API-equivalent, invoice and unpriced facts separately, including currency,
+null unpriced amounts, as-of and completeness. Recap strips private source
+identities and never blends those kinds, reprices tokens or interprets absent
+canonical money facts as a paid zero. Selected Coach facts expose only witnessed
+detector ids and evidence counts, with currentness and coverage kept explicit.
+
+Coach is a development-only projection of this same query, not another query,
+registry or rules engine. Its eleven built-in concepts each return `finding`,
+`insufficient_evidence` or `no_finding`, with the required evidence named.
+Missing native cache, tokenizer, model-outcome or complete tool-use evidence
+does not become a heuristic diagnosis or an observed zero. The public typed
+finding retains the exact query, period, evidence identity, source coverage and
+currentness; content and private source paths are not composition evidence.
+
+Host prompt preparation retains content-free composition in the existing
+Session-protected transcript event path. The selected Session read opens user
+and event rows through its captured Home/Account authority. Host-only records
+describe actual injected components and the final dispatch payload using scoped
+opaque identities and UTF-8 bytes. They do not claim a native cache prefix,
+tokenizer, TTL, MCP schema or context-window capacity. These events do not create
+unread messages or meaningful Session activity.
+That quietness is currently established only by the 0.3 attention owner. The
+released 0.2 Home treats an unknown live event as attention-bearing; mixed-version
+composition emission remains an unresolved compatibility amendment, not a
+verified quiet path.
+
+`usage.coach.apply`, `usage.coach.undo`, `usage.coach.dismiss` and
+`usage.coach.snooze` delegate to the existing settings, Session-model, MCP,
+recovery and prepared-Session Action owners. Their owner wiring and integration
+checks are still in progress; registration alone is not availability. The current
+query supplies prepared-Session proposals for witnessed instruction/context
+findings, not reversible setting, model or MCP proposals. A real reversible
+proposal producer is still required for the composed Coach Apply-to-Undo flow;
+conditional owner tests alone do not establish that flow. Apply revalidates the current
+evidence-bound proposal; each child keeps its normal admission and approval.
+Reversible effects use the owner's captured before/applied state and conditional
+write. Undo must refuse an intervening owner edit or a different Home/Account;
+it does not need an obsolete finding to survive a successful remedy. Settings
+Undo captures raw field presence/value at the owning mutation and does not
+depend on optional, prunable Account history. Repository advice prepares a review-prompt Session,
+not Git rollback. Dismissal and snooze are scoped Account preferences keyed to
+the exact evidence, and digest cadence defaults to off. Recurring digest
+delivery and the Coach widget body are not implemented by this logic contract.
+
+Compose produces data without publishing, rendering an image or opening a
+share sheet. Client-owned image rendering and `usage.recap.export` remain a
+later UI integration, not a shipped export capability. The compose contract
+is development-only; source tests do not establish loaded UI or release
+availability.
+
+The optional How-you-work footprint is also a deliberate data result. No
+applicable licensed, versioned method has been admitted for the available
+model/input/output/date/serving facts. Its projection returns
+`insufficient_basis`, with null Wh and CO₂e estimates, not measured zero.
+Accounting tokens remain explicit proxy coverage; no universal per-token
+energy or carbon coefficient is inferred.
+
+`usage.export` serializes explicitly selected accounting sections into JSON,
+CSV or text file bytes. Save, Copy and Share remain explicit client operations;
+the Action does not write a local file or send data. Plugin host-read admission
+does not expose this export Action. These are development-source contracts,
+not evidence of published SDK availability or completed live QA.
+
+### Native usage sources (development)
+
+The `usage.sources.*` family addresses one Home and Machine. Discovery reads
+declared source metadata, not transcripts or accounting. Consent, Stop, root
+changes and native-history deletion execute at the Machine's captured Account
+custodian through the canonical Action approval owner. Consent, root changes
+and deletion retain dangerous-Action approval (Ask first by default); a caller's
+`confirmed` flag cannot grant it. Dismissal is client-local presentation state
+and is unavailable to a headless caller, not a consent mutation.
+
+The daemon owns per-root consent and sealed pending accounting. Stop retires
+capture demand but retains pending rows and captured history. A root change
+retires the old capture and requires consent for the new root. Delete history
+removes that source's native captures in the selected range; it does not delete
+vendor files or runtime witnesses from Happier Sessions. Deletion retires
+collection until explicit consent is granted again, so source replacement cannot
+silently repopulate deleted history. An invalid root leaves the old scope intact.
+Paths may be shown through the admitted Machine transport but never enter usage
+ingest. All root-bearing Source results use live-only Approval custody, including
+discover/get when a policy forces approval of those safe reads. See
+[encryption.md](encryption.md#usage-accounting-03-development) for the consent
+disclosure and server-readable accounting fields.
+
 ### Filesystem mutations and finite transfers (development)
 
 The filesystem Action family addresses an exact Machine and reviewed workspace
@@ -227,6 +377,14 @@ Status reads this owner rather than a separate load cache. Capability publicatio
 uses the Machine's existing complete publication and acknowledgement owner, and
 must follow the installed finite handler's lifetime.
 
+Admission captures the selected Script execution basis from its SOURCE: command,
+environment/config declarations and passive hashes of selected execution inputs.
+Dequeue rechecks that basis before copying, then checks those same inputs in the
+copied target before effects. Changed execution inputs fail with
+`project_script_effect_changed` and typed `pendingApproval` review facts; they do
+not resume through setup consent or launch a substituted command. Ordinary project
+data is not frozen and still reaches the worker through fresh Sync.
+
 Current queue progress is a phase observation with a nonnegative numeric
 `queueAhead`, not percentage progress or another operation state. The same
 operation's V1 outward projection omits that additive field for strict predecessor
@@ -251,10 +409,18 @@ optional metric is neither transferred bytes nor a persisted custody fact;
 missing measurement never implies an empty or current copy.
 
 Personal copy retirement uses the same Sync relationship termination owner as
-ordinary termination. Current dependent work and the reviewed definition are
+ordinary termination, but only a relationship with canonical `worker_clean_copy`
+provenance and its bound target direction is a worker copy. Missing or unknown
+stored provenance is not inferred from a cross-machine link. The Machine's
+current Account/Home row reader uses that same fact; unavailable or incomplete
+rows remain unknown rather than an empty Fresh copies list.
+Current dependent work and the reviewed definition are
 checked before mutation; definition-only retirement preserves target bytes.
 Optional reviewed removal additionally requires the original committed-copy
-materialization evidence and exact physical-root custody. Replaced, symlinked or
+materialization evidence, including the original worker creation binding written
+by the target from its persisted Home definition, and exact physical-root custody.
+A later review, transient marker or recovery cannot enrich an ordinary receipt
+into a removable worker copy. Replaced, symlinked or
 user-created roots are refused. Unknown removal remains inspectable and does not
 authorize a second deletion attempt at another path. Releasing root ownership or
 aborting an uncommitted materialization is not committed-copy deletion authority.
@@ -359,6 +525,13 @@ adds, edits, removes or changes their signing secret through the captured Accoun
 The UI and Actions share the channel reducers and attention-policy mirror. Signing-secret input
 uses the Action secret field, is removed from observations, and has live-only approval custody.
 Webhook mutations retain ordinary dangerous-Action confirmation and do not send a notification.
+
+The Account endpoint-catalog cutover is in progress in 0.3 development. The catalog
+dispatcher requires the captured Account's ready catalog and reports missing or partial
+catalog authority as a typed failure, without substituting registered push tokens.
+Retained Workflow channel ids remain destination ids. The existing
+Settings-based editor described above has not yet completed its catalog-consumer validation;
+row readiness alone does not certify editor migration or signing-source cleanup.
 
 `app.updates.*` observes and invokes the answering app’s existing platform update owner through
 `useAppUpdateStatus`. The mounted shell summary keeps these operations available when the Updates
@@ -649,9 +822,15 @@ Saved groups use the `widgets.fragment.*` lifecycle and `widgets.group.add` to
 insert independent copies through one atomic layout intent. They preserve group
 options and child definitions, bindings and sizes, while allocating fresh group
 and child ids. Editing a saved fragment does not update previously added groups.
-Host-area presets use the existing area Artifact owner: reading missing content
-does not write, the first edit persists the default layout with that edit, and
-Reset returns an Undo capture guarded by the acknowledged revision. The generated
+Named areas use one `layoutId` and `widgets.area.layout.*` family for host presets
+and user views on Project, plugin and core pages. Create with `fromSurface` copies
+the current layout. The stock Project `overview` selection normalizes to the
+omitted-default owner reference, so both spellings address one Artifact.
+Reading missing defaults does not write, the first edit
+persists the defaults with that edit without changing the selected tab's order;
+only explicit reorder changes it. An explicit empty layout remains empty.
+Reset requires `expectedRevision` and returns an Undo capture; Reset and Undo
+refuse intervening edits. The generated
 [host Action reference](../apps/docs/content/docs/plugins/api/host-actions.mdx)
 owns the exact operation schemas.
 
@@ -698,8 +877,8 @@ update/delete and shared publication use the existing consequential approval
 defaults and configurable waivers. These are development contracts; public
 projection, package and loaded-platform validation remain separate evidence.
 
-Project dashboard Actions use that same instance/area corridor and Artifact
-owner. Named documents contain main and aside in one revision; the default is
+Project dashboards consume the same named-layout Actions and Artifact
+owner. Named documents contain main and aside in one revision; host presets are
 undeletable. Generic Artifact Actions consume the existing internal-kind policy
 and cannot read, manufacture, retag, update, delete or restore dashboard documents;
 their dedicated widget and sharing Actions remain the admitted paths. Shared
@@ -864,6 +1043,46 @@ declarations require their resource target. Account and device preferences accep
 no resource target. Unsupported kinds or a different Home return
 `setting_target_mismatch` before a read or write. Team policy and identity
 connection edits use their existing domain Actions and revision owners.
+
+In 0.3 development source, direct Account-key declarations accept
+`settings.get {anchor, includeVersion: true}` to return `settingsVersion`, and
+`settings.set {anchor, value, expectedSettingsVersion}` performs one conditional
+CAS without rebasing on a conflict. The revision covers the whole Account
+settings document, so an unrelated intervening preference edit also conflicts.
+Scalar Account-key writes can request `reversal: {kind: 'capture'}`; the writer
+returns the captured Home/Account scope, exact raw unset/value states, and the
+committed before/applied versions. Undo submits the complete captured receipt
+as `reversal: {kind: 'restore', ...receipt}` through the same Action. The owner
+checks its actual scope, declaration, applied version and raw applied state,
+then restores only that key under the same CAS, ignoring the caller's `value`.
+Raw absence is restored as absence, including inverted-boolean declarations;
+when the declaration has no default, reads and restores return `unset: true`
+instead of a JSON value. History retention or pruning does not control Undo. Capture reports
+`reversalUnavailableReason: 'no_change'` only for the real owner's unchanged
+version and exact raw-state equality; it creates neither an Undo receipt nor a
+forced write. Ordinary writes without capture keep their existing result.
+Compound owner bindings and device/Home/Team bindings do not support this
+reversal contract. Headless hosts that cannot enforce these conditional requests
+use the existing answering-client placement, including otherwise headless
+Account anchors; a disconnected client returns connect-client recovery. They
+never downgrade conditions to ordinary writes. No-flag Account requests retain
+their existing headless owner. All requests retain normal Action admission and approval.
+
+The same development-only conditional corridor extends the incumbent Session
+model and Account MCP binding Actions. `session.model.set {captureBefore: true}`
+captures the exact provider-bound selection, ordering stamp and Home/Account/
+Session scope; an active owner also captures its current `runId`. Restore submits
+that applied tuple and `updatedAt` through `expected`, so an intervening edit or
+owner/run change refuses. Inactive capture supports only an existing canonical
+V1 non-null intent for the same Agent target: null, absent, legacy and V2/Team selections are
+unsupported rather than converted into an inexact inverse. Restricted Session
+principals do not acquire this Account-owner capture capability.
+`mcp.bindings.enable/disable` can capture only the existing Account catalog
+binding's boolean, actual Home/Account scope and committed row revision.
+Restore supplies `expectedRevision`, `expectedEnabled` and `expectedScope` to
+the ordinary row CAS; this adds no Team catalog writer, private configuration
+receipt or Undo ledger. These are source contracts, not loaded-runtime or
+release certification claims.
 
 In 0.3 development source, `appearance.navigationPlacements` reads and sets the
 device-local `navigationSurfacePlacementsV1` map through that same declaration
@@ -1390,13 +1609,23 @@ retry without normal Action admission.
 
 Session Actions include `session.delete` (the existing durable Session deletion;
 the daemon owns managed-folder cleanup), `session.folder.set` and `session.tags.set`
-(the existing Session-organization assignment routes). `session.open` accepts
+(the existing Session-organization assignment routes). In current 0.3 development,
+ordinary `session.open` navigates without starting a process. Explicit `intent: 'resume'`
+resumes through the same Action admission and exact-Home Session reader; durable
+approval retains that intent rather than settling it as navigation. It also accepts
 `approvedNewDirectoryCreation: true` as explicit fresh-folder recovery consent;
 that arm requires mandatory present-user approval for Agent/MCP requests, even when
 settings waive ordinary approval. Exact-daemon replay accepts human authority only
 from authenticated RPC context, never an Artifact body or caller-authored payload.
 Ordinary open/resume remains safe, automatic wake/resume never infers consent, and
 `SESSION_DIRECTORY_MISSING` stays a typed recovery outcome.
+
+Requester credential disclosure is presentation in Share, approval and waiver
+surfaces, not a second consent decision after Action admission. Selected launch
+purposes name only the provider/native sign-ins actually materialized on the
+target; previews never contain credential values or private credential paths.
+Session and native Action delivery retain current Account and Machine custody
+checks even when the caller has configured an approval waiver.
 
 The `session.folders.*` and `session.tags.*` list/create/rename/delete Actions project
 the existing organization snapshot and upsert/delete routes. They do not introduce
@@ -1565,9 +1794,11 @@ or Voice attempt. Carrier delivery remains subject to the modality's existing
 startup/resume contract and its integration evidence.
 
 The coding Session producer resolves its current workspace/Project association
-through `resolveSessionProjectPromptStack`. The third layer contains shared
-Source attachments marked `context`, followed by the personal Project stack;
-dashboard attachments are not prompt context. An unavailable association or
+through `resolveSessionProjectPromptStack`. For a Source-backed Project, the third
+layer contains only shared Source attachments marked `context`; otherwise it
+contains the personal Project stack. The private Project row is retained but does
+not mirror or append to that Source layer. Dashboard attachments are not prompt
+context. An unavailable association or
 Source stays pending rather than silently dropping that layer. Spawned workers
 prepare their own Account, own Profile and associated Source/Project layers, not
 the Lead's Session entries or inherited-entry suppression. An explicitly selected

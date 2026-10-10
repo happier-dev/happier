@@ -375,7 +375,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             setupHelp: "S’exécute une fois, après les outils. sudo ne fonctionne que si l’image le permet.",
             setupLines: ({ count }: { count: number }) => (count === 1 ? `1 ligne` : `${count} lignes`),
             secrets: "Secrets pour la configuration",
-            secretsHelp: "Des secrets enregistrés que le script peut lire comme variables d’environnement. Les sessions ne les voient jamais.",
+            secretsHelp: "Les secrets enregistrés sont fournis au processus de configuration comme variables d’environnement. Le script peut les lire ou les enregistrer.",
             addSecret: "Ajouter un secret…",
             secretName: "Nom de la variable",
             secretNameHelp: "Le nom sous lequel le script le lit.",
@@ -384,7 +384,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             removeSecret: ({ name }: { name: string }) => `Retirer ${name}`,
             apply: "Configurer depuis un préréglage…",
             applyTitle: "Configurer depuis un préréglage",
-            applyDescription: ({ machine }: { machine: string }) => `Exécute les outils et le script d’un préréglage sur ${machine} avec son utilisateur Happier. Rien d’autre ne change sur ${machine}.`,
+            applyDescription: ({ machine }: { machine: string }) => `Exécute les outils et le script d’un préréglage à l’échelle du système sur ${machine} avec son utilisateur Happier. Ils peuvent modifier les outils, fichiers et services accessibles à cet utilisateur.`,
             applyEmpty: "Aucun préréglage n’installe encore quoi que ce soit. Ajoutez un Environnement à un préréglage dans Machines.",
             applyFailed: ({ machine }: { machine: string }) => `La configuration n’a pas pu démarrer sur ${machine}.`,
             toolchainPlaceholder: "[tools]\nnode = \"22\"",
@@ -397,6 +397,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         },
     },
     managedPower: {
+        asleep: "En veille",
         unsupported: ({ provider, effect }: { provider: string; effect: string }) => `${provider} ne prend pas en charge ${effect} pour cette ressource.`,
         stopPending: "Arrêt demandé. L’arrêt n’a pas encore été confirmé.",
         stoppedStorage: "Arrêtée · stockage conservé",
@@ -430,6 +431,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         pending: "Une action du fournisseur peut encore se terminer après le transfert de la gestion. Des frais peuvent continuer.",
     },
     managedCleanup: {
+        archiveTitle: "Archives",
         consoleHelp: "Vérifiez cette ressource directement dans la console de votre fournisseur.",
         reviewTitle: "Vérifier les ressources gérées",
         removalReview: "Supprimer cette connexion ou ces données ne supprime pas ces ressources. Les frais du fournisseur peuvent continuer.",
@@ -461,6 +463,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         terminalNotice: ({ owner, machine }: { owner: string; machine: string }) => `Les commandes s’exécutent en tant qu’utilisateur machine de ${owner} sur ${machine}.`,
     },
     machineWork: {
+        counts: ({ active }: { active: number }) => `Utilisée par d’autres · ${active} actifs`,
         title: "Utilisée par d’autres",
         description: ({ machine }: { machine: string }) => `Qui travaille sur ${machine} en ce moment. Leurs sessions restent les leurs ; Happier affiche seulement qui et combien.`,
         empty: ({ machine }: { machine: string }) => `Aucun membre de l’équipe ne travaille sur ${machine} en ce moment.`,
@@ -471,7 +474,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         refreshFailed: ({ machine }: { machine: string }) => `Impossible d’actualiser le travail sur ${machine}.`,
         sessions: ({ count }: { count: number }) => (count === 1 ? `1 session` : `${count} sessions`),
         scripts: ({ count }: { count: number }) => (count === 1 ? `1 script` : `${count} scripts`),
-        tasks: ({ count }: { count: number }) => (count === 1 ? `1 tâche` : `${count} tâches`),
+        tasks: ({ count }: { count: number }) => (count === 1 ? `1 travail actif` : `${count} travaux actifs`),
         terminals: ({ count }: { count: number }) => (count === 1 ? `1 terminal` : `${count} terminaux`),
     },
 };

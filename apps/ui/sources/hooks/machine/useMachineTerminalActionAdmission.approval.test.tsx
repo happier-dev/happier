@@ -3,16 +3,25 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
+import { decideApprovalAsInbox, replayApprovedAsDaemon } from '@/dev/testkit/harness/approvalInbox';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { applyProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
+import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 
 // The daemon RPC is the physical-process boundary; policy, Artifact CAS, pane
 // state, binding validation and original receipt delivery remain real.
 const rpc = vi.hoisted(() => vi.fn());
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: rpc }));
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
+    machineRpcWithServerScope: async (request: Readonly<{ method: string; serverId: string; machineId: string;
+        payload: Readonly<{ artifactId: string }>; signal?: AbortSignal }>) => {
+        if (request.method === RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED) return replayApprovedAsDaemon({
+            serverId: request.serverId, machineId: request.machineId, artifactId: request.payload.artifactId, signal: request.signal,
+        });
+        return rpc(request);
+    },
+}));
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 const { useMachineTerminalActionAdmission } = await import('./useMachineTerminalActionAdmission');
@@ -36,11 +45,15 @@ const { useMachineTerminalSession } = await import('./useMachineTerminalSession'
 
 const wrapper: React.ComponentType<React.PropsWithChildren> = ({ children }) => <AppPaneProvider>{children}</AppPaneProvider>;
 async function setup() {
-    const serverId = await harness.addHome({ name: 'Project Home', serverUrl: 'https://project-approval-continuity.test', accountId: 'bob' });
+    const serverId = await harness.addHome({ name: 'Project Home', serverUrl: 'https://project-approval-continuity.test',
+        serverIdentityId: 'srv_project-approval-continuity', accountId: 'bob' });
+    harness.answer(serverId, '/v1/machines', { body: [createPlainMachineRowFixture({ id: 'machine', accountId: 'bob' })] });
     await harness.requireUiApproval(serverId, 'machines.terminal.open');
     publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
-    const workspace = { serverId, workspaceId: 'accepted', machineId: 'machine', rootPath: '/accepted' };
-    applyProjectAccountRowsFixture(storage, { workspaceRefs: [{ id: workspace.workspaceId, serverId,
+    const scope = storage.getState().profileScope;
+    if (!scope) throw new Error('Expected admitted Account scope');
+    const workspace = { serverId: scope.serverId, workspaceId: 'accepted', machineId: 'machine', rootPath: '/accepted' };
+    applyProjectAccountRowsFixture(storage, { workspaceRefs: [{ id: workspace.workspaceId, serverId: workspace.serverId,
         machineId: workspace.machineId, rootPath: workspace.rootPath, createdAtMs: 1 }] });
     const scopeId = buildProjectPaneScopeId(workspace.workspaceId, serverId);
     const host = await renderHook(() => null, { wrapper });
@@ -51,10 +64,10 @@ async function setup() {
     const opened = outcome.result;
     if (!opened || !('terminalId' in opened) || typeof opened.terminalId !== 'string') throw new Error('Expected admitted member');
     const memberId = opened.terminalId;
-    const terminalKey = buildProjectTerminalKey({ serverId, accountId: 'bob' }, workspace, memberId);
+    const terminalKey = buildProjectTerminalKey(scope, workspace, memberId);
     const input = { terminalKey, workspace, scopeId, memberId };
     const request = { terminalKey, workspace, cwd: workspace.rootPath, cols: 80, rows: 24 };
-    return { serverId, workspace, scopeId, memberId, input, request, host };
+    return { serverId, scope, workspace, scopeId, memberId, input, request, host };
 }
 
 describe('pending terminal creation follows its existing member, not its mounted view', () => {
@@ -69,7 +82,7 @@ describe('pending terminal creation follows its existing member, not its mounted
     it.each(['session.terminals.open', 'session.terminals.split', 'session.terminals.run_script'] as const)(
         '%s keeps the original Agent Machine policy before committing a process-producing pane intent', async actionId => {
             const fixture = await setup();
-            const scope = { serverId: fixture.serverId, accountId: 'bob' };
+            const scope = fixture.scope;
             storage.getState().applySettingsForScope(scope, settingsParse({ actionsSettingsV1: { v: 1, actions: {},
                 approvalWaivedSurfaces: { 'machines.terminal.open': ['ui'] },
             } }), 2);
@@ -116,7 +129,7 @@ describe('pending terminal creation follows its existing member, not its mounted
         });
     it('keeps an Agent restart under Ask first when only the UI Machine policy is waived', async () => {
         const fixture = await setup();
-        const scope = { serverId: fixture.serverId, accountId: 'bob' };
+        const scope = fixture.scope;
         storage.getState().applySettingsForScope(scope, settingsParse({ actionsSettingsV1: { v: 1, actions: {},
             approvalWaivedSurfaces: { 'machines.terminal.open': ['ui'], 'machines.terminal.restart': ['ui'] },
         } }), 2);
@@ -165,7 +178,7 @@ describe('pending terminal creation follows its existing member, not its mounted
     });
     it('keeps pending creation when its view hides before acknowledgement', async () => {
         const fixture = await setup();
-        storage.getState().applySettingsForScope({ serverId: fixture.serverId, accountId: 'bob' }, settingsParse({
+        storage.getState().applySettingsForScope(fixture.scope, settingsParse({
             actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: { 'machines.terminal.open': ['ui'] } },
         }), 2);
         const acknowledgement = createDeferred<void>();
@@ -277,15 +290,16 @@ describe('pending terminal creation follows its existing member, not its mounted
         const hook = await renderHook(() => useMachineTerminalActionAdmission(fixture.input));
         const interest = new AbortController();
         const waiting = hook.getCurrent().admit(fixture.request, false, interest.signal);
-        await waitForHomeGovernance(() => expect(hook.getCurrent().approvalPending).toBe(true));
-        const artifactId = hook.getCurrent().approvalId!;
-        expect(await invokeSessionTerminalAction({ actionId: 'session.terminals.close', input: {
-            scopeId: fixture.scopeId, terminalId: fixture.memberId,
-        } })).toMatchObject({ ok: true });
-        expect(JSON.parse(harness.artifacts(fixture.serverId).readPlainBody(artifactId)!)).toMatchObject({ status: 'canceled' });
-        expect(rpc.mock.calls.some(([request]) => request.method === RPC_METHODS.DAEMON_TERMINAL_ENSURE
-            || request.method === RPC_METHODS.DAEMON_TERMINAL_CLOSE)).toBe(false);
-        interest.abort(); await waiting; await hook.unmount(); await fixture.host.unmount();
+        try {
+            await waitForHomeGovernance(() => expect(hook.getCurrent().approvalPending).toBe(true));
+            const artifactId = hook.getCurrent().approvalId!;
+            expect(await invokeSessionTerminalAction({ actionId: 'session.terminals.close', input: {
+                scopeId: fixture.scopeId, terminalId: fixture.memberId,
+            } })).toMatchObject({ ok: true });
+            expect(JSON.parse(harness.artifacts(fixture.serverId).readPlainBody(artifactId)!)).toMatchObject({ status: 'canceled' });
+            expect(rpc.mock.calls.some(([request]) => request.method === RPC_METHODS.DAEMON_TERMINAL_ENSURE
+                || request.method === RPC_METHODS.DAEMON_TERMINAL_CLOSE)).toBe(false);
+        } finally { interest.abort(); await waiting; await hook.unmount(); await fixture.host.unmount(); }
     });
     it('retains the member while the physical open is already claimed instead of reporting cancellation', async () => {
         const fixture = await setup();
@@ -298,14 +312,17 @@ describe('pending terminal creation follows its existing member, not its mounted
         rpc.mockImplementation(({ method }: { method: string }) => method === RPC_METHODS.DAEMON_TERMINAL_ENSURE
             ? physical.promise : Promise.resolve({ ok: true, terminals: [] }));
         const execution = decideApprovalAsInbox(fixture.serverId, artifactId, 'approve');
-        await waitForHomeGovernance(() => expect(JSON.parse(harness.artifacts(fixture.serverId).readPlainBody(artifactId)!)).toMatchObject({ status: 'executing' }));
-        expect(await invokeSessionTerminalAction({ actionId: 'session.terminals.close', input: {
-            scopeId: fixture.scopeId, terminalId: fixture.memberId,
-        } })).toMatchObject({ ok: false, errorCode: 'terminal_approval_cancellation_pending' });
-        expect(readSessionTerminalWorkspaceForScope(fixture.scopeId)?.tabs.flatMap(tab => tab.terminals).map(member => member.id)).toContain(fixture.memberId);
-        expect(rpc.mock.calls.some(([request]) => request.method === RPC_METHODS.DAEMON_TERMINAL_CLOSE)).toBe(false);
-        physical.resolve({ ok: true, terminalId: 'requester-pty', reused: false });
-        await execution; await waiting; await hook.unmount(); await fixture.host.unmount();
+        try {
+            await waitForHomeGovernance(() => expect(JSON.parse(harness.artifacts(fixture.serverId).readPlainBody(artifactId)!)).toMatchObject({ status: 'executing' }));
+            expect(await invokeSessionTerminalAction({ actionId: 'session.terminals.close', input: {
+                scopeId: fixture.scopeId, terminalId: fixture.memberId,
+            } })).toMatchObject({ ok: false, errorCode: 'terminal_approval_cancellation_pending' });
+            expect(readSessionTerminalWorkspaceForScope(fixture.scopeId)?.tabs.flatMap(tab => tab.terminals).map(member => member.id)).toContain(fixture.memberId);
+            expect(rpc.mock.calls.some(([request]) => request.method === RPC_METHODS.DAEMON_TERMINAL_CLOSE)).toBe(false);
+        } finally {
+            physical.resolve({ ok: true, terminalId: 'requester-pty', reused: false });
+            await execution; interest.abort(); await waiting; await hook.unmount(); await fixture.host.unmount();
+        }
     });
     it('keeps the member when a cancellation write loses its acknowledgement', async () => {
         const fixture = await setup();
@@ -377,7 +394,7 @@ describe('pending terminal creation follows its existing member, not its mounted
             const artifact = JSON.parse(harness.artifacts(fixture.serverId).readPlainBody(artifactId)!);
             expect(artifact).toMatchObject({ actionId: 'machines.terminal.open', status: 'executed',
                 actionArgs: { workspace: fixture.workspace }, executionOriginV1: { surface: 'agent' } });
-            expect(spawnedTerminalKey).toBe(buildProjectTerminalKey({ serverId: fixture.serverId, accountId: 'bob' }, fixture.workspace, outcome.terminalId));
+            expect(spawnedTerminalKey).toBe(buildProjectTerminalKey(fixture.scope, fixture.workspace, outcome.terminalId));
             if (retained?.pendingActionApproval) expect(retained.pendingActionApproval.artifactId).toBe(artifactId);
             expect(harness.artifacts(fixture.serverId).list()).toHaveLength(1);
         } finally { acknowledgement.resolve(); interest.abort(); await split; retireMeasurements(); await fixture.host.unmount(); }

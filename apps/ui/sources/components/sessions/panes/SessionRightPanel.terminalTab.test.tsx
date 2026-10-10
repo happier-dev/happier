@@ -1,3 +1,4 @@
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -5,8 +6,10 @@ import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plu
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { renderScreen } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storageStore';
+import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
 import { installSessionPaneRuntimeTestHarness } from './sessionPaneRuntimeTestHarness';
+import { createSessionPaneScopeId } from './sessionPaneScopeId';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 
 let phone = false;
@@ -30,6 +33,7 @@ installSessionDetailsPanelCommonModuleMocks({
     },
 });
 const runtime = installSessionPaneRuntimeTestHarness({
+    scopeId: ({ sessionId, serverId }) => createSessionPaneScopeId(sessionId, serverId),
     features: () => createRootLayoutFeaturesResponse({ features: { terminal: { embeddedPty: { enabled: true } } } }),
 });
 beforeEach(() => {
@@ -38,7 +42,12 @@ beforeEach(() => {
 });
 async function renderPanel() {
     const { SessionRightPanel } = await import('./SessionRightPanel');
-    return renderScreen(<runtime.Wrapper><SessionRightPanel sessionId="s1" scopeId="session:s1" /></runtime.Wrapper>);
+    const screen = await renderScreen(<runtime.Wrapper><SessionRightPanel sessionId="s1" scopeId={createSessionPaneScopeId('s1', runtime.serverId)} /></runtime.Wrapper>);
+    // The scoped feature hook fails closed until the real Home reply settles.
+    await act(async () => {
+        expect((await getServerFeaturesSnapshot({ serverId: runtime.serverId })).status).toBe('ready');
+    });
+    return screen;
 }
 async function createRightSidebarProjection(pluginId: string, descriptorId: string): Promise<PluginUiProjectionModel> {
     const { PluginProjectionV2Schema } = await import('@happier-dev/protocol');
@@ -102,9 +111,9 @@ describe('SessionRightPanel (terminal tab)', () => {
         const screen = await renderScreen(<runtime.Wrapper><AppShellPluginUiProjectionValueProvider value={{
             pluginUiProjection: global, pluginBrowserProjection: null, phase: 'current', interactionEnabled: true,
             machineId: 'machine-global', serverId: 'server-global', platform: 'ios',
-            clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {},
+            accountLifetime: captureActiveServerAccountScopeLifetime(), clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {},
         }}>
-            <SessionRightPanel sessionId="s1" scopeId="session:s1" paneSurfaceScope={{
+            <SessionRightPanel sessionId="s1" scopeId={createSessionPaneScopeId('s1', runtime.serverId)} paneSurfaceScope={{
                 targetKind: 'session', sessionId: 's1', serverId: runtime.serverId, machineId: 'machine-session',
                 pluginUiProjection: scoped, pluginBrowserProjection: null, projectionPhase: 'current', interactionEnabled: true, platform: 'ios',
             }} />

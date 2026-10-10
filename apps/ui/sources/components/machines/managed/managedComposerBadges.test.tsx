@@ -222,4 +222,15 @@ describe('managed composer badges', () => {
     expect(text).toContain('Alice and anyone who can sign in to devbox');
     expect(text).not.toContain('works only for this session');
   });
+
+  it.each(['scoped', 'full'] as const)('names selected sign-in purposes without revealing their account references (%s)', async signIn => {
+    const { buildRequesterDisclosureStatusBadge } = await import('./managedComposerBadges');
+    const badge = buildRequesterDisclosureStatusBadge({ owner: 'Alice', machine: 'devbox', signIn,
+      signInPurposes: ['OpenAI', 'Anthropic (native sign-in)'] });
+    const screen = await renderScreen(<>{badge.renderPopover?.({ open: true,
+      anchorRef: React.createRef<unknown>(), onRequestClose: () => undefined })}</>);
+    expect(screen.getTextContent()).toContain('OpenAI');
+    expect(screen.getTextContent()).toContain('Anthropic (native sign-in)');
+    expect(screen.getTextContent()).not.toContain('Linear');
+  });
 });

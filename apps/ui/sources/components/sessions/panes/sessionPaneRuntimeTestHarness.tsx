@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto';
 import * as React from 'react';
-import { AccountProfileSchema, CurrentCursorResponseSchema, FeaturesResponseSchema, V2SessionRecordSchema } from '@happier-dev/protocol';
+import { AccountProfileSchema, CurrentCursorResponseSchema, FeaturesResponseSchema } from '@happier-dev/protocol';
+import { SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol/sessions/listing/response';
 import { beforeEach, afterEach, vi } from 'vitest';
 import { standardCleanup, createSessionFixture } from '@/dev/testkit';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -42,6 +43,8 @@ export function installSessionPaneRuntimeTestHarness(params: Readonly<{
     let useAppPaneScope: typeof import('@/components/appShell/panes/hooks/useAppPaneScope')['useAppPaneScope'];
     beforeEach(async () => {
         installDisconnectedServerSocketBoundary(params.configureSocket);
+        const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
+        await prepareSessionDraftPersistenceStorage();
         await loadSyncSingletonForTests();
         ({ AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider'));
         ({ InjectedAuthProvider } = await import('@/auth/context/AuthContext'));
@@ -77,12 +80,14 @@ export function installSessionPaneRuntimeTestHarness(params: Readonly<{
                 if ((init?.method ?? 'GET') === 'GET' && path === `/v2/sessions/${sessionId}`) {
                     const session = storage.getState().sessions[sessionId];
                     if (!session) return Response.json({ error: 'Session not found' }, { status: 404 });
-                    return json({ session: V2SessionRecordSchema.parse({
+                    return json({ session: SessionCurrentProjectionRecordV1Schema.parse({
                         id: session.id, seq: session.seq, createdAt: session.createdAt, updatedAt: session.updatedAt,
                         active: session.active, activeAt: session.activeAt, encryptionMode: 'plain', dataEncryptionKey: null,
                         metadata: JSON.stringify(session.metadata), metadataVersion: session.metadataVersion, metadataLayoutVersion: 0,
                         agentState: session.agentState ? JSON.stringify(session.agentState) : null, agentStateVersion: session.agentStateVersion,
                         pendingVersion: session.pendingVersion, pendingActivationAuthorization: session.pendingActivationAuthorization ?? undefined,
+                        responsibleAccountId: session.responsibleAccountId ?? null,
+                        responsibleAccount: session.responsibleAccount ?? null,
                         share: null, effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }], audienceContext: null,
                             capabilities: session.access?.capabilities },
                     }) });

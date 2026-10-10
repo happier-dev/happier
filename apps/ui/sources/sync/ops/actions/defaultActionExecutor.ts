@@ -47,6 +47,9 @@ import { readPromptLibraryCatalogProjectionInContext, mutatePromptLibraryRoleOve
   requireUpdatedPromptLibraryMutation, PromptLibraryRowOperationError } from '@/sync/api/account/apiPromptLibraryCatalog';
 import type { PromptExternalLinksV1 } from '@happier-dev/protocol/prompts/library/promptExternalLinksV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { resolveActionBackendTargetSelection } from '@happier-dev/protocol/actions/resolveActionBackendTargetSelection';
+import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { loadDaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { createLaunchProfilePublisherV1 } from '@happier-dev/protocol/launchProfiles/publishLaunchProfile';
 import type { ProfileRecordV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
 import { readProfileCatalogProjectionInContext, writeProfileRecordInContext } from '@/sync/api/account/apiProfileCatalog';
@@ -108,7 +111,7 @@ import { t } from '@/text';
 import { HappyError } from '@/utils/errors/errors';
 
 import { captureLazyActionAccountContext, type LazyActionAccountContext } from './actionAccountContext';
-import { confirmRequesterAccountCredentialDisclosure, prepareRequesterSessionForSpawn, resolveRequesterSessionSpawnDisposition } from './requesterSessionSpawnPreparation';
+import { prepareRequesterSessionForSpawn, resolveRequesterSessionSpawnDisposition } from './requesterSessionSpawnPreparation';
 import { createUiArtifactAction } from './artifactActionDeps';
 import { createUiProfileActionExecuteV1 } from './profileActionDeps';
 import { createUiMcpServerActionExecuteV1 } from './mcpServerActionDeps';
@@ -174,7 +177,12 @@ import {
     resumeSession,
 } from '@/sync/ops/sessions';
 import { buildResumeSessionBaseOptionsFromSession } from '@/sync/domains/session/resume/resumeSessionBase';
-import { buildResumeCapabilityOptionsFromUiState } from '@/agents/registry/registryUiBehavior';
+import { buildResumeCapabilityOptionsFromUiState, buildResumeSessionExtrasFromUiState } from '@/agents/registry/registryUiBehavior';
+import { getPermissionModeOverrideForSpawn } from '@/sync/domains/permissions/permissionModeOverride';
+import { getModelOverrideForSpawn } from '@/sync/domains/models/modelOverride';
+import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
+import { ensureAgentInstallablesBackground } from '@/capabilities/ensureAgentInstallablesBackground';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { readAgentScopedPluginSettingsSnapshot } from '@/agents/registry/agentScopedPluginSettings';
 import { readSessionSnapshotForAuthority } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority';
 import { runWithServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
@@ -242,6 +250,9 @@ import {
   listAgentSessionModesForActions,
   listSpawnConnectedServicesForActions,
   resolveSessionSpawnAgentInventorySelectionForActions,
+  resolveAgentInventoryProbeTarget,
+  probeAgentModelsForActions,
+  type AgentInventoryProbeTarget,
 } from './agentInventoryActionDeps';
 import { listMachinesForVoiceTool } from '@/voice/tools/actionImpl/machinesList';
 import { listServersForVoiceTool } from '@/voice/tools/actionImpl/serversList';
@@ -487,6 +498,8 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
 }
 
   function buildDefaultActionExecutor(opts?: Readonly<{
+  /** Private presentation leaf for this invocation; never enters Action custody. */
+  openRoute?: (route: string) => void | Promise<void>;
   /** Surface-local custody notification, fired only by the admitted Provider RPC transport. */
   onProviderRpcDispatched?: () => void;
   /** An explicitly admitted API-token transport; Home owns grants and approvals. */
@@ -559,7 +572,31 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
   };
   const runtimeActionExecute = createDefaultRuntimeActionExecutor(opts?.runtimeActions, accountContext?.accountLifetime);
     type AgentsBackendsListArgs = Readonly<{ includeDisabled?: boolean; limit?: number; machineId?: string }>;
-    type AgentsModelsListArgs = Readonly<{ agentId?: string; machineId?: string; serverId?: string; limit?: number; backendTargetKey?: string }>;
+  const resolveNativeInventoryProbeTarget = async (args: Readonly<{
+    agentId?: string; machineId?: string; serverId?: string; backendTargetKey?: string;
+  }>): Promise<AgentInventoryProbeTarget | null> => {
+    const selected = resolveActionBackendTargetSelection(args);
+    if (!selected.ok) return null;
+    const target = selected.selection.canonicalBackendTarget;
+    if (target?.configuredBackendId || target?.sourceKind === 'configured') {
+      if (!accountContext || !args.machineId) return null;
+      const { catalog } = await readAcpCatalogInContext(accountContext);
+      accountContext.assertCurrent();
+      if (catalog.status !== 'ready') return null;
+      const projection = await loadDaemonMergedProjectionInputs({
+        machineId: args.machineId, serverId: accountContext.serverId, accountLifetime: accountContext.accountLifetime,
+      });
+      accountContext.assertCurrent();
+      if (!projection) return null;
+      const entry = getResolvedBackendCatalogEntries({
+        ...projection, enabledAgentIds: [], acpCatalogSnapshot: catalog,
+        backendEnabledByTargetKey: (accountContext.readLiveSettings() ?? accountContext.settings).backendEnabledByTargetKey,
+      }).find(candidate => candidate.backendTargetKey === selected.selection.backendTargetKey);
+      return entry ? { agentId: entry.catalogAgentId ?? entry.agentId, backendTargetParam: target } : null;
+    }
+    const resolved = resolveAgentInventoryProbeTarget(args);
+    return resolved.ok ? { ...resolved.target, backendTargetParam: target ?? resolved.target.backendTargetParam } : null;
+  };
 
   const resolveSessionMachineId = (sessionId: string, serverId?: string): string => {
     const exactServerId = String(serverId ?? '').trim();
@@ -605,12 +642,72 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
         input: { serverId: accountContext.serverId, machineId }, context, ...(context.signal ? { signal: context.signal } : {}) });
       accountContext.assertCurrent();
       const disposition = resolveRequesterSessionSpawnDisposition({ accountId: accountContext.accountId, machineId, access });
-      return disposition.kind === 'requester' ? { ...defaultPreview, requesterCredentialDisclosure: disposition.disclosure,
+      if (disposition.kind !== 'requester') return defaultPreview;
+      const [{ AGENT_IDS }, { projectSessionCredentialSignInPurposes },
+        { projectConnectedServiceRegistryEntries }, { resolveQualifiedConnectedServiceRegistryDisplayName },
+        routeOwner] = await Promise.all([
+        import('@/agents/catalog/catalog'),
+        import('@/components/sessions/new/modules/connectedServicesNewSessionBindings'),
+        import('@/sync/domains/connectedServices/connectedServiceRegistry'),
+        import('@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName'),
+        import('@/providers/session/resolveSessionRoutePresentation'),
+      ]);
+      const projection = await loadDaemonMergedProjectionInputs({ machineId, serverId: accountContext.serverId,
+        accountLifetime: accountContext.accountLifetime });
+      accountContext.assertCurrent();
+      const agent = getResolvedBackendCatalogEntries({ ...projection, enabledAgentIds: AGENT_IDS })
+        .find(entry => entry.backendTargetKey === buildBackendTargetKeyV2(parsed.data.agentTarget))?.agentCatalogEntry;
+      const targetRegistry = { entries: projectConnectedServiceRegistryEntries({ scopeKey: accountContext.serverId, status: 'ready',
+        descriptors: Object.values(projection?.pluginProjectionV2?.familiesById.connectedAccounts?.entriesById ?? {}),
+        conflicts: [], errorReason: null }) };
+      const resolveServiceTitle = (service: Parameters<typeof resolveQualifiedConnectedServiceRegistryDisplayName>[1]) =>
+        resolveQualifiedConnectedServiceRegistryDisplayName(targetRegistry, service, t);
+      const signInPurposes: string[] = [];
+      const selection = parsed.data.modelSelection?.ref;
+      const selectedConnectionId = selection?.providerConnectionId;
+      let nativePurposesKnown = !selectedConnectionId;
+      let suppressedServiceIds: readonly string[] | undefined;
+      if (selectedConnectionId && selection) {
+        const [{ readProviderCatalogForMutationInContext }, { DaemonProviderModelProjectionResponseV1Schema }] = await Promise.all([
+          import('@/sync/api/account/apiProviderCatalog'), import('@happier-dev/protocol/rpc'),
+        ]);
+        const [catalog, projected] = await Promise.all([
+          readProviderCatalogForMutationInContext(accountContext, context.signal),
+          deps.providerActionExecute?.({ actionId: 'providers.models.projection', input: {
+            machineId, agentTargetKey: buildBackendTargetKeyV2(parsed.data.agentTarget),
+            currentSelection: selection, sourceConnectionId: selectedConnectionId, refreshPolicy: 'current_only',
+          } }, context),
+        ]);
+        accountContext.assertCurrent();
+        const providerProjection = DaemonProviderModelProjectionResponseV1Schema.safeParse(projected?.ok ? projected.result : null);
+        const selectedSource = providerProjection.success && providerProjection.data.status === 'success'
+          ? providerProjection.data.groups.find(group => group.connectionId === selectedConnectionId) : null;
+        nativePurposesKnown = Boolean(selectedSource);
+        suppressedServiceIds = selectedSource?.suppressedConnectedServiceIds;
+        const connection = catalog.status === 'ready' ? catalog.catalog.connections.find(connection => connection.id === selectedConnectionId) : null;
+        if (connection) {
+          const source = routeOwner.readProviderConnectionDisclosureSource({ connection, projection: projection?.pluginProjectionV2,
+            machineId, resolveServiceTitle });
+          const route = routeOwner.resolveSessionRoutePresentation({ phase: 'draft', selection: parsed.data.modelSelection?.ref ?? null,
+            sources: [selectedSource ?? source.source], native: { label: '', authSource: 'unknown', connectedCount: 0 } }).applied;
+          signInPurposes.push(...routeOwner.projectProviderRouteSignInPurposes({ route, machineId,
+            secretBindings: catalog.status === 'ready' ? catalog.catalog.secretBindingsByConnectionId[selectedConnectionId] : undefined,
+            credentialSlotId: source.credentialSlotId, managedSignInPurposes: source.managedSignInPurposes }));
+        }
+      }
+      // A selected Provider may replace native sign-ins only through its actual Agent adapter projection.
+      // An unavailable projection supplies no authority to guess which native purposes still materialize.
+      if (nativePurposesKnown) signInPurposes.push(...projectSessionCredentialSignInPurposes({ declarations: agent?.connectedAccounts ?? [],
+        bindings: parsed.data.connectedServices, resolveServiceTitle, suppressedServiceIds,
+        formatNativeTitle: service => t('machineRequester.nativeSignInPurpose', { service }) }));
+      return { ...defaultPreview, requesterCredentialDisclosure: disposition.disclosure,
         summary: [t('machineRequester.fullSignIn', { machine: machineId }),
           t('machineRequester.osVisibility', { owner: disposition.disclosure.custodian.displayName
-            || disposition.disclosure.custodian.accountId, machine: machineId })].join('\n\n') } : defaultPreview;
+            || disposition.disclosure.custodian.accountId, machine: machineId }),
+          ...(signInPurposes.length ? [t('machineRequester.signInPurposes', { purposes: [...new Set(signInPurposes)].join(', ') })] : []),
+        ].join('\n\n') };
     },
-    ...(promptLibraryStore?.organization ? { artifactFolders: promptLibraryStore.organization } : {}),
+    ...(promptLibraryStore?.organization ? { artifactFolders: promptLibraryStore.organization, promptStacks: promptLibraryStore.organization } : {}),
     ...(accountContext && promptLibraryStore ? { memoryLibrary: {
       serverId: accountContext.serverId, store: promptLibraryStore, randomId: randomUUID,
       isSameServerId: serverId => areServerProfileIdentifiersEquivalent(serverId, accountContext.serverId),
@@ -757,7 +854,7 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
         return await accountContext.mutateRawSettings(mutate, options);
       },
       ...(accountContext ? { readAccountSettingsSnapshot: accountContext.readRawSettingsSnapshot,
-        readAccountSettingsHistory: accountContext.readSettingsHistorySnapshot } : {}),
+        accountScope: accountContext.accountLifetime.scope } : {}),
       readLocalSettings: () => storage.getState().localSettings,
       writeLocalSettings: (delta) => storage.getState().applyLocalSettings(delta, { source: 'ui' }),
       ...(accountContext ? { automationSettings: {
@@ -813,7 +910,7 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
       mcpServerAction: createUiMcpServerActionExecuteV1(accountContext),
       providerActionExecute: createUiProviderActionExecuteV1(accountContext, { onRpcDispatched: opts?.onProviderRpcDispatched }),
     } : {}),
-    ...(accountContext ? { remoteHostActionExecute: createUiRemoteHostActionExecuteV1(accountContext) } : {}),
+    ...(accountContext ? { remoteHostActionExecute: createUiRemoteHostActionExecuteV1(accountContext, opts?.openRoute) } : {}),
     ...(accountContext ? { artifactAccessAction: createArtifactAccessActionsV1({
       read: accountContext.workflowArtifacts.read,
       transport: accountContext.artifactAccessGrants,
@@ -1221,7 +1318,7 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
         throw error;
       }
     },
-    sessionOpen: async ({ sessionId, serverId, approvedNewDirectoryCreation, tabId, destination, signal }) => {
+    sessionOpen: async ({ sessionId, serverId, intent, approvedNewDirectoryCreation, actionRequestId, tabId, destination, signal }) => {
       const comparison = destination ? scmReviewComparisonOfSource(destination.comparison, destination.comparisonId) : null;
       if (destination && !comparison) return { ok: false, errorCode: 'invalid_parameters', error: 'comparison_selector_unavailable' };
       const query = destination && comparison ? serializeSessionPaneUrlState({ details: {
@@ -1235,7 +1332,7 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
         if (!target.ok) return target;
         if (!('tabs' in target) || !target.tabs.some((tab) => tab.id === tabId)) return { ok: false, errorCode: 'workspace_tab_not_found', error: 'workspace_tab_not_found' };
       }
-      if (approvedNewDirectoryCreation === true) {
+      if (intent === 'resume' || approvedNewDirectoryCreation === true) {
         if (!accountContext) return { ok: false, errorCode: 'not_authenticated', error: 'Exact Account scope is unavailable.' };
         accountContext.assertCurrent();
         const state = storage.getState();
@@ -1260,6 +1357,10 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
         accountContext.assertCurrent();
         const base = buildResumeSessionBaseOptionsFromSession({
           sessionId, session,
+          permissionOverride: getPermissionModeOverrideForSpawn(session),
+          modelOverride: target?.agentTarget || target?.backendTarget
+            ? getModelOverrideForSpawn(session, resolveBackendTargetKeyV2(target.agentTarget ?? target.backendTarget!))
+            : null,
           resumeTargetOverride: machineTarget ? { machineId: machineTarget.machineId, directory: machineTarget.basePath } : null,
           resumeCapabilityOptions: {
             ...buildResumeCapabilityOptionsFromUiState({ settings, pluginSettings, results: undefined }),
@@ -1267,12 +1368,24 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
           },
         });
         if (!machineTarget || !base) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.open' };
+        if (target?.defaultAgentId) {
+          fireAndForget(ensureAgentInstallablesBackground({
+            agentId: target.defaultAgentId, machineId: base.machineId,
+            serverId: accountContext.serverId, settings, resumeSessionId: base.resume ?? null,
+          }), { tag: `session.open.installables.${target.defaultAgentId}` });
+        }
         const resumed = await resumeSession({
           ...base, serverId: accountContext.serverId, accountLifetime: accountContext.accountLifetime,
-          approvedNewDirectoryCreation: true,
+          ...(approvedNewDirectoryCreation === true ? { approvedNewDirectoryCreation: true,
+            executionAuthorization: { provenance: 'user_request' as const, requestId: actionRequestId ?? randomUUID() },
+          } : {}),
+          ...(target?.defaultAgentId ? buildResumeSessionExtrasFromUiState({
+            agentId: target.defaultAgentId, settings, pluginSettings, session,
+          }) : {}),
         });
         accountContext.assertCurrent();
         if (resumed.type === 'error') return { ok: false, errorCode: resumed.errorCode, error: resumed.errorMessage };
+        if (intent === 'resume') return { ok: true, status: 'opened', sessionId, serverId, address: { serverId, sessionId } };
       }
       if ((tabId || destination) && workspace) {
         const outcome = await workspace({ actionId: 'workspace.tabs.open',
@@ -1590,30 +1703,23 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
         const access = await machineAccessAction({ actionId: 'machines.access.grants.list',
           input: { serverId, machineId: input.executionTarget.machineId }, context, ...(signal ? { signal } : {}) });
         accountContext.assertCurrent();
-        let disposition = resolveRequesterSessionSpawnDisposition({ accountId: accountContext.accountId,
+        const disposition = resolveRequesterSessionSpawnDisposition({ accountId: accountContext.accountId,
           machineId: input.executionTarget.machineId, access });
         if (disposition.kind === 'refused') return disposition.result;
-        const freshHumanRequester = !opts?.admittedClientActionId
-          && ((context.surface === 'ui' && context.authority === 'present_user')
-            || (context.surface === 'voice' && accountContext.credentialAuthorityKind === 'account'));
-        if (disposition.kind === 'requester' && freshHumanRequester
-          && !context.rpcSessionAuthorization && !context.externalActionExecutionAuthorization && !context.externalActionCredential
-          && (!context.actionCaller || context.actionCaller.kind === 'host')) {
+        if (disposition.kind === 'requester') {
           const custodian = disposition.disclosure.custodian;
-          const accepted = await confirmRequesterAccountCredentialDisclosure({ accountContext,
-            machineId: input.executionTarget.machineId, custodian, ...(signal ? { signal } : {}) });
-          if (!accepted) return { type: 'error' as const, code: 'permission_denied' as const, retryable: false as const };
+          requesterBootstrap = await prepareRequesterSessionForSpawn({ accountContext });
+          signal?.throwIfAborted();
           const currentAccess = await machineAccessAction({ actionId: 'machines.access.grants.list',
             input: { serverId, machineId: input.executionTarget.machineId }, context, ...(signal ? { signal } : {}) });
           accountContext.assertCurrent();
-          disposition = resolveRequesterSessionSpawnDisposition({ accountId: accountContext.accountId,
+          const currentDisposition = resolveRequesterSessionSpawnDisposition({ accountId: accountContext.accountId,
             machineId: input.executionTarget.machineId, access: currentAccess });
-          if (disposition.kind === 'refused') return disposition.result;
-          if (disposition.kind === 'requester' && disposition.disclosure.custodian.accountId !== custodian.accountId) {
+          if (currentDisposition.kind === 'refused') return currentDisposition.result;
+          if (currentDisposition.kind !== 'requester' || currentDisposition.disclosure.custodian.accountId !== custodian.accountId) {
             return { type: 'error' as const, code: 'permission_denied' as const, retryable: false as const };
           }
         }
-        if (disposition.kind === 'requester') requesterBootstrap = await prepareRequesterSessionForSpawn({ accountContext });
       }
       accountContext?.assertCurrent();
       return await dispatchSessionSpawnNewWithReportsToPreparation({
@@ -1752,8 +1858,9 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
     updateAccountAcpCatalogSettings: async (input) => {
       if (!accountContext) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       try {
-        await updateAcpCatalogInContext(accountContext, input);
-        return { ok: true };
+        const receipt = await updateAcpCatalogInContext(accountContext, input);
+        if (!receipt) return { ok: false, errorCode: 'acp_catalog_unavailable', error: 'acp_catalog_unavailable' };
+        return { ok: true, ...receipt };
       } catch (error) {
         const code = error instanceof AcpCatalogOperationError ? error.code : 'acp_catalog_unavailable';
         return { ok: false, errorCode: code, error: code,
@@ -1981,11 +2088,30 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
     machineAgentInstallCancel: async ({ machineId, serverId, signal, ...request }) =>
       await cancelAgentInstallJobRpc({ machineId, serverId, signal }, request),
     agentsModelsList: async (args) => {
-      const { agentId, machineId, serverId, limit, backendTargetKey } = args as AgentsModelsListArgs;
+      if (args.probe) {
+        const target = await resolveNativeInventoryProbeTarget(args);
+        if (!target || !args.machineId) return { items: [], source: 'unavailable' };
+        const result = await probeAgentModelsForActions({ ...args, machineId: args.machineId, probe: args.probe }, target);
+        accountContext?.assertCurrent();
+        return result;
+      }
+      const { agentId, machineId, serverId, limit, backendTargetKey } = args;
       return await listAgentModelsForVoiceTool({ agentId, machineId, serverId, limit, backendTargetKey });
     },
-    agentsConfigOptionsList: async (args) => await listAgentConfigOptionsForActions(args),
-    agentsSessionModesList: async (args) => await listAgentSessionModesForActions(args),
+    agentsConfigOptionsList: async (args) => {
+      const target = args.probe ? await resolveNativeInventoryProbeTarget(args) : undefined;
+      if (args.probe && !target) return { items: [], source: 'unavailable' };
+      const result = await listAgentConfigOptionsForActions(args, target ?? undefined);
+      accountContext?.assertCurrent();
+      return result;
+    },
+    agentsSessionModesList: async (args) => {
+      const target = args.probe ? await resolveNativeInventoryProbeTarget(args) : undefined;
+      if (args.probe && !target) return { items: [], source: 'unavailable' };
+      const result = await listAgentSessionModesForActions(args, target ?? undefined);
+      accountContext?.assertCurrent();
+      return result;
+    },
     spawnConnectedServicesList: async (args) => await listSpawnConnectedServicesForActions(args),
 
     sessionSendMessage: opts?.sessionSendMessage ?? (async ({ sessionId, message, serverId, recipient, requestedAction }) => {
@@ -2147,6 +2273,7 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
     },
     sessionModelSet: async (args) => {
       const { sessionId, modelId, providerConnectionId, serverId } = args;
+      if (args.captureBefore || args.expected) accountContext?.assertCurrent();
       if (args.teamCredentialModel !== undefined && (args.captureBefore || args.expected)) {
         return { ok: false, errorCode: 'unsupported', error: 'unsupported' };
       }
@@ -2282,6 +2409,7 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
           const candidate = createModelIntentMetadataCasCandidate({
             selection: initialRequest.request.selection,
             captureBefore: args.captureBefore,
+            ...(accountContext ? { ownerScope: { serverId: accountContext.serverId, accountId: accountContext.accountId, sessionId: normalizedSessionId } } : {}),
             ...(args.expected ? { expected: args.expected } : {}),
           });
           await sync.patchSessionMetadataWithRetry(
@@ -2411,6 +2539,22 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
     },
     teleportVoiceAgentToSessionRoot: async ({ sessionId }) => await teleportVoiceAgentToSessionRoot({ sessionId }),
 
+    searchConversations: async ({ input, context }) => {
+      if (!accountContext) throw new Error('Exact Account context is unavailable');
+      accountContext.assertCurrent();
+      const snapshot = await getServerFeaturesSnapshot({ serverId: accountContext.serverId });
+      const settings = accountContext.readLiveSettings() ?? accountContext.settings;
+      const { resolveConversationSearchProviders } = await import('@/sync/domains/memory/useMemorySearchProvider');
+      const providers = resolveConversationSearchProviders({
+        homeSearchEnabled: resolveRuntimeFeatureDecisionFromSnapshot({ featureId: 'search', settings, snapshot })?.state === 'enabled',
+        homeCapability: snapshot.status === 'ready' ? snapshot.features.capabilities.homeSearch : undefined,
+        daemonEnabled: resolveRuntimeFeatureDecisionFromSnapshot({ featureId: 'memory.search', settings, snapshot })?.state === 'enabled',
+      });
+      const { searchConversationsForAccount } = await import('@/sync/ops/searchConversations');
+      return await searchConversationsForAccount({ ...input, providers,
+        accountLifetime: accountContext.accountLifetime, signal: context.signal });
+    },
+
     daemonMemorySearch: async ({ machineId, query, serverId, signal }) => {
       const accountLifetime = captureActiveServerAccountScopeLifetime();
       if (!accountLifetime) {
@@ -2448,8 +2592,8 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
       }
     },
 
-    daemonMemoryGetWindow: async ({ machineId, sessionId, seqFrom, seqTo, serverId, signal }) => {
-      const accountLifetime = captureActiveServerAccountScopeLifetime();
+    daemonMemoryGetWindow: async ({ machineId, serverId, signal, ...request }) => {
+      const accountLifetime = accountContext?.accountLifetime ?? captureActiveServerAccountScopeLifetime();
       const exactServerId = String(serverId ?? accountLifetime?.scope.serverId ?? '').trim();
       if (
         !accountLifetime
@@ -2458,6 +2602,16 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
       ) {
         throw Object.assign(new Error('Exact Account scope is unavailable.'), { code: 'not_authenticated' as const });
       }
+      if (request.source !== undefined) {
+        if (!accountLifetime.isCurrent()) throw Object.assign(new Error('Exact Account scope is unavailable.'), { code: 'not_authenticated' as const });
+        const result = await machineRpcWithServerScope({ machineId, serverId: exactServerId,
+          accountId: accountLifetime.scope.accountId, preferScoped: true,
+          method: RPC_METHODS.DAEMON_MEMORY_GET_WINDOW, payload: { ...request, v: 1 }, ...(signal ? { signal } : {}),
+        });
+        if (!accountLifetime.isCurrent()) throw Object.assign(new Error('Exact Account scope is unavailable.'), { code: 'not_authenticated' as const });
+        return result;
+      }
+      const { sessionId, seqFrom, seqTo } = request;
       const authority = await captureMemorySearchSessionReadAuthority({
         serverId: exactServerId,
         accountId: accountLifetime.scope.accountId,
@@ -2755,12 +2909,16 @@ async function settleAccountSecurityAction<T>(operation: () => Promise<T>) {
 
 type DefaultActionExecutorOptions = Parameters<typeof buildDefaultActionExecutor>[0];
 /** UI-only projection qualifier; the captured Account owner enforces it before admission. */
-export type UiActionExecutorContext = ActionExecutorContext & Readonly<{ expectedAccountId?: string }>;
+export type UiActionExecutorContext = ActionExecutorContext & Readonly<{
+  expectedAccountId?: string;
+  /** Destination-owner navigation leaf, consumed only in this invocation. */
+  openRoute?: (route: string) => void | Promise<void>;
+}>;
 type DefaultActionExecutor = Omit<ReturnType<typeof createActionExecutor>, 'execute' | 'prepare'> & Readonly<{
   execute: (actionId: ActionId, input: unknown, context?: UiActionExecutorContext) => ReturnType<ReturnType<typeof createActionExecutor>['execute']>;
   prepare: (actionId: ActionId, input: unknown, context?: UiActionExecutorContext) => ReturnType<ReturnType<typeof createActionExecutor>['prepare']>;
 }>;
-type DefaultActionExecuteContext = Pick<UiActionExecutorContext, 'expectedAccountId' | 'externalActionCredential'> & Readonly<{
+type DefaultActionExecuteContext = Pick<UiActionExecutorContext, 'expectedAccountId' | 'externalActionCredential' | 'openRoute'> & Readonly<{
   serverId: string;
   signal?: AbortSignal;
   /** Synchronously consumes a failure only while this captured Account is still current. */
@@ -2905,7 +3063,7 @@ export async function withDefaultActionExecuteContext<TResult>(
       const settings = await account.readSettings();
       account.assertCurrent();
       context.signal?.throwIfAborted();
-      const result = await work(buildDefaultActionExecutor(opts, { ...account, settings }), account);
+      const result = await work(buildDefaultActionExecutor({ ...opts, ...(context.openRoute ? { openRoute: context.openRoute } : {}) }, { ...account, settings }), account);
       const effectClass = executedActionId ? getActionSpec(executedActionId).sideEffectClass : undefined;
       // Return an effect's actual disposition to its captured invoker. Retirement
       // suppresses Account projection publication, but cannot rewrite an acknowledgement.
@@ -3019,16 +3177,17 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
   };
   return {
     execute: async (actionId, input, context) => {
+      const { openRoute, ...actionContext } = context ?? {};
       const custodyFailure = resolveUiFilesystemTransferCustodyFailure(actionId, input);
       if (custodyFailure) return custodyFailure;
       const api = await apiTokenTransport();
-      if (api) return await executeApiTokenAction(api, actionId, input, context);
+      if (api) return await executeApiTokenAction(api, actionId, input, actionContext);
       const serverId = resolveDefaultActionInvocationServerId(actionId, input, context);
-      if (!serverId) return await ordinary().execute(actionId, input, context);
+      if (!serverId) return await ordinary().execute(actionId, input, actionContext);
       try {
-        return await withDefaultActionExecuteContext(opts, { ...context, serverId }, async (executor, account) => {
+        return await withDefaultActionExecuteContext(opts, { ...actionContext, openRoute, serverId }, async (executor, account) => {
           const capturedContext = {
-            ...context,
+            ...actionContext,
             serverId,
             ...(account.serverIdentityId ? { serverIdentityId: account.serverIdentityId } : {}),
             runtimeAccountId: account.accountId,
@@ -3044,21 +3203,22 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
       }
     },
     prepare: async (actionId, input, context) => {
+      const { openRoute, ...actionContext } = context ?? {};
       const custodyFailure = resolveUiFilesystemTransferCustodyFailure(actionId, input);
       if (custodyFailure) return { kind: 'settled', result: custodyFailure };
       const api = await apiTokenTransport();
-      if (api) return { kind: 'ready', invocation: { run: async () => await executeApiTokenAction(api, actionId, input, context) } };
+      if (api) return { kind: 'ready', invocation: { run: async () => await executeApiTokenAction(api, actionId, input, actionContext) } };
       const serverId = resolveDefaultActionInvocationServerId(actionId, input, context);
-      if (!serverId) return await ordinary().prepare(actionId, input, context);
+      if (!serverId) return await ordinary().prepare(actionId, input, actionContext);
       const account = await captureLazyActionAccountContext(serverId, context?.signal);
       try {
         assertExpectedActionAccount(account, context);
         const settings = await account.readSettings();
         account.assertCurrent();
         context?.signal?.throwIfAborted();
-        const executor = buildDefaultActionExecutor(opts, { ...account, settings });
+        const executor = buildDefaultActionExecutor({ ...opts, ...(openRoute ? { openRoute } : {}) }, { ...account, settings });
         const capturedContext = {
-          ...context,
+          ...actionContext,
           serverId,
           ...(account.serverIdentityId ? { serverIdentityId: account.serverIdentityId } : {}),
           runtimeAccountId: account.accountId,

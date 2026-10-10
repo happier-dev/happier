@@ -63,6 +63,8 @@ export async function executeMachineAccessHttpAction(params: Readonly<{
                     if (failure !== 'not_dispatched') throw new MachineAccessApiError(failure);
                 }
                 if (signal.aborted) throw new MachineAccessApiError('cancelled');
+                if (error instanceof MachineAccessApiError) throw error;
+                if (actionId === 'machines.access.grants.list') throw new MachineAccessApiError('machine_access_request_failed');
                 throw error;
             }
             if (!response.ok) {

@@ -2,6 +2,8 @@ import * as React from 'react';
 
 import { getAgentCore, buildNewSessionOptionsFromUiState, type AgentId } from '@/agents/catalog/catalog';
 import type { ResolvedAgentCatalogEntry } from '@/agents/backendCatalog/agentCatalogProjection';
+import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import type { DaemonMergedProjectionInputsState } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import {
     useNewSessionConnectedServices,
     type NewSessionConnectedServicesResult,
@@ -10,6 +12,25 @@ import { resolveNewSessionBehaviorAgentId } from '@/components/sessions/new/modu
 
 type BackendNewSessionOptionStateByTargetKey = Record<string, Record<string, unknown>>;
 type ConnectedServicesParams = Parameters<typeof useNewSessionConnectedServices>[0];
+
+/** Account-choice metadata for the selected target; never execution admission. */
+export function resolveNewSessionConnectedServicesAgent(params: Readonly<{
+    projection: DaemonMergedProjectionInputsState;
+    selectedBackendTargetKey: string;
+    catalog: Omit<Parameters<typeof getResolvedBackendCatalogEntries>[0],
+        'mergedProviderProjectionById' | 'mergedBackendProjectionById' | 'discoveredBackendIds'>;
+}>): ResolvedAgentCatalogEntry | null {
+    // The projection hook fences Account/Machine scope and retains declarations
+    // during a refresh. Choosing an Account credential does not ask the daemon
+    // to execute anything and must stay available to resolve native sign-out.
+    const inputs = params.projection.inputs;
+    return getResolvedBackendCatalogEntries({
+        ...params.catalog,
+        mergedProviderProjectionById: inputs?.mergedProviderProjectionById,
+        mergedBackendProjectionById: inputs?.mergedBackendProjectionById,
+        discoveredBackendIds: inputs?.discoveredBackendIds,
+    }).find((entry) => entry.backendTargetKey === params.selectedBackendTargetKey)?.agentCatalogEntry ?? null;
+}
 
 export function useNewSessionConnectedServicesAgentOptions(params: Readonly<{
     /** Explicit bundled behavior backing for connected-services controls. */
@@ -38,6 +59,11 @@ export function useNewSessionConnectedServicesAgentOptions(params: Readonly<{
     /** The selected Agent's contribution identity; it keys the Agent's default authentication. */
     agentIdentity?: ResolvedAgentCatalogEntry['identity'];
     teamCredentialResources?: ConnectedServicesParams['teamCredentialResources'];
+    modelSelection?: ConnectedServicesParams['modelSelection'];
+    providerSources?: ConnectedServicesParams['providerSources'];
+    providerSettings?: ConnectedServicesParams['providerSettings'];
+    providerProjection?: ConnectedServicesParams['providerProjection'];
+    modelRouteTeamSources?: ConnectedServicesParams['modelRouteTeamSources'];
     teamCredentialResourceCurrentKeys?: ConnectedServicesParams['teamCredentialResourceCurrentKeys'];
     teamNameById?: ConnectedServicesParams['teamNameById'];
     applyTeamCredentialPolicy?: ConnectedServicesParams['applyTeamCredentialPolicy'];
@@ -49,6 +75,8 @@ export function useNewSessionConnectedServicesAgentOptions(params: Readonly<{
 }>): Readonly<{
     setAgentOptionStateForCurrentAgent: (key: string, value: unknown) => void;
     connectedServicesAuthChip: NewSessionConnectedServicesResult['connectedServicesAuthChip'];
+    routePresentation: NewSessionConnectedServicesResult['routePresentation'];
+    requesterSignInPurposes: NewSessionConnectedServicesResult['requesterSignInPurposes'];
     connectedServicesBindingsPayload: NewSessionConnectedServicesResult['connectedServicesBindingsPayload'];
     connectedServicesModelProbeCacheIdentity: NewSessionConnectedServicesResult['connectedServicesModelProbeCacheIdentity'];
     connectedAccountDefaultsStatus: NewSessionConnectedServicesResult['connectedAccountDefaultsStatus'];
@@ -78,7 +106,12 @@ export function useNewSessionConnectedServicesAgentOptions(params: Readonly<{
 
     const { connectedAccountDefaultsStatus, requireConnectedAccountDefaultsReady,
         connectedServicesBindingsPayload, connectedServicesModelProbeCacheIdentity, connectedServicesAuthChip,
-        selectedCredentialMachineAgent, connectedServicesRecoveryAction } = useNewSessionConnectedServices({
+        selectedCredentialMachineAgent, connectedServicesRecoveryAction, routePresentation, requesterSignInPurposes } = useNewSessionConnectedServices({
+        modelSelection: params.modelSelection,
+        providerSources: params.providerSources,
+        providerSettings: params.providerSettings,
+        providerProjection: params.providerProjection,
+        modelRouteTeamSources: params.modelRouteTeamSources,
         agentCore,
         defaultAuthAgentId: behaviorAgentId,
         defaultAuthConsumer: params.agentIdentity ?? null,
@@ -112,6 +145,8 @@ export function useNewSessionConnectedServicesAgentOptions(params: Readonly<{
     }, [params.agentOptionState, behaviorAgentId, selectedMachineId, connectedServicesBindingsPayload]);
 
     return {
+        routePresentation,
+        requesterSignInPurposes,
         setAgentOptionStateForCurrentAgent,
         connectedServicesAuthChip,
         connectedServicesBindingsPayload,

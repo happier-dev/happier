@@ -375,7 +375,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             setupHelp: "Uruchamia się raz, po narzędziach. sudo działa tylko tam, gdzie pozwala obraz.",
             setupLines: ({ count }: { count: number }) => (count === 1 ? `1 wiersz` : `Wiersze: ${count}`),
             secrets: "Sekrety do konfiguracji",
-            secretsHelp: "Zapisane sekrety, które skrypt może odczytać jako zmienne środowiskowe. Sesje nigdy ich nie widzą.",
+            secretsHelp: "Zapisane sekrety są przekazywane procesowi konfiguracji jako zmienne środowiskowe. Skrypt może je odczytać lub zapisać.",
             addSecret: "Dodaj sekret…",
             secretName: "Nazwa zmiennej",
             secretNameHelp: "Nazwa, pod którą skrypt go odczytuje.",
@@ -384,7 +384,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             removeSecret: ({ name }: { name: string }) => `Usuń ${name}`,
             apply: "Skonfiguruj z szablonu…",
             applyTitle: "Skonfiguruj z szablonu",
-            applyDescription: ({ machine }: { machine: string }) => `Uruchamia narzędzia i skrypt szablonu na ${machine} jako jej użytkownik Happier. Nic innego na ${machine} się nie zmienia.`,
+            applyDescription: ({ machine }: { machine: string }) => `Uruchamia narzędzia i skrypt szablonu w całym systemie ${machine} jako jej użytkownik Happier. Może zmienić narzędzia, pliki i usługi dostępne dla tego użytkownika.`,
             applyEmpty: "Żaden szablon jeszcze niczego nie przygotowuje. Dodaj Środowisko do szablonu w Maszynach.",
             applyFailed: ({ machine }: { machine: string }) => `Konfiguracja nie mogła się rozpocząć na ${machine}.`,
             toolchainPlaceholder: "[tools]\nnode = \"22\"",
@@ -397,6 +397,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         },
     },
     managedPower: {
+        asleep: "Uśpiona",
         unsupported: ({ provider, effect }: { provider: string; effect: string }) => `${provider} nie obsługuje ${effect} dla tego zasobu.`,
         stopPending: "Zażądano zatrzymania. Zatrzymanie nie zostało jeszcze potwierdzone.",
         stoppedStorage: "Zatrzymana · dane zachowane",
@@ -430,6 +431,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         pending: "Czynność u dostawcy może się jeszcze zakończyć po przeniesieniu zarządzania. Opłaty mogą być naliczane dalej.",
     },
     managedCleanup: {
+        archiveTitle: "Archiwum",
         consoleHelp: "Sprawdź ten zasób bezpośrednio w konsoli dostawcy.",
         reviewTitle: "Sprawdź zarządzane zasoby",
         removalReview: "Usunięcie tego połączenia lub danych nie usuwa tych zasobów. Dostawca może nadal naliczać opłaty.",
@@ -461,6 +463,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         terminalNotice: ({ owner, machine }: { owner: string; machine: string }) => `Polecenia są uruchamiane jako użytkownik maszyny ${owner} na ${machine}.`,
     },
     machineWork: {
+        counts: ({ active }: { active: number }) => `Używana przez innych · ${active} aktywnych`,
         title: "Używana przez innych",
         description: ({ machine }: { machine: string }) => `Kto teraz pracuje na ${machine}. Ich sesje pozostają ich; Happier pokazuje tylko kto i ile.`,
         empty: ({ machine }: { machine: string }) => `Nikt z zespołu nie pracuje teraz na ${machine}.`,
@@ -471,7 +474,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         refreshFailed: ({ machine }: { machine: string }) => `Nie udało się odświeżyć pracy na ${machine}.`,
         sessions: ({ count }: { count: number }) => (count === 1 ? `1 sesja` : `${count} sesji`),
         scripts: ({ count }: { count: number }) => (count === 1 ? `1 skrypt` : `${count} skryptów`),
-        tasks: ({ count }: { count: number }) => `${count} ${count === 1 ? 'zadanie' : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? 'zadania' : 'zadań'}`,
+        tasks: ({ count }: { count: number }) => `${count} ${count === 1 ? 'aktywna praca' : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? 'aktywne prace' : 'aktywnych prac'}`,
         terminals: ({ count }: { count: number }) => (count === 1 ? `1 terminal` : `${count} terminali`),
     },
 };

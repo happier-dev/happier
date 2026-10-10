@@ -248,6 +248,8 @@ export type RequesterDisclosureModel = Readonly<{
   machine: string;
   /** `scoped` only when the scoped sign-in route was proven; `full` is the documented fallback. */
   signIn: 'scoped' | 'full';
+  /** Safe names from the resolved launch purpose projection; never account ids or credential material. */
+  signInPurposes?: readonly string[];
   onLearnMore?: () => void;
 }>;
 
@@ -308,6 +310,9 @@ function RequesterDisclosureContent(
           owner: model.owner,
           machine: model.machine,
         })}
+        {model.signInPurposes?.length ? ` ${t('machineRequester.signInPurposes', {
+          purposes: model.signInPurposes.join(', '),
+        })}` : null}
       </Text>
       {model.onLearnMore ? (
         <Text

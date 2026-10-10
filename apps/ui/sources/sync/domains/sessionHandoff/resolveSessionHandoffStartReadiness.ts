@@ -7,6 +7,7 @@ import type { WorkspaceSyncEngineReadinessSnapshot } from './workspaceSyncEngine
 export type SessionHandoffStartBlockedReason =
     | 'target_machine_not_selected'
     | 'target_machine_unavailable'
+    | 'source_machine_unavailable'
     | 'relationship_unavailable'
     | 'workspace_engine_readiness_pending'
     | 'workspace_engine_unavailable'
@@ -25,6 +26,7 @@ export type SessionHandoffStartReadiness =
 export type SessionHandoffStartBlockedTranslationKey =
     | 'workspaceSync.start.blocked.targetMachine'
     | 'workspaceSync.start.blocked.targetMachineOffline'
+    | 'machineRequester.handoffUnavailable'
     | 'workspaceSync.start.blocked.relationshipUnavailable'
     | 'workspaceSync.start.blocked.sourceFolder'
     | 'workspaceSync.start.blocked.destinationFolder'
@@ -69,6 +71,7 @@ function engineBlock(
 export function resolveSessionHandoffStartReadiness(input: Readonly<{
     targetMachineSelected: boolean;
     targetMachineAttemptable: boolean;
+    sourceMachineAttemptable: boolean;
     relationshipRequested: boolean;
     relationshipResolved: boolean;
     workspaceActionResolved: boolean;
@@ -85,6 +88,9 @@ export function resolveSessionHandoffStartReadiness(input: Readonly<{
     if (!input.targetMachineAttemptable) {
         return { canStart: false, reason: 'target_machine_unavailable' };
     }
+    if (!input.sourceMachineAttemptable) {
+        return { canStart: false, reason: 'source_machine_unavailable' };
+    }
     if (input.relationshipRequested && !input.relationshipResolved) {
         return { canStart: false, reason: 'relationship_unavailable' };
     }
@@ -95,8 +101,8 @@ export function resolveSessionHandoffStartReadiness(input: Readonly<{
             ?? engineBlock(input.sourceEngineReadiness, input.machineCarrierRequired);
         if (blocked) return blocked;
         if (!input.sourcePathAllowed) return { canStart: false, reason: 'source_path_unsafe' };
-        if (!input.targetPathAllowed) return { canStart: false, reason: 'target_path_unsafe' };
     }
+    if (!input.targetPathAllowed) return { canStart: false, reason: 'target_path_unsafe' };
     if (!input.workspaceActionResolved) {
         return { canStart: false, reason: 'workspace_action_incomplete' };
     }
@@ -112,6 +118,8 @@ export function resolveSessionHandoffStartBlockedTranslationKey(
             return 'workspaceSync.start.blocked.targetMachine';
         case 'target_machine_unavailable':
             return 'workspaceSync.start.blocked.targetMachineOffline';
+        case 'source_machine_unavailable':
+            return 'machineRequester.handoffUnavailable';
         case 'relationship_unavailable':
             return 'workspaceSync.start.blocked.relationshipUnavailable';
         case 'source_path_unsafe':

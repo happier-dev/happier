@@ -4,6 +4,7 @@ import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.
 import { buildSessionAwarenessListResultV1 } from '../sessions/awareness/action.js';
 import { bindHomeDomainActionHttpRequestV1 } from './homeDomainActionFamily.js';
 import { ActionIdSchema } from './actionIds.js';
+import { getActionSpec } from './actionSpecs.js';
 import { AgentStartSessionCallerV1Schema, type AgentStartContextV1 } from '../account/settings/admitAgentStartV1.js';
 
 function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
@@ -56,6 +57,88 @@ const canonicalSessionSpawnInput = {
 } as const;
 
 describe('createActionExecutor (session control)', () => {
+  it('keeps resume intent distinct from ordinary Session navigation', async () => {
+    const effects: unknown[] = [];
+    // Session-open reaches the client/daemon boundary; parsing and admission remain real.
+    const executor = createExecutor({ sessionOpen: async input => { effects.push(input); return { ok: true, status: 'opened' }; } });
+    const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId: 'home', actionCaller: { kind: 'host' as const } };
+    expect(await executor.execute('session.open', { sessionId: 's1', serverId: 'home', intent: 'resume' }, context))
+      .toMatchObject({ ok: true });
+    expect(effects[0]).toMatchObject({ sessionId: 's1', serverId: 'home', intent: 'resume' });
+    expect(await executor.execute('session.open', { sessionId: 's1', serverId: 'home' }, context)).toMatchObject({ ok: true });
+    expect(effects[1]).not.toHaveProperty('intent');
+  });
+  it('sets reset-bound work through Pending custody and preserves uncertain cancellation', async () => {
+    const input = { sessionId: 'session', localId: 'pending', reset: {
+      source: { bindingKind: 'account', ref: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'default' } },
+      recordId: 'paug_v1_abcdefghijklmnop', meterId: 'session', witness: { id: 'accepted', observedAtMs: 10 },
+    } };
+    for (const id of ['session.pending.resetStart.set', 'session.pending.resetStart.cancel'] as const) {
+      expect(getActionSpec(id).safety).toBe('danger');
+      expect(getActionSpec(id).approval.result).toBe('required');
+    }
+    const executor = createExecutor({
+      sessionPendingResetStartSet: async () => ({ didUpdate: true, requestedAction: { v: 1, kind: 'reset_start', reset: input.reset } }),
+      sessionPendingResetStartCancel: async () => ({ outcome: 'delivery_unknown' }),
+    });
+    expect(await executor.execute('session.pending.resetStart.set', input, { surface: 'cli' }))
+      .toMatchObject({ ok: true, result: { didUpdate: true, requestedAction: { kind: 'reset_start' } } });
+    expect(await executor.execute('session.pending.resetStart.cancel', { sessionId: 'session', localId: 'pending' }, { surface: 'cli' }))
+      .toEqual({ ok: true, result: { outcome: 'delivery_unknown' } });
+    expect(await createExecutor().execute('session.pending.resetStart.set', input, { surface: 'cli' }))
+      .toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+  });
+  it('withdraws through the existing pending boundary without claiming delivered or unknown input was removed', async () => {
+    expect(getActionSpec('session.pending.withdraw').serverTransport).toEqual({
+      method: 'POST', path: '/v2/sessions/:sessionId/pending/:localId/withdraw',
+    });
+    let outcome = 'removed';
+    const executor = createExecutor({ sessionPendingWithdraw: async () => ({ outcome }) });
+    for (const next of ['removed', 'already_delivered', 'delivery_unknown']) {
+      outcome = next;
+      expect(await executor.execute('session.pending.withdraw', { sessionId: 'session', localId: 'pending', serverId: 'home' }, { surface: 'cli' }))
+        .toEqual({ ok: true, result: { outcome: next } });
+    }
+    outcome = 'deleted';
+    expect(await executor.execute('session.pending.withdraw', { sessionId: 'session', localId: 'pending' }, { surface: 'cli' })).toMatchObject({ ok: false, errorCode: 'invalid_action_output' });
+  });
+  it('refuses autonomous view writes and admits only the strict Bot input shape', async () => {
+    const executor = createExecutor();
+    expect(getActionSpec('session.view.toolCalls.set').surfaces).toMatchObject({
+      ui: true, voice: true, cli: true, agent: false, mcp: false,
+    });
+    for (const surface of ['agent', 'mcp'] as const) {
+      expect(await executor.execute('session.view.toolCalls.set', { sessionId: 's1', showToolCalls: true }, { surface }))
+        .toMatchObject({ ok: false, errorCode: 'action_disabled' });
+    }
+    const actionCaller = AgentStartSessionCallerV1Schema.parse({ kind: 'session', sessionId: 's1', starterDepth: 0, turnDepth: 0 });
+    for (const surface of ['ui', 'voice', 'cli'] as const) {
+      const context = { surface, authority: 'present_user' as const, actionCaller };
+      for (const showToolCalls of [false, null]) {
+        const input = { sessionId: 's1', showToolCalls };
+        expect(await executor.prepare('session.view.toolCalls.set', input, context))
+          .toMatchObject({ kind: 'settled', result: { ok: false, errorCode: 'action_disabled' } });
+        expect(await executor.execute('session.view.toolCalls.set', input, context))
+          .toMatchObject({ ok: false, errorCode: 'action_disabled' });
+      }
+    }
+    expect(await executor.execute('session.bot.set', { sessionId: 's1', bot: { kind: 'bot', role: 'admin' } }, { surface: 'cli' }))
+      .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+  });
+  it('applies human tool-call preferences and reset through the registered field writer', async () => {
+    const writes: Array<Readonly<{ fieldId: string; value: unknown; sessionId: string }>> = [];
+    const executor = createExecutor({ sessionStateFieldSet: async request => {
+      writes.push(request);
+      return { ok: true };
+    } });
+    for (const surface of ['ui', 'voice', 'cli'] as const) {
+      for (const showToolCalls of [false, true, null]) {
+        expect(await executor.execute('session.view.toolCalls.set', { sessionId: 's1', showToolCalls },
+          { surface, authority: 'present_user', actionCaller: { kind: 'host' } })).toEqual({ ok: true, result: { ok: true } });
+        expect(writes.at(-1)).toMatchObject({ sessionId: 's1', fieldId: 'view.transcriptToolCalls', value: showToolCalls });
+      }
+    }
+  });
   it('discovers detached prompt responses but refuses autonomous answers before transport', async () => {
     const responseAction = 'execution.run.permission.respond';
     for (const surface of ['agent', 'mcp'] as const) {
@@ -174,7 +257,7 @@ describe('createActionExecutor (session control)', () => {
   });
 
   it('fails discoverable workspace Actions with typed unsupported when this host has no mounted workspace', async () => {
-    for (const surface of ['agent', 'mcp', 'cli'] as const) {
+    for (const surface of ['agent', 'mcp'] as const) {
       await expect(createExecutor().execute('workspace.tabs.list', {}, { surface })).resolves.toMatchObject({
         ok: false, errorCode: 'unsupported_action',
       });
@@ -191,6 +274,8 @@ describe('createActionExecutor (session control)', () => {
         .resolves.toEqual({ ok: true, result: { ok: true } });
     }
     await expect(createExecutor().execute('workspace.tabs.reorder', { tabId: 'tab-1', index: 1 }, { surface: 'agent' }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+    await expect(createExecutor().execute('workspace.tabs.reorder', { tabId: 'tab-1', index: 1 }, { surface: 'cli' }))
       .resolves.toMatchObject({ ok: false, errorCode: 'unsupported_action' });
   });
   it('preserves the explicitly selected workspace tab when opening a qualified session', async () => {
@@ -232,7 +317,7 @@ describe('createActionExecutor (session control)', () => {
       .resolves.toEqual({ ok: true, result: { commands } });
     await expect(executor.execute('ui.command_palette.invoke', { commandId: 'account' }, { surface: 'mcp' }))
       .resolves.toEqual({ ok: true, result: { invoked: true } });
-    await expect(createExecutor().execute('ui.command_palette.invoke', { commandId: 'account' }, { surface: 'cli' }))
+    await expect(createExecutor().execute('ui.command_palette.invoke', { commandId: 'account' }, { surface: 'agent' }))
       .resolves.toMatchObject({ ok: false, errorCode: 'unsupported_action' });
   });
   it('controls Find through the mounted client adapter and distinguishes headless absence from zero results', async () => {
@@ -662,30 +747,26 @@ describe('createActionExecutor (session control)', () => {
     }));
   });
 
-  it('refuses the global Session permission policy Action on the plugin surface while present-user CLI mutation stays available', async () => {
+  it('routes the Session permission policy Action on the trusted plugin and present-user CLI surfaces', async () => {
     const sessionPermissionModeSet = vi.fn(async () => ({ ok: true }));
     const executor = createExecutor({ sessionPermissionModeSet });
 
     await expect(executor.execute(
-      'session.permission_mode.set' as any,
+      'session.permission_mode.set',
       { sessionId: 'target', permissionMode: 'read-only' },
       {
         surface: 'plugin',
         actionCaller: { kind: 'plugin', pluginId: 'acme.channels', contributionLocalId: 'inbound' },
       },
-    )).resolves.toMatchObject({
-      ok: false,
-      errorCode: 'action_disabled',
-      details: { reason: 'unsupported_surface', surface: 'plugin' },
-    });
-    expect(sessionPermissionModeSet).not.toHaveBeenCalled();
+    )).resolves.toEqual({ ok: true, result: { ok: true } });
+    expect(sessionPermissionModeSet).toHaveBeenCalledTimes(1);
 
     await expect(executor.execute(
-      'session.permission_mode.set' as any,
+      'session.permission_mode.set',
       { sessionId: 'target', permissionMode: 'read-only' },
       { surface: 'cli', authority: 'present_user' },
     )).resolves.toEqual({ ok: true, result: { ok: true } });
-    expect(sessionPermissionModeSet).toHaveBeenCalledTimes(1);
+    expect(sessionPermissionModeSet).toHaveBeenCalledTimes(2);
   });
 
   it('refuses mediated source authority from a non-plugin caller instead of dropping it', async () => {
@@ -1028,24 +1109,6 @@ describe('createActionExecutor (session control)', () => {
       ok: false,
       errorCode: 'session_inactive',
       error: 'Session is inactive. Resume it before sending a message.',
-    });
-  });
-
-  it('executes session.title.set via deps.sessionTitleSet', async () => {
-    const sessionTitleSet = vi.fn(async () => ({ ok: true }));
-    const executor = createExecutor({ sessionTitleSet });
-
-    const res = await executor.execute(
-      'session.title.set' as any,
-      { sessionId: 's1', title: 'New title' },
-      { surface: 'cli', defaultSessionId: null },
-    );
-
-    expect(res).toEqual({ ok: true, result: { ok: true } });
-    expect(sessionTitleSet).toHaveBeenCalledWith({
-      sessionId: 's1',
-      title: 'New title',
-      context: { surface: 'cli', defaultSessionId: null },
     });
   });
 
@@ -1480,7 +1543,7 @@ describe('createActionExecutor (session control)', () => {
     expect(sessionTranscriptGet).not.toHaveBeenCalled();
   });
 
-  it('routes public Session reads but denies permission-mode control for plugin callers', async () => {
+  it('routes public Session reads and permission-mode control for trusted plugin callers', async () => {
     const sessionTranscriptGet = vi.fn(async () => ({ ok: true }));
     const sessionEventsGet = vi.fn(async () => ({ ok: true }));
     const sessionPermissionModeSet = vi.fn(async () => ({ ok: true }));
@@ -1488,7 +1551,7 @@ describe('createActionExecutor (session control)', () => {
       sessionTranscriptGet,
       sessionEventsGet,
       sessionPermissionModeSet,
-    } as any);
+    });
     const pluginContext = {
       surface: 'plugin' as const,
       actionCaller: { kind: 'plugin' as const, pluginId: 'acme.channels', contributionLocalId: 'inbound' },
@@ -1511,8 +1574,8 @@ describe('createActionExecutor (session control)', () => {
       'session.permission_mode.set',
       { sessionId: 's1', permissionMode: 'yolo' },
       pluginContext,
-    )).resolves.toMatchObject({ ok: false, errorCode: 'action_disabled' });
-    expect(sessionPermissionModeSet).not.toHaveBeenCalled();
+    )).resolves.toEqual({ ok: true, result: { ok: true } });
+    expect(sessionPermissionModeSet).toHaveBeenCalledTimes(1);
   });
 
   it('executes session.events.get via deps.sessionEventsGet', async () => {
@@ -2391,7 +2454,7 @@ describe('createActionExecutor (session control)', () => {
   );
 
   it.each(['api', 'plugin'] as const)(
-    'rejects %s automation from answering a present-user action request',
+    'prevents %s automation from directly answering a present-user action request',
     async (surface) => {
       const sessionUserActionAnswer = vi.fn(async () => ({ ok: true }));
       const executor = createExecutor({ sessionUserActionAnswer });
@@ -2413,8 +2476,8 @@ describe('createActionExecutor (session control)', () => {
 
       expect(res).toEqual({
         ok: false,
-        errorCode: 'present_user_required',
-        error: 'present_user_required',
+        errorCode: surface === 'plugin' ? 'approvals_not_supported' : 'present_user_required',
+        error: surface === 'plugin' ? 'approvals_not_supported' : 'present_user_required',
       });
       expect(sessionUserActionAnswer).not.toHaveBeenCalled();
     },

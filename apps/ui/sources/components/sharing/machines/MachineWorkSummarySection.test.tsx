@@ -15,16 +15,18 @@ installSettingsViewCommonModuleMocks({
 afterEach(() => standardCleanup());
 
 describe('MachineWorkSummarySection', () => {
-  it('counts only what each person has, and never says zero for an unavailable summary', async () => {
-    const { MachineWorkSummarySection, describeMachineWorkCounts } =
-      await import('./MachineWorkSummarySection');
+  it('describes the mixed script and run count as neutral active work', async () => {
+    const { describeMachineWorkCounts } = await import('./MachineWorkSummarySection');
     expect(
       describeMachineWorkCounts({ sessions: 2, tasks: 1, terminals: 1 }),
-    ).toBe('2 sessions · 1 task · 1 terminal');
+    ).toBe('2 sessions · 1 active work item · 1 terminal');
     expect(
       describeMachineWorkCounts({ sessions: 1, tasks: 0, terminals: 0 }),
     ).toBe('1 session');
+  });
 
+  it('sums active work across people, without navigation or a zero for unavailable work', async () => {
+    const { MachineWorkSummarySection } = await import('./MachineWorkSummarySection');
     const unavailable = await renderScreen(
       <MachineWorkSummarySection
         testID="work"
@@ -48,6 +50,13 @@ describe('MachineWorkSummarySection', () => {
             kind: 'current',
             requesters: [
               {
+                accountId: 'bob',
+                displayName: 'Bob',
+                sessions: 0,
+                tasks: 2,
+                terminals: 0,
+              },
+              {
                 accountId: 'ana',
                 displayName: 'Ana Ruiz',
                 sessions: 2,
@@ -67,6 +76,13 @@ describe('MachineWorkSummarySection', () => {
       />,
     );
     expect(current.findByTestId('work.ana')).not.toBeNull();
+    expect(current.findByTestId('work.bob')).not.toBeNull();
+    expect(current.getTextContent()).toContain('6 active');
+    for (const accountId of ['ana', 'bob']) {
+      const row = current.findByTestId(`work.${accountId}`);
+      expect(row?.props.onPress).toBeUndefined();
+      expect(row?.props.onClick).toBeUndefined();
+    }
     expect(current.findByTestId('work.idle')).toBeNull();
   });
 

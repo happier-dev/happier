@@ -13,6 +13,7 @@ function input(overrides: Partial<Parameters<typeof resolveSessionHandoffStartRe
     return {
         targetMachineSelected: true,
         targetMachineAttemptable: true,
+        sourceMachineAttemptable: true,
         relationshipRequested: false,
         relationshipResolved: false,
         workspaceActionResolved: true,
@@ -99,10 +100,26 @@ describe('resolveSessionHandoffStartReadiness', () => {
         expect(resolveSessionHandoffStartReadiness(input({
             workspaceEngineRequired: false,
             sourcePathAllowed: false,
-            targetPathAllowed: false,
+            targetPathAllowed: true,
             sourceEngineReadiness: { ...READY, phase: 'unavailable', errorCode: 'engine_unavailable' },
             targetEngineReadiness: { ...READY, phase: 'unavailable', errorCode: 'engine_unavailable' },
         }))).toEqual({ canStart: true });
+    });
+
+    it('requires an admissible destination even when no workspace action needs the engine', () => {
+        expect(resolveSessionHandoffStartReadiness(input({
+            workspaceEngineRequired: false,
+            targetPathAllowed: false,
+        }))).toEqual({ canStart: false, reason: 'target_path_unsafe' });
+    });
+
+    it('requires the source even when no files are being copied', () => {
+        const readiness = resolveSessionHandoffStartReadiness(input({
+            workspaceEngineRequired: false,
+            sourceMachineAttemptable: false,
+        }));
+        expect(readiness).toEqual({ canStart: false, reason: 'source_machine_unavailable' });
+        expect(resolveSessionHandoffStartBlockedTranslationKey(readiness)).toBe('machineRequester.handoffUnavailable');
     });
 
     it('names the unsafe folder side instead of a generic failure', () => {

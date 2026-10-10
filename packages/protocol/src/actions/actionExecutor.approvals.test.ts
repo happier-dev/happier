@@ -158,6 +158,25 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
 }
 
 describe('createActionExecutor (approvals)', () => {
+  it('defaults reviewed managed rebuild to Ask first and invokes the managed owner only after explicit approval waiver', async () => {
+    const input = { homeId: 'home', managedMachineId: 'managed', kind: 'rebuild', expectedRevision: 4, reviewedEffectDigest: 'reviewed-effects' };
+    expect(getActionSpec('machines.managed.rebuild')).toMatchObject({ safety: 'danger', executionPlacement: 'machine' });
+    for (const surface of ['ui', 'cli', 'agent', 'mcp', 'voice'] as const) {
+      expect(isApprovalRequiredByActionsSettings('machines.managed.rebuild', defaultActionsSettings, { surface }, undefined, undefined, input)).toBe(true);
+    }
+    const received: unknown[] = [];
+    // The protocol executor's declared host transport is the external boundary;
+    // its catalog, strict input and approval resolution remain real.
+    const executor = createExecutor({ managedMachineAction: async request => {
+      received.push(request.input);
+      return { kind: 'accepted', managedId: 'managed', intentRevision: 5, operation: { operationId: 'rebuild' } };
+    } });
+    expect(await executor.execute('machines.managed.rebuild', input, {
+      surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'machines.managed.rebuild': ['ui'] } }),
+    })).toMatchObject({ ok: true, result: { managedId: 'managed', intentRevision: 5 } });
+    expect(received).toEqual([input]);
+  });
   it.each(['agent', 'mcp'] as const)('requests approval before a %s Session permission answer and executes with a user waiver', async (surface) => {
     let request: ApprovalRequest | null = null;
     const delivered: string[] = [];
@@ -187,6 +206,7 @@ describe('createActionExecutor (approvals)', () => {
         items: page.items.map(row => ({ ...row, ownerAccountId: 'account' })) }; },
     }, { accountId: 'account' });
     const definition = await definitions.create({ v: 1, id: 'private-definition', name: 'Checks',
+      sizeDeclaration: { sizes: ['medium'], defaultSize: 'medium' },
       inputs: { fields: [] }, inputSchema: { type: 'object', additionalProperties: false },
       body: { kind: 'declarative', document: { version: 1, root: { kind: 'metric', label: 'Checks',
         value: { path: ['count'], type: 'number' }, data: { kind: 'resource', resource: { pluginId: 'acme.metrics', localId: 'counts' },
@@ -203,7 +223,7 @@ describe('createActionExecutor (approvals)', () => {
       widgetAccountScope: () => ({ serverId: 'home', accountId: 'account' }),
       approvalsCreate: async ({ request: value }) => { request = value; return { artifactId: 'share-definition' }; },
     });
-    expect(await executor.execute('widgets.instance.add', {
+    expect(await executor.execute('widgets.item.add', {
       surface: { serverId: 'home', accountId: 'account', owner: { kind: 'sessionBoard', sessionId: 'shared' } },
       instance: { v: 1, id: 'copy', definition: { kind: 'artifact', artifactId: definition.id }, bindings: {} },
       placement: {},
@@ -222,7 +242,7 @@ describe('createActionExecutor (approvals)', () => {
     const executor = createExecutor({ widgetAccountScope: () => ({ serverId: 'home', accountId: 'account' }),
       approvalsCreate: async () => { persisted = true; return { artifactId: 'private-choice' }; },
     });
-    expect(await executor.execute('widgets.instance.add', {
+    expect(await executor.execute('widgets.item.add', {
       surface: { serverId: 'home', accountId: 'account', owner: { kind: 'sessionBoard', sessionId: 'shared' } },
       instance: { v: 1, id: 'copy', definition: { kind: 'builtin', id: 'example' }, bindings: {} },
       viewerValues: { connection: { service: { pluginId: 'acme.metrics', localId: 'cloud' }, accountId: 'private' } }, placement: {},
@@ -359,6 +379,24 @@ describe('createActionExecutor (approvals)', () => {
     expect(request.status).toBe('executed');
     expect(messages).toEqual(['hello']);
   });
+  it('retains resume intent through durable Ask-first approval instead of settling as navigation', async () => {
+    let request: ApprovalRequest | null = null;
+    const effects: unknown[] = [];
+    const executor = createExecutor({
+      sessionOpen: async input => { effects.push(input); return { ok: true, status: 'opened' }; },
+      isActionApprovalRequired: () => true,
+      approvalsCreate: async ({ request: value }) => { request = value; return { artifactId: 'resume-request' }; },
+      approvalsGet: async () => request,
+      approvalsUpdate: async ({ request: value }) => { request = value; return { ok: true }; },
+    });
+    expect(await executor.execute('session.open', { sessionId: 's1', intent: 'resume' }, { surface: 'ui', authority: 'present_user' }))
+      .toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'resume-request' } });
+    expect(request).toMatchObject({ status: 'open', actionArgs: { sessionId: 's1', intent: 'resume' } });
+    expect(effects).toEqual([]);
+    expect(await executor.execute('approval.request.decide', { artifactId: 'resume-request', decision: 'approve' }))
+      .toMatchObject({ ok: true, result: { status: 'executed' } });
+    expect(effects[0]).toMatchObject({ sessionId: 's1', intent: 'resume' });
+  });
   it('requires present-user approval for automated fresh-folder consent without changing ordinary open', async () => {
     let request: ApprovalRequest | null = null;
     const sessionOpen = vi.fn(async () => ({ ok: true, status: 'opened' }));
@@ -427,6 +465,54 @@ describe('createActionExecutor (approvals)', () => {
       .toMatchObject({ ok: true, result: { status: 'executed' } });
     expect(sessionOpen).toHaveBeenCalledOnce();
   });
+  it('cancels a pending owned terminal through the conditional Artifact owner without launching it', async () => {
+    expect(getActionSpec('approval.request.decide').inputSchema.safeParse({ artifactId: 'pending-terminal',
+      decision: 'cancel', requesterAccountId: 'forged' }).success).toBe(false);
+    let stored = createApprovalRequest('open', { actionId: 'machines.terminal.open',
+      actionArgs: { serverId: 'server-1', machineId: 'machine', terminalKey: 'member' } });
+    let effects = 0;
+    const executor = createExecutor({ approvalsGet: async () => stored,
+      approvalsUpdate: async ({ request }) => {
+        const transition = decideApprovalRequestTransition(stored, request);
+        if (!transition.ok) return transition;
+        stored = ApprovalRequestSchema.parse(request);
+        return { ok: true };
+      }, machineTerminalAction: async () => { effects++; return { ok: true, terminalId: 'pty', reused: false }; },
+    });
+    expect(await executor.execute('approval.request.decide', { artifactId: 'pending-terminal', decision: 'cancel' }))
+      .toMatchObject({ ok: true, result: { status: 'canceled' } });
+    expect(stored.status).toBe('canceled');
+    expect(stored.decision).toBeUndefined();
+    expect(await executor.execute('approval.request.decide', { artifactId: 'pending-terminal', decision: 'cancel' }))
+      .toMatchObject({ ok: true, result: { status: 'canceled' } });
+    expect(await executor.execute('approval.request.decide', { artifactId: 'pending-terminal', decision: 'approve' }))
+      .toMatchObject({ ok: false, errorCode: 'approval_not_open' });
+    expect(effects).toBe(0);
+  });
+
+  it('does not turn an already claimed or conflicting terminal cancellation into success', async () => {
+    const opened = createApprovalRequest('open', { actionId: 'machines.terminal.open',
+      actionArgs: { serverId: 'server-1', machineId: 'machine', terminalKey: 'member' } });
+    if (opened.v !== 2) throw new Error('Expected current approval fixture');
+    let stored: ApprovalRequest = opened;
+    let changed = false;
+    const executor = createExecutor({ approvalsGet: async () => stored,
+      approvalsUpdate: async ({ request }) => {
+        stored = { ...opened, status: 'executing', decision: { kind: 'approve', decidedAtMs: 2 } };
+        const transition = decideApprovalRequestTransition(stored, request);
+        if (!transition.ok) return { ok: false, errorCode: 'approval_conflict', error: 'approval_conflict' };
+        changed = true;
+        return { ok: true };
+      },
+    });
+    expect(await executor.execute('approval.request.decide', { artifactId: 'pending-terminal', decision: 'cancel' }))
+      .toMatchObject({ ok: false, errorCode: 'approval_conflict' });
+    expect(stored.status).toBe('executing');
+    expect(changed).toBe(false);
+    expect(await executor.execute('approval.request.decide', { artifactId: 'pending-terminal', decision: 'cancel' }))
+      .toMatchObject({ ok: false, errorCode: 'approval_not_open' });
+  });
+
   it.each([
     ['account.apiTokens.create', { tokenId: securityTokenSummary.tokenId, label: securityTokenSummary.label }],
     ['account.security.terminalPresentUser.set', { policy: 'allowed' }],
@@ -1337,10 +1423,10 @@ describe('createActionExecutor (approvals)', () => {
       approvalsUpdate,
       approvalsWaitForDecision,
       isActionApprovalRequired: (actionId, ctx) => actionId === 'action.spec.search' && ctx.surface === 'api',
-    } as any);
+    });
 
     await expect(executor.execute(
-      'action.spec.search' as any,
+      'action.spec.search',
       { query: 'approval', limit: 1 },
       {
         surface: 'api',
@@ -1358,6 +1444,8 @@ describe('createActionExecutor (approvals)', () => {
             credentialId: 'credential-1',
             grant: API_TOKEN_FULL_GRANT_V1,
             machineId: 'machine-1',
+            custodianAccountId: 'account-1',
+            installationId: 'installation-1',
             actionId: 'action.spec.search',
             requestId: 'test-request:action.spec.search',
             requestEnvelopeDigest: 'a'.repeat(43),
@@ -1754,11 +1842,11 @@ describe('createActionExecutor (approvals)', () => {
 
   it('routes session.title.set through approvals when required by the caller policy', async () => {
     const approvalsCreate = vi.fn(async () => ({ artifactId: 'a1' }));
-    const sessionTitleSet = vi.fn(async () => ({ ok: true }));
+    const sessionStateFieldSet = vi.fn(async () => ({ ok: true }));
 
     const executor = createExecutor({
       approvalsCreate,
-      sessionTitleSet,
+      sessionStateFieldSet,
       isActionApprovalRequired: (actionId) => actionId === 'session.title.set',
     } as any);
 
@@ -1771,7 +1859,7 @@ describe('createActionExecutor (approvals)', () => {
     expect(res.ok).toBe(true);
     expect((res as any).result?.kind).toBe('approval_request_created');
     expect((res as any).result?.artifactId).toBe('a1');
-    expect(sessionTitleSet).not.toHaveBeenCalled();
+    expect(sessionStateFieldSet).not.toHaveBeenCalled();
     expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({
       request: expect.objectContaining({
         actionId: 'session.title.set',
@@ -1796,7 +1884,7 @@ describe('createActionExecutor (approvals)', () => {
     expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({
       request: expect.objectContaining({
         actionId: 'agents.backends.list',
-        summary: 'List agent backends — s1',
+        summary: 'List agent backends',
       }),
     }));
   });
@@ -1920,7 +2008,7 @@ describe('createActionExecutor (approvals)', () => {
       request: expect.objectContaining({
         status: 'open',
         actionId: 'session.message.send',
-        summary: 'Send a message to a session — s1',
+        summary: 'Send a message to a session',
       }),
     }));
   });
@@ -2158,7 +2246,7 @@ describe('createActionExecutor (approvals)', () => {
     expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({
       request: expect.objectContaining({
         actionId: 'review.start',
-        summary: 'Start review — s1',
+        summary: 'Start review',
       }),
     }));
   });
@@ -2511,13 +2599,15 @@ describe('createActionExecutor (approvals)', () => {
     });
 
     expect(approvalsUpdate).toHaveBeenCalledTimes(1);
-    expect(approvalRequestApprovedReplay).toHaveBeenCalledExactlyOnceWith({
+    expect(approvalRequestApprovedReplay).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
       artifactId: 'a1',
       request: expect.objectContaining({
         status: 'approved',
         decision: expect.objectContaining({ kind: 'approve' }),
       }),
-    });
+      context: expect.objectContaining({ surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } }),
+      requestId: 'request-1',
+    }));
     expect(sessionSendMessage).not.toHaveBeenCalled();
   });
 

@@ -34,6 +34,31 @@ export type {
   ConnectedServicesProfileOptionsByServiceId,
 };
 
+/** Names only the Agent's admitted launch purposes; retained unrelated bindings carry no disclosure authority. */
+export function projectSessionCredentialSignInPurposes(params: Readonly<{
+  declarations: readonly Readonly<{ service: PluginContributionIdentityV1 }>[];
+  bindings: ConnectedServiceBindingsV2 | null | undefined;
+  resolveServiceTitle: (service: PluginContributionIdentityV1) => string;
+  formatNativeTitle: (title: string) => string;
+  suppressedServiceIds?: readonly string[];
+}>): readonly string[] {
+  const suppressed = new Set((params.suppressedServiceIds ?? [])
+    .map(resolveQualifiedConnectedAccountServiceKey).filter((key): key is string => key !== null));
+  const labels: string[] = [];
+  const seen = new Set<string>();
+  for (const declaration of params.declarations) {
+    const key = buildQualifiedPluginContributionKey(declaration.service);
+    if (seen.has(key) || suppressed.has(key)) continue;
+    seen.add(key);
+    const binding = params.bindings?.bindingsByServiceId[key];
+    // Brokered use does not deliver the upstream reusable sign-in to this Machine.
+    if (binding?.source === 'team_resource' && binding.deliveryMode === 'brokered') continue;
+    const title = params.resolveServiceTitle(declaration.service);
+    labels.push(!binding || binding.source === 'native' ? params.formatNativeTitle(title) : title);
+  }
+  return labels;
+}
+
 export function buildConnectedServicesBindingsPayload(params: Readonly<{
   /** Qualified keys on current callers; released bundled scalar ids are translated through the generated built-in mapping. */
   supportedConnectedServiceIds: ReadonlyArray<string>;
@@ -48,6 +73,7 @@ export function buildConnectedServicesBindingsPayload(params: Readonly<{
   const bindingsByServiceId: Record<string, ConnectedServiceBindingSelectionV2> = {};
   const handledServiceIds = new Set<string>();
   let connectedCount = 0;
+  let hasExplicitNativeBinding = false;
 
   for (const requestedServiceId of params.supportedConnectedServiceIds) {
     // The wire contract carries canonical qualified keys only. Resolve every
@@ -61,6 +87,7 @@ export function buildConnectedServicesBindingsPayload(params: Readonly<{
       ?? [];
     const binding = params.connectedServicesBindingsByServiceId[serviceId]
       ?? params.connectedServicesBindingsByServiceId[requestedServiceId];
+    if (binding?.source === 'native') hasExplicitNativeBinding = true;
     if (binding?.source === 'team_resource') {
       bindingsByServiceId[serviceId] = binding;
       connectedCount += 1;
@@ -103,9 +130,10 @@ export function buildConnectedServicesBindingsPayload(params: Readonly<{
     if (!parsedBinding.success) continue;
     bindingsByServiceId[serviceId] = parsedBinding.data;
     if (parsedBinding.data.source !== 'native') connectedCount += 1;
+    else hasExplicitNativeBinding = true;
   }
 
-  return connectedCount > 0 || params.emitWhenAllNative === true
+  return connectedCount > 0 || hasExplicitNativeBinding || params.emitWhenAllNative === true
     ? ConnectedServiceBindingsV2Schema.parse({ v: 2, bindingsByServiceId })
     : null;
 }

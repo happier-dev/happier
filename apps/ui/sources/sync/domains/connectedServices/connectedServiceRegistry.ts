@@ -214,6 +214,19 @@ export function installConnectedAccountDescriptorProjection(
   accountLifetime: ActiveServerAccountScopeLifetime | null = null,
 ): void {
   if (accountLifetime && !accountLifetime.isCurrent()) return;
+  connectedServiceRegistrySnapshot = {
+    scopeKey: projection.scopeKey,
+    status: projection.status,
+    entries: projectConnectedServiceRegistryEntries(projection),
+    errorReason: projection.errorReason,
+  };
+  connectedServiceRegistryAccountLifetime = accountLifetime;
+}
+
+/** The same descriptor projection for an explicitly captured target, without installing it as focused Account state. */
+export function projectConnectedServiceRegistryEntries(
+  projection: ConnectedAccountDescriptorProjectionState,
+): readonly ConnectedServiceRegistryEntry[] {
   const descriptorsByQualifiedService = new Map<string, ConnectedAccountUiProjectionEntryV1[]>();
   for (const descriptor of projection.descriptors) {
     const key = projectedEntryKey(descriptor);
@@ -295,13 +308,7 @@ export function installConnectedAccountDescriptorProjection(
       executable,
     });
   }));
-  connectedServiceRegistrySnapshot = {
-    scopeKey: projection.scopeKey,
-    status: projection.status,
-    entries: projected,
-    errorReason: projection.errorReason,
-  };
-  connectedServiceRegistryAccountLifetime = accountLifetime;
+  return projected;
 }
 
 /**

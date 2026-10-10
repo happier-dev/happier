@@ -6,27 +6,6 @@ import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 
 import type { LazyActionAccountContext } from './actionAccountContext';
-import { Modal } from '@/modal';
-import { t } from '@/text';
-
-/** Confidentiality consent is separate from effect admission and contains no credential material. */
-export async function confirmRequesterAccountCredentialDisclosure(params: Readonly<{
-    accountContext: LazyActionAccountContext;
-    machineId: string;
-    custodian: Readonly<{ accountId: string; displayName?: string | null }>;
-    signal?: AbortSignal;
-}>): Promise<boolean> {
-    params.accountContext.assertCurrent();
-    const accepted = await Modal.confirm(t('common.warning'), [
-        t('machineRequester.fullSignIn', { machine: params.machineId }),
-        t('machineRequester.osVisibility', { owner: params.custodian.displayName || params.custodian.accountId,
-            machine: params.machineId }),
-    ].join('\n\n'), { confirmText: t('common.continue'), cancelText: t('common.cancel') });
-    params.accountContext.assertCurrent();
-    params.signal?.throwIfAborted();
-    return accepted === true;
-}
-
 type RequesterSessionSpawnDisposition = Readonly<{ kind: 'own' }>
     | Readonly<{ kind: 'requester'; disclosure: ReturnType<typeof projectRequesterSessionCredentialDisclosure> & Readonly<{ custodian: Readonly<{ accountId: string; displayName?: string | null }> }> }>
     | Readonly<{ kind: 'refused'; result: Extract<SessionSpawnNewResultV1, { type: 'error' }> }>;

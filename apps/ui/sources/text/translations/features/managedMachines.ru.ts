@@ -375,7 +375,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             setupHelp: "Выполняется один раз, после инструментов. sudo работает, только если образ это позволяет.",
             setupLines: ({ count }: { count: number }) => (count === 1 ? `1 строка` : `Строк: ${count}`),
             secrets: "Секреты для настройки",
-            secretsHelp: "Сохранённые секреты, которые скрипт может читать как переменные окружения. Сессии их не видят.",
+            secretsHelp: "Сохранённые секреты передаются процессу настройки как переменные окружения. Скрипт может читать или сохранять их.",
             addSecret: "Добавить секрет…",
             secretName: "Имя переменной",
             secretNameHelp: "Имя, под которым скрипт его читает.",
@@ -384,7 +384,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             removeSecret: ({ name }: { name: string }) => `Убрать ${name}`,
             apply: "Настроить по пресету…",
             applyTitle: "Настроить по пресету",
-            applyDescription: ({ machine }: { machine: string }) => `Запускает инструменты и скрипт пресета на ${machine} от её пользователя Happier. Больше ничего на ${machine} не меняется.`,
+            applyDescription: ({ machine }: { machine: string }) => `Запускает инструменты и скрипт пресета на уровне всей системы ${machine} от её пользователя Happier. Они могут менять инструменты, файлы и службы, доступные этому пользователю.`,
             applyEmpty: "Пока ни один пресет ничего не настраивает. Добавьте Окружение в пресет в разделе «Машины».",
             applyFailed: ({ machine }: { machine: string }) => `Не удалось запустить настройку на ${machine}.`,
             toolchainPlaceholder: "[tools]\nnode = \"22\"",
@@ -397,6 +397,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         },
     },
     managedPower: {
+        asleep: "Спит",
         unsupported: ({ provider, effect }: { provider: string; effect: string }) => `${provider} не поддерживает ${effect} для этого ресурса.`,
         stopPending: "Запрошена остановка. Остановка ещё не подтверждена.",
         stoppedStorage: "Остановлена · хранилище сохранено",
@@ -430,6 +431,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         pending: "Действие у провайдера может завершиться уже после переноса управления. Расходы могут продолжаться.",
     },
     managedCleanup: {
+        archiveTitle: "Архив",
         consoleHelp: "Проверьте этот ресурс напрямую в консоли провайдера.",
         reviewTitle: "Проверить управляемые ресурсы",
         removalReview: "Удаление этого подключения или данных не удаляет эти ресурсы. Поставщик может продолжить взимать плату.",
@@ -461,6 +463,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         terminalNotice: ({ owner, machine }: { owner: string; machine: string }) => `Команды выполняются от имени пользователя машины ${owner} на ${machine}.`,
     },
     machineWork: {
+        counts: ({ active }: { active: number }) => `Используется другими · ${active} активных`,
         title: "Используется другими",
         description: ({ machine }: { machine: string }) => `Кто сейчас работает на ${machine}. Их сеансы остаются их; Happier показывает только кто и сколько.`,
         empty: ({ machine }: { machine: string }) => `Сейчас никто из команды не работает на ${machine}.`,
@@ -471,7 +474,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         refreshFailed: ({ machine }: { machine: string }) => `Не удалось обновить сведения о работе на ${machine}.`,
         sessions: ({ count }: { count: number }) => (count === 1 ? `1 сеанс` : `${count} сеансов`),
         scripts: ({ count }: { count: number }) => (count === 1 ? `1 скрипт` : `${count} скриптов`),
-        tasks: ({ count }: { count: number }) => `${count} ${count % 10 === 1 && count % 100 !== 11 ? 'задача' : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? 'задачи' : 'задач'}`,
+        tasks: ({ count }: { count: number }) => `${count} ${count % 10 === 1 && count % 100 !== 11 ? 'активная работа' : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? 'активные работы' : 'активных работ'}`,
         terminals: ({ count }: { count: number }) => (count === 1 ? `1 терминал` : `${count} терминалов`),
     },
 };

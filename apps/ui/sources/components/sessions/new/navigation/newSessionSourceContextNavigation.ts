@@ -3,6 +3,8 @@ import type { SessionForkPoint } from '@happier-dev/protocol';
 import { buildNewSessionTempDataFromSessionConfiguration, buildNewSessionConfigurationDraft } from '@/components/sessions/authoring/draft/sessionConfigurationSeed';
 import type { ExistingSessionAuthoringSnapshotSession } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { seedAndOpenNewSession } from '../newSessionSeedComposer';
 
 export type NewSessionSourceContextNavigation = Readonly<{
@@ -24,13 +26,19 @@ export function openNewSessionSourceContextNavigation(params: Readonly<{
     forkPoint: SessionForkPoint;
     serverId: string | null;
     machineId: string | null;
+    accountLifetime?: ServerAccountScopeLifetime | null;
     /** Restored user text when the fork point is an editable user message. */
     restoredDraftText?: string | null;
     createDraftId?: () => string;
     navigateToNewSession: (route: NewSessionSourceContextNavigation) => void;
 }>) {
-    const lifetime = captureActiveServerAccountScopeLifetime();
-    if (!lifetime) return { kind: 'stale', reason: 'host_retired' } as const;
+    const lifetime = params.accountLifetime === undefined
+        ? captureActiveServerAccountScopeLifetime()
+        : params.accountLifetime;
+    if (!lifetime || !lifetime.isCurrent()
+        || !params.serverId || !areServerProfileIdentifiersEquivalent(lifetime.scope.serverId, params.serverId)) {
+        return { kind: 'stale', reason: 'host_retired' } as const;
+    }
     const seed = buildNewSessionTempDataFromSessionConfiguration({
         session: params.session,
         machineId: params.machineId,
@@ -55,7 +63,10 @@ export function openNewSessionSourceContextNavigation(params: Readonly<{
         },
         scope: lifetime.scope, isCurrent: lifetime.isCurrent, createDraftId: params.createDraftId,
         navigateToNewSession: ({ draftId, dataId }) => params.navigateToNewSession({
-            pathname: '/new', params: { draftId, ...(dataId ? { dataId } : {}), ...(serverId ? { spawnServerId: serverId } : {}) },
+            pathname: '/new', params: {
+                draftId, draftServerId: lifetime.scope.serverId, draftAccountId: lifetime.scope.accountId,
+                ...(dataId ? { dataId } : {}), ...(serverId ? { spawnServerId: serverId } : {}),
+            },
         }),
     });
 }

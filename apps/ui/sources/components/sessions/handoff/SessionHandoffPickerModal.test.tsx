@@ -1,15 +1,17 @@
 import * as React from 'react';
 import { act, ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol';
+import { computeWorkspaceSyncPolicyDigest, encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
 import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
-import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createHomeGovernanceHarness, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { applyProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import type { FetchedMachineRow } from '@/sync/engine/machines/syncMachines';
 import { installSessionHandoffCommonModuleMocks } from './sessionHandoffTestHelpers';
 import type { CustomModalChromeConfig } from '@/modal';
 
@@ -62,7 +64,6 @@ installSessionHandoffCommonModuleMocks({
 vi.doUnmock('@/components/ui/text/Text');
 const modalMock = createModalModuleMock();
 const home = createHomeGovernanceHarness();
-installHomeGovernanceBoundaries(home);
 installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
 const { sync } = await import('@/sync/sync');
@@ -76,12 +77,32 @@ const { renderScreen: renderScreenBase, invokeTestInstanceHandler, standardClean
 const homeA = { id: await home.addHome({ name: 'Handoff A', serverUrl: 'https://handoff-a.example.test', accountId: 'account-a' }) };
 const homeB = { id: await home.addHome({ name: 'Handoff B', serverUrl: 'https://handoff-b.example.test', accountId: 'account-b' }) };
 home.answer(homeA.id, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
-home.answer(homeA.id, '/v1/machines', { body: { machines: [] } });
+answerHomeMachines(homeA.id);
 const refreshMachinesThrottledMock = vi.spyOn(sync, 'refreshMachinesThrottled');
 const workspaceOps = await import('@/sync/ops/workspaceSync');
 const listWorkspaceSyncStatusesMock = vi.spyOn(workspaceOps, 'listWorkspaceSyncStatuses');
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 const initialStorage = storage.getState();
+
+function answerHomeMachines(serverId: string) {
+    home.answer(serverId, '/v1/machines', { select: () => {
+        const inventory = serverId === activeServerIdState
+            ? allMachinesState
+            : machineListByServerIdState[serverId] ?? [];
+        return { body: inventory.map((machine: Partial<Machine>) => {
+            const fixture = createMachineFixture({
+                ...machine, metadata: { ...createMachineFixture().metadata!, ...machine.metadata },
+            });
+            return {
+                id: fixture.id, seq: fixture.seq, createdAt: fixture.createdAt, updatedAt: fixture.updatedAt,
+                active: fixture.active, activeAt: fixture.activeAt,
+                metadata: encodePlainMachineStoredContent(fixture.metadata), metadataVersion: fixture.metadataVersion,
+                daemonState: fixture.daemonState === null ? null : encodePlainMachineStoredContent(fixture.daemonState),
+                daemonStateVersion: fixture.daemonStateVersion, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+            } satisfies FetchedMachineRow;
+        }) };
+    } });
+}
 
 async function applyFixtureState() {
     if (getActiveServerSnapshot().serverId !== activeServerIdState) {
@@ -101,7 +122,10 @@ async function applyFixtureState() {
     storage.setState({ sessionListRowsByServerId: { [homeA.id]: Object.fromEntries(sessionsState.map(session => [session.id,
         createSessionListRenderableSessionFixture({ ...session, metadata: session.metadata }),
     ])) } });
-    storage.getState().applySettingsLocal(settingsState);
+    const { recentMachinePaths, workspaceRefsV1, workspaceSyncRelationshipsV1, ...settings } = settingsState;
+    storage.getState().applySettingsLocal(settings);
+    applyProjectAccountRowsFixture(storage, { workspaceRefs: workspaceRefsV1 ?? [], relationships: workspaceSyncRelationshipsV1 ?? [] });
+    if (recentMachinePaths !== undefined) storage.getState().applyAuthoringMemory({ recentMachinePaths });
 }
 
 async function renderScreen(element: React.ReactElement) {
@@ -126,18 +150,20 @@ afterAll(() => { refreshMachinesThrottledMock.mockRestore(); listWorkspaceSyncSt
 
 describe('SessionHandoffPickerModal', () => {
     beforeEach(async () => {
-        await home.addHome({ name: 'Handoff A', serverUrl: 'https://handoff-a.example.test', accountId: 'account-a' });
-        await home.addHome({ name: 'Handoff B', serverUrl: 'https://handoff-b.example.test', accountId: 'account-b' });
+        storage.setState(initialStorage, true);
+        activeServerIdState = '';
+        machineListByServerIdState = {};
+        allMachinesState = [];
+        // The package harness clears persisted profiles before every test.
+        homeA.id = await home.addHome({ name: 'Handoff A', serverUrl: 'https://handoff-a.example.test', accountId: 'account-a' });
+        homeB.id = await home.addHome({ name: 'Handoff B', serverUrl: 'https://handoff-b.example.test', accountId: 'account-b', active: false });
         home.answer(homeA.id, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
-        home.answer(homeA.id, '/v1/machines', { body: { machines: [] } });
-        connection = await restoreServerAccountForTest({ serverUrl: 'https://handoff-a.example.test', accountId: 'account-a', request: async (url, init) => {
-            const { serverFetch } = await import('@/sync/http/client');
-            const target = new URL(String(url));
-            return serverFetch(target.pathname + target.search, init);
-        } });
+        answerHomeMachines(homeA.id);
+        answerHomeMachines(homeB.id);
+        connection = await restoreServerAccountForTest({ serverUrl: 'https://handoff-a.example.test', accountId: 'account-a', request: home.request });
         // Finish the real Account's memory bootstrap before seeding its projection.
         await sync.applyAuthoringMemoryDelta({});
-        storage.setState(initialStorage, true);
+        await waitForHomeGovernance(() => expect(storage.getState().projectAccountRows?.status).toBe('ready'));
         ({ resetWorkspaceSyncStatusStoreForTests, setWorkspaceSyncStatus } = await import(
             '@/sync/domains/sessionHandoff/workspaceSyncStatusStore'
         ));
@@ -171,6 +197,11 @@ describe('SessionHandoffPickerModal', () => {
                 metadata: { displayName: 'Target machine', host: 'target.local' },
             },
         ];
+        const source = createMachineFixture({ id: 'machine_source', active: true, activeAt: Date.now(), metadata: {
+            ...createMachineFixture().metadata!, displayName: 'Source machine', host: 'source.local', homeDir: '/Users/tester',
+        } });
+        allMachinesState.push(source);
+        machineListByServerIdState[homeA.id].push(source);
         sessionsByIdState = {
             sess_1: {
                 id: 'sess_1',
@@ -222,6 +253,97 @@ describe('SessionHandoffPickerModal', () => {
             ignoredIncludeGlobs: ['dist/**'],
             directTargetMode: 'convert_to_persisted',
         };
+    });
+
+    it('retains the Account credential while its socket is offline and withdraws it when the runtime retires', async () => {
+        // This harness never connects the socket; offline transport must not retire the Account.
+        expect(sync.getCredentials()).toEqual(connection!.credentials);
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = connection!.credentials;
+        expect(await TokenStorage.setCredentialsForServerUrl(connection!.home.serverUrl,
+            { serverId: connection!.home.id }, credentials)).toBe(true);
+        await connection!.dispose();
+        connection = undefined;
+        expect(sync.getCredentials()).toBeNull();
+        expect(await TokenStorage.getCredentialsForServerUrl('https://handoff-a.example.test',
+            { serverId: homeA.id })).toEqual(credentials);
+        home.answer(homeB.id, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
+        connection = await restoreServerAccountForTest({ serverUrl: 'https://handoff-b.example.test',
+            accountId: 'account-b', request: home.request });
+        expect(sync.getCredentials()).toEqual(connection.credentials);
+        expect(storage.getState().profileScope).toMatchObject({ serverId: homeB.id, accountId: 'account-b' });
+    });
+
+    it.each([
+        { sourcePath: '~/projects/happier', homeDir: '/Users/tester', equivalentPath: '/Users/tester//projects/happier/', destinationPath: '/Users/tester/projects/happier/child' },
+        { sourcePath: '~\\projects/happier', homeDir: 'C:\\Users\\tester\\', equivalentPath: 'c:/users/TESTER/projects\\happier/', destinationPath: 'C:\\Users\\tester2\\projects\\happier' },
+    ])('requires a distinct explicit directory for same-machine handoff ($homeDir)', async ({ sourcePath, homeDir, equivalentPath, destinationPath }) => {
+        const sourceMachine = createMachineFixture({ id: 'machine_source', active: true, activeAt: Date.now(), metadata: { ...createMachineFixture().metadata!, displayName: 'Source machine', host: 'source.local', homeDir } });
+        machineListByServerIdState[homeA.id].push(sourceMachine);
+        allMachinesState.push(sourceMachine);
+        sessionsByIdState.sess_1.metadata.path = sourcePath;
+        sessionsByIdState.sess_1.metadata.homeDir = homeDir;
+        const { applyWorkspaceSyncEngineReadinessEvent } = await import('@/sync/domains/sessionHandoff/workspaceSyncEngineReadinessStore');
+        applyWorkspaceSyncEngineReadinessEvent({ serverId: homeA.id, machineId: 'machine_source' }, {
+            engine: { state: 'ready' }, carrier: { state: 'unavailable', errorCode: 'machine_carrier_unavailable' },
+        });
+        const onResolve = vi.fn();
+        let chrome: CustomModalChromeConfig | null = null;
+        const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
+        const screen = await renderScreen(<SessionHandoffPickerModal
+            onClose={vi.fn()}
+            setChrome={(next) => { chrome = next; }}
+            onResolve={onResolve}
+            sessionId="sess_1"
+            sourceMachineId="machine_target"
+            serverId={homeA.id}
+        />);
+        const selector = screen.tree.findByType(MachineSelector);
+        expect(selector.props.machines).toContainEqual(expect.objectContaining({ id: 'machine_source' }));
+        expect(selector.props.recentMachines).toContainEqual(expect.objectContaining({ id: 'machine_source' }));
+        await act(async () => { invokeTestInstanceHandler(selector, 'onSelect', sourceMachine); });
+        const start = () => findElementByTestId(requireCardChrome(chrome).footer, 'session-handoff-start') as React.ReactElement<{ disabled: boolean; onPress: () => void; accessibilityHint?: string }>;
+        expect(start().props.disabled).toBe(true);
+        expect(start().props.accessibilityHint).toBe('workspaceSync.start.blocked.destinationFolder');
+        await act(async () => { start().props.onPress(); });
+        expect(onResolve).not.toHaveBeenCalled();
+        await act(async () => { screen.changeTextByTestId('path-selection-list:header:input', equivalentPath); });
+        expect(start().props.disabled).toBe(true);
+        await act(async () => { start().props.onPress(); });
+        expect(onResolve).not.toHaveBeenCalled();
+        await act(async () => { screen.changeTextByTestId('path-selection-list:header:input', destinationPath); });
+        expect(start().props.disabled).toBe(false);
+        const modeMenu = () => screen.tree.findAllByType(DropdownMenu)
+            .find((node) => node.props?.itemTrigger?.title === 'settingsSession.handoff.workspaceMode.title')!;
+        expect(modeMenu().props.selectedId).toBe('none');
+        await act(async () => { start().props.onPress(); });
+        expect(onResolve).toHaveBeenCalledWith(expect.objectContaining({ targetMachineId: 'machine_source', targetPath: destinationPath, workspaceAction: { kind: 'none' } }));
+        onResolve.mockClear();
+        await act(async () => { invokeTestInstanceHandler(modeMenu(), 'onSelect', 'copy_once'); });
+        await act(async () => { screen.changeTextByTestId('path-selection-list:header:input', destinationPath + '/other'); });
+        expect(modeMenu().props.selectedId).toBe('copy_once');
+        expect(start().props.disabled).toBe(false);
+        await act(async () => { start().props.onPress(); });
+        expect(onResolve).toHaveBeenCalledWith(expect.objectContaining({ workspaceAction: expect.objectContaining({ kind: 'copy_once' }) }));
+    });
+
+    it('preserves daemon-owned private-directory allocation for a same-machine managed session', async () => {
+        const sourceMachine = createMachineFixture({ id: 'machine_source', active: true, activeAt: Date.now() });
+        machineListByServerIdState[homeA.id].push(sourceMachine);
+        allMachinesState.push(sourceMachine);
+        sessionsByIdState.sess_1.metadata.sessionDirectoryV1 = { v: 1, kind: 'managed' };
+        delete sessionsByIdState.sess_1.metadata.externalSessionV1;
+        const onResolve = vi.fn();
+        let chrome: CustomModalChromeConfig | null = null;
+        const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
+        const screen = await renderScreen(<SessionHandoffPickerModal onClose={vi.fn()} setChrome={(next) => { chrome = next; }} onResolve={onResolve} sessionId="sess_1" serverId={homeA.id} />);
+        await act(async () => { invokeTestInstanceHandler(screen.tree.findByType(MachineSelector), 'onSelect', sourceMachine); });
+        expect(screen.tree.findAll((node) => node.props.testID === 'path-selection-list:header:input')).toHaveLength(0);
+        const start = findElementByTestId(requireCardChrome(chrome).footer, 'session-handoff-start') as React.ReactElement<{ disabled: boolean; onPress: () => void }>;
+        expect(start.props.disabled).toBe(false);
+        await act(async () => { start.props.onPress(); });
+        expect(onResolve).toHaveBeenCalledWith(expect.objectContaining({ targetMachineId: 'machine_source', targetSessionStorageMode: 'persisted', workspaceAction: { kind: 'none' } }));
+        expect(onResolve.mock.calls[0]?.[0]).not.toHaveProperty('targetPath');
     });
 
     it('does not load the target path browser until the user asks to choose a directory', async () => {
@@ -319,12 +441,16 @@ describe('SessionHandoffPickerModal', () => {
         expect(onResolve).toHaveBeenCalledWith(expect.objectContaining({ targetMachineId: 'machine_target', targetPath: '/home/target/repo' }));
     });
 
-    it('uses one mounted authoritative refresh for an empty cached machine inventory', async () => {
+    it('does not hydrate machines after the Account runtime retires', async () => {
         machineListByServerIdState = { [homeA.id]: [] };
         allMachinesState = [];
         const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
+        await applyFixtureState();
+        await connection!.dispose();
+        connection = undefined;
+        expect(sync.getCredentials()).toBeNull();
 
-        const screen = await renderScreen(<SessionHandoffPickerModal
+        const screen = await renderScreenBase(<SessionHandoffPickerModal
             onClose={vi.fn()}
             setChrome={vi.fn()}
             onResolve={vi.fn()}
@@ -334,7 +460,32 @@ describe('SessionHandoffPickerModal', () => {
         />);
         await act(async () => {});
 
-        expect(refreshMachinesThrottledMock).toHaveBeenCalledTimes(1);
+        expect(refreshMachinesThrottledMock).not.toHaveBeenCalled();
+        expect(screen.tree.findByType(MachineSelector).props.machines).toEqual([]);
+        screen.unmount();
+    });
+
+    it('refreshes an empty cached machine inventory while mounted', async () => {
+        machineListByServerIdState = { [homeA.id]: [] };
+        allMachinesState = [];
+        const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
+        await applyFixtureState();
+        const requestStart = home.requests.length;
+
+        const screen = await renderScreenBase(<SessionHandoffPickerModal
+            onClose={vi.fn()}
+            setChrome={vi.fn()}
+            onResolve={vi.fn()}
+            sessionId="sess_1"
+            sourceMachineId="machine_source"
+            serverId={homeA.id}
+        />);
+        await act(async () => {
+            await vi.waitFor(() => expect(home.requests.slice(requestStart)).toEqual(expect.arrayContaining([
+                expect.objectContaining({ serverId: homeA.id, path: '/v1/machines' }),
+            ])));
+        });
+
         expect(screen.tree.findByType(MachineSelector).props.machines).toEqual([]);
         screen.unmount();
     });
@@ -1047,11 +1198,12 @@ describe('SessionHandoffPickerModal', () => {
 
         const machineSelector = tree.findByType(MachineSelector);
         expect(machineSelector.props.machines).toMatchObject([
+            { id: 'machine_source', metadata: { displayName: 'Source machine', host: 'source.local' } },
             { id: 'machine_target', metadata: { displayName: 'Target machine', host: 'target.local' } },
         ]);
     });
 
-    it('prefers the current session machineId over a divergent sourceMachineId prop when filtering picker targets', async () => {
+    it('keeps both machines selectable when the sourceMachineId prop differs from the current session', async () => {
         sessionsByIdState = {
             sess_1: {
                 id: 'sess_1',
@@ -1097,6 +1249,7 @@ describe('SessionHandoffPickerModal', () => {
 
         const machineSelector = tree.findByType(MachineSelector);
         expect(machineSelector.props.machines).toMatchObject([
+            { id: 'machine_source', metadata: { displayName: 'Source machine', host: 'source.local' } },
             { id: 'machine_target', metadata: { displayName: 'Target machine', host: 'target.local' } },
         ]);
     });
@@ -1125,6 +1278,7 @@ describe('SessionHandoffPickerModal', () => {
         />);
 
         expect(screen.tree.findByType(MachineSelector).props.machines).toMatchObject([
+            { id: 'machine_source', metadata: { displayName: 'A source' } },
             { id: 'machine_shared', metadata: { displayName: 'A target' } },
         ]);
     });
@@ -1205,6 +1359,7 @@ describe('SessionHandoffPickerModal', () => {
 
         const machineSelector = tree.findByType(MachineSelector);
         expect(machineSelector.props.machines).toMatchObject([
+            { id: 'machine_source', metadata: { displayName: 'Source machine', host: 'source.local' } },
             { id: 'machine_target', metadata: { displayName: 'Target machine', host: 'target.local' } },
         ]);
     });
@@ -1224,13 +1379,13 @@ describe('SessionHandoffPickerModal', () => {
 
         await act(async () => {});
         expect(refreshMachinesThrottledMock).toHaveBeenCalledTimes(1);
-        expect(screen.tree.findByType(MachineSelector).props.machines).toMatchObject([{ id: 'machine_target' }]);
+        expect(screen.tree.findByType(MachineSelector).props.machines).toMatchObject([{ id: 'machine_target' }, { id: 'machine_source' }]);
 
         await home.switchAccount(homeA.id, 'account-a');
         await act(async () => {});
 
         expect(refreshMachinesThrottledMock).toHaveBeenCalledTimes(1);
-        expect(screen.tree.findByType(MachineSelector).props.machines).toMatchObject([{ id: 'machine_target' }]);
+        expect(screen.tree.findByType(MachineSelector).props.machines).toMatchObject([{ id: 'machine_target' }, { id: 'machine_source' }]);
     });
 
     it('renders a second online machine from the authoritative machine storage update', async () => {
@@ -1277,7 +1432,7 @@ describe('SessionHandoffPickerModal', () => {
 
         expect(refreshMachinesThrottledMock).toHaveBeenCalledTimes(1);
         const machineSelector = tree.findByType(MachineSelector);
-        expect(machineSelector.props.machines.map((machine: any) => machine.id)).toEqual(['machine_target']);
+        expect(machineSelector.props.machines.map((machine: any) => machine.id)).toEqual(['machine_source', 'machine_target']);
     });
 
     it('explains the disabled start state with the exact next step instead of an inert button', async () => {
@@ -1353,6 +1508,26 @@ describe('SessionHandoffPickerModal', () => {
         expect((startButton!.props as { accessibilityHint?: string }).accessibilityHint)
             .toBe('workspaceSync.error.componentUnavailable');
         screen.unmount();
+    });
+
+    it('keeps an unavailable source from moving and explains retained-history continuation without copying files', async () => {
+        settingsState.sessionHandoffDefaultsV1 = { v: 1, workspaceSyncMode: 'none', includeIgnoredMode: 'exclude', ignoredIncludeGlobs: [], directTargetMode: 'keep_direct' };
+        allMachinesState = allMachinesState.filter(machine => machine.id !== 'machine_source');
+        machineListByServerIdState[homeA.id] = allMachinesState;
+        let chrome: CustomModalChromeConfig | null = null;
+        const onResolve = vi.fn();
+        const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
+        const screen = await renderScreen(<SessionHandoffPickerModal
+            onClose={vi.fn()} setChrome={next => { chrome = next; }} onResolve={onResolve}
+            sessionId="sess_1" sourceMachineId="machine_source" serverId={homeA.id}
+        />);
+        await act(async () => { invokeTestInstanceHandler(screen.tree.findByType(MachineSelector), 'onSelect', { id: 'machine_target' }); });
+        const start = findElementByTestId(requireCardChrome(chrome).footer, 'session-handoff-start') as React.ReactElement<{ disabled: boolean; onPress: () => void }>;
+        expect(start.props.disabled).toBe(true);
+        expect(screen.findByTestId('session-handoff-retained-history')).toBeTruthy();
+        await act(async () => { start.props.onPress(); });
+        expect(onResolve).not.toHaveBeenCalled();
+        await screen.unmount();
     });
 
     it('never probes the engine when the chosen workspace action does not need it', async () => {

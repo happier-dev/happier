@@ -1,6 +1,10 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { USAGE_ACTION_IDS, USAGE_COACH_ACTION_IDS } from '../usage/usageActionIdsV1.js';
 import { PromptDocRevisionV1Schema } from '../prompts/library/promptDocV2.js';
+import { PromptLibraryStackUpdateInputV1Schema, PromptLibraryStackUpdateResultV1Schema } from '../prompts/library/promptStacksV1.js';
+import { readRecord } from '../inputs/inputRecords.js';
 import { SessionPendingWithdrawInputV1Schema, SessionPendingWithdrawResultV1Schema } from '../sessions/control/pendingWithdrawV1.js';
+import { SessionModelMutationExpectedV1Schema } from '../sessions/control/modelTransitionV1.js';
 import { MEMORY_DOCUMENT_ACTION_SPECS_V1 } from './specs/memoryDocuments.js';
 import { MEMORY_DOCUMENT_ACTION_IDS_V1, MEMORY_WRITE_ACTION_IDS_V1 } from '../prompts/library/memoryActionsV1.js';
 import { PROFILE_ACTION_SPECS_V1 } from './specs/profiles.js';
@@ -369,7 +373,9 @@ import {
   MemorySearchQueryV1Schema,
   MemorySearchResultV1Schema,
 } from '../memory/memorySearch.js';
-import { MemoryWindowV1Schema } from '../memory/memoryWindow.js';
+import { MemoryWindowV1Schema, MemoryWindowRequestV1Schema } from '../memory/memoryWindow.js';
+import { MemorySettingsV1Schema } from '../memory/memorySettings.js';
+import { MemoryStatusV1Schema } from '../memory/memoryStatus.js';
 import {
   ApprovalRequestCreatedBySchema,
   ApprovalRequestOriginV1Schema,
@@ -393,6 +399,7 @@ import {
 import { BackendTargetKeySchema } from '../backends/targets/backendTargetRef.js';
 import { BackendTargetKeyV2Schema, BackendTargetRefV2Schema } from '../backends/targets/backendTargetRefV2.js';
 import { ConnectedServiceBindingsV2IngressSchema } from '../connect/connectedServiceBindings.js';
+import { AgentModelsProbeObservationSchema, AgentSessionModesProbeObservationSchema, AgentConfigOptionsProbeObservationSchema } from '../capabilities/agentProbeObservation.js';
 import { normalizeConnectedServiceSelectionInput } from '../connect/normalizeConnectedServiceSelectionInput.js';
 import { ExecutionRunListRequestSchema } from '../execution/runs/listRequest.js';
 import { ExecutionRunCancelTurnRequestSchema, ExecutionRunCancelTurnResponseSchema } from '../execution/runs/cancelTurn.js';
@@ -636,6 +643,7 @@ import { CONNECTED_SERVICE_CONFIGURATION_ACTION_SPECS } from './specs/connectedS
 import { USAGE_SOURCE_ACTION_SPECS } from './specs/usageSources.js';
 import { USAGE_SOURCE_ACTION_INPUT_SCHEMAS, USAGE_SOURCE_ACTION_OUTPUT_SCHEMAS, type UsageSourceActionId } from '../usage/usageSources.js';
 import { USAGE_ACTION_SPECS } from './specs/usage.js';
+import { USAGE_COACH_ACTION_SPECS } from './specs/usageCoach.js';
 import {
   TEAM_CREDENTIAL_ACTION_INPUT_SCHEMAS_V1,
   TEAM_CREDENTIAL_ACTION_OUTPUT_SCHEMAS_V1,
@@ -1315,6 +1323,8 @@ export const SessionModelSetInputSchema = lazyZodSchema(() => z.object({
   providerConnectionId: ProviderConnectionIdSchema.nullable().optional(),
   teamCredentialModel: TeamCredentialProviderModelSelectionV1Schema.optional(),
   teamVisibilityGrantConsent: z.object({ teamId: z.string().min(1) }).strict().optional(),
+  captureBefore: z.boolean().optional(),
+  expected: SessionModelMutationExpectedV1Schema.optional(),
 }).passthrough().superRefine((value, context) => {
   const hasTeamSelection = value.teamCredentialModel !== undefined;
   const hasLegacySelection = value.modelId !== undefined || value.providerConnectionId !== undefined;
@@ -1623,9 +1633,11 @@ const IntentStartCommonSchema = lazyZodSchema(() => z.object({
   notifyParentOnCompletion: z.boolean().optional(),
   /**
    * Optional model selection applied to EVERY started run, reusing the canonical session-spawn
-   * `modelId` vocabulary. Omitted ⇒ each backend's default model.
+   * `modelId` vocabulary. Attached omission inherits at host admission;
+   * independent starts use their default model.
    */
   modelId: z.string().min(1).optional(),
+  modelSelection: ExecutionRunStartRequestBaseSchema.shape.modelSelection,
   /** Exact recipient-safe Team resource/model selection for the one selected Agent target. */
   teamCredentialModel: TeamCredentialProviderModelSelectionV1Schema.optional(),
   teamCredentialSessionBindingConsent: ExecutionRunTeamCredentialSessionBindingConsentV1Schema.optional(),
@@ -1649,8 +1661,8 @@ const IntentStartCommonSchema = lazyZodSchema(() => z.object({
    * key strings passed in `backendTargetKeys`. Each value may be an agent-friendly simple string
    * (`"<service>:group:<id>"`, `"<service>:<profileId>"`, `"<service>:native"`), an array of those,
    * or the full current connected-service bindings object — normalized at the action boundary. Targets
-   * without an entry apply the session-spawn account-settings defaulting; connected selections fail
-   * closed at run start.
+   * without an entry use the blanket choice, attached host inheritance, or independent
+   * Account defaults; connected selections fail closed at run start.
    */
   connectedServicesByBackendTargetKey: z
     .record(z.string(), StrictJsonValueSchema)
@@ -1876,6 +1888,7 @@ const SessionOpenInputSchema = lazyZodSchema(() => z.object({
   sessionTitle: z.string().trim().min(1).optional(),
   serverId: z.string().trim().min(1).optional(),
   approvedNewDirectoryCreation: z.boolean().optional(),
+  intent: z.literal('resume').optional(),
   destination: z.object({
     kind: z.literal('scmReview'),
     comparison: ScmComparisonSourceSchema,
@@ -2147,13 +2160,36 @@ const AgentsBackendsListInputSchema = lazyZodSchema(() => z.object({
   machineId: z.string().min(1).optional(),
 }).passthrough());
 
+export const AgentInventoryProbeInputSchema = lazyZodSchema(() => z.object({
+  cwd: z.string().trim().min(1).optional(),
+  timeoutMs: z.number().finite().positive().optional(),
+  transportTimeoutMs: z.number().finite().positive().optional(),
+  bypassCache: z.boolean().optional(),
+  profileId: z.string().trim().min(1).optional(),
+  runtimeDescriptorV1: RuntimeDescriptorV1Schema.optional(),
+  connectedServices: ConnectedServiceBindingsV2IngressSchema.optional(),
+}).strict());
+export type AgentInventoryProbeInput = z.output<typeof AgentInventoryProbeInputSchema>;
+
+function inventoryOutputWithProbeObservation(observationSchema: z.ZodType) {
+  return StrictJsonValueSchema.superRefine((value, ctx) => {
+    if (value === null || typeof value !== 'object' || Array.isArray(value) || !Object.hasOwn(value, 'probeObservation')) return;
+    const rawObservation: unknown = Reflect.get(value, 'probeObservation');
+    const observation = observationSchema.safeParse(rawObservation);
+    if (!observation.success) for (const issue of observation.error.issues) {
+      ctx.addIssue({ ...issue, path: ['probeObservation', ...issue.path] });
+    }
+  });
+}
+
 const AgentsModelsListInputSchema = lazyZodSchema(() => z.object({
   agentId: z.string().min(1).optional(),
   backendTargetKey: z.union([BackendTargetKeySchema, BackendTargetKeyV2Schema]).optional(),
   machineId: z.string().min(1).optional(),
   serverId: z.string().min(1).optional(),
   limit: z.number().int().min(1).max(200).optional(),
-}).passthrough().superRefine((value, ctx) => {
+  probe: AgentInventoryProbeInputSchema.optional(),
+}).strict().superRefine((value, ctx) => {
   if (!value.agentId && !value.backendTargetKey) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -2173,7 +2209,8 @@ const AgentSpawnOptionsListInputBaseSchema = lazyZodSchema(() => z.object({
 
 const AgentSpawnOptionsListInputSchema = lazyZodSchema(() => AgentSpawnOptionsListInputBaseSchema.extend({
   serverId: z.string().min(1).optional(),
-}).passthrough().superRefine((value, ctx) => {
+  probe: AgentInventoryProbeInputSchema.optional(),
+}).strict().superRefine((value, ctx) => {
   if (!value.agentId && !value.backendTargetKey) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -2210,7 +2247,8 @@ const SpawnProfilesListInputSchema = lazyZodSchema(() => AgentSpawnOptionsListIn
 const AgentsConfigOptionsListInputSchema = lazyZodSchema(() => AgentSpawnOptionsListInputBaseSchema.extend({
   modelId: z.string().min(1).optional(),
   serverId: z.string().min(1).optional(),
-}).passthrough().superRefine((value, ctx) => {
+  probe: AgentInventoryProbeInputSchema.optional(),
+}).strict().superRefine((value, ctx) => {
   if (!value.agentId && !value.backendTargetKey) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -2781,16 +2819,25 @@ const MemorySearchInputSchema = lazyZodSchema(() => z.object({
   query: MemorySearchQueryV1Schema,
 }).passthrough());
 
-const MemoryGetWindowInputSchema = lazyZodSchema(() => z.object({
-  machineId: z.string().min(1),
-  sessionId: z.string().min(1),
-  seqFrom: z.number().int().min(0),
-  seqTo: z.number().int().min(0),
-}).passthrough().superRefine((value, ctx) => {
-  if (value.seqFrom > value.seqTo) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'seqFrom must be <= seqTo', path: ['seqFrom'] });
-  }
-}));
+const MemoryMachineInputSchema = lazyZodSchema(() => z.object({
+  machineId: z.string().trim().min(1),
+}).strict());
+const SearchSettingsSetInputSchema = lazyZodSchema(() => z.object({
+  machineId: z.string().trim().min(1),
+  settings: MemorySettingsV1Schema,
+}).strict());
+export const SearchConversationsInputV1Schema = lazyZodSchema(() => z.object({
+  query: MemorySearchQueryV1Schema,
+  machineIds: z.array(z.string().trim().min(1)).optional(),
+  mode: z.enum(['auto', 'indexed', 'standard']).default('auto'),
+}).strict());
+export type SearchConversationsInputV1 = z.infer<typeof SearchConversationsInputV1Schema>;
+const MemoryClearIndexOutputSchema = lazyZodSchema(() => z.object({ ok: z.literal(true) }).strict());
+
+const MemoryGetWindowInputSchema = lazyZodSchema(() => z.union([
+  MemoryWindowRequestV1Schema.options[0].safeExtend({ machineId: z.string().min(1) }),
+  MemoryWindowRequestV1Schema.options[1].safeExtend({ machineId: z.string().min(1) }),
+]));
 
 const MemoryEnsureUpToDateInputSchema = lazyZodSchema(() => z.object({
   machineId: z.string().min(1),
@@ -2983,6 +3030,8 @@ const RESULT_REQUIRED_DEFERRED_APPROVAL_ACTION_IDS = [
 
 const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   ...ACTION_ID_FAMILIES_V1.usage_sources,
+  // Apply/Undo return non-refreshable owner receipts, not fire-and-forget advice.
+  ...USAGE_COACH_ACTION_IDS,
   ...ACTION_ID_FAMILIES_V1.providers,
   ...MACHINE_TERMINAL_ACTION_IDS,
   // The caller retains its actual byte reader/destination while admission
@@ -3027,6 +3076,7 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   ...ARTIFACT_ACCESS_ACTION_IDS_V1,
   ...ARTIFACT_ACTION_IDS_V1,
   ...ACTION_ID_FAMILIES_V1.artifact_folders,
+  'prompts.stack.update',
   // Sharing's continuation needs the published Artifact id, including after approval replay.
   ...ACTION_ID_FAMILIES_V1.launch_profiles,
   ...ACTION_ID_FAMILIES_V1.mcp_servers,
@@ -3144,6 +3194,10 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   'session.activity.get',
   'session.messages.recent.get',
   'memory.search',
+  'search.settings.get',
+  'search.settings.set',
+  'search.conversations',
+  'memory.status',
   'memory.get_window',
   'memory.ensure_up_to_date',
   'daemon.promptAssets.discover',
@@ -3319,9 +3373,10 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
 ] as const satisfies readonly ActionId[];
 
 const RESULT_NONE_APPROVAL_ACTION_IDS = [
+  'memory.clear_index',
   'connectedServices.quota.get',
   'connectedServices.pools.selection.get',
-  ...ACTION_ID_FAMILIES_V1.usage,
+  ...USAGE_ACTION_IDS,
   'memory.read', 'memory.list',
   'wait',
   'machines.agents.signIn.start',
@@ -4648,6 +4703,7 @@ const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
     outputSchema: ExternalSessionMaterializeActionResultV1Schema,
     inputSchema: ExternalSessionMaterializeActionInputV1Schema,
     inputHints: {
+      description: 'Bring a session you started outside Happier into Happier so you can follow it here.',
       title: 'Materialize external session',
       fields: [{ path: 'request', title: 'Operation request', widget: 'textarea', required: true }],
     },
@@ -4679,6 +4735,7 @@ const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
     outputSchema: ExternalSessionOperationActionResponseV1Schema,
     inputSchema: ExternalSessionTakeoverStartInputV1Schema,
     inputHints: {
+      description: 'Start moving a session you began outside Happier into Happier, so you can steer it here.',
       title: 'Start external session takeover',
       fields: [{ path: 'request', title: 'Operation request', widget: 'textarea', required: true }],
     },
@@ -4714,6 +4771,7 @@ const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
     outputSchema: ExternalSessionOperationActionResultV1Schema,
     inputSchema: ExternalSessionOperationStatusInputV1Schema,
     inputHints: {
+      description: 'See how far an import or takeover of an outside session has got.',
       title: 'Get external session operation status',
       fields: EXTERNAL_SESSION_OPERATION_REFERENCE_INPUT_HINT_FIELDS,
     },
@@ -4749,6 +4807,7 @@ const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
     outputSchema: ExternalSessionOperationActionResultV1Schema,
     inputSchema: ExternalSessionOperationCancelInputV1Schema,
     inputHints: {
+      description: 'Stop an import or takeover of an outside session that is still in progress.',
       title: 'Cancel external session operation',
       fields: EXTERNAL_SESSION_OPERATION_REFERENCE_INPUT_HINT_FIELDS,
     },
@@ -4784,6 +4843,7 @@ const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
     outputSchema: ExternalSessionOperationActionResultV1Schema,
     inputSchema: ExternalSessionOperationResumeInputV1Schema,
     inputHints: {
+      description: 'Pick up an interrupted import or takeover of an outside session where it left off.',
       title: 'Resume external session operation',
       fields: EXTERNAL_SESSION_OPERATION_REFERENCE_INPUT_HINT_FIELDS,
     },
@@ -4819,6 +4879,7 @@ const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
     outputSchema: ExternalSessionOperationActionResultV1Schema,
     inputSchema: ExternalSessionOperationRetryInputV1Schema,
     inputHints: {
+      description: 'Try a failed import or takeover of an outside session again.',
       title: 'Retry external session operation',
       fields: EXTERNAL_SESSION_OPERATION_REFERENCE_INPUT_HINT_FIELDS,
     },
@@ -4854,6 +4915,7 @@ const EXTERNAL_SESSION_OPERATION_ACTION_SPECS_V1 = [
     outputSchema: ExternalSessionOperationActionResultV1Schema,
     inputSchema: ExternalSessionOperationDiscardInputV1Schema,
     inputHints: {
+      description: 'Throw away an unfinished import of an outside session and the partial copy it made.',
       title: 'Discard external session operation',
       fields: EXTERNAL_SESSION_OPERATION_REFERENCE_INPUT_HINT_FIELDS,
     },
@@ -5098,6 +5160,7 @@ const ARTIFACT_ACTION_SPECS: readonly (PreNormalizedActionSpec & Readonly<{
 // schemas without serializing every Zod schema into the inline tuple type.
 const ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES: readonly (
   | (typeof USAGE_ACTION_SPECS)[number]
+  | (typeof USAGE_COACH_ACTION_SPECS)[number]
   | (typeof HOME_GOVERNANCE_ACTION_SPECS)[number]
   | (typeof SESSION_ORGANIZATION_RESOURCE_ACTION_SPECS)[number]
   | (typeof MACHINE_CONNECTION_ACTION_SPECS)[number]
@@ -5119,6 +5182,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES: readonly (
   | (typeof WORKFLOW_ACTION_SPECS_V1)[number]
 )[] = Object.freeze([
   ...USAGE_ACTION_SPECS,
+  ...USAGE_COACH_ACTION_SPECS,
   ...HOME_GOVERNANCE_ACTION_SPECS,
   ...SESSION_ORGANIZATION_RESOURCE_ACTION_SPECS,
   ...MACHINE_CONNECTION_ACTION_SPECS,
@@ -5164,9 +5228,16 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD = Object.freeze(defineActionSpec
     safety: id === 'settings.set' ? 'danger' : 'safe',
     sideEffectClass: id === 'settings.set' || id === 'settings.invoke' ? 'write' : 'read',
     requiredAuthority: 'account_automation', executionPlacement: id === 'settings.invoke' ? 'client' : 'account', placements: [],
-    executionPlacementForInput: (input: unknown) => id === 'settings.list' ? 'client'
-      : id !== 'settings.invoke' && typeof input === 'object' && input !== null && 'anchor' in input
-        && readAccountSettingDeclarationV1(input.anchor) ? 'account' : 'client',
+    executionPlacementForInput: (input: unknown) => {
+      if (id === 'settings.list' || id === 'settings.invoke') return 'client';
+      if (typeof input !== 'object' || input === null || !('anchor' in input)) return 'client';
+      // Versioned reads and exact conditional effects use the existing answering
+      // client's atomic owner, not the headless Account retry writer.
+      if (('includeVersion' in input && input.includeVersion === true)
+        || ('expectedSettingsVersion' in input && input.expectedSettingsVersion !== undefined)
+        || ('reversal' in input && input.reversal !== undefined)) return 'client';
+      return readAccountSettingDeclarationV1(input.anchor) ? 'account' : 'client';
+    },
     bindings: { rpcMethod: id, mcpToolName: id.replaceAll('.', '_') },
     surfaces: { ui: true, cli: true, rpc: true, agent: true, mcp: true, voice: false },
     inputSchema: SettingsDeclarationActionInputSchemasV1[id], outputSchema: SettingsDeclarationActionOutputSchemasV1[id],
@@ -6076,7 +6147,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
         {
           path: 'modelId',
           title: 'Model id',
-          description: 'Optional model applied to every started run (same vocabulary as session spawn). Omit for the backend default.',
+          description: 'Optional explicit model applied to every started run. Omit to inherit the applied parent choice for an attached child; independent starts use defaults.',
           widget: 'text',
           optionsSourceId: 'agents.models.available',
         },
@@ -6103,14 +6174,14 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
         {
           path: 'connectedServices',
           title: 'Connected services (json)',
-          description: 'Optional blanket connected-services selection for every target. Omit to use Account defaults; use "native" to suppress them. An exact connectedServicesByBackendTargetKey entry overrides it.',
+          description: 'Optional blanket connected-services selection for every target. Attached omission inherits the parent choice; independent starts use Account defaults. Use "native" to suppress connected accounts. An exact connectedServicesByBackendTargetKey entry overrides it.',
           widget: 'json',
           optionsSourceId: 'sessions.spawn.connected_services.available',
         },
         {
           path: 'connectedServicesByBackendTargetKey',
           title: 'Connected services per target (json)',
-          description: 'Optional connected-services selection per backend target key. Accepts "native" (suppress Account defaults), a per-service string ("<service>:group:<id>", "<service>:<profileId>", "<service>:native"), an array, or the full object; omitted targets use the blanket selection or Account defaults. Enumerate valid selections via the shared session-spawn options source.',
+          description: 'Optional connected-services selection per backend target key. Accepts "native", a per-service string ("<service>:group:<id>", "<service>:<profileId>", "<service>:native"), an array, or the full object; omitted targets use the blanket selection, attached inheritance, or independent Account defaults. Enumerate valid selections via the shared session-spawn options source.',
           widget: 'textarea',
           optionsSourceId: 'sessions.spawn.connected_services.available',
         },
@@ -6170,7 +6241,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
         {
           path: 'modelId',
           title: 'Model id',
-          description: 'Optional model applied to every started run (same vocabulary as session spawn). Omit for the backend default.',
+          description: 'Optional explicit model applied to every started run. Omit to inherit the applied parent choice for an attached child; independent starts use defaults.',
           widget: 'text',
           optionsSourceId: 'agents.models.available',
         },
@@ -6197,14 +6268,14 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
         {
           path: 'connectedServices',
           title: 'Connected services (json)',
-          description: 'Optional blanket connected-services selection for every target. Omit to use Account defaults; use "native" to suppress them. An exact connectedServicesByBackendTargetKey entry overrides it.',
+          description: 'Optional blanket connected-services selection for every target. Attached omission inherits the parent choice; independent starts use Account defaults. Use "native" to suppress connected accounts. An exact connectedServicesByBackendTargetKey entry overrides it.',
           widget: 'json',
           optionsSourceId: 'sessions.spawn.connected_services.available',
         },
         {
           path: 'connectedServicesByBackendTargetKey',
           title: 'Connected services per target (json)',
-          description: 'Optional connected-services selection per backend target key. Accepts "native" (suppress Account defaults), a per-service string ("<service>:group:<id>", "<service>:<profileId>", "<service>:native"), an array, or the full object; omitted targets use the blanket selection or Account defaults. Enumerate valid selections via the shared session-spawn options source.',
+          description: 'Optional connected-services selection per backend target key. Accepts "native", a per-service string ("<service>:group:<id>", "<service>:<profileId>", "<service>:native"), an array, or the full object; omitted targets use the blanket selection, attached inheritance, or independent Account defaults. Enumerate valid selections via the shared session-spawn options source.',
           widget: 'textarea',
           optionsSourceId: 'sessions.spawn.connected_services.available',
         },
@@ -6516,7 +6587,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
         {
           path: 'modelId',
           title: 'Model id',
-          description: 'Optional model for the run backend (same vocabulary as session spawn). Omit for the backend default.',
+          description: 'Optional explicit model for the run backend. Attached omission inherits the applied parent choice; independent starts use defaults.',
           widget: 'text',
           optionsSourceId: 'agents.models.available',
         },
@@ -6530,7 +6601,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
         {
           path: 'connectedServices',
           title: 'Connected services (json)',
-          description: 'Optional connected-services selection for the run backend. Accepts "native" (suppress Account defaults), a per-service string ("<service>:group:<id>", "<service>:<profileId>", "<service>:native"), an array, or the full object; omit to use Account defaults. Enumerate valid selections via the shared session-spawn options source.',
+          description: 'Optional connected-services selection for the run backend. Accepts "native", a per-service string ("<service>:group:<id>", "<service>:<profileId>", "<service>:native"), an array, or the full object. Attached omission inherits the parent choice; independent starts use Account defaults. Enumerate valid selections via the shared session-spawn options source.',
           widget: 'textarea',
           optionsSourceId: 'sessions.spawn.connected_services.available',
         },
@@ -6959,6 +7030,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
       rpc: false,
       },
     inputHints: {
+      description: 'Open a session, or resume it if it has stopped.',
       title: 'Open a session',
       fields: [
         { path: 'tabId', title: 'Workspace tab id (optional)', widget: 'text' },
@@ -7025,6 +7097,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
       rpc: true,
       },
     inputHints: {
+      description: 'Start a new session that picks up where an earlier one left off.',
       title: 'Continue with replay',
       fields: [
         { path: 'directory', title: 'Directory', widget: 'text', required: true },
@@ -7201,6 +7274,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
       rpc: true,
       },
     inputHints: {
+      description: 'Get another machine ready to take over a running session.',
       title: 'Prepare handoff target',
       fields: [
         { path: 'handoffId', title: 'Handoff id', widget: 'text', required: true },
@@ -7230,6 +7304,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
       rpc: true,
       },
     inputHints: {
+      description: 'See whether the machine taking over a session is ready.',
       title: 'Get handoff prepare-target result',
       fields: [{ path: 'handoffId', title: 'Handoff id', widget: 'text', required: true }],
     },
@@ -7252,6 +7327,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
       rpc: true,
     },
     inputHints: {
+      description: 'Continue getting a machine ready to take over a session after an interruption.',
       title: 'Resume interrupted handoff preparation',
       fields: [
         { path: 'handoffId', title: 'Handoff id', widget: 'text', required: true },
@@ -7282,6 +7358,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
       rpc: true,
       },
     inputHints: {
+      description: 'Finish moving a session to the machine that is ready for it.',
       title: 'Commit handoff',
       fields: [{ path: 'handoffId', title: 'Handoff id', widget: 'text', required: true }],
     },
@@ -7307,6 +7384,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
       rpc: true,
       },
     inputHints: {
+      description: 'Cancel moving a session to another machine; it stays where it is.',
       title: 'Abort handoff',
       fields: [
         { path: 'handoffId', title: 'Handoff id', widget: 'text', required: true },
@@ -7335,6 +7413,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
       rpc: true,
       },
     inputHints: {
+      description: 'See how a session\'s move to another machine is going.',
       title: 'Get handoff status',
       fields: [{ path: 'handoffId', title: 'Handoff id', widget: 'text', required: true }],
     },
@@ -7364,6 +7443,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
       rpc: false,
     },
     inputHints: {
+      description: 'Settle a conflict between linked folders by keeping the version you reviewed.',
       title: 'Resolve workspace conflict',
       fields: [
         { path: 'controllerMachineId', title: 'Controller machine id', widget: 'text', required: true },
@@ -7440,6 +7520,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
       rpc: false,
     },
     inputHints: {
+      description: 'See which folders are linked across your machines and whether they are in sync.',
       title: 'List linked workspace relationships',
       fields: [
         { path: 'controllerMachineId', title: 'Controller machine id', widget: 'text' },
@@ -7468,6 +7549,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
       rpc: false,
     },
     inputHints: {
+      description: 'See the files that changed in more than one linked folder.',
       title: 'List workspace sync conflicts',
       fields: [
         { path: 'controllerMachineId', title: 'Controller machine id', widget: 'text', required: true },
@@ -7497,6 +7579,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
       rpc: false,
     },
     inputHints: {
+      description: 'Compare the versions of a file that changed in more than one linked folder.',
       title: 'Inspect workspace sync conflict',
       fields: [
         { path: 'controllerMachineId', title: 'Controller machine id', widget: 'text' },
@@ -8074,8 +8157,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
         { path: 'limit', title: 'Max results', widget: 'text' },
       ],
     },
-    outputSchema: StrictJsonValueSchema,
     inputSchema: AgentsModelsListInputSchema,
+    outputSchema: lazyZodSchema(() => inventoryOutputWithProbeObservation(AgentModelsProbeObservationSchema)),
   },
   {
     id: 'agents.config_options.list',
@@ -8108,8 +8191,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
         { path: 'limit', title: 'Max results', widget: 'text' },
       ],
     },
-    outputSchema: StrictJsonValueSchema,
     inputSchema: AgentsConfigOptionsListInputSchema,
+    outputSchema: lazyZodSchema(() => inventoryOutputWithProbeObservation(AgentConfigOptionsProbeObservationSchema)),
   },
   {
     id: 'agents.session_modes.list',
@@ -8141,8 +8224,8 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
         { path: 'limit', title: 'Max results', widget: 'text' },
       ],
     },
-    outputSchema: StrictJsonValueSchema,
     inputSchema: AgentSpawnOptionsListInputSchema,
+    outputSchema: lazyZodSchema(() => inventoryOutputWithProbeObservation(AgentSessionModesProbeObservationSchema)),
   },
   {
     id: 'sessions.spawn.profiles.list',
@@ -8264,6 +8347,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
       rpc: false,
       },
     inputHints: {
+      description: 'Send a message to the agent in a session.',
       title: 'Send a message',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text' },
@@ -8309,6 +8393,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
       rpc: true,
       },
     inputHints: {
+      description: 'Stop a running session.',
       title: 'Stop a session',
       fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true }],
     },
@@ -8339,6 +8424,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
       rpc: true,
     },
     inputHints: {
+      description: 'Clear the text waiting in a session\'s terminal composer.',
       title: 'Clear terminal composer',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
@@ -8367,6 +8453,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
       rpc: true,
     },
     inputHints: {
+      description: 'Interrupt what the agent is doing so your queued message runs now.',
       title: 'Interrupt and run now',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
@@ -8386,7 +8473,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
     bindings: { mcpToolName: 'session_pending_withdraw', rpcMethod: 'session.pending.withdraw' },
     serverTransport: { method: 'POST', path: '/v2/sessions/:sessionId/pending/:localId/withdraw' },
     cli: { acceptsServerId: true, commands: [{ path: ['session', 'pending', 'withdraw'], visibility: 'canonical' }] },
-    inputHints: { fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+    inputHints: { description: 'Take back a queued message before the agent receives it.', fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true },
       { path: 'localId', title: 'Pending message id', widget: 'text', required: true }] },
     inputSchema: SessionPendingWithdrawInputV1Schema, outputSchema: SessionPendingWithdrawResultV1Schema,
   },
@@ -8398,7 +8485,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
     bindings: { mcpToolName: 'session_pending_reset_start_set' },
     cli: { acceptsServerId: true, commands: [] },
-    inputHints: { fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+    inputHints: { description: 'Hold a queued message until your usage limit resets, then send it.', fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true },
       { path: 'localId', title: 'Pending message id', widget: 'text', required: true },
       { path: 'reset', title: 'Qualified accepted reset witness', widget: 'json', required: true }] },
     inputSchema: PendingResetStartSetInputV1Schema, outputSchema: PendingResetStartSetResultV1Schema,
@@ -8411,7 +8498,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
     bindings: { mcpToolName: 'session_pending_reset_start_cancel' },
     cli: { acceptsServerId: true, commands: [] },
-    inputHints: { fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true },
+    inputHints: { description: 'Stop holding a queued message for a usage-limit reset.', fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true },
       { path: 'localId', title: 'Pending message id', widget: 'text', required: true }] },
     inputSchema: PendingResetStartCancelInputV1Schema, outputSchema: PendingResetStartCancelResultV1Schema,
   },
@@ -8423,7 +8510,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     safety: 'safe', sideEffectClass: 'write', requiredAuthority: 'account_automation', executionPlacement: 'session',
     placements: [], bindings: { mcpToolName: 'session_worker_publish' },
     surfaces: { ui: false, voice: false, agent: true, mcp: true, cli: false, rpc: false },
-    inputHints: { fields: [{ path: 'summary', title: 'Report', widget: 'text', required: true }] },
+    inputHints: { description: 'Let a worker session report what it did to the session that leads it.', fields: [{ path: 'summary', title: 'Report', widget: 'text', required: true }] },
     inputSchema: SessionWorkerPublishInputV1Schema, outputSchema: SessionWorkerPublishOutputV1Schema,
   },
   // The four shared human/Agent Board intents. People reach them through the UI
@@ -8829,6 +8916,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       rpc: false,
       },
     inputHints: {
+      description: 'Rename a session.',
       title: 'Set title',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text' },
@@ -8846,7 +8934,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     safety: 'safe', sideEffectClass: 'write', executionPlacement: 'account', placements: [],
     bindings: { mcpToolName: 'session_bot_set', voiceClientToolName: 'setSessionBot' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
-    inputHints: { title: 'Set Bot marker', fields: [
+    inputHints: { description: 'Turn a session into a bot, or back into a regular session.', title: 'Set Bot marker', fields: [
       { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
       { path: 'bot', title: 'Bot marker, or null for a regular session', widget: 'json', required: true },
     ] },
@@ -8859,7 +8947,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     safety: 'safe', sideEffectClass: 'write', executionPlacement: 'account', placements: [],
     bindings: { mcpToolName: 'session_memory_set', voiceClientToolName: 'setSessionMemory' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
-    inputHints: { title: 'Use memory', fields: [
+    inputHints: { description: 'Choose whether a session uses your memory.', title: 'Use memory', fields: [
       { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
       { path: 'serverId', title: 'Home id', widget: 'text', required: true },
       { path: 'expectedMetadataRevision', title: 'Reviewed metadata revision', widget: 'number', required: true },
@@ -8874,7 +8962,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     safety: 'safe', sideEffectClass: 'write', executionPlacement: 'account', placements: [],
     bindings: { mcpToolName: 'session_voice_preference_set', voiceClientToolName: 'setSessionVoicePreference' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
-    inputHints: { title: 'Session voice', fields: [
+    inputHints: { description: 'Choose how Voice behaves in one session without changing your other sessions.', title: 'Session voice', fields: [
       { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
       { path: 'serverId', title: 'Home id', widget: 'text', required: true },
       { path: 'expectedMetadataRevision', title: 'Reviewed metadata revision', widget: 'number', required: true },
@@ -8889,7 +8977,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     safety: 'safe', sideEffectClass: 'write', executionPlacement: 'account', placements: [],
     bindings: { mcpToolName: 'session_context_update', voiceClientToolName: 'updateSessionContext' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
-    inputHints: { title: 'Update context', fields: [
+    inputHints: { description: 'Turn a piece of context on or off for a session.', title: 'Update context', fields: [
       { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
       { path: 'serverId', title: 'Home id', widget: 'text', required: true },
       { path: 'expectedMetadataRevision', title: 'Reviewed metadata revision', widget: 'number', required: true },
@@ -8904,11 +8992,11 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     safety: 'safe', sideEffectClass: 'write', executionPlacement: 'account', placements: [],
     bindings: { mcpToolName: 'session_instructions_set', voiceClientToolName: 'setSessionInstructions' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
-    inputHints: { title: 'Set instructions', fields: [
+    inputHints: { description: 'Choose the instructions a session follows, or remove them.', title: 'Set instructions', fields: [
       { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
       { path: 'serverId', title: 'Home id', widget: 'text', required: true },
       { path: 'expectedMetadataRevision', title: 'Reviewed metadata revision', widget: 'number', required: true },
-      { path: 'ref', title: 'Document reference, or null to detach', widget: 'json', required: true },
+      { path: 'ref', title: 'Document reference', description: 'Set it to null to detach the document.', widget: 'json', required: true },
     ] },
     inputSchema: SessionInstructionsSetInputV1Schema, outputSchema: StrictJsonValueSchema,
     cli: { acceptsServerId: true, commands: [{ path: ['session', 'instructions', 'set'], positionals: ['sessionId'], visibility: 'canonical' }] },
@@ -8920,7 +9008,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     requiredAuthority: 'present_user',
     bindings: { voiceClientToolName: 'setSessionToolCalls' },
     surfaces: { ui: true, voice: true, agent: false, mcp: false, cli: true, rpc: false },
-    inputHints: { title: 'Show tool calls', fields: [
+    inputHints: { description: 'Show or hide tool calls in a session\'s conversation.', title: 'Show tool calls', fields: [
       { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
       { path: 'showToolCalls', title: 'Show tool calls, or null to use the default', widget: 'json', required: true },
     ] },
@@ -8946,6 +9034,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       rpc: true,
       },
     inputHints: {
+      description: 'Choose how much a session\'s agent may do without asking you.',
       title: 'Set permission mode',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
@@ -8975,6 +9064,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       rpc: false,
       },
     inputHints: {
+      description: 'Choose the model a session uses.',
       title: 'Set session model',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
@@ -9005,6 +9095,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       rpc: false,
       },
     inputHints: {
+      description: 'Move a session out of your list without deleting it.',
       title: 'Archive a session',
       fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true }],
     },
@@ -9022,7 +9113,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     serverTransport: { method: 'DELETE', path: '/v1/sessions/:sessionId' },
     inputSchema: lazyZodSchema(() => z.object({ sessionId: z.string().trim().min(1) }).strict()),
     outputSchema: lazyZodSchema(() => z.object({ success: z.literal(true) }).strict()),
-    inputHints: { title: 'Delete a session', fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true }] },
+    inputHints: { description: 'Permanently delete a session and the folders Happier made for it.', title: 'Delete a session', fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true }] },
     cli: { commands: [{ path: ['session', 'delete'], positionals: ['sessionId'], visibility: 'canonical' }] },
   },
   {
@@ -9035,7 +9126,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     serverTransport: { method: 'PUT', path: '/v2/session-organization/folder-assignments/:sessionId' },
     inputSchema: lazyZodSchema(() => SetSessionFolderAssignmentRequestSchema.extend({ sessionId: z.string().trim().min(1) })),
     outputSchema: SetSessionFolderAssignmentResponseSchema,
-    inputHints: { title: 'Assign session folder', fields: [
+    inputHints: { description: 'Put a session in one of your folders, or take it out.', title: 'Assign session folder', fields: [
       { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
       { path: 'folderId', title: 'Folder id, or null to clear', widget: 'text', required: true },
     ] },
@@ -9051,7 +9142,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     serverTransport: { method: 'PUT', path: '/v2/session-organization/tag-assignments/:sessionId' },
     inputSchema: lazyZodSchema(() => SetSessionTagAssignmentsRequestSchema.extend({ sessionId: z.string().trim().min(1) })),
     outputSchema: SetSessionTagAssignmentsResponseSchema,
-    inputHints: { title: 'Assign session tags', fields: [
+    inputHints: { description: 'Choose the tags on a session.', title: 'Assign session tags', fields: [
       { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
       { path: 'tagIds', title: 'Tag ids', widget: 'textarea', required: true },
     ] },
@@ -9076,6 +9167,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       rpc: false,
       },
     inputHints: {
+      description: 'Bring an archived session back to your list.',
       title: 'Unarchive a session',
       fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true }],
     },
@@ -9102,6 +9194,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       rpc: false,
     },
     inputHints: {
+      description: 'See whether a session is working, waiting or stopped.',
       title: 'Get session status',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
@@ -9131,6 +9224,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       rpc: false,
     },
     inputHints: {
+      description: 'See a session\'s goal, current task and to-dos.',
       title: 'Get session work state',
       fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true }],
     },
@@ -9157,6 +9251,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       rpc: false,
     },
     inputHints: {
+      description: 'See the goal a session is working towards.',
       title: 'Get session goal',
       fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true }],
     },
@@ -9183,6 +9278,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       rpc: false,
     },
     inputHints: {
+      description: 'Set the goal a session works towards.',
       title: 'Set session goal',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
@@ -9214,6 +9310,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       rpc: false,
     },
     inputHints: {
+      description: 'Remove a session\'s goal.',
       title: 'Clear session goal',
       fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true }],
     },
@@ -9296,9 +9393,9 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     examples: { voice: { argsExample: '{"sessionId":"{{sessionId}}","leadSessionId":"lead_session","expectedLeadSessionId":null}' } },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
     sideEffectClass: 'danger',
-    inputHints: { fields: [
+    inputHints: { description: 'Choose which session leads this one, or let it stand on its own.', fields: [
       { path: 'sessionId', title: 'Session', widget: 'text' },
-      { path: 'leadSessionId', title: 'Lead Session (null to detach)', widget: 'text' },
+      { path: 'leadSessionId', title: 'Lead session', description: 'Leave empty to detach it from its lead.', widget: 'text' },
       { path: 'expectedLeadSessionId', title: 'Expected current lead', widget: 'text' },
     ] },
     inputSchema: SessionReportsToSetActionInputV1Schema,
@@ -9606,6 +9703,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       rpc: false,
     },
     inputHints: {
+      description: 'Continue a session automatically once your usage limit lifts.',
       title: 'Enable usage-limit wait resume',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
@@ -9647,6 +9745,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       rpc: false,
     },
     inputHints: {
+      description: 'Stop waiting to continue a session after a usage limit.',
       title: 'Cancel usage-limit wait resume',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
@@ -9677,6 +9776,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       rpc: false,
     },
     inputHints: {
+      description: 'Check now whether a session\'s usage limit has lifted.',
       title: 'Check usage-limit recovery now',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
@@ -9729,6 +9829,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       rpc: false,
     },
     inputHints: {
+      description: 'Use a reset credit from your connected account to lift a session\'s usage limit now.',
       title: 'Apply reset credit',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
@@ -9772,6 +9873,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       rpc: false,
     },
     inputHints: {
+      description: 'See the agent plugins a session can use.',
       title: 'List vendor plugins',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
@@ -9800,6 +9902,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       rpc: false,
     },
     inputHints: {
+      description: 'See the skills a session\'s agent can use.',
       title: 'List skills',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
@@ -9828,6 +9931,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       rpc: false,
       },
     inputHints: {
+      description: 'Read a session\'s earlier events.',
       title: 'Get session history',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
@@ -9869,6 +9973,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       rpc: false,
     },
     inputHints: {
+      description: 'Read a session\'s conversation.',
       title: 'Get session transcript',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
@@ -9924,6 +10029,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       rpc: false,
       },
     inputHints: {
+      description: 'Look through everything that happened in a session, including tool calls, for troubleshooting.',
       title: 'Get session events',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
@@ -9954,6 +10060,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       rpc: false,
       },
     inputHints: {
+      description: 'Wait until a session\'s agent has finished its turn.',
       title: 'Wait for idle',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
@@ -9987,6 +10094,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       rpc: true,
     },
     inputHints: {
+      description: 'Allow or deny something a session\'s agent asked to do.',
       title: 'Respond to permission request',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text' },
@@ -10016,7 +10124,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     requiredAuthority: 'present_user',
     placements: [],
     surfaces: { ui: true, cli: true, agent: false, mcp: false, voice: false, rpc: false },
-    inputHints: { title: 'Set session approval reviewer', fields: [
+    inputHints: { description: 'Let a reviewer agent look at a session\'s requests before they reach you.', title: 'Set session approval reviewer', fields: [
       { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
       { path: 'enabled', title: 'Enabled', widget: 'boolean', required: true },
     ] },
@@ -10064,6 +10172,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       rpc: false,
     },
     inputHints: {
+      description: 'See requests from a session that are waiting for someone else\'s answer.',
       title: 'List remotely mediated permission requests',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
@@ -10091,6 +10200,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       rpc: false,
     },
     inputHints: {
+      description: 'Answer a session\'s request on someone else\'s behalf.',
       title: 'Respond to a remotely mediated permission request',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
@@ -10142,6 +10252,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       rpc: false,
     },
     inputHints: {
+      description: 'Answer a session\'s question on someone else\'s behalf.',
       title: 'Answer a remotely mediated user-action request',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
@@ -10172,6 +10283,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       rpc: true,
     },
     inputHints: {
+      description: 'See what has been allowed for a session on someone else\'s behalf.',
       title: 'List remotely mediated permission grants',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
@@ -10199,6 +10311,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       rpc: true,
     },
     inputHints: {
+      description: 'Take back something allowed for a session on someone else\'s behalf.',
       title: 'Revoke a remotely mediated permission grant',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
@@ -10241,6 +10354,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       rpc: true,
       },
     inputHints: {
+      description: 'Answer a question or review a request from a session\'s agent.',
       title: 'Respond to user-action request',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text' },
@@ -10294,6 +10408,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       rpc: false,
       },
     inputHints: {
+      description: 'Switch a session\'s agent to another mode, such as planning.',
       title: 'Set session mode',
       fields: [
         { path: 'sessionId', title: 'Session id', description: 'Optional when the active target session is already correct.', widget: 'text' },
@@ -10331,6 +10446,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       rpc: false,
       },
     inputHints: {
+      description: 'Choose the session Voice talks to by default.',
       title: 'Set primary action session',
       fields: [
         { path: 'serverId', title: 'Home id', widget: 'text' },
@@ -10360,6 +10476,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       rpc: false,
       },
     inputHints: {
+      description: 'Choose which sessions Voice keeps you up to date on.',
       title: 'Set Include in Voice sessions',
       fields: [{ path: 'sessionIds', title: 'Session ids', widget: 'text_list', required: true, listSeparator: 'comma' }],
     },
@@ -10387,6 +10504,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       rpc: false,
       },
     inputHints: {
+      description: 'See your recent sessions.',
       title: 'List sessions',
       fields: [
         {
@@ -10428,6 +10546,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       rpc: false,
       },
     inputHints: {
+      description: 'See a short summary of what a session has been doing.',
       title: 'Get session activity',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
@@ -10473,6 +10592,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       rpc: false,
       },
     inputHints: {
+      description: 'Read a session\'s latest messages.',
       title: 'Get recent messages',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
@@ -10677,6 +10797,60 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     inputSchema: MemorySearchInputSchema,
   },
   {
+    id: 'search.settings.get', title: 'Read Search settings',
+    description: 'Read the machine-local memory and conversation Search settings.',
+    sideEffectClass: 'read', safety: 'safe', executionPlacement: 'machine', placements: [],
+    bindings: { mcpToolName: 'search_settings_get', sdkMethod: 'conversationSearch.settings.get' },
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
+    inputSchema: MemoryMachineInputSchema, outputSchema: MemorySettingsV1Schema,
+    inputHints: { title: 'Read Search settings', fields: [{ path: 'machineId', title: 'Machine id', widget: 'text', required: true }] },
+  },
+  {
+    id: 'search.settings.set', title: 'Save Search settings',
+    description: 'Save the canonical machine-local memory and conversation Search settings.',
+    sideEffectClass: 'write', safety: 'safe', executionPlacement: 'machine', placements: [],
+    bindings: { mcpToolName: 'search_settings_set', sdkMethod: 'conversationSearch.settings.set' },
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
+    inputSchema: SearchSettingsSetInputSchema, outputSchema: MemorySettingsV1Schema,
+    inputHints: { title: 'Save Search settings', fields: [
+      { path: 'machineId', title: 'Machine id', widget: 'text', required: true },
+      { path: 'settings', title: 'Settings', widget: 'json', required: true },
+    ] },
+  },
+  {
+    id: 'memory.status', title: 'Read memory index status',
+    description: 'Read readiness, indexing progress and coverage from the machine memory owner.',
+    sideEffectClass: 'read', safety: 'safe', executionPlacement: 'machine', placements: [],
+    bindings: { mcpToolName: 'memory_status' },
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
+    inputSchema: MemoryMachineInputSchema, outputSchema: MemoryStatusV1Schema,
+    inputHints: { title: 'Read memory index status', fields: [{ path: 'machineId', title: 'Machine id', widget: 'text', required: true }] },
+  },
+  {
+    id: 'memory.clear_index', title: 'Clear memory index',
+    description: 'Clear the machine-local derived memory index. Agent calls require approval by default.',
+    sideEffectClass: 'danger', safety: 'danger', executionPlacement: 'machine', placements: [],
+    bindings: { mcpToolName: 'memory_clear_index' },
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
+    inputSchema: MemoryMachineInputSchema, outputSchema: MemoryClearIndexOutputSchema,
+    inputHints: { title: 'Clear memory index', fields: [{ path: 'machineId', title: 'Machine id', widget: 'text', required: true }] },
+  },
+  {
+    id: 'search.conversations', title: 'Search conversations across machines',
+    description: 'Search the machines in scope through the connected app conversation-search owner; omitted machineIds selects all machines in scope.',
+    sideEffectClass: 'read', safety: 'safe', executionPlacement: 'client', placements: [],
+    bindings: { mcpToolName: 'search_conversations', sdkMethod: 'conversationSearch.search' },
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: false, rpc: false },
+    inputSchema: SearchConversationsInputV1Schema, outputSchema: StrictJsonValueSchema,
+    inputHints: { title: 'Search conversations across machines', fields: [
+      { path: 'query', title: 'Memory search query', widget: 'json', required: true },
+      { path: 'machineIds', title: 'Machine ids', widget: 'json' },
+      { path: 'mode', title: 'Search mode', widget: 'select', options: [
+        { value: 'auto', label: 'Best available' }, { value: 'indexed', label: 'Indexed' }, { value: 'standard', label: 'Standard' },
+      ] },
+    ] },
+  },
+  {
     id: 'memory.get_window',
     title: 'Get memory window',
     sideEffectClass: 'read',
@@ -10686,20 +10860,23 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     bindings: { voiceClientToolName: 'memoryGetWindow', mcpToolName: 'memory_get_window' },
     inputHints: {
       title: 'Get memory window',
-      description: 'Fetch and decrypt a message range from a specific session.',
+      description: 'Read a Happier Session range or a native hit using its source, sourceItemId and optional cursor.',
       fields: [
         { path: 'machineId', title: 'Machine id', widget: 'text', required: true },
-        { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
-        { path: 'seqFrom', title: 'Seq from', widget: 'text', required: true },
-        { path: 'seqTo', title: 'Seq to', widget: 'text', required: true },
+        { path: 'sessionId', title: 'Session id', widget: 'text' },
+        { path: 'seqFrom', title: 'Seq from', widget: 'text' },
+        { path: 'seqTo', title: 'Seq to', widget: 'text' },
+        { path: 'source', title: 'Native transcript source', widget: 'json' },
+        { path: 'sourceItemId', title: 'Native message id', widget: 'text' },
+        { path: 'cursor', title: 'Native page cursor', widget: 'text' },
       ],
     },
     surfaces: {
       ui: true,
       voice: true,
       agent: true,
-      mcp: false,
-      cli: false,
+      mcp: true,
+      cli: true,
       rpc: false,
       },
     examples: {
@@ -10878,6 +11055,17 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       favorite: z.boolean(), updatedAtMs: z.number(),
     }).strict()) }).strict()),
     inputHints: { title: 'List prompt library', fields: [{ path: 'query', title: 'Search', widget: 'text' }] },
+  },
+  {
+    id: 'prompts.stack.update', title: 'Update Account context stack', safety: 'safe', sideEffectClass: 'write',
+    requiredAuthority: 'account_automation', executionPlacement: 'account', placements: [],
+    bindings: { mcpToolName: 'prompts_stack_update', rpcMethod: 'prompts.stack.update' },
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: true },
+    inputSchema: PromptLibraryStackUpdateInputV1Schema, outputSchema: PromptLibraryStackUpdateResultV1Schema,
+    projectObservationInput: (input: unknown) => { const value = readRecord(input); return { surface: value.surface, expectedRevision: value.expectedRevision }; },
+    projectObservationOutput: (output: unknown) => { const value = readRecord(output); return { status: value.status, revision: value.revision }; },
+    inputHints: { fields: [] },
+    cli: { acceptsServerId: true, commands: [{ path: ['prompts', 'stack', 'update'], visibility: 'canonical' }] },
   },
   {
     id: 'prompt_doc.update',
@@ -11487,6 +11675,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     outputSchema: SessionLogTailOutputSchema,
     inputSchema: SessionLogTailInputSchema,
     inputHints: {
+      description: 'Read the end of a session\'s log.',
       title: 'Tail session log',
       fields: [
         { path: 'path', title: 'Log path', widget: 'text', required: true },
@@ -11514,6 +11703,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     outputSchema: TranscriptPageOutputSchema,
     inputSchema: TranscriptPageInputSchema,
     inputHints: {
+      description: 'Read earlier parts of a session\'s conversation.',
       title: 'Page session transcript',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text' },
@@ -11542,6 +11732,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     outputSchema: TranscriptReadAfterOutputSchema,
     inputSchema: TranscriptReadAfterInputSchema,
     inputHints: {
+      description: 'Read what a session has said since a point in its conversation.',
       title: 'Read session transcript after cursor',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text' },
@@ -11570,6 +11761,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     outputSchema: TranscriptFollowOutputSchema,
     inputSchema: TranscriptFollowInputSchema,
     inputHints: {
+      description: 'Keep up with a session\'s conversation as it happens.',
       title: 'Follow session transcript',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text' },
@@ -11600,6 +11792,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     outputSchema: TranscriptUnfollowOutputSchema,
     inputSchema: TranscriptUnfollowInputSchema,
     inputHints: {
+      description: 'Stop keeping up with a session\'s conversation.',
       title: 'Unfollow session transcript',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text' },
@@ -11626,6 +11819,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     outputSchema: TranscriptImportOutputSchema,
     inputSchema: TranscriptImportInputSchema,
     inputHints: {
+      description: 'Add messages to a session\'s conversation from another record of it.',
       title: 'Import session transcript rows',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text' },
@@ -11654,6 +11848,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     outputSchema: TranscriptReadAfterOutputSchema,
     inputSchema: TranscriptSearchInputSchema,
     inputHints: {
+      description: 'Search a session\'s conversation.',
       title: 'Search session transcript',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text' },
@@ -11689,6 +11884,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     outputSchema: ExternalSessionsCandidatesListResponseSchema,
     inputSchema: ExternalSessionsCandidatesListRequestSchema,
     inputHints: {
+      description: 'See sessions you started outside Happier that you can bring in.',
       title: 'List external session candidates',
       fields: [
         { path: 'machineId', title: 'Machine id', widget: 'text', required: true },
@@ -11733,6 +11929,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     outputSchema: ExternalSessionCandidateDeleteResponseSchema,
     inputSchema: ExternalSessionCandidateDeleteRequestSchema,
     inputHints: {
+      description: 'Delete a session you started outside Happier from that agent\'s own list; nothing in Happier is deleted.',
       title: 'Delete external session candidate',
       fields: [
         { path: 'machineId', title: 'Machine id', widget: 'text', required: true },
@@ -11765,6 +11962,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     outputSchema: ExternalSessionLinkEnsureResponseSchema,
     inputSchema: ExternalSessionLinkEnsureRequestSchema,
     inputHints: {
+      description: 'Link a session you started outside Happier so it shows here.',
       title: 'Ensure external session link',
       fields: [
         { path: 'machineId', title: 'Machine id', widget: 'text', required: true },
@@ -11805,6 +12003,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     outputSchema: ExternalSessionViewerFollowActionResultV1Schema,
     inputSchema: ExternalSessionViewerFollowActionInputV1Schema,
     inputHints: {
+      description: 'Keep up with a session you started outside Happier while you watch it.',
       title: 'Follow external session lease',
       fields: [
         { path: 'sessionId', title: 'Linked session id', widget: 'text', required: true },
@@ -11842,6 +12041,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     outputSchema: ExternalSessionViewerUnfollowActionResultV1Schema,
     inputSchema: ExternalSessionViewerUnfollowActionInputV1Schema,
     inputHints: {
+      description: 'Stop keeping up with a session you started outside Happier.',
       title: 'Unfollow external session lease',
       fields: [
         { path: 'sessionId', title: 'Linked session id', widget: 'text', required: true },
@@ -11882,6 +12082,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     outputSchema: ExternalSessionBackgroundFollowActionResultV1Schema,
     inputSchema: ExternalSessionBackgroundFollowActionInputV1Schema,
     inputHints: {
+      description: 'Choose whether Happier keeps up with an outside session even when you are not watching it.',
       title: 'Set external session follow policy',
       fields: [
         { path: 'sessionId', title: 'Linked session id', widget: 'text', required: true },
@@ -11923,6 +12124,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     outputSchema: ExternalSessionStatusActionResultV1Schema,
     inputSchema: ExternalSessionStatusActionInputV1Schema,
     inputHints: {
+      description: 'See the state of a session you started outside Happier, and whether you can take it over.',
       title: 'Get external session status',
       fields: [
         { path: 'sessionId', title: 'Linked session id', widget: 'text', required: true },
@@ -11952,6 +12154,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     outputSchema: ExternalSessionTranscriptPageResponseSchema,
     inputSchema: ExternalSessionTranscriptPageRequestSchema,
     inputHints: {
+      description: 'Read earlier parts of a session you started outside Happier.',
       title: 'Page external session transcript',
       fields: [
         { path: 'machineId', title: 'Machine id', widget: 'text', required: true },
@@ -11997,6 +12200,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
       ExternalSessionTranscriptRefreshReadAfterRequestV1Schema,
     ])),
     inputHints: {
+      description: 'Read what an outside session has said since a point in its conversation.',
       title: 'Read external session transcript after cursor',
       fields: [
         { path: 'machineId', title: 'Machine id', widget: 'text', required: true },
@@ -12035,6 +12239,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     outputSchema: ExternalSessionTakeoverResultV1Schema,
     inputSchema: ExternalSessionTakeoverActionInputSchema,
     inputHints: {
+      description: 'Move a session you started outside Happier into Happier so you can steer it here.',
       title: 'Take over external session',
       fields: [
         { path: 'linkedSessionId', title: 'Linked session id', widget: 'text', required: true },
@@ -12269,6 +12474,7 @@ const ACTION_EXECUTION_PLACEMENT_BY_ID: ReadonlyMap<ActionId, ActionExecutionPla
     'prompt_doc.create',
     'prompt_doc.favorite.set',
     'prompts.library.list',
+    'prompts.stack.update',
     'prompts.invocations.list',
     'prompts.invocation.resolve',
     'prompt_doc.update',
@@ -12868,6 +13074,7 @@ type AccountSecurityActionSpecDefinition =
 
 export type CanonicalActionSpecDefinition =
   | (typeof USAGE_ACTION_SPECS)[number]
+  | (typeof USAGE_COACH_ACTION_SPECS)[number]
   | { [Id in UsageSourceActionId]: CanonicalActionSchemaDefinition<Id,
       (typeof USAGE_SOURCE_ACTION_INPUT_SCHEMAS)[Id],
       (typeof USAGE_SOURCE_ACTION_OUTPUT_SCHEMAS)[Id]> }[UsageSourceActionId]
@@ -13345,6 +13552,10 @@ const ACTION_PLUGIN_CALLER_POLICY_BY_ID: Readonly<
   'connectedServices.pools.selection.get': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'usage.query': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'usage.recap.compose': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'usage.coach.apply': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'usage.coach.undo': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'usage.coach.dismiss': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'usage.coach.snooze': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'capture.view': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'plugins.reload': PLUGIN_RELOAD_CALLER_POLICY,
   'plugins.permissions.grants.request': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
@@ -13392,6 +13603,7 @@ const ACTION_PLUGIN_CALLER_POLICY_BY_ID: Readonly<
   'prompt_doc.create': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'prompt_doc.favorite.set': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'prompts.library.list': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'prompts.stack.update': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'prompts.invocations.list': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'prompts.invocation.resolve': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'prompt_bundle.update': HOST_DOMAIN_PLUGIN_CALLER_POLICY,

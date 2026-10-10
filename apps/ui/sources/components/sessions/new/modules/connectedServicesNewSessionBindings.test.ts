@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { AGENTS_CORE } from '@happier-dev/agents';
+import { connectedServiceProfileKey } from '@happier-dev/protocol/connect/connectedServiceProfilePreferences';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import {
     buildConnectedServiceAccountGroupOptionsByServiceId,
     buildConnectedServiceProfileOptionsByServiceId,
@@ -32,6 +34,58 @@ const groupOptionsByServiceId: ConnectedServicesAccountGroupOptionsByServiceId =
 };
 
 describe('connectedServicesNewSessionBindings', () => {
+    it('discloses only declared launch purposes after resolving the actual connected selection', async () => {
+        const { projectSessionCredentialSignInPurposes } = await import('./connectedServicesNewSessionBindings');
+        const declarations = [
+            { purpose: 'model_upstream_api_key', service: { pluginId: 'happier.agent.claude', localId: 'anthropic' } },
+            { purpose: 'model_upstream', service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' } },
+        ];
+        const bindings = buildConnectedServicesBindingsPayload({
+            supportedConnectedServiceIds: declarations.map(declaration => buildQualifiedPluginContributionKey(declaration.service)),
+            connectedServiceProfileOptionsByServiceId: profileOptionsByServiceId,
+            connectedServicesBindingsByServiceId: {
+                [ANTHROPIC_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'primary' },
+                'happier.agent.claude/claude-subscription': { source: 'native' },
+                'happier.connect.linear/linear': { source: 'connected', selection: 'profile', profileId: 'private-linear-account' },
+            },
+            defaultProfileByServiceId: {},
+        });
+        const labels = projectSessionCredentialSignInPurposes({ declarations, bindings,
+            resolveServiceTitle: service => service.localId === 'anthropic' ? 'Anthropic API key'
+                : service.localId === 'claude-subscription' ? 'Claude subscription' : 'Linear',
+            formatNativeTitle: title => `${title} (native sign-in)`,
+        });
+        expect(labels).toEqual(['Anthropic API key', 'Claude subscription (native sign-in)']);
+        expect(JSON.stringify(labels)).not.toContain('private-linear-account');
+        expect(projectSessionCredentialSignInPurposes({ declarations: [], bindings,
+            resolveServiceTitle: () => 'Linear', formatNativeTitle: title => title })).toEqual([]);
+        expect(projectSessionCredentialSignInPurposes({ declarations, bindings: null,
+            resolveServiceTitle: service => service.localId === 'anthropic' ? 'Anthropic API key' : 'Claude subscription',
+            formatNativeTitle: title => `${title} (native sign-in)`,
+        })).toEqual(['Anthropic API key (native sign-in)', 'Claude subscription (native sign-in)']);
+    });
+
+    it('keeps explicit native intent distinct from omission at launch', () => {
+        const input = {
+            supportedConnectedServiceIds: [ANTHROPIC_SERVICE_KEY],
+            connectedServiceProfileOptionsByServiceId: profileOptionsByServiceId,
+            defaultProfileByServiceId: {},
+        };
+        expect(buildConnectedServicesBindingsPayload({
+            ...input,
+            connectedServicesBindingsByServiceId: {},
+        })).toBeNull();
+        expect(buildConnectedServicesBindingsPayload({
+            ...input,
+            connectedServicesBindingsByServiceId: {
+                [ANTHROPIC_SERVICE_KEY]: { source: 'native' },
+            },
+        })).toEqual({
+            v: 2,
+            bindingsByServiceId: { [ANTHROPIC_SERVICE_KEY]: { source: 'native' } },
+        });
+    });
+
     it('can serialize an all-native V2 payload for an existing-session disconnect', () => {
         expect(buildConnectedServicesBindingsPayload({
             supportedConnectedServiceIds: ['anthropic'],
@@ -358,7 +412,8 @@ describe('connectedServicesNewSessionBindings', () => {
                 ],
             }],
             supportedConnectedServiceIds: AGENTS_CORE.opencode.connectedServices?.supportedServiceIds ?? [],
-            labelsByKey: {},
+            labelsByKey: { [connectedServiceProfileKey({ serviceId: 'claude-subscription',
+                profileId: 'claude-pro-oauth' })]: 'Personal subscription' },
         });
 
         expect(result['claude-subscription']).toEqual([
@@ -371,6 +426,7 @@ describe('connectedServicesNewSessionBindings', () => {
                 profileId: 'claude-pro-oauth',
                 status: 'connected',
                 kind: 'oauth',
+                label: 'Personal subscription',
             }),
         ]);
     });
@@ -404,7 +460,8 @@ describe('composeConnectedServiceTeamCredentialBindingIntents', () => {
             teamResource: { teamId: 'team-acme', selection },
         });
         const bindings = projectAgentConnectedAccountPurposeDefaultsToSessionBindings(
-            resolveAgentConnectedAccountPurposeDefaults({ settings, agentId: 'claude', consumer, declarations }),
+            resolveAgentConnectedAccountPurposeDefaults({ settings, purposeBindings: settings.connectedAccountPurposeBindingsV1,
+                agentId: 'claude', consumer, declarations }),
         );
         expect(bindings).not.toBeNull();
         const resource = {

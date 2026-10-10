@@ -2,8 +2,12 @@ import type { SessionForkPoint } from '@happier-dev/protocol';
 import type { Router } from 'expo-router';
 
 import type { CurrentProjectedAgentCapabilities } from '@/agents/backendCatalog/currentAgentCapabilities';
-import { buildNewSessionSourceContextNavigation } from '@/components/sessions/new/navigation/newSessionSourceContextNavigation';
-import { storage } from '@/sync/domains/state/storage';
+import { openNewSessionSourceContextNavigation } from '@/components/sessions/new/navigation/newSessionSourceContextNavigation';
+import { Modal } from '@/modal';
+import { t } from '@/text';
+import { fireAndForget } from '@/utils/system/fireAndForget';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import {
     resolveSessionForkStrategyAvailability,
     type SessionForkSupportSource,
@@ -96,18 +100,41 @@ export function openSessionForkStrategyFlow(params: OpenSessionForkStrategyFlowP
         // points that decide whether to render an affordance at all can never
         // disagree about how many routes exist.
         configureNewSession: !availability.configure ? null : () => {
-            // Read the Session at the moment the user chooses Configure, so the
-            // seed reflects current configuration rather than menu-open state.
-            const session = storage.getState().sessions[params.sessionId] ?? null;
-            if (!session) return;
-            params.navigateToNewSession(buildNewSessionSourceContextNavigation({
-                session,
-                sourceSessionId: params.sessionId,
-                forkPoint: params.forkPoint,
-                serverId: params.serverId,
-                machineId: params.machineId,
-                restoredDraftText: params.restoredDraftText ?? null,
-            }));
+            fireAndForget((async () => {
+                let account: LazyActionAccountContext | null = null;
+                try {
+                    if (!params.serverId) throw new Error('Session Home is unavailable');
+                    const [{ captureLazyActionAccountContext }, { runWithServerRequestAuthorityForServerAccountScope },
+                        { readSessionSnapshotForAuthority }] = await Promise.all([
+                        import('@/sync/ops/actions/actionAccountContext'),
+                        import('@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope'),
+                        import('@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority'),
+                    ]);
+                    // Configure is a new gesture: its exact Home's current
+                    // credential owner admits the read and the resulting draft.
+                    account = await captureLazyActionAccountContext(params.serverId);
+                    const lifetime = account.accountLifetime;
+                    const { session } = await runWithServerRequestAuthorityForServerAccountScope({
+                        scope: lifetime.scope, activeRequest: account.request,
+                    }, authority => readSessionSnapshotForAuthority({
+                        authority, sessionId: params.sessionId, isCurrent: lifetime.isCurrent,
+                    }));
+                    account.assertCurrent();
+                    const outcome = openNewSessionSourceContextNavigation({
+                        session, sourceSessionId: params.sessionId, forkPoint: params.forkPoint,
+                        serverId: account.serverId,
+                        machineId: readSessionOwnerMetadataView(session)?.machineId ?? null,
+                        accountLifetime: lifetime,
+                        restoredDraftText: params.restoredDraftText ?? null,
+                        navigateToNewSession: params.navigateToNewSession,
+                    });
+                    if (outcome.kind !== 'opened') Modal.alert(t('common.error'), t('common.unavailable'));
+                } catch {
+                    Modal.alert(t('common.error'), t('common.unavailable'));
+                } finally {
+                    account?.dispose();
+                }
+            })(), { tag: 'SessionFork.configureNewSession' });
         },
     };
 

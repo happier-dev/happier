@@ -1,5 +1,8 @@
 import type { SessionFollowActionIdV1 } from '../../sessions/follow/actions.js';
+import type { MemoryWindowRequestV1 } from '../../memory/memoryWindow.js';
+import type { SessionModelMutationExpectedV1 } from '../../sessions/control/modelTransitionV1.js';
 import type { AcpCatalogSnapshotV1, AcpCatalogRowMutationV1 } from '../../acp/catalog/catalogRowsV1.js';
+import type { AcpCatalogCleanupV1 } from '../../acp/catalog/catalogMutationsV1.js';
 import type { RequesterWorkAttributionV1 } from '../../machines/requesterWorkAttributionV1.js';
 import type { UsageSourceActionPort } from './usageSourceActions.js';
 export type { MemorySessionSnapshotV1, MemoryAccountContextV1, MemoryInheritedContextV1, MemoryScopeContextV1, MemoryLibraryActionPortV1 } from './memoryDocumentActions.js';
@@ -78,6 +81,7 @@ import type {
   ActionRequiredAuthority,
   ActionSurfaces,
   PublicActionInputById,
+  AgentInventoryProbeInput,
   ExecutionRunPermissionRespondActionInput,
   PUBLIC_ACTION_INPUT_SCHEMAS,
   SessionTranscriptGetResult,
@@ -98,6 +102,9 @@ import type { ActionDefinitionSummaryV1 } from '../actionDefinitionV1.js';
 import type { ExternalActionTargetV1, ExternalActionExecutionAuthorizationV1 } from '../externalActionApi.js';
 import type { MemorySearchQueryV1, MemorySearchResultV1 } from '../../memory/memorySearch.js';
 import type { MemoryWindowV1 } from '../../memory/memoryWindow.js';
+import type { MemorySettingsV1 } from '../../memory/memorySettings.js';
+import type { MemoryStatusV1 } from '../../memory/memoryStatus.js';
+import type { SearchConversationsInputV1 } from '../actionSpecs.js';
 import type {
   ApprovalExecutionOriginV1,
   ApprovalRequest,
@@ -502,6 +509,8 @@ export type SessionPermissionRemoteActionArgs =
     }>;
 
 export type ActionExecutorContext = Readonly<{
+  /** Host-captured Account identity for this invocation; never Action input or RPC authority. */
+  expectedAccountId?: string;
   /** Acquiring Account's own readable creation preference at origination only; never Action input or RPC authority. */
   managedMachineCreationEnabled?: boolean;
   /** Host-validated readable page context; supplies no execution or storage authority. Never decoded from Action input. */
@@ -594,6 +603,8 @@ export type ActionExecutorContext = Readonly<{
   }>;
   /** Home-issued authorization, usable only with the exact Machine's request signature. */
   externalActionExecutionAuthorization?: ExternalActionExecutionAuthorizationV1;
+  /** Exact admitted public envelope retained locally for closed Project SOURCE routing. */
+  originalActionEnvelope?: import('../externalActionApi.js').ExternalActionRequestEnvelope;
   /** Process-local Machine signer; capture signs only the canonical stored approval input. */
   signExternalActionApprovalInput?: (input: Readonly<{
     actionId: ActionId; input: unknown; target: ExternalActionTargetV1; authorization: ExternalActionExecutionAuthorizationV1;
@@ -956,7 +967,8 @@ export type ActionExecutorDeps = Readonly<{
   memoryLibrary?: import('./memoryDocumentActions.js').MemoryLibraryActionPortV1;
   usageActions?: import('./usageActions.js').UsageActionPorts;
   artifactFolders?: import('../../prompts/library/promptFolderActionsV1.js').ArtifactFolderActionPortV1;
-  /** A client relays admitted typed-field discovery to the daemon's same options owner. */
+  promptStacks?: import('../../prompts/library/promptLibraryCatalogV1.js').PromptLibraryStackActionPortV1;
+  /** A client relays admitted contributed-type Resource discovery to the daemon's same options owner. */
   readAdmittedInputTypeOptions?: (request: Readonly<{ input: Readonly<Record<string, unknown>>;
     context: ActionExecutorContext }>) => Promise<unknown>;
   /** Admitted current plugin descriptor and incumbent Resource transport, bound by the host. */
@@ -1218,6 +1230,7 @@ export type ActionExecutorDeps = Readonly<{
     destination?: PublicActionInputById['session.open']['destination'];
     actionRequestId?: string | null;
     approvedNewDirectoryCreation?: boolean;
+    intent?: PublicActionInputById['session.open']['intent'];
     signal?: AbortSignal;
   }>) => Promise<unknown>;
   sessionFork: (args: Readonly<
@@ -1471,14 +1484,15 @@ export type ActionExecutorDeps = Readonly<{
     serverId?: string;
     limit?: number;
     backendTargetKey?: string;
+    probe?: AgentInventoryProbeInput;
     /** Only the admitted Session-spawn model field requests the Provider read projection. */
     includeProviderProjection?: true;
     signal?: AbortSignal;
   }>) => Promise<unknown>;
-  agentsConfigOptionsList?: (args: Readonly<{ agentId?: string; machineId?: string; serverId?: string; limit?: number; backendTargetKey?: string; modelId?: string }>) => Promise<unknown>;
-  agentsSessionModesList?: (args: Readonly<{ agentId?: string; machineId?: string; serverId?: string; limit?: number; backendTargetKey?: string }>) => Promise<unknown>;
+  agentsConfigOptionsList?: (args: Readonly<{ agentId?: string; machineId?: string; serverId?: string; limit?: number; backendTargetKey?: string; modelId?: string; probe?: AgentInventoryProbeInput }>) => Promise<unknown>;
+  agentsSessionModesList?: (args: Readonly<{ agentId?: string; machineId?: string; serverId?: string; limit?: number; backendTargetKey?: string; probe?: AgentInventoryProbeInput }>) => Promise<unknown>;
   spawnProfilesList?: (args: Readonly<{ agentId?: string; backendTargetKey?: string; limit?: number }>) => Promise<unknown>;
-  spawnConnectedServicesList?: (args: Readonly<{ agentId?: string; backendTargetKey?: string; machineId?: string; serverId?: string; includeUnavailable?: boolean }>) => Promise<unknown>;
+  spawnConnectedServicesList?: (args: Readonly<{ agentId?: string; backendTargetKey?: string; machineId?: string; serverId?: string; includeUnavailable?: boolean }>, context?: ActionExecutorContext) => Promise<unknown>;
   spawnMcpServersPreview?: (args: Readonly<{
     agentId?: string;
     backendTargetKey?: string;
@@ -1576,6 +1590,8 @@ export type ActionExecutorDeps = Readonly<{
     context?: ActionExecutorContext;
     callerInputConstraints?: CallerInputConstraintsV1;
     modelId?: string;
+    captureBefore?: boolean;
+    expected?: SessionModelMutationExpectedV1;
     providerConnectionId?: string | null;
     teamCredentialModel?: import('../../teams/credentials/resourceV1.js').TeamCredentialProviderModelSelectionV1;
     teamVisibilityGrantConsent?: Readonly<{ teamId: string }>;
@@ -1799,17 +1815,19 @@ export type ActionExecutorDeps = Readonly<{
   teleportVoiceAgentToSessionRoot?: (args: Readonly<{ sessionId: string }>) => Promise<unknown>;
 
   // Daemon-local memory (machine-scoped RPC)
+  daemonMemorySettingsGet?: (args: Readonly<{ machineId: string; context: ActionExecutorContext; serverId?: string | null; signal?: AbortSignal }>) => Promise<MemorySettingsV1>;
+  daemonMemorySettingsSet?: (args: Readonly<{ machineId: string; context: ActionExecutorContext; settings: MemorySettingsV1; serverId?: string | null; signal?: AbortSignal }>) => Promise<MemorySettingsV1>;
+  daemonMemoryStatus?: (args: Readonly<{ machineId: string; context: ActionExecutorContext; serverId?: string | null; signal?: AbortSignal }>) => Promise<MemoryStatusV1>;
+  daemonMemoryClearIndex?: (args: Readonly<{ machineId: string; context: ActionExecutorContext; serverId?: string | null; signal?: AbortSignal }>) => Promise<{ ok: true }>;
+  searchConversations?: (args: Readonly<{ input: SearchConversationsInputV1; context: ActionExecutorContext }>) => Promise<unknown>;
   daemonMemorySearch: (args: Readonly<{
     machineId: string;
     query: MemorySearchQueryV1;
     serverId?: string | null;
     signal?: AbortSignal;
   }>) => Promise<MemorySearchResultV1>;
-  daemonMemoryGetWindow: (args: Readonly<{
+  daemonMemoryGetWindow: (args: Readonly<MemoryWindowRequestV1 & {
     machineId: string;
-    sessionId: string;
-    seqFrom: number;
-    seqTo: number;
     serverId?: string | null;
     signal?: AbortSignal;
   }>) => Promise<MemoryWindowV1>;
@@ -1925,7 +1943,7 @@ export type ActionExecutorDeps = Readonly<{
     signal?: AbortSignal;
     expectedRevision?: AcpCatalogRowMutationV1['expectedRevision'];
     sourceSettingsVersion?: AcpCatalogRowMutationV1['sourceSettingsVersion'];
-  }>) => Promise<Readonly<{ ok: true }> | Readonly<{ ok: false; errorCode: string; error: string; details?: ActionExecuteFailure['details'] }>>;
+  }>) => Promise<Readonly<{ ok: true; revision: number; cleanup?: AcpCatalogCleanupV1 }> | Readonly<{ ok: false; errorCode: string; error: string; details?: ActionExecuteFailure['details'] }>>;
   workBoardArtifacts?: Pick<WorkBoardArtifactPortV1, 'read' | 'apply' | 'readBoardAccess'> & Partial<Pick<WorkBoardArtifactPortV1, 'readBoard'>>;
   promptDocGet?: (args: Readonly<{ artifactId: string; signal?: AbortSignal }>) => Promise<unknown>;
   promptDocCreate?: (args: Readonly<{ title: string; markdown: string; folderId?: string | null;

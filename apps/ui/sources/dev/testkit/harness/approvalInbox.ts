@@ -59,7 +59,7 @@ export async function createUiApprovalRequest(input: Readonly<{
 export async function decideApprovalAsInbox(
     serverId: string,
     artifactId: string,
-    decision: 'approve' | 'reject',
+    decision: 'approve' | 'reject' | 'cancel',
 ): Promise<ExecuteResult> {
     const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
     const executor = createDefaultActionExecutor({ resolveServerIdForSessionId: () => null });
@@ -71,4 +71,55 @@ export async function decideApprovalAsInbox(
         });
     });
     return result!;
+}
+
+/**
+ * An exact-daemon RPC boundary for an approved host-origin Machine Action.
+ * The real Protocol executor claims and settles the real Home Artifact; only
+ * the process IO remains in the test's existing daemon RPC boundary.
+ */
+export async function replayApprovedAsDaemon(input: Readonly<{
+    serverId: string;
+    machineId: string;
+    artifactId: string;
+    signal?: AbortSignal;
+}>): Promise<ExecuteResult> {
+    const [{ createActionExecutor }, { approvalArtifactBodyMatchesHeaderV1 },
+        { captureLazyActionAccountContext }, { createMachineConnectionActionDeps },
+        { writeApprovalRequestArtifact }, { isApprovalExecutionOriginCurrentForAccountContext }] = await Promise.all([
+        import('@happier-dev/protocol/actions/actionExecutor'),
+        import('@happier-dev/protocol/approvals/approvalArtifactHeaderV1'),
+        import('@/sync/ops/actions/actionAccountContext'),
+        import('@/sync/ops/actions/machineConnectionActionDeps'),
+        import('@/sync/ops/actions/approvalArtifactWriter'),
+        import('@/sync/ops/actions/defaultActionExecutor'),
+    ]);
+    const account = await captureLazyActionAccountContext(input.serverId, input.signal);
+    try {
+        const read = (artifactId: string) => account.fetchArtifact(artifactId);
+        const deps = {
+            ...createMachineConnectionActionDeps(),
+            approvalsGet: async ({ artifactId }) => {
+                const artifact = await read(artifactId);
+                if (!artifact?.header || typeof artifact.body !== 'string') return null;
+                const matched = approvalArtifactBodyMatchesHeaderV1(artifact.header, artifact.body);
+                return matched?.family === 'built_in' ? matched.request : null;
+            },
+            approvalsUpdate: async ({ artifactId, request }) => writeApprovalRequestArtifact({
+                artifactId, request, read,
+                write: (basis, header, body) => account.updateArtifact(artifactId, header, body, basis),
+            }),
+            isApprovalExecutionOriginCurrent: async ({ origin }) => {
+                account.assertCurrent();
+                return origin.caller.kind === 'host' && origin.machineId === input.machineId
+                    && isApprovalExecutionOriginCurrentForAccountContext({ origin,
+                        accountServerId: account.serverId, accountId: account.accountId });
+            },
+        } satisfies Partial<import('@happier-dev/protocol/actions/executor/types').ActionExecutorDeps>;
+        // This boundary exposes only Machine and approval effects; unrelated
+        // required executor ports cannot be reached by its admitted Action.
+        const executor = createActionExecutor(deps as import('@happier-dev/protocol/actions/executor/types').ActionExecutorDeps);
+        return await executor.replayApprovedApprovalRequest({ artifactId: input.artifactId, callerAuthority: 'present_user',
+            ...(input.signal ? { signal: input.signal } : {}) });
+    } finally { account.dispose(); }
 }

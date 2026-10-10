@@ -42,7 +42,7 @@ async function render(children?: React.ReactNode) {
     const { SessionRightPanelGitView } = await import('./SessionRightPanelGitView');
     storage.getState().updateSessionProjectScmSnapshot('s1', createSnapshot(), runtime.serverId);
     const screen = await renderScreen(<runtime.Wrapper>{children}<SessionRightPanelGitView sessionId="s1" serverId={runtime.serverId} scopeId="session:s1" /></runtime.Wrapper>);
-    await act(async () => storage.getState().applyMachines([createMachineFixture({ id: 'm1', storageMode: 'plain', active: false })], true, { sourceServerId: runtime.serverId }));
+    await act(async () => storage.getState().applyMachines([createMachineFixture({ id: 'm1', storageMode: 'plain', active: false, activeAt: Date.now() })], true, { sourceServerId: runtime.serverId }));
     return screen;
 }
 describe('SessionRightPanelGitView (inactive session resume)', () => {
@@ -71,7 +71,7 @@ describe('SessionRightPanelGitView (inactive session resume)', () => {
         const screen = await renderScreen(<runtime.Wrapper><SessionResumeProvider onResumeSession={resume}>
             <SessionRightPanelGitView sessionId="s1" serverId={runtime.serverId} scopeId="session:s1" />
         </SessionResumeProvider></runtime.Wrapper>);
-        await act(async () => storage.getState().applyMachines([createMachineFixture({ id: 'm1', storageMode: 'plain', active: false })], true, { sourceServerId: runtime.serverId }));
+        await act(async () => storage.getState().applyMachines([createMachineFixture({ id: 'm1', storageMode: 'plain', active: false, activeAt: Date.now() })], true, { sourceServerId: runtime.serverId }));
         await screen.pressByTestIdAsync('session-rightpanel-git-paused-action');
         expect(resume).toHaveBeenCalled();
     });

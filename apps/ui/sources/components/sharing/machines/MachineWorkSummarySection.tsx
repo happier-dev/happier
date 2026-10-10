@@ -10,7 +10,6 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { ManagedSectionCount } from '@/components/settings/machines/managed/ManagedSectionCount';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 
 /** What the owner-or-Manage reader returned: the content-free summary, or why there is none. */
@@ -21,7 +20,7 @@ export type MachineWorkSummaryState =
   | Readonly<{ kind: 'summary'; summary: MachineWorkSummaryV1; asOf?: number;
       stale?: 'loading' | 'offline' | 'unavailable' }>;
 
-/** Finite scripts, execution and workflow work share one neutral task count. */
+/** Finite scripts, execution and workflow work share one neutral active-work count. */
 export function describeMachineWorkCounts(
   requester: Readonly<{ sessions: number; tasks: number; terminals: number }>,
 ): string {
@@ -75,12 +74,10 @@ export const MachineWorkSummarySection = React.memo(
     const requesters = state === suppliedState ? visibleRequesters : null;
     return (
       <ItemGroup
-        title={t('machineWork.title')}
-        titleAccessory={
-          requesters && requesters.length > 0 ? (
-            <ManagedSectionCount count={requesters.length} />
-          ) : undefined
-        }
+        title={requesters && requesters.length > 0
+          ? t('machineWork.counts', { active: requesters.reduce(
+              (total, requester) => total + requester.sessions + requester.tasks + requester.terminals, 0,
+            ) }) : t('machineWork.title')}
         description={t('machineWork.description', { machine })}
       >
         {state.kind === 'summary' && state.summary.kind === 'current' && state.stale ? (

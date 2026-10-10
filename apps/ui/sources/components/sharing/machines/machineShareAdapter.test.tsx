@@ -12,6 +12,7 @@ import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccou
 import { AccountProfileSchema } from '@happier-dev/protocol';
 import { getStorage } from '@/sync/domains/state/storage';
 import { teamCapabilitiesFixture, teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
+import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -37,6 +38,130 @@ const initial: MachineAccessGrantsListResponseV1 = {
 };
 
 describe('Machine sharing through the canonical controller and sheet', () => {
+    it('retains dated census for transport loss, then clears it on denial and discards an older read', async () => {
+        let mode: 'ready' | 'transport' | 'unavailable' | 'pending' | 'denied' = 'ready';
+        let pending: { signal: AbortSignal | null | undefined; finish: (response: Response) => void } | undefined;
+        const home = await serveActionHomes({ homes: [{ key: 'machine', serverUrl: 'https://machine-census-denial.test', accountId: 'alice' }],
+            route: request => {
+                if (request.path !== '/v1/machines/machine/access') return undefined;
+                if (mode === 'transport') throw new TypeError('Network unavailable');
+                if (mode === 'unavailable') return Response.json({ kind: 'refused', code: 'machine_unavailable' });
+                if (mode === 'denied') return Response.json({ kind: 'refused', code: 'access_denied' });
+                if (mode === 'pending') return new Promise<Response>(finish => { pending = { signal: request.signal, finish }; });
+                return Response.json(initial);
+            } });
+        try {
+            const scope = { serverId: home.homes.machine!.id, accountId: 'alice' };
+            let current: ReturnType<typeof useMachineShareController> | undefined;
+            function Surface() {
+                const controller = useMachineShareController({ machineId: 'machine', machineName: 'Devbox', scope });
+                current = controller;
+                return <ShareSheet model={controller.model} actions={controller.actions}
+                    adapter={createMachineShareAdapter({ machineName: 'Devbox', online: true, controller })}
+                    presentation="full" testID="machine-share-editor" />;
+            }
+            const screen = await renderScreen(<Surface />);
+            await vi.waitFor(() => expect(screen.findByTestId('machine-share-grant-account:bob')).not.toBeNull());
+            mode = 'transport';
+            await act(async () => { publishHomeAccountChange(scope.serverId, ['machine']); });
+            await vi.waitFor(() => expect(current?.model.stale).toBe(true));
+            expect(screen.findByTestId('machine-share-grant-account:bob')).not.toBeNull();
+            expect(current?.model.editable).toBe(false);
+            // The Action result union also admits typed refusals in an HTTP-success response.
+            mode = 'unavailable';
+            await act(async () => { publishHomeAccountChange(scope.serverId, ['machine']); });
+            await vi.waitFor(() => expect(current?.issue?.code).toBe('machine_unavailable'));
+            expect(screen.findByTestId('machine-share-grant-account:bob')).not.toBeNull();
+            mode = 'pending';
+            await act(async () => { publishHomeAccountChange(scope.serverId, ['machine']); });
+            await vi.waitFor(() => expect(pending).toBeDefined());
+            mode = 'denied';
+            await act(async () => { publishHomeAccountChange(scope.serverId, ['machine']); });
+            await vi.waitFor(() => expect(screen.findByTestId('machine-share-grant-account:bob')).toBeNull());
+            expect(current?.model.owner).toBeNull();
+            expect(current?.response).toBeNull();
+            expect(current?.issue?.code).toBe('access_denied');
+            expect(pending?.signal?.aborted).toBe(true);
+            await act(async () => { pending?.finish(Response.json(initial)); });
+            expect(screen.findByTestId('machine-share-grant-account:bob')).toBeNull();
+            expect(current?.model.owner).toBeNull();
+        } finally { home.dispose(); }
+    });
+
+    it('retires the census and in-flight read on credential removal, and restores with a fresh same-Account read', async () => {
+        const localStorage = installLocalStorageMock();
+        const serverUrl = 'https://machine-census-credential.test';
+        let snapshot = initial;
+        let delay = false;
+        let pending: { signal: AbortSignal | null | undefined; finish: (response: Response) => void } | undefined;
+        const home = await serveActionHomes({ homes: [{ key: 'machine', serverUrl, accountId: 'alice' }],
+            route: request => request.path === '/v1/machines/machine/access'
+                ? delay ? new Promise<Response>(finish => { pending = { signal: request.signal, finish }; }) : Response.json(snapshot)
+                : undefined });
+        try {
+            const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+            const scope = { serverId: home.homes.machine!.id, accountId: 'alice' };
+            const credentials = { token: 'header.eyJzdWIiOiJhbGljZSJ9.signature' };
+            expect(await TokenStorage.setCredentialsForServerUrl(serverUrl, scope, credentials)).toBe(true);
+            let current: ReturnType<typeof useMachineShareController> | undefined;
+            function Surface() {
+                const controller = useMachineShareController({ machineId: 'machine', machineName: 'Devbox', scope });
+                current = controller;
+                return <ShareSheet model={controller.model} actions={controller.actions}
+                    adapter={createMachineShareAdapter({ machineName: 'Devbox', online: true, controller })}
+                    presentation="full" testID="machine-share-editor" />;
+            }
+            const screen = await renderScreen(<Surface />);
+            await vi.waitFor(() => expect(screen.findByTestId('machine-share-grant-account:bob')).not.toBeNull());
+            delay = true;
+            await act(async () => { publishHomeAccountChange(scope.serverId, ['machine']); });
+            await vi.waitFor(() => expect(pending).toBeDefined());
+            await act(async () => { expect(await TokenStorage.removeCredentialsForServerUrl(serverUrl, scope)).toBe(true); });
+            expect(screen.findByTestId('machine-share-grant-account:bob')).toBeNull();
+            expect(current?.model.owner).toBeNull();
+            expect(current?.response).toBeNull();
+            expect(pending?.signal?.aborted).toBe(true);
+            delay = false;
+            snapshot = { ...initial, grants: [{ ...initial.grants[0]!, principal: { kind: 'account', accountId: 'cara' },
+                display: { name: 'Cara' }, audience: [{ accountId: 'cara', displayName: 'Cara', readiness: 'ready', reason: null, canPrepareKeys: false }],
+                removal: { losesAccessAccountIds: ['cara'] } }] };
+            await act(async () => { expect(await TokenStorage.setCredentialsForServerUrl(serverUrl, scope, credentials)).toBe(true); });
+            await vi.waitFor(() => expect(screen.findByTestId('machine-share-grant-account:cara')).not.toBeNull());
+            await act(async () => { pending?.finish(Response.json(initial)); });
+            expect(screen.findByTestId('machine-share-grant-account:bob')).toBeNull();
+            expect(screen.findByTestId('machine-share-grant-account:cara')).not.toBeNull();
+        } finally { home.dispose(); localStorage.restore(); }
+    });
+
+    it('names only the Team members whose work loses effective access when another grant overlaps', async () => {
+        const team = { kind: 'team' as const, teamId: 'team' };
+        const snapshot: MachineAccessGrantsListResponseV1 = { ...initial, grants: [{ ...initial.grants[0]!, principal: team,
+            display: { name: 'Teammates' }, audience: [
+                { accountId: 'bob', displayName: 'Bob', readiness: 'ready', reason: null, canPrepareKeys: false },
+                { accountId: 'cara', displayName: 'Cara', readiness: 'ready', reason: null, canPrepareKeys: false },
+            ], removal: { losesAccessAccountIds: ['bob'] } }] };
+        const home = await serveActionHomes({ homes: [{ key: 'machine', serverUrl: 'https://machine-removal-actors.test', accountId: 'alice' }],
+            route: request => request.path === '/v1/machines/machine/access' ? Response.json(snapshot) : undefined });
+        try {
+            const scope = { serverId: home.homes.machine!.id, accountId: 'alice' };
+            function Surface() {
+                const controller = useMachineShareController({ machineId: 'machine', machineName: 'Devbox', scope });
+                return <ShareSheet model={controller.model} actions={controller.actions}
+                    adapter={createMachineShareAdapter({ machineName: 'Devbox', online: true, controller })}
+                    presentation="full" testID="machine-share-editor" />;
+            }
+            const screen = await renderScreen(<Surface />);
+            await vi.waitFor(() => expect(screen.findByTestId('machine-share-grant-team:team')).not.toBeNull());
+            await screen.pressByTestIdAsync('machine-share-grant-team:team');
+            await screen.pressByTestIdAsync('machine-share-remove:team:team');
+            const consequences = screen.findAll(node => node.props.testID === 'machine-share-remove-consequence:team:team')
+                .map(node => node.props.children).join(' ');
+            expect(consequences).toContain('Bob');
+            expect(consequences).not.toContain('Cara');
+            expect(consequences).toContain(t('machines.sharing.effectiveLoss'));
+        } finally { home.dispose(); }
+    });
+
     it('keeps mixed Team levels editable and explains incompatible members without offering futile key preparation', async () => {
         const team = { kind: 'team' as const, teamId: 'team' };
         const audience = [
@@ -215,7 +340,7 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             expect(screen.findByTestId('machine-share-search')?.props.value).toBe('Bob');
             expect(writes).toEqual([{ principal: bob, level: 'admin' }, { principal: bob, level: 'admin' }]);
             await screen.pressByTestIdAsync('machine-share-remove:account:bob');
-            expect(screen.findByTestId('machine-share-remove-consequence:account:bob')?.props.children).toBe(t('machines.sharing.effectiveLoss'));
+            expect(screen.findByTestId('machine-share-remove-consequence:account:bob')?.props.children).toBe(`Bob: ${t('machines.sharing.effectiveLoss')}`);
             expect(screen.findByTestId('machine-share-trusted-os')).not.toBeNull();
             await screen.pressByTestIdAsync('machine-share-remove-cancel:account:bob');
             expect(screen.findByTestId('machine-share-remove-confirm:account:bob')).toBeNull();

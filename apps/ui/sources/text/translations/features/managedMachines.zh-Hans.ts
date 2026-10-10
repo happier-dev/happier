@@ -375,7 +375,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             setupHelp: "在工具之后运行一次。只有镜像允许时 sudo 才可用。",
             setupLines: ({ count }: { count: number }) => (count === 1 ? `1 行` : `${count} 行`),
             secrets: "设置用的密钥",
-            secretsHelp: "设置脚本可作为环境变量读取的已保存密钥。会话永远看不到它们。",
+            secretsHelp: "已保存的密钥以环境变量的形式提供给设置进程。脚本可以读取或保存它们。",
             addSecret: "添加密钥…",
             secretName: "变量名",
             secretNameHelp: "设置脚本读取它时使用的名称。",
@@ -384,7 +384,7 @@ export const managedMachines: ManagedMachinesTranslations = {
             removeSecret: ({ name }: { name: string }) => `移除 ${name}`,
             apply: "从预设进行设置…",
             applyTitle: "从预设进行设置",
-            applyDescription: ({ machine }: { machine: string }) => `以 ${machine} 的 Happier 用户身份运行预设的工具和设置脚本。${machine} 上的其他内容不会改变。`,
+            applyDescription: ({ machine }: { machine: string }) => `以 ${machine} 的 Happier 用户身份在系统范围内运行预设的工具和设置脚本。它可以更改该用户有权访问的工具、文件和服务。`,
             applyEmpty: "还没有任何预设会进行设置。请在“机器”中为预设添加环境。",
             applyFailed: ({ machine }: { machine: string }) => `无法在 ${machine} 上开始设置。`,
             toolchainPlaceholder: "[tools]\nnode = \"22\"",
@@ -397,6 +397,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         },
     },
     managedPower: {
+        asleep: "休眠",
         unsupported: ({ provider, effect }: { provider: string; effect: string }) => `${provider} 不支持对此资源执行${effect}。`,
         stopPending: "已请求停止。停止尚未确认。",
         stoppedStorage: "已停止 · 存储已保留",
@@ -430,6 +431,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         pending: "移动管理后，提供方的操作可能仍会完成。费用可能会继续产生。",
     },
     managedCleanup: {
+        archiveTitle: "归档",
         consoleHelp: "请直接在提供方的控制台中检查此资源。",
         reviewTitle: "查看托管资源",
         removalReview: "移除此连接或数据不会删除这些资源。提供方可能会继续收费。",
@@ -461,6 +463,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         terminalNotice: ({ owner, machine }: { owner: string; machine: string }) => `命令以 ${owner} 在 ${machine} 上的机器用户身份运行。`,
     },
     machineWork: {
+        counts: ({ active }: { active: number }) => `其他人正在使用 · ${active} 项活跃工作`,
         title: "他人正在使用",
         description: ({ machine }: { machine: string }) => `当前在 ${machine} 上工作的人。他们的会话仍归他们所有；Happier 只显示是谁以及用量多少。`,
         empty: ({ machine }: { machine: string }) => `目前没有队友在 ${machine} 上工作。`,
@@ -471,7 +474,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         refreshFailed: ({ machine }: { machine: string }) => `无法刷新 ${machine} 上的工作。`,
         sessions: ({ count }: { count: number }) => (count === 1 ? `1 个会话` : `${count} 个会话`),
         scripts: ({ count }: { count: number }) => (count === 1 ? `1 个脚本` : `${count} 个脚本`),
-        tasks: ({ count }: { count: number }) => `${count} 个任务`,
+        tasks: ({ count }: { count: number }) => `${count} 项活跃工作`,
         terminals: ({ count }: { count: number }) => (count === 1 ? `1 个终端` : `${count} 个终端`),
     },
 };

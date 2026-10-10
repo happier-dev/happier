@@ -1,5 +1,9 @@
 import { resolveInputOptions, normalizeResolvedOptions, tryNormalizeExecutionBackendOptionValue, readReviewNarratorOptions, buildAgentInventorySelectionArgs } from '../inputs/inputOptions.js';
+import { MemoryWindowRequestV1Schema } from '../memory/memoryWindow.js';
+import { BackendTargetKeyV2InputSchema } from '../backends/targets/backendTargetRefV2.js';
 import { PromptDocRevisionV1Schema } from '../prompts/library/promptDocV2.js';
+import { updatePromptLibraryStackV1 } from '../prompts/library/promptLibraryCatalogV1.js';
+import { PromptLibraryStackUpdateInputV1Schema } from '../prompts/library/promptStacksV1.js';
 import { ProjectContextUpdateInputV1Schema } from '../projects/projectContextV1.js';
 import { SessionPendingWithdrawInputV1Schema } from '../sessions/control/pendingWithdrawV1.js';
 import { SetSessionPinRequestSchema, SetSessionPinResponseSchema } from '../sessions/organization/mutations.js';
@@ -24,6 +28,8 @@ import type { PublicActionInputById } from './actionSpecs.js';
 import { WaitActionInputV1Schema } from './specs/wait.js';
 import { ActionOperationActionIdV1Schema, ActionOperationActionInputSchemasV1 } from './specs/actionOperations.js';
 import { readActionFailureEnvelope, readFailureEnvelopeDetails } from './executor/actionFailureEnvelope.js';
+import { readUsageNoticeArtifactV1, USAGE_NOTICE_ARTIFACT_KIND_V1 } from '../activity/usageNoticeArtifactV1.js';
+import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { readLocalServiceControlActionRequest } from './specs/localServices.js';
 import { resolveActionOriginationPreferenceFailureV1 } from './executor/actionOriginationPreferences.js';
 import { UsageSourceActionIdSchema, USAGE_SOURCE_ACTION_INPUT_SCHEMAS } from '../usage/usageSources.js';
@@ -35,6 +41,7 @@ import { PrivateSecretContinuationV1Schema, type PrivateSecretContinuationV1 } f
 import { SecretFillSettlementV1Schema } from '../computer/v1.js';
 import { executeWaitActionV1 } from './executor/waitAction.js';
 import { executeUsageAction } from './executor/usageActions.js';
+import { executeUsageCoachAction } from './executor/usageCoachActions.js';
 import { isWorkspaceActionId } from './workspaceActionFamily.js';
 import { isFilesystemActionId } from './filesystemActionFamily.js';
 import { isProjectActionIdV1 } from './projectActionIdsV1.js';
@@ -96,9 +103,11 @@ import {
 } from '../daemon/agentInstallJobs.js';
 import {
   AgentsAcpBackendsDeleteInputV1Schema,
+  AgentsAcpBackendsDeleteOutputV1Schema,
   AgentsAcpBackendsGetInputV1Schema,
   AgentsAcpBackendsGetOutputV1Schema,
   AgentsAcpBackendsUpsertInputV1Schema,
+  AgentsAcpBackendsUpsertOutputV1Schema,
   applyAcpBackendDeleteV1,
   applyAcpBackendUpsertV1,
 } from '../acp/catalog/catalogMutationsV1.js';
@@ -154,6 +163,7 @@ import {
 import type { ActionDefinitionSummaryV1 } from './actionDefinitionV1.js';
 import {
   ActionSurfaceSchema,
+  AgentInventoryProbeInputSchema,
   DetachedExecutionRunSendInputSchema,
   ExecutionRunPermissionRespondInputSchema,
   SessionListActionInputV1Schema,
@@ -200,6 +210,8 @@ import { WorkflowActionFailureV1Schema } from '../workflows/workflowProgressV1.j
 import type { ActionUiPlacement } from './actionUiPlacements.js';
 import type { MemorySearchQueryV1, MemorySearchResultV1 } from '../memory/memorySearch.js';
 import type { MemoryWindowV1 } from '../memory/memoryWindow.js';
+import { MemorySettingsV1Schema } from '../memory/memorySettings.js';
+import { SearchConversationsInputV1Schema } from './actionSpecs.js';
 import { resolveSubagentLaunchStructuredSend } from '../messages/structured/subagentLaunchV1.js';
 import { ParticipantRecipientRoutingIdentityV1Schema } from '../messages/structured/participantMessageV1.js';
 import {
@@ -1684,7 +1696,9 @@ function doesTeamCredentialSelectionTargetBackend(
   selection: TeamCredentialProviderModelSelectionV1,
   backendTargetValue: string,
 ): boolean {
-  return tryNormalizeExecutionBackendOptionValue(backendTargetValue) === selection.agentTargetKey;
+  const target = BackendTargetKeyV2InputSchema.safeParse(tryNormalizeExecutionBackendOptionValue(backendTargetValue));
+  const selectedTarget = BackendTargetKeyV2InputSchema.safeParse(selection.agentTargetKey);
+  return target.success && selectedTarget.success && target.data === selectedTarget.data;
 }
 
 function resolveFanoutTeamCredentialModel(
@@ -2160,6 +2174,13 @@ function redactMemoryActionInput(actionId: string, input: unknown): unknown {
     ? { ...request, text: redactBugReportSensitiveText(request.text) } : input;
 }
 
+function isActionFamilyId<Id extends string>(
+  actionId: string,
+  schema: Readonly<{ options: readonly Id[] }>,
+): actionId is Id {
+  return schema.options.some((id) => id === actionId);
+}
+
 export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
   prepare: (actionId: ActionId, input: unknown, context?: ActionExecutorContext) => Promise<ActionPrepareResult>;
   execute: (actionId: ActionId, input: unknown, context?: ActionExecutorContext) => Promise<ActionExecuteResult>;
@@ -2275,10 +2296,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       && typeof action.pluginId === 'string' && typeof action.localId === 'string'
       ? formatQualifiedPluginActionId({ pluginId: action.pluginId, localId: action.localId })
       : parseQualifiedPluginActionId(actionId) !== null ? actionId : undefined;
-    const widgetSurface = (actionId === 'widgets.snapshot.post' || WidgetInstanceActionIdV1Schema.safeParse(actionId).success) ? readWidgetActionSurfaceV1(input) : null;
+    const widgetSurface = (actionId === 'widgets.snapshot.post' || isActionFamilyId(actionId, WidgetInstanceActionIdV1Schema)) ? readWidgetActionSurfaceV1(input) : null;
     const widgetSessionId = widgetSurface?.owner.kind === 'sessionBoard' || widgetSurface?.owner.kind === 'companion' ? widgetSurface.owner.sessionId : null;
-    const definitionAction = WidgetDefinitionActionIdV1Schema.safeParse(actionId).success
-      || WidgetLayoutFragmentActionIdV1Schema.safeParse(actionId).success;
+    const definitionAction = isActionFamilyId(actionId, WidgetDefinitionActionIdV1Schema)
+      || isActionFamilyId(actionId, WidgetLayoutFragmentActionIdV1Schema);
     const definitionSession = definitionAction ? readWidgetDefinitionActionSessionV1(input) : null;
     const sessionId = definitionSession?.sessionId ?? widgetSessionId ?? (input === undefined ? null : normalizeId(readRecord(input).sessionId));
     const target = sessionId ? { kind: 'session' as const, sessionId } : widgetSurface || definitionAction ? null : ctx.externalActionTarget
@@ -3158,7 +3179,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           ...(!ctx.signal?.aborted && error && typeof error === 'object' && 'details' in error ? { details: error.details } : {}) };
       }
     }
-    if (ActionOperationActionIdV1Schema.safeParse(actionId).success && ctx.serverId
+    if (isActionFamilyId(actionId, ActionOperationActionIdV1Schema) && ctx.serverId
       && ctx.serverId !== readNonEmptyString(readRecord(admittedInput).serverId)) {
       return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
     }
@@ -3166,7 +3187,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     if (credentialFailure) return credentialFailure;
     const workspaceFailure = workspaceWriteFailure(spec, admittedInput, ctx);
     if (workspaceFailure) return workspaceFailure;
-    if (WidgetDefinitionActionIdV1Schema.safeParse(actionId).success || WidgetLayoutFragmentActionIdV1Schema.safeParse(actionId).success) {
+    if (isActionFamilyId(actionId, WidgetDefinitionActionIdV1Schema) || isActionFamilyId(actionId, WidgetLayoutFragmentActionIdV1Schema)) {
       const account = readWidgetDefinitionActionAccountV1(admittedInput) ?? readWidgetLayoutFragmentActionAccountV1(admittedInput);
       if (!account) return { ok: false, errorCode: 'widget_scope_unavailable', error: 'widget_scope_unavailable' };
       const accountFailure = await admitWidgetActionSurfaceV1(deps, { ...account, owner: { kind: 'home' } }, ctx);
@@ -3180,9 +3201,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       }
     }
     const nativeBoardIntent = actionId === 'boards.apply' ? WorkBoardActionInputSchemasV1['boards.apply'].parse(admittedInput).intent : null;
-    const nativeBoardWidgetTarget = nativeBoardIntent?.kind.startsWith('widget_') && 'ref' in nativeBoardIntent
+    const storedNativeBoardWidgetTarget = nativeBoardIntent?.kind.startsWith('widget_') && 'ref' in nativeBoardIntent
       && 'surface' in nativeBoardIntent.ref ? nativeBoardIntent.ref.surface : null;
-    const widgetTarget = (actionId === 'widgets.snapshot.post' || WidgetInstanceActionIdV1Schema.safeParse(actionId).success)
+    // Native edits address stored Board keys; admission still belongs to the caller's captured Home.
+    // New adds and generic widget Actions must provide their current routing target themselves.
+    const nativeBoardWidgetTarget = storedNativeBoardWidgetTarget && nativeBoardIntent?.kind !== 'widget_add'
+      ? { ...storedNativeBoardWidgetTarget, serverId: ctx.serverIdentityId ?? ctx.serverId ?? storedNativeBoardWidgetTarget.serverId }
+      : storedNativeBoardWidgetTarget;
+    const widgetTarget = (actionId === 'widgets.snapshot.post' || isActionFamilyId(actionId, WidgetInstanceActionIdV1Schema))
       ? readWidgetActionSurfaceV1(admittedInput) : nativeBoardWidgetTarget;
     if (actionId === 'widgets.snapshot.post' && widgetTarget) {
       const snapshotScopeFailure = await admitWidgetActionSurfaceV1(deps, widgetTarget, ctx);
@@ -3768,7 +3794,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         return await deps.clientActionExecute({ actionId, input: admittedInput, context: ctx });
       }
       if (executionPlacement === 'client' && actionId !== 'widgets.item.refresh'
-        && WidgetInstanceActionIdV1Schema.safeParse(actionId).success
+        && isActionFamilyId(actionId, WidgetInstanceActionIdV1Schema)
         && !deps.widgetSurfaceActions?.companion) return clientActionUnavailable(actionId);
 
       if (actionId === 'session.authoring.open') {
@@ -3792,6 +3818,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       // Switch by actionId; keep substrate generic.
       if (actionId === 'usage.query' || actionId === 'usage.export' || actionId === 'usage.recap.compose') {
         return executeUsageAction(actionId, admittedInput, deps.usageActions, ctx);
+      }
+      if (actionId === 'usage.coach.apply' || actionId === 'usage.coach.undo'
+        || actionId === 'usage.coach.dismiss' || actionId === 'usage.coach.snooze') {
+        return executeUsageCoachAction(actionId, admittedInput, (childId, childInput) => executeHostChild(childId, childInput, ctx));
       }
       if (MEMORY_DOCUMENT_ACTION_IDS_V1.some(id => id === actionId)) {
         if (!deps.memoryLibrary) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
@@ -3990,8 +4020,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         return readActionFailureEnvelope(result) ?? { ok: true, result };
       }
 
-      const reviewCommentActionId = ReviewCommentActionIdV1Schema.safeParse(actionId);
-      if (reviewCommentActionId.success) {
+      const reviewCommentActionId = isActionFamilyId(actionId, ReviewCommentActionIdV1Schema) ? actionId : null;
+      if (reviewCommentActionId !== null) {
         if (!deps.reviewCommentAction) {
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
@@ -4010,7 +4040,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (actor?.kind !== 'agent' || (ctx.defaultSessionId && ctx.defaultSessionId !== actor.sessionId)) {
             return { ok: false, errorCode: 'review_comment_permission_denied', error: 'review_comment_permission_denied' };
           }
-          if (reviewCommentActionId.data === 'reviews.comments.list') {
+          if (reviewCommentActionId === 'reviews.comments.list') {
             reviewCommentInput = {
               ...data,
               sessionId: data.sessionId ?? actor.sessionId,
@@ -4042,7 +4072,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           ...(reviewCommentPrincipal ? { reviewCommentPrincipal } : {}),
           ...(ctx.signal ? { signal: ctx.signal } : {}),
         };
-        if (reviewCommentActionId.data === 'reviews.comments.list') {
+        if (reviewCommentActionId === 'reviews.comments.list') {
           const { allPages, ...request } = ReviewCommentListActionRequestV1Schema.parse(reviewCommentInput);
           reviewCommentInput = request;
           if (allPages) {
@@ -4065,7 +4095,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           }
         }
         const result = await deps.reviewCommentAction({
-          actionId: reviewCommentActionId.data,
+          actionId: reviewCommentActionId,
           input: reviewCommentInput,
           ...requestContext,
         });
@@ -4073,8 +4103,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         return failure ?? { ok: true, result };
       }
 
-      const permissionGrantActionId = PluginPermissionGrantActionIdV1Schema.safeParse(actionId);
-      if (permissionGrantActionId.success) {
+      const permissionGrantActionId = isActionFamilyId(actionId, PluginPermissionGrantActionIdV1Schema) ? actionId : null;
+      if (permissionGrantActionId !== null) {
         if (!deps.pluginPermissionGrantAction) {
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
@@ -4083,41 +4113,41 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           caller,
           ...(ctx.signal ? { signal: ctx.signal } : {}),
         };
-        const result = permissionGrantActionId.data === 'plugins.permissions.grants.list'
+        const result = permissionGrantActionId === 'plugins.permissions.grants.list'
           ? await deps.pluginPermissionGrantAction({
-              actionId: permissionGrantActionId.data,
-              input: PluginPermissionGrantActionInputSchemasV1[permissionGrantActionId.data].parse(parsed.data),
+              actionId: permissionGrantActionId,
+              input: PluginPermissionGrantActionInputSchemasV1[permissionGrantActionId].parse(parsed.data),
               ...common,
             })
-          : permissionGrantActionId.data === 'plugins.permissions.grants.request'
+          : permissionGrantActionId === 'plugins.permissions.grants.request'
             ? await deps.pluginPermissionGrantAction({
-                actionId: permissionGrantActionId.data,
-                input: PluginPermissionGrantActionInputSchemasV1[permissionGrantActionId.data].parse(parsed.data),
+                actionId: permissionGrantActionId,
+                input: PluginPermissionGrantActionInputSchemasV1[permissionGrantActionId].parse(parsed.data),
                 ...common,
               })
-            : permissionGrantActionId.data === 'plugins.permissions.grants.grant'
+            : permissionGrantActionId === 'plugins.permissions.grants.grant'
               ? await deps.pluginPermissionGrantAction({
-                  actionId: permissionGrantActionId.data,
-                  input: PluginPermissionGrantActionInputSchemasV1[permissionGrantActionId.data].parse(parsed.data),
+                  actionId: permissionGrantActionId,
+                  input: PluginPermissionGrantActionInputSchemasV1[permissionGrantActionId].parse(parsed.data),
                   ...common,
                 })
-              : permissionGrantActionId.data === 'plugins.permissions.grants.revoke'
+              : permissionGrantActionId === 'plugins.permissions.grants.revoke'
                 ? await deps.pluginPermissionGrantAction({
-                    actionId: permissionGrantActionId.data,
-                    input: PluginPermissionGrantActionInputSchemasV1[permissionGrantActionId.data].parse(parsed.data),
+                    actionId: permissionGrantActionId,
+                    input: PluginPermissionGrantActionInputSchemasV1[permissionGrantActionId].parse(parsed.data),
                     ...common,
                   })
                 : await deps.pluginPermissionGrantAction({
-                    actionId: permissionGrantActionId.data,
-                    input: PluginPermissionGrantActionInputSchemasV1[permissionGrantActionId.data].parse(parsed.data),
+                    actionId: permissionGrantActionId,
+                    input: PluginPermissionGrantActionInputSchemasV1[permissionGrantActionId].parse(parsed.data),
                     ...common,
                   });
         const failure = readActionFailureEnvelope(result);
         return failure ?? { ok: true, result };
       }
 
-      const automationEventActionId = AutomationEventActionIdV1Schema.safeParse(actionId);
-      if (automationEventActionId.success) {
+      const automationEventActionId = isActionFamilyId(actionId, AutomationEventActionIdV1Schema) ? actionId : null;
+      if (automationEventActionId !== null) {
         if (!deps.automationEventAction) {
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
@@ -4129,8 +4159,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           };
         }
         const result = await deps.automationEventAction({
-          actionId: automationEventActionId.data,
-          input: AutomationEventActionInputSchemasV1[automationEventActionId.data].parse(parsed.data),
+          actionId: automationEventActionId,
+          input: AutomationEventActionInputSchemasV1[automationEventActionId].parse(parsed.data),
           caller: ctx.actionCaller,
           ...(ctx.signal ? { signal: ctx.signal } : {}),
         });
@@ -4142,14 +4172,15 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (!deps.workBoardArtifacts) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         if (actionId === 'boards.apply') {
           const { intent } = WorkBoardActionInputSchemasV1['boards.apply'].parse(parsed.data);
-          if (intent.kind.startsWith('widget_') && 'ref' in intent && 'surface' in intent.ref) {
-            const refusal = await admitWidgetActionSurfaceV1(deps, intent.ref.surface, ctx);
+          if (intent.kind.startsWith('widget_') && 'ref' in intent && 'surface' in intent.ref && nativeBoardWidgetTarget) {
+            const routedRef = { ...intent.ref, surface: nativeBoardWidgetTarget };
+            const refusal = await admitWidgetActionSurfaceV1(deps, routedRef.surface, ctx);
             if (refusal) return refusal;
             if (intent.kind === 'widget_add' || intent.kind === 'widget_inputs' || intent.kind === 'widget_size') {
               let instance = intent.kind === 'widget_add' ? intent.instance : undefined;
               if (intent.kind === 'widget_inputs' || intent.kind === 'widget_size') {
-                const port = readWidgetActionSurfacePortV1(deps, intent.ref.surface);
-                const read = port ? await port.read(intent.ref.surface, ctx, ctx.signal) : null;
+                const port = readWidgetActionSurfacePortV1(deps, routedRef.surface);
+                const read = port ? await port.read(routedRef.surface, ctx, ctx.signal) : null;
                 const failed = readActionFailureEnvelope(read);
                 if (failed) return failed;
                 const state = WidgetSurfaceReadV1Schema.safeParse(read);
@@ -4160,11 +4191,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                   bindings: setWidgetInputBindingsV1(existing.bindings, intent.bindings, intent.paths) } : existing;
               }
               if (intent.kind === 'widget_add' || intent.kind === 'widget_inputs') {
-                const admission = await admitWidgetInstanceConfigurationV1(deps, intent.ref, instance!, ctx);
+                const admission = await admitWidgetInstanceConfigurationV1(deps, routedRef, instance!, ctx);
                 if (admission) return admission;
               }
               if (intent.kind === 'widget_add' || intent.kind === 'widget_size') {
-                const admission = await admitWidgetInstanceSizeV1(deps, intent.ref, instance!, intent.size, ctx);
+                const admission = await admitWidgetInstanceSizeV1(deps, routedRef, instance!, intent.size, ctx);
                 if ('ok' in admission) return admission;
                 return await executeWorkBoardActionV1(deps.workBoardArtifacts, actionId,
                   { intent: { ...intent, ...(admission.size ? { size: admission.size } : {}) } }, ctx.signal, ctx);
@@ -4175,12 +4206,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         return await executeWorkBoardActionV1(deps.workBoardArtifacts, actionId, parsed.data, ctx.signal, ctx);
       }
 
-      const widgetActionId = WidgetInstanceActionIdV1Schema.safeParse(actionId);
-      if (widgetActionId.success) return await executeWidgetInstanceActionV1(deps, widgetActionId.data, admittedInput, ctx);
-      const widgetDefinitionActionId = WidgetDefinitionActionIdV1Schema.safeParse(actionId);
-      if (widgetDefinitionActionId.success) return await executeWidgetDefinitionActionV1(deps, widgetDefinitionActionId.data, parsed.data, ctx);
-      const widgetFragmentActionId = WidgetLayoutFragmentActionIdV1Schema.safeParse(actionId);
-      if (widgetFragmentActionId.success) return await executeWidgetLayoutFragmentActionV1(deps, widgetFragmentActionId.data, admittedInput, ctx);
+      const widgetActionId = isActionFamilyId(actionId, WidgetInstanceActionIdV1Schema) ? actionId : null;
+      if (widgetActionId !== null) return await executeWidgetInstanceActionV1(deps, widgetActionId, admittedInput, ctx);
+      const widgetDefinitionActionId = isActionFamilyId(actionId, WidgetDefinitionActionIdV1Schema) ? actionId : null;
+      if (widgetDefinitionActionId !== null) return await executeWidgetDefinitionActionV1(deps, widgetDefinitionActionId, parsed.data, ctx);
+      const widgetFragmentActionId = isActionFamilyId(actionId, WidgetLayoutFragmentActionIdV1Schema) ? actionId : null;
+      if (widgetFragmentActionId !== null) return await executeWidgetLayoutFragmentActionV1(deps, widgetFragmentActionId, admittedInput, ctx);
       if (actionId === 'widgets.snapshot.post') return await executeWidgetSnapshotPostV1(deps, parsed.data, ctx);
 
       if (isProfileActionIdV1(actionId)) {
@@ -4234,27 +4265,42 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         return failure ?? { ok: true, result };
       }
 
-      const artifactAccessActionId = ArtifactAccessActionIdV1Schema.safeParse(actionId);
-      if (artifactAccessActionId.success) {
+      const artifactAccessActionId = isActionFamilyId(actionId, ArtifactAccessActionIdV1Schema) ? actionId : null;
+      if (artifactAccessActionId !== null) {
         if (!deps.artifactAccessAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
-        const result = await deps.artifactAccessAction({ actionId: artifactAccessActionId.data,
-          input: ArtifactAccessActionInputSchemasV1[artifactAccessActionId.data].parse(parsed.data), context: ctx,
+        const result = await deps.artifactAccessAction({ actionId: artifactAccessActionId,
+          input: ArtifactAccessActionInputSchemasV1[artifactAccessActionId].parse(parsed.data), context: ctx,
           ...(ctx.signal ? { signal: ctx.signal } : {}) });
-        return readActionFailureEnvelope(result) ?? { ok: true, result: ArtifactAccessActionOutputSchemasV1[artifactAccessActionId.data].parse(result) };
+        return readActionFailureEnvelope(result) ?? { ok: true, result: ArtifactAccessActionOutputSchemasV1[artifactAccessActionId].parse(result) };
       }
 
-      const artifactActionId = ArtifactActionIdV1Schema.safeParse(actionId);
-      if (artifactActionId.success) {
+      const artifactActionId = isActionFamilyId(actionId, ArtifactActionIdV1Schema) ? actionId : null;
+      if (artifactActionId !== null) {
         if (!deps.artifactAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
-        const artifactInput = ArtifactActionInputSchemasV1[artifactActionId.data].parse(parsed.data);
+        const artifactInput = ArtifactActionInputSchemasV1[artifactActionId].parse(parsed.data);
         const internalKindRefusal = { ok: false as const, errorCode: 'artifact_kind_internal', error: 'artifact_kind_internal' };
+        // The incumbent Inbox may read and dismiss its captured Account's private
+        // notices. This does not admit ordinary private-document authoring or egress.
+        const isUsageNoticeInboxCaller = ctx.surface === 'ui' && ctx.authority === 'present_user'
+          && (ctx.actionCaller === undefined || ctx.actionCaller.kind === 'host')
+          && Boolean(ctx.expectedAccountId) && ctx.externalActionCredential === undefined
+          && ctx.externalActionExecutionAuthorization === undefined && ctx.rpcSessionAuthorization === undefined;
+        const readOwnedUsageNotice = (artifact: Readonly<{ ownerAccountId: string; access: string;
+          publicAudience?: string; header: unknown; body: unknown }>) => {
+          if (!isUsageNoticeInboxCaller || artifact.ownerAccountId !== ctx.expectedAccountId
+            || artifact.access !== 'owner' || artifact.publicAudience !== 'none') return null;
+          return readUsageNoticeArtifactV1(artifact);
+        };
+        const isUsageNoticeDismissInput = artifactActionId === 'artifact.update'
+          && isUsageNoticeInboxCaller && 'header' in artifactInput
+          && artifactInput.header.kind === USAGE_NOTICE_ARTIFACT_KIND_V1 && 'body' in artifactInput;
         // Generic documents consume the same kind exclusion as the browser. Specialized
         // owners keep their native transport; retagging cannot bypass their write policy.
-        if ('header' in artifactInput && !getArtifactKindPolicyV1(artifactInput.header.kind).browserListed
-          || artifactActionId.data === 'artifact.publish_from_file' && 'kind' in artifactInput
+        if ('header' in artifactInput && !getArtifactKindPolicyV1(artifactInput.header.kind).browserListed && !isUsageNoticeDismissInput
+          || artifactActionId === 'artifact.publish_from_file' && 'kind' in artifactInput
             && !getArtifactKindPolicyV1(artifactInput.kind).browserListed) return internalKindRefusal;
-        if ((artifactActionId.data === 'artifact.update' || artifactActionId.data === 'artifact.delete'
-          || artifactActionId.data === 'artifact.revisions.list' || artifactActionId.data === 'artifact.revisions.restore')
+        if ((artifactActionId === 'artifact.update' || artifactActionId === 'artifact.delete'
+          || artifactActionId === 'artifact.revisions.list' || artifactActionId === 'artifact.revisions.restore')
           && 'artifactId' in artifactInput) {
           // The keyholding host opens the actual current document and admits its access.
           // The existing expected-revision writer still decides stale/current mutations.
@@ -4266,28 +4312,36 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (!admitted.success || admitted.data.artifact && admitted.data.artifact.artifactId !== artifactInput.artifactId)
             return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
           if (!admitted.data.artifact) return { ok: false, errorCode: 'not_found', error: 'not_found' };
-          if (!getArtifactKindPolicyV1(admitted.data.artifact.header.kind).browserListed) return internalKindRefusal;
+          if (!getArtifactKindPolicyV1(admitted.data.artifact.header.kind).browserListed || isUsageNoticeDismissInput) {
+            const current = admitted.data.artifact;
+            const notice = readOwnedUsageNotice(current);
+            if (!isUsageNoticeDismissInput || !notice || notice.status !== 'open'
+              || !('body' in artifactInput) || artifactInput.body !== current.body
+              || !('header' in artifactInput)
+              || !sameStrictJsonValue(artifactInput.header, { ...current.header, status: 'dismissed' })) return internalKindRefusal;
+          }
           ctx.signal?.throwIfAborted();
         }
-        const result = await deps.artifactAction({ actionId: artifactActionId.data,
+        const result = await deps.artifactAction({ actionId: artifactActionId,
           input: artifactInput, context: ctx,
           ...(ctx.signal ? { signal: ctx.signal } : {}) });
         const refusal = readActionFailureEnvelope(result);
         if (refusal) return refusal;
-        if (artifactActionId.data === 'artifact.get') {
+        if (artifactActionId === 'artifact.get') {
           const opened = ArtifactActionOutputSchemasV1['artifact.get'].parse(result);
-          if (opened.artifact && !getArtifactKindPolicyV1(opened.artifact.header.kind).browserListed) return internalKindRefusal;
+          if (opened.artifact && !getArtifactKindPolicyV1(opened.artifact.header.kind).browserListed
+            && !readOwnedUsageNotice(opened.artifact)) return internalKindRefusal;
           return { ok: true, result: opened };
         }
-        if (artifactActionId.data === 'artifact.list') {
+        if (artifactActionId === 'artifact.list') {
           const page = ArtifactActionOutputSchemasV1['artifact.list'].parse(result);
           return { ok: true, result: { ...page, items: page.items.filter(item => getArtifactKindPolicyV1(item.header.kind).browserListed) } };
         }
-        return { ok: true, result: ArtifactActionOutputSchemasV1[artifactActionId.data].parse(result) };
+        return { ok: true, result: ArtifactActionOutputSchemasV1[artifactActionId].parse(result) };
       }
 
-      const workflowActionId = WorkflowActionIdV1Schema.safeParse(actionId);
-      if (workflowActionId.success) {
+      const workflowActionId = isActionFamilyId(actionId, WorkflowActionIdV1Schema) ? actionId : null;
+      if (workflowActionId !== null) {
         const workflowAction = deps.workflowAction;
         if (!workflowAction) {
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
@@ -4311,7 +4365,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         // Keep the schema lookup correlated with the discriminant at the host
         // port. A dynamic union lookup loses that relationship in TypeScript
         // and would weaken the typed Workflow executor contract.
-        const workflowId = workflowActionId.data;
+        const workflowId = workflowActionId;
         const result = await (async () => {
           switch (workflowId) {
             case 'workflow.validate':
@@ -4385,8 +4439,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           : { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
       }
 
-      const automationConversationActionId = AutomationConversationActionIdV1Schema.safeParse(actionId);
-      if (automationConversationActionId.success) {
+      const automationConversationActionId = isActionFamilyId(actionId, AutomationConversationActionIdV1Schema) ? actionId : null;
+      if (automationConversationActionId !== null) {
         if (!deps.automationConversationAction) {
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
@@ -4404,8 +4458,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           };
         }
         const result = await deps.automationConversationAction({
-          actionId: automationConversationActionId.data,
-          input: AutomationConversationActionInputSchemasV1[automationConversationActionId.data].parse(parsed.data),
+          actionId: automationConversationActionId,
+          input: AutomationConversationActionInputSchemasV1[automationConversationActionId].parse(parsed.data),
           caller: ctx.actionCaller,
           ...(ctx.signal ? { signal: ctx.signal } : {}),
         });
@@ -4460,12 +4514,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         const failure = readActionFailureEnvelope(result);
         return failure ?? { ok: true, result };
       }
-      const scopeActionId = ScopeActionIdSchema.safeParse(actionId);
-      if (scopeActionId.success) {
+      const scopeActionId = isActionFamilyId(actionId, ScopeActionIdSchema) ? actionId : null;
+      if (scopeActionId !== null) {
         if (!deps.scopeAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
-        return completeActionResult(await deps.scopeAction({ actionId: scopeActionId.data, input: parsed.data, context: ctx }));
+        return completeActionResult(await deps.scopeAction({ actionId: scopeActionId, input: parsed.data, context: ctx }));
       }
-      const sessionBoardActionId = SessionBoardActionIdV1Schema.safeParse(actionId);
+      const sessionBoardActionId = isActionFamilyId(actionId, SessionBoardActionIdV1Schema) ? actionId : null;
       if (actionId === 'session.pending.next') {
         return completeActionResult(deps.nextPendingSession
           ? await deps.nextPendingSession(ctx)
@@ -4510,12 +4564,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           ? await deps.uiPromptPickerOpen({ actionId, input: parsed.data, context: ctx })
           : completeActionResult({ status: 'unavailable', reason: 'noClient' });
       }
-      if (sessionBoardActionId.success) {
+      if (sessionBoardActionId !== null) {
         if (!deps.sessionBoardAction) {
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
-        let boardInput = SESSION_BOARD_ACTION_INPUT_SCHEMAS_V1[sessionBoardActionId.data].parse(parsed.data);
-        if (sessionBoardActionId.data === 'session.board.item.upsert') {
+        let boardInput = SESSION_BOARD_ACTION_INPUT_SCHEMAS_V1[sessionBoardActionId].parse(parsed.data);
+        if (sessionBoardActionId === 'session.board.item.upsert') {
           const upsert = SessionBoardItemUpsertInputV1Schema.parse(boardInput);
           // Creation supplies the whole configured widget rectangle. Existing
           // native item edits retain their independent width/height contract.
@@ -4547,13 +4601,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           }
         }
         const result = await deps.sessionBoardAction({
-          actionId: sessionBoardActionId.data,
+          actionId: sessionBoardActionId,
           input: boardInput,
           context: ctx,
           ...(ctx.signal ? { signal: ctx.signal } : {}),
         });
         const boundSessionId = boardInput.sessionId ?? ctx.defaultSessionId ?? undefined;
-        const validated = parseSessionBoardActionPortResultV1(sessionBoardActionId.data, boardInput, result, {
+        const validated = parseSessionBoardActionPortResultV1(sessionBoardActionId, boardInput, result, {
           ...(boundSessionId ? { expectedSessionId: boundSessionId } : {}),
           ...(ctx.serverId ? { expectedServerId: ctx.serverId } : {}),
         });
@@ -4586,14 +4640,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       // settings, approval, interception and observation already ran above; the
       // host seals/opens content through the Session cipher and the canonical
       // result is validated once at the terminal output boundary.
-      const sessionDiscussionActionId = SessionDiscussionActionIdV1Schema.safeParse(actionId);
-      if (sessionDiscussionActionId.success) {
+      const sessionDiscussionActionId = isActionFamilyId(actionId, SessionDiscussionActionIdV1Schema) ? actionId : null;
+      if (sessionDiscussionActionId !== null) {
         if (!deps.sessionDiscussionAction) {
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
         const result = await deps.sessionDiscussionAction({
-          actionId: sessionDiscussionActionId.data,
-          input: SESSION_DISCUSSION_ACTION_INPUT_SCHEMAS_V1[sessionDiscussionActionId.data].parse(parsed.data),
+          actionId: sessionDiscussionActionId,
+          input: SESSION_DISCUSSION_ACTION_INPUT_SCHEMAS_V1[sessionDiscussionActionId].parse(parsed.data),
           context: ctx,
           ...(ctx.signal ? { signal: ctx.signal } : {}),
         });
@@ -4601,15 +4655,15 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         return failure ?? { ok: true, result };
       }
 
-      const managedMachineActionId = ManagedMachineActionIdV1Schema.safeParse(actionId);
-      if (managedMachineActionId.success) {
-        if (managedMachineActionId.data === 'machines.environment.apply') {
+      const managedMachineActionId = isActionFamilyId(actionId, ManagedMachineActionIdV1Schema) ? actionId : null;
+      if (managedMachineActionId !== null) {
+        if (managedMachineActionId === 'machines.environment.apply') {
           if (!deps.machineEnvironmentApply) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           const result = await deps.machineEnvironmentApply({ input: ManagedMachineActionInputSchemasV1['machines.environment.apply'].parse(admittedInput),
             context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}) });
           return readActionFailureEnvelope(result) ?? { ok: true, result };
         }
-        if (managedMachineActionId.data === 'machines.managed.references.get') {
+        if (managedMachineActionId === 'machines.managed.references.get') {
           const input = ManagedMachineActionInputSchemasV1['machines.managed.references.get'].parse(admittedInput);
           const result = MachineReferenceCensusV1Schema.parse(deps.managedMachineReferences
             ? await deps.managedMachineReferences({ input, context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}) })
@@ -4620,10 +4674,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
         try {
-          const nativeInput = ManagedMachineActionInputSchemasV1[managedMachineActionId.data].parse(admittedInput);
+          const nativeInput = ManagedMachineActionInputSchemasV1[managedMachineActionId].parse(admittedInput);
           let machineReferences: MachineReferenceCensusV1 | undefined;
           let nativeContext = ctx;
-          if (managedMachineActionId.data === 'machines.managed.delete') {
+          if (managedMachineActionId === 'machines.managed.delete') {
             const deleteInput = ManagedMachineActionInputSchemasV1['machines.managed.delete'].parse(nativeInput);
             machineReferences = MachineReferenceCensusV1Schema.parse(deps.managedMachineReferences
               ? await deps.managedMachineReferences({ input: deleteInput, context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}) })
@@ -4635,7 +4689,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             } };
           }
           const result = await deps.managedMachineAction({
-            actionId: managedMachineActionId.data,
+            actionId: managedMachineActionId,
             input: nativeInput,
             context: nativeContext,
             ...(ctx.signal ? { signal: ctx.signal } : {}),
@@ -4649,37 +4703,37 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
       }
 
-      const machinePresetActionId = MachinePresetActionIdV1Schema.safeParse(actionId);
-      if (machinePresetActionId.success) {
+      const machinePresetActionId = isActionFamilyId(actionId, MachinePresetActionIdV1Schema) ? actionId : null;
+      if (machinePresetActionId !== null) {
         if (!deps.machinePresetAction) {
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
         const result = await deps.machinePresetAction({
-          actionId: machinePresetActionId.data,
-          input: MachinePresetActionInputSchemasV1[machinePresetActionId.data].parse(admittedInput),
+          actionId: machinePresetActionId,
+          input: MachinePresetActionInputSchemasV1[machinePresetActionId].parse(admittedInput),
           context: ctx,
           ...(ctx.signal ? { signal: ctx.signal } : {}),
         });
         return readActionFailureEnvelope(result) ?? { ok: true, result };
       }
 
-      const machinePoolActionId = MachinePoolActionIdV1Schema.safeParse(actionId);
-      const operationActionId = ActionOperationActionIdV1Schema.safeParse(actionId);
-      if (operationActionId.success) {
+      const machinePoolActionId = isActionFamilyId(actionId, MachinePoolActionIdV1Schema) ? actionId : null;
+      const operationActionId = isActionFamilyId(actionId, ActionOperationActionIdV1Schema) ? actionId : null;
+      if (operationActionId !== null) {
         if (!deps.actionOperationAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         const result = await deps.actionOperationAction({
-          actionId: operationActionId.data,
-          input: ActionOperationActionInputSchemasV1[operationActionId.data].parse(parsed.data),
+          actionId: operationActionId,
+          input: ActionOperationActionInputSchemasV1[operationActionId].parse(parsed.data),
           context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}),
         });
         return readActionFailureEnvelope(result) ?? { ok: true, result };
       }
-      const projectWorkerActionId = ProjectWorkerActionIdV1Schema.safeParse(actionId);
-      if (projectWorkerActionId.success) {
+      const projectWorkerActionId = isActionFamilyId(actionId, ProjectWorkerActionIdV1Schema) ? actionId : null;
+      if (projectWorkerActionId !== null) {
         if (!deps.projectWorkerAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         const result = await deps.projectWorkerAction({
-          actionId: projectWorkerActionId.data,
-          input: ProjectWorkerActionInputSchemasV1[projectWorkerActionId.data].parse(parsed.data),
+          actionId: projectWorkerActionId,
+          input: ProjectWorkerActionInputSchemasV1[projectWorkerActionId].parse(parsed.data),
           context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}),
         });
         return readActionFailureEnvelope(result) ?? { ok: true, result };
@@ -4691,20 +4745,20 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         const result = await deps.machineWorkSummaryGet({ input: target, context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}) });
         return readActionFailureEnvelope(result) ?? { ok: true, result };
       }
-      const machineAccessActionId = MachineAccessActionIdSchema.safeParse(actionId);
-      if (machineAccessActionId.success) {
+      const machineAccessActionId = isActionFamilyId(actionId, MachineAccessActionIdSchema) ? actionId : null;
+      if (machineAccessActionId !== null) {
         if (!deps.machineAccessAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         const machineTarget = readRecord(parsed.data);
         if (ctx.serverId && machineTarget.serverId !== ctx.serverId) {
           return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
         }
-        const result = await deps.machineAccessAction({ actionId: machineAccessActionId.data, input: parsed.data, context: ctx,
+        const result = await deps.machineAccessAction({ actionId: machineAccessActionId, input: parsed.data, context: ctx,
           ...(ctx.signal ? { signal: ctx.signal } : {}) });
         return readActionFailureEnvelope(result) ?? { ok: true, result };
       }
-      const usageSourceActionId = UsageSourceActionIdSchema.safeParse(actionId);
-      if (usageSourceActionId.success) {
-        const id = usageSourceActionId.data;
+      const usageSourceActionId = isActionFamilyId(actionId, UsageSourceActionIdSchema) ? actionId : null;
+      if (usageSourceActionId !== null) {
+        const id = usageSourceActionId;
         const input = USAGE_SOURCE_ACTION_INPUT_SCHEMAS[id].parse(parsed.data);
         if (ctx.serverId && input.serverId !== ctx.serverId) return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
         if (!deps.usageSourceAction) return id === 'usage.sources.dismiss'
@@ -4714,17 +4768,17 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         const result = await deps.usageSourceAction(request, ctx);
         return readActionFailureEnvelope(result) ?? { ok: true, result };
       }
-      const connectedServiceActionId = ConnectedServiceConfigurationActionIdV1Schema.safeParse(actionId);
-      if (connectedServiceActionId.success) {
+      const connectedServiceActionId = isActionFamilyId(actionId, ConnectedServiceConfigurationActionIdV1Schema) ? actionId : null;
+      if (connectedServiceActionId !== null) {
         if (!deps.connectedServiceAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
-        const result = await deps.connectedServiceAction({ actionId: connectedServiceActionId.data, input: admittedInput, context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}) });
+        const result = await deps.connectedServiceAction({ actionId: connectedServiceActionId, input: admittedInput, context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}) });
         return readActionFailureEnvelope(result) ?? { ok: true, result };
       }
-      if (machinePoolActionId.success) {
+      if (machinePoolActionId !== null) {
         if (!deps.machinePoolAction) {
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
-        if (machinePoolActionId.data === 'machines.pools.resolve') {
+        if (machinePoolActionId === 'machines.pools.resolve') {
           const request = MachinePoolResolveInputV1Schema.parse(parsed.data);
           if (request.purpose === 'finite' || request.purpose === 'service-start') {
             if (ctx.serverId && request.workspace.serverId !== ctx.serverId) {
@@ -4742,8 +4796,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           }
         }
         const result = await deps.machinePoolAction({
-          actionId: machinePoolActionId.data,
-          input: MachinePoolActionInputSchemasV1[machinePoolActionId.data].parse(parsed.data),
+          actionId: machinePoolActionId,
+          input: MachinePoolActionInputSchemasV1[machinePoolActionId].parse(parsed.data),
           context: ctx,
           ...(ctx.signal ? { signal: ctx.signal } : {}),
         });
@@ -4755,14 +4809,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       // The declared serverTransport rows name the exact registered creator
       // routes; the bound adapter owns the captured Home scope and substitutes
       // the activation id.
-      const ephemeralRunnerActionId = EphemeralRunnerActionIdV1Schema.safeParse(actionId);
-      if (ephemeralRunnerActionId.success) {
+      const ephemeralRunnerActionId = isActionFamilyId(actionId, EphemeralRunnerActionIdV1Schema) ? actionId : null;
+      if (ephemeralRunnerActionId !== null) {
         if (!deps.ephemeralRunnerAction) {
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
         const result = await deps.ephemeralRunnerAction({
-          actionId: ephemeralRunnerActionId.data,
-          input: EphemeralRunnerActionInputSchemasV1[ephemeralRunnerActionId.data].parse(parsed.data),
+          actionId: ephemeralRunnerActionId,
+          input: EphemeralRunnerActionInputSchemasV1[ephemeralRunnerActionId].parse(parsed.data),
           context: ctx,
           ...(ctx.signal ? { signal: ctx.signal } : {}),
         });
@@ -4842,14 +4896,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         return readActionFailureEnvelope(result) ?? { ok: true, result };
       }
 
-      const webhookActionId = PluginWebhookActionIdV1Schema.safeParse(actionId);
-      if (webhookActionId.success) {
+      const webhookActionId = isActionFamilyId(actionId, PluginWebhookActionIdV1Schema) ? actionId : null;
+      if (webhookActionId !== null) {
         if (!deps.pluginWebhookAction) {
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
         const result = await deps.pluginWebhookAction({
-          actionId: webhookActionId.data,
-          input: PluginWebhookActionInputSchemasV1[webhookActionId.data].parse(parsed.data),
+          actionId: webhookActionId,
+          input: PluginWebhookActionInputSchemasV1[webhookActionId].parse(parsed.data),
           caller: ctx.actionCaller ?? { kind: 'host' },
           ...(ctx.signal ? { signal: ctx.signal } : {}),
         });
@@ -4871,12 +4925,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       }
 
       const pluginSettingsAdministrationActionId =
-        PluginSettingsAdministrationActionIdV1Schema.safeParse(actionId);
-      if (pluginSettingsAdministrationActionId.success) {
+        isActionFamilyId(actionId, PluginSettingsAdministrationActionIdV1Schema) ? actionId : null;
+      if (pluginSettingsAdministrationActionId !== null) {
         if (!deps.pluginSettingsAdministrationAction) {
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
-        const settingsActionId = pluginSettingsAdministrationActionId.data;
+        const settingsActionId = pluginSettingsAdministrationActionId;
         const result = await deps.pluginSettingsAdministrationAction({
           actionId: settingsActionId,
           input: PluginSettingsAdministrationActionInputSchemasV1[settingsActionId].parse(parsed.data),
@@ -5306,7 +5360,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                 backendTarget: data.roleId && data.backendTarget ? data.backendTarget : normalizeExecutionBackendTargetValue(engineId),
                 instructions,
                 ...(typeof data.modelId === 'string' ? { modelId: data.modelId } : {}),
-                ...(data.modelSelection ? { modelSelection: data.modelSelection } : {}),
+                ...(data.modelSelection !== undefined ? { modelSelection: data.modelSelection } : {}),
                 ...(data.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: data.sessionConfigOptionOverrides } : {}),
                 ...(connectedSelection.bindings !== undefined ? { connectedServices: connectedSelection.bindings } : {}),
                 ...(connectedSelection.defaultServiceIds.length > 0
@@ -5450,6 +5504,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           : opts;
 
           let executionRunDispatchOpts = executionRunOpts;
+          const connectedSelections = resolveFanoutConnectedServicesSelections(data, backendTargetKeys);
+          if (!connectedSelections.ok) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           const runScopedAgentBindings = data.roleId !== undefined || data.launchProfileId !== undefined
             || teamCredentialModel.selection !== null;
           if (detached || data.secretReferenceOverlay || runScopedAgentBindings) {
@@ -5468,10 +5524,6 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           }
           const runOptions = resolveRunStartModelAndConfig(data);
           if (!runOptions.ok) {
-            return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-          }
-          const connectedSelections = resolveFanoutConnectedServicesSelections(data, backendTargetKeys);
-          if (!connectedSelections.ok) {
             return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           }
           const {
@@ -5494,7 +5546,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                   ...(machineTarget?.project ? { cwd: machineTarget.project.directory } : {}),
                   backendTarget: data.roleId && data.backendTarget ? data.backendTarget : normalizeExecutionBackendTargetValue(backendTargetKey),
                   instructions,
-                  ...(data.modelSelection ? { modelSelection: data.modelSelection } : {}),
+                  ...(data.modelSelection !== undefined ? { modelSelection: data.modelSelection } : {}),
+                  ...(intent === 'voice_agent' && typeof data.chatModelId === 'string' ? { chatModelId: data.chatModelId } : {}),
+                  ...(intent === 'voice_agent' && typeof data.commitModelId === 'string' ? { commitModelId: data.commitModelId } : {}),
                   permissionMode,
                   retentionPolicy: data.retentionPolicy ?? 'ephemeral',
                   runClass: data.runClass ?? 'bounded',
@@ -5530,10 +5584,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                   ...(data.secretReferenceOverlay
                     ? { secretReferenceOverlay: data.secretReferenceOverlay }
                     : {}),
-                  ...(!data.intent || data.intent === intent ? { intentInput: {
-                    ...runIntentInput,
-                    backendTargetKey,
-                  } } : {}),
+                  ...(!data.intent || data.intent === intent
+                    ? intent === 'voice_agent'
+                      // Voice owns a closed two-role input; generic launch fields are not its intent data.
+                      ? (data.intentInput !== undefined ? { intentInput: data.intentInput } : {})
+                      : { intentInput: { ...runIntentInput, backendTargetKey } }
+                    : {}),
                 },
                 { ...executionRunDispatchOpts, ...(ctx.agentStartWorkDepth !== undefined ? { workDepth: ctx.agentStartWorkDepth, agentStartContext: ctx.agentStartContext, workspaceWrites: ctx.agentStartWorkspaceWrites, sessionAgentSpawnPolicyV1: ctx.sessionAgentSpawnPolicyV1 } : {}) },
               );
@@ -5731,7 +5787,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             return { ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied' };
           }
 
-          if (admittedInputTypeSource && deps.readAdmittedInputTypeOptions) {
+          const inputTypeSource = parseInputTypeOptionsSourceId(optionsSourceId);
+          if (admittedInputTypeSource && inputTypeSource && 'pluginId' in inputTypeSource && deps.readAdmittedInputTypeOptions) {
             const result = await deps.readAdmittedInputTypeOptions({ input: data, context: ctx });
             const failure = readActionFailureEnvelope(result);
             if (failure) return failure;
@@ -6681,6 +6738,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const res = await deps.sessionOpen({
             sessionId,
             serverId,
+            ...(data.intent === 'resume' ? { intent: 'resume' as const } : {}),
             ...(destination ? { destination } : {}),
             ...(typeof data.tabId === 'string' ? { tabId: data.tabId } : {}),
             ...(typeof data.approvedNewDirectoryCreation === 'boolean'
@@ -7253,6 +7311,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             ...((ctx.serverId) ? { serverId: String(ctx.serverId) } : {}),
             ...(typeof data.limit === 'number' ? { limit: data.limit } : {}),
             ...(backendTargetKey ? { backendTargetKey } : {}),
+            ...(data.probe === undefined ? {} : { probe: AgentInventoryProbeInputSchema.parse(data.probe) }),
           });
           return completeActionResult(res);
         }
@@ -7269,6 +7328,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             ...((ctx.serverId) ? { serverId: String(ctx.serverId) } : {}),
             ...((data.modelId) ? { modelId: String(data.modelId) } : {}),
             ...(typeof data.limit === 'number' ? { limit: data.limit } : {}),
+            ...(data.probe === undefined ? {} : { probe: AgentInventoryProbeInputSchema.parse(data.probe) }),
           });
           return completeActionResult(res);
         }
@@ -7284,6 +7344,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             ...((data.machineId) ? { machineId: String(data.machineId) } : {}),
             ...((ctx.serverId) ? { serverId: String(ctx.serverId) } : {}),
             ...(typeof data.limit === 'number' ? { limit: data.limit } : {}),
+            ...(data.probe === undefined ? {} : { probe: AgentInventoryProbeInputSchema.parse(data.probe) }),
           });
           return completeActionResult(res);
         }
@@ -7317,7 +7378,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             ...((data.machineId) ? { machineId: String(data.machineId) } : {}),
             ...((ctx.serverId) ? { serverId: String(ctx.serverId) } : {}),
             ...(typeof data.includeUnavailable === 'boolean' ? { includeUnavailable: data.includeUnavailable } : {}),
-          });
+          }, ctx);
           return completeActionResult(res);
         }
 
@@ -7616,6 +7677,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const res = await deps.sessionModelSet({
             sessionId,
             context: ctx,
+            ...(input.captureBefore !== undefined ? { captureBefore: input.captureBefore } : {}),
+            ...(input.expected !== undefined ? { expected: input.expected } : {}),
             ...(ctx.externalActionCredential?.grant ? { callerInputConstraints: {
               models: ctx.externalActionCredential.grant.models,
               permissionModes: ctx.externalActionCredential.grant.permissionModes,
@@ -8253,6 +8316,32 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return completeActionResult(res);
         }
 
+        if (actionId === 'search.conversations') {
+          if (!deps.searchConversations) return clientActionUnavailable(actionId);
+          return completeActionResult(await deps.searchConversations({
+            input: SearchConversationsInputV1Schema.parse(data), context: ctx,
+          }));
+        }
+
+        if (actionId === 'search.settings.get' || actionId === 'search.settings.set'
+          || actionId === 'memory.status' || actionId === 'memory.clear_index') {
+          const machineId = normalizeId(data.machineId);
+          const args = { machineId, context: ctx, serverId: normalizeId(ctx.serverId) || null, ...(ctx.signal ? { signal: ctx.signal } : {}) };
+          if (actionId === 'search.settings.get' && deps.daemonMemorySettingsGet) {
+            return completeActionResult(await deps.daemonMemorySettingsGet(args));
+          }
+          if (actionId === 'search.settings.set' && deps.daemonMemorySettingsSet) {
+            return completeActionResult(await deps.daemonMemorySettingsSet({ ...args, settings: MemorySettingsV1Schema.parse(data.settings) }));
+          }
+          if (actionId === 'memory.status' && deps.daemonMemoryStatus) {
+            return completeActionResult(await deps.daemonMemoryStatus(args));
+          }
+          if (actionId === 'memory.clear_index' && deps.daemonMemoryClearIndex) {
+            return completeActionResult(await deps.daemonMemoryClearIndex(args));
+          }
+          return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+        }
+
         if (actionId === 'memory.search') {
           const machineId = normalizeId(data.machineId);
           if (!machineId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
@@ -8268,13 +8357,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
 
         if (actionId === 'memory.get_window') {
           const machineId = normalizeId(data.machineId);
-          const sessionId = normalizeId(data.sessionId);
-          if (!machineId || !sessionId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          if (!machineId) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          const { machineId: _machineId, ...request } = data;
+          const window = MemoryWindowRequestV1Schema.parse(request);
           const res = await deps.daemonMemoryGetWindow({
+            ...window,
             machineId,
-            sessionId,
-            seqFrom: Number(data.seqFrom ?? 0),
-            seqTo: Number(data.seqTo ?? 0),
             serverId: normalizeId(ctx.serverId) || null,
             ...(ctx.signal ? { signal: ctx.signal } : {}),
           });
@@ -8373,7 +8461,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           }
           // The catalog owner decides; the host only persists what it returns, so this and the
           // Settings editor store identical results.
-          const settlement: { refusal?: Readonly<{ code: string; message: string }>; result?: unknown } = {};
+          const settlement: { refusal?: Readonly<{ code: string; message: string }>;
+            result?: Pick<ReturnType<typeof AgentsAcpBackendsUpsertOutputV1Schema.parse>, 'backend'>
+              | Pick<ReturnType<typeof AgentsAcpBackendsDeleteOutputV1Schema.parse>, 'backendId' | 'deleted'> } = {};
           const projectPersistenceFailure = (failure: Extract<Awaited<ReturnType<NonNullable<ActionExecutorDeps['updateAccountAcpCatalogSettings']>>>, { ok: false }>): ActionExecuteFailure => ({
             ...failure,
             errorCode: failure.errorCode === 'conflict' ? 'acp_catalog_conflict' : failure.errorCode,
@@ -8398,7 +8488,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             });
             if (settlement.refusal) return { ok: false, errorCode: settlement.refusal.code, error: settlement.refusal.message };
             if (!persisted.ok) return projectPersistenceFailure(persisted);
-            return { ok: true, result: settlement.result };
+            return { ok: true, result: AgentsAcpBackendsUpsertOutputV1Schema.parse({
+              ...settlement.result,
+              revision: persisted.revision,
+              ...(persisted.cleanup ? { cleanup: persisted.cleanup } : {}),
+            }) };
           }
           const parsed = AgentsAcpBackendsDeleteInputV1Schema.safeParse(data);
           if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
@@ -8418,7 +8512,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           });
           if (settlement.refusal) return { ok: false, errorCode: settlement.refusal.code, error: settlement.refusal.message };
           if (!persisted.ok) return projectPersistenceFailure(persisted);
-          return { ok: true, result: settlement.result };
+          return { ok: true, result: AgentsAcpBackendsDeleteOutputV1Schema.parse({
+            ...settlement.result, ...(persisted.cleanup ? { cleanup: persisted.cleanup } : {}),
+          }) };
         }
 
         if (isArtifactFolderActionIdV1(actionId)) {
@@ -8427,6 +8523,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
           }
           return completeActionResult(await executeArtifactFolderActionV1({ port: deps.artifactFolders, actionId, input: parsed.data, signal: ctx.signal }));
+        }
+
+        if (actionId === 'prompts.stack.update') {
+          if (!deps.promptStacks) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:prompts.stack.update' };
+          if (ctx.serverId && !(deps.promptStacks.matchesServerId?.(ctx.serverId) ?? ctx.serverId === deps.promptStacks.serverId)) {
+            return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
+          }
+          return completeActionResult(await updatePromptLibraryStackV1(deps.promptStacks, PromptLibraryStackUpdateInputV1Schema.parse(parsed.data), ctx.signal));
         }
 
         if (actionId === 'prompt_doc.get') {

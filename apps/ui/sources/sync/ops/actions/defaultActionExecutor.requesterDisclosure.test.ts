@@ -69,20 +69,18 @@ describe('requester credential disclosure at the human Action front door', () =>
         let artifactId: string;
         try { artifactId = await account.createArtifact(buildApprovalRequestArtifactHeaderV1(request), JSON.stringify(request)); }
         finally { account.dispose(); }
-        requesterConsent.mockImplementation(async () => {
-            if (scenario === 'retire') await harness.switchAccount(serverId, 'carol');
-            return true;
-        });
+        requesterConsent.mockResolvedValue(false);
         let boxedDecisions = 0;
         // The mounted handler supplies no id; consume the existing UI host's
         // invocation identity rather than adding a second nonce owner.
         let decisionRequestId: string | undefined;
-        harness.answer(serverId, '/v1/actions/approval.request.decide/execution-authorization', { select: body => {
+        harness.answer(serverId, '/v1/actions/approval.request.decide/execution-authorization', { select: async body => {
             const mint = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
             expect(mint.envelope.requestId).toBeTruthy();
             decisionRequestId = mint.envelope.requestId;
             expect(mint.envelope).toMatchObject({ requestId: decisionRequestId, target: { kind: 'machine', machineId },
                 input: expect.objectContaining({ artifactId, decision: 'approve' }) });
+            if (scenario === 'retire') await harness.switchAccount(serverId, 'carol');
             return { body: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fresh-decision-home-root', binding: {
                 accountId: 'bob', authentication: { kind: 'account', tokenEpoch: 0 }, serverIdentityId: homeId,
                 machineId, installationId: 'alice-installation', custodianAccountId: 'alice', accountEncryptionMode: 'plain',
@@ -119,21 +117,15 @@ describe('requester credential disclosure at the human Action front door', () =>
             return;
         }
         const result = await pending;
+        expect(requesterConsent).not.toHaveBeenCalled();
         expect(machineDispatch).not.toHaveBeenCalled();
-        expect(boxedDecisions).toBe(scenario === 'accept' ? 1 : 0);
+        expect(boxedDecisions, JSON.stringify(result)).toBe(scenario === 'accept' ? 1 : 0);
         if (scenario === 'accept') expect(result).toEqual({ ok: true, result: nativeResult });
         else if (result.ok) expect(result.result).toMatchObject({ status: 'failed', execution: { ok: false } });
         else expect(result.errorCode).toBeTruthy();
     });
 
-    it.each([
-        { surface: 'ui', decision: 'accept' },
-        { surface: 'ui', decision: 'decline' },
-        { surface: 'ui', decision: 'retire' },
-        { surface: 'voice', decision: 'accept' },
-        { surface: 'voice', decision: 'decline' },
-    ] as const)('requires actual full-sign-in consent before an ordinary waived foreign spawn ($surface/$decision)', async ({ surface, decision }) => {
-        const accepted = decision !== 'decline';
+    it.each(['ui', 'voice'] as const)('honors an ordinary foreign spawn waiver without a second consent modal (%s)', async surface => {
         const serverId = await harness.addHome({ name: 'Original requester Home', serverUrl: 'https://requester-send.test',
             accountId: 'bob', currentAccount: true });
         const home = harness.findByServerUrl('https://requester-send.test');
@@ -148,10 +140,7 @@ describe('requester credential disclosure at the human Action front door', () =>
             access: { custodian, role: 'use', resourceMode: 'plain', accessState: 'ready' },
             canManage: false, grants: [], ownDirectGrant: true, ownAccessSources: [],
         } });
-        requesterConsent.mockImplementation(async () => {
-            if (decision === 'retire') await harness.switchAccount(serverId, 'carol');
-            return accepted;
-        });
+        requesterConsent.mockResolvedValue(false);
         machineDispatch.mockImplementation(async () => {
             return { type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' };
         });
@@ -159,32 +148,20 @@ describe('requester credential disclosure at the human Action front door', () =>
             executionTarget: { serverId, machineId: 'alice-machine' },
             directory: { kind: 'path', path: '/workspace/project' },
             agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
-        }, { surface, serverId, actionRequestId: `requester-send-${surface}-${accepted}` });
+        }, { surface, serverId, actionRequestId: `requester-send-${surface}` });
         const reachedRequesterSender = machineDispatch.mock.calls.some(([request]) => request?.payload?.kind === 'requester_session_bootstrap_v1');
         const outcome = result.ok && result.result && typeof result.result === 'object' && 'type' in result.result
             ? result.result.type : result.ok ? 'other_success' : result.errorCode;
-        if (requesterConsent.mock.calls.length === 0) expect(reachedRequesterSender,
-            JSON.stringify({ ok: result.ok, outcome, reachedRequesterSender })).toBe(true);
-        expect(requesterConsent, JSON.stringify({ ok: result.ok, outcome, reachedRequesterSender })).toHaveBeenCalledOnce();
-        const { t } = await import('@/text');
-        expect(requesterConsent.mock.calls[0]).toContainEqual(expect.stringContaining(t('machineRequester.fullSignIn', { machine: 'alice-machine' })));
-        expect(requesterConsent.mock.calls[0]).toContainEqual(expect.stringContaining(t('machineRequester.osVisibility', { owner: 'Alice', machine: 'alice-machine' })));
-        expect(JSON.stringify(requesterConsent.mock.calls)).not.toContain(home.token);
-        if (decision === 'retire') {
-            // The protocol executor normalizes host-private thrown codes while
-            // preserving the scope failure; no new public code is required here.
-            expect(result).toMatchObject({ ok: false, errorCode: 'action_failed', error: 'action_account_scope_changed' });
-            expect(machineDispatch).not.toHaveBeenCalled();
-        } else if (accepted) {
-            expect(result).toEqual({ ok: true, result: { type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' } });
-            expect(machineDispatch).toHaveBeenCalledOnce();
-        } else {
-            expect(result).toEqual({ ok: true, result: { type: 'error', code: 'permission_denied', retryable: false } });
-            expect(machineDispatch).not.toHaveBeenCalled();
-        }
+        expect(requesterConsent, JSON.stringify({ ok: result.ok, outcome, reachedRequesterSender })).not.toHaveBeenCalled();
+        expect(reachedRequesterSender).toBe(true);
+        expect(result).toEqual({ ok: true, result: { type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' } });
+        expect(machineDispatch).toHaveBeenCalledOnce();
     });
 
-    it.each(['ui', 'voice'] as const)('discloses the original requester custody before a %s Ask can launch', async surface => {
+    it.each([
+        { surface: 'ui', route: 'native' }, { surface: 'voice', route: 'native' },
+        { surface: 'ui', route: 'provider' }, { surface: 'ui', route: 'auth-free' },
+    ] as const)('discloses the original requester custody before a $surface $route Ask can launch', async ({ surface, route }) => {
         const serverId = await harness.addHome({ name: 'Original requester Home', serverUrl: 'https://requester-disclosure.test',
             accountId: 'bob', currentAccount: true });
         const home = harness.findByServerUrl('https://requester-disclosure.test');
@@ -198,13 +175,55 @@ describe('requester credential disclosure at the human Action front door', () =>
             access: { custodian, role: 'use', resourceMode: 'plain', accessState: 'ready' },
             canManage: false, grants: [], ownDirectGrant: true, ownAccessSources: [],
         } });
+        const agentTargetKey = 'agent:happier.agent.claude/claude';
+        if (route !== 'native') {
+            const { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, PROVIDER_CONNECTIONS_ROWS_ROUTE_V1,
+                ProviderConnectionsCatalogV1Schema } = await import('@happier-dev/protocol/providers/connections/connectionRowsV1');
+            const { DaemonProviderModelProjectionResponseV1Schema } = await import('@happier-dev/protocol/rpc');
+            const connection = { v: 1, id: 'pc-selected', source: { kind: 'custom', template: {
+                v: 1, name: 'Gateway', endpointTemplates: [{ id: 'api', protocol: 'anthropic',
+                    baseUrl: 'https://private-provider-endpoint.test', capabilities: {
+                        streaming: 'unknown', toolRoundTrips: 'unknown', statefulResponses: 'unknown', reasoningControls: 'unknown',
+                    } }], catalog: { source: 'manual', manualModelPolicy: 'allowed' },
+                ...(route === 'provider' ? { credential: { kind: 'apiKey', slotId: 'apiKey', required: true,
+                    transports: [{ id: 'runtime-key', protocols: ['anthropic'], uses: ['runtime'], destination: {
+                        kind: 'httpHeader', name: 'authorization', format: 'bearer',
+                    } }] } } : {}),
+            } }, role: 'named', displayName: 'Work', displayNameMode: 'custom', deployment: { kind: 'external' },
+                revision: 1, createdAt: 1, updatedAt: 1 };
+            const catalog = ProviderConnectionsCatalogV1Schema.parse({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
+                connections: [connection, { ...connection, id: 'pc-unused', displayName: 'Unused neighbor' }],
+                secretBindingsByConnectionId: { 'pc-selected': { account: { apiKey: 'happier:shared-secret:v1:private-selected-ref' } },
+                    'pc-unused': { account: { apiKey: 'happier:shared-secret:v1:private-unused-ref' } } },
+            });
+            harness.answer(serverId, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
+            harness.answer(serverId, PROVIDER_CONNECTIONS_ROWS_ROUTE_V1, { body: {
+                status: 'present', revision: 1, content: { t: 'plain', v: catalog },
+            } });
+            const modelProjection = DaemonProviderModelProjectionResponseV1Schema.parse({ status: 'success', agentTargetKey,
+                groups: [{ connectionId: 'pc-selected', providerName: 'Gateway', connectionName: 'Work',
+                    connectionRole: 'named', connectionDisplayNameMode: 'custom', connectionRevision: 1,
+                    modelLoadAction: 'descriptor_absent', authorization: { authorized: true }, manualModelPolicy: 'allowed',
+                    supportsFreeformModelIds: true, suppressedConnectedServiceIds: ['anthropic', 'claude-subscription'], rows: [],
+                }],
+            });
+            machineDispatch.mockImplementation(async request => request.method === 'daemon.providers.model.projection'
+                ? modelProjection : { ok: false, errorCode: 'unsupported', error: 'unsupported' });
+        }
         // A different focused Home must not become the preview's actor or target.
         await harness.addHome({ name: 'Other Home', serverUrl: 'https://requester-disclosure-other.test', accountId: 'carol' });
         const controller = new AbortController();
         const pending = createFrontDoorActionExecute(createDefaultActionExecutor())('session.spawn_new', {
             executionTarget: { serverId, machineId: 'alice-machine' },
             directory: { kind: 'path', path: '/workspace/project' },
-            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+            ...(route !== 'native' ? { modelSelection: { v: 1, ref: {
+                agentTargetKey, providerConnectionId: 'pc-selected', modelId: 'selected-model',
+            }, updatedAt: 1 } } : {}),
+            connectedServices: { v: 2, bindingsByServiceId: {
+                'happier.agent.claude/anthropic': { source: 'connected', selection: 'profile', profileId: 'private-selected-account' },
+                'happier.agent.claude/claude-subscription': { source: 'native' },
+            } },
         }, { surface, serverId, actionRequestId: `requester-disclosure-${surface}`, signal: controller.signal });
         try {
             const approval = await waitForHomeGovernance(() => {
@@ -230,9 +249,23 @@ describe('requester credential disclosure at the human Action front door', () =>
             const summary = readApprovalPreviewSummary(request.preview);
             expect(summary).toContain(t('machineRequester.fullSignIn', { machine: 'alice-machine' }));
             expect(summary).toContain(t('machineRequester.osVisibility', { owner: 'Alice', machine: 'alice-machine' }));
+            if (route === 'native') {
+                expect(summary).toContain('Anthropic');
+                expect(summary).toContain('Claude');
+            } else {
+                expect(summary).not.toContain('Anthropic');
+                expect(summary).not.toContain('Claude');
+                if (route === 'provider') expect(summary).toContain('Gateway · Work');
+                else expect(summary).not.toContain('Gateway');
+                expect(summary).not.toContain('Unused neighbor');
+                expect(summary).not.toContain('private-selected-ref');
+                expect(summary).not.toContain('private-provider-endpoint');
+            }
+            expect(summary).not.toContain('Linear');
+            expect(summary).not.toContain('private-selected-account');
             expect(body).not.toContain(home.token);
             expect(body).not.toContain('requesterBootstrap');
-            expect(machineDispatch).not.toHaveBeenCalled();
+            expect(machineDispatch.mock.calls.some(([request]) => request?.payload?.kind === 'requester_session_bootstrap_v1')).toBe(false);
             const reads = harness.requestsFor('/v1/machines/alice-machine/access');
             expect(reads.length).toBeGreaterThan(0);
             expect(reads.every(read => read.serverId === serverId && read.token === home.token)).toBe(true);
