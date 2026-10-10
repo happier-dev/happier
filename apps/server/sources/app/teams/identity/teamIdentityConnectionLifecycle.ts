@@ -227,7 +227,10 @@ async function readCurrentInTx<TeamId extends string | null>(
         teamId: input.teamId,
     });
     if (!provider) return null;
-    return { row: scopedRow, provider, view: projectConnection({ provider, row: scopedRow }) };
+    const conflicts = provider.kind === "workos_sso"
+        ? await findConflictingWorkosProviderIdsInTx(tx, { providerInstanceIds: [provider.id] })
+        : new Set<string>();
+    return { row: scopedRow, provider, view: conflicts.has(provider.id) ? null : projectConnection({ provider, row: scopedRow }) };
 }
 
 export async function readTeamIdentityConnectionInTx<TeamId extends string | null>(
@@ -272,6 +275,10 @@ export async function readTeamIdentityConnectionsByIdInTx<TeamId extends string 
     const providerReads = await readIdentityProviderInstancePresentationsByIdsInTx(tx, {
         ids: rows.map((row) => row.providerInstanceId),
     });
+    const conflicts = await findConflictingWorkosProviderIdsInTx(tx, {
+        providerInstanceIds: [...providerReads.values()].flatMap((result) =>
+            result.status === "ready" && result.instance.kind === "workos_sso" ? [result.instance.id] : []),
+    });
     const rowsByKey = new Map(rows
         .filter((row) => wantedKeys.has(teamIdentityConnectionReferenceKey(row)))
         .map((row) => [teamIdentityConnectionReferenceKey(row), row] as const));
@@ -282,6 +289,7 @@ export async function readTeamIdentityConnectionsByIdInTx<TeamId extends string 
         const providerRead = providerReads.get(row.providerInstanceId.trim().toLowerCase());
         if (providerRead?.status !== "ready") return [key, { status: "unreadable" as const }] as const;
         const provider = providerRead.instance;
+        if (conflicts.has(provider.id)) return [key, { status: "unreadable" as const }] as const;
         const ownerMatches = provider.owner.kind === "home"
             || (provider.owner.kind === "team" && provider.owner.teamId === row.teamId);
         const connection = ownerMatches ? projectConnection({ provider, row: { ...row, teamId: reference.teamId } }) : null;
@@ -301,13 +309,23 @@ export async function listTeamIdentityConnectionsInTx<TeamId extends string | nu
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         select: connectionSelect,
     });
-    const projected = await Promise.all(rows.map(async (row) => {
-        const provider = await readAvailableProviderInTx(tx, {
-            providerInstanceId: row.providerInstanceId,
-            teamId: row.teamId,
-        });
-        return provider ? projectConnection({ provider, row: { ...row, teamId: input.teamId } }) : null;
-    }));
+    const providerReads = await readIdentityProviderInstancePresentationsByIdsInTx(tx, {
+        ids: rows.map((row) => row.providerInstanceId),
+    });
+    const conflicts = await findConflictingWorkosProviderIdsInTx(tx, {
+        providerInstanceIds: [...providerReads.values()].flatMap((result) =>
+            result.status === "ready" && result.instance.kind === "workos_sso" ? [result.instance.id] : []),
+    });
+    const projected = rows.map((row) => {
+        const result = providerReads.get(row.providerInstanceId.trim().toLowerCase());
+        if (result?.status !== "ready") return null;
+        const provider = result.instance;
+        const ownerMatches = provider.owner.kind === "home"
+            || (provider.owner.kind === "team" && provider.owner.teamId === row.teamId);
+        return ownerMatches && !conflicts.has(provider.id)
+            ? projectConnection({ provider, row: { ...row, teamId: input.teamId } })
+            : null;
+    });
     return projected.filter((connection): connection is TeamIdentityConnectionView<TeamId> => connection !== null);
 }
 
@@ -435,7 +453,7 @@ export async function updateTeamIdentityConnectionInTx<TeamId extends string | n
         return { status: "invalid_document" };
     }
 
-    if (nextDocuments.value.externalReference.kind === "workos_sso") {
+    if (input.externalReference !== undefined && nextDocuments.value.externalReference.kind === "workos_sso") {
         await tx.identityProviderInstance.update({ where: { id: current.provider.id }, data: { updatedAt: current.provider.updatedAt }, select: { id: true } });
         const conflicts = await findConflictingWorkosProviderIdsInTx(tx, {
             providerInstanceIds: [current.provider.id],
@@ -481,10 +499,6 @@ export async function setTeamIdentityConnectionEnabledInTx<TeamId extends string
         return { status: "revision_conflict", connection: current.view };
     }
     if (!current.view) return { status: "invalid_document" };
-    if (input.enabled && current.provider.kind === "workos_sso") {
-        const conflicts = await findConflictingWorkosProviderIdsInTx(tx, { providerInstanceIds: [current.provider.id] });
-        if (conflicts.has(current.provider.id)) return { status: "invalid_document" };
-    }
     const policyUse = await resolveTeamAuthenticationPolicyUseInTx(tx, input);
     if (!input.enabled) {
         if (policyUse !== "not_in_use") return { status: policyUse };

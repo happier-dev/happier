@@ -76,9 +76,10 @@ async function resolveEffectiveHomeAuthMethodsForPolicyInTx(
                     id: reference.id,
                     enabled: details.enabled === true,
                     configured: details.configured === true,
-                    // Managed providers provision under the Home's public-signup ceiling.
+                    // Company proof is independent of anonymous key-only signup;
+                    // the shared Home policy owner enforces explicit company admission.
                     keyedProvision: {
-                        enabled: policy.anonymousSignupEnabled,
+                        enabled: providerKind === "workos_sso" || policy.anonymousSignupEnabled,
                         reason: "provisioning_not_enabled",
                     },
                 }),
