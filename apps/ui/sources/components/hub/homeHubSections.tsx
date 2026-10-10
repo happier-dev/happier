@@ -10,7 +10,7 @@ import { HubAttentionSection } from './HubAttentionSection';
 import { HubComposerSection } from './composer/HubComposerSection';
 import { HubMachinesSection } from './HubMachinesSection';
 import { HubSetupSection } from './HubSetupSection';
-import { HubUsageSection } from './HubUsageSection';
+import { UsageCapacitySection } from '@/components/settings/usage/UsageCapacitySection';
 import { HOME_HUB_BUILTIN_DEFINITIONS, type HomeHubBuiltinDefinition, type HomeHubSection } from './layout/homeHubLayout';
 export { isHomeHubCardSection } from './layout/homeHubLayout';
 
@@ -76,7 +76,7 @@ export const HOME_HUB_BUILTIN_SECTIONS: readonly HomeHubBuiltinSection[] = Objec
         icon: 'speedometer',
         description: () => t('homeIndex.builtIn'),
         title: () => t('settingsOverview.usageTitle'),
-        render: ({ menu }) => <HubUsageSection menu={menu} />,
+        render: ({ menu }) => <UsageCapacitySection menu={menu} />,
     },
 ]);
 
@@ -90,7 +90,8 @@ export function findHomeHubBuiltinSection(id: string): HomeHubBuiltinSection | n
 
 /** What a section is called in its menu and in Customize. */
 export function homeHubSectionTitle(section: HomeHubSection<WidgetCandidate>): string {
-    return section.kind === 'widget'
-        ? section.instance.displayName ?? section.widget?.title ?? section.instance.id
-        : findHomeHubBuiltinSection(section.id)?.title() ?? section.id;
+    if (section.kind === 'widget') return section.instance.displayName ?? section.widget?.title ?? section.instance.id;
+    // A group is its title, or (untitled) the names of its widgets.
+    if (section.kind === 'group') return section.group.title ?? section.children.map(homeHubSectionTitle).join(' · ');
+    return findHomeHubBuiltinSection(section.id)?.title() ?? section.id;
 }

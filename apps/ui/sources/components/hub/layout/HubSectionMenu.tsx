@@ -3,7 +3,9 @@ import { Platform, View } from 'react-native';
 
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { readCoarsePrimaryPointer } from '@/components/sessions/transcript/messageActions/rowActionRevealHost';
+import { RowActionRevealSlot } from '@/components/sessions/transcript/messageActions/RowActionRevealSlot';
 import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
+import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { t } from '@/text';
 
 import { useWidgetFrameSurfaceDefault } from '@/components/widgets/frame/useWidgetFrameStyle';
@@ -14,6 +16,7 @@ import {
     buildWidgetMoveActions,
     buildWidgetSizeActions,
     orderWidgetMenu,
+    WIDGET_MENU_MAX_HEIGHT_PX,
 } from '@/components/widgets/frame/widgetFrameMenu';
 
 import { homeHubSectionTitle, isHomeHubCardSection } from '../homeHubSections';
@@ -46,16 +49,24 @@ export function HubSectionMenu(props: Readonly<{
     onRename?: () => void;
     /** About this widget, for a copy of one of the Account's own widgets (lab dagent G2). */
     onAbout?: () => void;
+    /**
+     * Inside a group (lab widget-groups C): no frame entry, movement steps within the group, and
+     * Remove takes the widget off Home rather than hiding a section.
+     */
+    inGroup?: Readonly<{ index: number; count: number; onMove: (delta: -1 | 1) => void }>;
+    /** Move to group / Remove from group / Ungroup, or Group with… (`buildWidgetGroupMembershipActions`). */
+    groupActions?: readonly ItemAction[];
+    /** Inside a half group: the sizes it cannot take there, and why. */
+    sizeLimit?: WidgetSizeControl['unavailable'];
 }>) {
-    const [focused, setFocused] = React.useState(false);
-    const alwaysVisible = Platform.OS !== 'web' || readCoarsePrimaryPointer();
-    const visible = alwaysVisible || props.hovered || focused;
+    // The shared reveal owner fades the ⋯ in, and shows it by itself while it has keyboard focus.
+    const revealed = Platform.OS !== 'web' || readCoarsePrimaryPointer() || props.hovered;
     const { section, layout } = props;
     const title = homeHubSectionTitle(section);
     const surfaceDefault = useWidgetFrameSurfaceDefault('home');
     // Menu events consume rejection; the layout queue retains the failed intent for Customize's Retry.
     // Only sections drawn in the widget frame have a frame to show or hide.
-    const frameActions = isHomeHubCardSection(section)
+    const frameActions = isHomeHubCardSection(section) && !props.inGroup
         ? buildWidgetFrameStyleActions({
             placement: 'home',
             surfaceDefault,
@@ -70,6 +81,7 @@ export function HubSectionMenu(props: Readonly<{
         surface: 'home', sizes: sizes.sizes,
         size: normalizeWidgetSizeForSurfaceV1('home', section.size, section.widget?.sizeDeclaration)!,
         onSet: size => { void layout.setSize(section.instance.id, size).catch(() => {}); },
+        ...(props.sizeLimit ? { unavailable: props.sizeLimit } : {}),
     } : undefined;
 
     return (
@@ -77,14 +89,14 @@ export function HubSectionMenu(props: Readonly<{
             ref={props.anchorRef}
             collapsable={false}
             testID={`home-hub.${section.id}.menu`}
-            style={{ opacity: visible ? 1 : 0 }}
-            onFocus={() => setFocused(true)}
-            onBlur={() => setFocused(false)}
         >
+            <RowActionRevealSlot revealed={revealed}>
             <ItemRowActions
                 title={title}
                 compactThreshold={ALWAYS_OVERFLOW}
                 compactActionIds={[]}
+                // Every entry of a grouped widget's menu shows at once; nothing is cut at the menu's foot.
+                overflowMaxHeightCap={WIDGET_MENU_MAX_HEIGHT_PX}
                 overflowTriggerTestID={`home-hub.${section.id}.menuTrigger`}
                 overflowTriggerAccessibilityLabel={`${section.kind === 'widget' ? t('widgetAdd.widgetOptions') : t('settingsOverview.homeSectionOptions')}: ${title}`}
                 onOverflowTriggerKeyDown={key => stepWidgetSizeControl(sizeControl, key)}
@@ -93,11 +105,14 @@ export function HubSectionMenu(props: Readonly<{
                     instance: buildWidgetInstanceActions({ editInputs: props.editInputs, onRename: props.onRename }),
                     size: buildWidgetSizeActions(sizeControl),
                     frame: frameActions,
-                    move: buildWidgetMoveActions({
-                        index: props.index,
-                        count: layout.sections.length,
-                        onMove: (delta) => { void layout.move(section.id, delta).catch(() => {}); },
-                    }),
+                    move: [
+                        ...(props.inGroup ? buildWidgetMoveActions(props.inGroup) : buildWidgetMoveActions({
+                            index: props.index,
+                            count: layout.sections.length,
+                            onMove: (delta) => { void layout.move(section.id, delta).catch(() => {}); },
+                        })),
+                        ...(props.groupActions ?? []),
+                    ],
                     definition: buildWidgetDefinitionActions({ onAbout: props.onAbout }),
                     surface: [
                         ...(props.onOpen ? [{ id: 'open', title: t('common.open'), icon: 'arrow-square-out' as const, onPress: props.onOpen }] : []),
@@ -109,10 +124,11 @@ export function HubSectionMenu(props: Readonly<{
                             ? t('settingsOverview.homeRemoveWidget')
                             : t('settingsOverview.homeHideSection'),
                         icon: 'eye-slash' as const,
-                        onPress: () => { void layout.setHidden(section.id, true).catch(() => {}); },
+                        onPress: () => { void (props.inGroup ? layout.remove(section.id) : layout.setHidden(section.id, true)).catch(() => {}); },
                     }] : [],
                 })}
             />
+            </RowActionRevealSlot>
         </View>
     );
 }

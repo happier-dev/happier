@@ -36,6 +36,7 @@ import { refreshOrdinarySessionList } from '@/sync/domains/session/listing/sessi
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import type { HubSectionProps } from './hubSectionProps';
+import { useActivityOverviewSummary } from '@/activity/source/useActivityOverview';
 
 const MARK_SIZE = 18;
 
@@ -46,6 +47,20 @@ export type AttentionItem = Readonly<{
     actionLabel: string;
     onAction: () => void;
 }>;
+
+/** The same pending-Session census as Home's status line and Inbox badge; never reclassified here. */
+function useSessionsNeedingAttention(): AttentionItem[] {
+    const { needsYouCount } = useActivityOverviewSummary();
+    const router = useRouter();
+    const { theme } = useUnistyles();
+    return React.useMemo(() => needsYouCount > 0 ? [{
+        key: 'sessions',
+        mark: <Icon name="chat-circle" size={MARK_SIZE} color={theme.colors.text.secondary} />,
+        title: t('homeIndex.sessionsAwaitingResponse', { count: needsYouCount }),
+        actionLabel: t('settingsOverview.review'),
+        onAction: () => router.push('/inbox'),
+    }] : [], [needsYouCount, router, theme.colors.text.secondary]);
+}
 
 /**
  * Agents on the Agents machine whose CLI reports it is signed out. It reads the last detection the
@@ -168,12 +183,13 @@ function useHomesNotAnswering(): AttentionItem[] {
  * when nothing does: a healthy setup is quiet.
  */
 export const HubAttentionSection = React.memo(function HubAttentionSection(props: HubSectionProps) {
+    const sessions = useSessionsNeedingAttention();
     const agents = useAgentsNeedingSignIn();
     const services = useConnectedAccountsNeedingSignIn();
     const updates = useUpdatesNeedingAttention();
     const plugins = usePluginChangesAwaitingReview();
     const homes = useHomesNotAnswering();
-    const items = [...homes, ...updates, ...agents, ...services, ...plugins];
+    const items = [...sessions, ...homes, ...updates, ...agents, ...services, ...plugins];
     return <HubAttentionList items={items} menu={props.menu} />;
 });
 

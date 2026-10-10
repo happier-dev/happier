@@ -1,4 +1,5 @@
 import { activityInstanceKey } from '@/sync/domains/session/sessionAddress';
+import { resolveSessionListRenderableMeaningfulActivityAt } from '@/sync/domains/session/listing/sessionListRenderableSorting';
 import type { ActivityOverviewSnapshot, BuildActivityOverviewSnapshotParams, SessionActivityAttention } from './activityAttentionTypes';
 import { buildSessionActivityAttention } from './buildSessionActivityAttention';
 import { isSessionAdmittedToPersonalActivity } from './isSessionAdmittedToPersonalActivity';
@@ -7,8 +8,13 @@ function sortCandidates(left: SessionActivityAttention, right: SessionActivityAt
     if (left.priority !== right.priority) {
         return right.priority - left.priority;
     }
-    if (left.session.updatedAt !== right.session.updatedAt) {
-        return right.session.updatedAt - left.session.updatedAt;
+    // Recency is the session list's own notion of it: the last meaningful activity. `updatedAt`
+    // also moves when the person merely opens the session (its read state is written), which
+    // would reorder the list under their pointer.
+    const leftActivityAt = resolveSessionListRenderableMeaningfulActivityAt(left.session);
+    const rightActivityAt = resolveSessionListRenderableMeaningfulActivityAt(right.session);
+    if (leftActivityAt !== rightActivityAt) {
+        return rightActivityAt - leftActivityAt;
     }
     return activityInstanceKey({
         serverId: left.serverId ?? null,

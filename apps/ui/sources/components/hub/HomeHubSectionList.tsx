@@ -42,6 +42,12 @@ function buildSlots(sections: readonly HomeHubSection<WidgetCandidate>[]): Slot[
     return slots;
 }
 
+/** A full-width widget, or a full-width group, takes the whole row. */
+function spansRow(section: HomeHubSection<WidgetCandidate>): boolean {
+    if (section.kind === 'group') return section.group.width === 'full';
+    return section.kind === 'widget' && getWidgetSizeFootprintV1('home', section.size)?.columnSpan === HOME_HUB_CARD_ROW_COLUMNS;
+}
+
 /**
  * Home's sections below the header, on one column: every block shares the page column's edges
  * (the composer's width), grids fill that width, and consecutive cards (widgets, Latest runs) form
@@ -63,8 +69,7 @@ export function HomeHubSectionList(props: Readonly<{
                     // A sheetless group gives the card row the same column edges as every other section.
                     <ItemGroup key={slot.key} surface="none">
                         <CardGrid testID={`home-hub.${slot.key}`} columns={HOME_HUB_CARD_ROW_COLUMNS}>
-                            {slot.entries.map((entry) => (alone || (entry.section.kind === 'widget'
-                                && getWidgetSizeFootprintV1('home', entry.section.size)?.columnSpan === HOME_HUB_CARD_ROW_COLUMNS) ? (
+                            {slot.entries.map((entry) => (alone || spansRow(entry.section) ? (
                                 <CardGridCell key={entry.section.id} span="row">
                                     {props.renderSection(entry.section, entry.index)}
                                 </CardGridCell>

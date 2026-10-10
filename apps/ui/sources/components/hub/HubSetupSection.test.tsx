@@ -1,3 +1,4 @@
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import * as React from 'react';
 import 'fake-indexeddb/auto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -25,6 +26,7 @@ import type { FetchedMachineRow } from '@/sync/engine/machines/syncMachines';
 import { WorkspaceNavigationContext, type WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import { createWorkspaceState } from '@/components/appShell/workspace/workspaceState';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { useHomeSetupDismissals, type HomeSetupDismissals } from './layout/useHomeSetupDismissals';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -37,7 +39,7 @@ const state = vi.hoisted(() => ({
     phone: false,
     push: null as null | ((href: unknown) => void),
     params: {} as { setupStep?: string },
-    layout: { order: [], hidden: [] } as Pick<HomeHubLayoutValue, 'order' | 'hidden'> & Partial<Pick<HomeHubLayoutValue, 'sections' | 'instances'>>,
+    layout: { order: [], hidden: [] } as Pick<HomeHubLayoutValue, 'order' | 'hidden'> & Partial<Pick<HomeHubLayoutValue, 'sections' | 'items'>>,
     authenticated: true,
     featureSnapshot: vi.fn<typeof getServerFeaturesSnapshot>(async () => ({ status: 'error', reason: 'network' })),
     request: vi.fn<(path: string, init?: RequestInit) => Promise<Response>>(),
@@ -140,9 +142,9 @@ afterEach(async () => {
     // one shared state is driven through its storage boundary (`state.dismissed`) in case order.
 });
 
-async function renderSection(presentation?: 'tiles' | 'checklist') {
+async function renderSection(presentation?: 'tiles' | 'checklist', children?: React.ReactNode) {
     if (!connection) {
-        artifact.seed({ v: 1, instances: [], ...state.layout });
+        artifact.seed({ v: 1, items: [], ...state.layout });
         await loadSyncSingletonForTests();
         const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
         await prepareSessionDraftPersistenceStorage();
@@ -167,7 +169,7 @@ async function renderSection(presentation?: 'tiles' | 'checklist') {
         machineListByServerId: { [scope.serverId]: state.machines }, machineListStatusByServerId: { [scope.serverId]: state.machineListSettled ? 'idle' : 'loading' } });
     // Both hubs are pages: the checklist's progress lives in the page section header.
     const screen = await renderScreen(
-        <AccountShell><ListPresentationProvider value="page"><HubSetupSection presentation={presentation} /></ListPresentationProvider></AccountShell>,
+        <AccountShell><ListPresentationProvider value="page"><HubSetupSection presentation={presentation} />{children}</ListPresentationProvider></AccountShell>,
     );
     await flushHookEffects({ cycles: 3 });
     return screen;
@@ -186,7 +188,7 @@ function AccountShell({ children }: React.PropsWithChildren) {
     return <InjectedAuthProvider credentials={state.authenticated ? connection!.credentials : null}>
         <AppShellPluginUiProjectionValueProvider value={{ pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION, pluginBrowserProjection: null,
             phase: 'current', interactionEnabled: true, machineId: null, serverId: resolveServerProfileScopeIdForIdentifier(connection!.home.id), platform: 'web',
-            clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {} }}>
+            accountLifetime: captureActiveServerAccountScopeLifetime(), clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {} }}>
             <WorkspaceNavigationContext.Provider value={workspace}>{children}</WorkspaceNavigationContext.Provider>
         </AppShellPluginUiProjectionValueProvider>
     </InjectedAuthProvider>;
@@ -199,6 +201,22 @@ const phoneWindow = () => {
 };
 
 describe('HubSetupSection on Home (tiles)', () => {
+    it('exposes settled Account offer visibility and acknowledges Ask Happier dismissal through the real Home Action', async () => {
+        const observations: HomeSetupDismissals[] = [];
+        function Probe() {
+            const value = useHomeSetupDismissals();
+            observations.push(value);
+            return null;
+        }
+        await renderSection(undefined, <Probe />);
+        const current = () => observations.at(-1)!;
+        expect(current().hasSnapshot).toBe(true);
+        expect(current().hidden.has('askHappier')).toBe(false);
+        await act(async () => { await current().dismiss('askHappier'); });
+        await flushHookEffects({ cycles: 3 });
+        expect(current().hidden.has('askHappier')).toBe(true);
+        expect(artifact.writes).not.toHaveLength(0);
+    });
     it('does not invent a recovery key for a plaintext Account', async () => {
         const screen = await renderSection();
         expect(screen.findByTestId('hub-setup.recoveryKey')).toBeNull();
@@ -367,9 +385,29 @@ describe('HubSetupSection on Home (tiles)', () => {
         expect(screen.findByTestId('settings-add-your-phone-shortcut')).toBeNull();
     });
 
+    it('offers Ask Happier: Not now hides it for this run without a write; Don\'t show again keeps it hidden Account-wide', async () => {
+        state.dismissed = true;
+        const { resetAskHappierOfferSnoozeForTests } = await import('@/components/sessions/bots/useAskHappierOffer');
+        resetAskHappierOfferSnoozeForTests();
+        const screen = await renderSection();
+        expect(screen.findByTestId('hub-setup.askHappier')).toBeTruthy();
+        await act(async () => { screen.pressByTestId('hub-setup.askHappier.notNow'); });
+        await flushHookEffects({ cycles: 2 });
+        expect(screen.findByTestId('hub-setup.askHappier')).toBeNull();
+        expect(artifact.layout().hidden).not.toContain('setup:askHappier');
+
+        resetAskHappierOfferSnoozeForTests();
+        const reopened = await renderSection();
+        expect(reopened.findByTestId('hub-setup.askHappier')).toBeTruthy();
+        await act(async () => { reopened.pressByTestId('hub-setup.askHappier.dismiss'); });
+        await flushHookEffects({ cycles: 3 });
+        expect(artifact.layout().hidden).toContain('setup:askHappier');
+        expect(reopened.findByTestId('hub-setup.askHappier')).toBeNull();
+    });
+
     it('leaves Home once every step is done or dismissed', async () => {
         state.dismissed = true;
-        state.layout = { order: [], hidden: ['setup:addPhone', 'setup:addMachine', 'setup:installComputer', 'setup:personalize'] };
+        state.layout = { order: [], hidden: ['setup:addPhone', 'setup:addMachine', 'setup:installComputer', 'setup:personalize', 'setup:askHappier'] };
         const screen = await renderSection();
 
         expect(screen.findByTestId('hub-setup.grid')).toBeNull();

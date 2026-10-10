@@ -11,6 +11,20 @@ function fixture() {
 }
 
 describe('mounted Home Account Artifact projection', () => {
+    it('persists Ask Happier offer dismissal and restoration across clients', async () => {
+        const { transport, owner } = fixture();
+        const first = createHomeHubAccountStore({ accountId: 'one', transport, isCurrent: () => true, execute: async intent => (await owner.apply(intent)).layout });
+        const second = createHomeHubAccountStore({ accountId: 'one', transport, isCurrent: () => true, execute: async intent => (await owner.apply(intent)).layout });
+        await Promise.all([first.refresh(), second.refresh()]);
+        await first.dispatch({ kind: 'setup_visibility', stepId: 'askHappier', hidden: true }, { rethrow: true });
+        await second.refresh();
+        expect(second.getSnapshot().layout.hidden).toContain('setup:askHappier');
+        expect(await owner.read()).toEqual(second.getSnapshot().layout);
+        // Dismissal is only the existing offer visibility intent, not a Bot/session deletion.
+        await second.dispatch({ kind: 'setup_visibility', stepId: 'askHappier', hidden: false }, { rethrow: true });
+        await first.refresh();
+        expect(first.getSnapshot().layout.hidden).not.toContain('setup:askHappier');
+    });
     it('rejects a failed semantic move while preserving its retry, then acknowledges the current Artifact order', async () => {
         const { boundary, transport, owner } = fixture();
         await owner.apply({ kind: 'visibility', sectionId: 'setup', hidden: true });

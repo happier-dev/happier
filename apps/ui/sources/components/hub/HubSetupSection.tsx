@@ -31,6 +31,7 @@ import { homeHasMachine } from '@/components/machines/add/machineAddPaths';
 import { AddMachinePanel } from './setup/AddMachinePanel';
 import { useSetupDevice } from './setup/useSetupDevice';
 import { usePersonalizeSetupItem } from '@/components/onboarding/personalize/usePersonalizeSetupItem';
+import { useAskHappierSetupItem } from '@/components/sessions/bots/useAskHappierSetupItem';
 import { ConnectComputerPanel } from './setup/ConnectComputerPanel';
 import { SetupBlockGrid, type SetupBlockItem } from '@/components/ui/setupBlocks/SetupBlockGrid';
 import { SetupBlockTile } from '@/components/ui/setupBlocks/SetupBlockTile';
@@ -250,6 +251,8 @@ function HubSetupTiles(props: HubSectionProps) {
     // "Personalize Happier" (lab personalize H1): after the steps that connect real work on a
     // computer, first on a phone where there are fewer of them. Its owner decides; null once done.
     const personalizeItem = usePersonalizeSetupItem({ hidden, onDismiss: dismiss });
+    // "Ask Happier" (lab b-rail G, D33): an opt-in guide that sets the rest up with the person.
+    const askHappierItem = useAskHappierSetupItem({ layout: tileLayout });
     const visible = entries.filter((entry) => !hidden.has(entry.id));
 
     const items: SetupBlockItem[] = visible.map((entry) => ({
@@ -285,6 +288,7 @@ function HubSetupTiles(props: HubSectionProps) {
         ...items,
         ...(personalizeItem && !phone ? [personalizeItem] : []),
         ...(servicesItem ? [servicesItem] : []),
+        ...(askHappierItem ? [askHappierItem] : []),
     ];
     if (allItems.length === 0) return null;
     return <HubSetupGridView items={allItems} phone={phone} menu={props.menu} />;
@@ -386,7 +390,7 @@ function SetupRow(props: Readonly<{ entry: SetupEntry; onAction: (id: SetupActio
             rightElementOutsidePressable
             // Two buttons are wider than a phone row can spare beside the label: they move beneath it
             // there (phones recompose rather than cut the title).
-            accessoryLayout={alternative ? 'adaptive' : 'inline'}
+            accessoryLayout="adaptive"
             rightElement={(
                 <View style={stylesheet.rowActions}>
                     {alternative ? (

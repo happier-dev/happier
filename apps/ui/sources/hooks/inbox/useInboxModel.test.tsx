@@ -2,17 +2,28 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createPlainAccountEncryptionCurrentnessFixture, createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
+import { buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization/keys';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
-import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { FeaturesResponseSchema, compilePluginJsonSchema, encodePluginCollectionLogicalValueV1, isValidPluginJsonSchemaValue,
+    normalizePluginAccountCollectionContractV1, PluginAccountCollectionContributionV1Schema } from '@happier-dev/protocol';
+import { ConversationBindingV1Schema } from '@happier-dev/channels-protocol/v1';
+import { replacePluginAccountAvailabilityProjection } from '@/sync/domains/plugins/availability/projection';
+import { resetActivePluginCollectionChanges } from '@/sync/api/plugins/data/pluginCollectionChangeWatch';
+import { recordAccountStoredContentServerRequirements } from '@/sync/http/accountStoredContentCompatibility';
+import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions';
+import { invokeMountedWorkRead } from '@/sync/ops/actions/mountedWorkReadAction';
 import { deleteServerFeaturesSnapshot, primeServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { createAutomationRunFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { storage } from '@/sync/domains/state/storageStore';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { WorkflowRunListPage } from '@/sync/domains/workflows/workflowRunListActions';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { useSessionManagedWorkflowRuns, type SessionManagedWorkflowRunsState } from '@/components/sessions/workState/useSessionManagedWorkflowRuns';
 import { projectWork, resolveWorkReadPresentation } from '@/components/sessions/work/workProjection';
+import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
+import { createUsageNoticeArtifactFixture, usageNoticeFixture } from '@/dev/testkit/fixtures/usageNoticeFixtures';
 
 import { InboxModelProvider, useInboxModel, type InboxModel } from './useInboxModel';
 
@@ -25,13 +36,14 @@ import { InboxModelProvider, useInboxModel, type InboxModel } from './useInboxMo
 const listRuns = vi.hoisted(() => vi.fn<(params: { filter?: Record<string, unknown> }) => Promise<WorkflowRunListPage>>());
 const executed = vi.hoisted(() => [] as Array<{ actionId: string; input: unknown }>);
 const automationBoundary = vi.hoisted(() => ({ request: vi.fn() }));
+const collectionBoundary = vi.hoisted(() => ({ request: vi.fn() }));
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope', () => ({
+    captureServerRequestAuthorityForServerAccountScope: async ({ scope }: { scope: import('@/sync/domains/scope/serverAccountScope').ServerAccountScope }) => ({
+        scope, context: { token: 'account-token' }, request: collectionBoundary.request,
+    }),
+}));
 vi.mock('@/sync/http/client', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/sync/http/client')>(), serverFetch: automationBoundary.request,
-}));
-vi.mock('@/sync/runtime/orchestration/connectionManager', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/runtime/orchestration/connectionManager')>(),
-    getAppliedActiveServerSnapshot: () => appliedSnapshot(),
-    isAppliedActiveServerRuntimeAvailable: () => true,
 }));
 let appliedSnapshot: typeof import('@/sync/domains/server/serverRuntime')['getActiveServerSnapshot'];
 vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({
@@ -49,6 +61,11 @@ function page(runs: ReturnType<typeof createWorkflowRunSummaryFixture>[]): Workf
 }
 
 let model: InboxModel | null = null;
+const readExecutor = createActionExecutor({ appShellAction: invokeMountedWorkRead } as unknown as ActionExecutorDeps);
+function readInbox(accountId = 'account-a') {
+    return readExecutor.execute('inbox.get', {}, { surface: 'agent', authority: 'account_automation',
+        serverId: appliedSnapshot().serverId, runtimeAccountId: accountId });
+}
 function Probe(): null {
     model = useInboxModel();
     return null;
@@ -65,11 +82,13 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         const runtime = await import('@/sync/domains/server/serverRuntime');
         appliedSnapshot = runtime.getActiveServerSnapshot;
         await runtime.upsertAndActivateServer({ serverUrl: 'http://inbox-home.test', name: 'Inbox Home' });
+        publishAppliedActiveServerSnapshot(appliedSnapshot());
         (await import('@/components/workflows/library/workflowLibraryReads')).resetWorkflowLibraryReadsForTests();
         model = null;
         executed.length = 0;
         listRuns.mockReset();
         automationBoundary.request.mockReset();
+        collectionBoundary.request.mockReset();
         automationBoundary.request.mockImplementation(async () => new Response(JSON.stringify({ runs: [], nextCursor: null }), { status: 200 }));
         const base = createRootLayoutFeaturesResponse();
         primeServerFeaturesSnapshot({ snapshot: { status: 'ready', features: FeaturesResponseSchema.parse({
@@ -97,6 +116,47 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         (await import('@/sync/domains/scope/activeServerAccountScope')).retireActiveServerAccountScopeLifetime();
     });
 
+    it('projects only current Account-owned readable open usage notices without creating Sessions', async () => {
+        listRuns.mockResolvedValue(page([]));
+        const notice = usageNoticeFixture;
+        const owned = createUsageNoticeArtifactFixture();
+        const rows: DecryptedArtifact[] = [owned,
+            { ...owned, id: 'foreign', ownerAccountId: 'account-b' },
+            { ...owned, id: 'shared', access: 'view' },
+            { ...owned, id: 'published', publicAudience: 'retained' },
+            { ...owned, id: 'unknown-audience', publicAudience: 'unknown' },
+            createUsageNoticeArtifactFixture({ id: 'dismissed', header: { ...owned.header!, status: 'dismissed' }, body: undefined }),
+            createUsageNoticeArtifactFixture({ id: 'invalid', header: { ...owned.header!, notice: { ...notice, evidence: {} } }, body: undefined }),
+            createUsageNoticeArtifactFixture({ id: 'body-mismatch', body: JSON.stringify({ v: 1, notice: { ...notice, issueFingerprint: 'other' } }) }),
+            createUsageNoticeArtifactFixture({ id: 'header-only', body: undefined }),
+            { ...owned, id: 'locked', isDecrypted: false, title: null, header: null,
+                rawHeader: null, body: undefined, sessions: undefined, draft: undefined,
+                storageMode: 'e2ee', availability: { kind: 'locked', reason: 'decryption_failed' } },
+        ];
+        storage.setState({ artifacts: Object.fromEntries(rows.map(row => [row.id, row])) });
+
+        await renderModel();
+
+        expect(model).toMatchObject({ openUsageNotices: [{ artifact: owned, header: owned.header }],
+            hasPrimaryAttention: true, showCaughtUp: false });
+        expect(model?.workGroups).toEqual([]);
+        expect(storage.getState().sessions).toEqual({});
+        expect(await readInbox()).toMatchObject({ ok: true, result: { status: 'ready', usageNoticeIds: ['notice-owned'] } });
+
+        await act(async () => { storage.setState({ artifacts: {
+            ...storage.getState().artifacts,
+            'header-only': createUsageNoticeArtifactFixture({ id: 'header-only' }),
+        } }); });
+        expect(model?.openUsageNotices.map(entry => entry.artifact.id)).toEqual(['notice-owned', 'header-only']);
+
+        await act(async () => { storage.setState({ profileScope: {
+            ...storage.getState().profileScope!, accountId: 'account-b',
+        } }); });
+        expect(model).toMatchObject({ openUsageNotices: [{ artifact: rows[1] }], hasPrimaryAttention: true });
+        expect(await readInbox()).toMatchObject({ ok: true, result: { status: 'unavailable' } });
+        expect(await readInbox('account-b')).toMatchObject({ ok: true, result: { status: 'ready', usageNoticeIds: ['foreign'] } });
+    });
+
     it('retries an initially unreadable Work window through the same Action and distinguishes proven empty work', async () => {
         listRuns.mockRejectedValueOnce(new Error('offline')).mockResolvedValue(page([]));
         let workRead: SessionManagedWorkflowRunsState | null = null;
@@ -113,9 +173,9 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         await renderScreen(<WorkProbe />);
         await act(async () => {});
         const read = () => resolveWorkReadPresentation({ projection, managedRuns: workRead, transcriptLoaded: true });
-        expect(read()).toEqual({ nothingYet: false, managedLoading: false, managedUnavailable: true });
+        expect(read()).toEqual({ nothingYet: false, holdWorkingPlace: false, managedUnavailable: true });
         await act(async () => { currentRead()?.retry(); });
-        expect(read()).toEqual({ nothingYet: true, managedLoading: false, managedUnavailable: false });
+        expect(read()).toEqual({ nothingYet: true, holdWorkingPlace: false, managedUnavailable: false });
     });
 
     it('exposes a pre-session Automation failure with its exact Run route and removes it on the Account wake', async () => {
@@ -140,11 +200,16 @@ describe('useInboxModel work groups (ORC R-10)', () => {
             .mockResolvedValueOnce(page([createWorkflowRunSummaryFixture({ id: 'run-held', state: 'interrupted' })]))
             .mockResolvedValueOnce(page([]));
 
-        await renderModel();
+        const screen = await renderModel();
 
         expect(model?.workGroups.map((group) => group.key)).toEqual(['run:run-held']);
         expect(model?.workGroups[0]?.items.map((item) => item.key)).toEqual(['run:run-held']);
         expect(model?.hasPrimaryAttention).toBe(true);
+        expect(await readInbox()).toMatchObject({ ok: true, result: { status: 'ready', groups: [
+            { key: model?.workGroups[0]?.key, root: { kind: 'run', runId: 'run-held' },
+                items: [{ kind: 'workflow_run', key: model?.workGroups[0]?.items[0]?.key, runId: 'run-held' }] },
+        ] } });
+        expect(await readInbox('different-account')).toMatchObject({ ok: true, result: { status: 'unavailable' } });
 
         await act(async () => {
             publishHomeAccountChange(appliedSnapshot().serverId, ['workflow-run:run-held']);
@@ -152,6 +217,87 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         await act(async () => {});
 
         expect(model?.workGroups).toEqual([]);
+        await screen.unmount();
+        expect(await readInbox()).toMatchObject({ ok: true, result: { status: 'unavailable' } });
+    });
+
+    it('reads a valid single-Home missing lead and refuses the real mixed-Home model rather than filtering it empty', async () => {
+        listRuns.mockResolvedValue(page([]));
+        const serverId = appliedSnapshot().serverId;
+        const first = createSessionFixture({ id: 'child', serverId, reportsTo: { sessionId: 'unknown-lead' } });
+        const foreign = createSessionFixture({ id: 'foreign', serverId: 'other-home' });
+        const remindAt = Date.now() + 60_000;
+        storage.setState({ sessions: { child: first }, sessionOrganizationAttentionStandingsBySessionKey: {
+            [buildSessionOrganizationSessionKey(serverId, first.id)]: { sessionId: first.id, standing: true, remindAt, updatedAt: 1 },
+        } });
+        await renderModel();
+        expect(model?.workGroups[0]?.root).toEqual({ kind: 'lead', sessionId: 'unknown-lead', session: null });
+        expect(await readInbox()).toMatchObject({ ok: true, result: { status: 'ready', groups: [
+            { key: 'lead:unknown-lead', root: { kind: 'lead', sessionId: 'unknown-lead' },
+                items: [{ kind: 'snoozed', serverId, sessionId: first.id, remindAt }] },
+        ] } });
+        await act(async () => { storage.setState({ sessions: { child: first, foreign },
+            sessionOrganizationAttentionStandingsBySessionKey: {
+                ...storage.getState().sessionOrganizationAttentionStandingsBySessionKey,
+                [buildSessionOrganizationSessionKey('other-home', foreign.id)]: { sessionId: foreign.id, standing: true, remindAt, updatedAt: 1 },
+            } }); });
+        expect(model?.workGroups.flatMap(group => group.items)).toHaveLength(2);
+        expect(await readInbox()).toMatchObject({ ok: true, result: { status: 'unavailable' } });
+    });
+
+    it('projects retained Channel PR bindings into Landing and refreshes through the existing Account collection', async () => {
+        listRuns.mockResolvedValue(page([]));
+        const { PLUGIN_MANIFEST } = await import('@happier-dev/plugins-channels/manifest');
+        const contribution = PLUGIN_MANIFEST.contributes?.accountCollections?.find(entry => entry.id === 'channel-state');
+        const contract = normalizePluginAccountCollectionContractV1({ pluginId: 'happier.channels',
+            contribution: PluginAccountCollectionContributionV1Schema.parse(contribution) });
+        const validate = compilePluginJsonSchema(contract.schema);
+        const binding = ConversationBindingV1Schema.parse({
+            v: 1, id: 'binding-1', connectionId: 'connection-1', createdAt: 1, updatedAt: 1,
+            endpoint: { kind: 'githubPullRequest', audience: 'shared', id: 'pr-1' },
+            target: { kind: 'session', sessionId: 'session-1', pullRequestLink: { repository: 'acme/widgets', number: 1 },
+                policy: { deliveryMode: 'repliesOnly', permissionCeiling: 'read-only', approvals: { kind: 'off' }, newSession: { kind: 'off' } } },
+            allowedPrincipalIds: ['principal-1'], allowBotSenders: false, inputMode: 'directMentionsOnly', inboundDebounceMs: 0,
+            linkPreviewPolicy: 'suppress', senderFeedback: 'off', authorityEpoch: 1, enabled: false, deletionState: 'none',
+        });
+        const { v, id, connectionId, createdAt, updatedAt, ...payload } = binding;
+        const encoded = encodePluginCollectionLogicalValueV1({ contract,
+            isValidLogicalValue: value => isValidPluginJsonSchemaValue(validate, value),
+            value: { id, 'record-kind': 'binding', v, 'connection-id': connectionId, 'binding-id': id,
+                'created-at': createdAt, 'updated-at': updatedAt, payload },
+            encryptionMode: 'plain', material: null, randomBytes: length => new Uint8Array(length).fill(9),
+        });
+        if (encoded.status !== 'encoded') throw new Error(encoded.reason);
+        let rows = [{ rowId: encoded.rowId, revision: 1, projection: encoded.projection, content: encoded.content }];
+        collectionBoundary.request.mockImplementation(async (path: string) => new Response(JSON.stringify(
+            path === '/v1/account/encryption/currentness' ? createPlainAccountEncryptionCurrentnessFixture()
+                : path === '/v1/plugins/data/contract' ? { access: 'readOnly', contract }
+                    : { rows, changeCursor: 18 },
+        ), { status: 200 }));
+        const scope = storage.getState().profileScope!;
+        recordAccountStoredContentServerRequirements({ serverUrl: appliedSnapshot().serverUrl,
+            requirements: { v: 1, minimumProtocolVersion: 2, currentProtocolVersion: 3,
+                declarationTransport: 'http-header-and-socket-auth-v1' } });
+        replacePluginAccountAvailabilityProjection({ scope, snapshot: {
+            availabilityCursor: 7, materializations: [], snapshots: [], intentReads: [{ pluginId: contract.pluginId,
+                response: { availabilityCursor: 7, packageAssets: [],
+                    hostingCapability: { enabled: true, maxArtifactBytes: 1024, maxAccountBytes: 2048 },
+                    intent: { pluginId: contract.pluginId, desiredVersion: null, enabled: true, offlineUiHosting: 'enabled',
+                        writableCollections: [{ pluginId: contract.pluginId, collectionId: contract.collectionId,
+                            schemaVersion: contract.schemaVersion, contractDigest: contract.contractDigest }], revision: 'intent-7' },
+                    release: null, uiArtifacts: [] },
+            }],
+        } });
+        const session = createSessionFixture({ id: 'session-1', serverId: scope.serverId, active: false, seq: 0 });
+        storage.setState({ sessions: { [session.id]: session } });
+        await renderModel();
+        expect(model?.workGroups.flatMap(group => group.items).filter(item => item.kind === 'landing'))
+            .toMatchObject([{ kind: 'landing', session, link: { sessionId: session.id, serverId: scope.serverId, number: 1 } }]);
+        await act(async () => {
+            rows = [];
+            resetActivePluginCollectionChanges();
+        });
+        expect(model?.workGroups.flatMap(group => group.items).filter(item => item.kind === 'landing')).toEqual([]);
     });
 
     it('settles through the one attention Action and the read-state Action, in that order', async () => {
@@ -176,6 +322,7 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         expect(model?.workflowAttention.phase).toBe('failed');
         expect(model?.isLoading).toBe(false);
         expect(model?.showCaughtUp).toBe(false);
+        expect(await readInbox()).toMatchObject({ ok: true, result: { status: 'unavailable' } });
 
         await act(async () => { model?.workflowAttention.retry(); });
         expect(model?.workflowAttention.phase).toBe('loaded');
@@ -189,6 +336,7 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         expect(model?.workflowAttention.phase).toBe('loading');
         expect(model?.isLoading).toBe(true);
         expect(model?.showCaughtUp).toBe(false);
+        expect(await readInbox()).toMatchObject({ ok: true, result: { status: 'loading' } });
     });
 
     it('keeps known groups during a failed workflow refresh and recovers on retry', async () => {

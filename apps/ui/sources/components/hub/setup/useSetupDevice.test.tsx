@@ -31,7 +31,8 @@ describe('Home setup device presentation', () => {
         expect(hook.getCurrent()).toMatchObject({ isComputer: true, isPhone: false, tileLayout: 'card' });
         Object.assign(viewport, { width: 844, height: 390 });
         await hook.rerender();
-        expect(hook.getCurrent()).toMatchObject({ isComputer: true, isPhone: false, tileLayout: 'row' });
+        // Desktop recomposition follows width, not the short window's minimum edge.
+        expect(hook.getCurrent()).toMatchObject({ isComputer: true, isPhone: false, tileLayout: 'card' });
     });
 
     it('keeps real phone scanning eligibility with the compact presentation', async () => {

@@ -16,12 +16,12 @@ export async function executeHomeHubLayoutIntent(input: Readonly<{
         serverId: input.scope.serverId, expectedAccountId: input.scope.accountId,
     } as const;
     const result = input.intent.kind === 'widget_size'
-        ? await input.execute('widgets.instance.size.set', { ref: {
+        ? await input.execute('widgets.item.size.set', { ref: {
             surface: { ...input.scope, owner: { kind: 'home' } }, instanceId: input.intent.instanceId,
         }, size: input.intent.size }, context)
         : await input.execute('home.hub.layout.update', { intent: input.intent }, context);
     if (input.intent.kind === 'widget_size') {
-        const outcome = classifyWidgetDefinitionCommandResult('widgets.instance.size.set', result);
+        const outcome = classifyWidgetDefinitionCommandResult('widgets.item.size.set', result);
         if (outcome.kind === 'refused') throw Object.assign(new Error(outcome.errorCode), { code: outcome.errorCode });
         // Universal mutation acknowledgement does not fabricate a native layout revision.
         const layout = await createHomeHubArtifactPortV1(input.transport, { accountId: input.scope.accountId }).read();

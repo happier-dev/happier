@@ -6,10 +6,12 @@ import {
     type InboxSessionPresentation,
 } from '@/activity/presentation/buildInboxSessionPresentation';
 import { isOpenApprovalInboxArtifact } from '@/sync/domains/artifacts/approvalArtifacts';
+import { readOpenUsageNoticeArtifactHeader, type OpenUsageNoticeArtifact } from '@/sync/domains/artifacts/usageNoticeArtifacts';
 import {
     type SessionBulkActionTarget,
 } from '@/components/sessions/actions/sessionBulkActionTypes';
 import { AppShellActionOutputSchemas } from '@happier-dev/protocol/actions/appShellActionFamily';
+import { ArtifactActionOutputSchemasV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import {
@@ -38,6 +40,13 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionAttentionStanding } from '@happier-dev/protocol';
 import type { AutomationDefinitionRun } from '@/sync/domains/automations/automationTypes';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
+import { registerMountedInboxReadOwner } from '@/sync/ops/actions/mountedWorkReadAction';
+import { useActivePluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/projection';
+import { readActiveSessionPullRequestLinks } from '@/sync/api/plugins/data/sessionPullRequestLinks';
+import { watchActivePluginCollectionChanges } from '@/sync/api/plugins/data/pluginCollectionChangeWatch';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 
 import { useInboxFriendRequests } from './useInboxFriendRequests';
 import {
@@ -57,6 +66,8 @@ export type AutomationInboxItem = Readonly<{
 export type InboxModel = Readonly<{
     source: ReturnType<typeof useActivityOverview>['source'];
     openApprovals: ReturnType<typeof useArtifacts>;
+    openUsageNotices: readonly OpenUsageNoticeArtifact[];
+    dismissUsageNotice: (entry: OpenUsageNoticeArtifact) => Promise<void>;
     friendRequests: ReturnType<typeof useInboxFriendRequests>['requests'];
     sessionPresentation: InboxSessionPresentation;
     targetBySessionAddress: ReadonlyMap<string, SessionBulkActionTarget>;
@@ -71,6 +82,8 @@ export type InboxModel = Readonly<{
     resolveActionOperation: (entry: InboxActionOperationEntry) => void;
     /** Everything that needs the person, grouped by the work it belongs to (ORC R-10). */
     workGroups: readonly InboxWorkGroup[];
+    /** Rows come from more than one Home, so each row names its Home; with one Home none repeats it. */
+    spansHomes: boolean;
     /** The workflow input's freshness, for the one "couldn't refresh" line. */
     workflowAttention: WorkflowAttentionSource;
     automationAttention: WorkflowAttentionSource;
@@ -81,11 +94,7 @@ export type InboxModel = Readonly<{
     setReminder: (session: Session, remindAt: number | null) => Promise<void>;
 }>;
 
-/**
- * FIN's `sessionPullRequestLink` read projection is the one source of Landing (FIN PLAN U10, 08
- * §5A). It has not landed, so no session is Landing yet; the rows are built against its shape.
- */
-const NO_PULL_REQUEST_LINKS: readonly InboxPullRequestLink[] = Object.freeze([]);
+const EMPTY_PULL_REQUEST_LINKS: readonly InboxPullRequestLink[] = Object.freeze([]);
 
 /**
  * The server origin link of a step session (ORC §3.1: awareness `origin?: {kind, runId?}`). U4 has
@@ -133,15 +142,69 @@ function useCreateInboxModel(): InboxModel {
     const { source, overview } = useActivityOverview();
     const friends = useInboxFriendRequests();
     const artifacts = useArtifacts();
+    const profileScope = storage((state) => state.profileScope);
+    const pluginAvailability = useActivePluginAccountAvailabilityReader();
+    const pullRequestReadAvailable = pluginAvailability?.readCurrentCollectionContract({
+        pluginId: 'happier.channels', collectionId: 'channel-state',
+    }).kind === 'available';
+    const [pullRequestRead, setPullRequestRead] = React.useState<Readonly<{
+        lifetime: NonNullable<ReturnType<typeof captureActiveServerAccountScopeLifetime>>;
+        phase: 'loading' | 'loaded' | 'failed';
+        links: readonly InboxPullRequestLink[];
+    }> | null>(null);
+    React.useEffect(() => {
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime || !profileScope || !areServerAccountScopesEqual(lifetime.scope, profileScope)
+            || !pluginAvailability || !pullRequestReadAvailable) {
+            setPullRequestRead(null);
+            return;
+        }
+        let controller: AbortController | undefined;
+        const refresh = () => {
+            controller?.abort();
+            const request = new AbortController();
+            controller = request;
+            setPullRequestRead(previous => ({ lifetime, phase: 'loading',
+                links: previous?.lifetime === lifetime ? previous.links : EMPTY_PULL_REQUEST_LINKS }));
+            void readActiveSessionPullRequestLinks({ accountLifetime: lifetime,
+                readAvailability: () => pluginAvailability, signal: request.signal,
+            }).then(outcome => {
+                if (request.signal.aborted || !lifetime.isCurrent()) return;
+                setPullRequestRead(previous => ({ lifetime,
+                    phase: outcome.status === 'ready' ? 'loaded' : 'failed',
+                    links: outcome.status === 'ready' ? outcome.sessions.flatMap(session => session.pullRequestLinks.map(link => ({
+                        sessionId: session.sessionId, serverId: lifetime.scope.serverId, number: link.number,
+                    }))) : previous?.lifetime === lifetime ? previous.links : EMPTY_PULL_REQUEST_LINKS,
+                }));
+            }).catch(() => {
+                if (request.signal.aborted || !lifetime.isCurrent()) return;
+                setPullRequestRead(previous => ({ lifetime, phase: 'failed',
+                    links: previous?.lifetime === lifetime ? previous.links : EMPTY_PULL_REQUEST_LINKS }));
+            });
+        };
+        const watch = watchActivePluginCollectionChanges({ pluginId: 'happier.channels', collectionId: 'channel-state',
+            accountLifetime: lifetime, onInvalidated: refresh });
+        const retirement = lifetime.onRetire(() => controller?.abort());
+        refresh();
+        return () => { controller?.abort(); watch?.dispose(); retirement.dispose(); };
+    }, [pluginAvailability, pullRequestReadAvailable, profileScope?.accountId, profileScope?.serverId]);
+    const currentPullRequestRead = pullRequestReadAvailable && pullRequestRead?.lifetime.isCurrent()
+        && areServerAccountScopesEqual(pullRequestRead.lifetime.scope, profileScope) ? pullRequestRead : null;
     const friendsLoaded = useFriendsLoaded();
     const actionOperationEntries = useInboxActionOperations();
     const [pendingReadKeys, setPendingReadKeys] = React.useState<ReadonlySet<string>>(() => new Set());
     const pendingReadKeysRef = React.useRef<ReadonlySet<string>>(pendingReadKeys);
 
     const openApprovals = React.useMemo(
+        // A draft is not a request yet: the badge's count leaves it out, and so does the list.
         () => artifacts.filter(isOpenApprovalInboxArtifact),
         [artifacts],
     );
+    const openUsageNotices = React.useMemo(() => artifacts.flatMap((artifact): OpenUsageNoticeArtifact[] => {
+        if (artifact.draft === true) return [];
+        const header = readOpenUsageNoticeArtifactHeader(artifact, profileScope?.accountId);
+        return header ? [{ artifact, header }] : [];
+    }), [artifacts, profileScope?.accountId]);
     const workflowAttention = useWorkflowAttentionSource();
     const workflowRuns = useWorkflowRunRows(workflowAttention.runIds);
     const automationAttention = useAutomationAttentionSource();
@@ -181,15 +244,21 @@ function useCreateInboxModel(): InboxModel {
                 : [];
         });
     }, [attentionStandings, sessionsById]);
-    const landings = React.useMemo(() => NO_PULL_REQUEST_LINKS.flatMap((link) => {
+    const pullRequestLinks = currentPullRequestRead?.links ?? EMPTY_PULL_REQUEST_LINKS;
+    const landings = React.useMemo(() => pullRequestLinks.flatMap((link) => {
         const session = sessionsById[link.sessionId];
         const standing = session
             ? attentionStandings[buildSessionOrganizationSessionKey(session.serverId ?? '', session.id)]
             : undefined;
-        // Settled (standing false) or merged work has landed; only an open link is Landing.
-        return session && link.state === 'open' && standing?.standing !== false ? [{ session, link }] : [];
-    }), [attentionStandings, sessionsById]);
-    const workGroups = React.useMemo(() => buildInboxWorkGroups({
+        // Channels proves the PR relation, not remote open/merged state. Settle remains
+        // the person's authority; never fabricate PR state from a retained binding.
+        return session && session.serverId && link.serverId
+            && areServerProfileIdentifiersEquivalent(session.serverId, link.serverId)
+            && link.state !== 'merged' && link.state !== 'closed' && standing?.standing !== false ? [{ session, link }] : [];
+    }), [attentionStandings, pullRequestLinks, sessionsById]);
+    const previousWorkGroups = React.useRef<readonly InboxWorkGroup[]>([]);
+    const workGroups = React.useMemo(() => {
+        const next = buildInboxWorkGroups({
         sessionEntries: sessionPresentation.sessionsNeedingAttention,
         workflowRuns,
         stalledSessions,
@@ -197,7 +266,15 @@ function useCreateInboxModel(): InboxModel {
         snoozed,
         resolveSession: (sessionId) => sessionsById[sessionId],
         resolveOriginRunId: readAwarenessOriginRunId,
-    }), [landings, sessionPresentation.sessionsNeedingAttention, sessionsById, snoozed, stalledSessions, workflowRuns]);
+        }, previousWorkGroups.current);
+        previousWorkGroups.current = next;
+        return next;
+    }, [landings, sessionPresentation.sessionsNeedingAttention, sessionsById, snoozed, stalledSessions, workflowRuns]);
+
+    const spansHomes = React.useMemo(
+        () => new Set(overview.candidates.map((candidate) => candidate.address?.serverId ?? candidate.serverId ?? '')).size > 1,
+        [overview.candidates],
+    );
 
     const markAllReadTargets = sessionPresentation.markAllReadTargets;
     const targetBySessionAddress = React.useMemo(
@@ -209,8 +286,10 @@ function useCreateInboxModel(): InboxModel {
         || (!source.isDataReady && overview.candidates.length === 0)
         || (workflowAttention.available && workflowAttention.phase === 'loading')
         || (automationAttention.available && automationAttention.phase === 'loading')
+        || (pullRequestReadAvailable && (!currentPullRequestRead || currentPullRequestRead.phase === 'loading'))
     );
     const hasPrimaryAttention = openApprovals.length > 0
+        || openUsageNotices.length > 0
         || automationAttentionItems.length > 0
         || workGroups.length > 0
         || sessionPresentation.sessionsNeedingAttention.length > 0
@@ -218,6 +297,7 @@ function useCreateInboxModel(): InboxModel {
         || friends.requests.length > 0
         || actionOperationEntries.length > 0;
     const showCaughtUp = !isLoading && !hasPrimaryAttention
+        && currentPullRequestRead?.phase !== 'failed'
         && ![workflowAttention, automationAttention].some((attention) => attention.available
             && (attention.phase === 'failed' || attention.refreshFailed));
     const markAllPending = markAllReadTargets.length > 0
@@ -266,6 +346,27 @@ function useCreateInboxModel(): InboxModel {
         actionOperationStore.markTerminalSeen(address);
     }, []);
 
+    const dismissUsageNotice = React.useCallback(async (entry: OpenUsageNoticeArtifact) => {
+        if (!profileScope || !readOpenUsageNoticeArtifactHeader(entry.artifact, profileScope.accountId)) {
+            throw new Error('usage_notice_unavailable');
+        }
+        const context = { surface: 'ui' as const, authority: 'present_user' as const,
+            serverId: profileScope.serverId, expectedAccountId: profileScope.accountId };
+        const read = await executeInboxAction('artifact.get', { artifactId: entry.artifact.id }, context);
+        if (!read.ok) throw new Error(read.errorCode ?? 'usage_notice_unavailable');
+        const current = ArtifactActionOutputSchemasV1['artifact.get'].parse(read.result).artifact;
+        const header = current && readOpenUsageNoticeArtifactHeader({ ...current, isDecrypted: true }, profileScope.accountId);
+        if (!current || !header || typeof current.body !== 'string'
+            || current.artifactId !== entry.artifact.id
+            || current.revision.headerVersion !== entry.artifact.headerVersion
+            || current.revision.bodyVersion !== entry.artifact.bodyVersion) throw new Error('usage_notice_changed');
+        const result = await executeInboxAction('artifact.update', {
+            artifactId: current.artifactId, expectedRevision: current.revision,
+            header: { ...header, status: 'dismissed' }, body: current.body,
+        }, context);
+        if (!result.ok) throw new Error(result.errorCode ?? 'usage_notice_unavailable');
+    }, [profileScope]);
+
     const settle = React.useCallback(async (session: Session) => {
         const serverId = session.serverId ?? null;
         try {
@@ -283,9 +384,11 @@ function useCreateInboxModel(): InboxModel {
         }
     }, []);
 
-    return React.useMemo(() => ({
+    const model = React.useMemo(() => ({
         source,
         openApprovals,
+        openUsageNotices,
+        dismissUsageNotice,
         friendRequests: friends.requests,
         sessionPresentation,
         targetBySessionAddress,
@@ -299,12 +402,14 @@ function useCreateInboxModel(): InboxModel {
         markRead,
         resolveActionOperation,
         workGroups,
+        spansHomes,
         workflowAttention,
         automationAttention,
         automationAttentionItems,
         settle,
         setReminder,
     }), [
+        spansHomes,
         actionOperationEntries,
         friends.requests,
         hasPrimaryAttention,
@@ -313,6 +418,8 @@ function useCreateInboxModel(): InboxModel {
         markRead,
         resolveActionOperation,
         openApprovals,
+        openUsageNotices,
+        dismissUsageNotice,
         pendingReadKeys,
         sessionPresentation,
         showCaughtUp,
@@ -325,6 +432,12 @@ function useCreateInboxModel(): InboxModel {
         automationAttention,
         automationAttentionItems,
     ]);
+    React.useLayoutEffect(() => {
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!profileScope || !lifetime || !areServerAccountScopesEqual(profileScope, lifetime.scope)) return;
+        return registerMountedInboxReadOwner({ scope: profileScope, isCurrent: lifetime.isCurrent, read: () => model });
+    }, [model, profileScope]);
+    return model;
 }
 
 /** Mount at an open Inbox screen or popover boundary. */

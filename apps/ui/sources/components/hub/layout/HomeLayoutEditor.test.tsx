@@ -1,3 +1,5 @@
+import type { HomeHubLayoutValue } from '@happier-dev/protocol/home';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -41,7 +43,7 @@ function AccountShell({ children }: React.PropsWithChildren) {
     return <InjectedAuthProvider credentials={connection!.credentials}>
         <AppShellPluginUiProjectionValueProvider value={{ pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION, pluginBrowserProjection: null,
             phase: 'current', interactionEnabled: true, machineId: null, serverId: connection!.home.id, platform: 'web',
-            clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {} }}>
+            accountLifetime: captureActiveServerAccountScopeLifetime(), clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {} }}>
             {children}
         </AppShellPluginUiProjectionValueProvider>
     </InjectedAuthProvider>;
@@ -56,6 +58,11 @@ afterEach(async () => {
     storage.setState({ profileScope: initial.profileScope, settings: initial.settings, artifacts: initial.artifacts });
 });
 
+/** Every placed copy in the acknowledged Home layout (widget items, and group children). */
+function storedInstances(artifact: Readonly<{ layout(): { items?: HomeHubLayoutValue['items'] } }>) {
+    return (artifact.layout().items ?? []).flatMap(item => item.kind === 'widget' ? [item.instance] : item.children.map(child => child.instance));
+}
+
 describe('Home Customize entity reorder binding', () => {
     it.each([
         { sizes: ['wide'], defaultSize: 'wide' },
@@ -68,7 +75,7 @@ describe('Home Customize entity reorder binding', () => {
             inputs: { fields: [] }, inputSchema: { type: 'object', properties: {}, additionalProperties: false },
             body: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Checks' } } } });
         const artifact = createHomeHubArtifactHttpBoundary('account-a');
-        artifact.seed({ v: 1, instances: [{ v: 1, id: 'copy', definition: { kind: 'artifact', artifactId: definition.id }, bindings: {} }], order: [], hidden: [] });
+        artifact.seed({ v: 1, items: [{ kind: 'widget', instance: { v: 1, id: 'copy', definition: { kind: 'artifact', artifactId: definition.id }, bindings: {} } }], order: [], hidden: [] });
         connection = await restoreServerAccountForTest({ serverUrl: 'https://home-size-header.test', accountId: 'account-a', request: artifact.request });
         const scope = { serverId: connection.home.id, accountId: 'account-a' };
         storage.setState({ isDataReady: true, profileScope: scope, settingsScope: scope, artifacts: { ...storage.getState().artifacts,
@@ -82,9 +89,30 @@ describe('Home Customize entity reorder binding', () => {
         expect(artifact.writes).toHaveLength(0);
         expect(artifact.layout().sections).toBeUndefined();
     });
+    it('lists a group as one row to reorder: no show switch, and its options stay with its bar on Home', async () => {
+        const artifact = createHomeHubArtifactHttpBoundary('account-a');
+        const child = (id: string, displayName: string) => ({ v: 1 as const, id, displayName, definition: { kind: 'builtin' as const, id: 'session_summary' as const }, bindings: {} });
+        artifact.seed({ v: 1, order: [], hidden: [], items: [{ kind: 'group', id: 'g', width: 'full', frameStyle: 'card', dividers: 'hairline',
+            children: [{ kind: 'widget', instance: child('wide-one', 'Daily usage'), size: 'wide' }, { kind: 'widget', instance: child('small-one', 'Checks'), size: 'small' }] }] });
+        await import('@/sync/syncEngine');
+        restoreActionLoader = await installRealActionExecutorModuleLoader();
+        connection = await restoreServerAccountForTest({ serverUrl: 'https://home-customize-group.test', accountId: 'account-a', request: artifact.request });
+        const scope = { serverId: connection.home.id, accountId: 'account-a' };
+        storage.setState({ isDataReady: true, profileScope: scope, settingsScope: scope });
+        const screen = await renderScreen(<AccountShell><HomeLayoutEditor presentation="popover" /></AccountShell>);
+        await flushHookEffects({ cycles: 3 });
+        // Hiding a group would remove its widgets, so it has no switch; it still moves by its grip.
+        expect(screen.findByTestId('home-layout.g')).not.toBeNull();
+        expect(screen.findByTestId('home-layout.g.grip')).not.toBeNull();
+        expect(screen.findByTestId('home-layout.g.shown')).toBeNull();
+        // One owner for a group's name, width and ⋯: its bar on the page, never a second copy in this list.
+        expect(screen.findByTestId('home-layout.g.groupMenu')).toBeNull();
+        expect(screen.root.findAll(node => node.props.testIDPrefix === 'home-layout.g.group.width')).toHaveLength(0);
+        expect(artifact.writes).toHaveLength(0);
+    });
     it('rejects failed Customize writes through the real queue and keeps mounted recovery available', async () => {
         const artifact = createHomeHubArtifactHttpBoundary('account-a');
-        artifact.seed({ v: 1, instances: [], order: ['setup'], hidden: ['setup'] });
+        artifact.seed({ v: 1, items: [], order: ['setup'], hidden: ['setup'] });
         let failWrite = true;
         await import('@/sync/syncEngine');
         restoreActionLoader = await installRealActionExecutorModuleLoader();
@@ -114,7 +142,7 @@ describe('Home Customize entity reorder binding', () => {
     it('keeps failed Home setup and input edits unsaved through the real Action queue, then retries them', async () => {
         const artifact = createHomeHubArtifactHttpBoundary('account-a');
         const instance = { v: 1 as const, id: 'existing', definition: { kind: 'builtin' as const, id: 'session_summary' as const }, bindings: {} };
-        artifact.seed({ v: 1, instances: [instance], order: [], hidden: [] });
+        artifact.seed({ v: 1, items: [{ kind: 'widget', instance }], order: [], hidden: [] });
         let failWrite = true;
         let rejectedWrites = 0;
         const requestedPaths: string[] = [];
@@ -174,20 +202,20 @@ describe('Home Customize entity reorder binding', () => {
         expect(layout!.status).toBe('error');
         expect(layout!.canCancelFailedIntent).toBe(true);
         expect(artifact.writes).toHaveLength(0);
-        expect(artifact.layout().instances).toEqual([instance]);
+        expect(storedInstances(artifact)).toEqual([instance]);
         failWrite = false;
         await act(async () => { await layout!.retry(); });
-        const added = artifact.layout().instances.find(copy => copy.id !== instance.id)!;
+        const added = storedInstances(artifact).find(copy => copy.id !== instance.id)!;
         expect(added).toMatchObject({ definition, bindings: draft.bindings });
         expect(layout!.status).toBe('ready');
         failWrite = true;
         const updatedBindings = { session: { kind: 'value' as const, value: { serverId: scope.serverId, sessionId: 'session-2' } } };
         await act(async () => { await expect(runWidgetSetupCommand(() => layout!.setInputs(added.id, updatedBindings), 'saveFailed')).resolves.toEqual({ ok: false, message: 'saveFailed' }); });
-        expect(artifact.layout().instances.find(copy => copy.id === added.id)!.bindings).toEqual(draft.bindings);
+        expect(storedInstances(artifact).find(copy => copy.id === added.id)!.bindings).toEqual(draft.bindings);
         expect(layout!.canCancelFailedIntent).toBe(true);
         failWrite = false;
         await act(async () => { await layout!.retry(); });
-        expect(artifact.layout().instances.find(copy => copy.id === added.id)!.bindings).toEqual(updatedBindings);
+        expect(storedInstances(artifact).find(copy => copy.id === added.id)!.bindings).toEqual(updatedBindings);
         expect(layout!.status).toBe('ready');
         failWrite = true;
         await act(async () => { rename!.begin!(); });
@@ -195,15 +223,15 @@ describe('Home Customize entity reorder binding', () => {
         await act(async () => { screen.findByTestId('write.rename-title-input')!.props.onSubmitEditing(); });
         expect(screen.findByTestId('write.rename-title-input')).not.toBeNull();
         expect(screen.findByTestId('write.rename-title-input')!.props.value).toBe('My summary');
-        expect(artifact.layout().instances.find(copy => copy.id === instance.id)!.displayName).toBeUndefined();
+        expect(storedInstances(artifact).find(copy => copy.id === instance.id)!.displayName).toBeUndefined();
         failWrite = false;
         await act(async () => { screen.findByTestId('write.rename-title-input')!.props.onSubmitEditing(); });
         expect(screen.findByTestId('write.rename-title-input')).toBeNull();
-        expect(artifact.layout().instances.find(copy => copy.id === instance.id)!.displayName).toBe('My summary');
+        expect(storedInstances(artifact).find(copy => copy.id === instance.id)!.displayName).toBe('My summary');
     });
     it.each(['retry', 'cancel'] as const)('keeps a rejected drag available for mounted %s recovery', async recovery => {
         const artifact = createHomeHubArtifactHttpBoundary('account-a');
-        artifact.seed({ v: 1, instances: [], order: [], hidden: [] });
+        artifact.seed({ v: 1, items: [], order: [], hidden: [] });
         let failWrite = true;
         await import('@/sync/syncEngine');
         restoreActionLoader = await installRealActionExecutorModuleLoader();
@@ -242,7 +270,7 @@ describe('Home Customize entity reorder binding', () => {
     });
     it('uses current Account sections and semantic anchors while Customize starts in Organize', async () => {
         const artifact = createHomeHubArtifactHttpBoundary('account-a');
-        artifact.seed({ v: 1, instances: [], order: [], hidden: ['setup'] });
+        artifact.seed({ v: 1, items: [], order: [], hidden: ['setup'] });
         await import('@/sync/syncEngine');
         restoreActionLoader = await installRealActionExecutorModuleLoader();
         connection = await restoreServerAccountForTest({ serverUrl: 'https://home-editor.test', accountId: 'account-a', request: artifact.request });

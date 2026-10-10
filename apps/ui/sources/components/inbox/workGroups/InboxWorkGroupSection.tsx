@@ -34,7 +34,7 @@ type GroupHeader = Readonly<{
     open: Readonly<{ label: string; route: string }> | null;
 }>;
 
-function useGroupHeader(group: InboxWorkGroup, identityDisplay: SessionListIdentityDisplay): GroupHeader {
+function useGroupHeader(group: InboxWorkGroup, identityDisplay: SessionListIdentityDisplay, workflowServerId: string | null): GroupHeader {
     const { theme } = useUnistyles();
     const root = group.root;
     switch (root.kind) {
@@ -65,7 +65,7 @@ function useGroupHeader(group: InboxWorkGroup, identityDisplay: SessionListIdent
                 title: formatWorkflowRunDisplayName(resolveWorkflowRunDisplayName(root.row.metadata)),
                 leading: <Icon name="tree-structure" size={MARK_SIZE} color={theme.colors.text.secondary} />,
                 meta: t('inbox.work.groups.runMeta'),
-                open: { label: t('inbox.work.groups.openRun'), route: createWorkflowRunRoute(root.runId) },
+                open: { label: t('inbox.work.groups.openRun'), route: createWorkflowRunRoute(root.runId, workflowServerId) },
             };
         case 'other':
             return {
@@ -77,6 +77,30 @@ function useGroupHeader(group: InboxWorkGroup, identityDisplay: SessionListIdent
     }
 }
 
+/** A run that is its own work root leads its group with its own row, so the group draws no header. */
+function isHeaderlessRunGroup(group: InboxWorkGroup): boolean {
+    const first = group.items[0];
+    return group.root.kind === 'run' && first?.kind === 'workflow_run' && first.runId === group.root.runId;
+}
+
+/**
+ * The sheets the work roots draw as. Neighbouring runs that are their own root have no header to
+ * separate them, so they share one sheet (a list of runs) instead of stacking as one card per run;
+ * every other root keeps its own section.
+ */
+export function groupInboxWorkSheets(groups: readonly InboxWorkGroup[]): InboxWorkGroup[] {
+    const sheets: InboxWorkGroup[] = [];
+    for (const group of groups) {
+        const previous = sheets[sheets.length - 1];
+        if (previous && isHeaderlessRunGroup(previous) && isHeaderlessRunGroup(group)) {
+            sheets[sheets.length - 1] = { ...previous, items: [...previous.items, ...group.items] };
+        } else {
+            sheets.push(group);
+        }
+    }
+    return sheets;
+}
+
 /**
  * One work root and everything under it that needs the person (lab `inbox-I1`): the root's mark,
  * name and one quiet fact, "Open session"/"Open run", then its rows. `extra` carries rows that
@@ -86,26 +110,30 @@ export const InboxWorkGroupSection = React.memo(function InboxWorkGroupSection(p
     group: InboxWorkGroup;
     model: InboxModel;
     identityDisplay: SessionListIdentityDisplay;
-    nowMs: number;
     presentation: 'screen' | 'popover';
     spacingBefore?: 'following' | 'separated';
     navigate: (route: string) => void;
     onBeforeNavigate?: () => void;
     /** The item the person came to see, drawn selected. */
     focusedItem?: InboxItemFocus | null;
+    /** Beside the Inbox's detail pane, rows select their item there. */
+    onSelectItem?: (focus: InboxItemFocus) => void;
     extra?: React.ReactNode;
 }>) {
-    const header = useGroupHeader(props.group, props.identityDisplay);
+    const header = useGroupHeader(props.group, props.identityDisplay, props.model.workflowAttention.serverId);
     const page = props.presentation === 'screen';
+    // A run that is its own work root leads its group with its own row (titled by the run, opening
+    // it): a header naming the run again above that row, with a second "Open run", says it twice.
+    const rootIsOwnRow = isHeaderlessRunGroup(props.group);
     return (
         <InboxSection
             testID={`inbox.group.${props.group.key}`}
-            title={header.title}
+            title={rootIsOwnRow ? undefined : header.title}
             surface={page ? 'page' : 'flat'}
             spacingBefore={props.spacingBefore}
-            leading={header.leading}
-            meta={header.meta ? <Text style={styles.meta}>{header.meta}</Text> : undefined}
-            rightAccessory={page && header.open ? (
+            leading={rootIsOwnRow ? undefined : header.leading}
+            meta={!rootIsOwnRow && header.meta ? <Text style={styles.meta}>{header.meta}</Text> : undefined}
+            rightAccessory={page && header.open && !rootIsOwnRow ? (
                 <SectionActionButton
                     testID={`inbox.group.${props.group.key}.open`}
                     title={header.open.label}
@@ -118,13 +146,16 @@ export const InboxWorkGroupSection = React.memo(function InboxWorkGroupSection(p
                 <InboxWorkItemRow
                     key={item.key}
                     item={item}
-                    model={props.model}
+                    spansHomes={props.model.spansHomes}
+                    workflowServerId={props.model.workflowAttention.serverId}
+                    settle={props.model.settle}
+                    setReminder={props.model.setReminder}
                     identityDisplay={props.identityDisplay}
-                    nowMs={props.nowMs}
                     presentation={props.presentation}
                     navigate={props.navigate}
                     onBeforeNavigate={props.onBeforeNavigate}
                     focused={isFocusedInboxWorkItem(item, props.focusedItem ?? null, props.model.workflowAttention.serverId)}
+                    onSelectItem={props.onSelectItem}
                 />
             ))}
             {props.extra}

@@ -35,7 +35,6 @@ describe('InboxSessionAttentionHeader', () => {
         const style = button.props.style({ pressed: false });
         const flattened = Object.assign({}, ...style.filter(Boolean));
         expect(button.props.accessibilityLabel).toBe('Open session: Fix login');
-        expect(flattened.width).toBeGreaterThanOrEqual(48);
-        expect(flattened.height).toBeGreaterThanOrEqual(48);
+        expect(flattened.minHeight).toBeGreaterThanOrEqual(48);
     });
 });

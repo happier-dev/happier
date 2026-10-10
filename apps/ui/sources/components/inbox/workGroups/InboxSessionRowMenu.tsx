@@ -27,7 +27,8 @@ const INBOX_SETTLE_MENU_ID = 'inbox.settle';
  */
 export const InboxSessionRowMenu = React.memo(function InboxSessionRowMenu(props: Readonly<{
     session: Session;
-    model: InboxModel;
+    settle: InboxModel['settle'];
+    setReminder: InboxModel['setReminder'];
 }>) {
     const { theme } = useUnistyles();
     const [open, setOpen] = React.useState(false);
@@ -35,7 +36,7 @@ export const InboxSessionRowMenu = React.memo(function InboxSessionRowMenu(props
     const applyReminderPresetIntent = useApplySessionReminderPresetIntent();
     const standingKey = buildSessionOrganizationSessionKey(props.session.serverId ?? '', props.session.id);
     const standing = storage((state) => state.sessionOrganizationAttentionStandingsBySessionKey?.[standingKey]);
-    const { session, model } = props;
+    const { session, settle, setReminder } = props;
 
     const items = React.useMemo<DropdownMenuItem[]>(() => {
         if (!open) return [];
@@ -53,7 +54,7 @@ export const InboxSessionRowMenu = React.memo(function InboxSessionRowMenu(props
 
     const onSelect = React.useCallback((itemId: string) => {
         if (itemId === INBOX_SETTLE_MENU_ID) {
-            void model.settle(session);
+            void settle(session);
             return;
         }
         if (!isSessionReminderMenuItemId(itemId)) return;
@@ -64,15 +65,15 @@ export const InboxSessionRowMenu = React.memo(function InboxSessionRowMenu(props
             presets: reminderPresets ?? [],
             applyPresetIntent: applyReminderPresetIntent,
             schedule: async (remindAt) => {
-                await model.setReminder(session, remindAt);
+                await setReminder(session, remindAt);
                 return { success: true };
             },
             clear: async () => {
-                await model.setReminder(session, null);
+                await setReminder(session, null);
                 return { success: true };
             },
         });
-    }, [applyReminderPresetIntent, model, reminderPresets, session, standing?.remindAt]);
+    }, [applyReminderPresetIntent, settle, setReminder, reminderPresets, session, standing?.remindAt]);
 
     return (
         <DropdownMenu

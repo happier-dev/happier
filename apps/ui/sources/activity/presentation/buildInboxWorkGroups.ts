@@ -2,10 +2,12 @@ import type { InboxSessionAttentionEntry } from '@/activity/presentation/buildIn
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { WorkflowRunRow } from '@/sync/store/domains/workflowRuns';
 import { comparePendingRequestsByAge, selectOldestPendingRequest } from '@happier-dev/session-core/pending';
+import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
+import { shallow } from 'zustand/shallow';
 
 /**
  * FIN's session↔PR link read projection (`sessionPullRequestLink`, FIN PLAN U10 / 08 §5A), as this
- * Inbox consumes it. The producer has not landed; the model passes an empty list until it does.
+ * Inbox consumes it. A retained Channel binding proves a relation, not remote PR state.
  */
 export type InboxPullRequestLink = Readonly<{
     sessionId: string;
@@ -13,7 +15,7 @@ export type InboxPullRequestLink = Readonly<{
     number: number;
     title?: string | null;
     url?: string | null;
-    state: 'open' | 'merged' | 'closed';
+    state?: 'open' | 'merged' | 'closed';
 }>;
 
 export type InboxWorkItem =
@@ -23,7 +25,7 @@ export type InboxWorkItem =
     | Readonly<{ kind: 'workflow_run'; key: string; runId: string; row: WorkflowRunRow }>
     /** A worker whose machine went offline while its turn was in flight. */
     | Readonly<{ kind: 'stalled'; key: string; session: Session }>
-    /** A session whose linked pull request is open, waiting for the person to land and settle it. */
+    /** A session with a retained PR link, waiting for the person to land and settle it. */
     | Readonly<{ kind: 'landing'; key: string; session: Session; link: InboxPullRequestLink }>
     /** A session the person snoozed until `remindAt`; it stays in place, quietly. */
     | Readonly<{ kind: 'snoozed'; key: string; session: Session; remindAt: number }>;
@@ -106,7 +108,7 @@ export function resolveInboxWorkRoot(
  *
  * It decides no attention: every item arrives already classified by its owner.
  */
-export function buildInboxWorkGroups(input: InboxWorkGroupsInput): readonly InboxWorkGroup[] {
+export function buildInboxWorkGroups(input: InboxWorkGroupsInput, previous?: readonly InboxWorkGroup[]): readonly InboxWorkGroup[] {
     const groups = new Map<string, { root: InboxWorkGroupRoot; items: InboxWorkItem[] }>();
     const other: InboxWorkItem[] = [];
     const listedRunIds = new Set(input.workflowRuns.map((row) => row.id));
@@ -177,7 +179,32 @@ export function buildInboxWorkGroups(input: InboxWorkGroupsInput): readonly Inbo
         ordered.push({ key, root: group.root, items: sortByRank(group.items) });
     }
     if (other.length > 0) ordered.push({ key: 'other', root: { kind: 'other' }, items: sortByRank(other) });
-    return ordered;
+    if (!previous) return ordered;
+    const oldGroups = new Map(previous.map((group) => [group.key, group]));
+    const oldItems = new Map(previous.flatMap((group) => group.items.map((item) => [item.key, item] as const)));
+    const retained = ordered.map((group) => {
+        const items = group.items.map((item) => {
+            const old = oldItems.get(item.key);
+            return old && areInboxWorkItemsEqual(item, old) ? old : item;
+        });
+        const old = oldGroups.get(group.key);
+        return old && shallow(group.root, old.root) && shallow(items, old.items) ? old : { ...group, items };
+    });
+    return shallow(retained, previous) ? previous : retained;
+}
+
+function areInboxWorkItemsEqual(a: InboxWorkItem, b: InboxWorkItem): boolean {
+    if (a.kind !== 'session' || b.kind !== 'session') return shallow(a, b);
+    if (a.foldedUnderRunId !== b.foldedUnderRunId || a.entry.candidate.session !== b.entry.candidate.session) return false;
+    const candidate = a.entry.candidate;
+    const oldCandidate = b.entry.candidate;
+    // Session identity is store-owned: compare only the small derived facts, never its transcript.
+    const keys = Object.keys(candidate) as (keyof typeof candidate)[];
+    if (keys.length !== Object.keys(oldCandidate).length || !keys.every((key) => candidate[key] === oldCandidate[key]
+        || pluginJsonValuesEqual(candidate[key], oldCandidate[key]))) return false;
+    const sameRequests = (next: InboxSessionAttentionEntry['pendingPermissions'], old: InboxSessionAttentionEntry['pendingPermissions']) =>
+        next.length === old.length && next.every((request, index) => shallow(request, old[index]));
+    return sameRequests(a.entry.pendingPermissions, b.entry.pendingPermissions) && sameRequests(a.entry.pendingUserActions, b.entry.pendingUserActions);
 }
 
 function sortByRank(items: InboxWorkItem[]): readonly InboxWorkItem[] {

@@ -2,7 +2,8 @@ import * as React from 'react';
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createMachineFixture, createRootLayoutFeaturesResponse, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createMachineFixture, createSessionFixture, createRootLayoutFeaturesResponse, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { act } from 'react-test-renderer';
 import { FeaturesResponseSchema, PluginProjectionV2Schema, QualifiedConnectedAccountProfileV4Schema, type MachineAgentInventoryItem } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -188,6 +189,29 @@ async function renderSection() {
 }
 
 describe('HubAttentionSection', () => {
+    it('offers the same pending Sessions as the Home count and opens their Inbox', async () => {
+        state.loginState = 'logged_in';
+        state.profile = {};
+        const { screen, push } = await renderSection();
+        const now = Date.now();
+        const session = createSessionFixture({ id: 'pending-session', serverId: state.serverId,
+            viewer: undefined, active: true, presence: 'online', activeAt: now, updatedAt: now,
+            agentState: { requests: { approval: { tool: 'Bash', arguments: {}, createdAt: now } }, completedRequests: {} },
+        });
+        await act(async () => {
+            storage.setState({ sessions: { [session.id]: session },
+                sessionListRowsByServerId: { [state.serverId]: { [session.id]: buildSessionListRenderableFromSession(session) } },
+                ordinarySessionListMembershipByServerId: { [state.serverId]: [session.id] } });
+        });
+        await flushHookEffects({ cycles: 2 });
+        const action = screen.findAll((node) => node.props?.testID === 'settings-overview-attention.sessions.action'
+            && typeof node.props.onPress === 'function')[0];
+        expect(action).toBeDefined();
+        action!.props.onPress();
+        expect(push).toHaveBeenCalledWith('/inbox');
+        await act(async () => { storage.setState({ sessions: {}, sessionListRowsByServerId: {}, ordinarySessionListMembershipByServerId: {} }); });
+        expect(screen.findAll((node) => node.props?.testID === 'settings-overview-attention.sessions.action')).toHaveLength(0);
+    });
     it('lists a signed-out agent and an expired account, each with the action that fixes it', async () => {
         state.loginState = 'logged_out';
         state.profile = { connectedServicesV2: [], connectedAccountsV4: [account('acct-ok', 'connected'), account('acct-1', 'needs_reauth')] };

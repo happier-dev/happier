@@ -28,7 +28,7 @@ describe('Home mounted size Action adapter', () => {
         // The mounted default executor enriches context with the Account's Actions policy.
         // Supply that same public context here; the real shared policy decides approval.
         const actionsSettings = ActionsSettingsV1Schema.parse({ v: 1, actions: {
-            'widgets.instance.size.set': { approvalRequiredSurfaces: ['ui'] },
+            'widgets.item.size.set': { approvalRequiredSurfaces: ['ui'] },
         } });
         const execute: typeof executor.execute = (id, args, context) => executor.execute(id, args, {
             ...context, actionsSettings, runtimeAccountId: scope.accountId, serverIdentityId: 'srv_home', actionRequestId: 'size-approval-request',
@@ -69,8 +69,8 @@ describe('Home mounted size Action adapter', () => {
         expect(store.getSnapshot()).toMatchObject({ status: 'error', failedIntent: intent, layout: previous });
         boundary.offline(false);
         await store.retry();
-        expect(requests).toEqual(['widgets.instance.size.set', 'widgets.instance.size.set']);
-        expect(store.getSnapshot()).toMatchObject({ status: 'ready', layout: { sections: { checks: { size: 'tall' } } } });
+        expect(requests).toEqual(['widgets.item.size.set', 'widgets.item.size.set']);
+        expect(store.getSnapshot()).toMatchObject({ status: 'ready', layout: { items: [{ instance: { id: 'checks' }, size: 'tall' }] } });
         expect(store.getSnapshot().failedIntent).toBeUndefined();
         expect(store.getSnapshot().layout).toEqual(await owner.read());
     });

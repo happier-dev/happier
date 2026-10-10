@@ -199,8 +199,8 @@ describe('InboxReadySessionRow', () => {
         const { tree } = await renderRow({ identityDisplay: 'none' });
         const [row] = findByTestId(tree, 'inbox.ready_session.server-a.session-1');
 
-        expect(row.props.leftElement).toBeUndefined();
-        expect(row.props.iconBoxSize).toBeUndefined();
+        expect(tree.root.findAllByType('SessionListIdentity')).toHaveLength(0);
+        expect(row.props.accessibilityRole).toBe('button');
     });
 
     it('refuses a second mark on the web control while the first is still in flight', async () => {

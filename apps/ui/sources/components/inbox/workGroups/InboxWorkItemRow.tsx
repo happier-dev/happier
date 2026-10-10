@@ -18,21 +18,22 @@ import {
 } from '@/components/workflows/presentation/workflowRunDisplayName';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
-import { Item } from '@/components/ui/lists/Item';
+import { InboxWorkRow } from '../InboxWorkRow';
+import { InboxRelativeTime } from '../InboxRelativeTime';
 import type { InboxModel } from '@/hooks/inbox/useInboxModel';
 import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
+import { resolveSessionListRenderableMeaningfulActivityAt } from '@/sync/domains/session/listing/sessionListRenderableSorting';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
-import { formatShortRelativeTimeAt } from '@/utils/time/formatShortRelativeTime';
 import { useIsTablet } from '@/utils/platform/responsive';
 import { getSessionStatus } from '@/utils/sessions/sessionUtils';
 import { resolveWorkStatusTone, type WorkStatusPresentation } from '@/components/work/status/resolveWorkStatusTone';
 import { readSessionWorkStatusFacts } from '@/components/work/status/sessionWorkStatusFacts';
-import { workStatusWordStyle } from '@/components/work/status/workStatusTreatment';
 import { readInboxSessionTitle } from '@/components/inbox/sessionAttention/inboxSessionPrivacy';
 
+import type { InboxItemFocus } from '../inboxItemFocus';
 import { InboxSessionRowMenu } from './InboxSessionRowMenu';
-import { buildInboxSessionContextLine, joinFacts } from './inboxSessionContextLine';
+import { buildInboxSessionContextLine } from './inboxSessionContextLine';
 
 export function requiresInboxPromptCard(entry: InboxSessionAttentionEntry): boolean {
     return entry.candidate.personalAttention.reasons.some(
@@ -53,14 +54,18 @@ function sessionServerId(session: Session): string | null {
 
 type RowProps = Readonly<{
     item: InboxWorkItem;
-    model: InboxModel;
+    spansHomes: boolean;
+    workflowServerId: string | null;
+    settle: InboxModel['settle'];
+    setReminder: InboxModel['setReminder'];
     identityDisplay: SessionListIdentityDisplay;
-    nowMs: number;
     presentation: 'screen' | 'popover';
     navigate: (route: string) => void;
     onBeforeNavigate?: () => void;
     /** The item the person came to see (`/inbox?item=`): its row is drawn selected. */
     focused?: boolean;
+    /** Beside the Inbox's detail pane a row selects its item there instead of leaving the Inbox. */
+    onSelectItem?: (focus: InboxItemFocus) => void;
 }>;
 
 /**
@@ -70,12 +75,26 @@ type RowProps = Readonly<{
  */
 export const InboxWorkItemRow = React.memo(function InboxWorkItemRow(props: RowProps) {
     const { theme } = useUnistyles();
-    const { item, nowMs } = props;
+    const { item } = props;
+    const nowMs = Date.now();
     const page = props.presentation === 'screen';
     // Phones keep only a small control right of a label (lab `phone-P4`); the row press opens.
     const wide = useIsTablet();
+    // The state word has its own column only on the wide page. A phone and the rail popover give the
+    // title the row's width (lab `inbox-I2`): there the state leads the line under it, never
+    // truncating the name that tells this row from its siblings.
+    const statusColumn = page && wide;
     const glyph = (name: IconName, color: string = theme.colors.text.secondary) => (
         <Icon name={name} size={18} color={color} />
+    );
+    // One opener per row: select into the detail pane when there is one and the item's Home is known,
+    // otherwise open the item's own page.
+    const openItem = (focus: InboxItemFocus | null, route: string | null) => {
+        if (focus && props.onSelectItem) props.onSelectItem(focus);
+        else if (route) props.navigate(route);
+    };
+    const sessionFocus = (id: string, serverId: string | null): InboxItemFocus | null => (
+        serverId ? { kind: 'session', serverId, id } : null
     );
 
     switch (item.kind) {
@@ -101,19 +120,18 @@ export const InboxWorkItemRow = React.memo(function InboxWorkItemRow(props: RowP
             const status = presentInboxSessionStatus(candidate.session, nowMs);
             const failed = status.tone === 'danger';
             return (
-                <Item
+                <InboxWorkRow
                     testID={`inbox.session.${candidate.sessionId}`}
                     selected={props.focused === true}
                     title={candidate.title}
-                    subtitle={joinFacts(
+                    facts={[
                         item.foldedUnderRunId ? t('inbox.work.rows.step') : null,
-                        buildInboxSessionContextLine(candidate),
-                        formatShortRelativeTimeAt(candidate.session.updatedAt, nowMs),
-                    )}
-                    detail={status.word}
-                    detailStyle={workStatusWordStyle(status.tone)}
-                    density="compact"
-                    leftElement={failed
+                        buildInboxSessionContextLine(candidate, { showHome: props.spansHomes }),
+                    ]}
+                    time={<InboxRelativeTime timestamp={resolveSessionListRenderableMeaningfulActivityAt(candidate.session)} />}
+                    status={status}
+                    inlineStatus={!statusColumn}
+                    mark={failed
                         ? glyph('warning', theme.colors.status.error)
                         : props.identityDisplay !== 'none' ? (
                             <SessionListIdentity
@@ -127,13 +145,8 @@ export const InboxWorkItemRow = React.memo(function InboxWorkItemRow(props: RowP
                                 testID={`inbox.session.${candidate.sessionId}.identity`}
                             />
                         ) : undefined}
-                    iconBoxSize={failed || props.identityDisplay !== 'none'
-                        ? SESSION_LIST_ROW_IDENTITY_METRICS.compact.slotSize
-                        : undefined}
-                    rightElement={page ? <InboxSessionRowMenu session={candidate.session} model={props.model} /> : undefined}
-                    onPress={() => {
-                        if (candidate.route) props.navigate(candidate.route);
-                    }}
+                    trailingAccessory={page ? <InboxSessionRowMenu session={candidate.session} settle={props.settle} setReminder={props.setReminder} /> : undefined}
+                    onPress={() => openItem(sessionFocus(candidate.sessionId, serverId), candidate.route ?? null)}
                 />
             );
         }
@@ -145,22 +158,27 @@ export const InboxWorkItemRow = React.memo(function InboxWorkItemRow(props: RowP
                 kind: 'workflow_run',
                 facts: { state: summary.state, word: describeWorkflowRunState(summary.state).label, inAttentionWindow: true },
             }) : null;
-            const open = () => props.navigate(createWorkflowRunRoute(item.runId));
+            const runServerId = props.workflowServerId;
+            const open = () => openItem(
+                runServerId ? { kind: 'workflow_run', serverId: runServerId, id: item.runId } : null,
+                createWorkflowRunRoute(item.runId),
+            );
+            // The row is titled by the run; its state is the row's one status: in the status column on
+            // the wide page, otherwise leading the line under the title in place of the kind label, so
+            // the line stays one line and its time is never orphaned on a second.
             return (
-                <Item
+                <InboxWorkRow
                     testID={`inbox.run.${item.runId}`}
                     selected={props.focused === true}
                     title={name}
-                    subtitle={joinFacts(
-                        t('inbox.work.rows.workflowRun'),
-                        formatShortRelativeTimeAt(item.row.updatedAt, nowMs),
-                    )}
-                    detail={status?.word}
-                    detailStyle={status ? workStatusWordStyle(status.tone) : null}
-                    density="compact"
-                    leftElement={glyph('hand')}
-                    iconBoxSize={SESSION_LIST_ROW_IDENTITY_METRICS.compact.slotSize}
-                    rightElement={page && wide ? (
+                    facts={statusColumn || !status ? [t('inbox.work.rows.workflowRun')] : []}
+                    time={<InboxRelativeTime timestamp={item.row.updatedAt} />}
+                    status={status}
+                    inlineStatus={!statusColumn}
+                    mark={glyph('hand')}
+                    // The inline answer (lab `inbox-I2`): a bordered Review wherever there is room for
+                    // one beside the title; a phone page keeps the row press.
+                    trailingAccessory={!page || wide ? (
                         <RoundButton
                             testID={`inbox.run.${item.runId}.review`}
                             size="small"
@@ -177,60 +195,55 @@ export const InboxWorkItemRow = React.memo(function InboxWorkItemRow(props: RowP
             const session = item.session;
             const status = presentInboxSessionStatus(session, nowMs);
             return (
-                <Item
+                <InboxWorkRow
                     testID={`inbox.stalled.${session.id}`}
                     selected={props.focused === true}
                     title={readInboxSessionTitle(session, sessionServerId(session))}
-                    subtitle={joinFacts(t('inbox.work.rows.stalled'), t('inbox.work.rows.stalledReason'))}
-                    detail={status.word}
-                    detailStyle={workStatusWordStyle(status.tone)}
-                    density="compact"
-                    leftElement={glyph('cloud-slash', theme.colors.state.warning.foreground)}
-                    iconBoxSize={SESSION_LIST_ROW_IDENTITY_METRICS.compact.slotSize}
-                    rightElement={page ? <InboxSessionRowMenu session={session} model={props.model} /> : undefined}
-                    onPress={() => props.navigate(createActivitySurfaceSessionRoute(session.id, sessionServerId(session)))}
+                    facts={[t('inbox.work.rows.stalled'), t('inbox.work.rows.stalledReason')]}
+                    status={status}
+                    inlineStatus={!statusColumn}
+                    mark={glyph('cloud-slash', theme.colors.state.warning.foreground)}
+                    trailingAccessory={page ? <InboxSessionRowMenu session={session} settle={props.settle} setReminder={props.setReminder} /> : undefined}
+                    onPress={() => openItem(sessionFocus(session.id, sessionServerId(session)), createActivitySurfaceSessionRoute(session.id, sessionServerId(session)))}
                 />
             );
         }
         case 'landing': {
             const { session, link } = item;
             return (
-                <Item
+                <InboxWorkRow
                     testID={`inbox.landing.${session.id}`}
                     selected={props.focused === true}
                     title={link.title ? `#${link.number} ${link.title}` : `#${link.number}`}
-                    subtitle={joinFacts(t('inbox.work.rows.landing'), readInboxSessionTitle(session, sessionServerId(session)))}
-                    density="compact"
-                    leftElement={glyph('git-pull-request')}
-                    iconBoxSize={SESSION_LIST_ROW_IDENTITY_METRICS.compact.slotSize}
-                    rightElement={(
+                    facts={[t('inbox.work.rows.landing'), readInboxSessionTitle(session, sessionServerId(session))]}
+                    mark={glyph('git-pull-request')}
+                    trailingAccessory={(
                         <RoundButton
                             testID={`inbox.landing.${session.id}.settle`}
                             size="small"
                             display="secondary"
                             title={t('inbox.work.rows.settle')}
-                            action={() => props.model.settle(session)}
+                            action={() => props.settle(session)}
                         />
                     )}
-                    onPress={() => props.navigate(createActivitySurfaceSessionRoute(session.id, sessionServerId(session)))}
+                    onPress={() => openItem(sessionFocus(session.id, sessionServerId(session)), createActivitySurfaceSessionRoute(session.id, sessionServerId(session)))}
                 />
             );
         }
         case 'snoozed': {
             const session = item.session;
             return (
-                <Item
+                <InboxWorkRow
                     testID={`inbox.snoozed.${session.id}`}
                     selected={props.focused === true}
                     title={readInboxSessionTitle(session, sessionServerId(session))}
-                    subtitle={t('inbox.work.rows.snoozedUntil', {
+                    phase="finished"
+                    facts={[t('inbox.work.rows.snoozedUntil', {
                         time: formatSessionAttentionReminderDateTime(item.remindAt, nowMs),
-                    })}
-                    density="compact"
-                    leftElement={glyph('clock', theme.colors.text.tertiary)}
-                    iconBoxSize={SESSION_LIST_ROW_IDENTITY_METRICS.compact.slotSize}
-                    rightElement={page ? <InboxSessionRowMenu session={session} model={props.model} /> : undefined}
-                    onPress={() => props.navigate(createActivitySurfaceSessionRoute(session.id, sessionServerId(session)))}
+                    })]}
+                    mark={glyph('clock', theme.colors.text.tertiary)}
+                    trailingAccessory={page ? <InboxSessionRowMenu session={session} settle={props.settle} setReminder={props.setReminder} /> : undefined}
+                    onPress={() => openItem(sessionFocus(session.id, sessionServerId(session)), createActivitySurfaceSessionRoute(session.id, sessionServerId(session)))}
                 />
             );
         }

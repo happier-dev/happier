@@ -1,10 +1,12 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
 import { Switch } from '@/components/ui/forms/Switch';
-import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { Text } from '@/components/ui/text/Text';
@@ -22,22 +24,23 @@ import { t } from '@/text';
 import { findHomeHubBuiltinSection, homeHubSectionTitle } from '../homeHubSections';
 import type { HomeHubSection } from './homeHubLayout';
 import { useHomeHubLayout, type HomeHubLayout } from './useHomeHubLayout';
+import { WIDGET_GROUP_ICON } from '@/components/widgets/group/widgetGroupMenu';
 
 type EditorRow = Readonly<{ id: string; section: HomeHubSection<WidgetCandidate> }>;
 
 /**
- * Customize Home: one list of the built-in sections and the widgets plugins offer, each named with
+ * Home's sections as one list: the built-in sections and the widgets plugins offer, each named with
  * its source. A grip moves a section with drag, staged keyboard or the chooser; a switch shows or
  * hides it; "Start a session" and "Needs your attention" are always shown. Dismissed setup steps
  * come back from the last row. Everything is saved on the Account, so the page behind updates
- * live. Home's Customize popover and Settings → Appearance render this one editor.
+ * live. Home's Customize bar ("Sections") and Settings → Appearance render this one editor.
+ *
+ * A group is one row here, to reorder. Its name, width and ⋯ belong to its bar on the page.
  */
 export const HomeLayoutEditor = React.memo(function HomeLayoutEditor(props: Readonly<{
     title?: string;
-    /** `popover`: Home's Customize popover, headed by its own title, Reset and purpose line. */
+    /** `popover`: the list opened from Home's Customize bar, headed by its own title, Reset and purpose line. */
     presentation?: 'section' | 'popover';
-    /** Opens Add to Home (the shared widget gallery); absent where the editor cannot hand over. */
-    onAddWidgets?: () => void;
 }>) {
     const layout = useHomeHubLayout();
     const scope = useActiveServerAccountScope();
@@ -87,7 +90,7 @@ export const HomeLayoutEditor = React.memo(function HomeLayoutEditor(props: Read
             {popover ? (
                 <View style={styles.popoverHeader}>
                     <View style={styles.popoverTitleRow}>
-                        <Text style={styles.popoverTitle} accessibilityRole="header">{t('homeIndex.customizeTitle')}</Text>
+                        <Text style={styles.popoverTitle} accessibilityRole="header">{t('homeIndex.sections')}</Text>
                         {reset}
                     </View>
                     <Text style={styles.popoverDescription}>{t('homeIndex.customizeDescription')}</Text>
@@ -115,14 +118,6 @@ export const HomeLayoutEditor = React.memo(function HomeLayoutEditor(props: Read
                     accessibilitySemantics="alert"
                 />
             ) : null}
-            {props.onAddWidgets ? (
-                <Item
-                    testID="home-layout.addWidgets"
-                    title={t('widgetAdd.addWidgets')}
-                    icon={<Icon name="plus" />}
-                    onPress={props.onAddWidgets}
-                />
-            ) : null}
             <EntityFlatReorderList binding={binding} testID="home-layout.reorder" initialOrganizing>
                 {rows.map((row, index) => (
                     <EditorRowView
@@ -148,11 +143,13 @@ export const HomeLayoutEditor = React.memo(function HomeLayoutEditor(props: Read
 });
 
 function rowIcon(row: EditorRow): IconName {
+    if (row.section.kind === 'group') return WIDGET_GROUP_ICON;
     if (row.section.kind === 'widget') return row.section.widget?.icon ?? 'squares-four';
     return findHomeHubBuiltinSection(row.section.id)?.icon ?? 'squares-four';
 }
 
 function rowSubtitle(row: EditorRow): string {
+    if (row.section.kind === 'group') return t('widgetFrame.groupCount', { count: row.section.children.length });
     if (row.section.kind === 'widget') return row.section.widget?.pluginName ?? t('sessionBoard.item.pluginUnavailable.title');
     return findHomeHubBuiltinSection(row.section.id)?.description() ?? t('homeIndex.builtIn');
 }
@@ -165,10 +162,20 @@ function EditorRowView(props: Readonly<{
     const { theme } = useUnistyles();
     const { row, layout } = props;
     const title = homeHubSectionTitle(row.section);
-    const alwaysShown = !row.section.hideable;
+    // Hiding a group would remove its widgets: it has no switch, and its options are on its bar.
+    const group = row.section.kind === 'group';
+    const alwaysShown = !group && !row.section.hideable;
     const shown = !row.section.hidden;
     const sizeChoices = row.section.kind === 'widget' ? resolveWidgetSizeChoicesV1('home', row.section.widget?.sizeDeclaration) : null;
+    const size = row.section.kind === 'widget' && row.section.widget && sizeChoices?.defaultSize ? (
+        <WidgetSizeControl surface="home" sizes={sizeChoices.sizes}
+            size={normalizeWidgetSizeForSurfaceV1('home', row.section.size, row.section.widget?.sizeDeclaration)!}
+            onSet={next => { void layout.setSize(row.id, next).catch(() => {}); }}
+            testID={`home-layout.${row.id}.size`} />
+    ) : null;
     const content = (renderHandle: (testID?: string) => React.ReactNode) => (
+        <>
+            {/* The grip centres on the row's own title and subtitle, never between the row and its size control. */}
             <View style={styles.row}>
                 <View style={styles.grip}>{renderHandle(`home-layout.${row.id}.grip`)}</View>
                 <View style={styles.item}>
@@ -178,10 +185,10 @@ function EditorRowView(props: Readonly<{
                         subtitle={rowSubtitle(row)}
                         icon={<Icon name={rowIcon(row)} />}
                         showChevron={false}
-                        showDivider={props.showDivider}
-                        rightElement={alwaysShown ? (
+                        showDivider={props.showDivider && size === null}
+                        rightElement={group ? undefined : alwaysShown ? (
                             <View style={styles.locked}>
-                                <Icon name="lock" size={12} color={theme.colors.text.tertiary} />
+                                <Icon name="lock" size={ICON_SIZE.xs} color={theme.colors.text.tertiary} />
                                 <Text style={styles.lockedText}>{t('homeIndex.alwaysShown')}</Text>
                             </View>
                         ) : (
@@ -193,16 +200,10 @@ function EditorRowView(props: Readonly<{
                             />
                         )}
                     />
-                    {row.section.kind === 'widget' && row.section.widget && sizeChoices?.defaultSize ? (
-                        <View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
-                            <WidgetSizeControl surface="home" sizes={sizeChoices.sizes}
-                                size={normalizeWidgetSizeForSurfaceV1('home', row.section.size, row.section.widget?.sizeDeclaration)!}
-                                onSet={size => { void layout.setSize(row.id, size).catch(() => {}); }}
-                                testID={`home-layout.${row.id}.size`} />
-                        </View>
-                    ) : null}
                 </View>
             </View>
+            {size ? <View style={[styles.size, props.showDivider ? styles.sizeDivided : null]}>{size}</View> : null}
+        </>
     );
     return <EntityFlatReorderRow id={row.id}>{({ renderHandle }) => content(renderHandle)}</EntityFlatReorderRow>;
 }
@@ -222,18 +223,27 @@ const styles = StyleSheet.create((theme) => ({
     },
     popoverTitle: {
         ...Typography.default('semiBold'),
+        ...happierPageTextMetrics('sectionTitle'),
         color: theme.colors.text.primary,
-        fontSize: 15,
-        lineHeight: 20,
     },
     popoverDescription: {
+        ...Typography.default(),
+        ...happierPageTextMetrics('sectionDescription'),
         color: theme.colors.text.secondary,
-        fontSize: 13,
-        lineHeight: 18,
     },
     row: {
         flexDirection: 'row',
         alignItems: 'center',
+    },
+    // Under its row, on the row's text column.
+    size: {
+        paddingLeft: PAGE_LIST_METRICS.rowPaddingHorizontalPx,
+        paddingRight: PAGE_LIST_METRICS.rowPaddingHorizontalPx,
+        paddingBottom: 12,
+    },
+    sizeDivided: {
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderBottomColor: theme.colors.border.subtle,
     },
     grip: {
         alignSelf: 'stretch',
@@ -250,8 +260,8 @@ const styles = StyleSheet.create((theme) => ({
         gap: 4,
     },
     lockedText: {
+        ...Typography.default(),
+        ...happierPageTextMetrics('meta'),
         color: theme.colors.text.tertiary,
-        fontSize: 12,
-        lineHeight: 16,
     },
 }));

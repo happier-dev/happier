@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
 import { useActivityOverviewSummary } from '@/activity/source/useActivityOverview';
 import { SessionRowAttentionIndicator } from '@/components/sessions/shell/row/SessionRowAttentionIndicator';
@@ -77,8 +78,7 @@ const styles = StyleSheet.create((theme) => ({
     },
     text: {
         color: theme.colors.text.secondary,
-        fontSize: 14,
-        lineHeight: 20,
+        ...happierPageTextMetrics('pageDescription'),
         fontVariant: ['tabular-nums'],
     },
 }));

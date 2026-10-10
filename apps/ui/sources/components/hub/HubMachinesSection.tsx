@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
 import { isMachineReplaced } from '@happier-dev/protocol/machines/identity/canonicalMachineId';
 
@@ -13,7 +14,7 @@ import { UPDATES_ROUTE } from '@/components/updates/updatesRoute';
 import { MachinePresenceCounts } from '@/components/machines/MachinePresenceCounts';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SurfaceCard, SURFACE_CARD_PADDING_PX } from '@/components/ui/cards/SurfaceCard';
-import { Icon } from '@/components/ui/icons/Icon';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { Text } from '@/components/ui/text/Text';
@@ -143,7 +144,7 @@ const HubMachineCard = React.memo(function HubMachineCard(props: Readonly<{
                     <View style={stylesheet.cardTop}>
                         <Icon
                             name={props.isThisComputer ? 'laptop' : 'desktop'}
-                            size={20}
+                            size={ICON_SIZE.md}
                             color={online ? theme.colors.text.secondary : theme.colors.text.tertiary}
                         />
                         <View testID={`${testID}.status`} style={stylesheet.status} accessible accessibilityLabel={status}>
@@ -209,22 +210,19 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     statusText: {
         color: theme.colors.text.secondary,
-        fontSize: 12,
-        lineHeight: 16,
+        ...happierPageTextMetrics('meta'),
     },
     name: {
         ...Typography.default('semiBold'),
         color: theme.colors.text.primary,
-        fontSize: 14,
-        lineHeight: 19,
+        ...happierPageTextMetrics('rowTitle'),
     },
     nameOffline: {
         color: theme.colors.text.secondary,
     },
     fact: {
         color: theme.colors.text.secondary,
-        fontSize: 12.5,
-        lineHeight: 17,
+        ...happierPageTextMetrics('meta'),
         marginTop: 2,
     },
     footer: {

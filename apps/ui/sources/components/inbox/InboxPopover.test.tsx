@@ -7,15 +7,21 @@ import { renderScreen } from '@/dev/testkit';
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const capture = vi.hoisted(() => ({
-    popoverProps: null as Record<string, unknown> | null,
     contentProps: null as Record<string, unknown> | null,
 }));
 const inboxModel = vi.hoisted(() => ({
-    sessionPresentation: { markAllReadTargets: [] },
+    sessionPresentation: {
+        markAllReadTargets: [],
+        sessionsNeedingAttention: [] as unknown[],
+        readySessions: [] as unknown[],
+    },
     markAllPending: false,
     markRead: vi.fn(),
-    openApprovals: [],
+    openApprovals: [] as unknown[],
+    openUsageNotices: [],
     actionOperationEntries: [],
+    friendRequests: [],
+    workflowAttention: { runIds: [] as string[] },
     workGroups: [],
 }));
 const boundaryState = vi.hoisted(() => ({ mounts: 0 }));
@@ -26,17 +32,6 @@ vi.mock('@/hooks/inbox/useInboxModel', () => ({
         return props.children;
     },
     useInboxModel: () => inboxModel,
-}));
-
-vi.mock('@/components/ui/popover', () => ({
-    Popover: (props: Record<string, unknown> & { children: (layout: { maxHeight: number; maxWidth: number }) => React.ReactNode }) => {
-        capture.popoverProps = props;
-        return React.createElement('Popover', props, props.children({ maxHeight: 600, maxWidth: 500 }));
-    },
-}));
-
-vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
-    FloatingOverlay: (props: Record<string, unknown>) => React.createElement('FloatingOverlay', props, props.children as React.ReactNode),
 }));
 
 vi.mock('./InboxContent', () => ({
@@ -51,55 +46,22 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ translate: (key: string) => key });
 });
 
-describe('InboxPopover', () => {
+describe('InboxPopoverContent (lab inbox-I2)', () => {
     beforeEach(() => {
         boundaryState.mounts = 0;
-        capture.popoverProps = null;
         capture.contentProps = null;
     });
 
-    it('does not mount the full Inbox model while the popover is closed', async () => {
-        const { InboxPopover } = await import('./InboxPopover');
-        const screen = await renderScreen(
-            <InboxPopover
-                open={false}
-                anchorRect={{ left: 100, top: 40, width: 32, height: 32 }}
-                onRequestClose={() => {}}
-                onOpenInbox={() => {}}
-            />,
-        );
-
-        expect(boundaryState.mounts).toBe(0);
-        expect(screen.tree.root.children).toHaveLength(0);
-    });
-
-    it('uses the canonical anchored overlay contract and closes before every navigation', async () => {
+    it('names itself, offers Open Inbox as its one header action, and closes before every navigation', async () => {
         const order: string[] = [];
-        const onRequestClose = vi.fn(() => order.push('close'));
+        const close = vi.fn(() => order.push('close'));
         const onOpenInbox = vi.fn(() => order.push('open'));
-        const { InboxPopover } = await import('./InboxPopover');
-        const screen = await renderScreen(
-            <InboxPopover
-                open
-                anchorRect={{ left: 100, top: 40, width: 32, height: 32 }}
-                focusReturnRef={{ current: null }}
-                onRequestClose={onRequestClose}
-                onOpenInbox={onOpenInbox}
-            />,
-        );
+        const { InboxPopoverContent } = await import('./InboxPopover');
+        const screen = await renderScreen(<InboxPopoverContent close={close} onOpenInbox={onOpenInbox} />);
 
-        expect(capture.popoverProps).toMatchObject({
-            open: true,
-            placement: 'bottom',
-            autoFocusOnOpen: true,
-            boundaryRef: null,
-            maxWidthCap: 420,
-            maxHeightCap: 560,
-        });
         expect(boundaryState.mounts).toBe(1);
-        expect(capture.contentProps?.onBeforeNavigate).toBe(onRequestClose);
+        expect(capture.contentProps?.onBeforeNavigate).toBe(close);
         expect(capture.contentProps?.presentation).toBe('popover');
-        // Lab `inbox-I2`: the popover names itself, and "Open Inbox" is its header's one action.
         expect(screen.getTextContent()).toContain('tabs.inbox');
         expect(screen.findByTestId('inbox.popover.mark_all_read')).toBeNull();
         expect(screen.findByTestId('inbox.popover.open')).not.toBeNull();
@@ -108,4 +70,18 @@ describe('InboxPopover', () => {
         expect(order).toEqual(['close', 'open']);
     });
 
+    it('shows the same count as the rail badge that opened it: what needs you plus the updates', async () => {
+        inboxModel.openApprovals = [{}];
+        inboxModel.workflowAttention.runIds = ['run-1'];
+        inboxModel.sessionPresentation.readySessions = [{}, {}];
+        try {
+            const { InboxPopoverContent } = await import('./InboxPopover');
+            const screen = await renderScreen(<InboxPopoverContent close={() => {}} onOpenInbox={() => {}} />);
+            expect(screen.findByTestId('inbox.popover.count')?.props.children).toBe('4');
+        } finally {
+            inboxModel.openApprovals = [];
+            inboxModel.workflowAttention.runIds = [];
+            inboxModel.sessionPresentation.readySessions = [];
+        }
+    });
 });

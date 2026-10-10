@@ -7,6 +7,7 @@ import { Avatar } from '@/components/ui/avatar/Avatar';
 import { Item } from '@/components/ui/lists/Item';
 import { useUnistyles } from 'react-native-unistyles';
 import { Icon } from '@/components/ui/icons/Icon';
+import { formatRelativeTime } from '@/utils/time/formatShortRelativeTime';
 
 interface FeedItemCardProps {
     item: FeedItem;
@@ -24,19 +25,6 @@ export const FeedItemCard = React.memo(({ item }: FeedItemCardProps) => {
             : undefined
     );
     
-    const getTimeAgo = (timestamp: number) => {
-        const now = Date.now();
-        const diff = now - timestamp;
-        const minutes = Math.floor(diff / 60000);
-        const hours = Math.floor(diff / 3600000);
-        const days = Math.floor(diff / 86400000);
-        
-        if (minutes < 1) return t('time.justNow');
-        if (minutes < 60) return t('time.minutesAgo', { count: minutes });
-        if (hours < 24) return t('time.hoursAgo', { count: hours });
-        return t('sessionHistory.daysAgo', { count: days });
-    };
-    
     switch (item.body.kind) {
         case 'friend_request': {
             const avatarElement = user!.avatar ? (
@@ -52,7 +40,7 @@ export const FeedItemCard = React.memo(({ item }: FeedItemCardProps) => {
             return (
                 <Item
                     title={t('feed.friendRequestFrom', { name: user!.firstName || user!.username })}
-                    subtitle={getTimeAgo(item.createdAt)}
+                    subtitle={formatRelativeTime(item.createdAt)}
                     leftElement={avatarElement}
                     onPress={() => router.push(`/user/${user!.id}`)}
                     showChevron={true}
@@ -74,7 +62,7 @@ export const FeedItemCard = React.memo(({ item }: FeedItemCardProps) => {
             return (
                 <Item
                     title={t('feed.friendAccepted', { name: user!.firstName || user!.username })}
-                    subtitle={getTimeAgo(item.createdAt)}
+                    subtitle={formatRelativeTime(item.createdAt)}
                     leftElement={avatarElement}
                     onPress={() => router.push(`/user/${user!.id}`)}
                     showChevron={true}
@@ -86,7 +74,7 @@ export const FeedItemCard = React.memo(({ item }: FeedItemCardProps) => {
             return (
                 <Item
                     title={item.body.text}
-                    subtitle={getTimeAgo(item.createdAt)}
+                    subtitle={formatRelativeTime(item.createdAt)}
                     icon={<Icon name="info" size={20} color={theme.colors.text.secondary} />}
                     showChevron={false}
                 />

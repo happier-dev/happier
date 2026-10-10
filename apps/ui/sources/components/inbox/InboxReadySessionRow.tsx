@@ -3,7 +3,7 @@ import { Platform, Pressable } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { Item } from '@/components/ui/lists/Item';
+import { InboxWorkRow } from './InboxWorkRow';
 import { Icon } from '@/components/ui/icons/Icon';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
@@ -18,7 +18,6 @@ import {
 import { SESSION_LIST_ROW_IDENTITY_METRICS } from '@/components/sessions/shell/resolveSessionListDensityViewState';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import type { WorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
-import { workStatusWordStyle } from '@/components/work/status/workStatusTreatment';
 
 const MARK_READ_ACCESSIBILITY_ACTION = 'markRead';
 const NO_ACCESSIBILITY_ACTIONS: readonly { name: string; label?: string }[] = [];
@@ -78,19 +77,17 @@ export const InboxReadySessionRow = React.memo(function InboxReadySessionRow(pro
         : undefined;
 
     const row = (
-        <Item
+        <InboxWorkRow
             testID={testIdPrefix}
             title={props.title}
-            subtitle={props.subtitle}
-            detail={props.statusWord}
-            detailStyle={props.statusTone ? workStatusWordStyle(props.statusTone) : null}
-            density="compact"
+            facts={[props.subtitle]}
+            status={props.statusWord ? { word: props.statusWord, tone: props.statusTone ?? 'neutral' } : null}
+            phase="finished"
             accessibilityLabel={t('inbox.readySessionAccessibilityLabel', { session: props.title })}
             accessibilityActions={accessibilityActions}
             onAccessibilityAction={onAccessibilityAction}
             onPress={props.onOpen}
-            showDivider={props.showDivider}
-            leftElement={props.identityDisplay !== 'none' ? (
+            mark={props.identityDisplay !== 'none' ? (
                 <SessionListIdentity
                     session={props.session}
                     display={props.identityDisplay}
@@ -102,10 +99,7 @@ export const InboxReadySessionRow = React.memo(function InboxReadySessionRow(pro
                     testID={`${testIdPrefix}.identity`}
                 />
             ) : undefined}
-            iconBoxSize={props.identityDisplay !== 'none'
-                ? SESSION_LIST_ROW_IDENTITY_METRICS.compact.slotSize
-                : undefined}
-            rightElement={isWeb ? (
+            trailingAccessory={isWeb ? (
                 <IconButton
                     testID={`${testIdPrefix}.mark_read`}
                     accessibilityLabel={t('sessionInfo.markSessionRead')}
@@ -122,7 +116,6 @@ export const InboxReadySessionRow = React.memo(function InboxReadySessionRow(pro
                     )}
                 />
             ) : undefined}
-            rightElementOutsidePressable={isWeb}
         />
     );
 

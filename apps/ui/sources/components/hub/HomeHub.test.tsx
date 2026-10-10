@@ -1,3 +1,4 @@
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
@@ -17,11 +18,17 @@ import type { WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
 import { CardGridCell } from '@/components/ui/cardGrid/CardGrid';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { WidgetAddSurface } from '@/components/widgets/add/WidgetAddSurface';
+import type { WidgetAddSection } from '@/components/widgets/add/widgetAddModel';
+import { SessionSurfaceEntityDragHandle, SessionSurfaceEntityTargetFeedback } from '@/components/sessions/board/SessionSurfaceEntityDrag';
 import { EMPTY_PLUGIN_UI_PROJECTION, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-type Layout = Pick<HomeHubLayoutValue, 'order' | 'hidden'> & Partial<Pick<HomeHubLayoutValue, 'instances' | 'sections'>>;
+type Layout = Pick<HomeHubLayoutValue, 'order' | 'hidden'> & Partial<Pick<HomeHubLayoutValue, 'items' | 'sections'>>;
+
+/** Placed copies as the Home layout stores them (top-level widget items). */
+const placed = (...instances: WidgetInstanceV1[]) => instances.map(instance => ({ kind: 'widget' as const, instance }));
 
 // Initial server-owned layout; subsequent assertions inspect the acknowledged HTTP Artifact.
 const settings = vi.hoisted(() => ({
@@ -152,7 +159,7 @@ vi.mock('./HubMachinesSection', async () => {
         },
     };
 });
-vi.mock('./HubUsageSection', () => ({ HubUsageSection: () => 'section:usage' }));
+vi.mock('@/components/settings/usage/UsageCapacitySection', () => ({ UsageCapacitySection: () => 'section:usage' }));
 vi.mock('@/components/automations/home/AutomationsLatestRunsSection', () => ({ AutomationsLatestRunsSection: () => 'section:automations' }));
 // The status line is its own owner (it reads the Activity summary, tested there).
 vi.mock('./header/HubStatusLine', () => ({ HubStatusLine: () => 'status-line' }));
@@ -217,7 +224,7 @@ function RoutedHomeBoundary({ children }: React.PropsWithChildren) {
 
 async function renderHome() {
     if (!connection) {
-        artifact.seed({ v: 1, instances: [], ...settings.layout });
+        artifact.seed({ v: 1, items: [], ...settings.layout });
         await import('@/sync/syncEngine');
         restoreActionLoader = await installRealActionExecutorModuleLoader();
         connection = await restoreServerAccountForTest({ serverUrl: 'https://home-layout.test', accountId: 'account-home', request: artifact.request });
@@ -238,7 +245,7 @@ async function renderHome() {
                 machineId: 'machine-1',
                 serverId: connection!.home.id,
                 platform: 'web',
-                clientExecutableActivation: { status: 'ready' },
+                accountLifetime: captureActiveServerAccountScopeLifetime(), clientExecutableActivation: { status: 'ready' },
                 reloadClientExecutables: () => {},
                 reloadConnectedAccountProjection: () => {},
             }}
@@ -269,6 +276,22 @@ async function renderHome() {
     });
     await flushHookEffects({ cycles: 2 });
     return screen;
+}
+
+/** The acknowledged layout's items, and every placed copy in them (inside groups too). */
+function storedItems() {
+    return artifact.layout().items ?? [];
+}
+function storedInstances(): WidgetInstanceV1[] {
+    return storedItems().flatMap(item => item.kind === 'widget' ? [item.instance] : item.children.map(child => child.instance));
+}
+
+/** Customize is a page state; the list that shows, hides and orders sections opens from its bar. */
+async function openSections(screen: Awaited<ReturnType<typeof renderHome>>) {
+    await act(async () => { screen.pressByTestId('home-hub.customize'); });
+    await flushHookEffects({ cycles: 2 });
+    await act(async () => { screen.pressByTestId('home-hub.customizing.sections'); });
+    await flushHookEffects({ cycles: 2 });
 }
 
 function shownSections(text: string): string[] {
@@ -302,8 +325,7 @@ describe('HomeHub', () => {
         const screen = await renderHome();
         expect(shownSections(screen.getTextContent())).toEqual(['start', 'attention', 'setup', 'automations', 'usage']);
 
-        screen.pressByTestId('home-hub.customize');
-        await flushHookEffects({ cycles: 2 });
+        await openSections(screen);
         expect(screen.findByTestId('home-hub.customize.popover')).toBeTruthy();
         // Always shown: no switch.
         expect(screen.findByTestId('home-layout.attention.shown')).toBeNull();
@@ -332,7 +354,7 @@ describe('HomeHub', () => {
 
         screen.pressByTestId('home-layout.reset');
         await flushHookEffects({ cycles: 2 });
-        expect(artifact.layout()).toEqual({ v: 1, instances: [], order: [], hidden: [] });
+        expect(artifact.layout()).toEqual({ v: 1, items: [], order: [], hidden: [] });
         expect(shownSections(screen.getTextContent())).toEqual(['start', 'attention', 'setup', 'automations', 'usage']);
 
         // The header button closes it again.
@@ -344,8 +366,7 @@ describe('HomeHub', () => {
     it('offers dismissed setup steps back from Customize', async () => {
         settings.layout = { order: [], hidden: ['setup:addPhone', 'setup:addMachine'] };
         const screen = await renderHome();
-        screen.pressByTestId('home-hub.customize');
-        await flushHookEffects({ cycles: 2 });
+        await openSections(screen);
 
         screen.pressByTestId('home-layout.hiddenSetupSteps');
         await flushHookEffects({ cycles: 2 });
@@ -357,8 +378,7 @@ describe('HomeHub', () => {
     it('customizes Home in a phone sheet, applies changes behind it, and dismisses back to Home', async () => {
         settings.viewport = { width: 390, height: 844 };
         const screen = await renderHome();
-        await act(async () => screen.pressByTestId('home-hub.customize'));
-        await flushHookEffects({ cycles: 2 });
+        await openSections(screen);
 
         expect(screen.findByTestId('home-hub.customize.popover')).toBeNull();
         const modal = screen.findByType('BaseModal');
@@ -376,7 +396,8 @@ describe('HomeHub', () => {
         await flushHookEffects({ cycles: 2 });
         expect(screen.findByTestId('home-layout.machines.shown')).toBeNull();
         expect(shownSections(screen.getTextContent())).toContain('machines');
-        await act(async () => screen.pressByTestId('home-hub.customize'));
+        // Home is still being customized: the sheet reopens from the same bar.
+        await act(async () => screen.pressByTestId('home-hub.customizing.sections'));
         await flushHookEffects({ cycles: 2 });
         expect(screen.findByType('BaseModal').props.placement).toBe('bottom');
     });
@@ -431,6 +452,226 @@ describe('HomeHub plugin widgets', () => {
         await flushHookEffects({ cycles: 2 });
     }
 
+    it('draws a group as one frame around its widgets; a grouped widget offers group entries, never its own frame', async () => {
+        widgets.projection = widgetProjectionOf([
+            { pluginId: 'acme.ci', localId: 'checks', title: 'Checks', target: 'app' },
+        ], { 'acme.ci': widgetInstalledPackage('acme.ci', 'CI') });
+        const first: WidgetInstanceV1 = { v: 1, id: 'checks-first', definition: { kind: 'installed', surface: { pluginId: 'acme.ci', localId: 'checks' } }, bindings: {} };
+        const second = { ...first, id: 'checks-second' };
+        // The Account layout as stored: one titled Card · Lines group holding both copies.
+        settings.layout = { order: ['start', 'attention', 'setup', 'happier'], hidden: [], items: [{ kind: 'group', id: 'happier', title: 'happier',
+            width: 'full', frameStyle: 'card', dividers: 'hairline', children: [
+                { kind: 'widget', instance: first, size: 'small' }, { kind: 'widget', instance: second, size: 'small' }] }] } as unknown as Layout;
+        const screen = await renderHome();
+        await lay(screen, { [first.id]: 300, [second.id]: 300 });
+
+        // Both widgets are drawn inside the group's one frame, under its title.
+        const group = screen.findByTestId('home-hub.section.happier.group')!;
+        expect(group.findAll(node => node.props.testID === `home-hub.section.${first.id}`).length).toBeGreaterThan(0);
+        expect(group.findAll(node => node.props.testID === `home-hub.section.${second.id}`).length).toBeGreaterThan(0);
+        expect(screen.getTextContent()).toContain('happier');
+
+        const childMenu = screen.findAllByType(ItemRowActions).find(node => node.props.overflowTriggerTestID === `home-hub.${first.id}.menuTrigger`)!;
+        const ids = childMenu.props.actions.map((action: { id: string }) => action.id);
+        expect(ids).toEqual(expect.arrayContaining(['removeFromGroup', 'ungroup']));
+        expect(ids).not.toContain('frameStyle');
+
+        // Remove from group: the widget goes back on its own card beside the group; the group keeps the other.
+        await act(async () => { childMenu.props.actions.find((action: { id: string }) => action.id === 'removeFromGroup').onPress(); });
+        await vi.waitFor(() => {
+            const items = (artifact.layout() as unknown as { items: Array<{ kind: string; id?: string; instance?: { id: string }; children?: unknown[] }> }).items;
+            expect(items.find(item => item.kind === 'group')?.children).toHaveLength(1);
+            expect(items.some(item => item.kind === 'widget' && item.instance?.id === first.id)).toBe(true);
+        });
+    });
+
+    it('lifts a whole group by its grip, and reorders widgets inside a group on the line between them', async () => {
+        widgets.projection = widgetProjectionOf([
+            { pluginId: 'acme.ci', localId: 'checks', title: 'Checks', target: 'app' },
+        ], { 'acme.ci': widgetInstalledPackage('acme.ci', 'CI') });
+        const copy = (id: string): WidgetInstanceV1 => ({ v: 1, id, definition: { kind: 'installed', surface: { pluginId: 'acme.ci', localId: 'checks' } }, bindings: {} });
+        const lone = copy('lone'); const first = copy('grouped-first'); const second = copy('grouped-second');
+        settings.layout = { order: ['start', 'attention', 'setup', lone.id, 'happier'], hidden: [], items: [{ kind: 'widget', instance: lone },
+            { kind: 'group', id: 'happier', title: 'happier', width: 'full', frameStyle: 'card', dividers: 'hairline', children: [
+                { kind: 'widget', instance: first, size: 'small' }, { kind: 'widget', instance: second, size: 'small' }] }] };
+        const screen = await renderHome();
+        await lay(screen, { [lone.id]: 300, [first.id]: 500, [second.id]: 500 });
+        // On a hover pointer the cards carry no grips until Home is being customized.
+        await act(async () => { screen.pressByTestId('home-hub.customize'); });
+        await flushHookEffects({ cycles: 2 });
+        const dragOf = (testID: string) => screen.root.findAllByType(SessionSurfaceEntityDragHandle).find(handle => handle.props.testID === testID)!.props.drag;
+        const destination = (drag: ReturnType<typeof dragOf>, match: Readonly<Record<string, unknown>>) => drag.runtime.getDestinations(drag.sourceId)
+            .find(entry => entry.destination !== null && typeof entry.destination === 'object'
+                && Object.entries(match).every(([key, value]) => (entry.destination as Record<string, unknown>)[key] === value));
+        const carryTo = async (drag: ReturnType<typeof dragOf>, match: Readonly<Record<string, unknown>>) => {
+            let carry: ReturnType<typeof drag.runtime.begin> = null;
+            await act(async () => { carry = drag.runtime.begin(drag.sourceId, 'keyboard'); });
+            let target: ReturnType<typeof destination>;
+            await vi.waitFor(async () => {
+                await flushHookEffects();
+                target = destination(drag, match);
+                expect(target?.admission.status).toBe('allowed');
+            });
+            await act(async () => { carry!.choose(target!.targetId, target!.destination); expect((await carry!.release())?.status).toBe('applied'); });
+            await flushHookEffects({ cycles: 4 });
+        };
+        // The whole group lifts by its grip and lands before the lone widget.
+        await carryTo(dragOf('home-hub.section.happier.move'), { anchorId: lone.id, placement: 'before' });
+        await vi.waitFor(() => expect(artifact.layout().order.slice(0, 5)).toEqual(['start', 'attention', 'setup', 'happier', lone.id]));
+
+        // Inside the group, the line between its widgets reorders them there.
+        await carryTo(dragOf(`home-hub.section.${second.id}.move`), { anchorId: first.id, placement: 'before', groupId: 'happier' });
+        await vi.waitFor(() => {
+            const group = storedItems().find(item => item.kind === 'group');
+            expect(group?.kind === 'group' ? group.children.map(child => child.instance.id) : []).toEqual([second.id, first.id]);
+        });
+
+        // Extracting a child above its group must keep Home's preceding sections in place.
+        await carryTo(dragOf(`home-hub.section.${second.id}.move`), { anchorId: 'happier', placement: 'before' });
+        await vi.waitFor(() => expect(artifact.layout().order.slice(0, 6)).toEqual(['start', 'attention', 'setup', second.id, 'happier', lone.id]));
+        expect(storedItems().find(item => item.kind === 'group')).toMatchObject({ children: [{ instance: first }] });
+    });
+
+    it.each([false, true])('extracts c1ea from 53ab immediately above 0389 (retained order slots: %s)', async retainedSlots => {
+        widgets.projection = widgetProjectionOf([
+            { pluginId: 'acme.ci', localId: 'checks', title: 'Checks', target: 'app' },
+        ], { 'acme.ci': widgetInstalledPackage('acme.ci', 'CI') });
+        const copy = (id: string): WidgetInstanceV1 => ({ v: 1, id, definition: { kind: 'installed', surface: { pluginId: 'acme.ci', localId: 'checks' } }, bindings: {} });
+        // Resume 13's live stored order retains five unresolved ids before the groups.
+        const unresolved = retainedSlots ? ['55249652', '95e264e9', '9bc23fb9', 'b3785069', 'b5c03de6'] : [];
+        const preceding = ['start', 'attention', 'daily', 'setup', 'triage', 'automations', 'machines', 'usage'];
+        settings.layout = { order: [...preceding, ...unresolved, '53ab', '0389'], hidden: ['machines'], items: [
+            ...placed(copy('daily'), copy('triage')),
+            { kind: 'group', id: '53ab', width: 'full', frameStyle: 'card', dividers: 'hairline', children: [
+                { kind: 'widget', instance: copy('c1ea'), size: 'small' }, { kind: 'widget', instance: copy('fb086'), size: 'small' }] },
+            { kind: 'group', id: '0389', width: 'full', frameStyle: 'card', dividers: 'hairline', children: [
+                { kind: 'widget', instance: copy('session'), size: 'small' }] },
+        ] };
+        const screen = await renderHome();
+        await lay(screen, { daily: 250, triage: 350, c1ea: 450, fb086: 450, session: 650 });
+        // On a hover pointer the cards carry no grips until Home is being customized.
+        await act(async () => { screen.pressByTestId('home-hub.customize'); });
+        await flushHookEffects({ cycles: 2 });
+        const drag = screen.root.findAllByType(SessionSurfaceEntityDragHandle)
+            .find(handle => handle.props.testID === 'home-hub.section.c1ea.move')!.props.drag;
+        let carry: ReturnType<typeof drag.runtime.begin> = null;
+        await act(async () => { carry = drag.runtime.begin(drag.sourceId, 'keyboard'); });
+        let destination: ReturnType<typeof drag.runtime.getDestinations>[number] | undefined;
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            destination = drag.runtime.getDestinations(drag.sourceId).find(entry => {
+                const value = entry.destination;
+                return value !== null && typeof value === 'object' && !Array.isArray(value)
+                    && 'anchorId' in value && 'placement' in value
+                    && value.anchorId === '0389' && value.placement === 'before';
+            });
+            expect(destination?.admission.status).toBe('allowed');
+        });
+        expect(destination?.admission).toMatchObject({ status: 'allowed', effect: { preview: { glyph: 'above' } } });
+        await act(async () => {
+            carry!.choose(destination!.targetId, destination!.destination);
+            expect((await carry!.release())?.status).toBe('applied');
+        });
+        await vi.waitFor(() => expect(artifact.layout().order).toEqual([...preceding, ...unresolved, '53ab', 'c1ea', '0389']));
+        expect(storedItems().find(item => item.kind === 'group' && item.id === '53ab')).toMatchObject({ children: [{ instance: copy('fb086') }] });
+    });
+
+    it('customizes Home on the page: each group bar names, sizes and opens it, and one new-row target ends the page', async () => {
+        widgets.projection = widgetProjectionOf([
+            { pluginId: 'acme.ci', localId: 'checks', title: 'Checks', target: 'app' },
+        ], { 'acme.ci': widgetInstalledPackage('acme.ci', 'CI') });
+        const copy = (id: string): WidgetInstanceV1 => ({ v: 1, id, definition: { kind: 'installed', surface: { pluginId: 'acme.ci', localId: 'checks' } }, bindings: {} });
+        const lone = copy('lone'); const first = copy('grouped-first'); const second = copy('grouped-second');
+        settings.layout = { order: ['start', 'attention', 'setup', 'g', lone.id], hidden: [], items: [
+            { kind: 'group', id: 'g', width: 'full', frameStyle: 'card', dividers: 'hairline', children: [
+                { kind: 'widget', instance: first, size: 'small' }, { kind: 'widget', instance: second, size: 'small' }] },
+            { kind: 'widget', instance: lone }] };
+        const screen = await renderHome();
+        await lay(screen, { [lone.id]: 500, [first.id]: 300, [second.id]: 300 });
+        const group = () => storedItems().find(item => item.kind === 'group');
+        // View mode: no bar, no new-row target.
+        expect(screen.findByTestId('home-hub.customizing')).toBeNull();
+        expect(screen.findByTestId('home-hub.section.g.bar')).toBeNull();
+        expect(screen.findByTestId('home-hub.new-row')).toBeNull();
+
+        await act(async () => { screen.pressByTestId('home-hub.customize'); });
+        await flushHookEffects({ cycles: 2 });
+        // Customize is the page's own state: nothing opens over the groups it edits.
+        expect(screen.findByTestId('home-hub.customizing')).not.toBeNull();
+        expect(screen.findByTestId('home-hub.customize.popover')).toBeNull();
+        expect(screen.findAllByType('BaseModal')).toHaveLength(0);
+
+        // The name is a field on the bar: an untitled group gets its name there, through the Home layout.
+        expect(screen.findByTestId('home-hub.section.g.bar.name')!.props.value).toBe('');
+        await act(async () => { screen.findByTestId('home-hub.section.g.bar.name')!.props.onChangeText('Release checks'); });
+        await act(async () => { screen.findByTestId('home-hub.section.g.bar.name')!.props.onSubmitEditing(); });
+        await vi.waitFor(() => expect(group()).toMatchObject({ title: 'Release checks' }));
+        await flushHookEffects({ cycles: 2 });
+        // Still one name on screen: the field, never a second header above it.
+        expect(screen.findByTestId('home-hub.section.g.bar.name')!.props.value).toBe('Release checks');
+        expect(screen.findByTestId('home-hub.section.g.frame.title')).toBeNull();
+
+        // Half | Full sits on the bar.
+        const width = screen.root.findAll(node => node.props.testIDPrefix === 'home-hub.section.g.bar.width')[0]!;
+        await act(async () => { width.props.onSelectTab('half'); });
+        await vi.waitFor(() => expect(group()).toMatchObject({ width: 'half' }));
+
+        // The bar's ⋯ is the one group menu, without a second Rename beside the field.
+        const menu = screen.findAllByType(ItemRowActions).find(node => node.props.overflowTriggerTestID === 'home-hub.section.g.bar.menu.trigger')!;
+        const ids = menu.props.actions.map((action: { id: string }) => action.id);
+        expect(ids).toEqual(expect.arrayContaining(['saveGroup', 'ungroup']));
+        expect(ids).not.toContain('rename');
+
+        // The page ends with the one new-row target: a grouped widget dropped there leaves its group for the end of Home.
+        expect(screen.findByTestId('home-hub.new-row')).not.toBeNull();
+        const drag = screen.root.findAllByType(SessionSurfaceEntityDragHandle).find(handle => handle.props.testID === `home-hub.section.${first.id}.move`)!.props.drag;
+        const newRow = screen.root.findAllByType(SessionSurfaceEntityTargetFeedback).find(node => node.props.testID === 'home-hub.new-row.drop')!.props.drag;
+        let carry: ReturnType<typeof drag.runtime.begin> = null;
+        await act(async () => { carry = drag.runtime.begin(drag.sourceId, 'keyboard'); });
+        let destination: ReturnType<typeof drag.runtime.getDestinations>[number] | undefined;
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            destination = drag.runtime.getDestinations(drag.sourceId).find(entry => entry.targetId === newRow.targetId);
+            expect(destination?.admission.status).toBe('allowed');
+        });
+        await act(async () => { carry!.choose(destination!.targetId, destination!.destination); expect((await carry!.release())?.status).toBe('applied'); });
+        await vi.waitFor(() => expect(artifact.layout().order.at(-1)).toBe(first.id));
+        expect(artifact.layout().order.indexOf('g')).toBeLessThan(artifact.layout().order.indexOf(lone.id));
+        expect(group()).toMatchObject({ children: [{ instance: second }] });
+
+        // Done leaves Customize; the group shows its name as its header again.
+        await act(async () => { screen.pressByTestId('home-hub.customizing.done'); });
+        await flushHookEffects({ cycles: 2 });
+        expect(screen.findByTestId('home-hub.customizing')).toBeNull();
+        expect(screen.findByTestId('home-hub.section.g.bar')).toBeNull();
+        expect(screen.getTextContent()).toContain('Release checks');
+    });
+
+    it('opens Add from a group\'s empty slot and puts the new widget into that group', async () => {
+        widgets.projection = widgetProjectionOf([
+            { pluginId: 'acme.ci', localId: 'checks', title: 'Checks', target: 'app' },
+        ], { 'acme.ci': widgetInstalledPackage('acme.ci', 'CI') });
+        const only: WidgetInstanceV1 = { v: 1, id: 'grouped-only', definition: { kind: 'installed', surface: { pluginId: 'acme.ci', localId: 'checks' } }, bindings: {} };
+        settings.layout = { order: ['start', 'attention', 'setup', 'happier'], hidden: [], items: [{ kind: 'group', id: 'happier', width: 'full',
+            frameStyle: 'card', dividers: 'hairline', children: [{ kind: 'widget', instance: only, size: 'small' }] }] };
+        const screen = await renderHome();
+        await lay(screen, { [only.id]: 300 });
+        // While customizing, the lone widget keeps its half beside an empty slot.
+        await act(async () => { screen.pressByTestId('home-hub.customize'); });
+        await flushHookEffects({ cycles: 2 });
+        await act(async () => { screen.pressByTestId('home-hub.section.happier.slot.add'); });
+        await flushHookEffects({ cycles: 3 });
+        const surface = screen.root.findAllByType(WidgetAddSurface).find(node => node.props.open === true)!;
+        const entry = surface.props.sections.flatMap((section: WidgetAddSection) => section.entries)
+            .find((candidate: { title: string }) => candidate.title === 'Checks')!;
+        const setup = entry.setup!();
+        await act(async () => { await expect(setup.submit(setup.initial)).resolves.toMatchObject({ ok: true }); });
+        await vi.waitFor(() => {
+            const group = storedItems().find(item => item.kind === 'group');
+            expect(group?.kind === 'group' ? group.children.length : 0).toBe(2);
+        });
+    });
+
     it('renders independently bound stored copies and full width on phone, retaining a missing type until it is removed', async () => {
         const copy = (id: string, branch: string): WidgetInstanceV1 => ({ v: 1, id, displayName: branch,
             definition: { kind: 'installed', surface: { pluginId: 'acme.ci', localId: 'checks' } },
@@ -443,8 +684,8 @@ describe('HomeHub plugin widgets', () => {
             inputs: { fields: [{ path: 'branch', title: 'Branch', widget: 'text', required: true }] },
             inputSchema: { type: 'object', properties: { branch: { type: 'string' } }, required: ['branch'], additionalProperties: false },
         }], { 'acme.ci': widgetInstalledPackage('acme.ci', 'CI') });
-        settings.layout = { order: ['start', 'attention', 'setup', first.id, second.id, missing.id], hidden: [], instances: [first, second, missing],
-            sections: { [second.id]: { size: 'full' } } };
+        settings.layout = { order: ['start', 'attention', 'setup', first.id, second.id, missing.id], hidden: [],
+            items: [...placed(first), { kind: 'widget', instance: second, size: 'full' }, ...placed(missing)] };
         const screen = await renderHome();
         await lay(screen, { [first.id]: 300, [second.id]: 500, [missing.id]: 700 });
         expect(screen.getTextContent()).toContain('branch:main');
@@ -456,28 +697,30 @@ describe('HomeHub plugin widgets', () => {
 
         settings.viewport = { width: 390, height: 844 };
         await screen.rerender();
-        expect(artifact.layout().sections?.[second.id]?.size).toBe('full');
+        expect(storedItems().find(item => item.kind === 'widget' && item.instance.id === second.id)).toMatchObject({ size: 'full' });
         expect(screen.getTextContent()).toContain('branch:main');
         expect(screen.getTextContent()).toContain('branch:release');
-        await act(async () => { screen.pressByTestId('home-hub.customize'); });
-        await flushHookEffects({ cycles: 2 });
+        await openSections(screen);
         await act(async () => { await screen.findByTestId(`home-layout.${missing.id}.shown`)!.props.onValueChange(false); });
         await flushHookEffects({ cycles: 3 });
-        expect(artifact.layout().instances).toEqual([first, second]);
-        expect(artifact.layout().sections?.[second.id]?.size).toBe('full');
+        expect(storedInstances()).toEqual([first, second]);
+        expect(storedItems().find(item => item.kind === 'widget' && item.instance.id === second.id)).toMatchObject({ size: 'full' });
         expect(screen.findByTestId(`home-hub.section.${missing.id}`)).toBeNull();
         expect(screen.getTextContent()).toContain('branch:release');
     });
 
-    it('moves a configured copy through the mounted chooser to the native first Home position, preserving its sibling', async () => {
+    it('moves a configured copy through the mounted chooser above the first widget, preserving preceding sections and its sibling', async () => {
         widgets.projection = widgetProjectionOf([
             { pluginId: 'acme.ci', localId: 'checks', title: 'Checks', target: 'app' },
         ], { 'acme.ci': widgetInstalledPackage('acme.ci', 'CI') });
         const first: WidgetInstanceV1 = { v: 1, id: 'checks-first', definition: { kind: 'installed', surface: { pluginId: 'acme.ci', localId: 'checks' } }, bindings: {} };
         const second = { ...first, id: 'checks-second' };
-        settings.layout = { order: ['start', 'attention', 'setup', first.id, second.id], hidden: [], instances: [first, second] };
+        settings.layout = { order: ['start', 'attention', 'setup', first.id, second.id], hidden: [], items: placed(first, second) };
         const screen = await renderHome();
         await lay(screen, { [first.id]: 300, [second.id]: 500 });
+        // On a hover pointer the cards carry no grips until Home is being customized.
+        await act(async () => { screen.pressByTestId('home-hub.customize'); });
+        await flushHookEffects({ cycles: 2 });
         const move = `home-hub.section.${second.id}.move`;
         await act(async () => { screen.pressByTestId(move); });
         const chooser = () => screen.findAllByType(DropdownMenu).find(node => node.props.open === true)!;
@@ -496,8 +739,8 @@ describe('HomeHub plugin widgets', () => {
         expect(chooser().props.closeOnSelect).toBe(false);
         await act(async () => { await chooser().props.onSelect('0'); });
         await vi.waitFor(() => {
-            expect(artifact.layout().order[0]).toBe(second.id);
-            expect(artifact.layout().instances).toEqual([first, second]);
+            expect(artifact.layout().order.slice(0, 5)).toEqual(['start', 'attention', 'setup', second.id, first.id]);
+            expect(storedInstances()).toEqual([first, second]);
         });
         expect(screen.findAllByType(DropdownMenu).some(node => node.props.open === true)).toBe(false);
     });
@@ -510,7 +753,7 @@ describe('HomeHub plugin widgets', () => {
             inputs: { fields: [{ path: 'branch', title: 'Branch', widget: 'text', required: true }] },
             inputSchema: { type: 'object', properties: { branch: { type: 'string' } }, required: ['branch'], additionalProperties: false },
         }], { 'acme.ci': widgetInstalledPackage('acme.ci', 'CI') });
-        settings.layout = { order: ['start', 'attention', 'setup', main.id, unbound.id], hidden: [], instances: [main, unbound] };
+        settings.layout = { order: ['start', 'attention', 'setup', main.id, unbound.id], hidden: [], items: placed(main, unbound) };
         const screen = await renderHome();
         await lay(screen, { [main.id]: 300, [unbound.id]: 500 });
 
@@ -526,7 +769,7 @@ describe('HomeHub plugin widgets', () => {
         await act(async () => { field.props.onChangeText('  Release soak '); });
         await act(async () => { screen.findByTestId(`home-hub.section.${main.id}-title-input`)!.props.onSubmitEditing(); });
         await flushHookEffects({ cycles: 3 });
-        expect(artifact.layout().instances).toEqual([{ ...main, displayName: 'Release soak' }, unbound]);
+        expect(storedInstances()).toEqual([{ ...main, displayName: 'Release soak' }, unbound]);
         expect(screen.findByTestId(`home-hub.section.${main.id}-title-input`)).toBeNull();
 
         // The copy with nothing bound says so in its card, and its repair opens the same step.
@@ -537,7 +780,7 @@ describe('HomeHub plugin widgets', () => {
         await flushHookEffects({ cycles: 2 });
         await act(async () => { screen.pressByTestId(`home-hub.section.${unbound.id}.editInputs.submit`); });
         await flushHookEffects({ cycles: 4 });
-        expect(artifact.layout().instances).toEqual([
+        expect(storedInstances()).toEqual([
             { ...main, displayName: 'Release soak' },
             { ...unbound, bindings: { branch: { kind: 'value', value: 'release' } } },
         ]);
@@ -564,8 +807,7 @@ describe('HomeHub plugin widgets', () => {
 
         expect(artifact.writes).toEqual([]);
         // Customize operates on placed instances, preserving their independent identities.
-        screen.pressByTestId('home-hub.customize');
-        await flushHookEffects({ cycles: 2 });
+        await openSections(screen);
         expect(screen.findByTestId(`home-layout.${LATEST}.shown`)!.props.value).toBe(true);
         await act(async () => {
             await screen.findByTestId(`home-layout.${LATEST}.shown`)!.props.onValueChange(false);

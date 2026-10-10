@@ -1,13 +1,14 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
-import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
+import { createSessionFixture, renderScreen } from '@/dev/testkit';
+import { createAutomationRunFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { buildInboxWorkGroups } from '@/activity/presentation/buildInboxWorkGroups';
 import { EMPTY_WORKFLOW_ATTENTION_SOURCE } from '@/hooks/inbox/useWorkflowAttentionSource';
 import { buildServerScopedSessionKey } from '@/sync/domains/session/navigation/sessionNavigationOrder';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { workflowRunRowFromSummary } from '@/sync/store/domains/workflowRuns';
+import { projectUiSessionAwareness } from '@/sync/domains/session/awareness/sessionAwareness';
 
 import type { InboxModel } from '@/hooks/inbox/useInboxModel';
 
@@ -73,18 +74,19 @@ vi.mock('@/text', async () => {
 
 const NOW = Date.parse('2026-09-30T12:00:00.000Z');
 
-function storedSession(id: string, facts: Readonly<{ lead?: string; reports?: number; turn?: string }> = {}): Session {
-    return {
+function storedSession(id: string, facts: Readonly<{ lead?: string; reports?: number; turn?: Session['latestTurnStatus'] }> = {}): Session {
+    return createSessionFixture({
         id,
         serverId: 'server-a',
+        encryptionMode: 'plain',
+        encryptedContentAvailability: 'ready',
         active: false,
         presence: 'online',
-        metadata: {},
         updatedAt: NOW - 3 * 60_000,
         ...(facts.lead ? { reportsTo: { sessionId: facts.lead } } : {}),
         ...(facts.reports ? { reports: { total: facts.reports, working: 1, needsYou: 1, stalled: 1 } } : {}),
         ...(facts.turn ? { latestTurnStatus: facts.turn } : {}),
-    } as unknown as Session;
+    });
 }
 
 function candidate(session: Session, attentionState: string, reasons: readonly string[]) {
@@ -93,10 +95,10 @@ function candidate(session: Session, attentionState: string, reasons: readonly s
         serverId: 'server-a',
         address: { serverId: 'server-a', sessionId: session.id },
         session,
-        awareness: {},
+        awareness: projectUiSessionAwareness(session, NOW),
         title: `Session ${session.id}`,
         subtitle: `/workspace/${session.id}`,
-        context: { contextLine: `Home · ${session.id}` },
+        context: { contextLine: `Home · ${session.id}`, segments: [{ kind: 'home', label: 'Home' }, { kind: 'workspace', label: session.id }] },
         route: `/session/${session.id}`,
         attentionState,
         personalAttention: { reasons, presentation: 'full' },
@@ -115,6 +117,8 @@ function createModel(options: Readonly<{
     openApprovals?: ReadonlyArray<Readonly<{ id: string; header: Record<string, unknown> }>>;
     workflowStale?: boolean;
     needsYou?: boolean;
+    /** Further runs with no orchestrator, after `library-run`. */
+    moreRunIds?: readonly string[];
 }> = {}): InboxModel {
     const needsYou = options.needsYou ?? true;
     const sessionEntries = needsYou ? [
@@ -133,11 +137,11 @@ function createModel(options: Readonly<{
     };
     const workGroups = buildInboxWorkGroups({
         sessionEntries: sessionEntries as never,
-        workflowRuns: needsYou ? [workflowRunRowFromSummary(createWorkflowRunSummaryFixture({
-            id: 'library-run',
+        workflowRuns: needsYou ? ['library-run', ...(options.moreRunIds ?? [])].map((id) => workflowRunRowFromSummary(createWorkflowRunSummaryFixture({
+            id,
             state: 'interrupted',
             updatedAt: '2026-09-30T11:54:00.000Z',
-        }), null)] : [],
+        }), null)) : [],
         stalledSessions: needsYou ? [stalledWorker] : [],
         landings: [],
         snoozed: needsYou ? [{ session: snoozed, remindAt: NOW + 3_600_000 }] : [],
@@ -147,6 +151,8 @@ function createModel(options: Readonly<{
     return {
         source: {},
         openApprovals: needsYou ? (options.openApprovals ?? [{ id: 'approval-1', header: {} }]) : [],
+        openUsageNotices: [],
+        dismissUsageNotice: vi.fn(async () => {}),
         friendRequests: [{ id: 'friend-1', username: 'friend' }],
         sessionPresentation: {
             sessionsNeedingAttention: sessionEntries,
@@ -166,6 +172,9 @@ function createModel(options: Readonly<{
         markRead: vi.fn(async () => {}),
         resolveActionOperation: vi.fn(),
         workGroups,
+        spansHomes: true,
+        automationAttention: EMPTY_WORKFLOW_ATTENTION_SOURCE,
+        automationAttentionItems: [],
         workflowAttention: options.workflowStale
             ? { ...EMPTY_WORKFLOW_ATTENTION_SOURCE, available: true, phase: 'loaded', refreshFailed: true,
                 runIds: needsYou ? ['library-run'] : [], knownAt: NOW - 60_000 }
@@ -184,6 +193,58 @@ function groupOrder(tree: { root: Node }): string[] {
 }
 
 describe('InboxContent grouped by work root (ORC R-10, lab inbox-I1)', () => {
+    it.each(['screen', 'popover'] as const)('renders Automation-only attention and its route in the %s', async (presentation) => {
+        const { InboxContent } = await import('./InboxContent');
+        const run = createAutomationRunFixture({ id: 'pre-session', state: 'failed' });
+        const route = { pathname: '/automations/[id]/runs/[runId]' as const, params: { id: run.automationId, runId: run.id } };
+        const model = { ...createModel({ needsYou: false }), friendRequests: [],
+            sessionPresentation: { sessionsNeedingAttention: [], readySessions: [], markAllReadTargets: [] },
+            automationAttention: { ...EMPTY_WORKFLOW_ATTENTION_SOURCE, available: true, phase: 'loaded' as const, runIds: [run.id], knownAt: NOW },
+            automationAttentionItems: [{ key: `automation-run:${run.id}`, run, route }],
+        };
+        const screen = await renderScreen(<InboxContent model={model} presentation={presentation} />);
+        const row = screen.findByTestId(`inbox.automation_run.${run.id}`);
+        expect(row).not.toBeNull();
+        expect(screen.findByTestId('inbox.empty')).toBeNull();
+        row!.props.onPress();
+        expect(routerPush).toHaveBeenCalledWith(route);
+    });
+
+    it.each(['screen', 'popover'] as const)('does not claim caught up after an initial Automation failure in the %s', async (presentation) => {
+        const { InboxContent } = await import('./InboxContent');
+        const retry = vi.fn();
+        const model = { ...createModel({ needsYou: false }), friendRequests: [],
+            sessionPresentation: { sessionsNeedingAttention: [], readySessions: [], markAllReadTargets: [] },
+            automationAttention: { ...EMPTY_WORKFLOW_ATTENTION_SOURCE, available: true, phase: 'failed' as const, retry },
+        };
+        const screen = await renderScreen(<InboxContent model={model} presentation={presentation} />);
+        expect(screen.findByTestId('inbox.empty')).toBeNull();
+        const button = screen.findByTestId('inbox.automation_retry');
+        expect(button).not.toBeNull();
+        button!.props.onPress();
+        expect(retry).toHaveBeenCalledOnce();
+    });
+
+    it('retains a stale Automation row and retries its own source, not Workflows', async () => {
+        const { InboxContent } = await import('./InboxContent');
+        const run = createAutomationRunFixture({ id: 'known-failure', state: 'failed' });
+        const retry = vi.fn();
+        const workflowRetry = vi.fn();
+        const model = { ...createModel({ needsYou: false }),
+            workflowAttention: { ...EMPTY_WORKFLOW_ATTENTION_SOURCE, retry: workflowRetry },
+            automationAttention: { ...EMPTY_WORKFLOW_ATTENTION_SOURCE, available: true, phase: 'loaded' as const,
+                refreshFailed: true, runIds: [run.id], knownAt: NOW - 60_000, retry },
+            automationAttentionItems: [{ key: `automation-run:${run.id}`, run,
+                route: { pathname: '/automations/[id]/runs/[runId]' as const, params: { id: run.automationId, runId: run.id } } }],
+        };
+        const screen = await renderScreen(<InboxContent model={model} />);
+        expect(screen.findByTestId(`inbox.automation_run.${run.id}`)).not.toBeNull();
+        const stale = screen.findByTestId('inbox.automation_stale');
+        expect(stale?.props.asOf).toBe(NOW - 60_000);
+        stale!.props.action.onPress();
+        expect(retry).toHaveBeenCalledOnce();
+        expect(workflowRetry).not.toHaveBeenCalled();
+    });
     beforeEach(() => {
         identityState.display = 'agentLogo';
         routerPush.mockClear();
@@ -212,8 +273,8 @@ describe('InboxContent grouped by work root (ORC R-10, lab inbox-I1)', () => {
         // The worker's prompt keeps the canonical answer card inside its lead's section.
         const leadSection = tree.root.findByProps({ testID: 'inbox.group.lead:lead' });
         expect(leadSection.findAllByType('InboxSessionAttentionGroupCard').map((card) => card.props.session.id)).toEqual(['worker']);
-        expect(leadSection.findByProps({ testID: 'inbox.stalled.stalled-worker' }).props.subtitle)
-            .toBe('inbox.work.rows.stalled · inbox.work.rows.stalledReason');
+        expect(leadSection.findByProps({ testID: 'inbox.stalled.stalled-worker' }).props.facts)
+            .toEqual(['inbox.work.rows.stalled', 'inbox.work.rows.stalledReason']);
 
         // An interrupted run with no orchestrator is its own root, reviewed from its row.
         const runSection = tree.root.findByProps({ testID: 'inbox.group.run:library-run' });
@@ -225,6 +286,37 @@ describe('InboxContent grouped by work root (ORC R-10, lab inbox-I1)', () => {
         expect(other.findAllByType('ApprovalInboxCard')).toHaveLength(1);
         expect(other.findAllByType('ActionOperationRows')).toHaveLength(1);
         expect(tree.root.findAllByType('InboxReadySessionRow')).toHaveLength(0);
+    });
+
+    it('opens a run group header on the workflow attention window’s exact Home', async () => {
+        const { InboxWorkGroupSection } = await import('./workGroups/InboxWorkGroupSection');
+        const base = createModel();
+        const model = { ...base, workflowAttention: { ...base.workflowAttention, serverId: 'home/1 a' } };
+        const group = model.workGroups.find((entry) => entry.root.kind === 'run')!;
+        // A run which leads with its own row is headerless. Exercise the section's declared
+        // run-header input without that row; the route still belongs to the window's Home.
+        const screen = await renderScreen(<InboxWorkGroupSection
+            group={{ ...group, items: [] }}
+            model={model}
+            identityDisplay="agentLogo"
+            presentation="screen"
+            navigate={routerPush}
+        />);
+
+        screen.findByTestId(`inbox.group.${group.key}.open`)!.props.onPress();
+        expect(routerPush).toHaveBeenCalledWith('/workflows/runs/library-run?serverId=home%2F1%20a');
+    });
+
+    it('keeps runs that are their own root in one sheet, rather than one card per run', async () => {
+        const { InboxContent } = await import('./InboxContent');
+        const { tree } = await renderScreen(<InboxContent model={createModel({ moreRunIds: ['second-run', 'third-run'] })} />);
+
+        // Lead, the runs, Other sessions: three sheets, not five.
+        expect(tree.root.findAllByType('ItemGroup' as never)).toHaveLength(3);
+        const runs = tree.root.findByProps({ testID: 'inbox.group.run:library-run' });
+        for (const id of ['library-run', 'second-run', 'third-run']) {
+            expect(runs.findByProps({ testID: `inbox.run.${id}.review` })).toBeTruthy();
+        }
     });
 
     it('marks the one item the person came to see (Boards opens the Inbox item, INT §5.1)', async () => {
@@ -251,6 +343,29 @@ describe('InboxContent grouped by work root (ORC R-10, lab inbox-I1)', () => {
         expect(selectedRows(invalid.tree as never)).toEqual([]);
     });
 
+    it('beside its detail pane, a row selects its item instead of leaving the Inbox (lab inbox-I1)', async () => {
+        const { InboxContent } = await import('./InboxContent');
+        const selected: unknown[] = [];
+        const model = createModel({ openApprovals: [{ id: 'approval-1', header: { serverIdentityId: 'server-a' } }] });
+        const { tree } = await renderScreen(
+            <InboxContent
+                model={{ ...model, workflowAttention: { ...model.workflowAttention, serverId: 'server-a' } }}
+                onSelectItem={(focus) => selected.push(focus)}
+            />,
+        );
+
+        tree.root.findByProps({ testID: 'inbox.stalled.stalled-worker' }).props.onPress();
+        tree.root.findByProps({ testID: 'inbox.run.library-run' }).props.onPress();
+        tree.root.findByType('ApprovalInboxCard' as never).props.onPress();
+
+        expect(selected).toEqual([
+            { kind: 'session', serverId: 'server-a', id: 'stalled-worker' },
+            { kind: 'workflow_run', serverId: 'server-a', id: 'library-run' },
+            { kind: 'approval', serverId: 'server-a', id: 'approval-1' },
+        ]);
+        expect(routerPush).not.toHaveBeenCalled();
+    });
+
     it("keeps a stopped session's pending request in its row as the Resume card (stale request, A17)", async () => {
         const { InboxContent } = await import('./InboxContent');
         const { tree } = await renderScreen(<InboxContent model={createModel()} />);
@@ -268,7 +383,7 @@ describe('InboxContent grouped by work root (ORC R-10, lab inbox-I1)', () => {
         const { tree } = await renderScreen(<InboxContent model={createModel()} />);
 
         const row = tree.root.findByProps({ testID: 'inbox.snoozed.snoozed' });
-        expect(String(row.props.subtitle)).toContain('inbox.work.rows.snoozedUntil');
+        expect(row.props.facts.join(' · ')).toContain('inbox.work.rows.snoozedUntil');
         expect(row.findAllByType('InboxSessionRowMenu')).toHaveLength(1);
         const other = tree.root.findByProps({ testID: 'inbox.group.other' });
         const keys = other.findAll((node) => typeof node.props.testID === 'string'
@@ -353,6 +468,19 @@ describe('InboxContent grouped by work root (ORC R-10, lab inbox-I1)', () => {
         expect(tree.root.findAllByProps({ testID: 'inbox.popover.updates' }).length).toBeGreaterThan(0);
     });
 
+    it('gives a popover row its title’s full width: the state leads the line beneath and the answer is inline (lab inbox-I2)', async () => {
+        const { InboxContent } = await import('./InboxContent');
+        const { describeWorkflowRunState } = await import('@/components/workflows/presentation/workflowLifecyclePresentation');
+        const { tree } = await renderScreen(<InboxContent model={createModel()} presentation="popover" onOpenInbox={vi.fn()} />);
+
+        const runRow = tree.root.findByProps({ testID: 'inbox.run.library-run' });
+        // No status column competing with the title for width.
+        expect(runRow.props.detail).toBeUndefined();
+        expect(String(runRow.props.subtitle).startsWith(describeWorkflowRunState('interrupted').label)).toBe(true);
+        expect(runRow.props.subtitleLines).toBe(1);
+        expect(tree.root.findByProps({ testID: 'inbox.run.library-run.review' })).toBeTruthy();
+    });
+
     it('opens a V2 approval through its portable owning Home rather than the focused Home', async () => {
         const { InboxContent } = await import('./InboxContent');
         const model = createModel({
@@ -385,9 +513,14 @@ describe('InboxContent grouped by work root (ORC R-10, lab inbox-I1)', () => {
         expect(String(failedRow.props.subtitle)).not.toContain(failedStatus.word);
 
         // A run in the attention window: the run owner's word, in the attention tone (not a local "interrupted is error").
+        // The row is titled by the run; its state is the row's one status, in the status column.
         const runRow = tree.root.findByProps({ testID: 'inbox.run.library-run' });
+        expect(runRow.props.title).not.toBe(describeWorkflowRunState('interrupted').label);
         expect(runRow.props.detail).toBe(describeWorkflowRunState('interrupted').label);
         expect(runRow.props.detailStyle).toEqual(workStatusWordStyle('attention'));
+        // A run that is its own work root and has only its own row needs no header repeating its name.
+        const runGroup = tree.root.findByProps({ testID: 'inbox.group.run:library-run' }).findAllByType('ItemGroup' as never)[0];
+        expect(runGroup?.props.title).toBeUndefined();
 
         // A stalled worker: its Session word beside the row's own explanation.
         const stalledStatus = resolveWorkStatusTone({ kind: 'session', facts: readSessionWorkStatusFacts(stalledWorker, NOW) });

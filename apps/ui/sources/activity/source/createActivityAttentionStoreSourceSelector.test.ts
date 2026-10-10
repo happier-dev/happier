@@ -32,6 +32,67 @@ function expectNoObjectKeysOrValuesOnRecords(action: () => void, guardedRecords:
 }
 
 describe('createActivityAttentionStoreSourceSelector', () => {
+    it('does no collection work on unrelated store ticks and refreshes a changed attention row', () => {
+        let visits = 0;
+        const watch = <T extends object>(value: T): T => new Proxy(value, {
+            ownKeys(target) { visits += 1; return Reflect.ownKeys(target); },
+            get(target, property, receiver) { visits += 1; return Reflect.get(target, property, receiver); },
+        });
+        const base = storage.getState();
+        const row = buildSessionListRenderableFromSession(createSessionFixture({ id: 'waiting', serverId: 'home-a' }));
+        const rows = watch({ waiting: row });
+        const state = { ...base, sessions: watch({}), sessionListRowsByServerId: watch({ 'home-a': rows }),
+            ordinarySessionListMembershipByServerId: watch({ 'home-a': ['waiting'] }),
+            sessionMessages: watch({}), sessionListIndexByServerId: watch({}), concurrentSessionListCacheByServerId: watch({}) };
+        const selector = createActivityAttentionStoreSourceSelector();
+        const first = selector(state);
+        visits = 0;
+        expect(selector({ ...state, lastSyncAt: 123 })).toBe(first);
+        expect(visits).toBe(0);
+        expect(selector({ ...state, sessionMessages: {} })).toBe(first);
+        expect(visits).toBe(0);
+
+        const changed = { ...row, thinking: true, thinkingAt: 124 };
+        const next = selector({ ...state, sessionListRowsByServerId: { 'home-a': { waiting: changed } } });
+        expect(next).not.toBe(first);
+        expect(next.sessionListRowsByServerId['home-a']?.waiting).toBe(changed);
+    });
+
+    it('computes each scoped address key once when sorting a large attention membership', () => {
+        const base = storage.getState();
+        const ids = Array.from({ length: 2_000 }, (_, index) => `session-${(index * 997) % 2_000}`);
+        const stringify = vi.spyOn(JSON, 'stringify'); // Call-through instrumentation of key allocation, not substituted domain logic.
+        try {
+            createActivityAttentionStoreSourceSelector({}, { includeSessionMessages: false })({
+                ...base, sessions: {}, ordinarySessionListMembershipByServerId: { 'home-a': ids }, sessionListRowsByServerId: {},
+            });
+            const keyAllocations = stringify.mock.calls.filter(([value]) => (
+                Array.isArray(value) && value[0] === 'home-a' && typeof value[1] === 'string' && value[1].startsWith('session-')
+            )).length;
+            expect(keyAllocations).toBe(ids.length);
+        } finally {
+            stringify.mockRestore();
+        }
+    });
+
+    it.runIf(process.env.HAPPIER_MEASURE_UI_HOT_LOOPS === '1')('measures 2,000 attention rows and unrelated ticks', () => {
+        const base = storage.getState();
+        const rows = Object.fromEntries(Array.from({ length: 2_000 }, (_, index) => {
+            const id = `session-${(index * 997) % 2_000}`;
+            return [id, buildSessionListRenderableFromSession(createSessionFixture({ id, serverId: 'home-a' }))];
+        }));
+        const state = { ...base, sessions: {}, sessionListRowsByServerId: { 'home-a': rows },
+            ordinarySessionListMembershipByServerId: { 'home-a': Object.keys(rows) }, sessionMessages: {} };
+        const selector = createActivityAttentionStoreSourceSelector();
+        const start = performance.now();
+        const first = selector(state);
+        const coldMs = performance.now() - start;
+        const tickStart = performance.now();
+        for (let index = 0; index < 200; index++) expect(selector({ ...state, lastSyncAt: index })).toBe(first);
+        console.log(JSON.stringify({ measurement: 'activity-attention', sessions: 2_000, unrelatedTicks: 200,
+            coldMs, ticksMs: performance.now() - tickStart }));
+    });
+
     it('does not project Session-list observations as an Activity-wide Home freshness fact', () => {
         const selector = createActivityAttentionStoreSourceSelector({ 'server-a': ['same-session'] });
         const base = storage.getState();
@@ -73,35 +134,42 @@ describe('createActivityAttentionStoreSourceSelector', () => {
             createdAtMs: 1,
             lastOpenedAtMs: null,
         };
+        const scope = { serverId: 'server-a', accountId: 'account-a' };
+        const projectRows = (refs: readonly typeof workspaceRef[]) => ({ scope, status: 'ready' as const, coverage: 'complete' as const,
+            workspaceRefs: refs, relationships: [], organizations: [], revisionsByPhysicalKey: {} });
         const first = selector({
             ...base,
+            profileScope: scope,
+            projectAccountRows: projectRows([workspaceRef]),
             settings: {
                 ...base.settings,
-                workspaceRefsV1: [workspaceRef],
                 workspacePathDisplayModeV1: 'name',
             },
         });
         const same = selector({
             ...base,
+            profileScope: scope,
+            projectAccountRows: projectRows([{ ...workspaceRef }]),
             settings: {
                 ...base.settings,
-                workspaceRefsV1: [{ ...workspaceRef }],
                 workspacePathDisplayModeV1: 'name',
             },
         });
         const renamed = selector({
             ...base,
+            profileScope: scope,
+            projectAccountRows: projectRows([{ ...workspaceRef, label: 'Happier Core' }]),
             settings: {
                 ...base.settings,
-                workspaceRefsV1: [{ ...workspaceRef, label: 'Happier Core' }],
                 workspacePathDisplayModeV1: 'name',
             },
         });
         const pathMode = selector({
             ...base,
+            profileScope: scope,
+            projectAccountRows: projectRows([{ ...workspaceRef, label: 'Happier Core' }]),
             settings: {
                 ...base.settings,
-                workspaceRefsV1: [{ ...workspaceRef, label: 'Happier Core' }],
                 workspacePathDisplayModeV1: 'path',
             },
         });

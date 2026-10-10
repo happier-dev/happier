@@ -91,7 +91,6 @@ vi.mock('@/sync/domains/state/storage', async () => {
         // projection. Keep this boundary fixture truthful now that Activity
         // consumes workspace presentation through that owner.
         settings: {
-            workspaceRefsV1: [],
             workspacePathDisplayModeV1: 'absolute',
         },
     });

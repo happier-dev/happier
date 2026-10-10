@@ -13,6 +13,7 @@ import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { StorageState } from '@/sync/store/types';
+import { readProjectWorkspaceRefs } from '@/sync/store/domains/projectAccountRows';
 import { readSessionDisplayTitleField } from '@/sync/state/selectors';
 import {
     readPendingAgentStateCompletedRequestSignature,
@@ -67,7 +68,7 @@ function joinSignatureParts(parts: readonly unknown[]): string {
 function buildWorkspaceDisplaySettingsSignature(state: StorageState): string {
     return joinSignatureParts([
         state.settings.workspacePathDisplayModeV1,
-        ...state.settings.workspaceRefsV1.map((ref) => joinSignatureParts([
+        ...readProjectWorkspaceRefs(state).map((ref) => joinSignatureParts([
             ref.id,
             ref.serverId,
             ref.machineId,
@@ -339,8 +340,9 @@ function buildSessionMessagesRecordSignature(
     sessionMessages: StorageState['sessionMessages'],
     cache: Map<string, SignatureCacheEntry<StorageState['sessionMessages'][string]>>,
 ): string {
+    const liveIds = new Set(sessionIds);
     for (const cachedId of cache.keys()) {
-        if (!sessionIds.includes(cachedId)) {
+        if (!liveIds.has(cachedId)) {
             cache.delete(cachedId);
         }
     }
@@ -410,12 +412,10 @@ function buildActivityRowsSignature(
             }
         }
     }
-    const addresses = [...addressesByKey.values()]
-        .sort((left, right) => sessionAddressKey(left).localeCompare(sessionAddressKey(right)));
-    const liveKeys = new Set(addresses.map(sessionAddressKey));
-    for (const key of cache.keys()) if (!liveKeys.has(key)) cache.delete(key);
-    return joinSignatureParts(addresses.map(({ serverId, sessionId }) => {
-        const key = sessionAddressKey({ serverId, sessionId });
+    const addresses = [...addressesByKey.entries()]
+        .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey));
+    for (const key of cache.keys()) if (!addressesByKey.has(key)) cache.delete(key);
+    return joinSignatureParts(addresses.map(([key, { serverId, sessionId }]) => {
         const row = state.sessionListRowsByServerId?.[serverId]?.[sessionId];
         if (!row) return joinSignatureParts([serverId, sessionId, '']);
         const cached = cache.get(key);
@@ -438,7 +438,7 @@ function buildSourceFromState(
         concurrentSessionListCacheByServerId:
             state.concurrentSessionListCacheByServerId ?? EMPTY_CONCURRENT_CACHE_BY_SERVER_ID,
         ...(includeSessionMessages ? { sessionMessagesById: state.sessionMessages } : {}),
-        workspaceRefsV1: state.settings.workspaceRefsV1,
+        workspaceRefsV1: readProjectWorkspaceRefs(state),
         workspacePathDisplayModeV1: state.settings.workspacePathDisplayModeV1,
     };
 }
@@ -452,19 +452,45 @@ export function createActivityAttentionStoreSourceSelector(
     const sessionMessagesSignatureCache = new Map<string, SignatureCacheEntry<StorageState['sessionMessages'][string]>>();
     let previousSignature: string | null = null;
     let previousSource: StoreActivityAttentionSource | null = null;
+    let previousInputs: StoreActivityAttentionSource | null = null;
+    const signatures = { sessions: '', rows: '', index: '', cache: '', messages: '', workspace: '' };
+    let potentialSessionIds: readonly string[] = [];
     const includeSessionMessages = options.includeSessionMessages !== false;
 
     return (state) => {
+        const inputs = buildSourceFromState(state, includeSessionMessages);
+        const sessionsChanged = !previousInputs || previousInputs.sessionsById !== inputs.sessionsById;
+        const membershipChanged = !previousInputs
+            || previousInputs.ordinarySessionListMembershipByServerId !== inputs.ordinarySessionListMembershipByServerId;
+        const rowsChanged = !previousInputs || previousInputs.sessionListRowsByServerId !== inputs.sessionListRowsByServerId;
+        const indexChanged = !previousInputs || previousInputs.sessionListIndexByServerId !== inputs.sessionListIndexByServerId;
+        const cacheChanged = !previousInputs
+            || previousInputs.concurrentSessionListCacheByServerId !== inputs.concurrentSessionListCacheByServerId;
+        const messagesChanged = includeSessionMessages && (sessionsChanged || membershipChanged
+            || previousInputs?.sessionMessagesById !== inputs.sessionMessagesById);
+        const workspaceChanged = !previousInputs || previousInputs.workspaceRefsV1 !== inputs.workspaceRefsV1
+            || previousInputs.workspacePathDisplayModeV1 !== inputs.workspacePathDisplayModeV1;
+        if (previousSource && previousInputs?.isDataReady === inputs.isDataReady
+            && !sessionsChanged && !membershipChanged && !rowsChanged && !indexChanged
+            && !cacheChanged && !messagesChanged && !workspaceChanged) {
+            return previousSource;
+        }
+
+        // Store domains publish immutable references. Retain each semantic signature independently:
+        // an unrelated notification must not sort/parse the unchanged Session collections.
+        if (includeSessionMessages && (sessionsChanged || membershipChanged)) {
+            potentialSessionIds = collectPotentialSessionIds(state);
+        }
+        if (sessionsChanged) signatures.sessions = buildCachedRecordSignature(state.sessions, sessionSignatureCache, buildSessionActivitySignature);
+        if (rowsChanged || membershipChanged) signatures.rows = buildActivityRowsSignature(state, renderableSignatureCache, personalMembershipByServerId);
+        if (indexChanged) signatures.index = buildSessionListIndexSignature(state.sessionListIndexByServerId);
+        if (cacheChanged) signatures.cache = buildConcurrentCacheSignature(state.concurrentSessionListCacheByServerId);
+        if (messagesChanged) signatures.messages = buildSessionMessagesRecordSignature(potentialSessionIds, state.sessionMessages, sessionMessagesSignatureCache);
+        if (workspaceChanged) signatures.workspace = buildWorkspaceDisplaySettingsSignature(state);
+        previousInputs = inputs;
         const signature = joinSignatureParts([
-            state.isDataReady === true ? 1 : 0,
-            buildCachedRecordSignature(state.sessions, sessionSignatureCache, buildSessionActivitySignature),
-            buildActivityRowsSignature(state, renderableSignatureCache, personalMembershipByServerId),
-            buildSessionListIndexSignature(state.sessionListIndexByServerId),
-            buildConcurrentCacheSignature(state.concurrentSessionListCacheByServerId),
-            includeSessionMessages
-                ? buildSessionMessagesRecordSignature(collectPotentialSessionIds(state), state.sessionMessages, sessionMessagesSignatureCache)
-                : '',
-            buildWorkspaceDisplaySettingsSignature(state),
+            inputs.isDataReady === true ? 1 : 0,
+            signatures.sessions, signatures.rows, signatures.index, signatures.cache, signatures.messages, signatures.workspace,
         ]);
 
         if (previousSource && previousSignature === signature) {
@@ -472,7 +498,7 @@ export function createActivityAttentionStoreSourceSelector(
         }
 
         previousSignature = signature;
-        previousSource = buildSourceFromState(state, includeSessionMessages);
+        previousSource = inputs;
         return previousSource;
     };
 }

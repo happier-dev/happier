@@ -62,6 +62,14 @@ const readOrigin = (value: InboxSessionAttentionEntry) => (
 );
 
 describe('buildInboxWorkGroups (ORC R-10)', () => {
+    it('retains an unchanged row when another Inbox item updates', () => {
+        const stable = entry(worker);
+        const changing = entry(grandchild);
+        const first = buildInboxWorkGroups({ ...EMPTY, sessionEntries: [stable, changing], workflowRuns: [], resolveSession, resolveOriginRunId: readOrigin });
+        const next = buildInboxWorkGroups({ ...EMPTY, sessionEntries: [stable, { ...changing, candidate: { ...changing.candidate, title: 'Changed' } }], workflowRuns: [], resolveSession, resolveOriginRunId: readOrigin }, first);
+        expect(next[0]?.items.find((item) => item.key === 'session:home-a:worker')).toBe(first[0]?.items.find((item) => item.key === 'session:home-a:worker'));
+        expect(next[0]?.items.find((item) => item.key === 'session:home-a:grandchild')).not.toBe(first[0]?.items.find((item) => item.key === 'session:home-a:grandchild'));
+    });
     it('orders pending sessions by the oldest question or permission inside each existing work group', () => {
         const olderQuestion = { ...entry(grandchild), pendingPermissions: [], pendingUserActions: [{ id: 'question', kind: 'user_action' as const, tool: 'AskUserQuestion', arguments: {}, createdAt: 100 }] };
         const newerPermission = { ...entry(worker), pendingPermissions: [{ id: 'permission', kind: 'permission' as const, tool: 'Bash', arguments: {}, createdAt: 200 }] };

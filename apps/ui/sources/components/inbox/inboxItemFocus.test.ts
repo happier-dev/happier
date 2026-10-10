@@ -32,6 +32,16 @@ describe('Home-qualified Inbox focus', () => {
         }
     });
 
+    it('addresses an approval by its artifact, with its Home when the request names one', () => {
+        for (const focus of [
+            { kind: 'approval', serverId: 'home-a', id: 'artifact:1' },
+            { kind: 'approval', serverId: '', id: 'artifact-2' },
+        ] as const) {
+            expect(readInboxItemFocus(createInboxItemRoute(focus).params.item)).toEqual(focus);
+        }
+        expect(readInboxItemFocus('approval:home-a:')).toBeNull();
+    });
+
     it('compares the workflow Run focus against the Home that serves the Inbox window', () => {
         const row = workflowRunRowFromSummary(createWorkflowRunSummaryFixture({ id: 'same-run' }), null);
         const item = { kind: 'workflow_run', key: 'run:same-run', runId: 'same-run', row } as const;
@@ -39,5 +49,12 @@ describe('Home-qualified Inbox focus', () => {
         expect(isFocusedInboxWorkItem(item, focus, 'home-a')).toBe(false);
         expect(isFocusedInboxWorkItem(item, focus, 'home-b')).toBe(true);
         expect(isFocusedInboxWorkItem(item, focus, null)).toBe(false);
+    });
+
+    it('retains an exact held invocation when opening a Run beside the Inbox', () => {
+        const focus = { kind: 'workflow_run', serverId: 'home-a', id: 'run-a',
+            invocationId: '33333333-3333-4333-8333-333333333333' } as const;
+        const route = createInboxItemRoute(focus);
+        expect(readInboxItemFocus(route.params.item, route.params.invocationId)).toEqual(focus);
     });
 });

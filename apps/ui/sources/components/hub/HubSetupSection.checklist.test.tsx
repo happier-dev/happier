@@ -1,3 +1,4 @@
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import * as React from 'react';
 import 'fake-indexeddb/auto';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
@@ -130,7 +131,7 @@ async function renderCurrentSection(credentials: NonNullable<Parameters<typeof I
         <InjectedAuthProvider credentials={credentials}>
             <AppShellPluginUiProjectionValueProvider value={{ pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION, pluginBrowserProjection: null,
                 phase: 'current', interactionEnabled: true, machineId: null, serverId: resolveServerProfileScopeIdForIdentifier(serverId), platform: 'web',
-                clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {} }}>
+                accountLifetime: captureActiveServerAccountScopeLifetime(), clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {} }}>
                 <ListPresentationProvider value="page"><HubSetupSection presentation={presentation} /></ListPresentationProvider>
             </AppShellPluginUiProjectionValueProvider>
         </InjectedAuthProvider>,
@@ -200,7 +201,7 @@ describe('HubSetupSection as a checklist (Settings Overview)', () => {
 
     it('completes the recovery key only after its saved acknowledgement, not modal close', async () => {
         legacyAccount = await createSecretSettingsTestHarness({ mode: 'e2ee' });
-        const serverId = legacyAccount.scope.serverId;
+        const serverId = resolveServerProfileScopeIdForIdentifier(legacyAccount.scope.serverId);
         const machine = createMachineFixture({ id: 'm1', metadata: null });
         storage.setState({ isDataReady: true, machines: { [machine.id]: machine },
             machineListByServerId: { [serverId]: [machine] }, machineListStatusByServerId: { [serverId]: 'idle' } });
