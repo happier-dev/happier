@@ -74,9 +74,12 @@ export type UseCompanionNativePanGestureResult<TDragState> = Readonly<{
 }>;
 
 export type UseCompanionNativePanGestureParams<TDragState> = Readonly<{
+    enabled?: boolean;
     bounds: CompanionDragBounds;
     initialPoint: CompanionPoint;
     noDragRegions: readonly CompanionNoDragRegionRect[];
+    /** UI-thread admission against the consumer's measured surface (must be a worklet). */
+    canStartAt?: (point: CompanionPoint) => boolean;
     /**
      * The companion's own settle. Injected rather than baked in: the pet arrives with a clipped
      * overshoot, the Voice orb is critically damped and must not inherit that bounce.
@@ -106,10 +109,12 @@ function readFinite(value: number | undefined, fallback = 0): number {
 function eventStartedInNoDragRegion(
     event: NativePanEvent,
     regions: readonly CompanionNoDragRegionRect[],
+    canStartAt?: (point: CompanionPoint) => boolean,
 ): boolean {
     'worklet';
     const x = readFinite(event.absoluteX, readFinite(event.x));
     const y = readFinite(event.absoluteY, readFinite(event.y));
+    if (canStartAt && !canStartAt({ x, y })) return true;
     for (const region of regions) {
         // Read screen coordinates on the UI thread at admission: onLayout is parent-relative and
         // doesn't run as an ancestor's spring/transform moves the control.
@@ -142,25 +147,51 @@ export function useCompanionNativePanGesture<TDragState = never>(
     const startY = useSharedValue(params.initialPoint.y);
     const ignored = useSharedValue(false);
     const moved = useSharedValue(false);
+    const ended = useSharedValue(false);
+    // Controlled geometry acknowledges the destination while the UI-thread spring is still moving.
+    const targetX = useSharedValue(params.initialPoint.x);
+    const targetY = useSharedValue(params.initialPoint.y);
     const dragProgress = useSharedValue(0);
     const [point, setPoint] = React.useState<CompanionPoint>(params.initialPoint);
     const [dragState, setDragState] = React.useState<TDragState | null>(null);
     const suppressNextPressRef = React.useRef(false);
+    const enabled = params.enabled !== false;
 
     React.useEffect(() => {
+        if (enabled && params.initialPoint.x === targetX.value && params.initialPoint.y === targetY.value) return;
+        cancelAnimation(translateX);
+        cancelAnimation(translateY);
+        // A new placement or control takeover invalidates the in-flight gesture's old closure.
+        ignored.value = true;
+        moved.value = false;
+        ended.value = true;
+        targetX.value = params.initialPoint.x;
+        targetY.value = params.initialPoint.y;
         translateX.value = params.initialPoint.x;
         translateY.value = params.initialPoint.y;
         startX.value = params.initialPoint.x;
         startY.value = params.initialPoint.y;
         setPoint(params.initialPoint);
     }, [
+        enabled,
         params.initialPoint.x,
         params.initialPoint.y,
         startX,
         startY,
         translateX,
         translateY,
+        targetX,
+        targetY,
+        ignored,
+        moved,
+        ended,
     ]);
+
+    React.useEffect(() => () => {
+        cancelAnimation(translateX);
+        cancelAnimation(translateY);
+        cancelAnimation(dragProgress);
+    }, [translateX, translateY, dragProgress]);
 
     const publishPoint = React.useCallback((nextPoint: CompanionPoint) => {
         setPoint(nextPoint);
@@ -193,19 +224,49 @@ export function useCompanionNativePanGesture<TDragState = never>(
     const resolveDragState = params.resolveDragState;
     const continuousPosition = params.positionPublication !== 'release';
 
+    const animateToPoint = React.useCallback((target: CompanionPoint, velocityX: number, velocityY: number) => {
+        'worklet';
+        targetX.value = target.x;
+        targetY.value = target.y;
+        translateX.value = snapMotion ? target.x : withSpring(target.x, resolveCompanionReleaseSpringConfig(releaseMotion, velocityX));
+        translateY.value = snapMotion ? target.y : withSpring(target.y, resolveCompanionReleaseSpringConfig(releaseMotion, velocityY));
+    }, [releaseMotion, snapMotion, targetX, targetY, translateX, translateY]);
+
+    const settleRelease = React.useCallback((released: CompanionPoint, velocityX: number, velocityY: number) => {
+        'worklet';
+        ended.value = true;
+        const projected = {
+            x: projectCompanionRelease(released.x, velocityX, releaseMotion),
+            y: projectCompanionRelease(released.y, velocityY, releaseMotion),
+        };
+        const target = resolveReleaseTarget
+            ? resolveReleaseTarget({ released, projected, velocityX, velocityY, bounds: params.bounds })
+            : released;
+        animateToPoint(target, velocityX, velocityY);
+        runOnJS(publishPoint)(target);
+        if (moved.value) {
+            runOnJS(markSuppressNextPress)();
+            runOnJS(commitPosition)(target);
+            runOnJS(publishRelease)(velocityX, velocityY, target);
+        }
+    }, [ended, moved, params.bounds, releaseMotion, resolveReleaseTarget, animateToPoint,
+        publishPoint, markSuppressNextPress, commitPosition, publishRelease]);
+
     const gesture = React.useMemo(() => Gesture.Pan()
+        .enabled(enabled)
         .minDistance(COMPANION_NATIVE_PAN_DRAG_THRESHOLD_PT)
         .withTestId('companion-native-pan-gesture')
         .onTouchesDown((event, manager) => {
             const touch = event.allTouches[0];
-            ignored.value = touch ? eventStartedInNoDragRegion(touch, params.noDragRegions) : false;
+            ignored.value = !enabled || (touch ? eventStartedInNoDragRegion(touch, params.noDragRegions, params.canStartAt) : false);
             // Fail before recognition, rather than recognizing a pan that only ignores updates:
             // recognition itself cancels the nested native control's press.
             if (ignored.value) manager.fail();
         })
         .onBegin((event: NativePanEvent) => {
-            ignored.value = eventStartedInNoDragRegion(event, params.noDragRegions);
+            ignored.value = !enabled || eventStartedInNoDragRegion(event, params.noDragRegions, params.canStartAt);
             moved.value = false;
+            ended.value = false;
             startX.value = translateX.value;
             startY.value = translateY.value;
             if (!ignored.value) {
@@ -242,43 +303,25 @@ export function useCompanionNativePanGesture<TDragState = never>(
                 if (nextDragState !== null) runOnJS(publishDragState)(nextDragState);
             }
         })
-        .onEnd((event: NativePanEvent) => {
+        .onEnd((event: NativePanEvent, success = true) => {
             if (ignored.value) return;
 
-            const velocityX = readFinite(event.velocityX);
-            const velocityY = readFinite(event.velocityY);
-            const released = clampPoint({
+            const velocityX = success ? readFinite(event.velocityX) : 0;
+            const velocityY = success ? readFinite(event.velocityY) : 0;
+            const released = clampPoint(success ? {
                 x: startX.value + readFinite(event.translationX),
                 y: startY.value + readFinite(event.translationY),
-            }, params.bounds);
-            const projected = {
-                x: projectCompanionRelease(released.x, velocityX, releaseMotion),
-                y: projectCompanionRelease(released.y, velocityY, releaseMotion),
-            };
-            const target = resolveReleaseTarget
-                ? resolveReleaseTarget({ released, projected, velocityX, velocityY, bounds: params.bounds })
-                : released;
-            translateX.value = snapMotion
-                ? target.x
-                : withSpring(
-                    target.x,
-                    resolveCompanionReleaseSpringConfig(releaseMotion, velocityX),
-                );
-            translateY.value = snapMotion
-                ? target.y
-                : withSpring(
-                    target.y,
-                    resolveCompanionReleaseSpringConfig(releaseMotion, velocityY),
-                );
-            runOnJS(publishPoint)(target);
-
-            if (moved.value) {
-                runOnJS(markSuppressNextPress)();
-                runOnJS(commitPosition)(target);
-                runOnJS(publishRelease)(velocityX, velocityY, target);
-            }
+            } : { x: translateX.value, y: translateY.value }, params.bounds);
+            settleRelease(released, velocityX, velocityY);
         })
         .onFinalize(() => {
+            if (enabled && !ignored.value && moved.value && !ended.value) {
+                settleRelease(clampPoint({ x: translateX.value, y: translateY.value }, params.bounds), 0, 0);
+            } else if (enabled && !ignored.value && !ended.value) {
+                // A tap may pick up a travelling frame without recognizing a pan. Resume its
+                // already-published destination instead of leaving the picture between anchors.
+                animateToPoint({ x: targetX.value, y: targetY.value }, 0, 0);
+            }
             ignored.value = false;
             moved.value = false;
             dragProgress.value = snapMotion
@@ -287,24 +330,26 @@ export function useCompanionNativePanGesture<TDragState = never>(
             if (resolveDragState) runOnJS(publishDragState)(null);
         }), [
             continuousPosition,
-            commitPosition,
+            animateToPoint,
+            enabled,
+            ended,
             dragProgress,
             ignored,
-            markSuppressNextPress,
             moved,
             params.bounds,
+            params.canStartAt,
             params.noDragRegions,
             publishDragState,
             publishPoint,
-            publishRelease,
-            releaseMotion,
             resolveDragState,
-            resolveReleaseTarget,
             snapMotion,
+            settleRelease,
             startX,
             startY,
             translateX,
             translateY,
+            targetX,
+            targetY,
         ]);
 
     const animatedStyle = useAnimatedStyle(() => ({

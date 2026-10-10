@@ -2,6 +2,19 @@ import { describe, expect, it } from 'vitest';
 import { resolveFloatingFrameRect } from './floatingFrameGeometry.js';
 
 describe('measured floating frame placement', () => {
+    it('settles a native or web throw at the projected corner through aspect, obstacle and dock constraints', () => {
+        const input = {
+            rect: { x: 40, y: 50, width: 200, height: 165 },
+            availableRect: { x: 10, y: 20, width: 800, height: 600 },
+            projectedPoint: { x: 650, y: 500 },
+            aspectRatio: 1.6, chromeHeight: 40, minWidth: 180,
+            avoidRects: [{ x: 610, y: 455, width: 200, height: 165 }],
+        };
+        expect(resolveFloatingFrameRect(input)).toEqual({
+            rect: { x: 610, y: 290, width: 200, height: 165 }, fits: true,
+        });
+        expect(resolveFloatingFrameRect({ ...input, minWidth: 900 }).fits).toBe(false);
+    });
     it('keeps the closest unobstructed placement inside the measured available rect', () => {
         const result = resolveFloatingFrameRect({
             rect: { x: 810, y: 600, width: 180, height: 120 },

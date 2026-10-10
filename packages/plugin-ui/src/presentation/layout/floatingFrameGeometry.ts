@@ -1,6 +1,31 @@
 export type FrameRect = Readonly<{ x: number; y: number; width: number; height: number }>;
 export type FloatingFrameMode = 'floating' | 'expanded' | 'docked' | 'closed';
 export type FloatingFrameGeometry = Readonly<{ rect: FrameRect; fits: boolean }>;
+export type FloatingFrameCorner = 'tl' | 'tr' | 'bl' | 'br';
+
+export function resolveFloatingFrameCorner(
+    point: Readonly<{ x: number; y: number }>,
+    availableRect: FrameRect,
+): FloatingFrameCorner {
+    'worklet';
+    const left = point.x < availableRect.x + availableRect.width / 2;
+    const top = point.y < availableRect.y + availableRect.height / 2;
+    return top ? (left ? 'tl' : 'tr') : left ? 'bl' : 'br';
+}
+
+export function resolveFloatingFrameCornerRect(
+    corner: FloatingFrameCorner,
+    size: Readonly<{ width: number; height: number }>,
+    availableRect: FrameRect,
+): FrameRect {
+    'worklet';
+    return {
+        x: corner === 'tl' || corner === 'bl' ? availableRect.x : availableRect.x + availableRect.width - size.width,
+        y: corner === 'tl' || corner === 'tr' ? availableRect.y : availableRect.y + availableRect.height - size.height,
+        width: size.width,
+        height: size.height,
+    };
+}
 
 function clamp(value: number, minimum: number, maximum: number): number {
     'worklet';
@@ -31,6 +56,8 @@ export function resolveFloatingFrameRect(input: Readonly<{
     aspectRatio?: number;
     chromeHeight?: number;
     minWidth?: number;
+    /** Projected top-left from the shared release owner; supplied only when settling a throw. */
+    projectedPoint?: Readonly<{ x: number; y: number }>;
 }>): FloatingFrameGeometry {
     'worklet';
     const available = input.availableRect;
@@ -45,9 +72,15 @@ export function resolveFloatingFrameRect(input: Readonly<{
     }
     const maxX = available.x + availableWidth - width;
     const maxY = available.y + availableHeight - height;
+    const desired = input.projectedPoint
+        ? resolveFloatingFrameCornerRect(resolveFloatingFrameCorner({
+            x: input.projectedPoint.x + width / 2,
+            y: input.projectedPoint.y + height / 2,
+        }, available), { width, height }, available)
+        : input.rect;
     const rect = {
-        x: clamp(input.rect.x, available.x, maxX),
-        y: clamp(input.rect.y, available.y, maxY),
+        x: clamp(desired.x, available.x, maxX),
+        y: clamp(desired.y, available.y, maxY),
         width, height,
     };
     if (width <= 0 || height - chrome <= 0 || width < (input.minWidth ?? 0)) return { rect, fits: false };

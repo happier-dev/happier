@@ -66,6 +66,102 @@ function flick(gesture: TestGesture, event: Readonly<{
 }
 
 describe('useCompanionNativePanGesture', () => {
+    it('resumes the destination spring after a touch that never becomes a drag', async () => {
+        const onDragRelease = vi.fn();
+        const hook = await renderHook(() => useCompanionNativePanGesture({
+            bounds, initialPoint: { x: 120, y: 200 }, noDragRegions: [],
+            releaseMotion: VOICE_ORB_RELEASE_MOTION, onDragRelease,
+            resolveReleaseTarget: () => ({ x: 282, y: 394 }),
+        }));
+        await act(async () => {
+            const gesture = hook.getCurrent().gesture as unknown as TestGesture;
+            flick(gesture, { translationX: 30, translationY: 20, velocityX: 500, velocityY: 300 });
+            hook.getCurrent().translateX.value = 170;
+            hook.getCurrent().translateY.value = 240;
+        });
+        onDragRelease.mockClear();
+        await act(async () => {
+            const gesture = hook.getCurrent().gesture as unknown as TestGesture;
+            gesture.__handlers.onBegin({ absoluteX: 170, absoluteY: 240 });
+            gesture.__handlers.onFinalize({}, false);
+        });
+        expect([hook.getCurrent().translateX.value, hook.getCurrent().translateY.value]).toEqual([282, 394]);
+        expect(onDragRelease).not.toHaveBeenCalled();
+        await hook.unmount();
+    });
+
+    it('discards the old active gesture when control takes over during a drag', async () => {
+        const onDragRelease = vi.fn();
+        const hook = await renderHook((enabled: boolean) => useCompanionNativePanGesture({
+            enabled, bounds, initialPoint: { x: 120, y: 200 }, noDragRegions: [],
+            releaseMotion: VOICE_ORB_RELEASE_MOTION, onDragRelease,
+        }), { initialProps: true });
+        const oldGesture = hook.getCurrent().gesture as unknown as TestGesture;
+        await act(async () => {
+            oldGesture.__handlers.onBegin({ absoluteX: 120, absoluteY: 200 });
+            oldGesture.__handlers.onUpdate({ translationX: 30, translationY: -20 });
+        });
+        await hook.rerender(false);
+        await act(async () => {
+            oldGesture.__handlers.onEnd({ translationX: 30, translationY: -20 }, false);
+            oldGesture.__handlers.onFinalize({}, false);
+        });
+        expect([hook.getCurrent().translateX.value, hook.getCurrent().translateY.value]).toEqual([120, 200]);
+        expect(onDragRelease).not.toHaveBeenCalled();
+        await hook.unmount();
+    });
+
+    it('does not cancel a settling spring when its controlled owner echoes the release target', async () => {
+        const hook = await renderHook((initialPoint: CompanionPoint) => useCompanionNativePanGesture({
+            bounds, initialPoint, noDragRegions: [], releaseMotion: VOICE_ORB_RELEASE_MOTION,
+            positionPublication: 'release', resolveReleaseTarget: () => ({ x: 282, y: 394 }),
+        }), { initialProps: { x: 120, y: 200 } });
+        await act(async () => {
+            flick(hook.getCurrent().gesture as unknown as TestGesture,
+                { translationX: 30, translationY: 20, velocityX: 500, velocityY: 300 });
+            // The OS spring is still between finger release and target when React receives the echo.
+            hook.getCurrent().translateX.value = 170;
+            hook.getCurrent().translateY.value = 240;
+        });
+        await hook.rerender({ x: 282, y: 394 });
+        expect([hook.getCurrent().translateX.value, hook.getCurrent().translateY.value]).toEqual([170, 240]);
+        await hook.rerender({ x: 12, y: 71 });
+        expect([hook.getCurrent().translateX.value, hook.getCurrent().translateY.value]).toEqual([12, 71]);
+        await hook.unmount();
+    });
+
+    it('leaves a controlled picture untouched when native frame movement is disabled', async () => {
+        const onDragRelease = vi.fn();
+        const hook = await renderHook(() => useCompanionNativePanGesture({
+            enabled: false,
+            bounds, initialPoint: { x: 120, y: 200 }, noDragRegions: [],
+            releaseMotion: VOICE_ORB_RELEASE_MOTION, onDragRelease,
+        }));
+        const gesture = hook.getCurrent().gesture as unknown as TestGesture;
+        await act(async () => {
+            flick(gesture, { translationX: 60, translationY: 40, velocityX: 700, velocityY: 200 });
+        });
+        expect(hook.getCurrent().translateX.value).toBe(120);
+        expect(hook.getCurrent().translateY.value).toBe(200);
+        expect(onDragRelease).not.toHaveBeenCalled();
+        await hook.unmount();
+    });
+
+    it('settles an interrupted finger drag without carrying its throw', async () => {
+        const onDragRelease = vi.fn();
+        const hook = await renderHook(() => useCompanionNativePanGesture({
+            bounds, initialPoint: { x: 120, y: 200 }, noDragRegions: [],
+            releaseMotion: VOICE_ORB_RELEASE_MOTION, onDragRelease,
+        }));
+        const gesture = hook.getCurrent().gesture as unknown as TestGesture;
+        await act(async () => {
+            gesture.__handlers.onBegin?.({ absoluteX: 120, absoluteY: 200 });
+            gesture.__handlers.onUpdate?.({ translationX: 30, translationY: -20 });
+            gesture.__handlers.onFinalize?.({ velocityX: 1000, velocityY: 800 }, false);
+        });
+        expect(onDragRelease).toHaveBeenCalledWith({ velocityX: 0, velocityY: 0, target: { x: 150, y: 180 } });
+        await hook.unmount();
+    });
     it('measures exclusions at touch admission after their host moves, in absolute screen coordinates', async () => {
         // A native ref is opaque outside Reanimated; this boundary supplies its current OS measurement.
         const nativeRef = (() => 1) as unknown as import('react-native-reanimated').AnimatedRef<import('react-native').View>;
