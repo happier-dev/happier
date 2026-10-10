@@ -605,18 +605,27 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "ui.find",
   "ui.prompts.picker.open",
   "ui.voice_agent.teleport",
+  "ui.voice_global.brief.close",
   "ui.voice_global.brief.request",
   "ui.voice_global.brief.retry",
   "ui.voice_global.brief.stop",
+  "ui.voice_global.companion.reveal",
   "ui.voice_global.dismiss",
   "ui.voice_global.end",
+  "ui.voice_global.glance.close",
+  "ui.voice_global.glance.open",
   "ui.voice_global.hold_begin",
   "ui.voice_global.hold_cancel",
   "ui.voice_global.hold_release",
+  "ui.voice_global.open_conversation",
+  "ui.voice_global.position.set",
   "ui.voice_global.recover",
   "ui.voice_global.reset",
   "ui.voice_global.set_muted",
+  "ui.voice_global.setup.close",
+  "ui.voice_global.setup.open",
   "ui.voice_global.start",
+  "ui.voice_global.transcript.set_visible",
   "ui.voice_global.turn_control",
   "usage.coach.apply",
   "usage.coach.dismiss",
@@ -661,6 +670,10 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "widgets.item.size.set",
   "widgets.snapshot.post",
   "workflow.authoring.conversation.bind",
+  "workflow.authoring.draft.edit",
+  "workflow.authoring.draft.redo",
+  "workflow.authoring.draft.save",
+  "workflow.authoring.draft.undo",
   "workflow.definition.create",
   "workflow.definition.delete",
   "workflow.definition.edit",
@@ -671,6 +684,7 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "workflow.run.invocations.retry",
   "workflow.run.pause",
   "workflow.run.resume",
+  "workflow.run.review.draft.set",
   "workflow.run.start",
   "workflow.trigger.add",
   "workflow.trigger.remove",
@@ -2403,20 +2417,39 @@ export type GeneratedActions = Readonly<{
     }> ;
     readonly voiceGlobal: Readonly<{
       readonly brief: Readonly<{
+        readonly close: (input: PublicActionInputById["ui.voice_global.brief.close"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.brief.close">>;
         readonly request: (input: PublicActionInputById["ui.voice_global.brief.request"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.brief.request">>;
         readonly retry: (input: PublicActionInputById["ui.voice_global.brief.retry"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.brief.retry">>;
         readonly stop: (input: PublicActionInputById["ui.voice_global.brief.stop"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.brief.stop">>;
       }> ;
+      readonly companion: Readonly<{
+        readonly reveal: (input: PublicActionInputById["ui.voice_global.companion.reveal"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.companion.reveal">>;
+      }> ;
       readonly dismiss: (input: PublicActionInputById["ui.voice_global.dismiss"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.dismiss">>;
       readonly end: (input: PublicActionInputById["ui.voice_global.end"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.end">>;
       readonly get: (input: PublicActionInputById["ui.voice_global.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.get">>;
+      readonly glance: Readonly<{
+        readonly close: (input: PublicActionInputById["ui.voice_global.glance.close"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.glance.close">>;
+        readonly open: (input: PublicActionInputById["ui.voice_global.glance.open"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.glance.open">>;
+      }> ;
       readonly holdBegin: (input: PublicActionInputById["ui.voice_global.hold_begin"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.hold_begin">>;
       readonly holdCancel: (input: PublicActionInputById["ui.voice_global.hold_cancel"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.hold_cancel">>;
       readonly holdRelease: (input: PublicActionInputById["ui.voice_global.hold_release"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.hold_release">>;
+      readonly openConversation: (input: PublicActionInputById["ui.voice_global.open_conversation"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.open_conversation">>;
+      readonly position: Readonly<{
+        readonly set: (input: PublicActionInputById["ui.voice_global.position.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.position.set">>;
+      }> ;
       readonly recover: (input: PublicActionInputById["ui.voice_global.recover"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.recover">>;
       readonly reset: (input: PublicActionInputById["ui.voice_global.reset"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.reset">>;
       readonly setMuted: (input: PublicActionInputById["ui.voice_global.set_muted"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.set_muted">>;
+      readonly setup: Readonly<{
+        readonly close: (input: PublicActionInputById["ui.voice_global.setup.close"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.setup.close">>;
+        readonly open: (input: PublicActionInputById["ui.voice_global.setup.open"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.setup.open">>;
+      }> ;
       readonly start: (input: PublicActionInputById["ui.voice_global.start"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.start">>;
+      readonly transcript: Readonly<{
+        readonly setVisible: (input: PublicActionInputById["ui.voice_global.transcript.set_visible"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.transcript.set_visible">>;
+      }> ;
       readonly turnControl: (input: PublicActionInputById["ui.voice_global.turn_control"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"ui.voice_global.turn_control">>;
     }> ;
   }> ;
@@ -2534,6 +2567,13 @@ export type GeneratedActions = Readonly<{
       readonly conversation: Readonly<{
         readonly bind: (input: PublicActionInputById["workflow.authoring.conversation.bind"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"workflow.authoring.conversation.bind">>;
       }> ;
+      readonly draft: Readonly<{
+        readonly edit: (input: PublicActionInputById["workflow.authoring.draft.edit"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"workflow.authoring.draft.edit">>;
+        readonly get: (input: PublicActionInputById["workflow.authoring.draft.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"workflow.authoring.draft.get">>;
+        readonly redo: (input: PublicActionInputById["workflow.authoring.draft.redo"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"workflow.authoring.draft.redo">>;
+        readonly save: (input: PublicActionInputById["workflow.authoring.draft.save"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"workflow.authoring.draft.save">>;
+        readonly undo: (input: PublicActionInputById["workflow.authoring.draft.undo"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"workflow.authoring.draft.undo">>;
+      }> ;
     }> ;
     readonly definition: Readonly<{
       readonly create: (input: PublicActionInputById["workflow.definition.create"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"workflow.definition.create">>;
@@ -2561,6 +2601,11 @@ export type GeneratedActions = Readonly<{
       readonly list: (input: PublicActionInputById["workflow.run.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"workflow.run.list">>;
       readonly pause: (input: PublicActionInputById["workflow.run.pause"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"workflow.run.pause">>;
       readonly resume: (input: PublicActionInputById["workflow.run.resume"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"workflow.run.resume">>;
+      readonly review: Readonly<{
+        readonly draft: Readonly<{
+          readonly set: (input: PublicActionInputById["workflow.run.review.draft.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"workflow.run.review.draft.set">>;
+        }> ;
+      }> ;
       readonly start: (input: PublicActionInputById["workflow.run.start"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"workflow.run.start">>;
       readonly summaries: (input: PublicActionInputById["workflow.run.summaries"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"workflow.run.summaries">>;
       readonly wait: (input: PublicActionInputById["workflow.run.wait"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"workflow.run.wait">>;
@@ -4335,20 +4380,39 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
       },
       voiceGlobal: {
         brief: {
+          close: (input: PublicActionInputById["ui.voice_global.brief.close"], options?: ActionExecutionOptions) => execute("ui.voice_global.brief.close", input, options),
           request: (input: PublicActionInputById["ui.voice_global.brief.request"], options?: ActionExecutionOptions) => execute("ui.voice_global.brief.request", input, options),
           retry: (input: PublicActionInputById["ui.voice_global.brief.retry"], options?: ActionExecutionOptions) => execute("ui.voice_global.brief.retry", input, options),
           stop: (input: PublicActionInputById["ui.voice_global.brief.stop"], options?: ActionExecutionOptions) => execute("ui.voice_global.brief.stop", input, options),
         },
+        companion: {
+          reveal: (input: PublicActionInputById["ui.voice_global.companion.reveal"], options?: ActionExecutionOptions) => execute("ui.voice_global.companion.reveal", input, options),
+        },
         dismiss: (input: PublicActionInputById["ui.voice_global.dismiss"], options?: ActionExecutionOptions) => execute("ui.voice_global.dismiss", input, options),
         end: (input: PublicActionInputById["ui.voice_global.end"], options?: ActionExecutionOptions) => execute("ui.voice_global.end", input, options),
         get: (input: PublicActionInputById["ui.voice_global.get"], options?: ActionExecutionOptions) => execute("ui.voice_global.get", input, options),
+        glance: {
+          close: (input: PublicActionInputById["ui.voice_global.glance.close"], options?: ActionExecutionOptions) => execute("ui.voice_global.glance.close", input, options),
+          open: (input: PublicActionInputById["ui.voice_global.glance.open"], options?: ActionExecutionOptions) => execute("ui.voice_global.glance.open", input, options),
+        },
         holdBegin: (input: PublicActionInputById["ui.voice_global.hold_begin"], options?: ActionExecutionOptions) => execute("ui.voice_global.hold_begin", input, options),
         holdCancel: (input: PublicActionInputById["ui.voice_global.hold_cancel"], options?: ActionExecutionOptions) => execute("ui.voice_global.hold_cancel", input, options),
         holdRelease: (input: PublicActionInputById["ui.voice_global.hold_release"], options?: ActionExecutionOptions) => execute("ui.voice_global.hold_release", input, options),
+        openConversation: (input: PublicActionInputById["ui.voice_global.open_conversation"], options?: ActionExecutionOptions) => execute("ui.voice_global.open_conversation", input, options),
+        position: {
+          set: (input: PublicActionInputById["ui.voice_global.position.set"], options?: ActionExecutionOptions) => execute("ui.voice_global.position.set", input, options),
+        },
         recover: (input: PublicActionInputById["ui.voice_global.recover"], options?: ActionExecutionOptions) => execute("ui.voice_global.recover", input, options),
         reset: (input: PublicActionInputById["ui.voice_global.reset"], options?: ActionExecutionOptions) => execute("ui.voice_global.reset", input, options),
         setMuted: (input: PublicActionInputById["ui.voice_global.set_muted"], options?: ActionExecutionOptions) => execute("ui.voice_global.set_muted", input, options),
+        setup: {
+          close: (input: PublicActionInputById["ui.voice_global.setup.close"], options?: ActionExecutionOptions) => execute("ui.voice_global.setup.close", input, options),
+          open: (input: PublicActionInputById["ui.voice_global.setup.open"], options?: ActionExecutionOptions) => execute("ui.voice_global.setup.open", input, options),
+        },
         start: (input: PublicActionInputById["ui.voice_global.start"], options?: ActionExecutionOptions) => execute("ui.voice_global.start", input, options),
+        transcript: {
+          setVisible: (input: PublicActionInputById["ui.voice_global.transcript.set_visible"], options?: ActionExecutionOptions) => execute("ui.voice_global.transcript.set_visible", input, options),
+        },
         turnControl: (input: PublicActionInputById["ui.voice_global.turn_control"], options?: ActionExecutionOptions) => execute("ui.voice_global.turn_control", input, options),
       },
     },
@@ -4466,6 +4530,13 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
         conversation: {
           bind: (input: PublicActionInputById["workflow.authoring.conversation.bind"], options?: ActionExecutionOptions) => execute("workflow.authoring.conversation.bind", input, options),
         },
+        draft: {
+          edit: (input: PublicActionInputById["workflow.authoring.draft.edit"], options?: ActionExecutionOptions) => execute("workflow.authoring.draft.edit", input, options),
+          get: (input: PublicActionInputById["workflow.authoring.draft.get"], options?: ActionExecutionOptions) => execute("workflow.authoring.draft.get", input, options),
+          redo: (input: PublicActionInputById["workflow.authoring.draft.redo"], options?: ActionExecutionOptions) => execute("workflow.authoring.draft.redo", input, options),
+          save: (input: PublicActionInputById["workflow.authoring.draft.save"], options?: ActionExecutionOptions) => execute("workflow.authoring.draft.save", input, options),
+          undo: (input: PublicActionInputById["workflow.authoring.draft.undo"], options?: ActionExecutionOptions) => execute("workflow.authoring.draft.undo", input, options),
+        },
       },
       definition: {
         create: (input: PublicActionInputById["workflow.definition.create"], options?: ActionExecutionOptions) => execute("workflow.definition.create", input, options),
@@ -4493,6 +4564,11 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
         list: (input: PublicActionInputById["workflow.run.list"], options?: ActionExecutionOptions) => execute("workflow.run.list", input, options),
         pause: (input: PublicActionInputById["workflow.run.pause"], options?: ActionExecutionOptions) => execute("workflow.run.pause", input, options),
         resume: (input: PublicActionInputById["workflow.run.resume"], options?: ActionExecutionOptions) => execute("workflow.run.resume", input, options),
+        review: {
+          draft: {
+            set: (input: PublicActionInputById["workflow.run.review.draft.set"], options?: ActionExecutionOptions) => execute("workflow.run.review.draft.set", input, options),
+          },
+        },
         start: (input: PublicActionInputById["workflow.run.start"], options?: ActionExecutionOptions) => execute("workflow.run.start", input, options),
         summaries: (input: PublicActionInputById["workflow.run.summaries"], options?: ActionExecutionOptions) => execute("workflow.run.summaries", input, options),
         wait: (input: PublicActionInputById["workflow.run.wait"], options?: ActionExecutionOptions) => execute("workflow.run.wait", input, options),
