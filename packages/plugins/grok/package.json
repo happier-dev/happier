@@ -7,14 +7,17 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
+      "happier-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
     "./manifest": {
+      "happier-source": "./src/manifest.ts",
       "types": "./dist/manifest.d.ts",
       "default": "./dist/manifest.js"
     },
     "./agent/acp/definition": {
+      "happier-source": "./src/agent/acp/definition.ts",
       "types": "./dist/agent/acp/definition.d.ts",
       "default": "./dist/agent/acp/definition.js"
     }

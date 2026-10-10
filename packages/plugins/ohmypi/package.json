@@ -7,18 +7,22 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
+      "happier-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
     "./manifest": {
+      "happier-source": "./src/manifest.ts",
       "types": "./dist/manifest.d.ts",
       "default": "./dist/manifest.js"
     },
     "./agent/transcripts/snapshot": {
+      "happier-source": "./src/agent/transcripts/snapshot.ts",
       "types": "./dist/agent/transcripts/snapshot.d.ts",
       "default": "./dist/agent/transcripts/snapshot.js"
     },
     "./agent/surfaces/sessions/external/semantics": {
+      "happier-source": "./src/agent/surfaces/sessions/external/semantics.ts",
       "types": "./dist/agent/surfaces/sessions/external/semantics.d.ts",
       "default": "./dist/agent/surfaces/sessions/external/semantics.js"
     }

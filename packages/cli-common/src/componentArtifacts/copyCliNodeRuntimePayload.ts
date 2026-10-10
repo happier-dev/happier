@@ -1,5 +1,13 @@
 import { createHash } from 'node:crypto';
-import { cpSync, existsSync, lstatSync, readFileSync, readdirSync, type Dirent, type Stats } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  lstatSync,
+  readFileSync,
+  readdirSync,
+  type Dirent,
+  type Stats,
+} from 'node:fs';
 import { cp, lstat, readFile, readdir } from 'node:fs/promises';
 import { basename, join, relative } from 'node:path';
 
@@ -31,7 +39,10 @@ export type CliNodeWorkspaceRuntimeIdentity = Readonly<{
  * Sort physical payload entry names by UTF-16 code units. Runtime identities
  * are cross-machine content hashes, so this must not inherit host collation.
  */
-export function compareCliNodeRuntimePayloadEntryNames(left: string, right: string): number {
+export function compareCliNodeRuntimePayloadEntryNames(
+  left: string,
+  right: string,
+): number {
   if (left === right) return 0;
   return left < right ? -1 : 1;
 }
@@ -51,22 +62,27 @@ function resolveInstalledCliNodeRuntimeWorkspaceBundles(
   hostPackageDir = join(repoRoot, 'apps', 'cli'),
 ): ReadonlyArray<CliNodeRuntimeWorkspaceBundle> {
   const resolveFromPackageJsonPath = join(hostPackageDir, 'package.json');
-  return resolveCliNodeRuntimeWorkspaceBundles(repoRoot, hostPackageDir).map((bundle) => {
-    const installedPackage = resolveInstalledRuntimePackage({
-      packageName: bundle.packageName,
-      resolveFromPackageJsonPath,
-      dereferenceRootDir: repoRoot,
-    });
-    return {
-      ...bundle,
-      srcDir: installedPackage.packageDir,
-    };
-  });
+  return resolveCliNodeRuntimeWorkspaceBundles(repoRoot, hostPackageDir).map(
+    (bundle) => {
+      const installedPackage = resolveInstalledRuntimePackage({
+        packageName: bundle.packageName,
+        resolveFromPackageJsonPath,
+        dereferenceRootDir: repoRoot,
+      });
+      return {
+        ...bundle,
+        srcDir: installedPackage.packageDir,
+      };
+    },
+  );
 }
 
 function orderedPhysicalTreeEntries(entries: Dirent[]): Dirent[] {
-  return entries.filter((entry) => entry.name !== 'node_modules')
-    .sort((left, right) => compareCliNodeRuntimePayloadEntryNames(left.name, right.name));
+  return entries
+    .filter((entry) => entry.name !== 'node_modules')
+    .sort((left, right) =>
+      compareCliNodeRuntimePayloadEntryNames(left.name, right.name),
+    );
 }
 
 function appendPhysicalTreeEntry(
@@ -76,20 +92,30 @@ function appendPhysicalTreeEntry(
   stats: Stats,
 ): 'directory' | 'file' {
   if (stats.isSymbolicLink()) {
-    throw new Error(`CLI workspace runtime package contains a symlink: ${entryPath}`);
+    throw new Error(
+      `CLI workspace runtime package contains a symlink: ${entryPath}`,
+    );
   }
   if (stats.isDirectory()) {
     hash.update(`dir\0${relativePath.replaceAll('\\', '/')}\0`);
     return 'directory';
   }
   if (!stats.isFile()) {
-    throw new Error(`CLI workspace runtime package contains a non-file entry: ${entryPath}`);
+    throw new Error(
+      `CLI workspace runtime package contains a non-file entry: ${entryPath}`,
+    );
   }
   return 'file';
 }
 
-function appendPhysicalFileContents(hash: ReturnType<typeof createHash>, relativePath: string, bytes: Buffer): void {
-  hash.update(`file\0${relativePath.replaceAll('\\', '/')}\0${bytes.byteLength}\0`);
+function appendPhysicalFileContents(
+  hash: ReturnType<typeof createHash>,
+  relativePath: string,
+  bytes: Buffer,
+): void {
+  hash.update(
+    `file\0${relativePath.replaceAll('\\', '/')}\0${bytes.byteLength}\0`,
+  );
   hash.update(bytes);
   hash.update('\0');
 }
@@ -100,11 +126,22 @@ function hashPhysicalTree(
   relativeDir = '',
 ): void {
   const directoryPath = relativeDir ? join(rootDir, relativeDir) : rootDir;
-  const entries = orderedPhysicalTreeEntries(readdirSync(directoryPath, { withFileTypes: true }));
+  const entries = orderedPhysicalTreeEntries(
+    readdirSync(directoryPath, { withFileTypes: true }),
+  );
   for (const entry of entries) {
-    const relativePath = relativeDir ? join(relativeDir, entry.name) : entry.name;
+    const relativePath = relativeDir
+      ? join(relativeDir, entry.name)
+      : entry.name;
     const entryPath = join(rootDir, relativePath);
-    if (appendPhysicalTreeEntry(hash, entryPath, relativePath, lstatSync(entryPath)) === 'directory') {
+    if (
+      appendPhysicalTreeEntry(
+        hash,
+        entryPath,
+        relativePath,
+        lstatSync(entryPath),
+      ) === 'directory'
+    ) {
       hashPhysicalTree(hash, rootDir, relativePath);
       continue;
     }
@@ -118,11 +155,22 @@ async function hashPhysicalTreeAsync(
   relativeDir = '',
 ): Promise<void> {
   const directoryPath = relativeDir ? join(rootDir, relativeDir) : rootDir;
-  const entries = orderedPhysicalTreeEntries(await readdir(directoryPath, { withFileTypes: true }));
+  const entries = orderedPhysicalTreeEntries(
+    await readdir(directoryPath, { withFileTypes: true }),
+  );
   for (const entry of entries) {
-    const relativePath = relativeDir ? join(relativeDir, entry.name) : entry.name;
+    const relativePath = relativeDir
+      ? join(relativeDir, entry.name)
+      : entry.name;
     const entryPath = join(rootDir, relativePath);
-    if (appendPhysicalTreeEntry(hash, entryPath, relativePath, await lstat(entryPath)) === 'directory') {
+    if (
+      appendPhysicalTreeEntry(
+        hash,
+        entryPath,
+        relativePath,
+        await lstat(entryPath),
+      ) === 'directory'
+    ) {
       await hashPhysicalTreeAsync(hash, rootDir, relativePath);
       continue;
     }
@@ -137,7 +185,9 @@ function* workspaceRuntimeIdentityPackages(
   hash.update('happier:cli-node-workspace-runtime:v1\0');
   for (const { packageName, srcDir } of workspaceBundles) {
     if (!existsSync(srcDir)) {
-      throw new Error(`Missing installed CLI workspace runtime package: ${packageName} (${srcDir})`);
+      throw new Error(
+        `Missing installed CLI workspace runtime package: ${packageName} (${srcDir})`,
+      );
     }
     hash.update(`package\0${packageName}\0`);
     yield srcDir;
@@ -177,9 +227,15 @@ export async function readCliNodeWorkspaceRuntimeIdentityAsync({
   repoRoot: string;
   hostPackageDir?: string;
 }>): Promise<CliNodeWorkspaceRuntimeIdentity> {
-  const workspaceBundles = resolveInstalledCliNodeRuntimeWorkspaceBundles(repoRoot, hostPackageDir);
+  const workspaceBundles = resolveInstalledCliNodeRuntimeWorkspaceBundles(
+    repoRoot,
+    hostPackageDir,
+  );
   const hash = createHash('sha256');
-  for (const srcDir of workspaceRuntimeIdentityPackages(hash, workspaceBundles)) {
+  for (const srcDir of workspaceRuntimeIdentityPackages(
+    hash,
+    workspaceBundles,
+  )) {
     await hashPhysicalTreeAsync(hash, srcDir);
   }
   return finishWorkspaceRuntimeIdentity(hash, workspaceBundles);
@@ -189,7 +245,10 @@ function readCliNodeWorkspaceRuntimeIdentityFromBundles(
   workspaceBundles: ReadonlyArray<CliNodeRuntimeWorkspaceBundle>,
 ): CliNodeWorkspaceRuntimeIdentity {
   const hash = createHash('sha256');
-  for (const srcDir of workspaceRuntimeIdentityPackages(hash, workspaceBundles)) {
+  for (const srcDir of workspaceRuntimeIdentityPackages(
+    hash,
+    workspaceBundles,
+  )) {
     hashPhysicalTree(hash, srcDir);
   }
   return finishWorkspaceRuntimeIdentity(hash, workspaceBundles);
@@ -201,9 +260,11 @@ function resolveRuntimeRootCliNodeWorkspaceBundles(
   packageNames: readonly string[],
 ): ReadonlyArray<CliNodeRuntimeWorkspaceBundle> {
   if (
-    packageNames.length === 0
-    || new Set(packageNames).size !== packageNames.length
-    || packageNames.some((packageName) => !/^@happier-dev\/[a-z0-9][a-z0-9._-]*$/u.test(packageName))
+    new Set(packageNames).size !== packageNames.length ||
+    packageNames.some(
+      (packageName) =>
+        !/^@happier-dev\/[a-z0-9][a-z0-9._-]*$/u.test(packageName),
+    )
   ) {
     throw new Error('Invalid CLI workspace runtime package membership');
   }
@@ -223,11 +284,18 @@ export function readCliNodeWorkspaceRuntimeIdentityFromRuntimeRoot({
   packageNames: readonly string[];
 }>): CliNodeWorkspaceRuntimeIdentity {
   return readCliNodeWorkspaceRuntimeIdentityFromBundles(
-    resolveRuntimeRootCliNodeWorkspaceBundles(runtimeRoot, runtimeRoot, packageNames),
+    resolveRuntimeRootCliNodeWorkspaceBundles(
+      runtimeRoot,
+      runtimeRoot,
+      packageNames,
+    ),
   );
 }
 
-async function copyCliNodeRuntimeDist(distDir: string, payloadDir: string): Promise<void> {
+async function copyCliNodeRuntimeDist(
+  distDir: string,
+  payloadDir: string,
+): Promise<void> {
   await cp(distDir, join(payloadDir, 'package-dist'), { recursive: true });
 }
 
@@ -267,9 +335,8 @@ function stageAdmittedCliNodeRuntimeWorkspaceBundles(
     cpSync(srcDir, destDir, {
       recursive: true,
       force: true,
-      filter: (sourcePath) => (
-        sourcePath === srcDir || basename(sourcePath) !== 'node_modules'
-      ),
+      filter: (sourcePath) =>
+        sourcePath === srcDir || basename(sourcePath) !== 'node_modules',
     });
   }
 }
@@ -281,11 +348,12 @@ function copyAdmittedCliNodeRuntimeWorkspaceBundlesExactly(
     includeRuntimeDependencies: false,
   },
 ): CliNodeWorkspaceRuntimeIdentity {
-  const before = readCliNodeWorkspaceRuntimeIdentityFromBundles(workspaceBundles);
+  const before =
+    readCliNodeWorkspaceRuntimeIdentityFromBundles(workspaceBundles);
   if (before.fingerprint !== expectedWorkspaceRuntimeIdentity) {
     throw new Error(
-      `CLI workspace runtime does not match its dist publication `
-      + `(expected ${expectedWorkspaceRuntimeIdentity}, found ${before.fingerprint})`,
+      `CLI workspace runtime does not match its dist publication ` +
+        `(expected ${expectedWorkspaceRuntimeIdentity}, found ${before.fingerprint})`,
     );
   }
   stageAdmittedCliNodeRuntimeWorkspaceBundles(workspaceBundles, options);
@@ -297,8 +365,8 @@ function copyAdmittedCliNodeRuntimeWorkspaceBundlesExactly(
   );
   if (staged.fingerprint !== before.fingerprint) {
     throw new Error(
-      `CLI admitted workspace runtime was not staged exactly `
-      + `(expected ${before.fingerprint}, found ${staged.fingerprint})`,
+      `CLI admitted workspace runtime was not staged exactly ` +
+        `(expected ${before.fingerprint}, found ${staged.fingerprint})`,
     );
   }
   return before;
@@ -307,18 +375,26 @@ function copyAdmittedCliNodeRuntimeWorkspaceBundlesExactly(
 function stageAdmittedCliNodeRuntimeHostPackageDependencies(
   runtimeRoot: string,
   payloadDir: string,
+  admittedPackageNames: readonly string[],
 ): void {
   const sourceNodeModulesDir = join(runtimeRoot, 'node_modules');
   if (!existsSync(sourceNodeModulesDir)) {
-    throw new Error(`Missing admitted CLI runtime dependency closure: ${sourceNodeModulesDir}`);
+    throw new Error(
+      `Missing admitted CLI runtime dependency closure: ${sourceNodeModulesDir}`,
+    );
   }
   copyDirDereferenceContainedSync({
     sourceDir: sourceNodeModulesDir,
     destDir: join(payloadDir, 'node_modules'),
     dereferenceRootDir: sourceNodeModulesDir,
     shouldCopyPath: (sourcePath) => {
-      const [topLevelEntry] = relative(sourceNodeModulesDir, sourcePath).split(/[\\/]/u);
-      return topLevelEntry !== '@happier-dev';
+      const segments = relative(sourceNodeModulesDir, sourcePath).split(
+        /[\\/]/u,
+      );
+      const packageName = segments
+        .slice(0, segments[0]?.startsWith('@') ? 2 : 1)
+        .join('/');
+      return !admittedPackageNames.includes(packageName);
     },
   });
 }
@@ -332,10 +408,13 @@ function stageInstalledCliNodeRuntimeWorkspaceBundles(
   }>,
 ): CliNodeWorkspaceRuntimeIdentity {
   const before = readCliNodeWorkspaceRuntimeIdentity({ repoRoot });
-  if (options.expectedIdentity && before.fingerprint !== options.expectedIdentity) {
+  if (
+    options.expectedIdentity &&
+    before.fingerprint !== options.expectedIdentity
+  ) {
     throw new Error(
-      `CLI workspace runtime publication changed before staging `
-      + `(expected ${options.expectedIdentity}, found ${before.fingerprint})`,
+      `CLI workspace runtime publication changed before staging ` +
+        `(expected ${options.expectedIdentity}, found ${before.fingerprint})`,
     );
   }
   stageCliNodeRuntimeWorkspaceBundles(
@@ -346,14 +425,18 @@ function stageInstalledCliNodeRuntimeWorkspaceBundles(
   const after = readCliNodeWorkspaceRuntimeIdentity({ repoRoot });
   if (after.fingerprint !== before.fingerprint) {
     throw new Error(
-      `CLI workspace runtime publication changed while staging `
-      + `(before ${before.fingerprint}, after ${after.fingerprint})`,
+      `CLI workspace runtime publication changed while staging ` +
+        `(before ${before.fingerprint}, after ${after.fingerprint})`,
     );
   }
   return before;
 }
 
-function vendorCliNodeRuntimeHostPackageDependencies(repoRoot: string, payloadDir: string, excludeRootDependencies?: readonly string[]): void {
+function vendorCliNodeRuntimeHostPackageDependencies(
+  repoRoot: string,
+  payloadDir: string,
+  excludeRootDependencies?: readonly string[],
+): void {
   vendorBundledPackageRuntimeDependencies({
     srcPackageJsonPath: join(repoRoot, 'apps', 'cli', 'package.json'),
     destPackageDir: payloadDir,
@@ -373,7 +456,11 @@ export function copyCliNodeRuntimeDependencies({
   expectedWorkspaceRuntimeIdentity?: string;
   excludeRootDependencies?: readonly string[];
 }>): CliNodeWorkspaceRuntimeIdentity {
-  vendorCliNodeRuntimeHostPackageDependencies(repoRoot, payloadDir, excludeRootDependencies);
+  vendorCliNodeRuntimeHostPackageDependencies(
+    repoRoot,
+    payloadDir,
+    excludeRootDependencies,
+  );
   return stageInstalledCliNodeRuntimeWorkspaceBundles(repoRoot, payloadDir, {
     includeRuntimeDependencies: true,
     expectedIdentity: expectedWorkspaceRuntimeIdentity,
@@ -389,13 +476,19 @@ export function copyCliNodeWorkspaceRuntimePackages({
   payloadDir: string;
   expectedWorkspaceRuntimeIdentity?: string;
 }>): CliNodeWorkspaceRuntimeIdentity {
-  const sourceBundles = resolveInstalledCliNodeRuntimeWorkspaceBundles(repoRoot).map((bundle) => ({
+  const sourceBundles = resolveInstalledCliNodeRuntimeWorkspaceBundles(
+    repoRoot,
+  ).map((bundle) => ({
     ...bundle,
     destDir: join(payloadDir, 'node_modules', ...bundle.packageName.split('/')),
   }));
-  const admittedIdentity = expectedWorkspaceRuntimeIdentity
-    ?? readCliNodeWorkspaceRuntimeIdentityFromBundles(sourceBundles).fingerprint;
-  return copyAdmittedCliNodeRuntimeWorkspaceBundlesExactly(sourceBundles, admittedIdentity);
+  const admittedIdentity =
+    expectedWorkspaceRuntimeIdentity ??
+    readCliNodeWorkspaceRuntimeIdentityFromBundles(sourceBundles).fingerprint;
+  return copyAdmittedCliNodeRuntimeWorkspaceBundlesExactly(
+    sourceBundles,
+    admittedIdentity,
+  );
 }
 
 export function copyCliNodeWorkspaceRuntimePackagesFromRuntimeRoot({
@@ -418,16 +511,21 @@ export function copyCliNodeWorkspaceRuntimePackagesFromRuntimeRoot({
   // publication. Preserve that tree instead of applying source-package
   // publication rules a second time: its sanitized package.json intentionally
   // no longer carries the source `files` list used to select static resources.
-  const stagedWorkspaceRuntime = copyAdmittedCliNodeRuntimeWorkspaceBundlesExactly(
-    sourceBundles,
-    expectedWorkspaceRuntimeIdentity,
-    { includeRuntimeDependencies: true },
-  );
+  const stagedWorkspaceRuntime =
+    copyAdmittedCliNodeRuntimeWorkspaceBundlesExactly(
+      sourceBundles,
+      expectedWorkspaceRuntimeIdentity,
+      { includeRuntimeDependencies: true },
+    );
   // The support artifact stages the host package's external closure at its
   // node_modules root. A pinned runner executes the package-dist outside that
   // support artifact, so preserve that admitted closure alongside the copied
   // workspace packages instead of resolving against a mutable checkout.
-  stageAdmittedCliNodeRuntimeHostPackageDependencies(runtimeRoot, payloadDir);
+  stageAdmittedCliNodeRuntimeHostPackageDependencies(
+    runtimeRoot,
+    payloadDir,
+    packageNames,
+  );
   return stagedWorkspaceRuntime;
 }
 

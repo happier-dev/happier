@@ -29,12 +29,16 @@ function writeWorkspacePackage(
   source: string,
   packageName = '@happier-dev/protocol',
 ): void {
-  const packageJson = `${JSON.stringify({
-    name: packageName,
-    private: true,
-    type: 'module',
-    exports: { '.': './dist/index.js' },
-  }, null, 2)}\n`;
+  const packageJson = `${JSON.stringify(
+    {
+      name: packageName,
+      private: true,
+      type: 'module',
+      exports: { '.': './dist/index.js' },
+    },
+    null,
+    2,
+  )}\n`;
   mkdirSync(join(root, 'dist'), { recursive: true });
   writeFileSync(join(root, 'package.json'), packageJson, 'utf8');
   writeFileSync(join(root, 'dist', 'index.js'), source, 'utf8');
@@ -45,16 +49,27 @@ it('reads workspace identity without withholding event-loop service and preserve
   try {
     const hostRoot = join(root, 'apps', 'cli');
     mkdirSync(hostRoot, { recursive: true });
-    writeFileSync(join(hostRoot, 'package.json'), JSON.stringify({
-      name: '@happier-dev/cli',
-      bundledDependencies: ['@happier-dev/protocol'],
-    }));
+    writeFileSync(
+      join(hostRoot, 'package.json'),
+      JSON.stringify({
+        name: '@happier-dev/cli',
+        bundledDependencies: ['@happier-dev/protocol'],
+      }),
+    );
     writeWorkspacePackage(join(root, 'packages', 'protocol'), 'export {};\n');
-    const installedPackage = join(hostRoot, 'node_modules', '@happier-dev', 'protocol');
+    const installedPackage = join(
+      hostRoot,
+      'node_modules',
+      '@happier-dev',
+      'protocol',
+    );
     writeWorkspacePackage(installedPackage, 'export {};\n');
     for (const name of ['z', 'ä', '🧪', '.tmp']) {
       mkdirSync(join(installedPackage, name));
-      writeFileSync(join(installedPackage, name, 'payload.bin'), Buffer.from([0, 255, 1]));
+      writeFileSync(
+        join(installedPackage, name, 'payload.bin'),
+        Buffer.from([0, 255, 1]),
+      );
     }
     const expected = readCliNodeWorkspaceRuntimeIdentity({ repoRoot: root });
     let serviced = 0;
@@ -66,7 +81,9 @@ it('reads workspace identity without withholding event-loop service and preserve
     setImmediate(serve);
     let actual;
     try {
-      actual = await readCliNodeWorkspaceRuntimeIdentityAsync({ repoRoot: root });
+      actual = await readCliNodeWorkspaceRuntimeIdentityAsync({
+        repoRoot: root,
+      });
     } finally {
       reading = false;
     }
@@ -74,7 +91,9 @@ it('reads workspace identity without withholding event-loop service and preserve
     expect(actual).toEqual(expected);
     if (process.platform !== 'win32') {
       symlinkSync('dist/index.js', join(installedPackage, 'linked.js'));
-      await expect(readCliNodeWorkspaceRuntimeIdentityAsync({ repoRoot: root })).rejects.toThrow(/contains a symlink/);
+      await expect(
+        readCliNodeWorkspaceRuntimeIdentityAsync({ repoRoot: root }),
+      ).rejects.toThrow(/contains a symlink/);
     }
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -85,14 +104,20 @@ it('orders Unicode sibling names by code units for a locale-independent runtime 
   const siblingNames = ['🧪', 'ä', 'z'];
   const codeUnitOrder = ['z', 'ä', '🧪'];
 
-  expect([...siblingNames].sort(compareCliNodeRuntimePayloadEntryNames)).toEqual(codeUnitOrder);
-  expect([...siblingNames].sort((left, right) => left.localeCompare(right, 'sv-SE')))
-    .not.toEqual(codeUnitOrder);
-  expect([...siblingNames].sort((left, right) => left.localeCompare(right, 'de-DE')))
-    .not.toEqual(codeUnitOrder);
+  expect(
+    [...siblingNames].sort(compareCliNodeRuntimePayloadEntryNames),
+  ).toEqual(codeUnitOrder);
+  expect(
+    [...siblingNames].sort((left, right) => left.localeCompare(right, 'sv-SE')),
+  ).not.toEqual(codeUnitOrder);
+  expect(
+    [...siblingNames].sort((left, right) => left.localeCompare(right, 'de-DE')),
+  ).not.toEqual(codeUnitOrder);
   // U+10000 begins with a surrogate code unit below U+E000, unlike code-point
   // or UTF-8 byte ordering.
-  expect(compareCliNodeRuntimePayloadEntryNames('\u{10000}', '\uE000')).toBeLessThan(0);
+  expect(
+    compareCliNodeRuntimePayloadEntryNames('\u{10000}', '\uE000'),
+  ).toBeLessThan(0);
 });
 
 it('requests copy-on-write cloning while staging an admitted runtime tree', async () => {
@@ -101,7 +126,11 @@ it('requests copy-on-write cloning while staging an admitted runtime tree', asyn
     const sourceDir = join(root, 'source');
     const payloadDir = join(root, 'payload');
     mkdirSync(sourceDir, { recursive: true });
-    writeFileSync(join(sourceDir, 'runtime.mjs'), 'export const runtime = true;\n', 'utf8');
+    writeFileSync(
+      join(sourceDir, 'runtime.mjs'),
+      'export const runtime = true;\n',
+      'utf8',
+    );
 
     const copyModes: Array<number | undefined> = [];
     vi.resetModules();
@@ -116,10 +145,13 @@ it('requests copy-on-write cloning while staging an admitted runtime tree', asyn
       };
     });
 
-    const { copyDirDereferenceContainedSync } = await import('../../workspaceRuntimeDependencies.mjs');
+    const { copyDirDereferenceContainedSync } =
+      await import('../../workspaceRuntimeDependencies.mjs');
     copyDirDereferenceContainedSync({ sourceDir, destDir: payloadDir });
 
-    expect(readFileSync(join(payloadDir, 'runtime.mjs'), 'utf8')).toBe('export const runtime = true;\n');
+    expect(readFileSync(join(payloadDir, 'runtime.mjs'), 'utf8')).toBe(
+      'export const runtime = true;\n',
+    );
     expect(copyModes).toEqual([constants.COPYFILE_FICLONE]);
   } finally {
     vi.doUnmock('node:fs');
@@ -134,17 +166,26 @@ it('rejects workspace package bytes that do not match the admitted runtime ident
     const packageName = '@happier-dev/protocol';
     const hostRoot = join(root, 'apps', 'cli');
     mkdirSync(hostRoot, { recursive: true });
-    writeFileSync(join(hostRoot, 'package.json'), JSON.stringify({
-      name: '@happier-dev/cli',
-      dependencies: { [packageName]: 'workspace:*' },
-      bundledDependencies: [packageName],
-    }), 'utf8');
-    writeWorkspacePackage(join(root, 'packages', 'protocol'), 'export const generation = "source";\n');
+    writeFileSync(
+      join(hostRoot, 'package.json'),
+      JSON.stringify({
+        name: '@happier-dev/cli',
+        dependencies: { [packageName]: 'workspace:*' },
+        bundledDependencies: [packageName],
+      }),
+      'utf8',
+    );
+    writeWorkspacePackage(
+      join(root, 'packages', 'protocol'),
+      'export const generation = "source";\n',
+    );
     writeWorkspacePackage(
       join(hostRoot, 'node_modules', '@happier-dev', 'protocol'),
       'export const generation = "admitted";\n',
     );
-    const admittedIdentity = readCliNodeWorkspaceRuntimeIdentity({ repoRoot: root });
+    const admittedIdentity = readCliNodeWorkspaceRuntimeIdentity({
+      repoRoot: root,
+    });
 
     const runtimeRoot = join(root, 'runtime-artifact');
     writeWorkspacePackage(
@@ -152,12 +193,14 @@ it('rejects workspace package bytes that do not match the admitted runtime ident
       'export const generation = "tampered";\n',
     );
 
-    expect(() => copyCliNodeWorkspaceRuntimePackagesFromRuntimeRoot({
-      runtimeRoot,
-      payloadDir: join(root, 'pinned-runner'),
-      packageNames: admittedIdentity.packageNames,
-      expectedWorkspaceRuntimeIdentity: admittedIdentity.fingerprint,
-    })).toThrow(/does not match its dist publication/i);
+    expect(() =>
+      copyCliNodeWorkspaceRuntimePackagesFromRuntimeRoot({
+        runtimeRoot,
+        payloadDir: join(root, 'pinned-runner'),
+        packageNames: admittedIdentity.packageNames,
+        expectedWorkspaceRuntimeIdentity: admittedIdentity.fingerprint,
+      }),
+    ).toThrow(/does not match its dist publication/i);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -168,13 +211,22 @@ it('preserves the exact admitted workspace package tree when pinning a runtime r
   try {
     const packageName = '@happier-dev/plugins-example';
     const runtimeRoot = join(root, 'runtime-artifact');
-    const packageRoot = join(runtimeRoot, 'node_modules', '@happier-dev', 'plugins-example');
+    const packageRoot = join(
+      runtimeRoot,
+      'node_modules',
+      '@happier-dev',
+      'plugins-example',
+    );
     mkdirSync(runtimeRoot, { recursive: true });
-    writeFileSync(join(runtimeRoot, 'package.json'), JSON.stringify({
-      name: '@happier-dev/cli-runtime-fixture',
-      dependencies: { [packageName]: 'workspace:*' },
-      bundledDependencies: [packageName],
-    }), 'utf8');
+    writeFileSync(
+      join(runtimeRoot, 'package.json'),
+      JSON.stringify({
+        name: '@happier-dev/cli-runtime-fixture',
+        dependencies: { [packageName]: 'workspace:*' },
+        bundledDependencies: [packageName],
+      }),
+      'utf8',
+    );
     writeWorkspacePackage(
       packageRoot,
       'export const generation = "admitted";\n',
@@ -187,9 +239,17 @@ it('preserves the exact admitted workspace package tree when pinning a runtime r
       'utf8',
     );
     mkdirSync(join(packageRoot, 'assets'), { recursive: true });
-    writeFileSync(join(packageRoot, 'assets', 'brand.txt'), 'brand bytes\n', 'utf8');
+    writeFileSync(
+      join(packageRoot, 'assets', 'brand.txt'),
+      'brand bytes\n',
+      'utf8',
+    );
     mkdirSync(join(packageRoot, 'resources'), { recursive: true });
-    writeFileSync(join(packageRoot, 'resources', 'prompt.md'), '# Prompt\n', 'utf8');
+    writeFileSync(
+      join(packageRoot, 'resources', 'prompt.md'),
+      '# Prompt\n',
+      'utf8',
+    );
 
     const admittedIdentity = readCliNodeWorkspaceRuntimeIdentity({
       repoRoot: root,
@@ -197,54 +257,74 @@ it('preserves the exact admitted workspace package tree when pinning a runtime r
     });
     const payloadDir = join(root, 'pinned-runner');
 
-    expect(() => copyCliNodeWorkspaceRuntimePackagesFromRuntimeRoot({
-      runtimeRoot,
-      payloadDir,
-      packageNames: admittedIdentity.packageNames,
-      expectedWorkspaceRuntimeIdentity: admittedIdentity.fingerprint,
-    })).not.toThrow();
-    expect(existsSync(join(
-      payloadDir,
-      'node_modules',
-      '@happier-dev',
-      'plugins-example',
-      '.happier-plugin',
-      'plugin.json',
-    ))).toBe(true);
-    expect(existsSync(join(
-      payloadDir,
-      'node_modules',
-      '@happier-dev',
-      'plugins-example',
-      'assets',
-      'brand.txt',
-    ))).toBe(true);
-    expect(existsSync(join(
-      payloadDir,
-      'node_modules',
-      '@happier-dev',
-      'plugins-example',
-      'resources',
-      'prompt.md',
-    ))).toBe(true);
+    expect(() =>
+      copyCliNodeWorkspaceRuntimePackagesFromRuntimeRoot({
+        runtimeRoot,
+        payloadDir,
+        packageNames: admittedIdentity.packageNames,
+        expectedWorkspaceRuntimeIdentity: admittedIdentity.fingerprint,
+      }),
+    ).not.toThrow();
+    expect(
+      existsSync(
+        join(
+          payloadDir,
+          'node_modules',
+          '@happier-dev',
+          'plugins-example',
+          '.happier-plugin',
+          'plugin.json',
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      existsSync(
+        join(
+          payloadDir,
+          'node_modules',
+          '@happier-dev',
+          'plugins-example',
+          'assets',
+          'brand.txt',
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      existsSync(
+        join(
+          payloadDir,
+          'node_modules',
+          '@happier-dev',
+          'plugins-example',
+          'resources',
+          'prompt.md',
+        ),
+      ),
+    ).toBe(true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
 it('preserves the admitted external runtime dependency closure when pinning a runtime root', () => {
-    const root = mkdtempSync(join(tmpdir(), 'happier-cli-runtime-external-closure-'));
+  const root = mkdtempSync(
+    join(tmpdir(), 'happier-cli-runtime-external-closure-'),
+  );
   try {
     const packageName = '@happier-dev/protocol';
     const runtimeRoot = join(root, 'runtime-artifact');
     const supportNodeModules = join(root, 'daemon-support', 'node_modules');
     const packageRoot = join(supportNodeModules, '@happier-dev', 'protocol');
     mkdirSync(runtimeRoot, { recursive: true });
-    writeFileSync(join(runtimeRoot, 'package.json'), JSON.stringify({
-      name: '@happier-dev/cli-runtime-fixture',
-      dependencies: { [packageName]: 'workspace:*' },
-      bundledDependencies: [packageName],
-    }), 'utf8');
+    writeFileSync(
+      join(runtimeRoot, 'package.json'),
+      JSON.stringify({
+        name: '@happier-dev/cli-runtime-fixture',
+        dependencies: { [packageName]: 'workspace:*' },
+        bundledDependencies: [packageName],
+      }),
+      'utf8',
+    );
     writeWorkspacePackage(
       packageRoot,
       'export const generation = "admitted";\n',
@@ -252,33 +332,79 @@ it('preserves the admitted external runtime dependency closure when pinning a ru
     );
     const workspaceZodRoot = join(packageRoot, 'node_modules', 'zod');
     mkdirSync(workspaceZodRoot, { recursive: true });
-    writeFileSync(join(workspaceZodRoot, 'package.json'), JSON.stringify({
-      name: 'zod',
-      version: '4.3.6-workspace',
-    }), 'utf8');
-    writeFileSync(join(workspaceZodRoot, 'index.js'), 'export const z = "workspace";\n', 'utf8');
+    writeFileSync(
+      join(workspaceZodRoot, 'package.json'),
+      JSON.stringify({
+        name: 'zod',
+        version: '4.3.6-workspace',
+      }),
+      'utf8',
+    );
+    writeFileSync(
+      join(workspaceZodRoot, 'index.js'),
+      'export const z = "workspace";\n',
+      'utf8',
+    );
 
     const zodRoot = join(supportNodeModules, 'zod');
     mkdirSync(join(zodRoot, 'node_modules', 'zod-core'), { recursive: true });
-    writeFileSync(join(zodRoot, 'package.json'), JSON.stringify({
-      name: 'zod',
-      version: '4.3.6',
-      dependencies: { 'zod-core': '1.0.0' },
-    }), 'utf8');
-    writeFileSync(join(zodRoot, 'index.js'), 'export const z = true;\n', 'utf8');
-    writeFileSync(join(zodRoot, 'node_modules', 'zod-core', 'package.json'), JSON.stringify({
-      name: 'zod-core',
-      version: '1.0.0',
-    }), 'utf8');
-    writeFileSync(join(zodRoot, 'node_modules', 'zod-core', 'index.js'), 'export const core = true;\n', 'utf8');
+    writeFileSync(
+      join(zodRoot, 'package.json'),
+      JSON.stringify({
+        name: 'zod',
+        version: '4.3.6',
+        dependencies: { 'zod-core': '1.0.0' },
+      }),
+      'utf8',
+    );
+    writeFileSync(
+      join(zodRoot, 'index.js'),
+      'export const z = true;\n',
+      'utf8',
+    );
+    writeFileSync(
+      join(zodRoot, 'node_modules', 'zod-core', 'package.json'),
+      JSON.stringify({
+        name: 'zod-core',
+        version: '1.0.0',
+      }),
+      'utf8',
+    );
+    writeFileSync(
+      join(zodRoot, 'node_modules', 'zod-core', 'index.js'),
+      'export const core = true;\n',
+      'utf8',
+    );
 
     const scopedRuntimeRoot = join(supportNodeModules, '@example', 'runtime');
     mkdirSync(scopedRuntimeRoot, { recursive: true });
-    writeFileSync(join(scopedRuntimeRoot, 'package.json'), JSON.stringify({
-      name: '@example/runtime',
-      version: '1.0.0',
-    }), 'utf8');
-    writeFileSync(join(scopedRuntimeRoot, 'index.js'), 'export const runtime = true;\n', 'utf8');
+    writeFileSync(
+      join(scopedRuntimeRoot, 'package.json'),
+      JSON.stringify({
+        name: '@example/runtime',
+        version: '1.0.0',
+      }),
+      'utf8',
+    );
+    writeFileSync(
+      join(scopedRuntimeRoot, 'index.js'),
+      'export const runtime = true;\n',
+      'utf8',
+    );
+    const nativeSupportRoot = join(
+      supportNodeModules,
+      '@happier-dev',
+      'iroh-native',
+    );
+    mkdirSync(join(nativeSupportRoot, 'native'), { recursive: true });
+    writeFileSync(
+      join(nativeSupportRoot, 'package.json'),
+      JSON.stringify({ name: '@happier-dev/iroh-native' }),
+    );
+    writeFileSync(
+      join(nativeSupportRoot, 'native/lifecycle.node'),
+      'target-native bytes',
+    );
     symlinkSync(
       supportNodeModules,
       join(runtimeRoot, 'node_modules'),
@@ -291,40 +417,88 @@ it('preserves the admitted external runtime dependency closure when pinning a ru
     });
     const payloadDir = join(root, 'pinned-runner');
 
-    expect(() => copyCliNodeWorkspaceRuntimePackagesFromRuntimeRoot({
-      runtimeRoot,
-      payloadDir,
-      packageNames: admittedIdentity.packageNames,
-      expectedWorkspaceRuntimeIdentity: admittedIdentity.fingerprint,
-    })).not.toThrow();
+    expect(() =>
+      copyCliNodeWorkspaceRuntimePackagesFromRuntimeRoot({
+        runtimeRoot,
+        payloadDir,
+        packageNames: admittedIdentity.packageNames,
+        expectedWorkspaceRuntimeIdentity: admittedIdentity.fingerprint,
+      }),
+    ).not.toThrow();
 
-    expect(readFileSync(join(payloadDir, 'node_modules', 'zod', 'index.js'), 'utf8'))
-      .toContain('z = true');
-    expect(readFileSync(join(payloadDir, 'node_modules', 'zod', 'node_modules', 'zod-core', 'index.js'), 'utf8'))
-      .toContain('core = true');
-    expect(readFileSync(
-      join(payloadDir, 'node_modules', '@happier-dev', 'protocol', 'node_modules', 'zod', 'index.js'),
-      'utf8',
-    )).toContain('z = "workspace"');
-    expect(readFileSync(join(payloadDir, 'node_modules', '@example', 'runtime', 'index.js'), 'utf8'))
-      .toContain('runtime = true');
+    expect(
+      readFileSync(join(payloadDir, 'node_modules', 'zod', 'index.js'), 'utf8'),
+    ).toContain('z = true');
+    expect(
+      readFileSync(
+        join(
+          payloadDir,
+          'node_modules',
+          'zod',
+          'node_modules',
+          'zod-core',
+          'index.js',
+        ),
+        'utf8',
+      ),
+    ).toContain('core = true');
+    expect(
+      readFileSync(
+        join(
+          payloadDir,
+          'node_modules',
+          '@happier-dev',
+          'protocol',
+          'node_modules',
+          'zod',
+          'index.js',
+        ),
+        'utf8',
+      ),
+    ).toContain('z = "workspace"');
+    expect(
+      readFileSync(
+        join(payloadDir, 'node_modules', '@example', 'runtime', 'index.js'),
+        'utf8',
+      ),
+    ).toContain('runtime = true');
+    expect(
+      readFileSync(
+        join(
+          payloadDir,
+          'node_modules/@happier-dev/iroh-native/native/lifecycle.node',
+        ),
+        'utf8',
+      ),
+    ).toBe('target-native bytes');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
 it('preserves the exact installed workspace package tree when pinning a source runtime', () => {
-  const root = mkdtempSync(join(tmpdir(), 'happier-cli-source-runtime-hidden-file-'));
+  const root = mkdtempSync(
+    join(tmpdir(), 'happier-cli-source-runtime-hidden-file-'),
+  );
   try {
     const packageName = '@happier-dev/plugins-example';
     const hostRoot = join(root, 'apps', 'cli');
-    const packageRoot = join(hostRoot, 'node_modules', '@happier-dev', 'plugins-example');
+    const packageRoot = join(
+      hostRoot,
+      'node_modules',
+      '@happier-dev',
+      'plugins-example',
+    );
     mkdirSync(hostRoot, { recursive: true });
-    writeFileSync(join(hostRoot, 'package.json'), JSON.stringify({
-      name: '@happier-dev/cli',
-      dependencies: { [packageName]: 'workspace:*' },
-      bundledDependencies: [packageName],
-    }), 'utf8');
+    writeFileSync(
+      join(hostRoot, 'package.json'),
+      JSON.stringify({
+        name: '@happier-dev/cli',
+        dependencies: { [packageName]: 'workspace:*' },
+        bundledDependencies: [packageName],
+      }),
+      'utf8',
+    );
     writeWorkspacePackage(
       join(root, 'packages', 'plugins', 'example'),
       'export const generation = "source";\n',
@@ -342,9 +516,15 @@ it('preserves the exact installed workspace package tree when pinning a source r
       'utf8',
     );
     mkdirSync(join(packageRoot, 'resources'), { recursive: true });
-    writeFileSync(join(packageRoot, 'resources', 'prompt.md'), '# Prompt\n', 'utf8');
+    writeFileSync(
+      join(packageRoot, 'resources', 'prompt.md'),
+      '# Prompt\n',
+      'utf8',
+    );
 
-    const admittedIdentity = readCliNodeWorkspaceRuntimeIdentity({ repoRoot: root });
+    const admittedIdentity = readCliNodeWorkspaceRuntimeIdentity({
+      repoRoot: root,
+    });
     const payloadDir = join(root, 'pinned-runner');
     const staged = copyCliNodeWorkspaceRuntimePackages({
       repoRoot: root,
@@ -353,22 +533,30 @@ it('preserves the exact installed workspace package tree when pinning a source r
     });
 
     expect(staged).toEqual(admittedIdentity);
-    expect(existsSync(join(
-      payloadDir,
-      'node_modules',
-      '@happier-dev',
-      'plugins-example',
-      '.happier-plugin',
-      'plugin.json',
-    ))).toBe(true);
-    expect(existsSync(join(
-      payloadDir,
-      'node_modules',
-      '@happier-dev',
-      'plugins-example',
-      'resources',
-      'prompt.md',
-    ))).toBe(true);
+    expect(
+      existsSync(
+        join(
+          payloadDir,
+          'node_modules',
+          '@happier-dev',
+          'plugins-example',
+          '.happier-plugin',
+          'plugin.json',
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      existsSync(
+        join(
+          payloadDir,
+          'node_modules',
+          '@happier-dev',
+          'plugins-example',
+          'resources',
+          'prompt.md',
+        ),
+      ),
+    ).toBe(true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -379,17 +567,38 @@ it('returns the exact staged identity when artifact packaging excludes source-on
   try {
     const packageName = '@happier-dev/protocol';
     const hostRoot = join(root, 'apps', 'cli');
-    const hostPackageRoot = join(hostRoot, 'node_modules', '@happier-dev', 'protocol');
+    const hostPackageRoot = join(
+      hostRoot,
+      'node_modules',
+      '@happier-dev',
+      'protocol',
+    );
     mkdirSync(hostRoot, { recursive: true });
-    writeFileSync(join(hostRoot, 'package.json'), JSON.stringify({
-      name: '@happier-dev/cli',
-      dependencies: { [packageName]: 'workspace:*' },
-      bundledDependencies: [packageName],
-    }), 'utf8');
-    writeWorkspacePackage(join(root, 'packages', 'protocol'), 'export const generation = "source";\n');
-    writeWorkspacePackage(hostPackageRoot, 'export const generation = "admitted";\n');
-    writeFileSync(join(hostPackageRoot, 'API.md'), '# source-only documentation\n', 'utf8');
-    const admittedIdentity = readCliNodeWorkspaceRuntimeIdentity({ repoRoot: root });
+    writeFileSync(
+      join(hostRoot, 'package.json'),
+      JSON.stringify({
+        name: '@happier-dev/cli',
+        dependencies: { [packageName]: 'workspace:*' },
+        bundledDependencies: [packageName],
+      }),
+      'utf8',
+    );
+    writeWorkspacePackage(
+      join(root, 'packages', 'protocol'),
+      'export const generation = "source";\n',
+    );
+    writeWorkspacePackage(
+      hostPackageRoot,
+      'export const generation = "admitted";\n',
+    );
+    writeFileSync(
+      join(hostPackageRoot, 'API.md'),
+      '# source-only documentation\n',
+      'utf8',
+    );
+    const admittedIdentity = readCliNodeWorkspaceRuntimeIdentity({
+      repoRoot: root,
+    });
 
     const distDir = join(hostRoot, 'dist');
     mkdirSync(distDir, { recursive: true });
@@ -405,54 +614,88 @@ it('returns the exact staged identity when artifact packaging excludes source-on
 
     expect(stagedIdentity).toMatchObject({ packageNames: [packageName] });
     expect(stagedIdentity.fingerprint).not.toBe(admittedIdentity.fingerprint);
-    expect(existsSync(join(payloadDir, 'node_modules', '@happier-dev', 'protocol', 'API.md'))).toBe(false);
-    expect(() => copyCliNodeWorkspaceRuntimePackagesFromRuntimeRoot({
-      runtimeRoot: payloadDir,
-      payloadDir: join(root, 'pinned-runner'),
-      packageNames: stagedIdentity.packageNames,
-      expectedWorkspaceRuntimeIdentity: stagedIdentity.fingerprint,
-    })).not.toThrow();
+    expect(
+      existsSync(
+        join(payloadDir, 'node_modules', '@happier-dev', 'protocol', 'API.md'),
+      ),
+    ).toBe(false);
+    expect(() =>
+      copyCliNodeWorkspaceRuntimePackagesFromRuntimeRoot({
+        runtimeRoot: payloadDir,
+        payloadDir: join(root, 'pinned-runner'),
+        packageNames: stagedIdentity.packageNames,
+        expectedWorkspaceRuntimeIdentity: stagedIdentity.fingerprint,
+      }),
+    ).not.toThrow();
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
 it('reads and stages a bundled workspace package hoisted to the repository node_modules', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'happier-cli-runtime-hoisted-workspace-'));
+  const root = mkdtempSync(
+    join(tmpdir(), 'happier-cli-runtime-hoisted-workspace-'),
+  );
   try {
     const packageName = '@happier-dev/protocol';
     const hostRoot = join(root, 'apps', 'cli');
-    const hoistedPackageRoot = join(root, 'node_modules', '@happier-dev', 'protocol');
+    const hoistedPackageRoot = join(
+      root,
+      'node_modules',
+      '@happier-dev',
+      'protocol',
+    );
     mkdirSync(hostRoot, { recursive: true });
-    writeFileSync(join(hostRoot, 'package.json'), JSON.stringify({
-      name: '@happier-dev/cli',
-      dependencies: { [packageName]: 'workspace:*' },
-      bundledDependencies: [packageName],
-    }), 'utf8');
-    writeWorkspacePackage(join(root, 'packages', 'protocol'), 'export const generation = "source";\n');
-    writeWorkspacePackage(hoistedPackageRoot, 'export const generation = "hoisted";\n');
+    writeFileSync(
+      join(hostRoot, 'package.json'),
+      JSON.stringify({
+        name: '@happier-dev/cli',
+        dependencies: { [packageName]: 'workspace:*' },
+        bundledDependencies: [packageName],
+      }),
+      'utf8',
+    );
+    writeWorkspacePackage(
+      join(root, 'packages', 'protocol'),
+      'export const generation = "source";\n',
+    );
+    writeWorkspacePackage(
+      hoistedPackageRoot,
+      'export const generation = "hoisted";\n',
+    );
 
     const distDir = join(hostRoot, 'dist');
     mkdirSync(distDir, { recursive: true });
     writeFileSync(join(distDir, 'index.mjs'), 'export {};\n', 'utf8');
 
-    const admittedIdentity = readCliNodeWorkspaceRuntimeIdentity({ repoRoot: root });
-    const payloadDir = join(root, 'runtime-artifact');
-    await expect(copyCliNodeRuntimePayload({
+    const admittedIdentity = readCliNodeWorkspaceRuntimeIdentity({
       repoRoot: root,
-      payloadDir,
-      distDir,
-      expectedWorkspaceRuntimeIdentity: admittedIdentity.fingerprint,
-    })).resolves.toMatchObject({ packageNames: [packageName] });
-    expect(existsSync(join(hostRoot, 'node_modules', '@happier-dev', 'protocol'))).toBe(false);
-    expect(readFileSync(join(
-      payloadDir,
-      'node_modules',
-      '@happier-dev',
-      'protocol',
-      'dist',
-      'index.js',
-    ), 'utf8')).toContain('hoisted');
+    });
+    const payloadDir = join(root, 'runtime-artifact');
+    await expect(
+      copyCliNodeRuntimePayload({
+        repoRoot: root,
+        payloadDir,
+        distDir,
+        expectedWorkspaceRuntimeIdentity: admittedIdentity.fingerprint,
+      }),
+    ).resolves.toMatchObject({ packageNames: [packageName] });
+    expect(
+      existsSync(join(hostRoot, 'node_modules', '@happier-dev', 'protocol')),
+    ).toBe(false);
+    expect(
+      readFileSync(
+        join(
+          payloadDir,
+          'node_modules',
+          '@happier-dev',
+          'protocol',
+          'dist',
+          'index.js',
+        ),
+        'utf8',
+      ),
+    ).toContain('hoisted');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -472,26 +715,48 @@ function writeInstalledBundledPluginGeneration(
 ): void {
   mkdirSync(join(packageRoot, 'dist'), { recursive: true });
   // Exactly what `sanitizeBundledPackageJson` writes: no `files`.
-  writeFileSync(join(packageRoot, 'package.json'), `${JSON.stringify({
-    name: '@happier-dev/plugins-example',
-    private: true,
-    type: 'module',
-    exports: { '.': './dist/index.js' },
-  }, null, 2)}\n`, 'utf8');
-  writeFileSync(join(packageRoot, 'dist', 'index.js'), 'export const generation = "admitted";\n', 'utf8');
+  writeFileSync(
+    join(packageRoot, 'package.json'),
+    `${JSON.stringify(
+      {
+        name: '@happier-dev/plugins-example',
+        private: true,
+        type: 'module',
+        exports: { '.': './dist/index.js' },
+      },
+      null,
+      2,
+    )}\n`,
+    'utf8',
+  );
+  writeFileSync(
+    join(packageRoot, 'dist', 'index.js'),
+    'export const generation = "admitted";\n',
+    'utf8',
+  );
   mkdirSync(join(packageRoot, '.happier-plugin'), { recursive: true });
-  writeFileSync(join(packageRoot, '.happier-plugin', 'plugin.json'), `${JSON.stringify({
-    id: 'happier.example',
-    contributes: {
-      resources: [
-        ...declaredResourcePaths.map((path, index) => ({ id: `packaged-${index}`, path })),
-        // A dynamic Resource contributes no packaged bytes and must not be required.
-        { id: 'dynamic', source: 'dynamic' },
-      ],
-    },
-  })}\n`, 'utf8');
+  writeFileSync(
+    join(packageRoot, '.happier-plugin', 'plugin.json'),
+    `${JSON.stringify({
+      id: 'happier.example',
+      contributes: {
+        resources: [
+          ...declaredResourcePaths.map((path, index) => ({
+            id: `packaged-${index}`,
+            path,
+          })),
+          // A dynamic Resource contributes no packaged bytes and must not be required.
+          { id: 'dynamic', source: 'dynamic' },
+        ],
+      },
+    })}\n`,
+    'utf8',
+  );
   for (const relativePath of presentResourcePaths) {
-    const targetPath = join(packageRoot, ...relativePath.replace(/^\.\//u, '').split('/'));
+    const targetPath = join(
+      packageRoot,
+      ...relativePath.replace(/^\.\//u, '').split('/'),
+    );
     mkdirSync(dirname(targetPath), { recursive: true });
     writeFileSync(targetPath, `bytes for ${relativePath}\n`, 'utf8');
   }
@@ -505,11 +770,15 @@ function createBundledPluginPayloadFixture(
   const packageName = '@happier-dev/plugins-example';
   const hostRoot = join(root, 'apps', 'cli');
   mkdirSync(hostRoot, { recursive: true });
-  writeFileSync(join(hostRoot, 'package.json'), JSON.stringify({
-    name: '@happier-dev/cli',
-    dependencies: { [packageName]: 'workspace:*' },
-    bundledDependencies: [packageName],
-  }), 'utf8');
+  writeFileSync(
+    join(hostRoot, 'package.json'),
+    JSON.stringify({
+      name: '@happier-dev/cli',
+      dependencies: { [packageName]: 'workspace:*' },
+      bundledDependencies: [packageName],
+    }),
+    'utf8',
+  );
   writeWorkspacePackage(
     join(root, 'packages', 'plugins', 'example'),
     'export const generation = "source";\n',
@@ -527,7 +796,9 @@ function createBundledPluginPayloadFixture(
 }
 
 it('carries the resources a bundled plugin manifest declares into the daemon artifact payload', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'happier-cli-payload-plugin-resources-'));
+  const root = mkdtempSync(
+    join(tmpdir(), 'happier-cli-payload-plugin-resources-'),
+  );
   try {
     const declared = ['assets/brand.png', './resources/prompt.md'];
     const fixture = createBundledPluginPayloadFixture(root, declared, declared);
@@ -545,17 +816,27 @@ it('carries the resources a bundled plugin manifest declares into the daemon art
       'plugins-example',
     );
     // The manifest ships, so the bytes it declares must ship with it.
-    expect(existsSync(join(payloadPackageRoot, '.happier-plugin', 'plugin.json'))).toBe(true);
-    expect(findUnservableBundledPluginPackageResources(payloadPackageRoot)).toEqual([]);
-    expect(existsSync(join(payloadPackageRoot, 'assets', 'brand.png'))).toBe(true);
-    expect(existsSync(join(payloadPackageRoot, 'resources', 'prompt.md'))).toBe(true);
+    expect(
+      existsSync(join(payloadPackageRoot, '.happier-plugin', 'plugin.json')),
+    ).toBe(true);
+    expect(
+      findUnservableBundledPluginPackageResources(payloadPackageRoot),
+    ).toEqual([]);
+    expect(existsSync(join(payloadPackageRoot, 'assets', 'brand.png'))).toBe(
+      true,
+    );
+    expect(existsSync(join(payloadPackageRoot, 'resources', 'prompt.md'))).toBe(
+      true,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
 it('refuses to publish a bundled plugin package that cannot serve a resource its manifest declares', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'happier-cli-payload-plugin-resource-gap-'));
+  const root = mkdtempSync(
+    join(tmpdir(), 'happier-cli-payload-plugin-resource-gap-'),
+  );
   try {
     const fixture = createBundledPluginPayloadFixture(
       root,
@@ -563,11 +844,13 @@ it('refuses to publish a bundled plugin package that cannot serve a resource its
       ['./resources/prompt.md'],
     );
 
-    await expect(copyCliNodeRuntimePayload({
-      repoRoot: root,
-      payloadDir: fixture.payloadDir,
-      distDir: fixture.distDir,
-    })).rejects.toThrow(/assets\/brand\.png/u);
+    await expect(
+      copyCliNodeRuntimePayload({
+        repoRoot: root,
+        payloadDir: fixture.payloadDir,
+        distDir: fixture.distDir,
+      }),
+    ).rejects.toThrow(/assets\/brand\.png/u);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

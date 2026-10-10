@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { verifyPackageExportTargets } from './verifyExports.mjs';
 import { resolveTypeScriptCliInvocation } from '../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs';
 import { resolveRemoteCommandPolicy } from '../../../apps/stack/scripts/utils/dev_targets/remote_commands.mjs';
+import { resolveWorkspaceTypeScriptCompilerArgs } from '../workspaceChildBuildEnv.mjs';
 
 async function removeDir(path) {
     await rm(path, { recursive: true, force: true });
@@ -73,7 +74,9 @@ export function resolveTypeScriptBuildInvocation({
 
     return {
         command: invocation.command,
-        args: [...invocation.argsPrefix, '-p', tsconfigPath, '--outDir', outDir],
+        args: [...invocation.argsPrefix, ...resolveWorkspaceTypeScriptCompilerArgs({
+            compilerArgs: ['-p', tsconfigPath, '--outDir', outDir], env,
+        })],
     };
 }
 

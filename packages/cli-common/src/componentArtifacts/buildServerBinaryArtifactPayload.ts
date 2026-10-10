@@ -185,11 +185,6 @@ export async function buildServerBinaryArtifactPayload({
   if (entrypoint !== join(repoRoot, 'apps', 'server', 'sources', expectedEntrypointName)) {
     throw new Error(`[component-artifacts] ${serverComponent} requires apps/server/sources/${expectedEntrypointName}`);
   }
-  await runCommand(
-    process.execPath,
-    ['apps/server/scripts/buildSharedDeps.mjs', '--quiet'],
-    { cwd: repoRoot, env },
-  );
   const effectiveBuildDbProviders = resolveServerRuntimeSupportBuildDbProviders({
     serverComponent,
     buildDbProviders,
@@ -236,6 +231,7 @@ export async function buildServerBinaryArtifactPayload({
       externals: [],
       bunCommand,
       runCommand,
+      buildRunnerEntrypoint: join(repoRoot, 'packages', 'cli-common', 'scripts', 'buildServerBunBinary.mjs'),
     });
   }
   if (includeRuntimeSupport && migrationEntrypoint) {

@@ -7,20 +7,29 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
+      "happier-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
     "./manifest": {
+      "happier-source": "./src/manifest.ts",
       "types": "./dist/manifest.d.ts",
       "default": "./dist/manifest.js"
     },
     "./agent": {
+      "happier-source": "./src/agent/index.ts",
       "types": "./dist/agent/index.d.ts",
       "default": "./dist/agent/index.js"
     },
     "./agent/auth/status": {
+      "happier-source": "./src/agent/auth/status.ts",
       "types": "./dist/agent/auth/status.d.ts",
       "default": "./dist/agent/auth/status.js"
+    },
+    "./agent/acp/transport": {
+      "happier-source": "./src/agent/acp/transport.ts",
+      "types": "./dist/agent/acp/transport.d.ts",
+      "default": "./dist/agent/acp/transport.js"
     }
   },
   "files": [

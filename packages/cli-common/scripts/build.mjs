@@ -119,6 +119,7 @@ async function runTscBuild({
   const invocation = resolveTypeScriptBuildInvocation({
     packageDir,
     outDir: stagingDistDir,
+    env,
   });
   runChecked(invocation.command, invocation.args, { cwd: packageDir, env, stdio }, runCommandImpl);
 }

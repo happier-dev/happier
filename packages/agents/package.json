@@ -7,130 +7,172 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
+      "happier-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
     "./permissions": {
+      "happier-source": "./src/permissions/index.ts",
       "types": "./dist/permissions/index.d.ts",
       "default": "./dist/permissions/index.js"
     },
     "./acpPresets": {
+      "happier-source": "./src/acpPresets.ts",
       "types": "./dist/acpPresets.d.ts",
       "default": "./dist/acpPresets.js"
     },
     "./agent-ids": {
+      "happier-source": "./src/generated/agentIds.ts",
       "types": "./dist/generated/agentIds.d.ts",
       "default": "./dist/generated/agentIds.js"
     },
     "./manifest": {
+      "happier-source": "./src/manifest.ts",
       "types": "./dist/manifest.d.ts",
       "default": "./dist/manifest.js"
     },
     "./cli/runtime": {
+      "happier-source": "./src/cli/runtime.ts",
       "types": "./dist/cli/runtime.d.ts",
       "default": "./dist/cli/runtime.js"
     },
     "./process/shellCommand": {
+      "happier-source": "./src/process/shellCommand.ts",
       "types": "./dist/process/shellCommand.d.ts",
       "default": "./dist/process/shellCommand.js"
     },
     "./definitions/agent-capabilities": {
+      "happier-source": "./src/definitions/agentCapabilityProjection.ts",
       "types": "./dist/definitions/agentCapabilityProjection.d.ts",
       "default": "./dist/definitions/agentCapabilityProjection.js"
     },
     "./definitions": {
+      "happier-source": "./src/definitions/index.ts",
       "types": "./dist/definitions/index.d.ts",
       "default": "./dist/definitions/index.js"
     },
     "./compat/customAcp": {
+      "happier-source": "./src/compat/customAcp.ts",
       "types": "./dist/compat/customAcp.d.ts",
       "default": "./dist/compat/customAcp.js"
     },
     "./session/controls/checkpoints": {
+      "happier-source": "./src/session/controls/checkpoints.ts",
       "types": "./dist/session/controls/checkpoints.d.ts",
       "default": "./dist/session/controls/checkpoints.js"
     },
     "./session/state/metadataWriters": {
+      "happier-source": "./src/session/state/metadataWriters.ts",
       "types": "./dist/session/state/metadataWriters.d.ts",
       "default": "./dist/session/state/metadataWriters.js"
     },
     "./runtime/session/preAdmissionBuffer": {
+      "happier-source": "./src/runtime/session/preAdmissionBuffer.ts",
       "types": "./dist/runtime/session/preAdmissionBuffer.d.ts",
       "default": "./dist/runtime/session/preAdmissionBuffer.js"
     },
     "./runtime/session/runtimeConfigUpdateOutcome": {
+      "happier-source": "./src/runtime/session/runtimeConfigUpdateOutcome.ts",
       "types": "./dist/runtime/session/runtimeConfigUpdateOutcome.d.ts",
       "default": "./dist/runtime/session/runtimeConfigUpdateOutcome.js"
     },
     "./runtime/session/recoverableTurnFailurePolicy": {
+      "happier-source": "./src/runtime/session/recoverableTurnFailurePolicy.ts",
       "types": "./dist/runtime/session/recoverableTurnFailurePolicy.d.ts",
       "default": "./dist/runtime/session/recoverableTurnFailurePolicy.js"
     },
     "./runtime/session/scopedServices": {
+      "happier-source": "./src/runtime/session/scopedServices.ts",
       "types": "./dist/runtime/session/scopedServices.d.ts",
       "default": "./dist/runtime/session/scopedServices.js"
     },
     "./runtime/surfaces": {
+      "happier-source": "./src/runtime/surfaces/index.ts",
       "types": "./dist/runtime/surfaces/index.d.ts",
       "default": "./dist/runtime/surfaces/index.js"
     },
     "./runtime/facets/transcriptDispatch": {
+      "happier-source": "./src/runtime/facets/transcriptDispatch.ts",
       "types": "./dist/runtime/facets/transcriptDispatch.d.ts",
       "default": "./dist/runtime/facets/transcriptDispatch.js"
     },
     "./runtime/facets/transcriptSource": {
+      "happier-source": "./src/runtime/facets/transcriptSource.ts",
       "types": "./dist/runtime/facets/transcriptSource.d.ts",
       "default": "./dist/runtime/facets/transcriptSource.js"
     },
     "./runtime/terminal/control": {
+      "happier-source": "./src/runtime/terminal/control.ts",
       "types": "./dist/runtime/terminal/control.d.ts",
       "default": "./dist/runtime/terminal/control.js"
     },
     "./runtime/terminal/inputReadiness": {
+      "happier-source": "./src/runtime/terminal/inputReadiness.ts",
       "types": "./dist/runtime/terminal/inputReadiness.d.ts",
       "default": "./dist/runtime/terminal/inputReadiness.js"
     },
     "./runtime/terminal/promptWriteTimeout": {
+      "happier-source": "./src/runtime/terminal/promptWriteTimeout.ts",
       "types": "./dist/runtime/terminal/promptWriteTimeout.d.ts",
       "default": "./dist/runtime/terminal/promptWriteTimeout.js"
     },
     "./session/controls/metadataKeys": {
+      "happier-source": "./src/session/controls/metadataKeys.ts",
       "types": "./dist/session/controls/metadataKeys.d.ts",
       "default": "./dist/session/controls/metadataKeys.js"
     },
     "./session/controls/vendorResumePolicy": {
+      "happier-source": "./src/session/controls/vendorResumePolicy.ts",
       "types": "./dist/session/controls/vendorResumePolicy.d.ts",
       "default": "./dist/session/controls/vendorResumePolicy.js"
     },
     "./session/state/bindings/metadataKeys": {
+      "happier-source": "./src/session/state/bindings/metadataKeys.ts",
       "types": "./dist/session/state/bindings/metadataKeys.d.ts",
       "default": "./dist/session/state/bindings/metadataKeys.js"
     },
+    "./runtime/identity/resolveAgentIdFromSessionMetadata": {
+      "happier-source": "./src/resolveAgentIdFromSessionMetadata.ts",
+      "types": "./dist/resolveAgentIdFromSessionMetadata.d.ts",
+      "default": "./dist/resolveAgentIdFromSessionMetadata.js"
+    },
+    "./session/timestamps/monotonic": {
+      "happier-source": "./src/session/timestamps/monotonic.ts",
+      "types": "./dist/session/timestamps/monotonic.d.ts",
+      "default": "./dist/session/timestamps/monotonic.js"
+    },
     "./session/state/metadataReaders": {
+      "happier-source": "./src/session/state/metadataReaders.ts",
       "types": "./dist/session/state/metadataReaders.d.ts",
       "default": "./dist/session/state/metadataReaders.js"
     },
     "./session/state/types": {
+      "happier-source": "./src/session/state/_types.ts",
       "types": "./dist/session/state/_types.d.ts",
       "default": "./dist/session/state/_types.js"
     },
     "./permissions/privilege": {
+      "happier-source": "./src/permissions/privilege.ts",
       "types": "./dist/permissions/privilege.d.ts",
       "default": "./dist/permissions/privilege.js"
     },
     "./request-auth": {
+      "happier-source": "./src/requestAuth/index.ts",
       "types": "./dist/requestAuth/index.d.ts",
       "default": "./dist/requestAuth/index.js"
     },
     "./voice": {
+      "happier-source": "./src/voice/index.ts",
       "types": "./dist/voice/index.d.ts",
       "default": "./dist/voice/index.js"
     },
     "./runtime/connected-services-adapter": {
+      "happier-source": "./src/runtime/adjunctAdapters/connectedServices.ts",
       "types": "./dist/runtime/adjunctAdapters/connectedServices.d.ts",
       "default": "./dist/runtime/adjunctAdapters/connectedServices.js"
     },
     "./runtime/identity/session-metadata": {
+      "happier-source": "./src/runtime/identity/readSessionMetadataRuntimeDescriptor.ts",
       "types": "./dist/runtime/identity/readSessionMetadataRuntimeDescriptor.d.ts",
       "default": "./dist/runtime/identity/readSessionMetadataRuntimeDescriptor.js"
     }

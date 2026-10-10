@@ -1,6 +1,7 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 
-export const InstallableSourceKindSchema = z.enum([
+export const InstallableSourceKindSchema = lazyZodSchema(() => z.enum([
   'github_release_binary',
   'managed_package',
   'managed_pypi_wheel_asset',
@@ -8,22 +9,22 @@ export const InstallableSourceKindSchema = z.enum([
   'first_party_runtime',
   'vendor_recipe',
   'manual_only',
-]);
+]));
 export type InstallableSourceKind = z.infer<typeof InstallableSourceKindSchema>;
 
-export const ManagedPypiWheelAssetPlatformSchema = z.enum([
+export const ManagedPypiWheelAssetPlatformSchema = lazyZodSchema(() => z.enum([
   'darwin-arm64',
   'linux-x64',
   'linux-arm64',
   'win32-x64',
   'win32-arm64',
-]);
+]));
 
-export const ManagedPypiWheelAssetInstallConsentSchema = z.enum(['host_managed_required']);
+export const ManagedPypiWheelAssetInstallConsentSchema = lazyZodSchema(() => z.enum(['host_managed_required']));
 
-export const ManagedPypiWheelAssetAutoUpdateModeSchema = z.enum(['off', 'notify', 'auto']);
+export const ManagedPypiWheelAssetAutoUpdateModeSchema = lazyZodSchema(() => z.enum(['off', 'notify', 'auto']));
 
-export const GitHubReleaseBinaryInstallableSourceSchema = z.object({
+export const GitHubReleaseBinaryInstallableSourceSchema = lazyZodSchema(() => z.object({
   kind: z.literal('github_release_binary'),
   repo: z.string().trim().regex(/^[^/\s]+\/[^/\s]+$/),
   distTag: z.string().trim().min(1).optional(),
@@ -36,16 +37,16 @@ export const GitHubReleaseBinaryInstallableSourceSchema = z.object({
     configOverridesEnvironmentKey: z.string().trim().min(1),
     configOverrideArgument: z.string().trim().min(1),
   }).strict().optional(),
-}).strict();
+}).strict());
 
-export const ManagedPackageInstallableSourceSchema = z.object({
+export const ManagedPackageInstallableSourceSchema = lazyZodSchema(() => z.object({
   kind: z.literal('managed_package'),
   packageName: z.string().trim().min(1),
   packageManager: z.literal('managed_js_runtime'),
   version: z.string().trim().min(1).optional(),
-}).strict();
+}).strict());
 
-export const ManagedPypiWheelAssetInstallableSourceSchema = z.object({
+export const ManagedPypiWheelAssetInstallableSourceSchema = lazyZodSchema(() => z.object({
   kind: z.literal('managed_pypi_wheel_asset'),
   distribution: z.string().trim().toLowerCase().regex(/^[a-z0-9]+(?:[-_.][a-z0-9]+)*$/),
   versionSpecifier: z.string().trim().min(1),
@@ -80,11 +81,9 @@ export const ManagedPypiWheelAssetInstallableSourceSchema = z.object({
   trustedPublisher: z.string().trim().min(1).optional(),
   maxWheelSizeBytes: z.number().int().positive().optional(),
   maxAssetSizeBytes: z.number().int().positive().optional(),
-}).strict();
+}).strict());
 
-export const PinnedArchivePlatformSchema = ManagedPypiWheelAssetPlatformSchema;
-
-export const PinnedArchiveInstallableAssetSchema = z.object({
+export const PinnedArchiveInstallableAssetSchema = lazyZodSchema(() => z.object({
   archiveUrl: z.string().url().refine((value) => value.startsWith('https://'), 'Pinned archive URL must use HTTPS'),
   sha256: z.string().regex(/^[0-9a-f]{64}$/),
   /** Known download bytes for this exact pinned archive; presentation metadata, not an extraction limit. */
@@ -94,18 +93,21 @@ export const PinnedArchiveInstallableAssetSchema = z.object({
     return value.split(/[\\/]/).every((segment) => segment !== '' && segment !== '.' && segment !== '..');
   }, 'Pinned archive executable path must be a safe relative path'),
   args: z.array(z.string()).optional(),
-}).strict();
+}).strict());
 export type PinnedArchiveInstallableAsset = z.infer<typeof PinnedArchiveInstallableAssetSchema>;
 
-export const PinnedArchiveAssetsByPlatformSchema = z.object({
+export const PinnedArchiveAssetsByPlatformSchema = lazyZodSchema(() => z.object({
   'darwin-arm64': PinnedArchiveInstallableAssetSchema.optional(),
+  'darwin-x64': PinnedArchiveInstallableAssetSchema.optional(),
   'linux-x64': PinnedArchiveInstallableAssetSchema.optional(),
   'linux-arm64': PinnedArchiveInstallableAssetSchema.optional(),
   'win32-x64': PinnedArchiveInstallableAssetSchema.optional(),
   'win32-arm64': PinnedArchiveInstallableAssetSchema.optional(),
-}).strict().refine((assets) => Object.values(assets).some(Boolean), 'Pinned archive source requires at least one platform asset');
+}).strict().refine((assets) => Object.values(assets).some(Boolean), 'Pinned archive source requires at least one platform asset'));
 
-export const PinnedArchiveExtractionLimitsSchema = z.object({
+export const PinnedArchivePlatformSchema = lazyZodSchema(() => PinnedArchiveAssetsByPlatformSchema.keyof());
+
+export const PinnedArchiveExtractionLimitsSchema = lazyZodSchema(() => z.object({
   maxArchiveBytes: z.number().int().positive().optional(),
   maxFileBytes: z.number().int().positive().optional(),
   maxExpandedBytes: z.number().int().positive().optional(),
@@ -125,7 +127,7 @@ export const PinnedArchiveExtractionLimitsSchema = z.object({
       message: 'Per-file extraction limit must not exceed the cumulative expanded-byte limit',
     });
   }
-});
+}));
 export type PinnedArchiveExtractionLimits = z.infer<typeof PinnedArchiveExtractionLimitsSchema>;
 
 /**
@@ -133,32 +135,32 @@ export type PinnedArchiveExtractionLimits = z.infer<typeof PinnedArchiveExtracti
  * pinned, so there is no version discovery: the declared `version` is both the
  * installed and the available version.
  */
-export const PinnedArchiveInstallableSourceSchema = z.object({
+export const PinnedArchiveInstallableSourceSchema = lazyZodSchema(() => z.object({
   kind: z.literal('pinned_archive'),
   version: z.string().trim().min(1),
   archiveExtractionLimits: PinnedArchiveExtractionLimitsSchema.optional(),
   assetsByPlatform: PinnedArchiveAssetsByPlatformSchema,
-}).strict();
+}).strict());
 
-export const VendorRecipeInstallableSourceSchema = z.object({
+export const VendorRecipeInstallableSourceSchema = lazyZodSchema(() => z.object({
   kind: z.literal('vendor_recipe'),
   recipeId: z.string().trim().min(1),
   commandsPreview: z.array(z.string().trim().min(1)).min(1),
-}).strict();
+}).strict());
 
-export const ManualOnlyInstallableSourceSchema = z.object({
+export const ManualOnlyInstallableSourceSchema = lazyZodSchema(() => z.object({
   kind: z.literal('manual_only'),
   setupUrl: z.string().trim().url().optional(),
   instructionsKey: z.string().trim().min(1).optional(),
-}).strict();
+}).strict());
 
 /** Host-owned optional runtimes use the verified release matching the running CLI. */
-export const FirstPartyRuntimeInstallableSourceSchema = z.object({
+export const FirstPartyRuntimeInstallableSourceSchema = lazyZodSchema(() => z.object({
   kind: z.literal('first_party_runtime'),
   componentId: z.enum(['happier-memory-runtime', 'happier-voice-runtime', 'happier-difftastic']),
-}).strict();
+}).strict());
 
-export const InstallableSourceSchema = z.discriminatedUnion('kind', [
+export const InstallableSourceSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   FirstPartyRuntimeInstallableSourceSchema,
   GitHubReleaseBinaryInstallableSourceSchema,
   ManagedPackageInstallableSourceSchema,
@@ -166,5 +168,5 @@ export const InstallableSourceSchema = z.discriminatedUnion('kind', [
   PinnedArchiveInstallableSourceSchema,
   VendorRecipeInstallableSourceSchema,
   ManualOnlyInstallableSourceSchema,
-]);
+]));
 export type InstallableSource = z.infer<typeof InstallableSourceSchema>;

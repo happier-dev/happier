@@ -10,11 +10,31 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
-    "./react": { "types": "./dist/react/index.d.ts", "default": "./dist/react/index.js" }
+    ".": {
+      "happier-source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./react": {
+      "happier-source": "./src/react/index.tsx",
+      "types": "./dist/react/index.d.ts",
+      "default": "./dist/react/index.js"
+    }
   },
-  "files": ["dist", "README.md", "API.md", "api-surface.json", "api-declarations.md"],
-  "happier": { "publicSdkRelease": { "posture": "developer_preview", "supportPolicy": "README.md#release-posture", "externalPublicationRequiresApproval": true } },
+  "files": [
+    "dist",
+    "README.md",
+    "API.md",
+    "api-surface.json",
+    "api-declarations.md"
+  ],
+  "happier": {
+    "publicSdkRelease": {
+      "posture": "developer_preview",
+      "supportPolicy": "README.md#release-posture",
+      "externalPublicationRequiresApproval": true
+    }
+  },
   "scripts": {
     "test": "../../apps/stack/bin/hstack-exec --script=test:local",
     "test:local": "vitest run --config ./vitest.config.ts && node --test scripts/*.test.mjs",
@@ -39,9 +59,27 @@
     "test:finite": "yarn -s test:local",
     "typecheck:finite": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.tests.json"
   },
-  "dependencies": { "@happier-dev/protocol": "0.0.0" },
-  "bundledDependencies": ["@happier-dev/protocol"],
-  "peerDependencies": { "react": ">=18.0.0" },
-  "peerDependenciesMeta": { "react": { "optional": true } },
-  "devDependencies": { "@types/react": "~19.2.10", "@types/react-dom": "~19.1.7", "jsdom": "^26.1.0", "react": "19.2.0", "react-dom": "19.2.0", "vitest": "^3.2.4", "typescript": "^5.9.2" }
+  "dependencies": {
+    "@happier-dev/protocol": "0.0.0"
+  },
+  "bundledDependencies": [
+    "@happier-dev/protocol"
+  ],
+  "peerDependencies": {
+    "react": ">=18.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.10",
+    "@types/react-dom": "~19.1.7",
+    "jsdom": "^26.1.0",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "vitest": "^3.2.4",
+    "typescript": "^5.9.2"
+  }
 }

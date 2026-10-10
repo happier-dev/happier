@@ -1,7 +1,7 @@
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { rename as renameFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -11,6 +11,33 @@ import * as buildScript from './build.mjs';
 const { buildPackageDistAtomically } = buildScript;
 
 describe('cli-common atomic build contract', () => {
+  it('emits source-runtime code but checks public package publication before replacing last-green output', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'happier-cli-common-runtime-mode-'));
+    try {
+      const packageDir = join(root, 'packages', 'cli-common');
+      mkdirSync(join(packageDir, 'src'), { recursive: true });
+      symlinkSync(resolve(import.meta.dirname, '../../../node_modules'), join(root, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
+      const packageJson = { name: '@fixture/cli-common', type: 'module', exports: { '.': './dist/index.js' } };
+      writeFileSync(join(packageDir, 'package.json'), JSON.stringify(packageJson));
+      writeFileSync(join(packageDir, 'tsconfig.json'), JSON.stringify({
+        compilerOptions: { target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext', rootDir: 'src', strict: true, noEmitOnError: true },
+        include: ['src/**/*.ts'],
+      }));
+      writeFileSync(join(packageDir, 'src/index.ts'), 'export const value: string = 42;\n');
+      // Keep the real compiler and its authenticated containing admission;
+      // this fixture does not replace the OS/process boundary.
+      const env = { ...process.env, HAPPIER_WORKSPACE_BUILD_MODE: 'source-dev', npm_lifecycle_event: 'build' };
+      await buildPackageDistAtomically({ packageDir, packageJson, env });
+      const prior = readFileSync(join(packageDir, 'dist/index.js'), 'utf8');
+      expect(prior).toContain('42');
+      await expect(buildPackageDistAtomically({ packageDir, packageJson, env: { ...env, npm_lifecycle_event: 'prepack' } }))
+        .rejects.toThrow(/failed with code/);
+      expect(readFileSync(join(packageDir, 'dist/index.js'), 'utf8')).toBe(prior);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('keeps the build script helper-only without exporting a main entrypoint', () => {
     expect(buildScript).toMatchObject({
       buildPackageDistAtomically: expect.any(Function),
@@ -62,6 +89,8 @@ describe('cli-common atomic build contract', () => {
         'tsconfig.json',
         '--outDir',
         '/repo/packages/cli-common/.dist-stage/dist',
+        '--noCheck',
+        'false',
       ],
     });
   });

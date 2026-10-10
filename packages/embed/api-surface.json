@@ -1,0 +1,107 @@
+{
+  "schemaVersion": 1,
+  "packageName": "@happier-dev/embed",
+  "entrypoints": [
+    {
+      "specifier": ".",
+      "declarationModule": "dist/index.d.ts"
+    },
+    {
+      "specifier": "./react",
+      "declarationModule": "dist/react/index.d.ts"
+    }
+  ],
+  "symbols": [
+    {
+      "specifier": ".",
+      "exportName": "EmbedColorTokenId",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "EmbedColorTokenId"
+    },
+    {
+      "specifier": ".",
+      "exportName": "EmbedCredential",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "EmbedCredential"
+    },
+    {
+      "specifier": ".",
+      "exportName": "EmbedCredentialRequest",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "EmbedCredentialRequest"
+    },
+    {
+      "specifier": ".",
+      "exportName": "EmbedError",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "EmbedError"
+    },
+    {
+      "specifier": ".",
+      "exportName": "EmbedHandle",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "EmbedHandle"
+    },
+    {
+      "specifier": ".",
+      "exportName": "EmbedOptions",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "EmbedOptions"
+    },
+    {
+      "specifier": ".",
+      "exportName": "EmbedSessionCreated",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "EmbedSessionCreated"
+    },
+    {
+      "specifier": ".",
+      "exportName": "EmbedState",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "EmbedState"
+    },
+    {
+      "specifier": ".",
+      "exportName": "EmbedStyle",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "EmbedStyle"
+    },
+    {
+      "specifier": ".",
+      "exportName": "EmbedUpdate",
+      "kind": "type",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "EmbedUpdate"
+    },
+    {
+      "specifier": ".",
+      "exportName": "mountHappierSession",
+      "kind": "value",
+      "declarationModule": "dist/index.d.ts",
+      "declarationExport": "mountHappierSession"
+    },
+    {
+      "specifier": "./react",
+      "exportName": "HappierSession",
+      "kind": "value",
+      "declarationModule": "dist/react/index.d.ts",
+      "declarationExport": "HappierSession"
+    },
+    {
+      "specifier": "./react",
+      "exportName": "HappierSessionProps",
+      "kind": "type",
+      "declarationModule": "dist/react/index.d.ts",
+      "declarationExport": "HappierSessionProps"
+    }
+  ]
+}

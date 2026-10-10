@@ -94,6 +94,24 @@ export function resolveWorkspaceSource(packages, specifier) {
   return resolve(owner.root, replacement === undefined ? target : target.replaceAll('*', replacement));
 }
 
+/** Declaration emission consumes the same authored exports as source runtime
+ * imports, even when a nearer installed workspace copy carries stale source. */
+export function workspaceSourceCompilerPaths(packages) {
+  const paths = {};
+  for (const [name, { manifest }] of packages) {
+    const exports = manifest.exports;
+    const declarations = Object.keys(exports ?? {}).some(key => key.startsWith('.'))
+      ? Object.entries(exports) : [['.', exports]];
+    for (const [key, declaration] of declarations) {
+      const target = sourceConditionTarget(declaration);
+      if (typeof target !== 'string' || !target.startsWith('./') || /(?:^|\/)(?:dist|package-dist)\//.test(target)) continue;
+      const specifier = key === '.' ? name : name + key.slice(1);
+      paths[specifier] = [resolveWorkspaceSource(packages, specifier)];
+    }
+  }
+  return paths;
+}
+
 /** CLI exports/imports and the generated semantic projection are the entry
  * authority for both retained source QA and native artifact construction. */
 export async function readCliSourceEntries({ repoDir, manifest, transform,

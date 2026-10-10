@@ -22,30 +22,37 @@
   },
   "exports": {
     ".": {
+      "happier-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
     "./manifest": {
+      "happier-source": "./src/manifest.ts",
       "types": "./dist/manifest.d.ts",
       "default": "./dist/manifest.js"
     },
     "./agent/auth/resolution": {
+      "happier-source": "./src/agent/auth/resolution.ts",
       "types": "./dist/agent/auth/resolution.d.ts",
       "default": "./dist/agent/auth/resolution.js"
     },
     "./agent/diff/toolResult": {
+      "happier-source": "./src/agent/diff/toolResult.ts",
       "types": "./dist/agent/diff/toolResult.d.ts",
       "default": "./dist/agent/diff/toolResult.js"
     },
     "./agent/acp/toolNames": {
+      "happier-source": "./src/agent/acp/toolNames.ts",
       "types": "./dist/agent/acp/toolNames.d.ts",
       "default": "./dist/agent/acp/toolNames.js"
     },
     "./agent/acp/definition": {
+      "happier-source": "./src/agent/acp/definition.ts",
       "types": "./dist/agent/acp/definition.d.ts",
       "default": "./dist/agent/acp/definition.js"
     },
     "./agent/promptAssets": {
+      "happier-source": "./src/agent/promptAssets/index.ts",
       "types": "./dist/agent/promptAssets/index.d.ts",
       "default": "./dist/agent/promptAssets/index.js"
     }

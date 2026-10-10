@@ -7,52 +7,64 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
+      "happier-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
     "./minisign": {
+      "happier-source": "./src/minisign.ts",
       "types": "./dist/minisign.d.ts",
       "default": "./dist/minisign.js"
     },
     "./checksums": {
+      "happier-source": "./src/checksums.ts",
       "types": "./dist/checksums.d.ts",
       "default": "./dist/checksums.js"
     },
     "./releaseArtifactVerification": {
+      "happier-source": "./src/releaseArtifactVerification.ts",
       "types": "./dist/releaseArtifactVerification.d.ts",
       "default": "./dist/releaseArtifactVerification.js"
     },
     "./assets": {
+      "happier-source": "./src/assets.ts",
       "types": "./dist/assets.d.ts",
       "default": "./dist/assets.js"
     },
     "./archiveExtraction": {
+      "happier-source": "./src/archiveExtraction.ts",
       "types": "./dist/archiveExtraction.d.ts",
       "default": "./dist/archiveExtraction.js"
     },
     "./archiveSymlinkContainment": {
+      "happier-source": "./src/archiveSymlinkContainment.ts",
       "types": "./dist/archiveSymlinkContainment.d.ts",
       "default": "./dist/archiveSymlinkContainment.js"
     },
     "./verifiedDownload": {
+      "happier-source": "./src/verifiedDownload.ts",
       "types": "./dist/verifiedDownload.d.ts",
       "default": "./dist/verifiedDownload.js"
     },
     "./github": {
+      "happier-source": "./src/github.ts",
       "types": "./dist/github.d.ts",
       "default": "./dist/github.js"
     },
     "./releaseRings": {
+      "happier-source": "./src/releaseRings.ts",
       "types": "./dist/releaseRings.d.ts",
       "import": "./dist/releaseRings.js",
       "require": "./releaseRings.cjs",
       "default": "./dist/releaseRings.js"
     },
     "./releaseProducts": {
+      "happier-source": "./src/releaseProducts.ts",
       "types": "./dist/releaseProducts.d.ts",
       "default": "./dist/releaseProducts.js"
     },
     "./releaseManifest": {
+      "happier-source": "./src/releaseManifest.ts",
       "types": "./dist/releaseManifest.d.ts",
       "default": "./dist/releaseManifest.js"
     }

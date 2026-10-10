@@ -5,8 +5,20 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "exports": { ".": { "types": "./dist/index.d.ts", "react-native": "./dist/index.js", "import": "./dist/index.js", "default": "./dist/index.js" } },
-  "files": ["dist", "package.json", "README.md"],
+  "exports": {
+    ".": {
+      "happier-source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "react-native": "./dist/index.js",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "package.json",
+    "README.md"
+  ],
   "scripts": {
     "build": "node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
     "typecheck": "../../apps/stack/bin/hstack-exec --script=typecheck:local",
@@ -19,5 +31,8 @@
     "@happier-dev/protocol": "0.0.0",
     "socket.io-client": "^4.8.1"
   },
-  "devDependencies": { "socket.io": "^4.8.1", "vitest": "^3.2.4" }
+  "devDependencies": {
+    "socket.io": "^4.8.1",
+    "vitest": "^3.2.4"
+  }
 }

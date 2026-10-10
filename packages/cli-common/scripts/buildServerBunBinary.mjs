@@ -1,6 +1,10 @@
 #!/usr/bin/env bun
 
-import { dirname, resolve } from 'node:path';
+import { createRequire } from 'node:module';
+import { dirname, join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+import { SOURCE_CONDITION, createWorkspaceSourceResolver, readWorkspacePackages } from '../sourceRuntimeEntries.mjs';
 
 function readArg(name) {
   const prefix = `${name}=`;
@@ -24,15 +28,19 @@ if (!entrypointArg || !outfileArg || !target) {
 }
 const entrypoint = resolve(entrypointArg);
 const outfile = resolve(outfileArg);
+const repoRoot = process.cwd();
+const workspacePackages = await readWorkspacePackages(repoRoot);
+const requireFromProject = createRequire(pathToFileURL(join(repoRoot, 'apps/server/package.json')));
 
 const result = await Bun.build({
   entrypoints: [entrypoint],
+  conditions: [SOURCE_CONDITION],
   external,
   compile: {
     target,
     outfile,
   },
-  plugins: [{
+  plugins: [createWorkspaceSourceResolver({ workspacePackages, requireFromProject, externalPackages: [] }), {
     name: 'load-packaged-sharp-addon',
     setup(build) {
       // Sharp selects its native binding through an opaque computed require.

@@ -7,18 +7,22 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
+      "happier-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
     "./manifest": {
+      "happier-source": "./src/manifest.ts",
       "types": "./dist/manifest.d.ts",
       "default": "./dist/manifest.js"
     },
     "./agent": {
+      "happier-source": "./src/agent/index.ts",
       "types": "./dist/agent/index.d.ts",
       "default": "./dist/agent/index.js"
     },
     "./agent/promptAssets": {
+      "happier-source": "./src/agent/promptAssets/index.ts",
       "types": "./dist/agent/promptAssets/index.d.ts",
       "default": "./dist/agent/promptAssets/index.js"
     }

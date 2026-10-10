@@ -282,8 +282,6 @@ export async function resolveIrohNativeServerSidecarEntries({
   const packageTargetRoot = join('node_modules', '@happier-dev', 'iroh-native');
   const requiredEntries = [
     ['package.json', 'package.json'],
-    ['dist', 'dist'],
-    ['scripts', 'scripts'],
   ] as const;
   const entries: StageEntry[] = [];
   for (const [sourceRelativePath, targetRelativePath] of requiredEntries) {

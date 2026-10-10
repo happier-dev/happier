@@ -7,78 +7,97 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
+      "happier-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
     "./manifest": {
+      "happier-source": "./src/manifest.ts",
       "types": "./dist/manifest.d.ts",
       "default": "./dist/manifest.js"
     },
     "./agent/auth/state": {
+      "happier-source": "./src/agent/auth/state.ts",
       "types": "./dist/agent/auth/state.d.ts",
       "default": "./dist/agent/auth/state.js"
     },
     "./agent/auth/services/materialize": {
+      "happier-source": "./src/agent/auth/services/materialize.ts",
       "types": "./dist/agent/auth/services/materialize.d.ts",
       "default": "./dist/agent/auth/services/materialize.js"
     },
     "./agent/auth/services/resumeReachability": {
+      "happier-source": "./src/agent/auth/services/resumeReachability.ts",
       "types": "./dist/agent/auth/services/resumeReachability.d.ts",
       "default": "./dist/agent/auth/services/resumeReachability.js"
     },
     "./agent/auth/services/selection": {
+      "happier-source": "./src/agent/auth/services/selection.ts",
       "types": "./dist/agent/auth/services/selection.d.ts",
       "default": "./dist/agent/auth/services/selection.js"
     },
     "./agent/auth/services/stateSharing": {
+      "happier-source": "./src/agent/auth/services/stateSharing.ts",
       "types": "./dist/agent/auth/services/stateSharing.d.ts",
       "default": "./dist/agent/auth/services/stateSharing.js"
     },
     "./agent/auth/services/switchContinuity": {
+      "happier-source": "./src/agent/auth/services/switchContinuity.ts",
       "types": "./dist/agent/auth/services/switchContinuity.d.ts",
       "default": "./dist/agent/auth/services/switchContinuity.js"
     },
     "./agent/auth/services/usageLimit": {
+      "happier-source": "./src/agent/auth/services/usageLimit.ts",
       "types": "./dist/agent/auth/services/usageLimit.d.ts",
       "default": "./dist/agent/auth/services/usageLimit.js"
     },
     "./agent/cli/auth": {
+      "happier-source": "./src/agent/cli/auth.ts",
       "types": "./dist/agent/cli/auth.d.ts",
       "default": "./dist/agent/cli/auth.js"
     },
     "./agent/identity/affinity": {
+      "happier-source": "./src/agent/identity/affinity.ts",
       "types": "./dist/agent/identity/affinity.d.ts",
       "default": "./dist/agent/identity/affinity.js"
     },
     "./agent/identity/runtimeDescriptor": {
+      "happier-source": "./src/agent/identity/runtimeDescriptor.ts",
       "types": "./dist/agent/identity/runtimeDescriptor.d.ts",
       "default": "./dist/agent/identity/runtimeDescriptor.js"
     },
     "./agent/identity/session": {
+      "happier-source": "./src/agent/identity/session.ts",
       "types": "./dist/agent/identity/session.d.ts",
       "default": "./dist/agent/identity/session.js"
     },
     "./agent/preferences/session": {
+      "happier-source": "./src/agent/preferences/session.ts",
       "types": "./dist/agent/preferences/session.d.ts",
       "default": "./dist/agent/preferences/session.js"
     },
     "./agent/preflight/models": {
+      "happier-source": "./src/agent/preflight/models.ts",
       "types": "./dist/agent/preflight/models.d.ts",
       "default": "./dist/agent/preflight/models.js"
     },
     "./agent/surfaces/sessions/fork/descriptor": {
+      "happier-source": "./src/agent/surfaces/sessions/fork/descriptor.ts",
       "types": "./dist/agent/surfaces/sessions/fork/descriptor.d.ts",
       "default": "./dist/agent/surfaces/sessions/fork/descriptor.js"
     },
     "./agent/surfaces/sessions/handoff/exportRecords": {
+      "happier-source": "./src/agent/surfaces/sessions/handoff/exportRecords.ts",
       "types": "./dist/agent/surfaces/sessions/handoff/exportRecords.d.ts",
       "default": "./dist/agent/surfaces/sessions/handoff/exportRecords.js"
     },
     "./agent/surfaces/sessions/handoff/descriptor": {
+      "happier-source": "./src/agent/surfaces/sessions/handoff/descriptor.ts",
       "types": "./dist/agent/surfaces/sessions/handoff/descriptor.d.ts",
       "default": "./dist/agent/surfaces/sessions/handoff/descriptor.js"
     },
     "./protocol/runtimeDescriptorV1": {
+      "happier-source": "./src/protocol/runtimeDescriptorV1.ts",
       "types": "./dist/protocol/runtimeDescriptorV1.d.ts",
       "default": "./dist/protocol/runtimeDescriptorV1.js"
     }

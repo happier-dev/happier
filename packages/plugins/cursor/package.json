@@ -7,14 +7,17 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
+      "happier-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
     "./manifest": {
+      "happier-source": "./src/manifest.ts",
       "types": "./dist/manifest.d.ts",
       "default": "./dist/manifest.js"
     },
     "./agent/preflight/models": {
+      "happier-source": "./src/agent/preflight/models.ts",
       "types": "./dist/agent/preflight/models.d.ts",
       "default": "./dist/agent/preflight/models.js"
     }

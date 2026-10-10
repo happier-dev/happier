@@ -589,6 +589,7 @@ export function bundleWorkspacePackage(params: Readonly<{
 function readWorkspacePackageDetails(params: Readonly<{
   packageName: string;
   srcDir: string;
+  distDir?: string;
 }>): Readonly<{
   srcPackageJsonPath: string;
   rawPackageJson: any;
@@ -606,7 +607,7 @@ function readWorkspacePackageDetails(params: Readonly<{
     );
   }
 
-  const distDir = resolve(params.srcDir, 'dist');
+  const distDir = resolve(params.distDir ?? resolve(params.srcDir, 'dist'));
   if (!existsSync(distDir)) {
     throw new Error(`Missing dist/ for ${params.packageName}. Run its build first.`);
   }
@@ -700,6 +701,9 @@ function copyBundledWorkspacePackageContents(params: Readonly<{
     // must remain available, but copying its source target would restore scripts, dev dependencies,
     // and internal workspace edges that the artifact boundary intentionally removed.
     if (targetPath === resolve(params.tempDir, 'package.json')) continue;
+    // dist was copied from the emission owner above. Never reopen workspace
+    // dist for export targets and overwrite a caller-owned source emission.
+    if (relativeTargetPath === 'dist' || relativeTargetPath.startsWith(`dist${sep}`)) continue;
     copyIfExists(resolve(params.srcDir, relativePath), targetPath);
   }
 
@@ -742,6 +746,8 @@ export function bundleWorkspacePackageWithRuntimeDependencies(params: Readonly<{
   packageName: string;
   srcDir: string;
   destDir: string;
+  /** Caller-owned current-source emission; source-runtime builds never require workspace dist. */
+  distDir?: string;
   includeFiles?: string[];
   resolveFromPackageJsonPath?: string;
   dereferenceRootDir?: string;

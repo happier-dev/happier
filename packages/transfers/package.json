@@ -7,10 +7,12 @@
   "types": "./dist/index.d.ts",
   "exports": {
     "./node": {
+      "happier-source": "./src/node.ts",
       "types": "./dist/node.d.ts",
       "default": "./dist/node.js"
     },
     ".": {
+      "happier-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     }

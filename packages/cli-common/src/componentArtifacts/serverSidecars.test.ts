@@ -3,7 +3,38 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { expect, test } from 'vitest';
-import { buildServerRuntimeSupportPayload } from './buildServerBinaryArtifactPayload.js';
+import { buildServerBinaryArtifactPayload, buildServerRuntimeSupportPayload } from './buildServerBinaryArtifactPayload.js';
+
+test.each(['happier-server-light', 'happier-server'] as const)('native %s code compiles main and migration without workspace preparation', async (serverComponent) => {
+  const root = await mkdtemp(join(tmpdir(), 'server-native-source-owner-'));
+  const payloadDir = join(root, 'payload');
+  const entrypoint = join(root, 'apps/server/sources', serverComponent === 'happier-server' ? 'main.ts' : 'main.light.ts');
+  const migrationSource = join(root, 'apps/server/scripts/runtime/migrateFullRuntime.ts');
+  try {
+    for (const path of [entrypoint, migrationSource]) {
+      await mkdir(join(path, '..'), { recursive: true });
+      await writeFile(path, 'export {};');
+    }
+    const compiled: string[] = [];
+    const result = await buildServerBinaryArtifactPayload({
+      repoRoot: root, payloadDir, serverComponent, entrypoint, buildDbProviders: 'postgres', includeRuntimeSupport: false,
+      target: { os: 'linux', arch: 'x64', bunTarget: 'bun-linux-x64-baseline', exeExt: '' },
+      commandProbe: command => command === 'bun',
+      // The external compiler boundary writes the artifact it is asked to emit.
+      compileBinary: async ({ entrypoint: input, outfile, buildRunnerEntrypoint }) => {
+        expect(buildRunnerEntrypoint).toBe(join(root, 'packages/cli-common/scripts/buildServerBunBinary.mjs'));
+        compiled.push(input);
+        await writeFile(outfile, `compiled ${input}`);
+      },
+      runCommand: async () => { throw new Error('native code must not run workspace preparation'); },
+    });
+    expect(compiled).toEqual([entrypoint, migrationSource]);
+    expect(await readFile(join(payloadDir, result.entrypoint), 'utf8')).toContain(entrypoint);
+    expect(await readFile(join(payloadDir, result.migrationEntrypoint!), 'utf8')).toContain(migrationSource);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 import {
   readServerRuntimeSupportIdentity,
@@ -86,14 +117,6 @@ test('server runtime support stages the ordinary Iroh package root and exact tar
         targetPath: join('node_modules', '@happier-dev', 'iroh-native', 'package.json'),
       },
       {
-        sourcePath: join(packageRoot, 'dist'),
-        targetPath: join('node_modules', '@happier-dev', 'iroh-native', 'dist'),
-      },
-      {
-        sourcePath: join(packageRoot, 'scripts'),
-        targetPath: join('node_modules', '@happier-dev', 'iroh-native', 'scripts'),
-      },
-      {
         sourcePath: join(packageRoot, 'native', 'happier-iroh-native-lifecycle.linux-x64.node'),
         targetPath: join(
           'node_modules',
@@ -127,7 +150,7 @@ test('server provider capability is independent of the behavior preset', () => {
   expect(serverRuntimeSupportNeedsPackagedMigration('all')).toBe(true);
 });
 
-test('server support ignores workspace build evidence and stages only the runtime output', async () => {
+test('server support ignores workspace JavaScript and build evidence while staging the native addon', async () => {
   const root = await mkdtemp(join(tmpdir(), 'server-support-build-evidence-'));
   const packageRoot = join(root, 'packages', 'iroh-native');
   const dist = join(packageRoot, 'dist');
@@ -137,6 +160,9 @@ test('server support ignores workspace build evidence and stages only the runtim
     await mkdir(join(packageRoot, 'scripts'), { recursive: true });
     await writeFile(join(packageRoot, 'package.json'), '{"name":"@happier-dev/iroh-native"}\n');
     await writeFile(join(dist, 'nodeNative.js'), 'export const runtime = 1;\n');
+    const nativePath = join(packageRoot, 'native', 'happier-iroh-native-lifecycle.linux-x64.node');
+    await mkdir(join(nativePath, '..'), { recursive: true });
+    await writeFile(nativePath, 'native first');
     const buildRecord = join(dist, '.happier-build-inputs.json');
     await writeFile(buildRecord, JSON.stringify({ builtAt: 'first preparation' }));
     const entries = await resolveIrohNativeServerSidecarEntries({ repoRoot: root, target });
@@ -145,6 +171,8 @@ test('server support ignores workspace build evidence and stages only the runtim
     await writeFile(buildRecord, JSON.stringify({ builtAt: 'second preparation' }));
     expect((await readServerRuntimeSupportIdentity(identityOptions)).fingerprint).toBe(first.fingerprint);
     await writeFile(join(dist, 'nodeNative.js'), 'export const runtime = 2;\n');
+    expect((await readServerRuntimeSupportIdentity(identityOptions)).fingerprint).toBe(first.fingerprint);
+    await writeFile(nativePath, 'native changed');
     expect((await readServerRuntimeSupportIdentity(identityOptions)).fingerprint).not.toBe(first.fingerprint);
 
     const client = join(root, 'client');
@@ -159,8 +187,8 @@ test('server support ignores workspace build evidence and stages only the runtim
       ],
     });
     const stagedDist = join(payloadDir, 'node_modules', '@happier-dev', 'iroh-native', 'dist');
-    await expect(readFile(join(stagedDist, '.happier-build-inputs.json'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
-    expect(await readFile(join(stagedDist, 'nodeNative.js'), 'utf8')).toBe('export const runtime = 2;\n');
+    await expect(readFile(join(stagedDist, 'nodeNative.js'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await readFile(join(payloadDir, 'node_modules/@happier-dev/iroh-native/native', 'happier-iroh-native-lifecycle.linux-x64.node'), 'utf8')).toBe('native changed');
   } finally {
     await rm(root, { recursive: true, force: true });
   }

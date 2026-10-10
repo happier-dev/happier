@@ -7,60 +7,70 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
+      "happier-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "react-native": "./dist/index.js",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
     "./raw": {
+      "happier-source": "./src/raw/index.ts",
       "types": "./dist/raw/index.d.ts",
       "react-native": "./dist/raw/index.js",
       "import": "./dist/raw/index.js",
       "default": "./dist/raw/index.js"
     },
     "./reducer": {
+      "happier-source": "./src/reducer/index.ts",
       "types": "./dist/reducer/index.d.ts",
       "react-native": "./dist/reducer/index.js",
       "import": "./dist/reducer/index.js",
       "default": "./dist/reducer/index.js"
     },
     "./messages": {
+      "happier-source": "./src/messages/index.ts",
       "types": "./dist/messages/index.d.ts",
       "react-native": "./dist/messages/index.js",
       "import": "./dist/messages/index.js",
       "default": "./dist/messages/index.js"
     },
     "./pins": {
+      "happier-source": "./src/pins/index.ts",
       "types": "./dist/pins/index.d.ts",
       "react-native": "./dist/pins/index.js",
       "import": "./dist/pins/index.js",
       "default": "./dist/pins/index.js"
     },
     "./state": {
+      "happier-source": "./src/state/index.ts",
       "types": "./dist/state/index.d.ts",
       "react-native": "./dist/state/index.js",
       "import": "./dist/state/index.js",
       "default": "./dist/state/index.js"
     },
     "./tools": {
+      "happier-source": "./src/tools/index.ts",
       "types": "./dist/tools/index.d.ts",
       "react-native": "./dist/tools/index.js",
       "import": "./dist/tools/index.js",
       "default": "./dist/tools/index.js"
     },
     "./pending": {
+      "happier-source": "./src/pending/index.ts",
       "types": "./dist/pending/index.d.ts",
       "react-native": "./dist/pending/index.js",
       "import": "./dist/pending/index.js",
       "default": "./dist/pending/index.js"
     },
     "./live": {
+      "happier-source": "./src/live/index.ts",
       "types": "./dist/live/index.d.ts",
       "react-native": "./dist/live/index.js",
       "import": "./dist/live/index.js",
       "default": "./dist/live/index.js"
     },
     "./transcript": {
+      "happier-source": "./src/transcript/index.ts",
       "types": "./dist/transcript/index.d.ts",
       "react-native": "./dist/transcript/index.js",
       "import": "./dist/transcript/index.js",

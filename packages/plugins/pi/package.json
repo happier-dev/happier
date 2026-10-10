@@ -7,42 +7,52 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
+      "happier-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
     "./manifest": {
+      "happier-source": "./src/manifest.ts",
       "types": "./dist/manifest.d.ts",
       "default": "./dist/manifest.js"
     },
     "./protocol/runtimeDescriptorV1": {
+      "happier-source": "./src/protocol/runtimeDescriptorV1.ts",
       "types": "./dist/protocol/runtimeDescriptorV1.d.ts",
       "default": "./dist/protocol/runtimeDescriptorV1.js"
     },
     "./protocol/thinking": {
+      "happier-source": "./src/protocol/thinking.ts",
       "types": "./dist/protocol/thinking.d.ts",
       "default": "./dist/protocol/thinking.js"
     },
     "./agent/preflight/models": {
+      "happier-source": "./src/agent/preflight/models.ts",
       "types": "./dist/agent/preflight/models.d.ts",
       "default": "./dist/agent/preflight/models.js"
     },
     "./agent/sessionFiles": {
+      "happier-source": "./src/agent/sessionFiles.ts",
       "types": "./dist/agent/sessionFiles.d.ts",
       "default": "./dist/agent/sessionFiles.js"
     },
     "./agent/runtime/compaction": {
+      "happier-source": "./src/agent/runtime/compaction/index.ts",
       "types": "./dist/agent/runtime/compaction/index.d.ts",
       "default": "./dist/agent/runtime/compaction/index.js"
     },
     "./agent/runtime/rpc/events": {
+      "happier-source": "./src/agent/runtime/rpc/events.ts",
       "types": "./dist/agent/runtime/rpc/events.d.ts",
       "default": "./dist/agent/runtime/rpc/events.js"
     },
     "./agent/runtime/rpc/args": {
+      "happier-source": "./src/agent/runtime/rpc/args.ts",
       "types": "./dist/agent/runtime/rpc/args.d.ts",
       "default": "./dist/agent/runtime/rpc/args.js"
     },
     "./agent/runtime/rpc/permissions": {
+      "happier-source": "./src/agent/runtime/rpc/permissions.ts",
       "types": "./dist/agent/runtime/rpc/permissions.d.ts",
       "default": "./dist/agent/runtime/rpc/permissions.js"
     }

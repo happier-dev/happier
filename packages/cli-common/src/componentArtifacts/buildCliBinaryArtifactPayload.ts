@@ -1,44 +1,62 @@
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
-import { copyFile, cp, mkdir, rm, writeFile } from 'node:fs/promises';
+import {
+  existsSync,
+  lstatSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+} from 'node:fs';
+import { copyFile, cp, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { isAbsolute, join, relative, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, sep } from 'node:path';
+import type {
+  build as EsbuildBuild,
+  transform as EsbuildTransform,
+} from 'esbuild';
+import {
+  SOURCE_CONDITION,
+  bundleCliSourceSidecars,
+  createWorkspaceSourceResolver,
+  readCliSourceEntries,
+  readWorkspacePackages,
+  runtimePackageExports,
+} from '../../sourceRuntimeEntries.mjs';
 
 import cliDistBuildManifest from '../../cliDistBuildManifest.cjs';
 import { getCliBinaryArtifactSupportTargetUnavailableReason } from '../../componentArtifactTarget.mjs';
-import { BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH as BUNDLED_PLUGIN_FAILURES_RELATIVE_PATH, parseBundledPluginPublicationFailures } from '../../bundledPluginPublicationPolicy.mjs';
+import {
+  BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH as BUNDLED_PLUGIN_FAILURES_RELATIVE_PATH,
+  parseBundledPluginPublicationFailures,
+} from '../../bundledPluginPublicationPolicy.mjs';
 import {
   assertResolvedRuntimeDependencyMatchesDeclaration,
   collectExternalRuntimeDependencies,
   resolveInstalledRuntimePackage,
 } from '../../workspaceRuntimeDependencies.mjs';
-import { createWorkspaceChildBuildEnv } from '../../workspaceChildBuildEnv.mjs';
 import {
-  resolveCliSharedDepsBuildLockPath,
-  withWorkspaceBundleLock,
-} from '../../workspaceBundleLock.mjs';
-import { CLI_BINARY_TARGETS, resolveCliToolsPlatformDir, resolveCurrentBinaryTarget, resolveExecutableName, type BinaryTarget } from './targets.js';
-import { commandExists, compileBunBinary, ensureFileExists, execOrThrow, resolveBunCommand, resolveYarnCommand, type RunCommand } from './commands.js';
+  CLI_BINARY_TARGETS,
+  resolveCliToolsPlatformDir,
+  resolveCurrentBinaryTarget,
+  resolveExecutableName,
+  type BinaryTarget,
+} from './targets.js';
 import {
-  bundleInstalledPackageWithRuntimeDependencies,
+  commandExists,
+  compileBunBinary,
+  ensureFileExists,
+  execOrThrow,
+  resolveBunCommand,
+  resolveYarnCommand,
+  type RunCommand,
+} from './commands.js';
+import {
   resolveWorkspaceBundlesFromPackageJson,
+  vendorBundledPackageRuntimeDependencies,
 } from '../workspaces/index.js';
-import { withCliDistBuildLock } from './withCliDistBuildLock.js';
-import { resolveCliDistSnapshotDir } from './resolveCliDistSnapshotDir.js';
-import {
-  copyCliNodeRuntimeDependencies,
-  readCliNodeWorkspaceRuntimeIdentity,
-  readCliNodeWorkspaceRuntimeIdentityFromRuntimeRoot,
-} from './copyCliNodeRuntimePayload.js';
+import { readCliNodeWorkspaceRuntimeIdentityFromRuntimeRoot } from './copyCliNodeRuntimePayload.js';
 import { finalizeRuntimeArtifactPayload } from './finalizeRuntimeArtifactPayload.js';
-import type {
-  EnsureWorkspacePackagesBuiltByName,
-} from './ensureBundledWorkspacePackagesBuilt.js';
-import { buildCliBundledWorkspaceArtifactClosure } from './ensureBundledWorkspacePackagesBuilt.js';
-import { shouldReuseCliDistSnapshot } from './shouldReuseCliDistSnapshot.js';
 import { stageCliProxyApiManagedRuntime } from './stageCliProxyApiManagedRuntime.js';
 import { stageProcessCustodyRuntime } from './stageProcessCustodyRuntime.js';
-import { CLI_RUNTIME_SIDECAR_ENTRIES } from './cliRuntimeSidecars.js';
 import { writeCliBinaryArtifactRuntimeAssetBuildManifest } from './refreshCliBinaryArtifactRuntimeAssetBuildManifest.js';
 import { stageIrohNativeReleaseEvidence } from './stageIrohNativeReleaseEvidence.js';
 import { stageCliTargetRuntimeDependencies } from './stageCliTargetRuntimeDependencies.js';
@@ -64,14 +82,10 @@ const CLI_OPTIONAL_RUNTIME_PACKAGES: readonly string[] = [
   'sherpa-onnx-win-x64',
 ];
 
-// Every shipped Fastify owner constructs its server with `logger: false`, so its
-// optional Pino branch is deliberately absent from the standalone Bun image.
-// The physical payload still contains the transitive packages for the Node
-// runtime tree; compiled artifact smokes exercise every shipped HTTP owner.
-const CLI_BUN_COMPILE_EXTERNAL_PACKAGES = [
-  'pino',
-  'thread-stream',
-] as const;
+// Pino and ThreadStream locate their worker scripts relative to their physical
+// packages. Keep that package-owned worker layout in the runtime payload rather
+// than inlining it into the shared authored graph.
+const CLI_BUN_COMPILE_EXTERNAL_PACKAGES = ['pino', 'thread-stream'] as const;
 
 const DAEMON_SUPPORT_ENTRYPOINT = '.happier-daemon-support.json';
 const CLIPROXYAPI_MANAGED_RUNTIME_RELATIVE_PATH = join(
@@ -81,7 +95,13 @@ const CLIPROXYAPI_MANAGED_RUNTIME_RELATIVE_PATH = join(
 );
 
 type CliToolUnpackModule = {
-  unpackTools?: (options: Readonly<{ platformDir: string; toolsDir: string; tools: readonly string[] }>) => Promise<unknown> | unknown;
+  unpackTools?: (
+    options: Readonly<{
+      platformDir: string;
+      toolsDir: string;
+      tools: readonly string[];
+    }>,
+  ) => Promise<unknown> | unknown;
 };
 
 type CliPackageJson = Readonly<{
@@ -99,33 +119,16 @@ export type CliBinaryArtifactCodePayload = Readonly<{
   entrypoint: string;
   workspaceRuntimeIdentity: string;
   runtimeAssetRelativePath: string;
-  stalePackages?: NonNullable<ReturnType<typeof cliDistBuildManifest.buildCliDistManifest>['stalePackages']>;
 }>;
 
-type CliBinaryArtifactWorkspacePublication = Readonly<{
-  workspaceRuntimeIdentity: string;
-  workspaceRuntimePackages: readonly string[];
-}>;
-
-function isExactStringList(value: unknown, expected: readonly string[]): boolean {
-  return Array.isArray(value)
-    && value.length === expected.length
-    && value.every((entry, index) => entry === expected[index]);
-}
-
-function workspacePublicationMatches(
-  publication: CliBinaryArtifactWorkspacePublication,
-  workspaceRuntime: Readonly<{
-    fingerprint: string;
-    packageNames: readonly string[];
-  }>,
-): boolean {
-  return publication.workspaceRuntimeIdentity === workspaceRuntime.fingerprint
-    && isExactStringList(publication.workspaceRuntimePackages, workspaceRuntime.packageNames);
-}
-
-function assertCliNativeRuntimeTargetMatchesHost(target: BinaryTarget, commandProbe = commandExists): void {
-  const reason = getCliBinaryArtifactSupportTargetUnavailableReason({ target, commandProbe });
+function assertCliNativeRuntimeTargetMatchesHost(
+  target: BinaryTarget,
+  commandProbe = commandExists,
+): void {
+  const reason = getCliBinaryArtifactSupportTargetUnavailableReason({
+    target,
+    commandProbe,
+  });
   if (reason) throw new Error(reason);
 }
 
@@ -134,14 +137,17 @@ function compareSupportIdentityPathNames(left: string, right: string): number {
   return left < right ? -1 : 1;
 }
 
-function assertPhysicalPathWithinRepoRoot(repoRoot: string, path: string): string {
+function assertPhysicalPathWithinRepoRoot(
+  repoRoot: string,
+  path: string,
+): string {
   const physicalRepoRoot = realpathSync(repoRoot);
   const physicalPath = realpathSync(path);
   const relativePath = relative(physicalRepoRoot, physicalPath);
   if (
-    relativePath === '..'
-    || relativePath.startsWith(`..${sep}`)
-    || isAbsolute(relativePath)
+    relativePath === '..' ||
+    relativePath.startsWith(`..${sep}`) ||
+    isAbsolute(relativePath)
   ) {
     throw new Error(
       `[component-artifacts] daemon support input escapes the repository root: ${physicalPath} (root: ${physicalRepoRoot})`,
@@ -174,22 +180,32 @@ function hashSupportInputTree({
     if (entry.isDirectory()) {
       const physicalPath = assertPhysicalPathWithinRepoRoot(repoRoot, path);
       if (activeDirectories.has(physicalPath)) {
-        throw new Error(`[component-artifacts] daemon support input contains a directory symlink cycle: ${path}`);
+        throw new Error(
+          `[component-artifacts] daemon support input contains a directory symlink cycle: ${path}`,
+        );
       }
       activeDirectories.add(physicalPath);
       hash.update(`dir\0${label}\0${relativePath.replaceAll('\\', '/')}\0`);
-      for (const child of readdirSync(path, { withFileTypes: true })
-        .sort((left, right) => compareSupportIdentityPathNames(left.name, right.name))) {
-        visit(join(path, child.name), relativePath ? join(relativePath, child.name) : child.name);
+      for (const child of readdirSync(path, { withFileTypes: true }).sort(
+        (left, right) => compareSupportIdentityPathNames(left.name, right.name),
+      )) {
+        visit(
+          join(path, child.name),
+          relativePath ? join(relativePath, child.name) : child.name,
+        );
       }
       activeDirectories.delete(physicalPath);
       return;
     }
     if (!entry.isFile()) {
-      throw new Error(`[component-artifacts] daemon support input has an unsupported file type: ${path}`);
+      throw new Error(
+        `[component-artifacts] daemon support input has an unsupported file type: ${path}`,
+      );
     }
     const bytes = readFileSync(path);
-    hash.update(`file\0${label}\0${relativePath.replaceAll('\\', '/')}\0${entry.mode & 0o7777}\0${bytes.byteLength}\0`);
+    hash.update(
+      `file\0${label}\0${relativePath.replaceAll('\\', '/')}\0${entry.mode & 0o7777}\0${bytes.byteLength}\0`,
+    );
     hash.update(bytes);
     hash.update('\0');
   };
@@ -210,7 +226,9 @@ function hashRequiredSupportInputPath({
   label: string;
 }>): void {
   if (!existsSync(sourcePath)) {
-    throw new Error(`[component-artifacts] missing daemon support input: ${sourcePath}`);
+    throw new Error(
+      `[component-artifacts] missing daemon support input: ${sourcePath}`,
+    );
   }
   hashSupportInputTree({ hash, repoRoot, sourcePath, label });
 }
@@ -220,14 +238,17 @@ function readCliPackageJson(repoRoot: string): CliPackageJson {
   return JSON.parse(readFileSync(packageJsonPath, 'utf8')) as CliPackageJson;
 }
 
-function readRequiredCliRuntimePackageSpecs(repoRoot: string): ReadonlyArray<Readonly<{
-  packageName: string;
-  declaredSpec: string;
-}>> {
+function readRequiredCliRuntimePackageSpecs(repoRoot: string): ReadonlyArray<
+  Readonly<{
+    packageName: string;
+    declaredSpec: string;
+  }>
+> {
   const cliPackageJson = readCliPackageJson(repoRoot);
   return CLI_RUNTIME_EXTERNAL_PACKAGES.map((packageName) => {
-    const declaredSpec = cliPackageJson.dependencies?.[packageName]
-      ?? cliPackageJson.optionalDependencies?.[packageName];
+    const declaredSpec =
+      cliPackageJson.dependencies?.[packageName] ??
+      cliPackageJson.optionalDependencies?.[packageName];
     if (typeof declaredSpec !== 'string' || !declaredSpec.trim()) {
       throw new Error(
         `[component-artifacts] missing CLI runtime dependency declaration for ${packageName}`,
@@ -254,7 +275,9 @@ function hashRuntimeDependencyTree({
   visitedDestinations?: Set<string>;
   activeSourcePackageDirs?: Set<string>;
 }>): void {
-  const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as CliPackageJson;
+  const packageJson = JSON.parse(
+    readFileSync(packageJsonPath, 'utf8'),
+  ) as CliPackageJson;
   for (const dependency of collectExternalRuntimeDependencies(packageJson)) {
     let resolvedPackage: ReturnType<typeof resolveInstalledRuntimePackage>;
     try {
@@ -264,7 +287,11 @@ function hashRuntimeDependencyTree({
         dereferenceRootDir: repoRoot,
       });
     } catch (error) {
-      if (dependency.optional && (error as NodeJS.ErrnoException | undefined)?.code === 'MODULE_NOT_FOUND') {
+      if (
+        dependency.optional &&
+        (error as NodeJS.ErrnoException | undefined)?.code ===
+          'MODULE_NOT_FOUND'
+      ) {
         continue;
       }
       throw error;
@@ -274,13 +301,21 @@ function hashRuntimeDependencyTree({
       resolvedPackageJsonPath: resolvedPackage.packageJsonPath,
       resolvedPackageJson: resolvedPackage.packageJson,
     });
-    const physicalSourcePackageDir = assertPhysicalPathWithinRepoRoot(repoRoot, resolvedPackage.packageDir);
+    const physicalSourcePackageDir = assertPhysicalPathWithinRepoRoot(
+      repoRoot,
+      resolvedPackage.packageDir,
+    );
     if (activeSourcePackageDirs.has(physicalSourcePackageDir)) continue;
 
-    const destinationPath = join(destinationNodeModulesPath, ...dependency.name.split('/'));
+    const destinationPath = join(
+      destinationNodeModulesPath,
+      ...dependency.name.split('/'),
+    );
     if (visitedDestinations.has(destinationPath)) continue;
     visitedDestinations.add(destinationPath);
-    hash.update(`runtime-package\0${destinationPath.replaceAll('\\', '/')}\0${dependency.declaredSpec}\0`);
+    hash.update(
+      `runtime-package\0${destinationPath.replaceAll('\\', '/')}\0${dependency.declaredSpec}\0`,
+    );
     hashSupportInputTree({
       hash,
       repoRoot,
@@ -312,67 +347,76 @@ export function readCliBinaryArtifactSupportIdentity({
   repoRoot,
   target = resolveCurrentBinaryTarget({ availableTargets: CLI_BINARY_TARGETS }),
   goVersion,
-  workspaceSourceFingerprint,
   cliProxyApiManagedRuntimeExecutablePath,
   processCustodyRuntimeExecutablePath,
 }: Readonly<{
   repoRoot: string;
   target?: BinaryTarget;
   goVersion: string;
-  workspaceSourceFingerprint?: string;
   cliProxyApiManagedRuntimeExecutablePath?: string;
   processCustodyRuntimeExecutablePath?: string;
 }>): CliBinaryArtifactSupportIdentity {
   const normalizedGoVersion = String(goVersion ?? '').trim();
   if (!normalizedGoVersion) {
-    throw new Error('[component-artifacts] daemon support identity requires a Go toolchain version');
+    throw new Error(
+      '[component-artifacts] daemon support identity requires a Go toolchain version',
+    );
   }
 
   const hash = createHash('sha256');
-  // v2 binds release support metadata to the finalized (projected) workspace bytes.
-  // Do not reuse older immutable support artifacts whose recorded identity
-  // described the pre-projection tree.
-  const sourceFingerprint = String(workspaceSourceFingerprint ?? '').trim().toLowerCase();
-  if (workspaceSourceFingerprint !== undefined && !/^[a-f0-9]{64}$/.test(sourceFingerprint)) {
-    throw new Error('[component-artifacts] invalid daemon workspace source fingerprint');
-  }
-  hash.update(sourceFingerprint
-    ? 'happier:daemon-runtime-support-source:v1\0'
-    : 'happier:daemon-runtime-support:v2\0');
+  hash.update('happier:daemon-runtime-support:v3\0');
   hash.update(`target\0${target.os}\0${target.arch}\0${target.exeExt}\0`);
   hash.update(`node\0${process.version}\0`);
   hash.update(`go\0${normalizedGoVersion}\0`);
-  const bundledPluginFailuresPath = join(repoRoot, 'apps', 'cli', BUNDLED_PLUGIN_FAILURES_RELATIVE_PATH);
+  const bundledPluginFailuresPath = join(
+    repoRoot,
+    'apps',
+    'cli',
+    BUNDLED_PLUGIN_FAILURES_RELATIVE_PATH,
+  );
   hash.update('bundled-plugin-failures\0');
-  hash.update(existsSync(bundledPluginFailuresPath) ? readFileSync(bundledPluginFailuresPath) : 'absent');
+  hash.update(
+    existsSync(bundledPluginFailuresPath)
+      ? readFileSync(bundledPluginFailuresPath)
+      : 'absent',
+  );
   hash.update('\0');
 
   const cliDir = join(repoRoot, 'apps', 'cli');
-  const workspaceRuntime = sourceFingerprint
-    ? null
-    : readCliNodeWorkspaceRuntimeIdentity({ repoRoot, hostPackageDir: cliDir });
-  hash.update(sourceFingerprint
-    ? `workspace-source\0${sourceFingerprint}\0`
-    : `workspace-runtime\0${workspaceRuntime?.fingerprint}\0`);
-  const workspacePackages = sourceFingerprint
-    ? resolveWorkspaceBundlesFromPackageJson({ repoRoot, hostPackageDir: cliDir })
-      .map(({ packageName, srcDir }) => ({ packageName, packageJsonPath: join(srcDir, 'package.json') }))
-    : (workspaceRuntime?.packageNames ?? []).map((packageName) => ({
-      packageName,
-      packageJsonPath: resolveInstalledRuntimePackage({
-        packageName,
-        resolveFromPackageJsonPath: join(cliDir, 'package.json'),
-        dereferenceRootDir: repoRoot,
-      }).packageJsonPath,
-    }));
+  const workspacePackages = resolveWorkspaceBundlesFromPackageJson({
+    repoRoot,
+    hostPackageDir: cliDir,
+  }).map(({ packageName, srcDir }) => ({
+    packageName,
+    packageJsonPath: join(srcDir, 'package.json'),
+  }));
   for (const { packageName, packageJsonPath } of workspacePackages) {
     hash.update(`workspace-package\0${packageName}\0`);
     hashRuntimeDependencyTree({
       hash,
       repoRoot,
       packageJsonPath,
-      destinationNodeModulesPath: join('node_modules', ...packageName.split('/'), 'node_modules'),
+      destinationNodeModulesPath: join(
+        'node_modules',
+        ...packageName.split('/'),
+        'node_modules',
+      ),
     });
+    const manifest = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as {
+      files?: string[];
+    };
+    for (const name of (manifest.files ?? []).filter(
+      (name) => name === 'native',
+    )) {
+      const sourcePath = join(dirname(packageJsonPath), name);
+      if (existsSync(sourcePath))
+        hashSupportInputTree({
+          hash,
+          repoRoot,
+          sourcePath,
+          label: `workspace-support:${packageName}/${name}`,
+        });
+    }
   }
 
   const cliPackageJsonPath = join(cliDir, 'package.json');
@@ -382,19 +426,13 @@ export function readCliBinaryArtifactSupportIdentity({
     packageJsonPath: cliPackageJsonPath,
     destinationNodeModulesPath: 'node_modules',
   });
-  for (const { packageName, declaredSpec } of readRequiredCliRuntimePackageSpecs(repoRoot)) {
+  for (const {
+    packageName,
+    declaredSpec,
+  } of readRequiredCliRuntimePackageSpecs(repoRoot)) {
     hash.update(`required-runtime-package\0${packageName}\0${declaredSpec}\0`);
   }
 
-  for (const segments of CLI_RUNTIME_SIDECAR_ENTRIES) {
-    const relativePath = join('apps', 'cli', 'scripts', ...segments);
-    hashRequiredSupportInputPath({
-      hash,
-      repoRoot,
-      sourcePath: join(repoRoot, relativePath),
-      label: `sidecar:${relativePath.replaceAll('\\', '/')}`,
-    });
-  }
   hashRequiredSupportInputPath({
     hash,
     repoRoot,
@@ -410,13 +448,25 @@ export function readCliBinaryArtifactSupportIdentity({
   hashRequiredSupportInputPath({
     hash,
     repoRoot,
-    sourcePath: join(repoRoot, 'packages', 'plugins', 'cliproxyapi', 'package.json'),
+    sourcePath: join(
+      repoRoot,
+      'packages',
+      'plugins',
+      'cliproxyapi',
+      'package.json',
+    ),
     label: 'cliproxyapi:package-json',
   });
   hashRequiredSupportInputPath({
     hash,
     repoRoot,
-    sourcePath: join(repoRoot, 'packages', 'plugins', 'cliproxyapi', 'managed-runtime'),
+    sourcePath: join(
+      repoRoot,
+      'packages',
+      'plugins',
+      'cliproxyapi',
+      'managed-runtime',
+    ),
     label: 'cliproxyapi:managed-runtime',
   });
   if (cliProxyApiManagedRuntimeExecutablePath) {
@@ -455,7 +505,6 @@ export function readCliBinaryArtifactSupportIdentity({
   for (const relativePath of [
     'packages/cli-common/src/componentArtifacts/buildCliBinaryArtifactPayload.ts',
     'packages/cli-common/src/componentArtifacts/stageCliTargetRuntimeDependencies.ts',
-    'packages/cli-common/src/componentArtifacts/copyCliNodeRuntimePayload.ts',
     'packages/cli-common/src/componentArtifacts/finalizeRuntimeArtifactPayload.ts',
     'packages/cli-common/src/componentArtifacts/targets.ts',
     'packages/cli-common/nodePtySpawnHelperPermissions.cjs',
@@ -476,44 +525,39 @@ export function readCliBinaryArtifactSupportIdentity({
 
   return {
     fingerprint: hash.digest('hex'),
-    workspaceRuntimeIdentity: workspaceRuntime?.fingerprint ?? null,
+    workspaceRuntimeIdentity: null,
   };
 }
 
-async function copyCliRuntimeSidecars(repoRoot: string, payloadDir: string): Promise<void> {
-  for (const segments of CLI_RUNTIME_SIDECAR_ENTRIES) {
-    const sourcePath = join(repoRoot, 'apps', 'cli', 'scripts', ...segments);
-    const targetPath = join(payloadDir, 'scripts', ...segments);
-    await mkdir(join(targetPath, '..'), { recursive: true });
-    await cp(sourcePath, targetPath, { recursive: true });
-  }
-
-  const resolveFromPackageJsonPath = join(repoRoot, 'apps', 'cli', 'package.json');
-  for (const { packageName, declaredSpec } of readRequiredCliRuntimePackageSpecs(repoRoot)) {
-    if (CLI_OPTIONAL_RUNTIME_PACKAGES.includes(packageName)) continue;
-    bundleInstalledPackageWithRuntimeDependencies({
-      packageName,
-      declaredSpec,
-      resolveFromPackageJsonPath,
-      destNodeModulesDir: join(payloadDir, 'node_modules'),
-      dereferenceRootDir: repoRoot,
-    });
-  }
-}
-
-async function copyCliRuntimeTools(repoRoot: string, payloadDir: string, target: BinaryTarget): Promise<void> {
+async function copyCliRuntimeTools(
+  repoRoot: string,
+  payloadDir: string,
+  target: BinaryTarget,
+): Promise<void> {
   const sourceToolsDir = join(repoRoot, 'apps', 'cli', 'tools');
   const targetToolsDir = join(payloadDir, 'tools');
   const targetArchivesDir = join(targetToolsDir, 'archives');
   await mkdir(targetToolsDir, { recursive: true });
   await rm(targetArchivesDir, { recursive: true, force: true });
-  await cp(join(sourceToolsDir, 'archives'), targetArchivesDir, { recursive: true });
+  await cp(join(sourceToolsDir, 'archives'), targetArchivesDir, {
+    recursive: true,
+  });
 
-  const unpackToolsScript = join(repoRoot, 'apps', 'cli', 'scripts', 'unpack-tools.cjs');
+  const unpackToolsScript = join(
+    repoRoot,
+    'apps',
+    'cli',
+    'scripts',
+    'unpack-tools.cjs',
+  );
   const requireFromUnpackTools = createRequire(unpackToolsScript);
-  const unpackToolsModule = requireFromUnpackTools(unpackToolsScript) as CliToolUnpackModule;
+  const unpackToolsModule = requireFromUnpackTools(
+    unpackToolsScript,
+  ) as CliToolUnpackModule;
   if (typeof unpackToolsModule.unpackTools !== 'function') {
-    throw new Error('[component-artifacts] apps/cli/scripts/unpack-tools.cjs must export unpackTools()');
+    throw new Error(
+      '[component-artifacts] apps/cli/scripts/unpack-tools.cjs must export unpackTools()',
+    );
   }
 
   await unpackToolsModule.unpackTools({
@@ -524,155 +568,6 @@ async function copyCliRuntimeTools(repoRoot: string, payloadDir: string, target:
   await rm(targetArchivesDir, { recursive: true, force: true });
 }
 
-/**
- * Settle the installed CLI workspace publication before a managed daemon build
- * captures identities that include that publication. Its exact physical
- * identity is passed to code assembly, which validates it while holding the
- * existing consumer lock instead of preparing the broad closure again.
- */
-export async function prepareCliBinaryArtifactWorkspacePublication({
-  repoRoot,
-  publicationMode = 'artifact',
-  ensureWorkspacePackagesBuiltByName,
-}: Readonly<{
-  repoRoot: string;
-  publicationMode?: 'live' | 'artifact';
-  ensureWorkspacePackagesBuiltByName?: EnsureWorkspacePackagesBuiltByName;
-}>): Promise<CliBinaryArtifactWorkspacePublication> {
-  await buildCliBundledWorkspaceArtifactClosure({
-    repoRoot,
-    publicationMode,
-    ensureWorkspacePackagesBuiltByName,
-  });
-  return await readCliBinaryArtifactWorkspacePublication({ repoRoot });
-}
-
-/** Read the settled publication without running another publication writer. */
-export async function readCliBinaryArtifactWorkspacePublication({ repoRoot }: Readonly<{
-  repoRoot: string;
-}>): Promise<CliBinaryArtifactWorkspacePublication> {
-  const cliDir = join(repoRoot, 'apps', 'cli');
-  return await withWorkspaceBundleLock(() => {
-    const workspaceRuntime = readCliNodeWorkspaceRuntimeIdentity({
-      repoRoot,
-      hostPackageDir: cliDir,
-    });
-    return {
-      workspaceRuntimeIdentity: workspaceRuntime.fingerprint,
-      workspaceRuntimePackages: workspaceRuntime.packageNames,
-    };
-  }, {
-    lockPath: resolveCliSharedDepsBuildLockPath(repoRoot),
-  });
-}
-
-async function prepareCliDistSnapshot({
-  repoRoot,
-  runCommand,
-  ensureWorkspacePackagesBuiltByName,
-  requiredCliDistInputFingerprint,
-  preparedWorkspacePublication,
-  commandProbe,
-  env,
-}: Readonly<{
-  repoRoot: string;
-  runCommand: RunCommand;
-  ensureWorkspacePackagesBuiltByName?: EnsureWorkspacePackagesBuiltByName;
-  requiredCliDistInputFingerprint?: string;
-  preparedWorkspacePublication?: CliBinaryArtifactWorkspacePublication;
-  commandProbe: (cmd: string) => boolean;
-  env: NodeJS.ProcessEnv;
-}>): Promise<Readonly<{
-  snapshotDistDir: string;
-  workspaceRuntimeIdentity: string;
-  workspaceRuntimePackages: readonly string[];
-  yarn: Readonly<{ cmd: string; args: string[] }>;
-}>> {
-  const cliDir = join(repoRoot, 'apps', 'cli');
-  const distDir = join(cliDir, 'dist');
-  const distBackupDir = join(cliDir, '.dist.hstack-backup');
-  const entrypoint = join(distDir, 'index.mjs');
-  const lockPath = join(repoRoot, '.project', 'tmp', 'cli-dist-build.lock');
-  const yarn = resolveYarnCommand({ commandProbe });
-  const workspacePublication = preparedWorkspacePublication
-    ?? await prepareCliBinaryArtifactWorkspacePublication({
-      repoRoot,
-      ensureWorkspacePackagesBuiltByName,
-    });
-  const prepared = await withWorkspaceBundleLock(() => {
-    return withCliDistBuildLock<{
-      snapshotDistDir: string;
-      workspaceRuntimeIdentity: string;
-      workspaceRuntimePackages: readonly string[];
-    }>(async ({ heldLockValue }) => {
-      const runCommandWithHeldDistLock: RunCommand = (cmd, args, options = {}) => runCommand(cmd, args, {
-        ...options,
-        env: createWorkspaceChildBuildEnv({
-          env: {
-            ...env,
-            ...(options.env ?? {}),
-          },
-          heldLockValue,
-        }),
-      });
-      const workspaceRuntimeBeforeBuild = readCliNodeWorkspaceRuntimeIdentity({
-        repoRoot,
-        hostPackageDir: cliDir,
-      });
-      if (!workspacePublicationMatches(workspacePublication, workspaceRuntimeBeforeBuild)) {
-        throw new Error(
-          '[component-artifacts] CLI workspace runtime publication changed before staging '
-          + `(expected ${workspacePublication.workspaceRuntimeIdentity}, found ${workspaceRuntimeBeforeBuild.fingerprint})`,
-        );
-      }
-      const currentDistManifest = cliDistBuildManifest.readCliDistBuildManifest(entrypoint);
-
-      // The CLI build manifest binds the compiled bytes to the source identity.
-      // A caller without that identity must build rather than guess from mtimes.
-      const reuseExistingDistSnapshot = await shouldReuseCliDistSnapshot({
-        distEntrypointPath: entrypoint,
-        requiredInputFingerprint: requiredCliDistInputFingerprint,
-        env,
-      })
-        && currentDistManifest.manifest?.workspaceRuntimeIdentity
-          === workspaceRuntimeBeforeBuild.fingerprint
-          && isExactStringList(
-            currentDistManifest.manifest?.workspaceRuntimePackages,
-            workspaceRuntimeBeforeBuild.packageNames,
-          );
-      const snapshotDistDir = await resolveCliDistSnapshotDir({
-        cliDir,
-        distDir,
-        distBackupDir,
-        distEntrypointPath: entrypoint,
-        reuseExistingDistSnapshot,
-        buildDist: async () => {
-          await runCommandWithHeldDistLock(yarn.cmd, [...yarn.args, '--cwd', 'apps/cli', 'build:prepared'], { cwd: repoRoot });
-          await ensureFileExists(entrypoint);
-        },
-      });
-      const workspaceRuntime = readCliNodeWorkspaceRuntimeIdentity({
-        repoRoot,
-        hostPackageDir: cliDir,
-      });
-      // build:prepared can canonically publish generated workspace bytes while
-      // this lock is held. Return that coherent final identity for the dist
-      // manifest; external closure writers remain excluded by this same lock.
-      return {
-        snapshotDistDir,
-        workspaceRuntimeIdentity: workspaceRuntime.fingerprint,
-        workspaceRuntimePackages: workspaceRuntime.packageNames,
-      };
-    }, { lockPath });
-  }, {
-    // pkgroll consumes the installed workspace closure below apps/cli/node_modules.
-    // Keep the existing publication lock through that read so a source-dev refresh
-    // cannot replace the closure halfway through a multi-minute bundle.
-    lockPath: resolveCliSharedDepsBuildLockPath(repoRoot),
-  });
-  return { ...prepared, yarn };
-}
-
 export async function buildCliBinaryArtifactCodePayload({
   repoRoot,
   payloadDir,
@@ -681,10 +576,6 @@ export async function buildCliBinaryArtifactCodePayload({
   runCommand = execOrThrow,
   commandProbe = commandExists,
   compileBinary = compileBunBinary,
-  ensureWorkspacePackagesBuiltByName,
-  requiredCliDistInputFingerprint,
-  preparedWorkspacePublication,
-  env = process.env,
 }: {
   repoRoot: string;
   payloadDir: string;
@@ -693,88 +584,263 @@ export async function buildCliBinaryArtifactCodePayload({
   runCommand?: RunCommand;
   commandProbe?: (cmd: string) => boolean;
   compileBinary?: typeof compileBunBinary;
-  ensureWorkspacePackagesBuiltByName?: EnsureWorkspacePackagesBuiltByName;
-  requiredCliDistInputFingerprint?: string;
-  preparedWorkspacePublication?: CliBinaryArtifactWorkspacePublication;
-  env?: NodeJS.ProcessEnv;
 }): Promise<CliBinaryArtifactCodePayload> {
   const bunCommand = resolveBunCommand({ commandProbe });
-  if (!bunCommand) {
-    throw new Error('[component-artifacts] bun is required to build CLI binary artifacts');
-  }
-  const prepared = await prepareCliDistSnapshot({
-    repoRoot,
-    runCommand,
-    ensureWorkspacePackagesBuiltByName,
-    requiredCliDistInputFingerprint,
-    preparedWorkspacePublication,
-    commandProbe,
-    env,
-  });
-  const snapshotEntrypoint = join(prepared.snapshotDistDir, 'index.mjs');
-  const snapshotManifest = cliDistBuildManifest.readCliDistBuildManifest(snapshotEntrypoint);
-  const recordedWorkspaceRuntimeIdentity = String(
-    snapshotManifest.manifest?.workspaceRuntimeIdentity ?? '',
-  ).trim().toLowerCase();
-  if (
-    !snapshotManifest.ok
-    || recordedWorkspaceRuntimeIdentity !== prepared.workspaceRuntimeIdentity
-    || !isExactStringList(
-      snapshotManifest.manifest?.workspaceRuntimePackages,
-      prepared.workspaceRuntimePackages,
-    )
-  ) {
-    await rm(prepared.snapshotDistDir, { recursive: true, force: true }).catch(() => {});
+  if (!bunCommand)
     throw new Error(
-      '[component-artifacts] CLI dist snapshot does not match its workspace runtime publication',
+      '[component-artifacts] bun is required to build CLI binary artifacts',
     );
-  }
-
-  try {
-    await mkdir(payloadDir, { recursive: true });
-    const executableName = resolveExecutableName({ baseName: 'happier', target });
-    const mergedExternals = [...new Set([
+  const cliDir = join(repoRoot, 'apps', 'cli');
+  const requireFromProject = createRequire(join(cliDir, 'package.json'));
+  const esbuild = requireFromProject('esbuild') as Readonly<{
+    build: typeof EsbuildBuild;
+    transform: typeof EsbuildTransform;
+  }>;
+  const manifest = JSON.parse(
+    readFileSync(join(cliDir, 'package.json'), 'utf8'),
+  ) as {
+    exports?: Record<string, unknown>;
+    imports?: Record<string, unknown>;
+  };
+  const workspacePackages = await readWorkspacePackages(repoRoot);
+  const { entries, pluginMetadata } = await readCliSourceEntries({
+    repoDir: repoRoot,
+    manifest,
+    transform: esbuild.transform,
+    cliPrefix: '',
+    mainOutput: 'package-dist/index',
+    publicPrefix: 'package-dist',
+    pluginPrefix: (name) => `node_modules/${name}`,
+  });
+  const mergedExternals = [
+    ...new Set([
       ...CLI_RUNTIME_EXTERNAL_PACKAGES,
       ...CLI_BUN_COMPILE_EXTERNAL_PACKAGES,
-      ...externals.map((value) => String(value ?? '').trim()).filter(Boolean),
-    ])];
-    await rm(join(payloadDir, executableName), { recursive: true, force: true });
+      ...externals.map((value) => value.trim()).filter(Boolean),
+    ]),
+  ];
+  await mkdir(payloadDir, { recursive: true });
+  const result = await esbuild.build({
+    absWorkingDir: repoRoot,
+    entryPoints: entries,
+    outdir: payloadDir,
+    bundle: true,
+    splitting: true,
+    format: 'esm',
+    platform: 'node',
+    target: 'node20',
+    // Each authored entry keeps its own tsconfig. Forcing the CLI tsconfig on
+    // third-party JavaScript wrongly parses legacy CommonJS as strict modules.
+    conditions: [SOURCE_CONDITION],
+    chunkNames: 'package-dist/chunks/[name]-[hash]',
+    metafile: true,
+    logLevel: 'silent',
+    banner: {
+      js: "import {createRequire as __artifactCreateRequire} from 'node:module'; import {fileURLToPath as __artifactFileURLToPath} from 'node:url'; import {dirname as __artifactDirname} from 'node:path'; const require=__artifactCreateRequire(import.meta.url); const __artifactFilename=__artifactFileURLToPath(import.meta.url); const __artifactDirectory=__artifactDirname(__artifactFilename);",
+    },
+    define: {
+      __dirname: '__artifactDirectory',
+      __filename: '__artifactFilename',
+    },
+    plugins: [
+      createWorkspaceSourceResolver({
+        workspacePackages,
+        requireFromProject,
+        externalPackages: mergedExternals,
+      }),
+    ],
+  });
+  const sidecars = await bundleCliSourceSidecars({
+    repoDir: repoRoot,
+    outputDir: join(payloadDir, 'scripts'),
+    build: esbuild.build,
+    workspacePackages,
+    requireFromProject,
+  });
+  Object.assign(result.metafile!.inputs, sidecars.metafile.inputs);
+  Object.assign(result.metafile!.outputs, sidecars.metafile.outputs);
+  const assets = join(cliDir, 'assets');
+  if (existsSync(assets))
+    await cp(assets, join(payloadDir, 'assets'), { recursive: true });
+  const distInputs = Object.keys(result.metafile!.inputs).filter((file) =>
+    /^(?:packages|apps)\/.*\/(?:dist|package-dist|\.happier-plugin)\//.test(
+      file.replaceAll('\\', '/'),
+    ),
+  );
+  if (distInputs.length)
+    throw new Error(
+      `[component-artifacts] native CLI consumed first-party built code: ${distInputs.join(', ')}`,
+    );
+  for (const key of Object.keys(entries).filter((key) =>
+    key.startsWith('package-dist/'),
+  )) {
+    await writeFile(
+      join(payloadDir, key + '.mjs'),
+      `export * from './${key.split('/').at(-1)}.js';\n`,
+    );
+  }
+  await writeFile(
+    join(payloadDir, 'package.json'),
+    JSON.stringify({
+      ...manifest,
+      type: 'module',
+      bundledDependencies: pluginMetadata.map((item) =>
+        String(item.package.name),
+      ),
+      main: './package-dist/index.mjs',
+      module: './package-dist/index.mjs',
+      exports: Object.fromEntries(
+        Object.keys(manifest.exports ?? {}).map((key) => [
+          key,
+          `./package-dist/${key === '.' ? 'index' : key.slice(2)}.mjs`,
+        ]),
+      ),
+      imports: Object.fromEntries(
+        Object.entries(manifest.imports ?? {}).map(([key, value]) => [
+          key,
+          `./package-dist/${String(
+            (value as Record<string, unknown>)[SOURCE_CONDITION],
+          )
+            .slice('./src/'.length)
+            .replace(/\.[^.]+$/, '')}.mjs`,
+        ]),
+      ),
+    }),
+  );
+  for (const item of pluginMetadata) {
+    const pluginDir = join(payloadDir, item.prefix);
+    await mkdir(join(pluginDir, '.happier-plugin'), { recursive: true });
+    await writeFile(
+      join(pluginDir, 'package.json'),
+      JSON.stringify({
+        ...item.package,
+        type: 'module',
+        exports: runtimePackageExports(item.package.exports),
+      }),
+    );
+    for (const path of (item.package.files as string[] | undefined) ?? []) {
+      if (
+        path === 'package.json' ||
+        path === 'src' ||
+        path === 'dist' ||
+        path.includes('*')
+      )
+        continue;
+      if (path.startsWith('.happier-plugin')) continue;
+      const source = join(item.sourceDir, path);
+      if (existsSync(source))
+        await cp(source, join(pluginDir, path), { recursive: true });
+    }
+    await writeFile(
+      join(pluginDir, '.happier-plugin/plugin.json'),
+      JSON.stringify(item.manifest),
+    );
+  }
+  if (pluginMetadata.some((item) => item.manifest.contributes !== undefined)) {
+    const uiPreparationDir = await mkdtemp(
+      join(payloadDir, '.source-plugin-ui-'),
+    );
+    try {
+      await runCommand(
+        process.execPath,
+        [
+          '--conditions=happier-source',
+          '--import',
+          join(repoRoot, 'packages/cli-common/registerSourceRuntime.mjs'),
+          join(repoRoot, 'apps/ui/scripts/prepareSourcePluginUiArtifacts.mjs'),
+        ],
+        {
+          cwd: repoRoot,
+          input: JSON.stringify({
+            repoRoot,
+            outputDir: uiPreparationDir,
+            plugins: pluginMetadata.map((item) => ({
+              directory: String(item.package.name).slice(
+                '@happier-dev/plugins-'.length,
+              ),
+              manifest: item.manifest,
+            })),
+            artifactOutputDirs: Object.fromEntries(
+              pluginMetadata.map((item) => [
+                String(item.package.name).slice('@happier-dev/plugins-'.length),
+                join(payloadDir, item.prefix, 'dist/happier-plugin-ui'),
+              ]),
+            ),
+          }),
+        },
+      );
+    } finally {
+      await rm(uiPreparationDir, { recursive: true, force: true });
+    }
+  }
+  const staticAssets = join(
+    cliDir,
+    'src/plugins/projection/registry/static-assets',
+  );
+  if (existsSync(staticAssets))
+    await cp(
+      staticAssets,
+      join(
+        payloadDir,
+        'package-dist/plugins/projection/registry/static-assets',
+      ),
+      { recursive: true },
+    );
+  const workspaceRuntimePackages = pluginMetadata.map((item) =>
+    String(item.package.name),
+  );
+  const workspaceRuntimeIdentity =
+    readCliNodeWorkspaceRuntimeIdentityFromRuntimeRoot({
+      runtimeRoot: payloadDir,
+      packageNames: workspaceRuntimePackages,
+    }).fingerprint;
+  await writeFile(
+    join(payloadDir, 'package-dist/metafile.json'),
+    JSON.stringify(result.metafile),
+  );
+  cliDistBuildManifest.writeCliDistBuildManifest(
+    join(payloadDir, 'package-dist/index.mjs'),
+    {
+      workspaceRuntimeIdentity,
+      ...(workspaceRuntimePackages.length ? { workspaceRuntimePackages } : {}),
+    },
+  );
+  const executableName = resolveExecutableName({ baseName: 'happier', target });
+  // Bun's embedded module graph and physical plugin entries have separate
+  // module caches. The native engine loads the same executable-relative ESM
+  // graph as plugins and child entries, preserving shared SDK/Zod identities.
+  const nativeEntryDir = await mkdtemp(join(payloadDir, '.native-entry-'));
+  try {
+    const nativeEntry = join(nativeEntryDir, 'index.mjs');
+    await writeFile(
+      nativeEntry,
+      "import { dirname, join } from 'node:path';\n" +
+        "import { pathToFileURL } from 'node:url';\n" +
+        "await import(pathToFileURL(join(dirname(process.execPath), 'package-dist', 'index.mjs')).href);\n",
+    );
     await compileBinary({
-      entrypoint: snapshotEntrypoint,
+      entrypoint: nativeEntry,
       bunTarget: target.bunTarget,
       outfile: join(payloadDir, executableName),
       cwd: repoRoot,
       externals: mergedExternals,
       bunCommand,
-      // Standalone CLI binaries must not inherit project-local dotenv files
-      // from the directory where users invoke them.
       autoloadDotenv: false,
       runCommand,
     });
-    await rm(join(payloadDir, 'package-dist'), { recursive: true, force: true });
-    await cp(prepared.snapshotDistDir, join(payloadDir, 'package-dist'), { recursive: true });
-    // The compiled CLI reads its package publication metadata from the
-    // executable's runtime root. It belongs to this code artifact, not the
-    // separately linked support-directory closure.
-    await copyFile(join(repoRoot, 'apps', 'cli', 'package.json'), join(payloadDir, 'package.json'));
-    // The source dist manifest detects build-host publication churn. The code
-    // artifact binds its exact workspace publication even when the physical
-    // workspace dependency tree lives in a separate daemon support artifact.
-    cliDistBuildManifest.writeCliDistWorkspaceRuntimeIdentity({
-      entrypoint: join(payloadDir, 'package-dist', 'index.mjs'),
-      workspaceRuntimeIdentity: recordedWorkspaceRuntimeIdentity,
-    });
-
-    return {
-      executableName,
-      entrypoint: executableName,
-      workspaceRuntimeIdentity: recordedWorkspaceRuntimeIdentity,
-      ...(snapshotManifest.manifest?.stalePackages?.length ? { stalePackages: snapshotManifest.manifest.stalePackages } : {}),
-      runtimeAssetRelativePath: `${CLIPROXYAPI_MANAGED_RUNTIME_RELATIVE_PATH}${target.exeExt}`.replaceAll('\\', '/'),
-    };
   } finally {
-    await rm(prepared.snapshotDistDir, { recursive: true, force: true }).catch(() => {});
+    await rm(nativeEntryDir, { recursive: true, force: true });
   }
+  return {
+    executableName,
+    entrypoint: executableName,
+    workspaceRuntimeIdentity,
+    runtimeAssetRelativePath:
+      `${CLIPROXYAPI_MANAGED_RUNTIME_RELATIVE_PATH}${target.exeExt}`.replaceAll(
+        '\\',
+        '/',
+      ),
+  };
 }
 
 async function stageCliBinaryArtifactSupportPayload({
@@ -785,10 +851,8 @@ async function stageCliBinaryArtifactSupportPayload({
   commandProbe = commandExists,
   cliProxyApiManagedRuntimeExecutablePath,
   processCustodyRuntimeExecutablePath,
-  expectedWorkspaceRuntimeIdentity,
   supportArtifactFingerprint,
   goVersion,
-  workspaceSourceFingerprint,
   preserveCompilePayloadAssets = false,
   includeIrohNativeReleaseEvidence = false,
 }: {
@@ -799,29 +863,32 @@ async function stageCliBinaryArtifactSupportPayload({
   commandProbe?: (cmd: string) => boolean;
   cliProxyApiManagedRuntimeExecutablePath?: string;
   processCustodyRuntimeExecutablePath?: string;
-  expectedWorkspaceRuntimeIdentity?: string;
   supportArtifactFingerprint?: string;
   goVersion?: string;
-  workspaceSourceFingerprint?: string;
   preserveCompilePayloadAssets?: boolean;
   includeIrohNativeReleaseEvidence?: boolean;
-}): Promise<Readonly<{
-  entrypoint: string;
-  workspaceRuntimeIdentity: string;
-  runtimeAssetRelativePath: string;
-}>> {
+}): Promise<
+  Readonly<{
+    entrypoint: string;
+    workspaceRuntimeIdentity: string;
+    runtimeAssetRelativePath: string;
+  }>
+> {
   assertCliNativeRuntimeTargetMatchesHost(target, commandProbe);
-  const expectedSupportFingerprint = String(supportArtifactFingerprint ?? '').trim();
+  const expectedSupportFingerprint = String(
+    supportArtifactFingerprint ?? '',
+  ).trim();
   const normalizedGoVersion = String(goVersion ?? '').trim();
   if (expectedSupportFingerprint && !normalizedGoVersion) {
-    throw new Error('[component-artifacts] daemon support publication requires its Go toolchain identity');
+    throw new Error(
+      '[component-artifacts] daemon support publication requires its Go toolchain identity',
+    );
   }
   if (expectedSupportFingerprint) {
     const before = readCliBinaryArtifactSupportIdentity({
       repoRoot,
       target,
       goVersion: normalizedGoVersion,
-      workspaceSourceFingerprint,
       cliProxyApiManagedRuntimeExecutablePath,
       processCustodyRuntimeExecutablePath,
     });
@@ -835,26 +902,79 @@ async function stageCliBinaryArtifactSupportPayload({
   const yarn = resolveYarnCommand({ commandProbe });
   await mkdir(payloadDir, { recursive: true });
   const runtimeSupportDirectories = preserveCompilePayloadAssets
-    ? ['node_modules', '.project']
-    : ['node_modules', 'tools', 'scripts', '.project'];
-  await Promise.all(runtimeSupportDirectories.map(async (name) => {
-    await rm(join(payloadDir, name), { recursive: true, force: true });
-  }));
+    ? ['.project']
+    : ['node_modules', 'tools', '.project'];
+  await Promise.all(
+    runtimeSupportDirectories.map(async (name) => {
+      await rm(join(payloadDir, name), { recursive: true, force: true });
+    }),
+  );
 
-  const sourceWorkspaceRuntime = copyCliNodeRuntimeDependencies({
-    repoRoot,
-    payloadDir,
-    expectedWorkspaceRuntimeIdentity,
+  vendorBundledPackageRuntimeDependencies({
+    srcPackageJsonPath: join(repoRoot, 'apps/cli/package.json'),
+    destPackageDir: payloadDir,
+    dereferenceRootDir: repoRoot,
     excludeRootDependencies: CLI_OPTIONAL_RUNTIME_PACKAGES,
   });
-  await copyCliRuntimeSidecars(repoRoot, payloadDir);
-  await stageCliTargetRuntimeDependencies({ repoRoot, payloadDir, target, runCommand, commandProbe });
-  const bundledPluginFailuresSource = join(repoRoot, 'apps', 'cli', BUNDLED_PLUGIN_FAILURES_RELATIVE_PATH);
-  const bundledPluginFailuresTarget = join(payloadDir, BUNDLED_PLUGIN_FAILURES_RELATIVE_PATH);
+  const workspaceBundles = resolveWorkspaceBundlesFromPackageJson({
+    repoRoot,
+    hostPackageDir: join(repoRoot, 'apps/cli'),
+  });
+  for (const { srcDir, packageName } of workspaceBundles) {
+    const destination = join(
+      payloadDir,
+      'node_modules',
+      ...packageName.split('/'),
+    );
+    vendorBundledPackageRuntimeDependencies({
+      srcPackageJsonPath: join(srcDir, 'package.json'),
+      destPackageDir: destination,
+      dereferenceRootDir: repoRoot,
+    });
+    // Native/static support is consumed beside the source-bundled graph.
+    // Authored TypeScript and private package dist never enter this tree.
+    const manifest = JSON.parse(
+      readFileSync(join(srcDir, 'package.json'), 'utf8'),
+    ) as { files?: string[] };
+    for (const name of (manifest.files ?? []).filter(
+      (name) => name === 'native',
+    )) {
+      const source = join(srcDir, name);
+      if (existsSync(source))
+        await cp(source, join(destination, name), { recursive: true });
+    }
+    if (existsSync(join(destination, 'native')))
+      await copyFile(
+        join(srcDir, 'package.json'),
+        join(destination, 'package.json'),
+      );
+  }
+  await stageCliTargetRuntimeDependencies({
+    repoRoot,
+    payloadDir,
+    target,
+    runCommand,
+    commandProbe,
+  });
+  const bundledPluginFailuresSource = join(
+    repoRoot,
+    'apps',
+    'cli',
+    BUNDLED_PLUGIN_FAILURES_RELATIVE_PATH,
+  );
+  const bundledPluginFailuresTarget = join(
+    payloadDir,
+    BUNDLED_PLUGIN_FAILURES_RELATIVE_PATH,
+  );
   const publicationFailures = existsSync(bundledPluginFailuresSource)
-    ? parseBundledPluginPublicationFailures(readFileSync(bundledPluginFailuresSource, 'utf8'))
+    ? parseBundledPluginPublicationFailures(
+        readFileSync(bundledPluginFailuresSource, 'utf8'),
+      )
     : [];
-  await mkdir(join(payloadDir, '.project', 'tmp', 'bundled-plugin-publication'), { recursive: true });
+  await mkdir(
+    join(payloadDir, '.project', 'tmp', 'bundled-plugin-publication'),
+    { recursive: true },
+  );
   if (existsSync(bundledPluginFailuresSource)) {
     await copyFile(bundledPluginFailuresSource, bundledPluginFailuresTarget);
   } else {
@@ -891,17 +1011,21 @@ async function stageCliBinaryArtifactSupportPayload({
     );
   }
   await finalizeRuntimeArtifactPayload(payloadDir, target);
-  const stagedWorkspaceRuntime = readCliNodeWorkspaceRuntimeIdentityFromRuntimeRoot({
-    runtimeRoot: payloadDir,
-    packageNames: sourceWorkspaceRuntime.packageNames,
-  });
+  const supportHash = createHash('sha256');
+  for (const name of ['node_modules', 'tools']) {
+    hashRequiredSupportInputPath({
+      hash: supportHash,
+      repoRoot: payloadDir,
+      sourcePath: join(payloadDir, name),
+      label: name,
+    });
+  }
 
   if (expectedSupportFingerprint) {
     const after = readCliBinaryArtifactSupportIdentity({
       repoRoot,
       target,
       goVersion: normalizedGoVersion,
-      workspaceSourceFingerprint,
       cliProxyApiManagedRuntimeExecutablePath,
       processCustodyRuntimeExecutablePath,
     });
@@ -914,10 +1038,14 @@ async function stageCliBinaryArtifactSupportPayload({
 
   return {
     entrypoint: DAEMON_SUPPORT_ENTRYPOINT,
-    workspaceRuntimeIdentity: stagedWorkspaceRuntime.fingerprint,
+    workspaceRuntimeIdentity: supportHash.digest('hex'),
     runtimeAssetRelativePath: relative(
       payloadDir,
-      cliProxyApiManagedRuntime?.executablePath ?? join(payloadDir, `${CLIPROXYAPI_MANAGED_RUNTIME_RELATIVE_PATH}${target.exeExt}`),
+      cliProxyApiManagedRuntime?.executablePath ??
+        join(
+          payloadDir,
+          `${CLIPROXYAPI_MANAGED_RUNTIME_RELATIVE_PATH}${target.exeExt}`,
+        ),
     ).replaceAll('\\', '/'),
   };
 }
@@ -930,10 +1058,8 @@ export async function buildCliBinaryArtifactSupportPayload({
   commandProbe = commandExists,
   cliProxyApiManagedRuntimeExecutablePath,
   processCustodyRuntimeExecutablePath,
-  expectedWorkspaceRuntimeIdentity,
   supportArtifactFingerprint,
   goVersion,
-  workspaceSourceFingerprint,
   preserveCompilePayloadAssets = false,
   includeIrohNativeReleaseEvidence = false,
 }: {
@@ -944,18 +1070,18 @@ export async function buildCliBinaryArtifactSupportPayload({
   commandProbe?: (cmd: string) => boolean;
   cliProxyApiManagedRuntimeExecutablePath?: string;
   processCustodyRuntimeExecutablePath?: string;
-  expectedWorkspaceRuntimeIdentity?: string;
   supportArtifactFingerprint?: string;
   goVersion?: string;
-  workspaceSourceFingerprint?: string;
   preserveCompilePayloadAssets?: boolean;
   includeIrohNativeReleaseEvidence?: boolean;
-}): Promise<Readonly<{
-  entrypoint: string;
-  workspaceRuntimeIdentity: string;
-  runtimeAssetRelativePath: string;
-}>> {
-  return await withWorkspaceBundleLock(async () => await stageCliBinaryArtifactSupportPayload({
+}): Promise<
+  Readonly<{
+    entrypoint: string;
+    workspaceRuntimeIdentity: string;
+    runtimeAssetRelativePath: string;
+  }>
+> {
+  return await stageCliBinaryArtifactSupportPayload({
     repoRoot,
     payloadDir,
     target,
@@ -963,17 +1089,10 @@ export async function buildCliBinaryArtifactSupportPayload({
     commandProbe,
     cliProxyApiManagedRuntimeExecutablePath,
     processCustodyRuntimeExecutablePath,
-    expectedWorkspaceRuntimeIdentity,
     supportArtifactFingerprint,
     goVersion,
-    workspaceSourceFingerprint,
     preserveCompilePayloadAssets,
     includeIrohNativeReleaseEvidence,
-  }), {
-    // The support identity is computed from the installed CLI workspace
-    // publication. Keep that existing publication stable until every byte has
-    // been copied and the identity has been rechecked.
-    lockPath: resolveCliSharedDepsBuildLockPath(repoRoot),
   });
 }
 
@@ -990,10 +1109,8 @@ export async function buildCliBinaryArtifactPayload({
   runCommand = execOrThrow,
   commandProbe = commandExists,
   compileBinary = compileBunBinary,
-  ensureWorkspacePackagesBuiltByName,
   cliProxyApiManagedRuntimeExecutablePath,
   processCustodyRuntimeExecutablePath,
-  requiredCliDistInputFingerprint,
   includeIrohNativeReleaseEvidence = false,
 }: {
   repoRoot: string;
@@ -1003,17 +1120,26 @@ export async function buildCliBinaryArtifactPayload({
   runCommand?: RunCommand;
   commandProbe?: (cmd: string) => boolean;
   compileBinary?: typeof compileBunBinary;
-  ensureWorkspacePackagesBuiltByName?: EnsureWorkspacePackagesBuiltByName;
   cliProxyApiManagedRuntimeExecutablePath?: string;
   processCustodyRuntimeExecutablePath?: string;
-  requiredCliDistInputFingerprint?: string;
   includeIrohNativeReleaseEvidence?: boolean;
 }): Promise<{ executableName: string; entrypoint: string }> {
   assertCliNativeRuntimeTargetMatchesHost(target, commandProbe);
-  const publicationFailuresPath = join(repoRoot, 'apps', 'cli', BUNDLED_PLUGIN_FAILURES_RELATIVE_PATH);
-  if (existsSync(publicationFailuresPath)
-    && parseBundledPluginPublicationFailures(readFileSync(publicationFailuresPath, 'utf8')).length > 0) {
-    throw new Error('[component-artifacts] release payload requires a complete bundled-plugin publication');
+  const publicationFailuresPath = join(
+    repoRoot,
+    'apps',
+    'cli',
+    BUNDLED_PLUGIN_FAILURES_RELATIVE_PATH,
+  );
+  if (
+    existsSync(publicationFailuresPath) &&
+    parseBundledPluginPublicationFailures(
+      readFileSync(publicationFailuresPath, 'utf8'),
+    ).length > 0
+  ) {
+    throw new Error(
+      '[component-artifacts] release payload requires a complete bundled-plugin publication',
+    );
   }
   await rm(payloadDir, { recursive: true, force: true });
   await mkdir(payloadDir, { recursive: true });
@@ -1025,8 +1151,6 @@ export async function buildCliBinaryArtifactPayload({
     runCommand,
     commandProbe,
     compileBinary,
-    ensureWorkspacePackagesBuiltByName,
-    requiredCliDistInputFingerprint,
   });
   const support = await buildCliBinaryArtifactSupportPayload({
     repoRoot,
@@ -1036,7 +1160,6 @@ export async function buildCliBinaryArtifactPayload({
     commandProbe,
     cliProxyApiManagedRuntimeExecutablePath,
     processCustodyRuntimeExecutablePath,
-    expectedWorkspaceRuntimeIdentity: code.workspaceRuntimeIdentity,
     // The release payload preserves legitimate assets emitted alongside the
     // Bun executable (for example its managed JS runtime). New immutable
     // daemon support artifacts stage into an empty payload instead.
@@ -1046,7 +1169,7 @@ export async function buildCliBinaryArtifactPayload({
   writeCliBinaryArtifactRuntimeAssetBuildManifest({
     payloadDir,
     relativePath: support.runtimeAssetRelativePath,
-    workspaceRuntimeIdentity: support.workspaceRuntimeIdentity,
+    workspaceRuntimeIdentity: code.workspaceRuntimeIdentity,
   });
   return {
     executableName: code.executableName,

@@ -30,7 +30,8 @@ function rebaseDistTargets(value) {
   }
 
   return Object.fromEntries(
-    Object.entries(value).map(([key, nested]) => [key, rebaseDistTargets(nested)]),
+    Object.entries(value).filter(([key]) => key !== 'happier-source')
+      .map(([key, nested]) => [key, rebaseDistTargets(nested)]),
   );
 }
 
@@ -40,12 +41,13 @@ function collectTargetStrings(value, output) {
     return;
   }
   if (!value || typeof value !== 'object') return;
-  for (const nested of Object.values(value)) {
+  for (const [condition, nested] of Object.entries(value)) {
+    if (condition === 'happier-source') continue;
     collectTargetStrings(nested, output);
   }
 }
 
-function collectDistOutputFiles(packageJson) {
+export function collectDistOutputFiles(packageJson) {
   const targets = [];
   for (const key of ['main', 'module', 'types']) {
     collectTargetStrings(packageJson[key], targets);
@@ -128,4 +130,4 @@ function runBuild() {
   }
 }
 
-runBuild();
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) runBuild();

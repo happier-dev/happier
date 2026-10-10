@@ -14,12 +14,17 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
+      "happier-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     }
   },
   "imports": {
     "#http": {
+      "happier-source": {
+        "node": "./src/http/undiciHttp.ts",
+        "default": "./src/http/fetchHttp.ts"
+      },
       "node": "./dist/http/undiciHttp.js",
       "default": "./dist/http/fetchHttp.js"
     }

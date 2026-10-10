@@ -7,3 +7,8 @@ export function resolveWorkspaceBuildMode(options?: {
   buildMode?: string;
   env?: Record<string, string | undefined>;
 }): 'strict' | 'qa-runtime' | 'source-dev';
+export function resolveWorkspaceTypeScriptCompilerArgs(options?: {
+  compilerArgs?: string[];
+  env?: Record<string, string | undefined>;
+  checkOnly?: boolean;
+}): string[];

@@ -7,78 +7,97 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
+      "happier-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
     "./manifest": {
+      "happier-source": "./src/manifest.ts",
       "types": "./dist/manifest.d.ts",
       "default": "./dist/manifest.js"
     },
     "./agent": {
+      "happier-source": "./src/agent/index.ts",
       "types": "./dist/agent/index.d.ts",
       "default": "./dist/agent/index.js"
     },
     "./agent/hooks/settings": {
+      "happier-source": "./src/agent/hooks/settings.ts",
       "types": "./dist/agent/hooks/settings.d.ts",
       "default": "./dist/agent/hooks/settings.js"
     },
     "./agent/hooks/protocol": {
+      "happier-source": "./src/agent/hooks/protocol.ts",
       "types": "./dist/agent/hooks/protocol.d.ts",
       "default": "./dist/agent/hooks/protocol.js"
     },
     "./protocol/remoteSettings": {
+      "happier-source": "./src/protocol/remoteSettings.ts",
       "types": "./dist/protocol/remoteSettings.d.ts",
       "default": "./dist/protocol/remoteSettings.js"
     },
     "./agent/auth/services/cloud/refreshBridge": {
+      "happier-source": "./src/agent/auth/services/cloud/refreshBridge.ts",
       "types": "./dist/agent/auth/services/cloud/refreshBridge.d.ts",
       "default": "./dist/agent/auth/services/cloud/refreshBridge.js"
     },
     "./agent/auth/services/native/credentials": {
+      "happier-source": "./src/agent/auth/services/native/credentials.ts",
       "types": "./dist/agent/auth/services/native/credentials.d.ts",
       "default": "./dist/agent/auth/services/native/credentials.js"
     },
     "./agent/auth/services/quota/subscriptionFetcher": {
+      "happier-source": "./src/agent/auth/services/quota/subscriptionFetcher.ts",
       "types": "./dist/agent/auth/services/quota/subscriptionFetcher.d.ts",
       "default": "./dist/agent/auth/services/quota/subscriptionFetcher.js"
     },
     "./agent/auth/services/runtime": {
+      "happier-source": "./src/agent/auth/services/runtime/index.ts",
       "types": "./dist/agent/auth/services/runtime/index.d.ts",
       "default": "./dist/agent/auth/services/runtime/index.js"
     },
     "./agent/runtime/remote/sdk": {
+      "happier-source": "./src/agent/runtime/remote/sdk/index.ts",
       "types": "./dist/agent/runtime/remote/sdk/index.d.ts",
       "default": "./dist/agent/runtime/remote/sdk/index.js"
     },
     "./agent/runtime/permissionMode": {
+      "happier-source": "./src/agent/runtime/permissionMode.ts",
       "types": "./dist/agent/runtime/permissionMode.d.ts",
       "default": "./dist/agent/runtime/permissionMode.js"
     },
     "./agent/runtime/reasoningEffort": {
+      "happier-source": "./src/agent/runtime/reasoningEffort.ts",
       "types": "./dist/agent/runtime/reasoningEffort.d.ts",
       "default": "./dist/agent/runtime/reasoningEffort.js"
     },
     "./provider/catalog": {
+      "happier-source": "./src/provider/catalog.ts",
       "types": "./dist/provider/catalog.d.ts",
       "default": "./dist/provider/catalog.js"
     },
     "./agent/permissions/requestSource": {
+      "happier-source": "./src/agent/permissions/requestSource.ts",
       "types": "./dist/agent/permissions/requestSource.d.ts",
       "default": "./dist/agent/permissions/requestSource.js"
     },
     "./agent/promptAssets": {
+      "happier-source": "./src/agent/promptAssets/index.ts",
       "types": "./dist/agent/promptAssets/index.d.ts",
       "default": "./dist/agent/promptAssets/index.js"
     },
     "./agent/transcripts": {
+      "happier-source": "./src/agent/transcripts/index.ts",
       "types": "./dist/agent/transcripts/index.d.ts",
       "default": "./dist/agent/transcripts/index.js"
     },
     "./agent/surfaces/sessions/handoff/providerOps": {
+      "happier-source": "./src/agent/surfaces/sessions/handoff/providerOps.ts",
       "types": "./dist/agent/surfaces/sessions/handoff/providerOps.d.ts",
       "default": "./dist/agent/surfaces/sessions/handoff/providerOps.js"
     },
     "./ui/predecessor-message-meta": {
+      "happier-source": "./src/ui/predecessorMessageMeta.ts",
       "types": "./dist/ui/predecessorMessageMeta.d.ts",
       "react-native": "./dist/ui/predecessorMessageMeta.js",
       "default": "./dist/ui/predecessorMessageMeta.js"
