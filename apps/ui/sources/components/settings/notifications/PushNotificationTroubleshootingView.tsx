@@ -41,7 +41,6 @@ export const PushNotificationTroubleshootingView = React.memo(function PushNotif
     const settings = useSettingsSelector((settings) => ({
         attentionDeliveryPolicyV1: settings.attentionDeliveryPolicyV1,
         notificationsSettingsV1: settings.notificationsSettingsV1,
-        notificationChannelsV1: settings.notificationChannelsV1,
     }));
 
     const activeServer = useActiveServerSnapshot();

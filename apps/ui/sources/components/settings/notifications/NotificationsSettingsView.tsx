@@ -14,17 +14,24 @@ import {
 } from '@/sync/domains/settings/attentionDeviceOverridesV1';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import { useLocalSettings, useSettingsSelector } from '@/sync/domains/state/storage';
-import { useApplyLocalSettings, useApplySettings } from '@/sync/store/settingsWriters';
+import { useAccountSettingsScope, useApplyLocalSettings, useApplySettings } from '@/sync/store/settingsWriters';
 import { t } from '@/text';
 import { sync } from '@/sync/sync';
 import { schedulePushTokenReconciliation } from '@/sync/engine/account/syncAccount';
 import { runPushNotificationPermissionPriming } from '@/activity/notifications/permission/pushNotificationPermissionPriming';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { AttentionDeliveryPolicyV1Schema, accountSettingsParse, resolveNotificationChannelsV1FromAccountSettings, type AttentionDeliveryPolicyV1 } from '@happier-dev/protocol/account/settings/accountSettings';
+import { AttentionDeliveryPolicyV1Schema, accountSettingsParse, type AttentionDeliveryPolicyV1 } from '@happier-dev/protocol/account/settings/accountSettings';
 import { DEFAULT_LIVE_ACTIVITY_REMOTE_UPDATE_CAPABILITY_DIAGNOSTICS, type LiveActivityRemoteUpdateCapabilityDiagnostics } from '@happier-dev/protocol/activity/live/remoteUpdateCapabilities';
 import { PUSH_NOTIFICATION_SOUND_IDS, resolveExpoNotificationSoundName } from '@happier-dev/protocol/push/pushNotificationActions';
-import type { NotificationChannelV1, WebhookNotificationChannelV1 } from '@happier-dev/protocol/account/settings/notificationChannels';
+import { BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID } from '@happier-dev/protocol/account/settings/notificationChannels';
+import type { WebhookNotificationChannelRecordV1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
+import { NotificationConfigurationActionOutputSchemas,
+    type NotificationChannelConfigurationPatch } from '@happier-dev/protocol/actions/notificationConfigurationActionFamily';
+import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
+import { useNotificationChannelCatalog } from '@/sync/store/useNotificationChannelCatalog';
+import { Modal } from '@/modal';
 
 import { SessionAutoFollowPreferencesSection } from '@/components/sessions/follow/SessionAutoFollowPreferencesSection';
 import { ActivitySurfacesSettingsSection } from './ActivitySurfacesSettingsSection';
@@ -39,8 +46,7 @@ import { useRemoteAlertRegistrationStatus } from './useRemoteAlertRegistrationSt
 import { NotificationQuietHoursSection } from './NotificationQuietHoursSection';
 import { NotificationSoundsSection } from './NotificationSoundsSection';
 import { NotificationTypesSection, type NotificationTypeEventId } from './NotificationTypesSection';
-import { NotificationWebhooksSection } from './NotificationWebhooksSection';
-import { buildWebhookNotificationSettingsDelta } from './notificationChannels';
+import { NotificationWebhooksSection, type ExecuteNotificationConfigurationMutation } from './NotificationWebhooksSection';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
@@ -49,18 +55,34 @@ import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHead
 import { NOTIFICATIONS_SETTINGS } from '@/components/settings/notifications/notificationsSettings';
 import { settingRendersOnHost } from '@/components/settings/catalog/settingDeclarations';
 import { SettingSection } from '@/components/settings/shell/SettingRow';
+import { updateAccountNotificationPreference, updateNotificationDeviceSounds, updateNotificationDeviceQuietHours, type AccountNotificationPreference } from './notificationPreferences';
 
 export const NotificationsSettingsView = React.memo(function NotificationsSettingsView() {
     const router = useRouter();
     const settings = useSettingsSelector((settings) => ({
         attentionDeliveryPolicyV1: settings.attentionDeliveryPolicyV1,
-        notificationsSettingsV1: settings.notificationsSettingsV1,
-        notificationChannelsV1: settings.notificationChannelsV1,
         sessionRemoteAlertsEnabled: settings.sessionRemoteAlertsEnabled,
     }));
     const localSettings = useLocalSettings();
     const applySettings = useApplySettings();
     const applyLocalSettings = useApplyLocalSettings();
+    const scope = useAccountSettingsScope();
+    const channelCatalog = useNotificationChannelCatalog(scope);
+    const { execute: executeAction, ready: actionReady, approval } = useMountedActionExecution(scope);
+    const executeMutation = React.useCallback<ExecuteNotificationConfigurationMutation>(async mutation => {
+        if (!actionReady) return null;
+        try {
+            const result = await executeAction(mutation.actionId, mutation.input);
+            if (!result.ok) {
+                if (result.errorCode === 'action_account_scope_changed') return null;
+                throw new Error(result.error);
+            }
+            return NotificationConfigurationActionOutputSchemas[mutation.actionId].parse(result.result);
+        } catch (error) {
+            Modal.alert(t('common.error'), error instanceof Error ? error.message : t('common.error'));
+            return null;
+        }
+    }, [actionReady, executeAction]);
     const activeServer = useActiveServerSnapshot();
     useServerProfilesGeneration();
     const activeHomeName = getServerProfileById(activeServer.serverId)?.name.trim()
@@ -75,18 +97,15 @@ export const NotificationsSettingsView = React.memo(function NotificationsSettin
         () => accountSettingsParse(settings).attentionDeliveryPolicyV1,
         [settings],
     );
-    const notificationChannels = React.useMemo(
-        () => resolveNotificationChannelsV1FromAccountSettings(settings),
-        [settings],
-    );
     const webhookChannels = React.useMemo(
-        () => notificationChannels.filter((channel): channel is WebhookNotificationChannelV1 => (
+        () => channelCatalog.channels.filter((channel): channel is WebhookNotificationChannelRecordV1 => (
             channel.kind === 'webhook'
         )),
-        [notificationChannels],
+        [channelCatalog.channels],
     );
-
-    const pushEnabled = attentionPolicy.channels.expo_push.enabled !== false;
+    const builtin = channelCatalog.channels.find((channel): channel is Extract<typeof channel, { kind: 'expo_push' }> =>
+        channel.id === BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID && channel.kind === 'expo_push');
+    const pushEnabled = builtin?.enabled === true && attentionPolicy.channels.expo_push.enabled !== false;
     const remoteAlerts = useRemoteAlertRegistrationStatus({
         enabled: followingEnabled,
         serverId: activeServer.serverId,
@@ -107,17 +126,6 @@ export const NotificationsSettingsView = React.memo(function NotificationsSettin
         router.push('/settings/notifications/push');
     }, [router]);
 
-    const applyWebhookNotificationSettings = React.useCallback((nextChannels: ReadonlyArray<NotificationChannelV1>) => {
-        applySettings(buildWebhookNotificationSettingsDelta({
-            basePolicy: attentionPolicy,
-            webhookChannels: nextChannels,
-        }));
-    }, [applySettings, attentionPolicy]);
-
-    const setWebhookChannels = React.useCallback((nextChannels: ReadonlyArray<NotificationChannelV1>) => {
-        applyWebhookNotificationSettings(nextChannels);
-    }, [applyWebhookNotificationSettings]);
-
     const setAttentionPolicy = React.useCallback((next: Partial<AttentionDeliveryPolicyV1>) => {
         applySettings({
             attentionDeliveryPolicyV1: AttentionDeliveryPolicyV1Schema.parse({
@@ -127,16 +135,11 @@ export const NotificationsSettingsView = React.memo(function NotificationsSettin
         });
     }, [applySettings, attentionPolicy]);
 
-    const setPushEnabled = React.useCallback((enabled: boolean) => {
-        setAttentionPolicy({
-            channels: {
-                ...attentionPolicy.channels,
-                expo_push: {
-                    ...attentionPolicy.channels.expo_push,
-                    enabled,
-                },
-            },
-        });
+    const updateBuiltin = React.useCallback(async (patch: NotificationChannelConfigurationPatch) =>
+        executeMutation({ actionId: 'notifications.expoPush.update', input: { patch } }), [executeMutation]);
+
+    const setPushEnabled = React.useCallback(async (enabled: boolean) => {
+        if (!await updateBuiltin({ enabled })) return;
         schedulePushTokenReconciliation();
         if (!enabled) return;
         // Enabling push here is the user's demonstrated intent, so it is the right moment to ask
@@ -147,92 +150,29 @@ export const NotificationsSettingsView = React.memo(function NotificationsSettin
             trigger: 'user_action',
             onGranted: () => sync.onPushPermissionGranted(),
         });
-    }, [attentionPolicy.channels, setAttentionPolicy]);
+    }, [updateBuiltin]);
 
-    const setExpoPushEventEnabled = React.useCallback((event: NotificationTypeEventId, enabled: boolean) => {
-        const expoPushChannel = attentionPolicy.channels.expo_push;
-        setAttentionPolicy({
-            events: {
-                ...attentionPolicy.events,
-                [event]: {
-                    ...attentionPolicy.events[event],
-                    enabled,
-                },
-            },
-            channels: {
-                ...attentionPolicy.channels,
-                expo_push: {
-                    ...expoPushChannel,
-                    events: {
-                        ...expoPushChannel.events,
-                        [event]: {
-                            ...expoPushChannel.events[event],
-                            enabled,
-                        },
-                    },
-                },
-            },
-        });
-    }, [attentionPolicy.channels, attentionPolicy.events, setAttentionPolicy]);
+    const setNotificationPreference = React.useCallback((id: AccountNotificationPreference, value: boolean | string) => {
+        applySettings({ attentionDeliveryPolicyV1: updateAccountNotificationPreference(attentionPolicy, id, value) });
+    }, [applySettings, attentionPolicy]);
 
-    const setExpoPushReadyPreviewEnabled = React.useCallback((enabled: boolean) => {
-        const expoPushChannel = attentionPolicy.channels.expo_push;
-        setAttentionPolicy({
-            channels: {
-                ...attentionPolicy.channels,
-                expo_push: {
-                    ...expoPushChannel,
-                    previewBehavior: enabled ? 'include_preview' : 'status_only',
-                },
-            },
-        });
-    }, [attentionPolicy.channels, setAttentionPolicy]);
+    const setExpoPushEventEnabled = React.useCallback(async (event: NotificationTypeEventId, enabled: boolean) => {
+        if (event === 'follow_update') { setNotificationPreference(event, enabled); return; }
+        const topic = event === 'permission_request' ? 'permissionRequest' : event === 'user_action_request' ? 'userActionRequest' : 'ready';
+        await updateBuiltin({ topics: { [topic]: enabled } });
+    }, [setNotificationPreference, updateBuiltin]);
 
-    const setExpoPushRequestPreviewEnabled = React.useCallback((enabled: boolean) => {
-        const expoPushChannel = attentionPolicy.channels.expo_push;
-        const previewBehavior = enabled ? 'include_preview' : 'status_only';
-        setAttentionPolicy({
-            channels: {
-                ...attentionPolicy.channels,
-                expo_push: {
-                    ...expoPushChannel,
-                    events: {
-                        ...expoPushChannel.events,
-                        permission_request: { ...expoPushChannel.events.permission_request, previewBehavior },
-                        user_action_request: { ...expoPushChannel.events.user_action_request, previewBehavior },
-                    },
-                },
-            },
-        });
-    }, [attentionPolicy.channels, setAttentionPolicy]);
+    const setExpoPushReadyPreviewEnabled = React.useCallback(async (enabled: boolean) => {
+        await updateBuiltin({ readyIncludeMessageText: enabled });
+    }, [updateBuiltin]);
+
+    const setExpoPushRequestPreviewEnabled = React.useCallback(async (enabled: boolean) => {
+        await updateBuiltin({ requestIncludeMessageText: enabled });
+    }, [updateBuiltin]);
 
     const setAccountSoundPreset = React.useCallback((preset: 'happier' | 'system' | 'silent') => {
-        const eventSoundIds = { ...attentionPolicy.sounds.eventSoundIds };
-        delete eventSoundIds.permission_request;
-        delete eventSoundIds.user_action_request;
-
-        const sounds = preset === 'happier'
-            ? {
-                ...attentionPolicy.sounds,
-                defaultSoundId: PUSH_NOTIFICATION_SOUND_IDS.soft,
-                eventSoundIds: {
-                    ...eventSoundIds,
-                    permission_request: PUSH_NOTIFICATION_SOUND_IDS.urgent,
-                    user_action_request: PUSH_NOTIFICATION_SOUND_IDS.urgent,
-                },
-            }
-            : {
-                ...attentionPolicy.sounds,
-                defaultSoundId: preset === 'system'
-                    ? PUSH_NOTIFICATION_SOUND_IDS.systemDefault
-                    : PUSH_NOTIFICATION_SOUND_IDS.none,
-                eventSoundIds,
-            };
-
-        setAttentionPolicy({
-            sounds,
-        });
-    }, [attentionPolicy.sounds, setAttentionPolicy]);
+        setNotificationPreference('soundPreset', preset);
+    }, [setNotificationPreference]);
 
     const setLocalSetting = React.useCallback((delta: Partial<LocalSettings>) => {
         const deltaRecord: Record<string, unknown> = { ...delta };
@@ -252,16 +192,8 @@ export const NotificationsSettingsView = React.memo(function NotificationsSettin
     }, [applyLocalSettings, localSettings.attentionDeviceOverridesV1]);
 
     const setDeviceSoundsEnabled = React.useCallback((enabled: boolean) => {
-        applyLocalSettings({
-            attentionDeviceOverridesV1: {
-                ...localSettings.attentionDeviceOverridesV1,
-                sounds: {
-                    ...localSettings.attentionDeviceOverridesV1.sounds,
-                    enabled,
-                },
-            },
-        });
-    }, [applyLocalSettings, localSettings.attentionDeviceOverridesV1]);
+        applyLocalSettings(updateNotificationDeviceSounds(localSettings, enabled));
+    }, [applyLocalSettings, localSettings]);
 
     const previewSound = React.useCallback(() => {
         const sound = (
@@ -286,6 +218,11 @@ export const NotificationsSettingsView = React.memo(function NotificationsSettin
     return (
         <ItemList style={{ paddingTop: 0 }} testID="settings-notifications-screen">
             <SettingsPageHeader description={t('settingsNotifications.pageDescription')} />
+            {approval.approvalId && scope ? (
+                <ActionApprovalPendingNotice testID="settings-notifications-approval-pending"
+                    message={t('secrets.catalog.approvalPending')}
+                    onOpenApproval={() => router.push(`/inbox/approvals/${encodeURIComponent(approval.approvalId!)}?serverId=${encodeURIComponent(scope.serverId)}`)} />
+            ) : null}
             {isDesktopHost() ? (
                 <NotificationDesktopPermissionSection />
             ) : null}
@@ -295,10 +232,11 @@ export const NotificationsSettingsView = React.memo(function NotificationsSettin
                 setPushEnabled={setPushEnabled}
                 openPushTroubleshooting={openPushTroubleshooting}
                 mutePhoneWhenComputerFocused={attentionPolicy.mutePhoneWhenComputerFocused === true}
-                setMutePhoneWhenComputerFocused={(enabled) => setAttentionPolicy({ mutePhoneWhenComputerFocused: enabled })}
+                setMutePhoneWhenComputerFocused={(enabled) => setNotificationPreference('mutePhoneWhenComputerFocused', enabled)}
             />
             <NotificationTypesSection
                 policy={attentionPolicy}
+                builtin={builtin ?? null}
                 pushEnabled={pushEnabled}
                 setEventEnabled={setExpoPushEventEnabled}
                 setReadyPreviewEnabled={setExpoPushReadyPreviewEnabled}
@@ -316,12 +254,7 @@ export const NotificationsSettingsView = React.memo(function NotificationsSettin
                 policy={attentionPolicy}
                 deviceOverride={localSettings.attentionDeviceOverridesV1.quietHoursOverride}
                 setAccountQuietHours={(quietHours) => setAttentionPolicy({ quietHours })}
-                setDeviceQuietHoursOverride={(quietHoursOverride) => setLocalSetting({
-                    attentionDeviceOverridesV1: {
-                        ...localSettings.attentionDeviceOverridesV1,
-                        quietHoursOverride,
-                    },
-                })}
+                setDeviceQuietHoursOverride={(quietHoursOverride) => setLocalSetting(updateNotificationDeviceQuietHours(localSettings, quietHoursOverride))}
             />
             <SessionAutoFollowPreferencesSection key={activeServer.serverId} serverId={activeServer.serverId} />
             <SettingSection section={NOTIFICATIONS_SETTINGS.sectionRefs.remoteAlerts}>
@@ -387,7 +320,8 @@ export const NotificationsSettingsView = React.memo(function NotificationsSettin
             ) : null}
             <NotificationWebhooksSection
                 webhookChannels={webhookChannels}
-                setWebhookChannels={setWebhookChannels}
+                executeMutation={executeMutation}
+                canMutate={channelCatalog.status === 'ready' && !channelCatalog.stale}
             />
         </ItemList>
     );

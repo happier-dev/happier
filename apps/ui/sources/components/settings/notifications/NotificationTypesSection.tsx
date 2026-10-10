@@ -3,15 +3,18 @@ import * as React from 'react';
 import { Switch } from '@/components/ui/forms/Switch';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
-import { resolveAttentionDeliveryPolicyDecision, type AttentionDeliveryPolicyV1 } from '@happier-dev/protocol/account/settings/accountSettings';
+import type { AttentionDeliveryPolicyV1 } from '@happier-dev/protocol/account/settings/accountSettings';
 import type { RemoteAlertAttentionDeliveryEventId } from '@happier-dev/protocol/account/settings/attentionDeliveryPolicy';
+import type { NotificationChannelRecordV1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 import { SettingRow } from '@/components/settings/shell/SettingRow';
 import { NOTIFICATIONS_SETTINGS } from '@/components/settings/notifications/notificationsSettings';
+import { readAccountNotificationPreference } from './notificationPreferences';
 
 export type NotificationTypeEventId = RemoteAlertAttentionDeliveryEventId;
 
 type NotificationTypesSectionProps = Readonly<{
     policy: AttentionDeliveryPolicyV1;
+    builtin?: Extract<NotificationChannelRecordV1, { kind: 'expo_push' }> | null;
     pushEnabled: boolean;
     setEventEnabled: (event: NotificationTypeEventId, enabled: boolean) => void;
     setReadyPreviewEnabled: (enabled: boolean) => void;
@@ -20,25 +23,18 @@ type NotificationTypesSectionProps = Readonly<{
 
 export function NotificationTypesSection({
     policy,
+    builtin,
     pushEnabled,
     setEventEnabled,
     setReadyPreviewEnabled,
     setRequestPreviewEnabled,
 }: NotificationTypesSectionProps): React.ReactElement {
-    const readyEnabled = policy.channels.expo_push.events.ready.enabled !== false && policy.events.ready.enabled !== false;
-    const readyPreviewEnabled = policy.channels.expo_push.previewBehavior !== 'status_only';
-    const requestPreviewEnabled = ['permission_request', 'user_action_request'].every(
-        (event) => resolveAttentionDeliveryPolicyDecision({ policy, event, channel: 'expo_push', now: new Date(0) }).previewBehavior === 'include_preview',
-    );
-    const permissionRequestsEnabled =
-        policy.channels.expo_push.events.permission_request.enabled !== false
-        && policy.events.permission_request.enabled !== false;
-    const userActionsEnabled =
-        policy.channels.expo_push.events.user_action_request.enabled !== false
-        && policy.events.user_action_request.enabled !== false;
-    const followUpdatesEnabled =
-        policy.channels.expo_push.events.follow_update.enabled !== false
-        && policy.events.follow_update.enabled !== false;
+    const readyEnabled = readAccountNotificationPreference(policy, 'ready', builtin) === true;
+    const readyPreviewEnabled = readAccountNotificationPreference(policy, 'readyPreview', builtin) === true;
+    const requestPreviewEnabled = readAccountNotificationPreference(policy, 'requestPreview', builtin) === true;
+    const permissionRequestsEnabled = readAccountNotificationPreference(policy, 'permission_request', builtin) === true;
+    const userActionsEnabled = readAccountNotificationPreference(policy, 'user_action_request', builtin) === true;
+    const followUpdatesEnabled = readAccountNotificationPreference(policy, 'follow_update') === true;
 
     return (
         <ItemGroup
