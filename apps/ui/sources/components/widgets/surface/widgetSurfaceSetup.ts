@@ -1,13 +1,13 @@
 import { VoiceTrackedSessionAddressV1Schema } from '@happier-dev/protocol/sessions/follow/voiceTrackedTargetsCompatibilityV1';
-import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { StrictJsonValueSchema, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readInputPath } from '@happier-dev/protocol/inputs';
-import { projectWidgetBindingInputV1, resolveConfiguredWidgetInputs, widgetCandidateDefinitionV1, isSameWidgetDefinitionV1, countWidgetInstancesV1, type WidgetInstanceV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
+import { isWidgetTargetHostableV1, projectWidgetBindingInputV1, resolveConfiguredWidgetInputs, readWidgetInputTargetV1, widgetCandidateDefinitionV1, isSameWidgetDefinitionV1, countWidgetInstancesV1, type WidgetInstanceV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 
 import type { SessionBoardCommandOutcome } from '@/components/sessions/board/useSessionBoardController';
 import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
+import { readWidgetGroupInputCandidate } from '@/components/widgets/group/widgetGroupInputs';
 import {
     proposeWidgetSetupDraft,
-    isLiteralWidgetSetupField,
     type WidgetSetup,
     type WidgetSetupDraft,
     type WidgetSetupField,
@@ -43,7 +43,7 @@ export type WidgetSurfaceContext = Readonly<{
 
 const NO_VIEWER_VALUES: Readonly<Record<string, JsonValue>> = Object.freeze({});
 
-/** The binder's slot for a widget's declared Session input (`sessionInputPath`). */
+/** The binder's slot for a widget's declared Session input. */
 export const WIDGET_SESSION_CONTEXT_SLOT = 'session';
 
 /** The binder's provided context for a surface: its named slots and their current values. */
@@ -113,7 +113,7 @@ function describeWidgetCandidateSource(candidate: Pick<WidgetCandidate, 'pluginN
 export function describeWidgetCandidateProvenance(candidate: WidgetCandidate): string {
     const kind = candidate.definition?.kind;
     if (kind === 'builtin') {
-        return candidate.sessionInputPath ? `${t('widgetAdd.builtIn')} · ${t('widgetAdd.readsChosenSession')}` : t('widgetAdd.builtIn');
+        return readWidgetInputTargetV1(candidate).kind === 'session' ? `${t('widgetAdd.builtIn')} · ${t('widgetAdd.readsChosenSession')}` : t('widgetAdd.builtIn');
     }
     if (kind === 'artifact') {
         const yours = t('widgetDefinition.yourWidget');
@@ -130,13 +130,25 @@ export function describeWidgetCandidateProvenance(candidate: WidgetCandidate): s
 /** "made by your agent on Oct 3", from the definition's own provenance; nothing when it has none. */
 function describeWidgetDefinitionMaker(candidate: WidgetCandidate): string | null {
     const made = candidate.madeBy;
-    if (!made || made.createdAt === undefined || true) return null; // A4-RED-TEMP
+    if (!made || made.createdAt === undefined) return null;
     const date = formatWithCachedDateTimeFormatter(made.createdAt, getPreferredLanguage(), { month: 'short', day: 'numeric' });
     switch (made.author.kind) {
         case 'agent': return t('widgetAdd.madeByAgent', { date });
         case 'plugin': return t('widgetAdd.madeByPlugin', { date });
         case 'person': return t('widgetAdd.madeByYou', { date });
     }
+}
+
+/**
+ * The candidates a surface can host, for its Add: a checkout widget (Project built-ins) only where
+ * a Project supplies the checkout. The target owner (`isWidgetTargetHostableV1`) decides.
+ */
+export function selectHostableWidgetCandidates<T extends Parameters<typeof isWidgetTargetHostableV1>[0]>(
+    candidates: readonly T[],
+    surface: WidgetSurfaceRefV1['owner']['kind'],
+): readonly T[] {
+    const hostable = candidates.filter(candidate => isWidgetTargetHostableV1(candidate, surface));
+    return hostable.length === candidates.length ? candidates : hostable;
 }
 
 /** Same widget definition: the gallery counts copies by it, never by title. */
@@ -150,8 +162,9 @@ export function widgetSetupFieldsForCandidate(
     context: WidgetSurfaceContext,
     audience: 'personal' | 'shared',
 ): readonly WidgetSetupField[] {
+    const target = readWidgetInputTargetV1(candidate);
     return (candidate.inputs?.fields ?? []).map((field): WidgetSetupField => {
-        if (field.path === candidate.sessionInputPath && context.session) {
+        if (field.contextMode !== 'own' && target.kind === 'session' && field.path === target.path && context.session) {
             const session = context.session;
             return {
                 field,
@@ -163,7 +176,7 @@ export function widgetSetupFieldsForCandidate(
             };
         }
         const slot = context.slots && Object.hasOwn(context.slots, field.path) ? context.slots[field.path] : undefined;
-        if (slot?.value) return { field, follow: { slot: field.path, label: slot.label, values: [slot.value] } };
+        if (field.contextMode !== 'own' && slot?.value) return { field, follow: { slot: field.path, label: slot.label, values: [slot.value] } };
         // On a shared surface a connection is each viewer's own; it is never stored in shared content.
         const purpose = candidate.connectedAccountPurposeBindings?.find(binding => binding.path === field.path)?.purpose;
         if (audience === 'shared' && field.connectedAccountOptions === true && purpose) return { field, viewer: { purpose } };
@@ -178,9 +191,11 @@ export function widgetSetupFieldsForCandidate(
  */
 export function buildWidgetCandidateSetup(input: Readonly<{
     candidate: WidgetCandidate;
+    /** Group fields retain each child's declaration for discovery; the group grants no access. */
+    fieldCandidates?: readonly (WidgetCandidate | null | undefined)[];
     context: WidgetSurfaceContext;
     audience: 'personal' | 'shared';
-    mode: Readonly<{ kind: 'add'; submitLabel: string }> | Readonly<{ kind: 'edit'; instance: WidgetInstanceV1 }>;
+    mode: Readonly<{ kind: 'add'; submitLabel: string; copiedInput?: Readonly<Record<string, JsonValue>> }> | Readonly<{ kind: 'edit'; instance: WidgetInstanceV1 }>;
     submit: (draft: WidgetSetupDraft) => Promise<WidgetSetupSubmitResult>;
     renderPreview?: WidgetSetup['renderPreview'];
     /** The qualified surface: option reads are admitted for this widget on this surface only. */
@@ -190,7 +205,7 @@ export function buildWidgetCandidateSetup(input: Readonly<{
     const fields = widgetSetupFieldsForCandidate(candidate, input.context, input.audience);
     const proposed: WidgetSetupDraft = mode.kind === 'edit'
         ? { bindings: mode.instance.bindings }
-        : proposeWidgetCandidateSetupDraft(candidate, fields);
+        : proposeWidgetCandidateSetupDraft(candidate, fields, mode.copiedInput);
     // Input editing has its own mutation; size editing stays at the layout Action.
     const choices = mode.kind === 'add' && input.scope
         ? resolveWidgetSizeChoicesV1(input.scope.owner.kind, candidate.sizeDeclaration) : null;
@@ -203,7 +218,9 @@ export function buildWidgetCandidateSetup(input: Readonly<{
         ...(mode.kind === 'edit' ? { hint: t('widgetAdd.editHint') } : candidate.description ? { hint: candidate.description } : {}),
         ...(mode.kind === 'add' ? { provenance: describeWidgetCandidateProvenance(candidate) } : {}),
         submitLabel: mode.kind === 'edit' ? t('common.save') : mode.submitLabel,
-        widget: { title: (mode.kind === 'edit' ? mode.instance.displayName : undefined) ?? candidate.title, mark: candidate.icon },
+        widget: { title: (mode.kind === 'edit' ? mode.instance.displayName : undefined) ?? candidate.title, mark: candidate.icon,
+            // The preview card names its source as the placed card will (lab wsplit A1).
+            ...(candidate.pluginName ? { source: candidate.pluginName } : {}) },
         fields,
         initial,
         ...(choices?.sizes.length && input.scope ? { sizeChoices: { surface: input.scope.owner.kind, sizes: choices.sizes } } : {}),
@@ -215,14 +232,20 @@ export function buildWidgetCandidateSetup(input: Readonly<{
             viewerValues: NO_VIEWER_VALUES,
         }),
         ...(input.renderPreview ? { renderPreview: input.renderPreview } : {}),
-        optionsContext: (draft) => {
+        optionsContext: (draft, field) => {
             // Discovery needs the readable bound dependencies even before every required input is
             // chosen. The canonical binder projects intent; the Action still admits every read.
-            const draftInput = projectWidgetBindingInputV1({ instance: { v: 1, id: instanceId, definition, bindings: draft.bindings },
-                fields: candidate.inputs?.fields ?? [], context: providedContext, viewerValues: NO_VIEWER_VALUES });
-            const selected = candidate.sessionInputPath
-                ? VoiceTrackedSessionAddressV1Schema.safeParse(readInputPath(draftInput, candidate.sessionInputPath)) : null;
-            return { draftInput, ...(input.scope ? { consumer: { kind: 'widget' as const, surface: input.scope, definition,
+            const declaring = field && input.fieldCandidates ? readWidgetGroupInputCandidate(input.fieldCandidates, field.path) : undefined;
+            const optionsCandidate = declaring ?? candidate;
+            const optionsDefinition = declaring ? widgetDefinitionOfCandidate(declaring) : definition;
+            const fields = optionsCandidate.inputs?.fields ?? [];
+            const draftInput = projectWidgetBindingInputV1({ instance: { v: 1, id: instanceId, definition: optionsDefinition, bindings: draft.bindings },
+                fields: input.fieldCandidates && field ? fields.filter(field => field.contextMode !== 'own' && !field.connectedAccountOptions) : fields,
+                context: providedContext, viewerValues: NO_VIEWER_VALUES });
+            const target = readWidgetInputTargetV1(optionsCandidate);
+            const selected = target.kind === 'session'
+                ? VoiceTrackedSessionAddressV1Schema.safeParse(readInputPath(draftInput, target.path)) : null;
+            return { draftInput, ...(input.scope ? { consumer: { kind: 'widget' as const, surface: input.scope, definition: optionsDefinition,
                 ...(selected?.success ? { selectedSession: selected.data } : {}) } } : {}) };
         },
         submit: (draft) => {
@@ -234,11 +257,15 @@ export function buildWidgetCandidateSetup(input: Readonly<{
 }
 
 /** Schema defaults are proposals only; the same binder still validates every proposed value. */
-function proposeWidgetCandidateSetupDraft(candidate: WidgetCandidate, fields: readonly WidgetSetupField[]): WidgetSetupDraft {
+function proposeWidgetCandidateSetupDraft(candidate: WidgetCandidate, fields: readonly WidgetSetupField[], copiedInput?: Readonly<Record<string, JsonValue>>): WidgetSetupDraft {
     const proposed = proposeWidgetSetupDraft(fields);
     const bindings = { ...proposed.bindings };
     for (const entry of fields) {
-        if (Object.hasOwn(bindings, entry.field.path) || entry.follow || entry.viewer || !isLiteralWidgetSetupField(entry.field)) continue;
+        if (Object.hasOwn(bindings, entry.field.path) || entry.follow || entry.viewer) continue;
+        if (entry.field.connectedAccountOptions === true || entry.field.widget === 'secret') continue;
+        // A copy carries resolved values, never the source's follow-slot promise or read authority.
+        const copiedValue = copiedInput === undefined ? undefined : readInputPath(copiedInput, entry.field.path);
+        if (copiedValue !== undefined) { bindings[entry.field.path] = { kind: 'value', value: StrictJsonValueSchema.parse(copiedValue) }; continue; }
         let schema = candidate.inputSchema;
         for (const segment of entry.field.path.split('.')) schema = schema?.properties?.[segment];
         if (schema?.default !== undefined) bindings[entry.field.path] = { kind: 'value', value: schema.default };

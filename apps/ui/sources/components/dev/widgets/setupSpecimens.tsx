@@ -1,6 +1,9 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { HappierDataChart, HappierDataMetric } from '@happier-dev/plugin-ui/presentation';
+import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
+import { SheetDismissProvider } from '@/modal/components/card/sheetDragDismiss';
 import { WIDGET_SIZE_POLICY_V1, type WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
 
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
@@ -153,6 +156,8 @@ const SIGNUPS: WidgetCandidate = {
     title: 'Signups this week',
     description: 'New people per day, against last week',
     pluginName: 'analytics replica',
+    bodyKind: 'declarative',
+    madeBy: { author: { kind: 'agent' }, createdAt: Date.UTC(2026, 9, 3, 12) },
     sharedPluginName: false,
     icon: 'chart-bar',
     homeDefault: 'available',
@@ -160,11 +165,16 @@ const SIGNUPS: WidgetCandidate = {
 };
 const HOME_SCOPE = { serverId: 'specimen', accountId: 'specimen', owner: { kind: 'home' as const } };
 
+/** The saved query's real body nodes (the public metric and chart) at static data. */
 function StandInSignups(): React.ReactElement {
+    const { theme } = useUnistyles();
+    const presentationTheme = React.useMemo(() => projectPluginUiTheme(theme), [theme]);
+    const days = [['Thu', 142], ['Fri', 168], ['Sat', 151], ['Sun', 189], ['Mon', 214], ['Tue', 236], ['Wed', 183]] as const;
     return (
-        <View style={{ gap: 6 }}>
-            <Text style={[stylesheet.row, { fontSize: 24, lineHeight: 30 }]}>1,284</Text>
-            <Text style={stylesheet.sub}>+18% vs the week before</Text>
+        <View style={{ gap: 12 }}>
+            <HappierDataMetric label="Signups this week" value={1284} theme={presentationTheme}
+                comparison={{ value: '+18%', label: 'vs the week before', meaning: 'good' }} />
+            <HappierDataChart label="Signups per day" style="bar" theme={presentationTheme} points={days.map(([x, y]) => ({ x, y }))} />
         </View>
     );
 }
@@ -203,7 +213,9 @@ function HomeAdd(props: Readonly<{ phone: boolean; entry?: string }>) {
     return props.phone ? (
         // The phone's bottom sheet: the same card frame `WidgetSheetShell` opens.
         <View style={[stylesheet.phone, { height: 760, justifyContent: 'flex-end' }]}>
-            <ModalCardFrame header="none" title={t('widgetAdd.homeTitle')} presentation="sheet" testID="specimen-add-home.sheet">{panel}</ModalCardFrame>
+            <SheetDismissProvider onDismiss={NOOP}>
+                <ModalCardFrame header="none" title={t('widgetAdd.homeTitle')} presentation="sheet" testID="specimen-add-home.sheet">{panel}</ModalCardFrame>
+            </SheetDismissProvider>
         </View>
     ) : (
         <View style={{ width: WIDGET_ADD_SURFACE_PX.width }}>

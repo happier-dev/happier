@@ -4,6 +4,14 @@ import { scopedStorageId } from '@/utils/system/storageScope';
 import { readProjectWidgetAreaContextV1 } from './projectWidgetAreaContext';
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 
+it('supplies the plural Usage projects slot from admitted identity without changing singular Project/checkout semantics', () => {
+    const projectRef = { id: 'base', projectKey: 'opaque-project', serverId: 'home', machineId: 'machine', rootPath: '/repo', createdAtMs: 1 };
+    expect(readProjectWidgetAreaContextV1({ serverId: 'home', projectRef }).providedContext)
+        .toEqual({ project: [], checkout: [], projects: [['opaque-project']] });
+    expect(readProjectWidgetAreaContextV1({ serverId: 'other-home', projectRef }).providedContext)
+        .toEqual({ project: [], checkout: [], projects: [] });
+});
+
 it('projects only a same-Home authorized matching Source, without treating provenance revision as an eligibility gate', () => {
     const checkout = { id: 'checkout', serverId: 'home', machineId: 'machine', rootPath: '/repo', createdAtMs: 1,
         projectKey: 'project', source: { sourceId: 'source', revision: 1 } };

@@ -34,7 +34,15 @@ export function useWidgetInstanceBindingLabel(
     for (const field of candidate?.inputs?.fields ?? []) {
         const binding = instance.bindings[field.path];
         if (binding?.kind !== 'value') continue;
-        if (typeof binding.value === 'string' && binding.value.length > 0) return binding.value;
+        // A choice reads as its option's words, never its stored value ("Automatic", not "auto").
+        if (typeof binding.value === 'string' && binding.value.length > 0) {
+            const option = field.options?.find(candidate => candidate.value === binding.value);
+            if (option && typeof option.label === 'string') return option.label;
+            // A stored choice is an identifier, not words: when its option's words are not known here
+            // (a host- or source-owned choice), the slot is left to the widget's own source.
+            if (field.options || field.optionsSourceId || field.inputType) continue;
+            return binding.value;
+        }
         if (typeof binding.value === 'number') return String(binding.value);
     }
     return null;

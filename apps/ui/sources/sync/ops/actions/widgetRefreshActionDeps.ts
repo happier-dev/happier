@@ -51,6 +51,7 @@ export function createWidgetRefreshActionDepsV1(account: LazyActionAccountContex
         const instance = state.instances.find(row => row.instance.id === ref.instanceId)?.instance;
         if (!instance) return unavailable('widget_instance_not_found');
         const definition = instance.definition;
+        if (definition.kind === 'artifact' && ref.surface.accountId !== account.accountId) return unavailable('widget_definition_unavailable');
         const authored = definition.kind === 'inline' ? definition.definition
             : definition.kind === 'artifact' ? await deps.widgetDefinitionArtifacts?.get(definition.artifactId, signal) : null;
         account.assertCurrent();
@@ -58,7 +59,7 @@ export function createWidgetRefreshActionDepsV1(account: LazyActionAccountContex
         const resolved = await deps.widgetInputs.resolve({ ref, instance, context, admission: 'execution', ...(signal ? { signal } : {}) });
         account.assertCurrent();
         if (resolved.status !== 'ready') return unavailable(`widget_inputs_${resolved.status}`);
-        const initial = await readWidgetActionRuntimeV1(ref.surface, account, signal);
+        const initial = await readWidgetActionRuntimeV1(ref.surface, account, signal, undefined, deps);
         const installedDefinition = definition.kind === 'installed' ? definition : authored?.body.kind === 'installed' ? authored.body : null;
         const matches = (candidate: NonNullable<ReturnType<typeof readWidgetDescriptor>>) => installedDefinition !== null
             && isSameWidgetDefinitionV1(widgetCandidateDefinitionV1(candidate), installedDefinition);
@@ -70,7 +71,7 @@ export function createWidgetRefreshActionDepsV1(account: LazyActionAccountContex
         const parsedSession = seed.sessionInputPath ? VoiceTrackedSessionAddressV1Schema.safeParse(readInputPath(resolved.input, seed.sessionInputPath)) : null;
         if (parsedSession && (!parsedSession.success || parsedSession.data.serverId !== account.serverId)) return unavailable();
         if (seed.target === 'session' && !parsedSession?.success) return unavailable();
-        const runtime = parsedSession?.success ? await readWidgetActionRuntimeV1(ref.surface, account, signal, parsedSession.data) : initial;
+        const runtime = parsedSession?.success ? await readWidgetActionRuntimeV1(ref.surface, account, signal, parsedSession.data, deps) : initial;
         if ('ok' in runtime) return runtime;
         if (definition.kind === 'artifact') {
             const current = await deps.widgetDefinitionArtifacts?.get(definition.artifactId, signal);

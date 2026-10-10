@@ -4,7 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import type { PluginUiWidgetAreaOperationV1, PluginUiWidgetAreaResultV1 } from '@happier-dev/protocol/plugins/ui';
 import {
-    applyWidgetAreaLayoutIntentV1, type WidgetAreaLayoutIntentV1, type WidgetAreaLayoutV1, type WidgetInstanceV1, type WidgetSurfaceRefV1,
+    applyWidgetAreaLayoutIntentV1, flattenWidgetLayoutWidgetsV1, type WidgetAreaLayoutIntentV1, type WidgetAreaLayoutV1, type WidgetLayoutWidgetV1, type WidgetInstanceV1, type WidgetSurfaceRefV1,
 } from '@happier-dev/protocol/widgets';
 
 import { Text } from '@/components/ui/text/Text';
@@ -28,8 +28,8 @@ const SUMMARY: WidgetInstanceV1['definition'] = { kind: 'builtin', id: 'session_
 const CHANGES: WidgetInstanceV1['definition'] = { kind: 'builtin', id: 'changes' };
 
 /** A specimen area port: the Protocol reducer over in-memory layout, answered like the host port. */
-function useSpecimenAreaPort(surface: WidgetSurfaceRefV1, initial: WidgetAreaLayoutV1['instances']): WidgetAreaPort {
-    const layout = React.useRef<WidgetAreaLayoutV1>({ v: 1, surface, instances: initial });
+function useSpecimenAreaPort(surface: WidgetSurfaceRefV1, initial: readonly Omit<WidgetLayoutWidgetV1, 'kind'>[]): WidgetAreaPort {
+    const layout = React.useRef<WidgetAreaLayoutV1>({ v: 1, surface, items: initial.map(item => ({ kind: 'widget', ...item })) });
     return React.useMemo<WidgetAreaPort>(() => ({
         execute: async (operation: PluginUiWidgetAreaOperationV1): Promise<PluginUiWidgetAreaResultV1> => {
             const ref = (instanceId: string) => ({ surface, instanceId });
@@ -40,19 +40,21 @@ function useSpecimenAreaPort(surface: WidgetSurfaceRefV1, initial: WidgetAreaLay
                     const code = error instanceof Error ? error.message : 'widget_area_unavailable';
                     return { ok: false, errorCode: code, error: code };
                 }
-                return { ok: true, result: { ref: ref(instanceId), instance: layout.current.instances.find(entry => entry.instance.id === instanceId)?.instance ?? null } };
+                return { ok: true, result: { ref: ref(instanceId), instance: flattenWidgetLayoutWidgetsV1(layout.current.items).find(entry => entry.instance.id === instanceId)?.instance ?? null } };
             };
             switch (operation.actionId) {
-                case 'widgets.instance.list': return { ok: true, result: { surface, instances: layout.current.instances, canEdit: true } };
-                case 'widgets.instance.add': return apply({ kind: 'add', instance: operation.instance,
+                case 'widgets.item.list': return { ok: true, result: { surface, items: layout.current.items, instances: flattenWidgetLayoutWidgetsV1(layout.current.items), canEdit: true } };
+                case 'widgets.item.add': return apply({ kind: 'add', instance: operation.instance,
                     ...(operation.size ? { size: operation.size } : {}) }, operation.instance.id);
-                case 'widgets.instance.remove': return apply({ kind: 'remove', instanceId: operation.instanceId }, operation.instanceId);
-                case 'widgets.instance.move': return apply({ kind: 'move', instanceId: operation.instanceId, toIndex: operation.toIndex }, operation.instanceId);
-                case 'widgets.instance.rename': return apply({ kind: 'rename', instanceId: operation.instanceId, displayName: operation.displayName }, operation.instanceId);
-                case 'widgets.instance.size.set':
-                    return apply({ kind: 'size', instanceId: operation.instanceId, size: operation.size }, operation.instanceId);
-                case 'widgets.instance.frame.set': return apply({ kind: 'frame', instanceId: operation.instanceId, frameStyle: operation.frameStyle }, operation.instanceId);
-                case 'widgets.instance.inputs.set': return apply({ kind: 'inputs', instanceId: operation.instanceId, bindings: operation.bindings }, operation.instanceId);
+                case 'widgets.item.remove': return apply({ kind: 'remove', instanceId: operation.instanceId }, operation.instanceId);
+                case 'widgets.item.move': return apply({ kind: 'move', instanceId: operation.instanceId, toIndex: operation.toIndex }, operation.instanceId);
+                case 'widgets.item.rename': return apply({ kind: 'rename', instanceId: operation.instanceId, displayName: operation.displayName }, operation.instanceId);
+                case 'widgets.item.size.set':
+                    return apply('size' in operation
+                        ? { kind: 'size', instanceId: operation.instanceId, size: operation.size }
+                        : { kind: 'width', instanceId: operation.instanceId, width: operation.width }, operation.instanceId);
+                case 'widgets.item.frame.set': return apply({ kind: 'frame', instanceId: operation.instanceId, frameStyle: operation.frameStyle }, operation.instanceId);
+                case 'widgets.item.inputs.set': return apply({ kind: 'inputs', instanceId: operation.instanceId, bindings: operation.bindings }, operation.instanceId);
                 default: return { ok: false, errorCode: 'unsupported_method', error: 'unsupported_method' };
             }
         },

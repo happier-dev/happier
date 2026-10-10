@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { AccessibilityInfo, Platform, ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
+import { WidgetSizePicker, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import type { JsonValue } from '@happier-dev/protocol';
 import { resolveEffectiveInputFields } from '@happier-dev/protocol/inputs';
 
@@ -111,12 +111,12 @@ export function WidgetSetupStep(props: Readonly<{
     const selectedSession = consumer?.kind === 'widget' ? consumer.selectedSession : undefined;
     const optionServerId = selectedSession?.serverId ?? props.serverId;
     const requests = React.useMemo<InputFieldOptionsRequest[]>(() => setup.fields.map(({ field, viewer }) => ({
-        ...discoveryContext,
+        ...setup.optionsContext?.(draft, field),
         // Viewer discovery belongs to Connect. Literals without a declared source use the
         // public parser/picker, not an unused choices read merely because they name a type.
         field: viewer || (isLiteralWidgetSetupField(field) && field.optionsSourceId === undefined && field.connectedAccountOptions !== true)
             ? { path: field.path, ...(field.options ? { options: field.options } : {}) } : field,
-    })), [discoveryContext, setup.fields]);
+    })), [draft, setup]);
     const options = useInputFieldOptions({
         requests,
         enabled: true,
@@ -169,6 +169,15 @@ export function WidgetSetupStep(props: Readonly<{
         { inputHints: { fields: setup.fields.map(({ field }) => field) } }, draftInput ?? {}, { includeHidden: true },
     ).map((field) => [field.path, field])), [draftInput, setup.fields]);
 
+    // The values the draft is bound to, as their rows name them, for the line that says what Add does.
+    const boundValues = setup.describeOutcome ? setup.fields.flatMap((entry, index) => {
+        const request = requests[index]!;
+        const row = describeWidgetSetupRow({ entry, draft, resolution, options: options.state(request.field, request).options.map((option): WidgetSetupValue => ({
+            value: option.value as JsonValue, label: option.label })) });
+        const label = row.kind === 'pinned' ? row.value?.label ?? row.label : row.kind === 'follows' ? row.valueLabel ?? row.label : null;
+        return label ? [label] : [];
+    }) : [];
+
     const inputs = (
         <InputTypePickerHostProvider enabled={setup.fields.some(({ field }) => field.inputType !== undefined)}
             {...options.resolveOptions.pickerContext}
@@ -218,34 +227,58 @@ export function WidgetSetupStep(props: Readonly<{
     // only resolves for each viewer once added; the card then says what it waits for rather than
     // drawing someone else's data.
     const live = resolution.status === 'ready' && setup.renderPreview ? setup.renderPreview({ input: resolution.input, draft }) : null;
+    const waitingText = finishable || props.blockedReason ? t('widgetAdd.previewAfterAdd')
+        : t('widgetAdd.previewWaiting', { field: blocker?.title ?? setup.fields[0]?.field.title ?? '' });
     const sizes = setup.sizeChoices;
+    const widths = setup.widthChoices;
+    // A group's width as the same footprint a size has: one or both of the surface's two columns.
+    const widthFootprint = (width: 'half' | 'full') => ({ columns: 2, columnSpan: width === 'half' ? 1 : 2, rowSpan: 1 });
+    const unavailableWidth = widths?.find(choice => choice.unavailableReason);
     const sizePicker = sizes && draft.size ? <WidgetSizeControl
         testID={`${props.testID}.size`} showLabel={!pane} surface={sizes.surface} sizes={sizes.sizes}
-        size={draft.size} disabled={busy} onSet={size => { setError(null); setDraft(current => ({ ...current, size })); }} /> : null;
+        size={draft.size} disabled={busy} onSet={size => { setError(null); setDraft(current => ({ ...current, size })); }} />
+        // A saved group offers its width only (lab wgsaved A): the same picker, Half | Full.
+        : widths && draft.width ? <View style={styles.widthPicker}>
+            <WidgetSizePicker testID={`${props.testID}.width`} accessibilityLabel={t('widgetFrame.groupWidth')} value={draft.width} disabled={busy}
+                choices={widths.map(choice => ({ key: choice.width, label: t(choice.width === 'half' ? 'widgetFrame.widthHalf' : 'widgetFrame.widthFull'),
+                    footprint: widthFootprint(choice.width), ...(choice.unavailableReason ? { unavailable: true } : {}) }))}
+                colors={{ track: theme.colors.segmentedControl.trackBackground, thumb: theme.colors.segmentedControl.activeBackground,
+                    label: theme.colors.text.secondary, activeLabel: theme.colors.text.primary, focusRing: theme.colors.border.focus }}
+                onChange={key => {
+                    const choice = widths.find(entry => entry.width === key);
+                    if (!choice || choice.unavailableReason) return;
+                    setError(null);
+                    setDraft(current => ({ ...current, width: choice.width }));
+                }} />
+            {unavailableWidth?.unavailableReason ? <Text style={styles.waiting} testID={`${props.testID}.width.unavailable`}>{unavailableWidth.unavailableReason}</Text> : null}
+        </View> : null;
     const widgetTitle = setup.widget?.title ?? setup.title;
     // The card at its size on this surface: a grid surface lends it the footprint's rows, a column
     // (Companion, Project aside) its compact frame.
-    // A phone shows a card still waiting for its inputs at Home's compact card height (lab A2p); once it
-    // reads, the card takes its chosen size.
-    const compactWaiting = props.phone && pane && !live;
-    const footprint = sizes && draft.size && !compactWaiting ? getWidgetSizeFootprintV1(sizes.surface, draft.size) : undefined;
-    const card = setup.renderPreview ? (
+    // A phone shows a card still waiting for its inputs at its smallest declared footprint (lab A2p);
+    // once it reads, the card takes its chosen size.
+    const compactWaiting = props.phone === true && pane && !live;
+    const shownSize = compactWaiting ? sizes?.sizes[0] : draft.size;
+    const footprint = sizes && shownSize ? getWidgetSizeFootprintV1(sizes.surface, shownSize) : undefined;
+    const card = setup.renderWaitingPreview
+        // Its own frame (a saved group): live once it resolves, the same frame waiting until then.
+        ? live ?? setup.renderWaitingPreview({ draft, waiting: waitingText })
+        : setup.renderPreview ? (
         <WidgetFrame
             testID={`${props.testID}.previewCard`}
             frameStyle="card"
-            placement={footprint || compactWaiting ? 'home' : 'companion'}
-            {...(footprint && draft.size ? { widgetPresentation: { size: draft.size, footprint } } : {})}
+            placement={footprint ? 'home' : 'companion'}
+            {...(footprint && shownSize ? { widgetPresentation: { size: shownSize, footprint } } : {})}
             mark={setup.widget?.mark ?? 'squares-four'}
             title={widgetTitle}
+            {...(setup.widget?.source ? { source: setup.widget.source } : {})}
             body={live ? { kind: 'content', children: live } : {
                 kind: 'content',
                 // What it waits for, centred in the card's room under its own mark (lab A2).
                 children: (
                     <View style={styles.waitingBody}>
                         <Icon name={setup.widget?.mark ?? 'squares-four'} size={ICON_SIZE.md} color={theme.colors.text.tertiary} />
-                        <Text style={styles.waiting} testID={`${props.testID}.previewWaiting`}>
-                            {finishable || props.blockedReason ? t('widgetAdd.previewAfterAdd') : t('widgetAdd.previewWaiting', { field: blocker?.title ?? setup.fields[0]?.field.title ?? '' })}
-                        </Text>
+                        <Text style={styles.waiting} testID={`${props.testID}.previewWaiting`}>{waitingText}</Text>
                     </View>
                 ),
             }}
@@ -254,6 +287,7 @@ export function WidgetSetupStep(props: Readonly<{
     const preview = card ? (
         pane && !props.phone ? (
             <WidgetPreviewStage testID={`${props.testID}.preview`} surface={sizes?.surface ?? null} size={draft.size} live={live !== null}
+                {...(widths && draft.width ? { footprint: widthFootprint(draft.width), alone: true } : {})}
                 caption={live ? t('widgetAdd.previewLiveData') : t('widgetAdd.preview')} accessibilityLabel={widgetTitle}>{card}</WidgetPreviewStage>
         ) : (
             <WidgetPreviewWell
@@ -267,7 +301,9 @@ export function WidgetSetupStep(props: Readonly<{
         )
     ) : null;
     // What Add will do, until an outcome takes the line (lab wsplit A1).
-    const consequence = pane && finishable && draft.size ? t('widgetAdd.addsAtSize', { size: t(`widgetAdd.sizes.${draft.size}`) }) : null;
+    const consequence = pane && finishable && setup.describeOutcome ? setup.describeOutcome({ draft, values: boundValues })
+        : pane && finishable && draft.size ? t('widgetAdd.addsAtSize', { size: t(`widgetAdd.sizes.${draft.size}`) })
+        : pane && finishable && draft.width ? t('widgetFrame.addsAtWidth', { width: t(draft.width === 'half' ? 'widgetFrame.widthHalf' : 'widgetFrame.widthFull') }) : null;
 
     const panel = {
         testID: props.testID,
@@ -297,16 +333,22 @@ export function WidgetSetupStep(props: Readonly<{
         // Inputs first, then the stage with the size under the card (lab wsplit A1/A2).
         return (
             <WidgetFlowPanel {...panel}>
-                <View style={props.phone ? styles.bodyPhone : styles.paneBody}>
-                    {setup.fields.length > 0 ? (
-                        props.phone ? inputs : (
-                            // Many inputs scroll in their own room; the stage keeps its room below them.
-                            <ScrollView style={styles.paneInputs} keyboardShouldPersistTaps="always">{inputs}</ScrollView>
-                        )
-                    ) : null}
-                    {preview}
-                    {sizePicker ? <View style={props.phone ? null : styles.paneSize}>{sizePicker}</View> : null}
-                </View>
+                {props.phone ? (
+                    <View style={styles.bodyPhone}>
+                        {setup.fields.length > 0 ? inputs : null}
+                        {preview}
+                        {sizePicker}
+                    </View>
+                ) : (
+                    // One scroller for the pane: every input is whole, the stage keeps its room, and
+                    // more inputs than fit scroll with the preview instead of being cut (lab wsplit A).
+                    <ScrollView style={styles.paneScroll} contentContainerStyle={styles.paneBody} keyboardShouldPersistTaps="always"
+                        testID={`${props.testID}.scroll`}>
+                        {setup.fields.length > 0 ? inputs : null}
+                        {preview}
+                        {sizePicker ? <View style={styles.paneSize}>{sizePicker}</View> : null}
+                    </ScrollView>
+                )}
             </WidgetFlowPanel>
         );
     }
@@ -333,9 +375,10 @@ const styles = StyleSheet.create((theme) => ({
     bodyPhone: { gap: 6 },
     inputs: { flexGrow: 1.25, flexShrink: 1, flexBasis: 0, minWidth: 0 },
     previewColumn: { flexGrow: 1, flexShrink: 1, flexBasis: 0, minWidth: 0, paddingTop: 2 },
-    paneBody: { flex: 1, minHeight: 0, gap: 12 },
-    paneInputs: { flexGrow: 0, flexShrink: 1 },
+    paneScroll: { flex: 1, minHeight: 0 },
+    paneBody: { flexGrow: 1, gap: 12 },
     paneSize: { alignItems: 'center' },
+    widthPicker: { alignItems: 'center', gap: 6 },
     // The card's reserved rows while its inputs are still being chosen: what it waits for, quiet.
     waitingBody: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', gap: 8, paddingBottom: 4 },
     waiting: {

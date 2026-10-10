@@ -37,7 +37,7 @@ export function useSaveAsWidgetDestinations(account: Readonly<{ serverId: string
  * Account's own widgets. The Session keeps its item. Reads the item made from its Session become
  * inputs, each place filling them; the person names the copy and may also place it on Home or a
  * board. One primary action; Back and Cancel write nothing. Saving is `widgets.definition.saveFromSession`
- * and each placement `widgets.instance.add` — the same operations an agent uses.
+ * and each placement `widgets.item.add` — the same operations an agent uses.
  */
 export function SaveAsWidgetPanel(props: Readonly<{
     account: Readonly<{ serverId: string; accountId: string }>;
@@ -67,7 +67,7 @@ export function SaveAsWidgetPanel(props: Readonly<{
         if (saved.kind !== 'applied') { setState('failed'); return; }
         const bindings: WidgetInputBindingsV1 = saved.result.suggestedBindings;
         const adds = await Promise.all(destinations.filter((destination) => chosen.has(destination.key)).map((destination) => (
-            runWidgetDefinitionCommand('widgets.instance.add', { surface: destination.surface,
+            runWidgetDefinitionCommand('widgets.item.add', { surface: destination.surface,
                 instance: { v: 1, id: randomUUID(), definition: { kind: 'artifact', artifactId }, bindings } }, props.account)
         )));
         if (adds.some((outcome) => outcome.kind === 'refused')) { setState('partial'); return; }

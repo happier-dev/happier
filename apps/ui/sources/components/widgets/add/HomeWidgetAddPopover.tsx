@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { View } from 'react-native';
-import type { WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
+import type { WidgetInstanceV1, WidgetSizeV1, WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 
 import { useHomeHubLayout } from '@/components/hub/layout/useHomeHubLayout';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
@@ -23,7 +23,7 @@ const HOME_LABELS: AccountWidgetSurfaceLabels = {
 /**
  * What Add to Home offers (lab `dashboards` dbind G): the shared personal-surface gallery
  * (`buildAccountWidgetAddSections`), counted "N on Home", every add one Home layout intent through
- * the Home Artifact owner — the same operation `widgets.instance.add` performs for an agent.
+ * the Home Artifact owner — the same operation `widgets.item.add` performs for an agent.
  */
 export function buildHomeWidgetAddSections(input: Omit<AccountWidgetAddInput, 'labels'>): readonly WidgetAddSection[] {
     return buildAccountWidgetAddSections({ ...input, labels: HOME_LABELS });
@@ -37,6 +37,8 @@ export function HomeWidgetAddPopover(props: Readonly<{
     open: boolean;
     anchorRef: React.RefObject<View | null>;
     onRequestClose: () => void;
+    /** Adds into this group (a group's empty slot) instead of at the end of Home. */
+    groupId?: string;
     testID: string;
 }>): React.ReactElement | null {
     if (!props.open) return null;
@@ -50,10 +52,15 @@ function OpenHomeWidgetAddPopover(props: React.ComponentProps<typeof HomeWidgetA
         account ? { serverId: account.serverId, accountId: account.accountId, owner: { kind: 'home' } } : null
     ), [account]);
     const instances = React.useMemo(
-        () => layout.sections.flatMap((section) => (section.kind === 'widget' ? [section.instance] : [])),
+        // Grouped widgets are on Home too: the gallery counts every copy.
+        () => layout.sections.flatMap((section) => (section.kind === 'widget' ? [section.instance]
+            : section.kind === 'group' ? section.children.map(child => child.instance) : [])),
         [layout.sections],
     );
-    const sections = useAccountWidgetAddSections({ scope, instances, addInstance: layout.addInstance, labels: HOME_LABELS, testID: props.testID });
+    const groupId = props.groupId;
+    const { addInstance: addToHome } = layout;
+    const addInstance = React.useCallback((instance: WidgetInstanceV1, size?: WidgetSizeV1) => addToHome(instance, size, groupId), [addToHome, groupId]);
+    const sections = useAccountWidgetAddSections({ scope, instances, addInstance, labels: HOME_LABELS, testID: props.testID });
 
     return (
         <WidgetAddSurface

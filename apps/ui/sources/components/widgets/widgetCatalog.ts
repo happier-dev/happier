@@ -1,5 +1,5 @@
 import type { ConnectedAccountUiProjectionEntryV1, PluginContributionIdentityV1, PluginJsonSchemaV2, PluginProjectedResourceV2 } from '@happier-dev/protocol';
-import { WidgetConnectedAccountPurposeBindingV1Schema, WidgetSizeDeclarationV1Schema, type WidgetSizeDeclarationV1, type WidgetConnectedAccountPurposeBindingV1, type WidgetDefinitionAuthorV1, type WidgetDefinitionSummaryV1 } from '@happier-dev/protocol/widgets';
+import { readWidgetInputTargetV1, WidgetConnectedAccountPurposeBindingV1Schema, WidgetSizeDeclarationV1Schema, type WidgetSizeDeclarationV1, type WidgetConnectedAccountPurposeBindingV1, type WidgetDefinitionAuthorV1, type WidgetDefinitionSummaryV1 } from '@happier-dev/protocol/widgets';
 import { buildQualifiedPluginContributionKey, PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { PluginJsonSchemaV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { InputHintsSchema, InputPathSchema, type InputHints } from '@happier-dev/protocol/inputs';
@@ -115,7 +115,9 @@ export function selectBuiltinWidgetCandidates(): readonly WidgetCandidate[] {
 
 function describeBuiltinWidgetCandidate(descriptor: BuiltinWidgetDescriptorV1): WidgetCandidate {
     return Object.freeze({ ...descriptor, title: t(descriptor.titleKey),
-        description: t(`widgetAdd.nativeDescriptions.${descriptor.definition.id}`),
+        description: descriptor.descriptionKey ? t(descriptor.descriptionKey)
+            : readWidgetInputTargetV1(descriptor).kind !== 'session' ? t(descriptor.titleKey)
+            : t(`widgetAdd.nativeDescriptions.${descriptor.definition.id as 'session_summary' | 'agent_plan' | 'changes' | 'local_services'}`),
         pluginName: t('widgetAdd.builtIn'), sharedPluginName: false });
 }
 

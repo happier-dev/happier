@@ -1,18 +1,20 @@
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
 import { readWorkBoardArtifactV1, WORK_BOARD_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/boards/workBoardArtifactV1';
-import { createWidgetDefinitionArtifactPortV1, createSessionWidgetDefinitionSourceReaderV1,
-    isSameWidgetDefinitionV1, widgetCandidateDefinitionV1 } from '@happier-dev/protocol/widgets';
+import { createWidgetDefinitionArtifactPortV1, createWidgetLayoutFragmentArtifactPortV1, createSessionWidgetDefinitionSourceReaderV1,
+    isSameWidgetDefinitionV1, widgetCandidateDefinitionV1, flattenWidgetLayoutWidgetsV1 } from '@happier-dev/protocol/widgets';
 import type { LazyActionAccountContext } from './actionAccountContext';
 import { readWidgetActionCandidatesV1 } from './widgetCatalogActionDeps';
 import { storage } from '@/sync/domains/state/storage';
 
 export function createWidgetDefinitionActionDepsV1(account: LazyActionAccountContext | null | undefined,
-    deps: ActionExecutorDeps): Pick<ActionExecutorDeps, 'widgetDefinitionArtifacts' | 'readSessionWidgetDefinitionSource' | 'describeWidgetDefinitionPlacements'> {
+    deps: ActionExecutorDeps): Pick<ActionExecutorDeps, 'widgetDefinitionArtifacts' | 'widgetLayoutFragmentArtifacts' | 'readSessionWidgetDefinitionSource' | 'describeWidgetDefinitionPlacements'> {
     if (!account) return {};
     const widgetDefinitionArtifacts = createWidgetDefinitionArtifactPortV1(account.workflowArtifacts, {
         accountId: account.accountId, shouldContinue: account.accountLifetime.isCurrent,
     });
-    return { widgetDefinitionArtifacts,
+    return { widgetDefinitionArtifacts, widgetLayoutFragmentArtifacts: createWidgetLayoutFragmentArtifactPortV1(account.workflowArtifacts, {
+        accountId: account.accountId, shouldContinue: account.accountLifetime.isCurrent,
+    }),
         ...(deps.sessionBoardAction ? { readSessionWidgetDefinitionSource: createSessionWidgetDefinitionSourceReaderV1({
             sessionBoardAction: deps.sessionBoardAction,
             readInstalledDescriptor: async (definition, request) => {
@@ -32,7 +34,7 @@ export function createWidgetDefinitionActionDepsV1(account: LazyActionAccountCon
             if (deps.homeHubArtifacts) {
                 const layout = await deps.homeHubArtifacts.read(context.signal);
                 account.assertCurrent();
-                for (const instance of layout.instances) if (instance.definition.kind === 'artifact' && instance.definition.artifactId === artifactId)
+                for (const { instance } of flattenWidgetLayoutWidgetsV1(layout.items)) if (instance.definition.kind === 'artifact' && instance.definition.artifactId === artifactId)
                     placements.push({ surface: { ...accountRef, owner: { kind: 'home' as const } }, instanceId: instance.id });
             } else unavailableScopes.push('home');
             // Already opened Board bytes are discoverable; never load other Boards

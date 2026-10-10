@@ -25,5 +25,5 @@ export function useWidgetMovementAdmission(surface: WidgetSurfaceRefV1 | null, b
     React.useEffect(() => { runtime.refresh(); }, [runtime, current]);
     const admission = current?.key === key && current.basis === basis ? current.admission : null;
     const admit = React.useCallback((effect: EntityDropEffectV1) => admitWidgetEntityMovement(effect, admission), [admission]);
-    return { admit, sourceRef: admission?.ref ?? null };
+    return { admit, sourceRef: admission?.ref ?? null, sourceItem: admission?.status === 'ready' ? admission.sourceItem : undefined };
 }

@@ -5,6 +5,13 @@ import type { WidgetFramePlacement, WidgetFrameStyle } from './WidgetFrame';
 import { resolveWidgetFrameStyleToggle } from './widgetFrameStyle';
 import type { WidgetSizeControl } from './WidgetSizeControl';
 
+/**
+ * How tall a widget's or a group's ⋯ may grow before it scrolls: every entry of the longest widget
+ * menu (a grouped widget's, lab wgmenu C) shows at once on a desktop window, so no row is cut
+ * mid-line at the menu's foot. The popover still shrinks to the window and scrolls when that is shorter.
+ */
+export const WIDGET_MENU_MAX_HEIGHT_PX = 520;
+
 function styleLabel(style: WidgetFrameStyle): string {
     return style === 'card' ? t('widgetFrame.styleCard') : t('widgetFrame.stylePlain');
 }
@@ -78,14 +85,18 @@ export function orderWidgetMenu(groups: Readonly<{
     surface?: readonly ItemAction[];
     remove?: readonly ItemAction[];
 }>): ItemAction[] {
+    // Untitled sections set off by hairlines (lab widget-groups wgmenu C): the menu is anchored to its
+    // widget, so no heading repeats the widget's name. An entry that already names its section keeps it.
+    const section = (id: string, actions: readonly ItemAction[] | undefined): ItemAction[] =>
+        (actions ?? []).map(action => action.group ? action : { ...action, group: { id, title: '' } });
     return [
-        ...(groups.instance ?? []),
-        ...(groups.size ?? []),
-        ...(groups.frame ?? []),
-        ...(groups.move ?? []),
-        ...(groups.definition ?? []),
-        ...(groups.surface ?? []),
-        ...(groups.remove ?? []),
+        ...section('widgetThis', groups.instance),
+        ...section('widgetThis', groups.size),
+        ...section('widgetThis', groups.frame),
+        ...section('widgetMove', groups.move),
+        ...section('widgetAbout', groups.definition),
+        ...section('widgetSurface', groups.surface),
+        ...section('widgetRemove', groups.remove),
     ];
 }
 
@@ -142,9 +153,10 @@ export function buildWidgetSizeActions(input: WidgetSizeControl | undefined): It
         title: t(`widgetAdd.sizes.${size}`),
         icon: 'square' as const,
         selected: input.size === size,
-        disabled: input.disabled,
+        disabled: input.disabled || input.unavailable?.sizes.includes(size),
+        ...(input.unavailable?.sizes.includes(size) ? { subtitle: input.unavailable.reason } : {}),
         group: { id: 'size', title: t('widgetAdd.size') },
-        onPress: () => { if (input.size !== size) input.onSet(size); },
+        onPress: () => { if (input.size !== size && !input.unavailable?.sizes.includes(size)) input.onSet(size); },
     })) ?? [];
 }
 

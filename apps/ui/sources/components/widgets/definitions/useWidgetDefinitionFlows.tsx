@@ -219,7 +219,7 @@ function AboutPanelContent(props: Parameters<typeof AboutBoundFlow>[0] & Readonl
             placements={props.placements}
             inputs={{ binding: editInputs?.binding ?? null,
                 ...(editInputs ? { onEdit: () => { props.onClose(); editInputs.onPress(); } } : {}) }}
-            onRefresh={async () => (await runWidgetDefinitionCommand('widgets.instance.refresh',
+            onRefresh={async () => (await runWidgetDefinitionCommand('widgets.item.refresh',
                 { ref: { surface: props.scope, instanceId: props.instance.id } }, account)).kind === 'applied'}
             {...(draftTarget ? { onChangeWithAgent: () => {
                 void appendMountedComposerDraft({ scope: account, ref: { kind: 'session', sessionId: draftTarget.sessionId },

@@ -7,6 +7,8 @@ import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountS
 /** Current Account metadata admits personal pins; viewer bindings require the existing purpose selection. */
 export function admitWidgetViewerSelectionMetadataV1(input: Readonly<{
     viewer: ServerAccountScope;
+    /** The host's actual layout admission, never the stored owner's identity rewritten as actor. */
+    admittedViewer?: ServerAccountScope;
     ref: WidgetInstanceRefV1;
     instance: WidgetInstanceV1;
     descriptor: WidgetInputDescriptorV1 & Readonly<{ surface?: PluginContributionIdentityV1; definition?: WidgetDefinitionRefV1;
@@ -18,7 +20,9 @@ export function admitWidgetViewerSelectionMetadataV1(input: Readonly<{
     resources?: readonly PluginProjectedResourceV2[];
 }>): ActionExecuteFailure | null {
     const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
-    if (!areServerAccountScopesEqual(input.viewer, input.ref.surface) || input.profile?.id !== input.viewer.accountId)
+    if ((!areServerAccountScopesEqual(input.viewer, input.ref.surface)
+        && !(input.viewer.serverId === input.ref.surface.serverId && areServerAccountScopesEqual(input.viewer, input.admittedViewer)))
+        || input.profile?.id !== input.viewer.accountId)
         return failure('widgets_viewer_scope_mismatch');
     const definition = input.instance.definition;
     const described = input.descriptor.definition ?? (input.descriptor.surface ? { kind: 'installed' as const, surface: input.descriptor.surface } : null);

@@ -82,6 +82,7 @@ export function useWidgetPlacementLabels(summary: PlacementSummary | null): read
                     return session ? getSessionName(session, ref.surface.serverId) : t('widgetDefinition.placedInASession');
                 }
                 case 'project': return t('widgetDefinition.placedInAProject');
+                case 'corePage': return t('widgetDefinition.placedOnACorePage');
                 case 'pluginArea': return t('widgetDefinition.placedOnAPluginPage');
             }
         });

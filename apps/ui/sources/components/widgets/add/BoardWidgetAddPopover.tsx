@@ -25,8 +25,8 @@ import type { WidgetSetupDraft, WidgetSetupSubmitResult } from './widgetSetupMod
 const PLUGINS_ROUTE = '/plugins';
 
 /** Publication/privacy and approval custody stay at the same Action an agent invokes. */
-async function publishSavedBoardWidget(input: PublicActionInputById['widgets.instance.add']): Promise<WidgetSetupSubmitResult> {
-    const outcome = await runWidgetDefinitionCommand('widgets.instance.add', input, input.surface);
+async function publishSavedBoardWidget(input: PublicActionInputById['widgets.item.add']): Promise<WidgetSetupSubmitResult> {
+    const outcome = await runWidgetDefinitionCommand('widgets.item.add', input, input.surface);
     return outcome.kind === 'refused' ? { ok: false, message: t('widgetAdd.addFailed') }
         : { ok: true, ...(outcome.kind === 'approvalPending' ? { approvalPending: true } : {}) };
 }

@@ -14,6 +14,7 @@ import { AccountProfileSchema } from '@happier-dev/protocol';
 import { resolveWidgetViewerPurposeValuesV1, type WidgetInstanceV1, type WidgetInputDescriptorV1 } from '@happier-dev/protocol/widgets';
 import { resolveConfiguredWidgetTarget, withWidgetInputRepairOutcome } from '@/sync/domains/widgets/widgetBinding';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { ConfiguredWidgetRefusal, InstalledWidgetSurface } from './InstalledWidgetSurface';
 
 /**
  * The installed arm every widget host shares (Board and Home).
@@ -110,6 +111,7 @@ function runtime(overrides: Partial<SessionPluginRuntimeState> = {}): SessionPlu
         machineId: 'machine-a',
         serverId: 'home-a',
         platform: 'web',
+        accountLifetime: null,
         ...overrides,
     } as SessionPluginRuntimeState;
 }
@@ -121,7 +123,6 @@ const source = {
 
 describe('InstalledWidgetSurface', () => {
     it('offers current-viewer Connect on a readable shared widget without an inputs writer', async () => {
-        const { ConfiguredWidgetRefusal } = await import('./InstalledWidgetSurface');
         const consumer = { pluginId: 'acme.metrics', localId: 'metrics' };
         const instance: WidgetInstanceV1 = { v: 1, id: 'shared-copy', definition: { kind: 'installed', surface: source.surface },
             bindings: { connection: { kind: 'viewer', purpose: 'read' } } };
@@ -139,7 +140,7 @@ describe('InstalledWidgetSurface', () => {
             purposeBindings: { v: 1, bindings: [] }, resources, now: 1 });
         expect(selection.fields).toMatchObject([{ reasonCode: 'widget_viewer_connection_missing' }]);
         const resolution = resolveConfiguredWidgetTarget({ scope: { serverId: 'home-a', accountId: 'viewer', owner: { kind: 'sessionBoard', sessionId: 'shared' } },
-            resolvedInput: { status: 'selection_required', fields: selection.fields }, targetKind: 'app', appRuntime: runtime(),
+            descriptor, resolvedInput: { status: 'selection_required', fields: selection.fields }, targetKind: 'app', appRuntime: runtime(),
             repairContext: { instance, descriptor, connection: { scope, machineId: 'machine-a', resources } }, readSession: () => { throw new Error('missing connection must not execute'); } });
         if (resolution.status === 'ready') throw new Error('the viewer has no connection');
         const screen = await renderScreen(<ConfiguredWidgetRefusal resolution={resolution} testID="shared-widget" />);
@@ -156,7 +157,7 @@ describe('InstalledWidgetSurface', () => {
         await screen.pressByTestIdAsync('shared-widget-connect');
         expect(sharedInputsWriter).not.toHaveBeenCalled();
         const withoutCurrentPurpose = resolveConfiguredWidgetTarget({ scope, resolvedInput: { status: 'selection_required', fields: selection.fields },
-            targetKind: 'app', appRuntime: runtime(), repairContext: { instance, descriptor },
+            descriptor, targetKind: 'app', appRuntime: runtime(), repairContext: { instance, descriptor },
             readSession: () => { throw new Error('missing connection must not execute'); } });
         if (withoutCurrentPurpose.status === 'ready') throw new Error('the viewer has no connection');
         await act(async () => { screen.tree.update(<ConfiguredWidgetRefusal resolution={withoutCurrentPurpose} testID="shared-widget" onRepairInputs={sharedInputsWriter} />); });
@@ -165,7 +166,6 @@ describe('InstalledWidgetSurface', () => {
     });
 
     it('keeps Session access loss and removed input types distinct from editable invalid inputs', async () => {
-        const { ConfiguredWidgetRefusal } = await import('./InstalledWidgetSurface');
         const instance: WidgetInstanceV1 = { v: 1, id: 'copy', definition: { kind: 'installed', surface: source.surface },
             bindings: { source: { kind: 'value', value: 'old' } } };
         const descriptor = { inputs: { fields: [{ path: 'source', title: 'Repository', widget: 'select' as const,
@@ -190,7 +190,6 @@ describe('InstalledWidgetSurface', () => {
         expect(state.mounts).toHaveLength(0);
     });
     it('repairs a lost pinned value in place: names the value, says why, and offers that field’s own choice', async () => {
-        const { ConfiguredWidgetRefusal } = await import('./InstalledWidgetSurface');
         const instance: WidgetInstanceV1 = { v: 1, id: 'copy', definition: { kind: 'installed', surface: source.surface },
             bindings: { repo: { kind: 'value', value: 'happier-dev/relay' } } };
         const descriptor = { inputs: { fields: [{ path: 'repo', title: 'Repository', widget: 'select' as const, optionsSourceId: 'repositories' }] } };
@@ -209,7 +208,6 @@ describe('InstalledWidgetSurface', () => {
     });
 
     it('retires the mounted lifetime when an exact Session target changes under the same instance revision', async () => {
-        const { InstalledWidgetSurface } = await import('./InstalledWidgetSurface');
         const current = runtime();
         const render = (sessionId: string) => React.createElement(InstalledWidgetSurface, {
             target: { kind: 'session' as const, sessionId, session: createSessionFixture({ id: sessionId, serverId: 'home-a' }) },
@@ -225,7 +223,6 @@ describe('InstalledWidgetSurface', () => {
     });
 
     it('mounts an App widget with the app target and no Session facts', async () => {
-        const { InstalledWidgetSurface } = await import('./InstalledWidgetSurface');
         const appProjection = widgetProjectionOf(
             [{ pluginId: 'acme.review', localId: 'latest', title: 'Latest', target: 'app', homeDefault: 'shown' }],
             { 'acme.review': widgetInstalledPackage('acme.review', 'Review Assistant') },
@@ -246,7 +243,6 @@ describe('InstalledWidgetSurface', () => {
     });
 
     it('never mounts a Session widget on the App host, or an App widget on a Session', async () => {
-        const { InstalledWidgetSurface } = await import('./InstalledWidgetSurface');
         const appProjection = widgetProjectionOf(
             [{ pluginId: 'acme.review', localId: 'latest', title: 'Latest', target: 'app' }],
             { 'acme.review': widgetInstalledPackage('acme.review', 'Review Assistant') },
@@ -280,7 +276,6 @@ describe('InstalledWidgetSurface', () => {
     });
 
     it('forwards the item\'s exact persisted bounded input as the plugin launch input', async () => {
-        const { InstalledWidgetSurface } = await import('./InstalledWidgetSurface');
         const onIntrinsicHeightChange = vi.fn();
         await renderScreen(React.createElement(InstalledWidgetSurface, {
             target: { kind: 'session' as const, sessionId: 'session-1', session: createSessionFixture({ id: 'session-1', serverId: 'home-a' }) },
@@ -303,7 +298,6 @@ describe('InstalledWidgetSurface', () => {
     });
 
     it('gives two simultaneous physical placements distinct mount identities', async () => {
-        const { InstalledWidgetSurface } = await import('./InstalledWidgetSurface');
         const current = runtime();
         await renderScreen(React.createElement(React.Fragment, null,
             React.createElement(InstalledWidgetSurface, {
@@ -335,7 +329,6 @@ describe('InstalledWidgetSurface', () => {
     });
 
     it('allocates a fresh physical mount identity after availability retires the prior mount', async () => {
-        const { InstalledWidgetSurface } = await import('./InstalledWidgetSurface');
         const renderWidget = (current: SessionPluginRuntimeState) => React.createElement(InstalledWidgetSurface, {
             target: { kind: 'session' as const, sessionId: 'session-1', session: createSessionFixture({ id: 'session-1', serverId: 'home-a' }) },
             recordRevision: 'revision-a',
@@ -360,7 +353,6 @@ describe('InstalledWidgetSurface', () => {
     });
 
     it('retires the physical mount identity when the persisted item revision changes', async () => {
-        const { InstalledWidgetSurface } = await import('./InstalledWidgetSurface');
         const renderWidget = (recordRevision: string) => React.createElement(InstalledWidgetSurface, {
             target: { kind: 'session' as const, sessionId: 'session-1', session: createSessionFixture({ id: 'session-1', serverId: 'home-a' }) },
             recordRevision,
@@ -383,7 +375,6 @@ describe('InstalledWidgetSurface', () => {
     });
 
     it('keeps the physical mount across unrelated projection and custody changes and remounts only on its own occurrence', async () => {
-        const { InstalledWidgetSurface } = await import('./InstalledWidgetSurface');
         const projectionWithExact = (coarseGeneration: number, exactGeneration: string, occurrenceId: string) => {
             const binding = normalizePluginUiInlineSurfaceBindingV1({
                 pluginId: 'acme.review',
@@ -458,7 +449,6 @@ describe('InstalledWidgetSurface', () => {
     });
 
     it('mounts with a real Session policy context rather than none', async () => {
-        const { InstalledWidgetSurface } = await import('./InstalledWidgetSurface');
         await renderScreen(React.createElement(InstalledWidgetSurface, {
             target: { kind: 'session' as const, sessionId: 'session-1', session: createSessionFixture({ id: 'session-1', serverId: 'home-a' }) },
             recordRevision: 'revision-a',
@@ -474,7 +464,6 @@ describe('InstalledWidgetSurface', () => {
     });
 
     it('renders a typed state instead of mounting when no exact placement resolves', async () => {
-        const { InstalledWidgetSurface } = await import('./InstalledWidgetSurface');
         const screen = await renderScreen(React.createElement(InstalledWidgetSurface, {
             target: { kind: 'session' as const, sessionId: 'session-1', session: createSessionFixture({ id: 'session-1', serverId: 'home-a' }) },
             recordRevision: 'revision-a',
@@ -494,7 +483,6 @@ describe('InstalledWidgetSurface', () => {
     it('uses the admitted runtime Home for a legacy-shaped Session instead of a same-id store entry', async () => {
         state.legacyIdOnlySession = createSessionFixture({ id: 'session-1', serverId: 'home-b' });
         const exactSession = createSessionFixture({ id: 'session-1', serverId: undefined });
-        const { InstalledWidgetSurface } = await import('./InstalledWidgetSurface');
         await renderScreen(React.createElement(InstalledWidgetSurface, {
             target: { kind: 'session' as const, sessionId: 'session-1', session: exactSession },
             recordRevision: 'revision-a',
@@ -509,7 +497,6 @@ describe('InstalledWidgetSurface', () => {
     });
 
     it('fails closed when the shell Session projection belongs to another Home', async () => {
-        const { InstalledWidgetSurface } = await import('./InstalledWidgetSurface');
         const screen = await renderScreen(React.createElement(InstalledWidgetSurface, {
             target: { kind: 'session' as const, sessionId: 'session-1', session: createSessionFixture({ id: 'session-1', serverId: 'home-b' }) },
             recordRevision: 'revision-a',

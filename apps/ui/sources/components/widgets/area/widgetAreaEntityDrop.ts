@@ -1,38 +1,21 @@
-import { AnchoredListPositionV1Schema, resolveAnchoredListMoveV1 } from '@happier-dev/protocol/actions/anchoredListOrderV1';
-import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { entityDragScopesEqualV1, type EntityDragItemV1, type EntityDropAdmissionV1, type EntityDropPreviewV1 } from '@happier-dev/protocol/plugins/ui';
-import type { WidgetAreaLayoutV1, WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
-import { widgetEntitySourceRef, widgetMovementRefused } from '@/sync/ops/actions/widgetEntityMovement';
+import type { EntityDragItemV1, EntityDropAdmissionV1, EntityDropPreviewV1 } from '@happier-dev/protocol/plugins/ui';
+import type { WidgetPlacementV1, WidgetLayoutGroupV1, WidgetLayoutItemV1, WidgetSurfaceRefV1, WidgetProjectAreaV1 } from '@happier-dev/protocol/widgets';
+import { resolveWidgetLayoutEntityDrop } from '@/components/ui/treeDragDrop/widgetLayoutEntityDrop';
+import { widgetMovementRefused } from '@/sync/ops/actions/widgetEntityMovement';
 
-/** Current semantic anchors become a request to the incumbent widget movement owner, never a layout write. */
+/** Area presentation delegates item/container admission to the shared entity owner. */
 export function resolveWidgetAreaEntityDrop(input: Readonly<{
     item: EntityDragItemV1;
     surface: WidgetSurfaceRefV1;
-    placements: WidgetAreaLayoutV1['instances'];
+    placements: readonly (WidgetLayoutItemV1 | WidgetPlacementV1)[];
+    sourceItem?: WidgetLayoutItemV1;
     canEdit: boolean;
+    area?: WidgetProjectAreaV1;
     destination: unknown;
     preview: EntityDropPreviewV1;
+    describeGroup?: (group: WidgetLayoutGroupV1) => string;
 }>): EntityDropAdmissionV1 {
-    const ref = widgetEntitySourceRef(input.item);
-    if (!ref) return widgetMovementRefused('unsupported_widget_surface', input.preview);
-    if (!entityDragScopesEqualV1(input.item.scope, input.surface)) return widgetMovementRefused('scope-mismatch', input.preview);
-    if (!input.canEdit) return widgetMovementRefused('widget_edit_denied', input.preview);
-    const parsed = AnchoredListPositionV1Schema.safeParse(input.destination ?? { anchorId: null, placement: 'after' });
-    if (!parsed.success) return widgetMovementRefused('anchor-gone', input.preview);
-    const position = parsed.data;
-    const ids = input.placements.map(entry => entry.instance.id);
-    const sameArea = sameStrictJsonValue(ref.surface, input.surface);
-    let index: number;
-    if (sameArea) {
-        const order = resolveAnchoredListMoveV1(ids, ref.instanceId, position);
-        if (!order) return widgetMovementRefused('widget_instance_not_found', input.preview);
-        index = order.indexOf(ref.instanceId);
-        if (index === ids.indexOf(ref.instanceId)) return widgetMovementRefused('same-position', input.preview);
-    } else {
-        if (ids.includes(ref.instanceId)) return widgetMovementRefused('widget_instance_already_exists', input.preview);
-        const anchor = position.anchorId === null ? null : ids.indexOf(position.anchorId);
-        if (anchor === -1) return widgetMovementRefused('anchor-gone', input.preview);
-        index = anchor === null ? position.placement === 'before' ? 0 : ids.length : anchor + (position.placement === 'after' ? 1 : 0);
-    }
-    return { status: 'allowed', effect: { actionId: 'widgets.instance.move', input: { ref, to: { surface: input.surface, index } }, preview: { ...input.preview, glyph: 'move' } } };
+    const items = input.placements.map((entry): WidgetLayoutItemV1 => 'kind' in entry ? entry : { kind: 'widget', ...entry });
+    const admission = resolveWidgetLayoutEntityDrop({ ...input, items });
+    return admission.status === 'refused' ? widgetMovementRefused(admission.reason.code, admission.preview) : admission;
 }

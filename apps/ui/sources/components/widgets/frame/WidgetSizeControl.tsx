@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { WidgetSizePicker, type WidgetSizePickerCompactInput } from '@happier-dev/plugin-ui/presentation';
+import { WidgetSizePicker, happierPageTextMetrics, type WidgetSizePickerCompactInput } from '@happier-dev/plugin-ui/presentation';
+import { Typography } from '@/constants/Typography';
 import { getWidgetSizeFootprintV1, stepWidgetSizeV1, type WidgetSizeV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Text } from '@/components/ui/text/Text';
@@ -13,6 +14,8 @@ export type WidgetSizeControl = Readonly<{
     size?: WidgetSizeV1;
     onSet: (size: WidgetSizeV1) => void;
     disabled?: boolean;
+    /** Sizes shown but not choosable here, and why (a widget inside a half-width group). */
+    unavailable?: Readonly<{ sizes: readonly WidgetSizeV1[]; reason: string }>;
 }>;
 
 /** Core supplies labels, theme and its field menu; app and plugins render the same presentation primitive. */
@@ -30,14 +33,18 @@ export function WidgetSizeControl(props: WidgetSizeControl & Readonly<{ testID: 
             renderCompact={renderCompact}
             choices={props.sizes.flatMap(size => {
                 const footprint = getWidgetSizeFootprintV1(props.surface, size);
-                return footprint ? [{ key: size, label: t(`widgetAdd.sizes.${size}`), footprint }] : [];
+                return footprint ? [{ key: size, label: t(`widgetAdd.sizes.${size}`), footprint,
+                    ...(props.unavailable?.sizes.includes(size) ? { unavailable: true } : {}) }] : [];
             })}
             colors={{ track: theme.colors.segmentedControl.trackBackground, thumb: theme.colors.segmentedControl.activeBackground,
                 label: theme.colors.text.secondary, activeLabel: theme.colors.text.primary, focusRing: theme.colors.border.focus }}
             onChange={key => {
                 const size = props.sizes.find(size => size === key);
-                if (size) props.onSet(size);
+                if (size && !props.unavailable?.sizes.includes(size)) props.onSet(size);
             }} />
+        {props.unavailable?.sizes.length ? (
+            <Text testID={`${testID}.unavailable`} style={{ ...Typography.default(), ...happierPageTextMetrics('meta'), color: theme.colors.text.tertiary }}>{props.unavailable.reason}</Text>
+        ) : null}
     </View>;
 }
 
@@ -54,7 +61,8 @@ function WidgetSizeMenu(props: Readonly<{ input: WidgetSizePickerCompactInput; t
             testID={props.testID}
             open={open}
             onOpenChange={setOpen}
-            items={input.choices.map((choice) => ({ id: choice.key, testID: `${props.testID}.${choice.key}`, title: choice.label }))}
+            items={input.choices.map((choice) => ({ id: choice.key, testID: `${props.testID}.${choice.key}`, title: choice.label,
+                ...(choice.unavailable ? { disabled: true } : {}) }))}
             selectedId={selected?.key ?? null}
             onSelect={(id) => { input.onChange(id); setOpen(false); }}
             variant="default"
@@ -71,7 +79,8 @@ function WidgetSizeMenu(props: Readonly<{ input: WidgetSizePickerCompactInput; t
 /** Keyboard and pointer selection share the Protocol order and the same caller mutation. */
 export function stepWidgetSizeControl(control: WidgetSizeControl | undefined, key: string): boolean {
     if (!control || control.disabled || (key !== '[' && key !== ']')) return false;
-    const next = stepWidgetSizeV1(control.sizes, control.size, key === '[' ? -1 : 1);
+    const choosable = control.sizes.filter(size => !control.unavailable?.sizes.includes(size));
+    const next = stepWidgetSizeV1(choosable, control.size, key === '[' ? -1 : 1);
     if (next && next !== control.size) control.onSet(next);
     return true;
 }

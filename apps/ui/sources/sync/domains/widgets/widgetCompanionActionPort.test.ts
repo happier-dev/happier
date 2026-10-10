@@ -3,6 +3,29 @@ import { normalizeSessionCompanionPreference, setSessionCompanionInstanceInputs,
 import { createWidgetCompanionActionPortV1 } from './widgetCompanionActionPort';
 
 describe('Companion widget Action adapter', () => {
+    it('refuses group and width mutations without dispatching personal presentation changes', async () => {
+        const instance = { v: 1 as const, id: 'copy', definition: { kind: 'builtin' as const, id: 'session_summary' }, bindings: {} };
+        const preference = normalizeSessionCompanionPreference({ v: 1, visible: true, collapsed: false, density: 'compact', edge: 'trailing', items: [{ kind: 'instance', instance }] });
+        const surface = { serverId: 'home', accountId: 'viewer', owner: { kind: 'companion' as const, sessionId: 'session' } };
+        const port = createWidgetCompanionActionPortV1({
+            lifetime: { scope: surface, isCurrent: () => true, onRetire: () => ({ dispose() {} }) },
+            readPreference: () => preference,
+            applyPresentation: async () => { throw new Error('Unsupported group mutation reached presentation'); },
+        });
+        const mutations: Parameters<typeof port.apply>[1][] = [
+            { kind: 'group_create', groupId: 'group', instanceIds: ['copy'] },
+            { kind: 'group_add', group: { kind: 'group', id: 'group', width: 'full', frameStyle: 'card', dividers: 'hairline', children: [{ kind: 'widget', instance }] } },
+            { kind: 'group_ungroup', instanceId: 'group' },
+            { kind: 'group_set', instanceId: 'group', width: 'full' },
+            { kind: 'group_inputs', instanceId: 'group', bindings: {} },
+            { kind: 'width', instanceId: 'copy', width: 'full' },
+            { kind: 'move', instanceId: 'copy', toIndex: 0, groupId: 'group' },
+        ];
+        for (const mutation of mutations) {
+            expect(await port.apply(surface, mutation, {})).toMatchObject({ ok: false, errorCode: 'unsupported_widget_group_surface' });
+        }
+        expect(preference.items).toEqual([{ kind: 'instance', instance }]);
+    });
     it('orders configured instances without treating existing glances and pane links as widget indices', async () => {
         const makeInstance = (id: string) => ({ v: 1 as const, id, definition: { kind: 'builtin' as const, id: 'summary' }, bindings: {} });
         const a = { kind: 'instance' as const, instance: makeInstance('a') };
@@ -52,6 +75,10 @@ describe('Companion widget Action adapter', () => {
         });
         expect(await port.read(surface, {})).toMatchObject({ instances: [{ instance }], canEdit: true });
         expect(await port.apply(surface, { kind: 'inputs', instanceId: 'copy-a', bindings: { session: { kind: 'value', value: 'session-b' } } }, {})).toMatchObject({ ok: true, result: { instance: { bindings: { session: { kind: 'value', value: 'session-b' } } } } });
+        await port.apply(surface, { kind: 'inputs', instanceId: 'copy-a', bindings: { title: { kind: 'value', value: 'Kept sibling' } }, paths: ['title'] }, {});
+        expect(await port.apply(surface, { kind: 'inputs_reset', instanceId: 'copy-a', paths: ['session'] }, {}))
+            .toMatchObject({ ok: true, result: { instance: { bindings: { title: { kind: 'value', value: 'Kept sibling' } } } } });
+        await port.apply(surface, { kind: 'inputs', instanceId: 'copy-a', bindings: { session: { kind: 'value', value: 'session-b' } } }, {});
         expect(preference.items[0]).toEqual({ kind: 'widget', widgetId: 'shared' });
         expect(await port.apply(surface, { kind: 'add', instance: { ...instance, id: 'copy-b' }, presentation: { size: 'full' } }, {}))
             .toMatchObject({ ok: false, errorCode: 'widgets_size_unavailable' });

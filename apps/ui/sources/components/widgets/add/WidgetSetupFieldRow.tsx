@@ -78,6 +78,7 @@ export function WidgetSetupFieldRow(props: Readonly<{
 
 function rowSubtitle(props: Readonly<{ entry: WidgetSetupField; row: WidgetSetupRow }>): string | undefined {
     if (props.row.kind === 'invalid') return t('widgetAdd.invalidReason');
+    if (props.row.kind === 'needed' && props.entry.neededHint) return props.entry.neededHint;
     return props.entry.field.description;
 }
 
@@ -88,9 +89,16 @@ function NeededTag(): React.ReactElement {
 function BindingFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>): React.ReactElement {
     const { theme } = useUnistyles();
     const { entry, row, options } = props;
-    const [open, setOpen] = React.useState(props.autoOpen === true);
+    const field = entry.field;
+    const [open, setOpen] = React.useState(props.autoOpen === true || Boolean(props.focusRequest));
+    const [lastFocusRequest, setLastFocusRequest] = React.useState(props.focusRequest);
     const [searching, setSearching] = React.useState(false);
-    React.useEffect(() => { if (props.focusRequest) setOpen(true); }, [props.focusRequest]);
+    // Open in this render, not a later passive effect: the menu's opening listener
+    // must be mounted before input delivered in the command's commit can cancel it.
+    if (props.focusRequest !== lastFocusRequest) {
+        setLastFocusRequest(props.focusRequest);
+        if (props.focusRequest) setOpen(true);
+    }
     const follow = entry.follow;
     // A few likely values sit in the menu; the rest wait behind Another… (lab IN "Follow or pin").
     const shortlist = options.length > AMBIGUOUS_INLINE_LIMIT && !searching ? options.slice(0, AMBIGUOUS_INLINE_LIMIT) : options;
@@ -99,8 +107,9 @@ function BindingFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>
     // and pins exactly like a listed choice; cancelling leaves the binding as it was.
     const picker = useHappierInputPicker({
         field: entry.field,
-        value: row.kind === 'pinned' ? row.value?.value : undefined,
-        ...(props.optionsStatus === 'ready' ? { options } : {}),
+        value: row.kind === 'pinned' ? props.plainValue : follow?.values[0]?.value,
+        ...(props.optionsStatus === 'ready' && (field.optionsSourceId !== undefined || field.options !== undefined
+            || (field.inputType !== undefined && !('hostType' in field.inputType))) ? { options } : {}),
         onSelect: (picked) => {
             const value = readInputOptionValue(picked);
             if (value === undefined) return;
@@ -357,7 +366,10 @@ function LiteralFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>
     const { theme } = useUnistyles();
     const presentationTheme = React.useMemo(() => projectPluginUiTheme(theme), [theme]);
     const { entry, row } = props;
-    const field = entry.field;
+    // A list input that declares no placeholder would draw as a blank block: say what to type in it.
+    const field = React.useMemo(() => (entry.field.widget === 'text_list' && entry.field.placeholder === undefined
+        ? { ...entry.field, placeholder: t(entry.field.listSeparator === 'newline' ? 'widgetAdd.listOnePerLine' : 'widgetAdd.listCommaSeparated') }
+        : entry.field), [entry.field]);
     const value = props.plainValue;
     const multiple = field.widget === 'multiselect';
     const choices = multiple || field.widget === 'select';
@@ -386,7 +398,7 @@ function LiteralFieldRow(props: React.ComponentProps<typeof WidgetSetupFieldRow>
             title={field.title}
             // A chosen value that stopped resolving says why; a typed one is still being typed, and the
             // step's line says what is needed.
-            subtitle={choices ? rowSubtitle(props) : field.description}
+            subtitle={choices || (row.kind === 'needed' && entry.neededHint) ? rowSubtitle(props) : field.description}
             subtitleLines={0}
             titleAccessory={row.kind === 'needed' && field.required ? <NeededTag /> : undefined}
             showChevron={false}

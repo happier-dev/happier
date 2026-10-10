@@ -36,7 +36,8 @@ function entry(path: string, kind: ScmWorkingEntry['kind'], added: number, remov
     };
 }
 
-const SNAPSHOT: ScmWorkingSnapshot = {
+/** The lab session's working tree and services, shared with the group specimens. */
+export const SNAPSHOT: ScmWorkingSnapshot = {
     projectKey: 'machine:/repo',
     fetchedAt: Date.now(),
     repo: { isRepo: true, rootPath: '/repo' },
@@ -90,7 +91,7 @@ function runningTarget(id: string, port: number): LocalServiceLaunchTarget {
     } as LocalServiceLaunchTarget;
 }
 
-const SERVICE_ROWS = buildLocalServiceRows({
+export const SERVICE_ROWS = buildLocalServiceRows({
     inventoryRows: [inventoryRow('web', 8081, 'yarn web'), inventoryRow('relay', 3011, 'yarn relay')],
     launchTargets: [
         runningTarget('web', 8081),

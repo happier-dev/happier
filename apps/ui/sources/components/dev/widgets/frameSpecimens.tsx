@@ -1,3 +1,4 @@
+import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -37,7 +38,7 @@ const CHECKLIST = createSessionSurfaceNoteDocumentV1([
 const BOARD = projectSessionBoard({
     layout: undefined,
     items: new Map([
-        ['relay', boardItem('Relay retries, last 90 min', { kind: 'hostedHtml', source: { kind: 'html', html: '<main></main>' }, requestedCapabilities: {} })],
+        ['relay', boardItem('Relay retries, last 90 min', { kind: 'hostedHtml', source: artifactHtmlBundleFromBodyV1('<main></main>'), requestedCapabilities: {} })],
         ['checklist', boardItem('Release checklist', { kind: 'declarative', document: CHECKLIST })],
         ['conv', boardItem('External conversations', { kind: 'widget', instance: {
             v: 1, id: 'conv', definition: { kind: 'installed', surface: { pluginId: 'happier.channels', localId: 'session-conversations-widget' } }, bindings: {},
@@ -57,7 +58,7 @@ function item(id: string): SessionBoardItemProjection {
     return projected;
 }
 
-const PLAN = projectSessionAgentPlan([
+export const PLAN = projectSessionAgentPlan([
     { id: 'p1', content: 'Add backoff with jitter', status: 'completed', priority: 'medium' },
     { id: 'p2', content: 'Cover the 503 path', status: 'completed', priority: 'medium' },
     { id: 'p3', content: 'Soak test 30 min on devbox', status: 'in_progress', priority: 'medium' },

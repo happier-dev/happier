@@ -8,6 +8,7 @@ import { buildWidgetCandidateSetup } from '@/components/widgets/surface/widgetSu
 import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import { WidgetSetupStep } from './WidgetSetupStep';
 import { WidgetSetupFieldRow } from './WidgetSetupFieldRow';
+import { buildWidgetGroupInputsCandidate } from '@/components/widgets/group/widgetGroupInputs';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -36,6 +37,28 @@ const candidate: WidgetCandidate = { key: 'acme.options/checks', title: 'Checks'
     ] } };
 
 describe('WidgetSetupStep discovery', () => {
+    it('sends a group field read with its own declaring child identity', async () => {
+        const first: WidgetCandidate = { ...candidate, target: 'app', sessionInputPath: undefined,
+            surface: { pluginId: 'acme.options', localId: 'first' },
+            inputs: { fields: [{ path: 'period', title: 'Period', widget: 'select', optionsSourceId: 'sessions' },
+                { path: 'result', title: 'Owned result', widget: 'select', optionsSourceId: 'sessions', contextMode: 'own' }] } };
+        const children = [first, candidate];
+        const setup = buildWidgetCandidateSetup({ candidate: buildWidgetGroupInputsCandidate({ title: 'Group', candidates: children })!,
+            fieldCandidates: children, scope, audience: 'personal', context: {},
+            mode: { kind: 'edit', instance: { v: 1, id: 'group', definition: { kind: 'installed', surface: first.surface! },
+                bindings: { session: { kind: 'value', value: { serverId: scope.serverId, sessionId: 'B' } } } } },
+            submit: async () => ({ ok: true }) });
+        const screen = await renderScreen(<WidgetSetupStep setup={setup} phone={false} serverId={scope.serverId}
+            onDone={() => {}} testID="group-discovery" />);
+        await vi.waitFor(() => expect(discovery.requests.find(request => request.fieldPath === 'result')).toMatchObject({
+            consumer: { kind: 'widget', definition: { kind: 'installed', surface: candidate.surface },
+                selectedSession: { serverId: scope.serverId, sessionId: 'B' } },
+        }));
+        expect(discovery.requests.find(request => request.fieldPath === 'period')).toMatchObject({
+            consumer: { definition: { kind: 'installed', surface: first.surface } },
+        });
+        expect(screen.findAllByType(WidgetSetupFieldRow).filter(row => row.props.entry.field.path === 'result')).toHaveLength(1);
+    });
     it('does not write when a ready size-only setup is cancelled', async () => {
         const submit = vi.fn(async () => ({ ok: true as const }));
         const cancel = vi.fn();

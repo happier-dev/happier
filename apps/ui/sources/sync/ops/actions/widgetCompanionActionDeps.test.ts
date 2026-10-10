@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import * as React from 'react';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { SessionPresentedSurfacePresentationTarget } from '@/components/sessions/companion/presentation/SessionPresentedSurfacePresentationTarget';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { createWidgetActionInputResolverV1, WidgetMoveCaptureV1Schema } from '@happier-dev/protocol/widgets';
@@ -35,7 +36,7 @@ describe('mounted Companion widget Action dependency', () => {
         const sibling = { ...instance, id: 'copy-b' };
         await homeHubArtifacts.apply({ kind: 'widget_add', instance });
         await homeHubArtifacts.apply({ kind: 'widget_add', instance: sibling });
-        const deps = { homeHubArtifacts, workBoardArtifacts, widgetAccountScope: () => scope,
+        const deps = createActionExecutorBoundaryFixture({ homeHubArtifacts, workBoardArtifacts, widgetAccountScope: () => scope,
             widgetInputs: createWidgetActionInputResolverV1({
                 readDescriptor: async () => ({ sizeDeclaration: { sizes: ['medium', 'full'], defaultSize: 'medium' }, inputs: { fields: [{ path: 'count', title: 'Count', widget: 'integer' }] },
                     inputSchema: { type: 'object', properties: { count: { type: 'integer' } }, required: ['count'], additionalProperties: false } }),
@@ -45,15 +46,14 @@ describe('mounted Companion widget Action dependency', () => {
                 }, readViewerValues: async () => ({ values: {} }),
                 validateValue: async () => ({ status: 'valid' }), resolveOptions: async () => [],
             }),
-        // Boundary fixture supplies only this Action family's ports; an unexpected family fails loudly.
-        } as unknown as ActionExecutorDeps;
+        });
         const executor = createActionExecutor(deps);
         const homeRef = { surface: home, instanceId: instance.id };
-        await executor.execute('widgets.instance.inputs.set', { ref: homeRef, bindings: { count: { kind: 'context', slot: 'sessionCount' } } }, { surface: 'mcp', bypassApprovals: true });
+        await executor.execute('widgets.item.inputs.set', { ref: homeRef, bindings: { count: { kind: 'context', slot: 'sessionCount' } } }, { surface: 'mcp', bypassApprovals: true });
         expect(await readWidgetEntityMovementAdmission(deps, homeRef, workBoard, { surface: 'mcp' }))
             .toMatchObject({ status: 'refused', code: 'widget_context_missing' });
-        expect((await homeHubArtifacts.read()).instances.map(copy => copy.id)).toEqual([instance.id, sibling.id]);
-        await executor.execute('widgets.instance.inputs.set', { ref: homeRef, bindings: instance.bindings }, { surface: 'mcp', bypassApprovals: true });
+        expect((await homeHubArtifacts.read()).items.flatMap(item => item.kind === 'widget' ? [item.instance.id] : [])).toEqual([instance.id, sibling.id]);
+        await executor.execute('widgets.item.inputs.set', { ref: homeRef, bindings: instance.bindings }, { surface: 'mcp', bypassApprovals: true });
         const board = await workBoardArtifacts.readBoard('launch');
         if (!board) throw new Error('Expected the real WorkBoard');
         const admission = resolveWorkBoardEntityDrop({ item: { kind: 'home-section', scope, sectionId: instance.id },
@@ -66,17 +66,17 @@ describe('mounted Companion widget Action dependency', () => {
         runtime.registerSource({ id: 'home', scope, isCurrent: () => true, getItem: () => ({ kind: 'home-section', scope, sectionId: instance.id }) });
         runtime.registerTarget({ id: 'work-board', scope, acceptedKinds: ['home-section'], getBounds: () => null,
             resolve: () => admitWidgetEntityMovement(admission.effect, preflight),
-            execute: async effect => projectWidgetEntityMovementResult(await executor.execute('widgets.instance.move', effect.input, { surface: 'mcp', bypassApprovals: true }), effect),
+            execute: async effect => projectWidgetEntityMovementResult(await executor.execute('widgets.item.move', effect.input, { surface: 'mcp', bypassApprovals: true }), effect),
         });
         const carry = runtime.begin('home', 'keyboard'); carry?.choose('work-board');
         expect(await carry?.release()).toEqual({ status: 'applied' });
-        expect((await homeHubArtifacts.read()).instances).toEqual([sibling]);
+        expect((await homeHubArtifacts.read()).items).toEqual([{ kind: 'widget', instance: sibling }]);
         expect((await workBoardArtifacts.readBoard('launch'))?.widgets?.map(copy => copy.instance)).toEqual([instance]);
         const ref = widgetEntitySourceRef({ kind: 'work-board-widget', scope, boardId: 'launch', instanceId: instance.id });
         expect(ref).toEqual({ surface: workBoard, instanceId: instance.id });
-        expect(await executor.execute('widgets.instance.move', { ref, to: { surface: home, index: 0 } }, { surface: 'mcp', bypassApprovals: true }))
+        expect(await executor.execute('widgets.item.move', { ref, to: { surface: home, index: 0 } }, { surface: 'mcp', bypassApprovals: true }))
             .toMatchObject({ ok: true, result: { status: 'moved', fromRef: ref, ref: homeRef } });
-        expect((await homeHubArtifacts.read()).instances.filter(copy => copy.id === instance.id)).toEqual([instance]);
+        expect((await homeHubArtifacts.read()).items.flatMap(item => item.kind === 'widget' && item.instance.id === instance.id ? [item.instance] : [])).toEqual([instance]);
         expect((await workBoardArtifacts.readBoard('launch'))?.widgets).toEqual([]);
     });
     it('moves a Home copy before legacy Companion content through the public Action and both real owners', async () => {
@@ -112,7 +112,7 @@ describe('mounted Companion widget Action dependency', () => {
         }));
         try {
             const mounted = createWidgetCompanionActionDepsV1({ ...scope, accountLifetime: { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) }, assertCurrent() {} });
-            const deps = { ...mounted, homeHubArtifacts, widgetAccountScope: () => scope,
+            const deps = createActionExecutorBoundaryFixture({ ...mounted, homeHubArtifacts, widgetAccountScope: () => scope,
                 // Fixed descriptor facts are the host boundary; binding and strict input-schema admission remain real.
                 widgetInputs: createWidgetActionInputResolverV1({
                     readDescriptor: async () => ({ sizeDeclaration: { sizes: ['medium', 'full'], defaultSize: 'medium' }, inputs: { fields: [{ path: 'count', title: 'Count', widget: 'integer' }] },
@@ -123,7 +123,7 @@ describe('mounted Companion widget Action dependency', () => {
                     }, readViewerValues: async () => ({ values: {} }),
                     validateValue: async () => ({ status: 'valid' }), resolveOptions: async () => [],
                 }),
-            } as unknown as ActionExecutorDeps;
+            });
             const clientExecutor = createActionExecutor(deps);
             // Replace only the Machine network hop. Both dispatchers, configuration
             // admission, Artifact owner and mounted Companion preference owner stay real.
@@ -141,7 +141,7 @@ describe('mounted Companion widget Action dependency', () => {
             const ref = { surface: home, instanceId: instance.id };
             const admission = await readWidgetEntityMovementAdmission(deps, ref, companion, { surface: 'mcp', bypassApprovals: true });
             expect(admission).toMatchObject({ status: 'ready', ref, instance });
-            expect(admitWidgetEntityMovement({ actionId: 'widgets.instance.move', input: { ref, to: { surface: home, index: 0 } },
+            expect(admitWidgetEntityMovement({ actionId: 'widgets.item.move', input: { ref, to: { surface: home, index: 0 } },
                 preview: { verb: 'Move', target: 'Home' } }, admission))
                 .toMatchObject({ status: 'refused', reason: { code: 'widget_destination_changed' } });
             expect(await readWidgetEntityMovementAdmission({ ...deps, widgetAccountScope: () => null }, ref, companion, { surface: 'mcp' }))
@@ -150,16 +150,16 @@ describe('mounted Companion widget Action dependency', () => {
             expect(await readWidgetEntityMovementAdmission(deps, ref, companion, { surface: 'mcp' }))
                 .toMatchObject({ status: 'refused' });
             await homeHubArtifacts.apply({ kind: 'widget_inputs', instanceId: instance.id, bindings: instance.bindings });
-            expect((await homeHubArtifacts.read()).instances).toEqual([instance, sibling]);
+            expect((await homeHubArtifacts.read()).items).toEqual([{ kind: 'widget', instance, frameStyle: 'plain' }, { kind: 'widget', instance: sibling }]);
             expect(storage.getState().localSettings.sessionCompanionPreferencesBySessionV1[key]?.items).toEqual(initial.items);
             const runtime = createEntityDragDropRuntime();
             runtime.registerSource({ id: 'home', scope, isCurrent: () => true, getItem: () => ({ kind: 'home-section', scope, sectionId: instance.id }) });
             runtime.registerTarget({ id: 'companion', scope, isCurrent: () => true, acceptedKinds: ['home-section'], getBounds: () => ({ x: 0, y: 0, width: 100, height: 100 }),
-                resolve: () => admitWidgetEntityMovement({ actionId: 'widgets.instance.move', input: { ref, to: { surface: companion, index: 0 } }, preview: { verb: 'Move', target: 'Companion' } }, admission),
-                execute: async effect => projectWidgetEntityMovementResult(await executor.execute('widgets.instance.move', effect.input, { surface: 'mcp', bypassApprovals: true }), effect),
+                resolve: () => admitWidgetEntityMovement({ actionId: 'widgets.item.move', input: { ref, to: { surface: companion, index: 0 } }, preview: { verb: 'Move', target: 'Companion' } }, admission),
+                execute: async effect => projectWidgetEntityMovementResult(await executor.execute('widgets.item.move', effect.input, { surface: 'mcp', bypassApprovals: true }), effect),
             });
             const cancelled = runtime.begin('home', 'keyboard'); cancelled?.choose('companion'); cancelled?.cancel(); await cancelled?.release();
-            expect((await homeHubArtifacts.read()).instances).toEqual([instance, sibling]);
+            expect((await homeHubArtifacts.read()).items).toEqual([{ kind: 'widget', instance, frameStyle: 'plain' }, { kind: 'widget', instance: sibling }]);
             transferring = true;
             await React.act(async () => {
                 expect(await runtime.perform('home', 'companion', undefined, 'chooser')).toEqual({ status: 'applied' });
@@ -167,18 +167,18 @@ describe('mounted Companion widget Action dependency', () => {
             expect(storage.getState().localSettings.sessionCompanionPreferencesBySessionV1[key]?.items).toEqual([
                 { kind: 'instance', instance, frameStyle: 'plain' }, ...initial.items,
             ]);
-            expect((await homeHubArtifacts.read()).instances).toEqual([sibling]);
+            expect((await homeHubArtifacts.read()).items).toEqual([{ kind: 'widget', instance: sibling }]);
             const companionRef = { surface: companion, instanceId: instance.id };
-            expect(await executor.execute('widgets.instance.inputs.get', { ref: companionRef }, { surface: 'mcp' }))
+            expect(await executor.execute('widgets.item.inputs.get', { ref: companionRef }, { surface: 'mcp' }))
                 .toMatchObject({ ok: true, result: { ref: companionRef, bindings: instance.bindings } });
             await React.act(async () => {
-                expect(await executor.execute('widgets.instance.inputs.set', { ref: companionRef,
+                expect(await executor.execute('widgets.item.inputs.set', { ref: companionRef,
                     bindings: { count: { kind: 'value', value: 4 } } }, { surface: 'mcp', bypassApprovals: true }))
                     .toMatchObject({ ok: true, result: { instance: { bindings: { count: { kind: 'value', value: 4 } } } } });
             });
-            expect((await homeHubArtifacts.read()).instances).toEqual([sibling]);
+            expect((await homeHubArtifacts.read()).items).toEqual([{ kind: 'widget', instance: sibling }]);
             await React.act(async () => {
-                expect(await executor.execute('widgets.instance.inputs.set', { ref: companionRef, bindings: instance.bindings },
+                expect(await executor.execute('widgets.item.inputs.set', { ref: companionRef, bindings: instance.bindings },
                     { surface: 'mcp', bypassApprovals: true })).toMatchObject({ ok: true });
             });
             const updateBindings = (bindings: Parameters<typeof setSessionCompanionInstanceInputs>[2]) => React.act(async () => {
@@ -195,27 +195,27 @@ describe('mounted Companion widget Action dependency', () => {
             runtime.registerSource({ id: 'companion-copy', scope, isCurrent: () => true, getItem: () => ({ kind: 'companion-item', scope,
                 address: { serverId: scope.serverId, sessionId: 'session-a' }, item: { kind: 'instance', instance } }) });
             runtime.registerTarget({ id: 'home-target', scope, isCurrent: () => true, acceptedKinds: ['companion-item'], getBounds: () => ({ x: 200, y: 0, width: 100, height: 100 }),
-                resolve: () => admitWidgetEntityMovement({ actionId: 'widgets.instance.move', input: { ref: companionRef, to: { surface: home, index: 0 } }, preview: { verb: 'Move', target: 'Home' } }, homeAdmission),
-                execute: async effect => projectWidgetEntityMovementResult(await executor.execute('widgets.instance.move', effect.input, { surface: 'mcp', bypassApprovals: true }), effect),
+                resolve: () => admitWidgetEntityMovement({ actionId: 'widgets.item.move', input: { ref: companionRef, to: { surface: home, index: 0 } }, preview: { verb: 'Move', target: 'Home' } }, homeAdmission),
+                execute: async effect => projectWidgetEntityMovementResult(await executor.execute('widgets.item.move', effect.input, { surface: 'mcp', bypassApprovals: true }), effect),
             });
             await React.act(async () => {
                 const carry = runtime.begin('companion-copy', 'keyboard'); carry?.choose('home-target');
                 expect(await carry?.release()).toEqual({ status: 'applied' });
             });
             expect(storage.getState().localSettings.sessionCompanionPreferencesBySessionV1[key]?.items).toEqual(initial.items);
-            expect((await homeHubArtifacts.read()).instances).toEqual(expect.arrayContaining([instance, sibling]));
+            expect((await homeHubArtifacts.read()).items.flatMap(item => item.kind === 'widget' ? [item.instance] : [])).toEqual(expect.arrayContaining([instance, sibling]));
             await React.act(async () => {
                 const carry = runtime.begin('home', 'pointer'); carry?.move({ x: 10, y: 10 });
                 expect(await carry?.release()).toEqual({ status: 'applied' });
             });
-            expect((await homeHubArtifacts.read()).instances).toEqual([sibling]);
+            expect((await homeHubArtifacts.read()).items).toEqual([{ kind: 'widget', instance: sibling }]);
             expect(storage.getState().localSettings.sessionCompanionPreferencesBySessionV1[key]?.items).toEqual([{ kind: 'instance', instance, frameStyle: 'plain' }, ...initial.items]);
             await React.act(async () => {
-                expect(await executor.execute('widgets.instance.move', { ref: companionRef, to: { surface: home, index: 0 } }, { surface: 'mcp', bypassApprovals: true }))
+                expect(await executor.execute('widgets.item.move', { ref: companionRef, to: { surface: home, index: 0 } }, { surface: 'mcp', bypassApprovals: true }))
                     .toMatchObject({ ok: true, result: { ref, fromRef: companionRef, status: 'moved' } });
             });
             expect(storage.getState().localSettings.sessionCompanionPreferencesBySessionV1[key]?.items).toEqual(initial.items);
-            expect((await homeHubArtifacts.read()).instances.filter(copy => copy.id === instance.id)).toEqual([instance]);
+            expect((await homeHubArtifacts.read()).items.flatMap(item => item.kind === 'widget' && item.instance.id === instance.id ? [item.instance] : [])).toEqual([instance]);
         } finally { await renderer.unmount(); storage.setState(previous, true); }
     });
     it('captures a framed transfer through the actual mounted producer and refuses cleanup after a newer edit', async () => {

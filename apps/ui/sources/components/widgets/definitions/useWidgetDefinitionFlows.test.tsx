@@ -1,3 +1,4 @@
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WIDGET_SIZE_POLICY_V1, type WidgetSizeDeclarationV1 } from '@happier-dev/protocol/widgets';
 
@@ -141,7 +142,7 @@ describe('widget definition flows', () => {
         try {
             const screen = await renderScreen(React.createElement(AppShellPluginUiProjectionValueProvider, { value: {
                 pluginUiProjection: projection, pluginBrowserProjection: null, phase: 'current', interactionEnabled: false, machineId: 'app-machine',
-                serverId, platform: 'web', reloadConnectedAccountProjection: () => {}, clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {},
+                serverId, platform: 'web', reloadConnectedAccountProjection: () => {}, accountLifetime: captureActiveServerAccountScopeLifetime(), clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {},
             }, children: React.createElement(Gallery) }));
             try {
                 const sections: readonly WidgetAddSection[] = screen.tree.root.findByType(WidgetAddSurface).props.sections;
@@ -154,7 +155,7 @@ describe('widget definition flows', () => {
                 const preview = app.renderPreview!({ input: resolution.input, draft: app.initial });
                 const body = await renderScreen(React.createElement(AppShellPluginUiProjectionValueProvider, { value: {
                     pluginUiProjection: projection, pluginBrowserProjection: null, phase: 'current', interactionEnabled: false, machineId: 'app-machine',
-                    serverId, platform: 'web', reloadConnectedAccountProjection: () => {}, clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {},
+                    serverId, platform: 'web', reloadConnectedAccountProjection: () => {}, accountLifetime: captureActiveServerAccountScopeLifetime(), clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {},
                 }, children: preview }));
                 try { expect(body.tree.root.findByType(ConfiguredInstalledWidgetSurface).props.resolution).toMatchObject({ status: 'ready', target: { kind: 'app' }, input: {} }); }
                 finally { await body.unmount(); }
@@ -207,7 +208,7 @@ describe('widget definition flows', () => {
                 const approvals = harness.artifacts(serverId).list().filter(row => !before.has(row.id));
                 expect(approvals).toHaveLength(1);
                 const approval = JSON.parse(harness.artifacts(serverId).readPlainBody(approvals[0]!.id)!);
-                expect(approval).toMatchObject({ actionId: 'widgets.instance.add', actionArgs: { surface, placement: { tabId: 'overview' },
+                expect(approval).toMatchObject({ actionId: 'widgets.item.add', actionArgs: { surface, placement: { tabId: 'overview' },
                     instance: { definition: { kind: 'inline', definition: { id: 'checks-definition', name: DRAFT.name } }, bindings: { repo: { kind: 'value', value: 'main' } } } } });
                 const { SessionSurfaceItemV1Schema } = await import('@happier-dev/protocol/sessions/board');
                 const publishedItem = SessionSurfaceItemV1Schema.parse({ v: 1, title: DRAFT.name, frame: 'card', height: { mode: 'auto', fallback: 'regular' },
@@ -301,7 +302,7 @@ describe('widget definition flows', () => {
             const before = harness.requests.length;
             const screen = await renderScreen(React.createElement(AppShellPluginUiProjectionValueProvider, {
                 value: { pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION, pluginBrowserProjection: null, phase: 'current', interactionEnabled: true,
-                    machineId: 'machine-1', serverId, platform: 'web', clientExecutableActivation: { status: 'ready' },
+                    machineId: 'machine-1', serverId, platform: 'web', accountLifetime: captureActiveServerAccountScopeLifetime(), clientExecutableActivation: { status: 'ready' },
                     reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {} }, children: React.createElement(Gallery),
             }));
             try {
@@ -399,7 +400,8 @@ describe('widget definition flows', () => {
         });
         const instance = { v: 1, id: 'copy', definition: { kind: 'artifact', artifactId: 'checks-definition' }, bindings: {} } as const;
         const surface = { ...account, owner: { kind: 'pluginArea', pluginId: 'com.acme.checks', pageId: 'overview', area: 'pinned' } } as const;
-        const layout = WidgetSurfaceReadV1Schema.parse({ surface, instances: [{ instance, size: WIDGET_SIZE_POLICY_V1.pluginArea.defaultSize }], canEdit: true });
+        const widgetPlacement = { instance, size: WIDGET_SIZE_POLICY_V1.pluginArea.defaultSize };
+        const layout = WidgetSurfaceReadV1Schema.parse({ surface, instances: [widgetPlacement], items: [{ kind: 'widget', ...widgetPlacement }], canEdit: true });
         // The plugin-page Host API is the external boundary; metadata comes from real Account storage.
         const port = { execute: async () => ({ ok: true as const, result: layout }) };
         const executor = createDefaultActionExecutor();
@@ -420,7 +422,7 @@ describe('widget definition flows', () => {
                     surfaceName: 'Checks', testID: 'saved-area' });
             const screen = await renderScreen(React.createElement(AppShellPluginUiProjectionValueProvider, {
                 value: { pluginUiProjection: projection, pluginBrowserProjection: null, phase: 'current', interactionEnabled: true,
-                    machineId: 'machine-1', serverId, platform: 'web', clientExecutableActivation: { status: 'ready' },
+                    machineId: 'machine-1', serverId, platform: 'web', accountLifetime: captureActiveServerAccountScopeLifetime(), clientExecutableActivation: { status: 'ready' },
                     reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {} },
                 children: React.createElement(DestinationInstanceHost, { tabId: 'retained', ref: { kind: 'plugins', params: {} },
                     pathname: '/plugins', focused: false, visible: true, children: frame }),
@@ -567,7 +569,7 @@ describe('widget definition flows', () => {
         const before = harness.requests.length;
         const screen = await renderScreen(React.createElement(AppShellPluginUiProjectionValueProvider, { value: {
             pluginUiProjection: projection, pluginBrowserProjection: null, phase: 'current', interactionEnabled: true,
-            machineId: 'machine-a', serverId, platform: 'web', clientExecutableActivation: { status: 'ready' },
+            machineId: 'machine-a', serverId, platform: 'web', accountLifetime: captureActiveServerAccountScopeLifetime(), clientExecutableActivation: { status: 'ready' },
             reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {},
         }, children: React.createElement(Card) }));
         try {
@@ -675,7 +677,7 @@ describe('widget definition flows', () => {
         });
         const descriptor = readWidgetDescriptor(ambient, { kind: 'installed', surface: source });
         const runtime = { pluginUiProjection: bound, pluginBrowserProjection: null, phase: 'current' as const, interactionEnabled: true,
-            machineId: 'machine-b', serverId: 'home', platform: 'web' as const, clientExecutableActivation: { status: 'ready' as const },
+            machineId: 'machine-b', serverId: 'home', platform: 'web' as const, accountLifetime: captureActiveServerAccountScopeLifetime(), clientExecutableActivation: { status: 'ready' as const },
             reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {} };
         expect(readWidgetAboutSources({ definition: null, descriptor, resolution: { status: 'ready', runtime, target: { kind: 'app' }, input: {} } }))
             .toEqual([{ key: 'acme.checks/bound-count', plugin: 'Admitted source B', machine: null, usesViewerConnection: false, read: 'bound-count' }]);

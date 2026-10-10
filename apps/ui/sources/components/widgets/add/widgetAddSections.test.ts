@@ -2,11 +2,13 @@ import type * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createSessionSurfaceNoteDocumentV1, type SessionSurfaceItemV1 } from '@happier-dev/protocol/sessions/board';
+import { USAGE_BUILTIN_WIDGET_IDS_V1 } from '@happier-dev/protocol/widgets';
 
 import { selectBuiltinWidgetCandidates, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import { projectSessionBoard } from '@/sync/domains/session/board';
 
 import { buildBoardWidgetAddContent, buildCompanionWidgetAddSections } from './widgetAddSections';
+import { buildAccountWidgetAddSections } from './accountWidgetAddSections';
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -175,6 +177,7 @@ describe('buildCompanionWidgetAddSections', () => {
             'plugin-builtin:agent_plan',
             'plugin-builtin:changes',
             'plugin-builtin:local_services',
+            ...USAGE_BUILTIN_WIDGET_IDS_V1.map(id => `plugin-builtin:${id}`),
             'plugin-happier.channels/pr',
         ]);
         expect(glances.find((entry) => entry.id === 'plugin-builtin:changes')?.setup).toBeDefined();
@@ -316,6 +319,7 @@ describe('configurable widgets in the Add popovers', () => {
         });
         expect(ids(content.sections.find((section) => section.id === 'builtins')!.entries)).toEqual([
             'plugin-builtin:session_summary', 'plugin-builtin:agent_plan', 'plugin-builtin:changes', 'plugin-builtin:local_services',
+            ...USAGE_BUILTIN_WIDGET_IDS_V1.map(id => `plugin-builtin:${id}`),
         ]);
         expect(ids(content.sections.find((section) => section.id === 'plugin:happier.channels')!.entries)).toEqual(['plugin-happier.channels/summary']);
     });
@@ -343,5 +347,18 @@ describe('configurable widgets in the Add popovers', () => {
         const added = addItem.mock.calls[0]![0];
         expect(added).toMatchObject({ kind: 'instance', instance: { v: 1, definition: existing.instance.definition, bindings: pinnedB.bindings } });
         expect(added.instance.id).not.toBe('mine');
+    });
+});
+
+describe('built-in widgets by host surface', () => {
+    const labels = { count: (count: number) => `${count} here`, submit: 'Add' };
+    const builtIns = (ownerKind: 'home' | 'project') => buildAccountWidgetAddSections({
+        candidates: selectBuiltinWidgetCandidates(), instances: [], addInstance: vi.fn(), labels,
+        scope: { serverId: 's', accountId: 'a', owner: ownerKind === 'home' ? { kind: 'home' } : { kind: 'project', projectId: 'p' } },
+    }).find(section => section.id === 'builtins')!.entries.map(entry => entry.id);
+
+    it('offers a checkout widget only where a Project supplies the checkout', () => {
+        expect(builtIns('home').some(id => id.startsWith('plugin-builtin:project_'))).toBe(false);
+        expect(builtIns('project')).toEqual(expect.arrayContaining(['plugin-builtin:project_readme']));
     });
 });

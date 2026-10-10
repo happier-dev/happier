@@ -8,6 +8,7 @@ import type {
     SessionCompanionBuiltinItemId,
     SessionCompanionItemRefV1,
 } from '@/components/sessions/companion/state/sessionCompanionPreference';
+import { SESSION_COMPANION_BUILTIN_ITEM_IDS } from '@/components/sessions/companion/state/sessionCompanionPreference';
 import { resolveBoardWidgetProvenance } from '@/components/widgets/boardWidgetProvenance';
 import { describeWidgetCandidatePurpose, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
@@ -20,6 +21,7 @@ import {
     groupWidgetCandidatesByPlugin,
     isConfigurableWidgetCandidate,
     partitionWidgetCandidatesBySource,
+    selectHostableWidgetCandidates,
     runAcknowledgedWidgetSetupCommand,
     runWidgetSetupCommand,
     widgetDefinitionOfCandidate,
@@ -103,7 +105,7 @@ export function buildBoardWidgetAddContent(input: Readonly<{
             setup: () => proposed,
         }];
     };
-    const widgets = partitionWidgetCandidatesBySource(input.candidates);
+    const widgets = partitionWidgetCandidatesBySource(selectHostableWidgetCandidates(input.candidates, 'sessionBoard'));
     const offered = intents.includes('fromPlugins');
     const make: WidgetAddEntry[] = [];
     if (intents.includes('walkthrough')) {
@@ -202,14 +204,16 @@ export function buildCompanionWidgetAddSections(input: Readonly<{
     const { refs, addItem, renderGlancePreview, renderNotePreview, renderSetupPreview } = input;
     const context = input.context ?? NO_CONTEXT;
     const personalInstances = refs.flatMap((ref) => (ref.kind === 'instance' ? [ref.instance] : []));
-    const model = resolveSessionCompanionPickerSections({ refs, snapshot: input.snapshot, candidates: input.glanceCandidates });
-    const candidatesBySource = partitionWidgetCandidatesBySource(input.glanceCandidates);
+    const glanceCandidates = selectHostableWidgetCandidates(input.glanceCandidates, 'companion');
+    const model = resolveSessionCompanionPickerSections({ refs, snapshot: input.snapshot, candidates: glanceCandidates });
+    const candidatesBySource = partitionWidgetCandidatesBySource(glanceCandidates);
     const yourKeys = new Set(candidatesBySource.yours.map(candidate => `plugin-${candidate.key}`));
     const glances: WidgetAddEntry[] = [
         ...model.plugins.map((row): WidgetAddEntry => {
             const candidate = row.candidate;
             const definition = widgetDefinitionOfCandidate(candidate);
             const native = readBuiltinWidgetDescriptorV1(definition);
+            const nativeGlanceId = SESSION_COMPANION_BUILTIN_ITEM_IDS.find(id => id === native?.definition.id);
             // A direct personal copy: its own definition reference and bindings, kept on this device.
             const add = (bindings: WidgetInputBindingsV1) => addItem({ kind: 'instance', instance: { v: 1, id: randomUUID(), definition, bindings } });
             const configurable = isConfigurableWidgetCandidate(candidate);
@@ -238,7 +242,7 @@ export function buildCompanionWidgetAddSections(input: Readonly<{
                 }),
             } : {
                 ...base,
-                ...(native && renderGlancePreview ? { renderPreview: () => renderGlancePreview(native.definition.id) } : {}),
+                ...(nativeGlanceId && renderGlancePreview ? { renderPreview: () => renderGlancePreview(nativeGlanceId) } : {}),
                 onPick: () => runWidgetSetupCommand(() => add(startingBindings(candidate, context, 'personal')), t('widgetAdd.addFailed')),
             };
         }),

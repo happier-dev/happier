@@ -28,5 +28,6 @@ export function readProjectWidgetAreaContextV1(input: Readonly<{
         sourceId, projectIdentity, providedContext: {
         project: source ? [source] : [],
         checkout: activeCheckout ? [activeCheckout] : [],
+        projects: projectIdentity ? [[projectIdentity.projectKey]] : [],
     } };
 }

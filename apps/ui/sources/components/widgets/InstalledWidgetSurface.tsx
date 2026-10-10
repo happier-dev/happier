@@ -86,6 +86,7 @@ export type InstalledWidgetSurfaceProps = Readonly<{
     presentation: WidgetPresentation;
     /** The host's plugin projection: the Session's, or the app shell's. */
     runtime: PluginUiProjectionCurrentness;
+    isCurrent?: () => boolean;
     /** Route-owned recovery retained by the incumbent plugin surface host. */
     onManagePlugin?: () => void;
     /** Current framed renderer's validated intrinsic height for outer semantic sizing. */
@@ -133,6 +134,7 @@ export function UnavailableInstalledWidget(props: Readonly<{
 type MountedWidgetProps = Readonly<{
     mount: InstalledWidgetMount;
     runtime: PluginUiProjectionCurrentness;
+    isCurrent?: () => boolean;
     input?: PluginUiLaunchInputV1;
     onManagePlugin?: () => void;
     onIntrinsicHeightChange?: (height: number) => void;
@@ -151,6 +153,7 @@ function useMountedWidgetHostProps(props: MountedWidgetProps) {
         pluginUiProjection: props.runtime.pluginUiProjection,
         platform: props.runtime.platform,
         projectionInteractionEnabled: props.runtime.interactionEnabled,
+        isHostCurrent: props.isCurrent,
         launchInput: props.input,
         mountInstanceKey,
         ...(props.onIntrinsicHeightChange
@@ -263,6 +266,7 @@ export function InstalledWidgetSurface(props: InstalledWidgetSurfaceProps): Reac
     const mountedProps: MountedWidgetProps = {
         mount,
         runtime: props.runtime,
+        isCurrent: props.isCurrent,
         input: props.input,
         ...(props.onIntrinsicHeightChange ? { onIntrinsicHeightChange: props.onIntrinsicHeightChange } : {}),
         ...(props.onManagePlugin ? { onManagePlugin: props.onManagePlugin } : {}),
@@ -304,6 +308,7 @@ export function ConfiguredInstalledWidgetSurface(props: Omit<InstalledWidgetSurf
 }>): React.ReactElement {
     const { resolution, onRepairInputs, ...mounted } = props;
     if (resolution.status !== 'ready') return <ConfiguredWidgetRefusal resolution={resolution} testID={props.testID} onRepairInputs={onRepairInputs} onManagePlugin={props.onManagePlugin} />;
+    if (resolution.target.kind === 'workspace') return <UnavailableInstalledWidget unresolved={{ state: 'unavailable', reasonCode: 'widget_type_unavailable' }} testID={props.testID} />;
     return <InstalledWidgetSurface {...mounted} target={resolution.target} runtime={resolution.runtime} input={resolution.input} />;
 }
 

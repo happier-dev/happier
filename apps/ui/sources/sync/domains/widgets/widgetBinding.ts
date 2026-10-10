@@ -1,4 +1,4 @@
-import { readWidgetConnectedAccountPurposeV1, type WidgetBindingResolutionV1, type WidgetDefinitionRefV1, type WidgetInputDescriptorV1, type WidgetInputIssueV1, type WidgetInstanceV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
+import { readWidgetInputTargetV1, validateWidgetWorkspaceInputV1, readWidgetConnectedAccountPurposeV1, type WidgetBindingResolutionV1, type WidgetDefinitionRefV1, type WidgetDefinitionV1, type WidgetInputDescriptorV1, type WidgetInputIssueV1, type WidgetInstanceV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 import type { PluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { InstalledWidgetTarget } from '@/components/widgets/InstalledWidgetSurface';
@@ -6,9 +6,11 @@ import { isSameInputOptionValue, readInputPath } from '@happier-dev/protocol/inp
 import { VoiceTrackedSessionAddressV1Schema } from '@happier-dev/protocol/sessions/follow/voiceTrackedTargetsCompatibilityV1';
 import type { JsonValue, PluginContributionIdentityV1, PluginProjectedResourceV2, QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import type { WorkspaceAddressV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces';
 
 export type ConfiguredWidgetTargetResolution =
-  | Readonly<{ status: 'ready'; target: InstalledWidgetTarget; runtime: PluginUiProjectionCurrentness; input: Readonly<Record<string, JsonValue>> }>
+  | Readonly<{ status: 'ready'; target: InstalledWidgetTarget | Readonly<{ kind: 'workspace'; workspace: WorkspaceAddressV1; checkout: WorkspaceRefV1 }>; runtime: PluginUiProjectionCurrentness; input: Readonly<Record<string, JsonValue>> }>
   | Readonly<{ status: 'loading'; reasonCode: string }>
   | Readonly<{ status: 'selection_required' | 'invalid' | 'unavailable' | 'denied'; reasonCode: string; fields?: readonly WidgetInputIssueV1[]; repair?: WidgetInputRepairOutcome }>;
 /** Credential-free facts for one next action; Connect never needs a shared inputs writer. */
@@ -25,8 +27,12 @@ type WidgetRepairContext = Readonly<{ instance: WidgetInstanceV1;
 export type ConfiguredWidgetTargetInput = Readonly<{
   scope: WidgetSurfaceRefV1; resolvedInput: WidgetBindingResolutionV1;
   definition?: WidgetDefinitionRefV1;
+  /** Parsed body from the admitted Account/Session definition, not catalog summary metadata. */
+  authoredBody?: WidgetDefinitionV1['body'];
   targetKind: 'app' | 'session';
-  sessionInputPath?: string; appRuntime: PluginUiProjectionCurrentness;
+  descriptor: WidgetInputDescriptorV1;
+  providedContext?: Readonly<Record<string, readonly JsonValue[]>>;
+  appRuntime: PluginUiProjectionCurrentness;
   repairContext?: WidgetRepairContext;
   readSession(ref: Readonly<{ serverId: string; sessionId: string }>):
     | Readonly<{ status: 'ready'; session: Session; runtime: PluginUiProjectionCurrentness }>
@@ -51,7 +57,8 @@ export function withWidgetInputRepairOutcome<T extends ConfiguredWidgetTargetRes
   if (!kind) return result;
   const hint = context.descriptor.inputs?.fields.find(field => field.path === issue?.path);
   const binding = hint && context.instance.bindings[hint.path];
-  const sessionRef = hint?.path === context.descriptor.sessionInputPath && binding?.kind === 'value'
+  const declaredTarget = readWidgetInputTargetV1(context.descriptor);
+  const sessionRef = declaredTarget.kind === 'session' && hint?.path === declaredTarget.path && binding?.kind === 'value'
     ? VoiceTrackedSessionAddressV1Schema.safeParse(binding.value) : null;
   // Prefer public choice labels, then ordinary literals. Never serialize arbitrary
   // saved objects, secret fields or another viewer's credential metadata into copy.
@@ -75,17 +82,39 @@ function resolveConfiguredWidgetTargetFacts(input: ConfiguredWidgetTargetInput):
     reasonCode: input.resolvedInput.fields[0]?.reasonCode ?? 'widget_inputs_unavailable',
     fields: input.resolvedInput.fields,
   };
-  if (!input.sessionInputPath) {
+  const declaredTarget = readWidgetInputTargetV1(input.descriptor);
+  if (declaredTarget.kind === 'invalid') return { status: 'invalid', reasonCode: declaredTarget.reasonCode,
+    fields: declaredTarget.paths.map(path => ({ path, status: 'invalid', reasonCode: declaredTarget.reasonCode })) };
+  if (declaredTarget.kind === 'workspace') {
+    const path = declaredTarget.path;
+    const selected = readInputPath(input.resolvedInput.input, path);
+    if (selected === undefined) return { status: 'selection_required',
+      reasonCode: 'widget_workspace_selection_invalid', fields: [{ path, status: selected === undefined ? 'selection_required' : 'invalid', reasonCode: 'widget_workspace_selection_invalid' }] };
+    // The path is read from the admitted strict-JSON input; the shared path reader returns unknown.
+    const admitted = validateWidgetWorkspaceInputV1({ value: selected as JsonValue, serverId: input.scope.serverId, contextValues: input.providedContext?.[path] ?? [] });
+    if (admitted.status !== 'valid') return { ...admitted, fields: [{ path, ...admitted }] };
+    // Equality may accept target-platform spelling differences; only the admitted
+    // checkout supplies the actual path bytes passed to filesystem/SCM readers.
+    const workspace = workspaceAddressFromRefV1(admitted.checkout);
+    return { status: 'ready', target: { kind: 'workspace', workspace, checkout: admitted.checkout }, runtime: input.appRuntime, input: input.resolvedInput.input };
+  }
+  if (declaredTarget.kind === 'app') {
     if (input.targetKind === 'session') return { status: 'selection_required', reasonCode: 'widget_session_selection_missing' };
-    if (input.appRuntime.serverId !== input.scope.serverId) return { status: 'denied', reasonCode: 'widget_target_scope_mismatch' };
+    // A declarative body is rendered locally in the admitted viewer's scope.
+    // The AppShell union has no unique server/machine with zero or several
+    // members. It is not that body's authority: live Resource nodes separately
+    // admit their exact contribution origin against the Account lifetime.
+    if (input.definition?.kind !== 'builtin' && input.authoredBody?.kind !== 'declarative' && input.appRuntime.serverId !== input.scope.serverId)
+      return { status: 'denied', reasonCode: 'widget_target_scope_mismatch' };
     return { status: 'ready', target: { kind: 'app' }, runtime: input.appRuntime, input: input.resolvedInput.input };
   }
-  const selected = readInputPath(input.resolvedInput.input, input.sessionInputPath);
+  const path = declaredTarget.path;
+  const selected = readInputPath(input.resolvedInput.input, path);
   if (selected === undefined) return { status: 'selection_required', reasonCode: 'widget_session_selection_missing',
-    fields: [{ path: input.sessionInputPath, status: 'selection_required', reasonCode: 'widget_session_selection_missing' }] };
+    fields: [{ path, status: 'selection_required', reasonCode: 'widget_session_selection_missing' }] };
   const ref = VoiceTrackedSessionAddressV1Schema.safeParse(selected);
   if (!ref.success) return { status: 'invalid', reasonCode: 'widget_session_selection_invalid',
-    fields: [{ path: input.sessionInputPath, status: 'invalid', reasonCode: 'widget_session_selection_invalid' }] };
+    fields: [{ path, status: 'invalid', reasonCode: 'widget_session_selection_invalid' }] };
   if (ref.data.serverId !== input.scope.serverId) return { status: 'denied', reasonCode: 'widget_target_scope_mismatch' };
   const current = input.readSession(ref.data);
   if (current.status !== 'ready') return current;

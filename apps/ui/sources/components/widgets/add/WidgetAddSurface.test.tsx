@@ -2,7 +2,8 @@ import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { WidgetSizePicker } from '@happier-dev/plugin-ui/presentation';
-import type { WidgetSizeV1, WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
+import { composeWidgetGroupContextV1, createWidgetSurfaceArtifactPortV1, instantiateWidgetLayoutFragmentGroupV1, resolveConfiguredWidgetInputs, type WidgetLayoutFragmentSummaryV1, type WidgetSizeV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
+import { createWorkBoardArtifactBoundary } from '../../../../../../packages/protocol/src/boards/workBoardArtifactV1.testkit';
 
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -15,10 +16,15 @@ import { buildBoardWidgetAddContent, buildCompanionWidgetAddSections } from './w
 import type { WidgetAddAsk, WidgetAddEntry, WidgetAddSection } from './widgetAddModel';
 import type { WidgetSetupDraft, WidgetSetupSubmitResult } from './widgetSetupModel';
 import { WidgetAddPanel } from './WidgetAddSurface';
+import { buildAccountWidgetAddSections } from './accountWidgetAddSections';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
+const accessibilityBoundary = vi.hoisted(() => ({ os: 'web', announce: vi.fn() }));
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
+    Platform: { get OS() { return accessibilityBoundary.os; } },
+    AccessibilityInfo: { announceForAccessibility: accessibilityBoundary.announce },
+}));
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 // The menu's portal and window measurement are the boundary; its rows and selection stay real.
@@ -34,7 +40,7 @@ vi.mock('@/sync/domains/workflows/callWorkflowAction', () => ({
     }),
 }));
 
-afterEach(() => { standardCleanup(); optionsResolve.options = []; });
+afterEach(() => { standardCleanup(); optionsResolve.options = []; accessibilityBoundary.os = 'web'; accessibilityBoundary.announce.mockClear(); });
 
 const HOME: WidgetSurfaceRefV1 = { serverId: 'home', accountId: 'me', owner: { kind: 'home' } };
 const THIS_SESSION: WidgetSurfaceContext = { session: { ref: { serverId: 'home', sessionId: 'A' }, label: 'Retry relay handshake' } };
@@ -104,6 +110,60 @@ async function renderPanel(props: Readonly<{
 const recorder = (): Recorder => ({ previews: [], submits: [] });
 
 describe('WidgetAddSurface', () => {
+    it('delivers native search-arrow selection changes through the platform announcement boundary', async () => {
+        accessibilityBoundary.os = 'ios';
+        const rec = recorder();
+        const screen = await renderPanel({ sections: [{ id: 'all', title: 'All', entries: [widgetEntry(SIGNUPS, rec), widgetEntry(SUMMARY, rec)] }] });
+        expect(accessibilityBoundary.announce).not.toHaveBeenCalled();
+        await act(async () => screen.findByTestId('add.search')!.props.onKeyPress({ nativeEvent: { key: 'ArrowDown' }, preventDefault: () => {} }));
+        await flushHookEffects({ cycles: 2 });
+        expect(accessibilityBoundary.announce).toHaveBeenLastCalledWith('Signups this week, New people per day');
+        await act(async () => screen.findByTestId('add.search')!.props.onKeyPress({ nativeEvent: { key: 'ArrowDown' }, preventDefault: () => {} }));
+        await flushHookEffects({ cycles: 2 });
+        expect(accessibilityBoundary.announce).toHaveBeenLastCalledWith('Summary, Sessions');
+        expect(rec.submits).toEqual([]);
+    });
+
+    it('clears an optional saved-group pin in preview and persists the same empty context atomically without changing the saved fragment', async () => {
+        const scope: WidgetSurfaceRefV1 = { ...HOME, owner: { kind: 'corePage', pageId: 'example', area: 'main' } };
+        const descriptor = { inputs: { fields: [{ path: 'amount', title: 'Amount', widget: 'number' as const }] },
+            inputSchema: { type: 'object' as const, properties: { amount: { type: 'number' as const } }, additionalProperties: false } };
+        const fragment: WidgetLayoutFragmentSummaryV1 = { artifactId: 'saved', name: 'Optional amounts', childCount: 1,
+            ...descriptor, group: { width: 'full', frameStyle: 'card', dividers: 'hairline',
+                context: { amount: { kind: 'value', value: 42 } }, children: [{ kind: 'widget',
+                    instance: { v: 1, definition: { kind: 'builtin', id: 'amounts' }, bindings: { amount: { kind: 'context', slot: 'amount' } } } }] } };
+        const original = structuredClone(fragment);
+        const boundary = createWorkBoardArtifactBoundary();
+        const port = createWidgetSurfaceArtifactPortV1(boundary.forAccount('me'), { surface: scope, isCurrent: () => true });
+        const resolve = (bindings: WidgetSetupDraft['bindings']) => resolveConfiguredWidgetInputs({
+            instance: { ...fragment.group.children[0]!.instance, id: 'child' }, descriptor,
+            providedContext: composeWidgetGroupContextV1({ providedContext: {}, groupBindings: bindings }), viewerValues: {},
+        });
+        const screen = await renderPanel({ sections: buildAccountWidgetAddSections({ candidates: [], instances: [], scope,
+            labels: { count: String, submit: 'Add' }, addInstance: async () => ({ ok: true }), fragments: [fragment],
+            renderGroupPreview: (_saved, draft) => JSON.stringify(resolve(draft.bindings)),
+            // The Artifact transport is the persistence boundary; instantiation, reduction and reads stay real.
+            addGroup: async (saved) => { await port.apply({ kind: 'group_add', group: instantiateWidgetLayoutFragmentGroupV1(saved.group,
+                { groupId: 'copy', childIds: ['copy-child'] }) }); return { ok: true }; },
+        }) });
+        await act(async () => screen.pressByTestId('add.entry.group-saved'));
+        await flushHookEffects({ cycles: 2 });
+        expect(screen.getTextContent()).toContain('"amount":42');
+        await act(async () => screen.changeTextByTestId('add.detail.field.amount.input', ''));
+        await flushHookEffects({ cycles: 2 });
+        expect(screen.getTextContent()).not.toContain('"amount":42');
+        expect(boundary.rows.size).toBe(0);
+        await screen.pressByTestIdAsync('add.detail.submit');
+        await flushHookEffects({ cycles: 2 });
+        const persisted = (await createWidgetSurfaceArtifactPortV1(boundary.forAccount('me'), { surface: scope, isCurrent: () => true }).read()).items[0]!;
+        expect(persisted.kind).toBe('group');
+        if (persisted.kind !== 'group') throw new Error('expected copied group');
+        expect(persisted.context).toEqual({});
+        expect(resolve(persisted.context ?? {})).toMatchObject({ status: 'selection_required', fields: [{ path: 'amount' }] });
+        expect(boundary.rows.size).toBe(1);
+        expect(fragment).toEqual(original);
+    });
+
     it('opens with nothing selected and mounts only the selected widget’s live body', async () => {
         const rec = recorder();
         const sections: WidgetAddSection[] = [{ id: 'plugins', title: 'Analytics', entries: [widgetEntry(SIGNUPS, rec), widgetEntry(SUMMARY, rec, { context: THIS_SESSION })] }];
@@ -313,7 +373,7 @@ describe('WidgetAddSurface', () => {
             ? buildHomeWidgetAddSections({ candidates: [candidate], instances: [], scope: null, addInstance: async () => result() })
             : surface === 'board'
                 ? buildBoardWidgetAddContent({ candidates: [candidate], intents: ['fromPlugins'], snapshot: null,
-                    run: async () => (pending ? { kind: 'approvalPending', artifactId: 'approval', actionId: 'widgets.instance.add' }
+                    run: async () => (pending ? { kind: 'approvalPending', artifactId: 'approval', actionId: 'widgets.item.add' }
                         : { kind: 'failed', error: 'permission_denied' }), openPlugins: () => {} }).sections
                 : buildCompanionWidgetAddSections({ glanceCandidates: [candidate], refs: [], snapshot: null, pluginProjection: null, addItem: async () => result() });
         const close = vi.fn();

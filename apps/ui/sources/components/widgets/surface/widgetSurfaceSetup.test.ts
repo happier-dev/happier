@@ -20,6 +20,43 @@ describe('Widget setup schema defaults', () => {
         expect(created.resolve(created.initial)).toEqual({ status: 'ready', input: { filter: { limit: 3 } } });
     });
 
+    it('keeps own inputs at their declared values even when the surface offers matching context', () => {
+        const ownCandidate = { ...candidate, inputs: { fields: [
+            { ...candidate.inputs!.fields[0]!, contextMode: 'own' as const },
+        ] } };
+        const created = setup({ candidate: ownCandidate,
+            context: { slots: { 'filter.limit': { label: 'This page', value: { value: 5, label: 'Five' } } } } });
+        expect(created.fields[0]?.follow).toBeUndefined();
+        expect(created.initial.bindings['filter.limit']).toEqual({ kind: 'value', value: 3 });
+        expect(created.resolve(created.initial)).toEqual({ status: 'ready', input: { filter: { limit: 3 } } });
+    });
+
+    it('proposes a declared own semantic default without fabricating missing values or credential pins', () => {
+        const typedCandidate = { ...candidate, inputs: { fields: [
+            { path: 'repository', title: 'Repository', widget: 'select' as const,
+                inputType: { pluginId: 'acme.inputs', localId: 'repository' }, contextMode: 'own' as const },
+            { path: 'missing', title: 'Missing', widget: 'text' as const, contextMode: 'own' as const },
+            { path: 'connection', title: 'Connection', widget: 'select' as const,
+                connectedAccountOptions: true as const, contextMode: 'own' as const },
+            { path: 'secret', title: 'Secret', widget: 'secret' as const, contextMode: 'own' as const },
+        ] }, inputSchema: { type: 'object' as const, properties: {
+            repository: { type: 'string' as const, default: 'happier' },
+            connection: { type: 'string' as const, default: 'editor-private' },
+            secret: { type: 'string' as const, default: 'private' },
+        } } };
+        expect(setup({ candidate: typedCandidate }).initial.bindings).toEqual({ repository: { kind: 'value', value: 'happier' } });
+    });
+
+    it('uses the declared semantic default as a value when a follow-able field has no offered slot', () => {
+        const created = setup({ candidate: { ...candidate, inputs: { fields: [
+            { path: 'repository', title: 'Repository', widget: 'select', contextMode: 'follow',
+                inputType: { pluginId: 'acme.inputs', localId: 'repository' }, required: true },
+        ] }, inputSchema: { type: 'object', properties: { repository: { type: 'string', default: 'happier' } },
+            required: ['repository'], additionalProperties: false } } });
+        expect(created.initial.bindings).toEqual({ repository: { kind: 'value', value: 'happier' } });
+        expect(created.resolve(created.initial)).toEqual({ status: 'ready', input: { repository: 'happier' } });
+    });
+
     it('preserves edit pins and followed context instead of replacing either with a default', () => {
         const edited = setup({ mode: { kind: 'edit', instance: { v: 1, id: 'copy', definition: { kind: 'installed', surface: candidate.surface! },
             bindings: { 'filter.limit': { kind: 'value', value: 8 } } } } });
@@ -61,11 +98,26 @@ describe('Widget setup page context', () => {
     ] };
     const context = { slots: { repository: { label: 'This page', value: { value: 'happier', label: 'happier' } } } };
 
+    it('offers the ambient Session through the declared host Session type at its own field path', () => {
+        const fields = widgetSetupFieldsForCandidate({ inputs: { fields: [
+            { path: 'source', title: 'Session', widget: 'json', inputType: { hostType: 'session' } },
+        ] } }, { session: { ref: { serverId: 'home', sessionId: 'A' }, label: 'A' } }, 'personal');
+        expect(fields[0]?.follow).toEqual({ slot: 'session', label: expect.any(String),
+            values: [{ value: { serverId: 'home', sessionId: 'A' }, label: 'A' }] });
+    });
+
     it('offers a page slot as the follow for the input it names, and pins every other input', () => {
         const fields = widgetSetupFieldsForCandidate({ inputs }, context, 'personal');
         expect(fields[0]?.follow).toEqual({ slot: 'repository', label: 'This page', values: [{ value: 'happier', label: 'happier' }] });
         expect(fields[1]?.follow).toBeUndefined();
         expect(widgetProvidedContext(context)).toEqual({ repository: ['happier'] });
+    });
+
+    it('does not offer the ambient Session to a declared own Session field', () => {
+        const ownInputs = { fields: [{ path: 'session', title: 'Session', widget: 'json' as const, contextMode: 'own' as const }] };
+        const fields = widgetSetupFieldsForCandidate({ inputs: ownInputs, sessionInputPath: 'session' },
+            { session: { ref: { serverId: 'home', sessionId: 'A' }, label: 'A' } }, 'personal');
+        expect(fields[0]?.follow).toBeUndefined();
     });
 
     it('starts a fresh copy following the page, and a changed page value reaches only followers', () => {

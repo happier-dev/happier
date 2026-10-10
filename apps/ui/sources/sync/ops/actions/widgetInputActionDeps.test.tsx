@@ -1,3 +1,5 @@
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { expect, it, vi } from 'vitest';
@@ -18,7 +20,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { captureLazyActionAccountContext } from './actionAccountContext';
 import { createWidgetInputActionDepsV1 } from './widgetInputActionDeps';
-import { readWidgetActionCandidatesV1 } from './widgetCatalogActionDeps';
+import { createWidgetCatalogActionDepsV1, readWidgetActionCandidatesV1 } from './widgetCatalogActionDeps';
 import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { createPluginDeclaredResourceStore } from '@/components/plugins/surfaces/PluginContextualResourceStoreProvider';
 import { normalizePluginUiProjection } from '@/sync/domains/plugins/ui/projection';
@@ -26,33 +28,129 @@ import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { buildConnectedAccountPurposeSetupRoute, readConnectedAccountPurposeSetupRequest,
     isConnectedAccountPurposeSetupTargetCurrent } from '@/sync/domains/connectedServices/connectedAccountPurposeSetup';
-import { useApplyConnectedAccountPurposeTarget } from '@/sync/store/settingsWriters';
+import { useConnectedAccountPurposeDefaults, type ConnectedAccountPurposeDefaultsIntent } from '@/hooks/server/connectedServices/useConnectedAccountPurposeDefaults';
+import { publishMachineContributionRegistryProjectionInvalidation } from '@/sync/ops/machineContributionRegistryProjectionRevision';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { applyConnectedAccountCatalogSnapshot } from '@/sync/store/settings/connectedAccountCatalogSnapshot';
+import { ConnectedAccountCatalogRowMutationV1Schema, type ConnectedPurposeCatalogV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+import { InputFieldHintSchema } from '@happier-dev/protocol/inputs';
 
-it('repairs a shared mounted viewer purpose through the existing Account settings mutation without changing shared inputs', async () => {
+// Blocked: authored typed static choices are not admitted until the executable CLI consumer is migrated and validated.
+it('[blocked: authored typed static choices] enforces mounted host choices for saved and changing followed Usage inputs', async () => {
+    const bridge = await loadSyncSingletonForTests();
+    const connection = await restoreServerAccountForTest({ serverUrl: 'http://host-widget-choice.test', accountId: 'viewer',
+        request: createHomeHubArtifactHttpBoundary('viewer').request });
+    const previous = storage.getState();
+    try {
+        const { useConfiguredWidgetTarget } = await import('@/sync/domains/widgets/useConfiguredWidgetTarget');
+        const scope = { serverId: connection.home.id, accountId: 'viewer', owner: { kind: 'home' as const } };
+        storage.setState({ profileScope: scope, profile: AccountProfileSchema.parse({ id: 'viewer' }) });
+        const definition = { kind: 'builtin' as const, id: 'usage' };
+        const descriptor = { ...readWidgetDescriptor(null, { kind: 'builtin', id: 'session_summary' })!,
+            definition, target: 'app' as const, sessionInputPath: undefined,
+            inputs: { fields: [InputFieldHintSchema.parse({ path: 'query', title: 'Usage', widget: 'select',
+                inputType: { hostType: 'usageQuery' }, options: [{ value: { metric: 'cost' }, label: 'Cost' }] })] },
+            inputSchema: undefined };
+        const hook = await renderHook((props: Readonly<{ metric: string; follow: boolean }>) => useConfiguredWidgetTarget({
+            scope, descriptor, providedContext: { query: [{ metric: props.metric }] },
+            instance: { v: 1, id: 'copy', definition, bindings: { query: props.follow
+                ? { kind: 'context', slot: 'query' } : { kind: 'value', value: { metric: props.metric } } } },
+            appRuntime: { pluginUiProjection: null, pluginBrowserProjection: null, phase: 'current', interactionEnabled: true,
+                machineId: null, serverId: scope.serverId, platform: 'web', accountLifetime: captureActiveServerAccountScopeLifetime() },
+        }), { initialProps: { metric: 'tokens', follow: false } });
+        expect(hook.getCurrent()).toMatchObject({ status: 'invalid', reasonCode: 'widget_input_option_unavailable' });
+        await hook.rerender({ metric: 'cost', follow: true });
+        expect(hook.getCurrent()).toMatchObject({ status: 'ready', input: { query: { metric: 'cost' } } });
+        await hook.rerender({ metric: 'tokens', follow: true });
+        expect(hook.getCurrent()).toMatchObject({ status: 'invalid', reasonCode: 'widget_input_option_unavailable' });
+        await hook.unmount();
+    } finally { storage.setState(previous, true); await connection.dispose(); bridge.dispose(); }
+});
+
+it('refuses a builtin checkout pin outside the admitted context and after Account retirement', async () => {
+    const bridge = await loadSyncSingletonForTests();
+    const http = createHomeHubArtifactHttpBoundary('viewer');
+    const connection = await restoreServerAccountForTest({ serverUrl: 'https://widget-declared-inputs.test', accountId: 'viewer', request: http.request });
+    const account = await captureLazyActionAccountContext(connection.home.id);
+    const previous = storage.getState();
+    try {
+        const scope = { serverId: account.serverId, accountId: account.accountId };
+        const surface = { ...scope, owner: { kind: 'home' as const } };
+        const checkout = { id: 'checkout', serverId: scope.serverId, machineId: 'machine', rootPath: '/repo', createdAtMs: 1 };
+        const deps = createWidgetInputActionDepsV1(account, createActionExecutorBoundaryFixture({ widgetAccountScope: () => scope }));
+        const request = { ref: { surface, instanceId: 'copy' }, instance: { v: 1 as const, id: 'copy',
+            definition: { kind: 'builtin' as const, id: 'project_code' }, bindings: { checkout: { kind: 'value' as const, value: checkout } } },
+            context: { surface: 'ui' as const, widgetAreaContext: { surface, values: { checkout: [checkout] } } } };
+        expect(await deps.widgetInputs!.resolve(request)).toEqual({ status: 'ready', input: { checkout } });
+        expect(await deps.widgetInputs!.resolve({ ...request, instance: { ...request.instance,
+            bindings: { checkout: { kind: 'value', value: { ...checkout, rootPath: '/other' } } } } })).toMatchObject({ status: 'denied',
+            fields: [{ path: 'checkout', reasonCode: 'widget_target_identity_mismatch' }] });
+        await connection.dispose();
+        await expect(deps.widgetInputs!.resolve(request)).rejects.toThrow();
+    } finally {
+        account.dispose(); storage.setState(previous, true); await connection.dispose(); bridge.dispose();
+    }
+});
+
+it('admits its own Account scope when the catalog is composed before scope deps are returned', async () => {
+    const bridge = await loadSyncSingletonForTests();
+    const http = createHomeHubArtifactHttpBoundary('catalog-viewer');
+    const connection = await restoreServerAccountForTest({ serverUrl: 'https://catalog-composition.test', accountId: 'catalog-viewer', request: http.request });
+    const account = await captureLazyActionAccountContext(connection.home.id);
+    const previous = storage.getState();
+    try {
+        const { createActionExecutor, createHomeHubArtifactPortV1 } = await import('@happier-dev/protocol');
+        const scope = { serverId: account.serverId, accountId: account.accountId };
+        storage.setState({ profileScope: scope, profile: AccountProfileSchema.parse({ id: account.accountId }) });
+        const surface = { ...scope, owner: { kind: 'home' as const } };
+        const base = createActionExecutorBoundaryFixture({ homeHubArtifacts: createHomeHubArtifactPortV1(account.homeHubArtifactTransport, {
+            accountId: account.accountId, shouldContinue: account.accountLifetime.isCurrent,
+        }) });
+        const executor = createActionExecutor({ ...base, ...createWidgetCatalogActionDepsV1(account, base) });
+        const result = await executor.execute('widgets.catalog.list', { surface }, { surface: 'ui', serverId: scope.serverId });
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: {
+            surface, entries: expect.arrayContaining([expect.objectContaining({
+                definition: { kind: 'builtin', id: 'session_summary' }, availability: 'available',
+            })]),
+        } });
+    } finally {
+        account.dispose();
+        storage.setState(previous, true);
+        await connection.dispose();
+        bridge.dispose();
+    }
+});
+
+it('repairs a shared mounted viewer purpose through the Account catalog without changing Settings or shared inputs', async () => {
     // Bridge Metro's call-time require to the same real Sync singleton; no settings logic is replaced.
     const syncBridge = await loadSyncSingletonForTests();
     const http = createHomeHubArtifactHttpBoundary('viewer');
-    let raw: Record<string, unknown> = {};
-    let version = 1;
+    const raw: Record<string, unknown> = {};
+    const version = 1;
+    let purposeBindings: ConnectedPurposeCatalogV1 = { v: 1, bindings: [] };
+    let revision = 1;
     let reject = false;
-    const writes: Record<string, unknown>[] = [];
+    const writes: ConnectedPurposeCatalogV1[] = [];
     const connection = await restoreServerAccountForTest({ serverUrl: 'http://viewer-purpose-recovery.test', accountId: 'viewer', request: async (input, init) => {
         if (new URL(String(input)).pathname === '/v2/sessions/named-session')
             return Response.json({ error: 'Session not found' }, { status: 404 });
-        if (new URL(String(input)).pathname !== '/v2/account/settings') return http.request(input, init);
-        if (init?.method !== 'POST') return Response.json({ content: { t: 'plain', v: raw }, version });
+        const path = new URL(String(input)).pathname;
+        if (path === '/v2/account/settings') {
+            if (init?.method === 'POST') throw new Error('viewer_purpose_must_not_write_settings');
+            return Response.json({ content: { t: 'plain', v: raw }, version });
+        }
+        if (path !== '/v1/account/entity-rows/connected-accounts/purposes') return http.request(input, init);
+        if (init?.method !== 'POST') return Response.json({ status: 'present', revision, content: { t: 'plain', v: { key: 'purposes', value: purposeBindings } } });
         if (reject) return Response.json({ error: 'denied' }, { status: 403 });
-        const body: unknown = JSON.parse(String(init.body));
-        if (!body || typeof body !== 'object' || Reflect.get(body, 'expectedVersion') !== version) throw new Error('Expected exact Account CAS');
-        const content: unknown = Reflect.get(body, 'content');
-        if (!content || typeof content !== 'object' || Reflect.get(content, 't') !== 'plain') throw new Error('Expected explicit plain Account envelope');
-        const value: unknown = Reflect.get(content, 'v');
-        if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected Account settings object');
-        raw = Object.fromEntries(Object.entries(value)); writes.push(raw); version += 1;
-        return Response.json({ success: true, version });
+        const body = ConnectedAccountCatalogRowMutationV1Schema.parse(JSON.parse(String(init.body)));
+        expect(body.expectedRevision).toBe(revision);
+        expect(body.settingsMutation).toBeUndefined();
+        if (body.content?.t !== 'plain' || body.content.v.key !== 'purposes') throw new Error('Expected explicit purpose Account envelope');
+        purposeBindings = body.content.v.value; writes.push(purposeBindings); revision += 1;
+        return Response.json({ status: 'updated', revision, cursor: revision });
     } });
     const previous = storage.getState();
+    const restoreExecutorLoader = await installRealActionExecutorModuleLoader();
     try {
         const { useConfiguredWidgetTarget } = await import('@/sync/domains/widgets/useConfiguredWidgetTarget');
         const surface = { pluginId: 'com.acme.recovery', localId: 'status' };
@@ -68,20 +166,28 @@ it('repairs a shared mounted viewer purpose through the existing Account setting
             properties: { service: { type: 'object', properties: { pluginId: { type: 'string' }, localId: { type: 'string' } }, required: ['pluginId', 'localId'], additionalProperties: false },
                 accountId: { type: 'string' } }, additionalProperties: false } }, additionalProperties: false } }),
             resources: [consumer], connectedAccountPurposeBindings: [{ path: 'connection', purpose: 'read', consumer }] };
-        const projection = normalizePluginUiProjection(PluginProjectionV2Schema.parse({ v: 2, generation: 1,
+        const rawProjection = PluginProjectionV2Schema.parse({ v: 2, generation: 1,
             installedPackagesById: { [surface.pluginId]: { ...widgetInstalledPackage(surface.pluginId, 'Recovery'), occurrenceId: 'current',
                 source: { kind: 'local', locator: `/plugins/${surface.pluginId}` } } },
             familiesById: { pluginUi: { family: 'pluginUi', entriesById: { 'recovery-widget': widget } } },
             resourcesById: { metrics: { id: consumer.localId, pluginId: consumer.pluginId, resourceKind: 'config', scope: 'global',
                 connectedAccountPurposes: [{ purpose: 'read', serviceRefs: [service] }] } },
-        }));
+        });
+        const projection = normalizePluginUiProjection(rawProjection);
+        daemon.projections.set('machine', rawProjection);
+        storage.setState({ machines: { ...storage.getState().machines,
+            machine: createMachineFixture({ id: 'machine', serverId: connection.home.id, activeAt: Date.now() }) } });
+        clearDaemonMergedProjectionCacheForTests();
         const descriptor = readWidgetDescriptor(projection, surface)!;
         const scope = { serverId: connection.home.id, accountId: 'viewer', owner: { kind: 'sessionBoard' as const, sessionId: 'shared' } };
         const instance = { v: 1 as const, id: 'shared', definition: { kind: 'installed' as const, surface }, bindings: { connection: { kind: 'viewer' as const, purpose: 'read' } } };
         let runtime = { pluginUiProjection: projection, pluginBrowserProjection: null, phase: 'current' as const, interactionEnabled: true,
-            machineId: 'machine', serverId: connection.home.id, platform: 'web' as const };
+            machineId: 'machine', serverId: connection.home.id, platform: 'web' as const, accountLifetime: captureActiveServerAccountScopeLifetime() };
+        applyConnectedAccountCatalogSnapshot({ serverId: scope.serverId, accountId: 'viewer' }, 'purposes', {
+            status: 'ready', revision, record: { key: 'purposes', value: purposeBindings },
+        }, true);
         const hook = await renderHook(() => ({ resolution: useConfiguredWidgetTarget({ scope, instance, descriptor, providedContext: {}, appRuntime: runtime }),
-            select: useApplyConnectedAccountPurposeTarget() }));
+            select: useConnectedAccountPurposeDefaults().mutateDefaults }));
         const initial = hook.getCurrent().resolution;
         if (initial.status === 'ready' || initial.status === 'loading' || !initial.repair?.connection) throw new Error(`Expected admitted viewer-purpose Connect recovery: ${JSON.stringify(initial)}`);
         const request = readConnectedAccountPurposeSetupRequest(buildConnectedAccountPurposeSetupRoute(initial.repair.connection).params)!;
@@ -89,32 +195,51 @@ it('repairs a shared mounted viewer purpose through the existing Account setting
         // Authentication adds a profile, but it does not choose this Resource's purpose.
         await act(async () => { storage.setState({ profile: connected }); });
         expect(hook.getCurrent().resolution).toMatchObject({ status: 'selection_required', repair: { kind: 'connect' } });
+        const catalogScope = { serverId: scope.serverId, accountId: 'viewer' };
+        await act(async () => {
+            purposeBindings = { v: 1, bindings: [{ purpose: request.purpose, target: { kind: 'account', account: ref } }] };
+            applyConnectedAccountCatalogSnapshot(catalogScope, 'purposes', { status: 'ready', revision: 1,
+                record: { key: 'purposes', value: purposeBindings } }, true);
+        });
+        expect(hook.getCurrent().resolution).toMatchObject({ status: 'ready', input: { connection: ref } });
+        await act(async () => {
+            applyConnectedAccountCatalogSnapshot(catalogScope, 'purposes', { status: 'unavailable', reason: 'account-mode-mismatch' }, true);
+        });
+        expect(hook.getCurrent().resolution).toMatchObject({ status: 'unavailable', reasonCode: 'connected_account_purpose_catalog_unavailable' });
+        await act(async () => {
+            purposeBindings = { v: 1, bindings: [] }; revision = 2;
+            applyConnectedAccountCatalogSnapshot(catalogScope, 'purposes', { status: 'ready', revision: 2,
+                record: { key: 'purposes', value: purposeBindings } }, true);
+        });
         expect(isConnectedAccountPurposeSetupTargetCurrent({ request, viewer: storage.getState().profileScope,
             runtime, profile: connected, target: null })).toBe(false);
         const next = { kind: 'account' as const, account: ref };
         const isCurrent = () => isConnectedAccountPurposeSetupTargetCurrent({ request, viewer: storage.getState().profileScope,
             runtime, profile: storage.getState().profile, target: next });
+        expect(isCurrent()).toBe(true);
+        const intent: ConnectedAccountPurposeDefaultsIntent = { kind: 'resource',
+            input: { machineId: request.machineId, purpose: request.purpose, target: next } };
         reject = true;
-        await act(async () => { await expect(hook.getCurrent().select({ purpose: request.purpose, target: next, isCurrent })).rejects.toThrow(); });
+        await act(async () => { await expect(hook.getCurrent().select(intent)).rejects.toThrow(); });
         expect(writes).toHaveLength(0);
         expect(hook.getCurrent().resolution.status).toBe('selection_required');
         reject = false;
-        await act(async () => { await hook.getCurrent().select({ purpose: request.purpose, target: next, isCurrent }); });
+        await act(async () => { await hook.getCurrent().select(intent); });
         expect(writes).toHaveLength(1);
+        expect(raw).toEqual({});
+        expect(version).toBe(1);
         expect(hook.getCurrent().resolution).toMatchObject({ status: 'ready', input: { connection: ref } });
         expect(instance.bindings).toEqual({ connection: { kind: 'viewer', purpose: 'read' } });
         expect(isConnectedAccountPurposeSetupTargetCurrent({ request, viewer: { serverId: scope.serverId, accountId: 'other' },
             runtime, profile: connected, target: next })).toBe(false);
-        const validSettingsScope = storage.getState().settingsScope;
-        await act(async () => {
-            storage.setState({ settingsScope: { serverId: scope.serverId, accountId: 'other' } });
-            await expect(hook.getCurrent().select({ purpose: request.purpose, target: next, isCurrent })).rejects.toThrow();
-            storage.setState({ settingsScope: validSettingsScope });
-        });
-        expect(writes).toHaveLength(1);
         runtime = { ...runtime, pluginUiProjection: { ...projection, resourcesById: {} } };
-        await act(async () => { await expect(hook.getCurrent().select({ purpose: request.purpose, target: next, isCurrent })).rejects.toThrow(); });
+        daemon.projections.set('machine', { ...rawProjection, resourcesById: {} });
+        publishMachineContributionRegistryProjectionInvalidation({ serverId: scope.serverId, machineId: 'machine' });
+        await act(async () => { await expect(hook.getCurrent().select(intent)).rejects.toThrow(); });
         expect(writes).toHaveLength(1);
+        const capturedSelect = hook.getCurrent().select;
+        const capturedLifetime = captureActiveServerAccountScopeLifetime();
+        if (!capturedLifetime) throw new Error('Expected the viewer Account lifetime');
         await hook.unmount();
         const deniedSession = createSessionFixture({ id: 'named-session', serverId: scope.serverId,
             metadata: { name: 'Build release', path: '/private/release', host: 'machine' } });
@@ -134,7 +259,30 @@ it('repairs a shared mounted viewer purpose through the existing Account setting
         await vi.waitFor(() => expect(named.getCurrent()).toMatchObject({ status: 'unavailable', reasonCode: 'widget_session_unavailable',
             repair: { kind: 'session_unavailable', field: { selectedLabel: deniedSession.id } } }));
         await named.unmount();
-    } finally { storage.setState(previous, true); await connection.dispose(); syncBridge.dispose(); }
+        await connection.dispose();
+        const successorHttp = createHomeHubArtifactHttpBoundary('other');
+        const successorWrites: unknown[] = [];
+        const successor = await restoreServerAccountForTest({ serverUrl: 'http://viewer-purpose-recovery.test', accountId: 'other',
+            request: async (input, init) => {
+                const path = new URL(String(input)).pathname;
+                if (path !== '/v1/account/entity-rows/connected-accounts/purposes') return successorHttp.request(input, init);
+                if (init?.method === 'POST') {
+                    const mutation = ConnectedAccountCatalogRowMutationV1Schema.parse(JSON.parse(String(init.body)));
+                    successorWrites.push(mutation);
+                    return Response.json({ status: 'updated', revision: 2, cursor: 2 });
+                }
+                return Response.json({ status: 'present', revision: 1, content: {
+                    t: 'plain', v: { key: 'purposes', value: { v: 1, bindings: [] } },
+                } });
+            } });
+        try {
+            expect(capturedLifetime.isCurrent()).toBe(false);
+            await expect(capturedSelect(intent)).rejects.toThrow();
+            expect(writes).toHaveLength(1);
+            expect(successorWrites).toEqual([]);
+        } finally { await successor.dispose(); }
+    } finally { restoreExecutorLoader(); daemon.projections.delete('machine'); clearDaemonMergedProjectionCacheForTests();
+        storage.setState(previous, true); await connection.dispose(); syncBridge.dispose(); }
 });
 
 it('admits a personal connection pin only from the current Account and refuses shared pins', async () => {
@@ -177,11 +325,11 @@ it('admits a personal connection pin only from the current Account and refuses s
             descriptor, providedContext: {}, instance: { v: 1, id: 'pin', definition: { kind: 'installed', surface },
                 bindings: { connection: { kind: 'value', value: props.value } } },
             appRuntime: { pluginUiProjection: projection, pluginBrowserProjection: null, phase: 'current', interactionEnabled: true,
-                machineId: 'machine', serverId: home.serverId, platform: 'web' },
+                machineId: 'machine', serverId: home.serverId, platform: 'web', accountLifetime: captureActiveServerAccountScopeLifetime() },
         }), { initialProps: { value: selected, shared: false }, wrapper: ({ children }) => React.createElement(AppShellPluginUiProjectionValueProvider,
             { children, value: { pluginUiProjection: projection, pluginBrowserProjection: null, phase: 'current', interactionEnabled: true,
                 machineId: 'machine', serverId: home.serverId, platform: 'web', reloadConnectedAccountProjection: () => {},
-                clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {} } }, children) });
+                accountLifetime: captureActiveServerAccountScopeLifetime(), clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {} } }, children) });
         await act(async () => {
             expect(await callWorkflowAction({ actionId: 'action.options.resolve', input: { consumer: { kind: 'widget', surface: home,
                 definition: { kind: 'installed', surface } }, fieldPath: 'connection' }, parseResult: value => value }))
@@ -197,7 +345,8 @@ it('admits a personal connection pin only from the current Account and refuses s
     } finally { restoreExecutorLoader(); storage.setState(previous, true); await connection.dispose(); }
 });
 
-it('validates a mounted schema-only typed pin from its selected origin before exposing a ready Widget target', async () => {
+// Blocked regression preparation: the added parsed static constraint is not admitted until the executable CLI consumer is migrated.
+it('[blocked: authored contributed static choices] validates a mounted schema-only typed pin from its selected origin before exposing a ready Widget target', async () => {
     await import('@/sync/syncEngine');
     const connection = await restoreServerAccountForTest({ serverUrl: 'http://typed-widget-mount.test', accountId: 'viewer',
         request: createHomeHubArtifactHttpBoundary('viewer').request });
@@ -229,16 +378,22 @@ it('validates a mounted schema-only typed pin from its selected origin before ex
         const union = unionPluginUiProjections([{ machineId: 'machine', serverId: connection.home.id, projection,
             phase: 'current', interactionEnabled: true }], new Map([[inputType.pluginId, typeOrigin]]));
         if (!union.pluginUiProjection) throw new Error('Expected the current selected projection');
-        const descriptor = readWidgetDescriptor(union.pluginUiProjection, surface)!;
+        let descriptor = readWidgetDescriptor(union.pluginUiProjection, surface)!;
         let currentProjection = union.pluginUiProjection;
         const scope = { serverId: connection.home.id, accountId: 'viewer', owner: { kind: 'home' as const } };
         const hook = await renderHook((repositoryId: string | number) => useConfiguredWidgetTarget({ scope, descriptor,
             providedContext: {}, instance: { v: 1, id: 'typed-copy', definition: { kind: 'installed', surface },
                 bindings: { repository: { kind: 'value', value: { repositoryId } } } },
             appRuntime: { pluginUiProjection: currentProjection, pluginBrowserProjection: null, phase: 'current', interactionEnabled: true,
-                machineId: 'machine', serverId: scope.serverId, platform: 'web' },
+                machineId: 'machine', serverId: scope.serverId, platform: 'web', accountLifetime: captureActiveServerAccountScopeLifetime() },
         }), { initialProps: 42 as string | number });
         expect(hook.getCurrent()).toMatchObject({ status: 'invalid', reasonCode: 'input_type_value_invalid' });
+        await hook.rerender('repo');
+        expect(hook.getCurrent()).toMatchObject({ status: 'ready', input: { repository: { repositoryId: 'repo' } } });
+        descriptor = { ...descriptor, inputs: { fields: [InputFieldHintSchema.parse({ path: 'repository', title: 'Repository',
+            widget: 'select', inputType, options: [{ value: { repositoryId: 'repo' }, label: 'Repository' }] })] } };
+        await hook.rerender('excluded');
+        expect(hook.getCurrent()).toMatchObject({ status: 'invalid', reasonCode: 'widget_input_option_unavailable' });
         await hook.rerender('repo');
         expect(hook.getCurrent()).toMatchObject({ status: 'ready', input: { repository: { repositoryId: 'repo' } } });
         currentProjection = { ...projection, inputTypesById: {} };
@@ -276,7 +431,9 @@ it('admits and refreshes a B-only stored widget using current B inputs and Resou
     // canonical repository, Board adapter and Action port open them normally.
     const connection = await restoreServerAccountForTest({ serverUrl: 'http://widget-input-binding.test', accountId: 'viewer', request: async (input, init) => {
         const url = new URL(String(input));
-        if (areaHttp && (url.pathname === `/v1/artifacts/${areaHttp.artifactId}` || url.pathname === '/v1/artifacts' && init?.method === 'POST')) return areaHttp.request(input, init);
+        if (areaHttp && (url.pathname === `/v1/artifacts/${areaHttp.artifactId}`
+            || url.pathname.startsWith(`/v1/artifacts/${areaHttp.artifactId}/`)
+            || url.pathname === '/v1/artifacts' && init?.method === 'POST')) return areaHttp.request(input, init);
         if (url.pathname === '/v1/features' || url.pathname === '/v1/features/authenticated') return Response.json(features);
         if (url.pathname === '/v2/sessions/physical-a/system-records/record') return Response.json({ record: url.searchParams.get('kind') === 'layout.v1'
             ? record('layout.v1', 'layout', { v: 1, tabs: [{ id: 'overview', title: 'Overview', items: [{ itemId: 'copy-b', width: 'wide' }] }] })
@@ -293,7 +450,7 @@ it('admits and refreshes a B-only stored widget using current B inputs and Resou
         const scope = { serverId: account.serverId, accountId: account.accountId };
         const areaSurface = { ...scope, owner: { kind: 'pluginArea' as const, pluginId: 'com.acme.binding', pageId: 'overview', area: 'pinned' } };
         areaHttp = createLayoutArtifactHttpBoundary<WidgetAreaLayoutV1>('viewer', { artifactId: buildWidgetSurfaceArtifactIdV1(areaSurface),
-            kind: WIDGET_SURFACE_ARTIFACT_KIND_V1, defaultLayout: { v: 1, surface: areaSurface, instances: [] }, parseLayout: value => WidgetAreaLayoutV1Schema.parse(value) });
+            kind: WIDGET_SURFACE_ARTIFACT_KIND_V1, defaultLayout: { v: 1, surface: areaSurface, items: [] }, parseLayout: value => WidgetAreaLayoutV1Schema.parse(value) });
         const a = createSessionFixture({ id: 'physical-a', serverId: scope.serverId, metadata: { path: '/a', machineId: 'machine-a', host: 'a' } });
         const b = createSessionFixture({ id: 'selected-b', serverId: scope.serverId, metadata: { path: '/b', machineId: 'machine-b', host: 'b' } });
         const machines = [createMachineFixture({ id: 'machine-a' }), createMachineFixture({ id: 'machine-b' })];
@@ -322,9 +479,9 @@ it('admits and refreshes a B-only stored widget using current B inputs and Resou
         clearDaemonMergedProjectionCacheForTests();
         const metadata = widgetProjectionOf([entry('metadata-only')], installed, resources('metadata-only'));
         const projected = unionPluginUiProjections([{ machineId: 'machine-b', serverId: scope.serverId, projection: metadata,
-            phase: 'current', interactionEnabled: true }], new Map(), 'machine-b');
+            phase: 'current', interactionEnabled: true }], new Map());
         await act(async () => { tree = renderer.create(<AppShellPluginUiProjectionValueProvider value={{ ...projected,
-            pluginBrowserProjection: null, platform: 'web', clientExecutableActivation: { status: 'ready' },
+            pluginBrowserProjection: null, platform: 'web', accountLifetime: captureActiveServerAccountScopeLifetime(), clientExecutableActivation: { status: 'ready' },
             reloadClientExecutables() {}, reloadConnectedAccountProjection() {} }}><></></AppShellPluginUiProjectionValueProvider>); });
         const physical = { ...scope, owner: { kind: 'sessionBoard' as const, sessionId: a.id } };
         const definition = { kind: 'installed' as const, surface };
@@ -336,7 +493,7 @@ it('admits and refreshes a B-only stored widget using current B inputs and Resou
         expect(bCandidates).toEqual(expect.arrayContaining([expect.objectContaining({ surface })]));
         // Static input admission and the public Refresh use real descriptor
         // resolution; only HTTP and daemon network transports are replaced.
-        const inputs = createWidgetInputActionDepsV1(account, {} as ActionExecutorDeps).widgetInputs!;
+        const inputs = createWidgetInputActionDepsV1(account, createActionExecutorBoundaryFixture(createWidgetCatalogActionDepsV1(account, createActionExecutorBoundaryFixture({})))).widgetInputs!;
         const instance = { v: 1 as const, id: 'copy-b', definition, bindings: {
             session: { kind: 'value' as const, value: { serverId: scope.serverId, sessionId: b.id } },
             mode: { kind: 'value' as const, value: 'current-b' },
@@ -354,7 +511,7 @@ it('admits and refreshes a B-only stored widget using current B inputs and Resou
         const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
         const executor = createDefaultActionExecutor();
         const context = { serverId: scope.serverId, expectedAccountId: scope.accountId, surface: 'ui' as const };
-        expect(await executor.execute('widgets.instance.refresh', { ref: request.ref }, context)).toEqual({ ok: true, result: { ref: request.ref, status: 'refreshed' } });
+        expect(await executor.execute('widgets.item.refresh', { ref: request.ref }, context)).toEqual({ ok: true, result: { ref: request.ref, status: 'refreshed' } });
         expect(daemon.resourceRead).toHaveBeenCalledTimes(1);
         for (const call of daemon.resourceRead.mock.calls) expect(call.slice(0, 2)).toEqual(['machine-b', expect.objectContaining({
             resource: { pluginId: surface.pluginId, localId: 'current-b-state' }, context: { kind: 'session', sessionId: b.id },
@@ -366,15 +523,22 @@ it('admits and refreshes a B-only stored widget using current B inputs and Resou
             execute: (id, input, areaContext) => executor.execute(id, input, { ...context, ...areaContext, bypassApprovals: true }) });
         const areaInstance = { ...instance, bindings: { ...instance.bindings, session: { kind: 'context' as const, slot: 'session' } } };
         const pageContext = { session: { serverId: scope.serverId, sessionId: b.id } };
-        expect(await areaPort.execute({ area: 'pinned', context: pageContext, operation: { actionId: 'widgets.instance.add', instance: areaInstance } })).toMatchObject({ ok: true });
-        expect(await areaPort.execute({ area: 'pinned', context: pageContext, operation: { actionId: 'widgets.instance.inputs.validate', instanceId: instance.id, bindings: areaInstance.bindings } }))
+        const added = await areaPort.execute({ area: 'pinned', context: pageContext, operation: { actionId: 'widgets.item.add', instance: areaInstance } });
+        expect(added, JSON.stringify(added)).toMatchObject({ ok: true });
+        expect(await executor.execute('widgets.group.create', { surface: areaSurface, groupId: 'group-b', instanceIds: [instance.id],
+            context: { session: { kind: 'value', value: pageContext.session } } }, { ...context, bypassApprovals: true }))
+            .toMatchObject({ ok: true });
+        const followsGroup = await areaPort.execute({ area: 'pinned', context: { session: { serverId: scope.serverId, sessionId: a.id } },
+            operation: { actionId: 'widgets.item.inputs.validate', instanceId: instance.id, bindings: areaInstance.bindings } });
+        expect(followsGroup).toMatchObject({ ok: true, result: { status: 'ready', input: { session: pageContext.session } } });
+        expect(await areaPort.execute({ area: 'pinned', context: pageContext, operation: { actionId: 'widgets.item.inputs.validate', instanceId: instance.id, bindings: areaInstance.bindings } }))
             .toMatchObject({ ok: true, result: { status: 'ready', input: { session: pageContext.session } } });
-        expect(await areaPort.execute({ area: 'pinned', context: pageContext, operation: { actionId: 'widgets.instance.size.set', instanceId: instance.id, size: 'full' } })).toMatchObject({ ok: true });
+        expect(await areaPort.execute({ area: 'pinned', context: pageContext, operation: { actionId: 'widgets.item.size.set', instanceId: instance.id, size: 'full' } })).toMatchObject({ ok: true });
         const admittedSizeWrites = areaHttp.writes.length;
-        expect(await areaPort.execute({ area: 'pinned', context: pageContext, operation: { actionId: 'widgets.instance.size.set', instanceId: instance.id, size: 'wide' } }))
+        expect(await areaPort.execute({ area: 'pinned', context: pageContext, operation: { actionId: 'widgets.item.size.set', instanceId: instance.id, size: 'wide' } }))
             .toMatchObject({ ok: false, errorCode: 'widget_size_unsupported' });
         expect(areaHttp.writes).toHaveLength(admittedSizeWrites);
-        expect(await areaPort.execute({ area: 'pinned', context: pageContext, operation: { actionId: 'widgets.instance.refresh', instanceId: instance.id } }))
+        expect(await areaPort.execute({ area: 'pinned', context: pageContext, operation: { actionId: 'widgets.item.refresh', instanceId: instance.id } }))
             .toMatchObject({ ok: true, result: { status: 'refreshed', ref: { surface: { owner: { kind: 'pluginArea' } } } } });
         expect(daemon.resourceRead.mock.calls.at(-1)?.slice(0, 2)).toEqual(['machine-b', expect.objectContaining({
             resource: { pluginId: surface.pluginId, localId: 'current-b-state' }, context: { kind: 'session', sessionId: b.id },
@@ -393,7 +557,7 @@ it('admits and refreshes a B-only stored widget using current B inputs and Resou
             let acknowledge: ((value: typeof resourceResult) => void) | undefined;
             const read = new Promise<typeof resourceResult>(resolve => { acknowledge = resolve; });
             daemon.resourceRead.mockReturnValue(read);
-            const pending = executor.execute('widgets.instance.refresh', { ref: request.ref }, context);
+            const pending = executor.execute('widgets.item.refresh', { ref: request.ref }, context);
             await vi.waitFor(() => { expect(daemon.resourceRead).toHaveBeenCalledTimes(2); });
             releaseMount(); mount.dispose();
             // The Action's static demand protects this requested read after
@@ -412,7 +576,7 @@ it('admits and refreshes a B-only stored widget using current B inputs and Resou
         boardItem = { v: 1, title: 'Copied checks', frame: 'card', height: { mode: 'auto', fallback: 'regular' },
             source: { kind: 'widget', instance: copiedInstance } };
         daemon.resourceRead.mockResolvedValue(resourceResult);
-        expect(await executor.execute('widgets.instance.refresh', { ref: request.ref }, context))
+        expect(await executor.execute('widgets.item.refresh', { ref: request.ref }, context))
             .toEqual({ ok: true, result: { ref: request.ref, status: 'refreshed' } });
         expect(daemon.resourceRead.mock.calls.at(-1)?.slice(0, 2)).toEqual(['machine-b', expect.objectContaining({
             resource: { pluginId: surface.pluginId, localId: 'current-b-state' }, context: { kind: 'session', sessionId: b.id },
@@ -421,7 +585,7 @@ it('admits and refreshes a B-only stored widget using current B inputs and Resou
         const readsBeforeDenial = daemon.resourceRead.mock.calls.length;
         storage.setState({ sessions: { ...storage.getState().sessions, [b.id]: { ...b, access: { ...b.access!, capabilities: { ...b.access!.capabilities, readTranscript: false } } } } });
         expect(await inputs.resolve(request)).toMatchObject({ status: 'unavailable' });
-        expect(await executor.execute('widgets.instance.refresh', { ref: request.ref }, context)).toMatchObject({ ok: false });
+        expect(await executor.execute('widgets.item.refresh', { ref: request.ref }, context)).toMatchObject({ ok: false });
         expect(daemon.resourceRead).toHaveBeenCalledTimes(readsBeforeDenial);
         expect(areaHttp.writes).toHaveLength(writesAfterAreaEdits);
         expect(http.writes).toHaveLength(0);

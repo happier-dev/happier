@@ -16,13 +16,20 @@ export type WidgetDefinitionCommandOutcome<Result> =
     | Readonly<{ kind: 'refused'; errorCode: string }>;
 
 type CommandId = Extract<ActionId,
+    | 'widgets.fragment.list'
+    | 'widgets.fragment.get'
+    | 'widgets.fragment.create'
+    | 'widgets.fragment.update'
+    | 'widgets.fragment.duplicate'
+    | 'widgets.fragment.delete'
+    | 'widgets.group.add'
     | 'widgets.definition.get'
     | 'widgets.definition.list'
     | 'widgets.definition.duplicate'
     | 'widgets.definition.saveFromSession'
-    | 'widgets.instance.add'
-    | 'widgets.instance.size.set'
-    | 'widgets.instance.refresh'
+    | 'widgets.item.add'
+    | 'widgets.item.size.set'
+    | 'widgets.item.refresh'
     | 'widgets.snapshot.post'>;
 
 /** The exact Home and Account the person is acting in; a call never drifts to another. */

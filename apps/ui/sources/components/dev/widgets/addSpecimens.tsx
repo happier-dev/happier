@@ -1,3 +1,4 @@
+import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -49,7 +50,7 @@ const BOARD = projectSessionBoard({
     layout: undefined,
     items: new Map([
         ['checklist', boardItem('Release checklist', { kind: 'declarative', document: createSessionSurfaceNoteDocumentV1('- [x] Backoff capped at 5 attempts') })],
-        ['relay', boardItem('Relay retries, last 90 min', { kind: 'hostedHtml', source: { kind: 'html', html: '<main></main>' }, requestedCapabilities: {} })],
+        ['relay', boardItem('Relay retries, last 90 min', { kind: 'hostedHtml', source: artifactHtmlBundleFromBodyV1('<main></main>'), requestedCapabilities: {} })],
         ['conv', boardItem('External conversations', { kind: 'widget', instance: {
             v: 1, id: 'conv', definition: { kind: 'installed', surface: { pluginId: 'happier.channels', localId: 'session-conversations-widget' } }, bindings: {},
         } })],

@@ -46,7 +46,7 @@ export function PluginPageWidgetArea(props: PluginUiWidgetAreaPresentation & Rea
         // The mounted area port admits declaration, context and lifetime and supplies identity.
         // Authored page values never select a Home/Account or a different destination.
         const readMovementContext = async (destination: WidgetSurfaceRefV1, signal?: AbortSignal) => {
-            const result = await pagePort.execute({ actionId: 'widgets.instance.list' }, pageContext, signal ? { signal } : undefined);
+            const result = await pagePort.execute({ actionId: 'widgets.item.list' }, pageContext, signal ? { signal } : undefined);
             if (!result.ok) return { ok: false, code: result.errorCode ?? 'widget_area_unavailable' } as const;
             const read = WidgetSurfaceReadV1Schema.safeParse(result.result);
             if (!read.success) return { ok: false, code: 'invalid_widget_area_result' } as const;
@@ -63,7 +63,7 @@ export function PluginPageWidgetArea(props: PluginUiWidgetAreaPresentation & Rea
                     return readDefaultWidgetMovementAdmission(ref, destination, signal, admitted.context);
                 },
                 execute: async (effect, scope) => {
-                    const move = WidgetInstanceActionInputSchemasV1['widgets.instance.move'].safeParse(effect.input);
+                    const move = WidgetInstanceActionInputSchemasV1['widgets.item.move'].safeParse(effect.input);
                     if (!move.success) return widgetMovementRefused('invalid_parameters', effect.preview);
                     const destination = 'to' in move.data ? move.data.to.surface : move.data.ref.surface;
                     const admitted = await readMovementContext(destination);

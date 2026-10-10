@@ -117,6 +117,29 @@ describe('WidgetFrame', () => {
         expect(mounts).toBe(1);
         expect(screen.getTextContent()).toContain('all retained rows');
     });
+    it('lets a grouped widget grow with its rows instead of scrolling inside a fixed box, still telling the body its measured room', async () => {
+        const { HappierScrollArea } = await import('@happier-dev/plugin-ui/presentation');
+        let observed: ReturnType<typeof useWidgetPresentation>;
+        function Body() { observed = useWidgetPresentation(); return <>every row</>; }
+        const screen = await renderScreen(<WidgetFrame testID="grouped" frameStyle="plain" grouped placement="home" title="Period summary"
+            widgetPresentation={{ size: 'small', footprint: { columns: 2, columnSpan: 1, rowSpan: 1, height: 'compact', width: 'half' } }}
+            body={{ kind: 'content', children: <Body /> }} />);
+        expect(screen.root.findAllByType(HappierScrollArea)).toHaveLength(0);
+        await act(async () => { screen.findByTestId('grouped.viewport')!.props.onLayout({ nativeEvent: { layout: { width: 330, height: 240 } } }); });
+        expect(observed).toMatchObject({ size: 'small', geometry: { width: 330, height: 240 } });
+    });
+    it('takes its content height on a content-height surface (a core page), keeping the body its size and measured width', async () => {
+        const { HappierScrollArea } = await import('@happier-dev/plugin-ui/presentation');
+        let observed: ReturnType<typeof useWidgetPresentation>;
+        function Body() { observed = useWidgetPresentation(); return <>every row</>; }
+        const screen = await renderScreen(<WidgetFrame testID="core" frameStyle="card" placement="home" title="Daily usage" bodyHeight="content"
+            widgetPresentation={{ size: 'wide', footprint: { columns: 2, columnSpan: 2, rowSpan: 2, height: 'regular', width: 'full' } }}
+            body={{ kind: 'content', children: <Body /> }} />);
+        // No fixed-height scroll viewport: the row is as tall as what it shows.
+        expect(screen.root.findAllByType(HappierScrollArea)).toHaveLength(0);
+        await act(async () => { screen.findByTestId('core.viewport')!.props.onLayout({ nativeEvent: { layout: { width: 900, height: 412 } } }); });
+        expect(observed).toMatchObject({ size: 'wide', footprint: { columnSpan: 2 }, geometry: { width: 900, height: 412 } });
+    });
     it('draws the header at once — title, source, freshness and the section menu — around the body', async () => {
         const screen = await renderFrame({ meta: 'As of 10:42', menu: 'menu:here' });
         const text = screen.getTextContent();

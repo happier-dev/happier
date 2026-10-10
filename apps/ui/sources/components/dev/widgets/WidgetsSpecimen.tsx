@@ -10,6 +10,9 @@ import { AREA_SPECIMEN_FRAMES } from './areaSpecimens';
 import { DATA_SPECIMEN_FRAMES } from './dataSpecimens';
 import { FRAME_SPECIMEN_FRAMES } from './frameSpecimens';
 import { GLANCE_SPECIMEN_FRAMES } from './glanceSpecimens';
+import { CUSTOMIZE_SPECIMEN_FRAMES } from './customizeSpecimens';
+import { GROUP_SPECIMEN_FRAMES } from './groupSpecimens';
+import { LAYOUT_SPECIMEN_FRAMES } from './layoutSpecimens';
 import { SETUP_SPECIMEN_FRAMES } from './setupSpecimens';
 import type { WidgetSpecimenFrames } from './widgetSpecimenTypes';
 
@@ -35,6 +38,9 @@ export function WidgetsSpecimen(props: Readonly<{ only: string | null; phone: bo
         ...GLANCE_SPECIMEN_FRAMES,
         ...SETUP_SPECIMEN_FRAMES,
         ...DATA_SPECIMEN_FRAMES,
+        ...GROUP_SPECIMEN_FRAMES,
+        ...LAYOUT_SPECIMEN_FRAMES,
+        ...CUSTOMIZE_SPECIMEN_FRAMES,
     };
     const ids = props.only ? [props.only] : Object.keys(frames);
     return (

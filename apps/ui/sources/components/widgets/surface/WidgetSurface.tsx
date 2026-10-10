@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View, type LayoutChangeEvent } from 'react-native';
 import { WidgetPresentationProvider, useWidgetPresentation } from '@happier-dev/plugin-ui';
 import type { JsonValue } from '@happier-dev/protocol';
-import { getWidgetSizeFootprintV1, normalizeWidgetSizeForSurfaceV1, readBuiltinWidgetDescriptorV1, type WidgetSizeV1, type WidgetInstanceV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
+import { getWidgetSizeFootprintV1, normalizeWidgetSizeForSurfaceV1, readBuiltinWidgetDescriptorV1, type WidgetInputBindingsV1, type WidgetSizeV1, type WidgetInstanceV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 
 import { ConfiguredInstalledWidgetSurface, ConfiguredWidgetRefusal, UnavailableInstalledWidget } from '@/components/widgets/InstalledWidgetSurface';
 import { BuiltinWidgetBody } from '@/components/sessions/companion/glances/BuiltinWidgetBody';
@@ -16,11 +16,18 @@ import { useWidgetDefinition } from '@/sync/domains/widgets/useWidgetDefinition'
 import { useWidgetInstanceDescriptor } from './useWidgetInstanceDescriptor';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { storage, useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 /** Placement supplies context and presentation, never executable target facts. */
 export type WidgetSurfaceProps = Readonly<{
     scope: WidgetSurfaceRefV1;
+    /** Captured only by the layout host after its actual Artifact read admits this viewer. */
+    admittedViewer?: ServerAccountScope;
+    /** Exact containing document admission, supplied by its canonical layout host. */
+    isCurrent?: () => boolean;
     providedContext: Readonly<Record<string, readonly JsonValue[]>>;
+    /** Value composition only; providedContext retains the host's admitted read facts. */
+    groupBindings?: WidgetInputBindingsV1;
     descriptor: WidgetCandidate | null;
     instance: WidgetInstanceV1;
     appRuntime: PluginUiProjectionCurrentness;
@@ -43,14 +50,15 @@ function InstalledInstanceBody(props: WidgetSurfaceProps & Readonly<{ descriptor
         if (resolution.status !== 'ready') return <ConfiguredWidgetRefusal resolution={resolution} testID={props.testID} onRepairInputs={props.onRepairInputs} onManagePlugin={props.onManagePlugin} />;
         if (props.reference !== undefined) return <>{props.reference}</>;
         const descriptor = readBuiltinWidgetDescriptorV1(definition);
-        if (descriptor && resolution.target.kind === 'session' && resolution.target.session) return <BuiltinWidgetBody
-            id={descriptor.definition.id} session={resolution.target.session} serverId={props.scope.serverId} testID={props.testID} />;
+        if (descriptor) return <BuiltinWidgetBody id={descriptor.definition.id} target={resolution.target}
+            input={resolution.input} serverId={props.scope.serverId} testID={props.testID} />;
     }
     if (definition.kind !== 'installed') {
         return <UnavailableInstalledWidget unresolved={{ state: 'unavailable', reasonCode: 'widget_type_unavailable' }} testID={props.testID} />;
     }
     return <ConfiguredInstalledWidgetSurface
         resolution={resolution}
+        isCurrent={props.isCurrent}
         source={{ kind: 'installedSurface', surface: definition.surface }}
         recordRevision={props.recordRevision}
         presentation={props.presentation}
@@ -70,24 +78,24 @@ function AuthoredReadyBody(props: WidgetSurfaceProps & Readonly<{ descriptor: Wi
     const lifetime = React.useMemo(() => captureActiveServerAccountScopeLifetime(), [viewer]);
     const definition = props.descriptor.authoredDefinition!;
     const isCurrent = React.useCallback(() => {
-        if (latest.current !== resolution || resolution.status !== 'ready' || !lifetime?.isCurrent()) return false;
+        if (latest.current !== resolution || resolution.status !== 'ready' || !lifetime?.isCurrent() || props.isCurrent?.() === false) return false;
         if (resolution.target.kind !== 'session') return true;
         const session = storage.getState().sessions[resolution.target.sessionId];
         return session?.serverId === props.scope.serverId && session.access?.capabilities.readTranscript === true;
-    }, [resolution, lifetime, props.scope.serverId]);
+    }, [resolution, lifetime, props.scope.serverId, props.isCurrent]);
     if (resolution.status !== 'ready') return <ConfiguredWidgetRefusal resolution={resolution} testID={props.testID} onRepairInputs={props.onRepairInputs} onManagePlugin={props.onManagePlugin} />;
     if (!lifetime) return <UnavailableInstalledWidget unresolved={{ state: 'unavailable', reasonCode: 'widget_scope_unavailable' }} testID={props.testID} />;
     if (definition.body.kind === 'declarative' && props.reference !== undefined) return <>{props.reference}</>;
     if (definition.body.kind === 'declarative') return <DeclarativeWidgetDocument document={definition.body.document}
         input={resolution.input} runtime={resolution.runtime} accountLifetime={lifetime} isCurrent={isCurrent}
         sessionId={resolution.target.kind === 'session' ? resolution.target.sessionId : undefined} enabled={props.enabled} testID={props.testID} />;
-    return <ConfiguredInstalledWidgetSurface resolution={resolution} source={{ kind: 'installedSurface', surface: definition.body.surface }}
+    return <ConfiguredInstalledWidgetSurface resolution={resolution} isCurrent={isCurrent} source={{ kind: 'installedSurface', surface: definition.body.surface }}
         recordRevision={props.recordRevision} presentation={props.presentation} onManagePlugin={props.onManagePlugin}
         onRepairInputs={props.onRepairInputs} onIntrinsicHeightChange={props.onIntrinsicHeightChange} reference={props.reference} testID={props.testID} />;
 }
 
 function AuthoredInstanceBody(props: WidgetSurfaceProps): React.ReactElement {
-    const opened = useWidgetDefinition(props.scope, props.instance.definition, props.enabled !== false);
+    const opened = useWidgetDefinition(props.scope, props.instance.definition, props.enabled !== false, props.admittedViewer);
     const definition = opened.definition;
     const reference = props.instance.definition;
     if (!definition || (reference.kind !== 'artifact' && reference.kind !== 'inline')) return <UnavailableInstalledWidget
@@ -99,6 +107,10 @@ function AuthoredInstanceBody(props: WidgetSurfaceProps): React.ReactElement {
 
 /** One mounted instance body shared by Home, Board and Companion; hosts retain their frame. */
 function WidgetSurfaceBody(props: WidgetSurfaceProps): React.ReactElement {
+    // Native descendants own their Session/checkout admission, but cannot start
+    // new demand from a containing document whose read is no longer current.
+    if (props.instance.definition.kind === 'builtin' && props.isCurrent?.() === false) return <UnavailableInstalledWidget
+        unresolved={{ state: 'unavailable', reasonCode: 'widget_scope_unavailable' }} testID={props.testID} />;
     if (props.instance.definition.kind === 'artifact' || props.instance.definition.kind === 'inline') return <AuthoredInstanceBody {...props} />;
     if (!props.descriptor) {
         const establishing = props.instance.definition.kind === 'installed' && props.appRuntime.phase === 'establishing';

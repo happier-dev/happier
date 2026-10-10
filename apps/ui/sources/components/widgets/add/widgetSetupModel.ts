@@ -4,18 +4,20 @@ import type {
     WidgetBindingResolutionV1,
     WidgetInputBindingV1,
     WidgetInputBindingsV1,
+    WidgetGroupWidthV1,
     WidgetInputIssueV1,
     WidgetSizeV1,
     WidgetSurfaceRefV1,
 } from '@happier-dev/protocol/widgets';
 
 import type { IconName } from '@/components/ui/icons/Icon';
+import { describeHostInputTypePickerValue } from '@/components/sessions/actions/hostInputTypePickerForm';
 
 /**
  * The Set up / Edit inputs step's model (lab `dashboards` dadd A/Ab/IN, dbind E/X). It only presents
  * bindings and admitted sizes: what each input is bound to, which choices the person has, and whether the step can
  * finish. Admission belongs to the binder (`resolveConfiguredWidgetInputs`) and to the
- * `widgets.instance.*` Actions behind `submit`; this file never decides that a value is valid.
+ * `widgets.item.*` Actions behind `submit`; this file never decides that a value is valid.
  */
 
 /** A value a person can pin (or a surface offers), named for people. */
@@ -46,6 +48,8 @@ export type WidgetSetupField = Readonly<{
      * with their own connection for this purpose, so the step shows it and never asks for it.
      */
     viewer?: Readonly<{ purpose: string }>;
+    /** Said under the input only while it is still needed ("Asked once. The 3 widgets follow it."). */
+    neededHint?: string;
 }>;
 
 /** Literal controls share the public field/parser; discovered references use binding choices. */
@@ -59,6 +63,8 @@ export function isLiteralWidgetSetupField(field: InputFieldHint): boolean {
 export type WidgetSetupDraft = Readonly<{
     bindings: WidgetInputBindingsV1;
     size?: WidgetSizeV1;
+    /** A group's width (a saved group asks only its inputs and its width). */
+    width?: WidgetGroupWidthV1;
 }>;
 
 export type WidgetSetupSubmitResult = Readonly<{ ok: true; approvalPending?: true }> | Readonly<{ ok: false; message: string }>;
@@ -74,11 +80,13 @@ export type WidgetSetup = Readonly<{
     /** Says where it goes ("Add to Home") or "Save". */
     submitLabel: string;
     /** The widget being set up, for the preview card's header (its mark and name). */
-    widget?: Readonly<{ title: string; mark: IconName }>;
+    widget?: Readonly<{ title: string; mark: IconName; source?: string }>;
     fields: readonly WidgetSetupField[];
     initial: WidgetSetupDraft;
     /** Resolved once from the declaration and host surface; linear surfaces omit it. */
     sizeChoices?: Readonly<{ surface: WidgetSurfaceRefV1['owner']['kind']; sizes: readonly WidgetSizeV1[] }>;
+    /** A group's widths instead of a size; an unavailable one names the widget that prevents it. */
+    widthChoices?: ReadonlyArray<Readonly<{ width: WidgetGroupWidthV1; unavailableReason?: string }>>;
     /** The binder's answer for a draft (pure; re-run on every change). */
     resolve: (draft: WidgetSetupDraft) => WidgetBindingResolutionV1;
     /**
@@ -86,12 +94,20 @@ export type WidgetSetup = Readonly<{
      * resolves. It returns nothing when it cannot read with the bound target's own authority.
      */
     renderPreview?: (preview: Readonly<{ input: Readonly<Record<string, JsonValue>>; draft: WidgetSetupDraft }>) => React.ReactNode;
+    /**
+     * A setup whose preview is its own frame (a saved group is a group, not a card): the step does not
+     * wrap it in a widget card, and while inputs are still needed it draws that frame itself with
+     * `waiting` in each body ("Choose the project to see it here").
+     */
+    renderWaitingPreview?: (preview: Readonly<{ draft: WidgetSetupDraft; waiting: string }>) => React.ReactNode;
+    /** What the button will do once nothing is needed, with the values the draft is bound to. */
+    describeOutcome?: (outcome: Readonly<{ draft: WidgetSetupDraft; values: readonly string[] }>) => string;
     /** Which widget on which surface consumes the options, so option reads are admitted for exactly it. */
-    optionsContext?: (draft: WidgetSetupDraft) => Readonly<{
+    optionsContext?: (draft: WidgetSetupDraft, field?: InputFieldHint) => Readonly<{
         draftInput: Readonly<Record<string, JsonValue>>;
         consumer?: InputOptionsConsumerV1;
     }>;
-    /** The canonical Action behind the button (`widgets.instance.add` / `.inputs.set`). */
+    /** The canonical Action behind the button (`widgets.item.add` / `.inputs.set`). */
     submit: (draft: WidgetSetupDraft) => Promise<WidgetSetupSubmitResult>;
 }>;
 
@@ -151,7 +167,11 @@ function findValue(values: readonly WidgetSetupValue[], value: JsonValue | undef
 }
 
 /** A pin people can still read when its option list does not hold it (plain strings and numbers). */
-function plainLabel(value: JsonValue | undefined): string | null {
+function plainLabel(value: JsonValue | undefined, field: InputFieldHint): string | null {
+    if (field.inputType && 'hostType' in field.inputType) {
+        const typedLabel = describeHostInputTypePickerValue(field.inputType, value);
+        if (typedLabel !== null) return typedLabel;
+    }
     return typeof value === 'string' || typeof value === 'number' ? String(value) : null;
 }
 
@@ -181,14 +201,14 @@ export function describeWidgetSetupRow(input: Readonly<{
     }
     if (binding?.kind === 'value') {
         if (issue && issue.status !== 'selection_required') {
-            return { kind: 'invalid', label: findValue([...offered, ...input.options], binding.value)?.label ?? plainLabel(binding.value), issue };
+            return { kind: 'invalid', label: findValue([...offered, ...input.options], binding.value)?.label ?? plainLabel(binding.value, entry.field), issue };
         }
         if (offered.length > 1) {
             const selectedIndex = offered.findIndex((candidate) => sameStrictJsonValue(candidate.value, binding.value));
             if (selectedIndex >= 0 && offered.length <= AMBIGUOUS_INLINE_LIMIT) return { kind: 'choices', choices: offered, selectedIndex };
         }
         const value = findValue([...offered, ...input.options], binding.value);
-        return { kind: 'pinned', value, label: value?.label ?? plainLabel(binding.value) ?? '' };
+        return { kind: 'pinned', value, label: value?.label ?? plainLabel(binding.value, entry.field) ?? '' };
     }
     return { kind: 'needed' };
 }

@@ -1,6 +1,7 @@
 import type { ActionExecuteResult, ActionExecutorContext } from '@happier-dev/protocol';
 import type { CurrentSessionPresentationIntentV1 } from '@happier-dev/protocol/sessions';
 import type { WidgetActionSurfacePortV1, WidgetMoveCaptureV1, WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
+import { setWidgetInputBindingsV1, resetWidgetInputBindingsV1 } from '@happier-dev/protocol/widgets';
 import type { SessionCompanionPreferenceV1 } from '@/components/sessions/companion/state/sessionCompanionPreference';
 import type { SessionCompanionMutationObserver } from '@/components/sessions/companion/presentation/sessionCompanionPresentationAdapter';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -34,6 +35,11 @@ export function createWidgetCompanionActionPortV1(input: Readonly<{
             const preference = readPreference(surface, signal);
             if (!preference) return unavailable;
             if (mutation.kind === 'size') return { ok: false, errorCode: 'widgets_size_unavailable', error: 'widgets_size_unavailable' };
+            if (mutation.kind === 'group_create' || mutation.kind === 'group_add' || mutation.kind === 'group_ungroup'
+                || mutation.kind === 'group_set' || mutation.kind === 'group_inputs' || mutation.kind === 'width'
+                || (mutation.kind === 'move' && mutation.groupId !== undefined)) {
+                return { ok: false, errorCode: 'unsupported_widget_group_surface', error: 'unsupported_widget_group_surface' };
+            }
             if ((mutation.kind === 'add' && (mutation.placement || mutation.position?.tabId !== undefined))
                 || (mutation.kind === 'move' && 'tabId' in mutation && mutation.tabId !== undefined)
                 || (mutation.kind === 'remove' && mutation.boardRevisions)) return { ok: false, errorCode: 'widgets_placement_unavailable', error: 'widgets_placement_unavailable' };
@@ -63,7 +69,10 @@ export function createWidgetCompanionActionPortV1(input: Readonly<{
                     ? mutation.nativeIndex : insertionIndex(mutation.toIndex, mutation.instanceId) }; break;
                 case 'frame': intent = { kind: 'companion.item.frameStyle.set', item, frameStyle: mutation.frameStyle }; break;
                 case 'rename': intent = { kind: 'companion.instance.rename', instanceId: mutation.instanceId, displayName: mutation.displayName }; break;
-                case 'inputs': intent = { kind: 'companion.instance.inputs.set', instanceId: mutation.instanceId, bindings: mutation.bindings }; break;
+                case 'inputs': intent = { kind: 'companion.instance.inputs.set', instanceId: mutation.instanceId,
+                    bindings: setWidgetInputBindingsV1(item.instance.bindings, mutation.bindings, mutation.paths) }; break;
+                case 'inputs_reset': intent = { kind: 'companion.instance.inputs.set', instanceId: mutation.instanceId,
+                    bindings: resetWidgetInputBindingsV1(item.instance.bindings, mutation.paths) }; break;
             }
             const captured: { value: WidgetMoveCaptureV1 | null } = { value: null };
             const result = await input.applyPresentation(surface, intent, context, signal, mutation.kind === 'add' && mutation.captureForMove

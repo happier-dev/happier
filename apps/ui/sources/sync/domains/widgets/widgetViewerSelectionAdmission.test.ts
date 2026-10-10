@@ -22,6 +22,13 @@ describe('Widget viewer selection metadata admission', () => {
             resources: [{ id: consumer.localId, pluginId: consumer.pluginId, resourceKind: 'config' as const, scope: 'global' as const,
                 connectedAccountPurposes: [{ purpose: 'read', serviceRefs: [value.service] }] }] };
         expect(admitWidgetViewerSelectionMetadataV1({ ...admitted, values: { connection: value } })).toBeNull();
+        const shared = { ...admitted.ref, surface: { ...admitted.ref.surface, accountId: 'stored-owner',
+            owner: { kind: 'project' as const, projectId: 'stable-project' }, artifactId: 'attached-layout' } };
+        expect(admitWidgetViewerSelectionMetadataV1({ ...admitted, ref: shared, values: { connection: value } }))
+            .toMatchObject({ ok: false, errorCode: 'widgets_viewer_scope_mismatch' });
+        expect(admitWidgetViewerSelectionMetadataV1({ ...admitted, ref: shared, admittedViewer: viewer, values: { connection: value } })).toBeNull();
+        expect(admitWidgetViewerSelectionMetadataV1({ ...admitted, ref: shared, admittedViewer: { ...viewer, accountId: 'old-viewer' }, values: { connection: value } }))
+            .toMatchObject({ ok: false, errorCode: 'widgets_viewer_scope_mismatch' });
         expect(admitWidgetViewerSelectionMetadataV1({ ...admitted, values: { connection: { ...value, accountId: 'other-active' } } })).not.toBeNull();
         expect(admitWidgetViewerSelectionMetadataV1({ ...admitted, purposeBindings: { v: 1, bindings: [] }, values: { connection: value } })).not.toBeNull();
         expect(admitWidgetViewerSelectionMetadataV1({ ...admitted, resources: [], values: { connection: value } })).not.toBeNull();

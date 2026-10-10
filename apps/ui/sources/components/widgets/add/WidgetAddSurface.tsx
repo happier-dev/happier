@@ -15,6 +15,7 @@ import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { MENU_ROW_METRICS } from '@/components/ui/lists/itemDensityMetrics';
+import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { Popover } from '@/components/ui/popover';
@@ -24,7 +25,7 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { WidgetFlowPanel, WidgetPreviewWell } from '@/components/widgets/flow/WidgetFlowPanel';
-import { WidgetFlowStep, WidgetSheetShell } from '@/components/widgets/flow/WidgetFlowShell';
+import { WidgetFlowStep, WidgetSheetDone, WidgetSheetShell } from '@/components/widgets/flow/WidgetFlowShell';
 
 import { WidgetAddPluginMark } from './WidgetAddPluginMark';
 import { WidgetSetupStep } from './WidgetSetupStep';
@@ -330,10 +331,7 @@ function WidgetAddList(props: WidgetAddPanelProps & Readonly<{
                     {props.hint ? <Text style={styles.hint} numberOfLines={1}>{props.hint}</Text> : null}
                 </View>
                 {props.phone ? (
-                    <HappierPressable testID={`${props.testID}.done`} accessibilityRole="button" accessibilityLabel={t('common.done')}
-                        onPress={props.onRequestClose} style={styles.done}>
-                        <Text style={styles.doneLabel}>{t('common.done')}</Text>
-                    </HappierPressable>
+                    <WidgetSheetDone testID={`${props.testID}.done`} onPress={props.onRequestClose} />
                 ) : !split ? (
                     <IconButton testID={`${props.testID}.close`} iconName="x" variant="plain" accessibilityLabel={t('common.close')} onPress={props.onRequestClose} />
                 ) : null}
@@ -378,7 +376,7 @@ const WidgetAddRow = React.memo(function WidgetAddRow(props: Readonly<{
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const { entry, feedback } = props;
-    return (
+    const row = (
         <HappierPressable
             testID={props.testID}
             accessibilityRole="option"
@@ -387,6 +385,7 @@ const WidgetAddRow = React.memo(function WidgetAddRow(props: Readonly<{
             onPress={() => props.onSelect(entry.id)}
             style={(state) => [
                 styles.row,
+                entry.actions?.length ? styles.rowPick : null,
                 props.selected ? styles.rowSelected : state.hovered || state.pressed ? styles.rowHover : null,
                 focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
             ]}
@@ -403,6 +402,12 @@ const WidgetAddRow = React.memo(function WidgetAddRow(props: Readonly<{
             </View>
         </HappierPressable>
     );
+    return entry.actions?.length ? (
+        <View style={styles.rowWithActions}>
+            {row}
+            <ItemRowActions title={entry.title} actions={entry.actions} overflowOnly overflowTriggerTestID={`${props.testID}.actions`} />
+        </View>
+    ) : row;
 });
 
 /** The glyph for an Add's outcome, landing with a small zoom (a fade under reduced motion). */
@@ -579,8 +584,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     titleBlock: { flex: 1, minWidth: 0, gap: 1 },
     title: { ...listText('title'), color: theme.colors.text.primary },
     hint: { ...Typography.default(), ...happierPageTextMetrics('meta'), color: theme.colors.text.tertiary },
-    done: { paddingHorizontal: 6, paddingVertical: 8, borderRadius: MENU_ROW_METRICS.radiusPx },
-    doneLabel: { ...Typography.default('semiBold'), ...happierPageTextMetrics('rowTitle'), color: theme.colors.text.link },
     search: { marginHorizontal: 10, marginBottom: 4 },
     // The Collection list's column geometry and type rhythm (`HAPPIER_COLLECTION_LIST_*`).
     listContent: { paddingHorizontal: HAPPIER_COLLECTION_LIST_METRICS.rowInset - 4, paddingBottom: 10 },
@@ -605,6 +608,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderRadius: HAPPIER_COLLECTION_LIST_METRICS.rowRadius,
     },
     rowHover: { backgroundColor: theme.colors.surface.pressed },
+    rowWithActions: { flexDirection: 'row', alignItems: 'center' },
+    rowPick: { flex: 1, minWidth: 0 },
     rowSelected: { backgroundColor: theme.colors.surface.selected },
     // The mark sits on the title's line.
     rowMark: { width: HAPPIER_COLLECTION_LIST_METRICS.rowGlyphBox, height: HAPPIER_COLLECTION_LIST_TEXT.rowTitle.lineHeight, alignItems: 'center', justifyContent: 'center' },
@@ -629,6 +634,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: 4,
         borderRadius: HAPPIER_WIDGET_FRAME_METRICS.cardRadiusPx / 2,
         backgroundColor: theme.colors.surface.inset,
+        // A key, not a tag: the cap's lower lip (lab wsplit A1).
+        borderBottomWidth: 1,
+        borderBottomColor: theme.colors.border.default,
+        overflow: 'hidden',
         color: theme.colors.text.secondary,
     },
     askDraft: {

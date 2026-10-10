@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { WIDGET_SIZE_POLICY_V1 } from '@happier-dev/protocol/widgets';
+import { BUILTIN_WIDGET_DESCRIPTORS_V1, WIDGET_SIZE_POLICY_V1 } from '@happier-dev/protocol/widgets';
 
 import {
     widgetInstalledPackage as installedPackage,
@@ -49,11 +49,11 @@ describe('Widget Add candidates', () => {
     });
     it('offers native glances through the universal catalog without a plugin occurrence or a fake plugin identity', () => {
         const candidates = selectUniversalWidgetCandidates(null);
-        expect(candidates).toMatchObject([
-            { definition: { kind: 'builtin', id: 'session_summary' }, target: 'session', sessionInputPath: 'session' },
-            { definition: { kind: 'builtin', id: 'agent_plan' }, target: 'session', sessionInputPath: 'session' },
-            { definition: { kind: 'builtin', id: 'changes' }, target: 'session', sessionInputPath: 'session' },
-            { definition: { kind: 'builtin', id: 'local_services' }, target: 'session', sessionInputPath: 'session' },
+        expect(candidates.filter(candidate => candidate.target === 'session')).toMatchObject([
+            { definition: { kind: 'builtin', id: 'session_summary' }, target: 'session', inputs: { fields: [{ path: 'session', inputType: { hostType: 'session' } }] } },
+            { definition: { kind: 'builtin', id: 'agent_plan' }, target: 'session', inputs: { fields: [{ path: 'session', inputType: { hostType: 'session' } }] } },
+            { definition: { kind: 'builtin', id: 'changes' }, target: 'session', inputs: { fields: [{ path: 'session', inputType: { hostType: 'session' } }] } },
+            { definition: { kind: 'builtin', id: 'local_services' }, target: 'session', inputs: { fields: [{ path: 'session', inputType: { hostType: 'session' } }] } },
         ]);
         expect(candidates.some(candidate => 'surface' in candidate)).toBe(false);
     });
@@ -232,6 +232,7 @@ describe('Widget Add candidates', () => {
             platform: 'web',
             phase: state.phase,
             interactionEnabled: state.interactionEnabled,
+            accountLifetime: null,
         } satisfies SessionPluginRuntimeState;
 
         const candidates = selectCurrentSessionWidgetCandidates({
@@ -241,6 +242,7 @@ describe('Widget Add candidates', () => {
             policyContext: { platform: 'web' },
         });
         expect(candidates.filter(candidate => candidate.surface)).toEqual([]);
-        expect(candidates).toHaveLength(state.boardFeatureEnabled && state.canEdit ? 4 : 0);
+        expect(candidates.map(candidate => candidate.definition)).toEqual(state.boardFeatureEnabled && state.canEdit
+            ? BUILTIN_WIDGET_DESCRIPTORS_V1.map(descriptor => descriptor.definition) : []);
     });
 });

@@ -10,6 +10,9 @@ import {
     HAPPIER_WIDGET_FRAME_METRICS,
     happierPageTextMetrics,
     resolveHappierWidgetFrameInsetPx,
+    type HappierSceneInput,
+    type HappierWidgetFrameSourceBinding,
+    type HappierWidgetFrameSourceDescriptor,
     type HappierWidgetFramePlacement,
     type HappierWidgetFrameStyle,
     type HappierWidgetFrameTextRender,
@@ -19,7 +22,8 @@ import {
 } from '@happier-dev/plugin-ui/presentation';
 
 import { resolveThemeSurfaceChromeStyle } from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
-import { resolveThemeRaisedEdge } from '@/components/ui/surfaces/themeRaisedEdge';
+import { resolveThemeRaisedEdge, resolveThemeSurfaceFinish } from '@/components/ui/surfaces/themeRaisedEdge';
+import { renderThemeMaterialSurface } from '@/components/ui/glass/GlassSurface';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
@@ -54,7 +58,9 @@ export type WidgetFrameBody =
     | Readonly<{ kind: 'content'; children: React.ReactNode }>
     /** First load only: a widget with last-known rows shows them while it refreshes. */
     | Readonly<{ kind: 'loading'; accessibilityLabel: string }>
-    | Readonly<{ kind: 'empty'; title: string; reason: string; iconName?: IconName; action?: SurfaceStateAction }>
+    | Readonly<{ kind: 'empty'; title: string; reason: string; iconName?: IconName; action?: SurfaceStateAction;
+        /** The Daybreak scene (A5) drawn in the glyph's place where the centred state has room for it. */
+        scene?: HappierSceneInput }>
     | Readonly<{
         kind: 'error';
         title: string;
@@ -83,16 +89,26 @@ export type WidgetFrameProps = Readonly<{
     placement: WidgetFramePlacement;
     /** The source's mark: its glyph, or a brand mark element. */
     mark?: IconName | React.ReactElement;
-    /** A string, or an element the placement owns (the Board's rename field). */
-    title: string | React.ReactElement;
+    /**
+     * A string, or an element the placement owns (the Board's rename field). `null` with no mark, meta
+     * or menu draws no header row (an untitled widget group: exactly the footprint of what it holds).
+     */
+    title: string | React.ReactElement | null;
     /** The source's name, quiet beside the title ("Note", a plugin's name), or the placement's own source text. */
-    source?: string | React.ReactElement;
+    source?: string | React.ReactElement | HappierWidgetFrameSourceDescriptor;
     /** Freshness ("As of 10:42") or a count, only when the source actually knows it. */
     meta?: React.ReactNode;
     /** A live fact that belongs to the title itself (a running call's clock), set right after it. */
     titleMeta?: React.ReactNode;
-    /** The widget's controls at the end of the header: its ⋯ menu, a move handle. */
+    /** The widget's controls at the end of the header: its ⋯ menu. */
     menu?: React.ReactNode;
+    /** The move handle, before the mark, while the widget's surface is being arranged. */
+    leading?: React.ReactNode;
+    /**
+     * A half-width cell of a group: the title keeps its room, so the activity label is its spinner alone
+     * and the source takes its short form whatever the frame measures.
+     */
+    compactHeader?: boolean;
     /** Mounted viewer-local disclosure; never writes the layout or alters Resource activity. */
     disclosure?: HappierControlledDisclosure;
     body: WidgetFrameBody;
@@ -101,6 +117,13 @@ export type WidgetFrameProps = Readonly<{
     rows?: number;
     /** Resolved presentation facts. Persisted size and native height remain with the placement owner. */
     widgetPresentation?: Pick<WidgetBodyPresentation, 'size' | 'footprint'>;
+    /**
+     * How the owning surface sizes this frame's body, apart from the body's own size and width:
+     * `fixed` (a grid surface: the size's rows, scrolling inside), `grow` (at least those rows, taller
+     * when the body is) or `content` (a content-height surface such as a core page: exactly the body).
+     * Default: `fixed`; inside a group, `grow` on a grid and `content` on a phone's stack.
+     */
+    bodyHeight?: 'fixed' | 'grow' | 'content';
     /** Existing native Board height, including its Auto lifecycle; not a second saved height. */
     viewportHeight?: number;
     /** Body box (a measured height, full-bleed insets) for a placement that sizes its body. */
@@ -112,6 +135,11 @@ export type WidgetFrameProps = Readonly<{
     fresh?: boolean | number;
     /** Fill the grid cell, so cards in one row share a height. */
     fill?: boolean;
+    /**
+     * Inside a widget group: the group draws the surface and the dividers, so this frame (always
+     * plain there) draws no hairline of its own.
+     */
+    grouped?: boolean;
     accessibilityLabel?: string;
 }>;
 
@@ -145,6 +173,8 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
         ? { ...props.widgetPresentation, ...(geometry ? { geometry } : {}) } : inheritedPresentation,
         [props.widgetPresentation, geometry, inheritedPresentation]);
     const inset = resolveHappierWidgetFrameInsetPx(props.frameStyle);
+    // Inside a group nothing clips (A6): a grid cell keeps its rows' room and grows; a phone's stack is its content.
+    const bodyHeight = props.bodyHeight ?? (props.grouped ? phone ? 'content' : 'grow' : 'fixed');
     const footer = props.footer ?? null;
     const [refreshingResources, setRefreshingResources] = React.useState<ReadonlySet<symbol>>(() => new Set());
     const reportResourceActivity = React.useCallback((key: symbol, refreshing: boolean) => {
@@ -157,26 +187,38 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
     }, []);
     // While a read refreshes, the meta slot says so in place of its time (lab ST "Refreshing"): the
     // shared activity glyph and the word, then the time returns. The content below never moves.
-    const meta = refreshingResources.size > 0 ? (
+    const refreshing = refreshingResources.size > 0;
+    // Where the header is narrow the word leaves and the glyph stays, named for assistive technology.
+    const refreshingMark = refreshing ? (
+        <View testID={`${props.testID}.refreshing`} style={styles.refreshing} accessibilityLiveRegion="polite"
+            accessible accessibilityLabel={t('widgetDefinition.refreshing')}>
+            <ActivitySpinner size={ICON_SIZE.xs - 2} color={theme.colors.text.tertiary} />
+        </View>
+    ) : undefined;
+    const meta = !refreshing ? props.meta : props.compactHeader ? refreshingMark : (
         <View testID={`${props.testID}.refreshing`} style={styles.refreshing} accessibilityLiveRegion="polite">
             <ActivitySpinner size={ICON_SIZE.xs - 2} color={theme.colors.text.tertiary} />
             <Text style={styles.source} numberOfLines={1}>{t('widgetDefinition.refreshing')}</Text>
         </View>
-    ) : props.meta;
+    );
     // The frame sizes every state inside it (W1 bodies, a refusal, a plugin's own): a card's states on
     // Home and a Board, one line under the header in a Companion or other column (lab ST "Compact").
     const stateSize = props.placement === 'companion' ? 'line' : 'pane';
 
     const renderText = React.useCallback<HappierWidgetFrameTextRender>((input) => (
         <Text
-            testID={input.role === 'title' ? `${props.testID}.title` : `${props.testID}.source`}
+            testID={input.testID}
             style={input.role === 'title' ? styles.title : styles.source}
             numberOfLines={1}
             accessibilityRole={input.role === 'title' ? 'header' : undefined}
         >
             {input.text}
         </Text>
-    ), [props.testID, styles.source, styles.title]);
+    ), [styles.source, styles.title]);
+    // A bound source's glyph from the app's icon family: the pin it is set by, or the link it follows.
+    const renderSourceGlyph = React.useCallback((binding: HappierWidgetFrameSourceBinding) => (
+        <Icon name={binding === 'pin' ? 'push-pin' : 'link'} size={ICON_SIZE.xs} color={theme.colors.text.tertiary} />
+    ), [theme.colors.text.tertiary]);
 
     const mark = props.mark === undefined
         ? null
@@ -239,7 +281,9 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
             frameStyle={props.frameStyle}
             placement={props.placement}
             cardStyle={styles.card}
-            dividerColor={theme.colors.border.default}
+            gradient={resolveThemeSurfaceFinish(theme, 'card')}
+            renderMaterialSurface={renderThemeMaterialSurface}
+            {...(props.grouped ? {} : { dividerColor: theme.colors.border.default })}
             mark={mark}
             title={props.titleMeta && typeof props.title === 'string' ? (
                 <View style={styles.titleWithMeta}>
@@ -247,9 +291,13 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
                     {props.titleMeta}
                 </View>
             ) : props.title}
-            {...(props.source ? { source: props.source } : {})}
+            // A half cell of a group draws the short source at once instead of crowding the title first.
+            {...(props.source ? { source: props.compactHeader && props.compactSource ? props.compactSource : props.source } : {})}
+            renderSourceGlyph={renderSourceGlyph}
             sourcePlacement={phone ? 'below' : 'inline'}
             meta={meta}
+            {...(refreshingMark && !props.compactHeader ? { compactMeta: refreshingMark } : {})}
+            {...(props.leading ? { leading: props.leading } : {})}
             accessory={props.menu}
             disclosure={props.disclosure}
             // The public driver erases Reanimated's host-private value types, as at the plugin presentation boundary.
@@ -270,7 +318,14 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
         >
             <SurfaceStateSizeProvider size={stateSize}>
                 <WidgetPresentationProvider value={widgetPresentation}>
-                {props.widgetPresentation ? (
+                {props.widgetPresentation && bodyHeight !== 'fixed' ? (
+                    // Nothing clips or scrolls here: the body is measured (its size and width still
+                    // reach it) and the frame takes the height that results.
+                    <View testID={`${props.testID}.viewport`} onLayout={onViewportLayout}
+                        style={{ minHeight: bodyHeight === 'grow' ? props.viewportHeight ?? rows * rowHeight : undefined, minWidth: 0 }}>
+                        <WidgetFrameBodyView testID={props.testID} body={props.body} rows={rows} />
+                    </View>
+                ) : props.widgetPresentation ? (
                     <HappierScrollArea testID={`${props.testID}.viewport`} onLayout={onViewportLayout}
                         style={{ height: props.viewportHeight ?? rows * rowHeight, minWidth: 0 }}
                         contentContainerStyle={{ minHeight: '100%' }}>
@@ -359,6 +414,7 @@ function WidgetFrameBodyView(props: Readonly<{ testID: string; body: WidgetFrame
                     reason={body.reason}
                     {...(body.action ? { action: body.action } : {})}
                     {...(body.iconName ? { iconName: body.iconName } : {})}
+                    {...(body.scene ? { scene: body.scene } : {})}
                 />
             );
         case 'error':

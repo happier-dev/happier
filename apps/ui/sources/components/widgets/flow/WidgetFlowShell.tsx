@@ -1,5 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
+import { HappierPressable, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
@@ -11,6 +13,10 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 import { BaseModal } from '@/modal/components/BaseModal';
 import { ModalCardFrame } from '@/modal/components/card/ModalCardFrame';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { MENU_ROW_METRICS } from '@/components/ui/lists/itemDensityMetrics';
+import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
+import { t } from '@/text';
 
 /**
  * The widget flows' widths: an Edit inputs / repair step holds its inputs column and the preview
@@ -67,8 +73,29 @@ export function AnchoredWidgetShell(props: Readonly<{
     );
 }
 
-/** The same flows as the app's bottom sheet on a phone, in thumb reach; the flow draws its own title. */
-export function WidgetSheetShell(props: Readonly<{ title: string; onRequestClose: () => void; testID: string; children: React.ReactNode }>): React.ReactElement {
+/** A phone sheet's one dismiss (lab wgphone Mp, wadd Ap): "Done", as the navigation bar would draw it. */
+export function WidgetSheetDone(props: Readonly<{ onPress: () => void; testID?: string }>): React.ReactElement {
+    return (
+        <HappierPressable testID={props.testID} accessibilityRole="button" accessibilityLabel={t('common.done')}
+            onPress={props.onPress} style={sheetStyles.done}>
+            <Text style={sheetStyles.doneLabel}>{t('common.done')}</Text>
+        </HappierPressable>
+    );
+}
+
+/**
+ * The same flows as the app's bottom sheet on a phone, in thumb reach. A flow that has its own header
+ * draws its title itself; a sheet that is only a list of choices (a group's ⋯) passes `heading`, and
+ * the shell names the object once — its name, one quiet fact about it — with Done.
+ */
+export function WidgetSheetShell(props: Readonly<{
+    title: string;
+    /** Draws the sheet's own header: the title, this quiet fact beside it, and Done. */
+    heading?: Readonly<{ meta?: string; doneTestID?: string }>;
+    onRequestClose: () => void;
+    testID: string;
+    children: React.ReactNode;
+}>): React.ReactElement {
     const insets = useChromeSafeAreaInsets();
     return (
         <BaseModal
@@ -86,6 +113,14 @@ export function WidgetSheetShell(props: Readonly<{ title: string; onRequestClose
                 dimensions={{ maxHeightRatio: SHEET_MAX_HEIGHT_RATIO }}
                 testID={props.testID}
             >
+                {props.heading ? (
+                    <View style={sheetStyles.heading}>
+                        <Text style={sheetStyles.headingTitle} accessibilityRole="header" numberOfLines={1}>{props.title}</Text>
+                        {props.heading.meta ? <Text style={sheetStyles.headingMeta} numberOfLines={1}>{props.heading.meta}</Text> : null}
+                        <View style={sheetStyles.headingGrow} />
+                        <WidgetSheetDone onPress={props.onRequestClose} testID={props.heading.doneTestID ?? `${props.testID}.done`} />
+                    </View>
+                ) : null}
                 {props.children}
             </ModalCardFrame>
         </BaseModal>
@@ -147,3 +182,19 @@ const FILL = { flex: 1, minHeight: 0 } as const;
 
 /** The routine step's travel: enough to read as a push, never a slide-show. */
 const STEP_TRAVEL_PX = slideTransitionTokens.routine.timed.translatePx;
+
+const sheetStyles = StyleSheet.create((theme) => ({
+    // The header's text starts on the menu rows' text column (the menu inset plus a row's own padding).
+    heading: {
+        flexDirection: 'row',
+        alignItems: 'baseline',
+        gap: 8,
+        paddingLeft: MENU_ROW_METRICS.insetPx + MENU_ROW_METRICS.paddingHorizontalPx,
+        paddingRight: MENU_ROW_METRICS.insetPx + MENU_ROW_METRICS.paddingHorizontalPx - 6,
+    },
+    headingTitle: { ...Typography.default('semiBold'), ...happierPageTextMetrics('sectionTitle'), color: theme.colors.text.primary, flexShrink: 1 },
+    headingMeta: { ...Typography.default(), ...happierPageTextMetrics('meta'), color: theme.colors.text.tertiary, flexShrink: 1 },
+    headingGrow: { flex: 1 },
+    done: { paddingHorizontal: 6, paddingVertical: 8, borderRadius: MENU_ROW_METRICS.radiusPx },
+    doneLabel: { ...Typography.default('semiBold'), ...happierPageTextMetrics('rowTitle'), color: theme.colors.text.link },
+}));
