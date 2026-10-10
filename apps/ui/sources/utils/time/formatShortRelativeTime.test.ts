@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { formatShortRelativeTime, formatShortRelativeTimeAt } from './formatShortRelativeTime';
+import { formatRelativeTimeShort, formatShortRelativeTime, formatShortRelativeTimeAt, readRelativeTimeShortRefreshAtMs } from './formatShortRelativeTime';
 
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;
@@ -9,6 +9,20 @@ const WEEK = 7 * DAY;
 
 // Fixed "now" anchor: 2025-06-15T12:00:00.000Z
 const NOW = new Date('2025-06-15T12:00:00.000Z').getTime();
+
+describe('compact localized age display boundaries', () => {
+    it.each([[-10_000, 70_000], [30_000, 30_000], [90_000, 30_000], [61 * MINUTE, 59 * MINUTE],
+        [25 * HOUR, 23 * HOUR]])('keeps age %sms until its next display boundary', (age, delay) => {
+        const at = NOW - age;
+        const boundary = readRelativeTimeShortRefreshAtMs(at, NOW);
+        expect(boundary).toBe(NOW + delay);
+        expect(formatRelativeTimeShort(at, boundary! - 1)).toBe(formatRelativeTimeShort(at, NOW));
+        expect(formatRelativeTimeShort(at, boundary!)).not.toBe(formatRelativeTimeShort(at, NOW));
+    });
+    it('does not register a deadline for an invalid timestamp', () => {
+        expect(readRelativeTimeShortRefreshAtMs(NaN, NOW)).toBeNull();
+    });
+});
 
 describe('formatShortRelativeTime', () => {
     afterEach(() => {
