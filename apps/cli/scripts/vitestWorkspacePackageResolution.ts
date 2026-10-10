@@ -16,6 +16,7 @@ const repoRoot = resolve(cliRoot, '..', '..');
 function readCliWorkspacePackageSpecs(): readonly WorkspacePackageSpec[] {
     const cliPackageJson = JSON.parse(readFileSync(resolve(cliRoot, 'package.json'), 'utf8')) as Readonly<{
         dependencies?: Readonly<Record<string, unknown>>;
+        devDependencies?: Readonly<Record<string, unknown>>;
     }>;
     const workspacePackages = new Map<string, WorkspacePackageSpec>();
     const addWorkspacePackage = (workspacePackage: WorkspacePackageSpec): void => {
@@ -52,6 +53,18 @@ function readCliWorkspacePackageSpecs(): readonly WorkspacePackageSpec[] {
 
     for (const workspacePackage of readBundledPluginWorkspacePackageSpecs(repoRoot)) {
         addWorkspacePackage(workspacePackage);
+    }
+
+    // Tests may consume a first-party public contribution before it joins the
+    // runtime bundle. Declared test dependencies do not change that membership.
+    for (const packageName of Object.keys(cliPackageJson.devDependencies ?? {}).sort()) {
+        if (!packageName.startsWith(FIRST_PARTY_PLUGIN_PACKAGE_PREFIX)) continue;
+        const packageSourceRoot = resolve(repoRoot, 'packages', 'plugins',
+            packageName.slice(FIRST_PARTY_PLUGIN_PACKAGE_PREFIX.length), 'src');
+        if (!existsSync(packageSourceRoot)) {
+            throw new Error(`Missing source root for CLI plugin test dependency ${packageName}: ${packageSourceRoot}`);
+        }
+        addWorkspacePackage({ packageName, packageSourceRoot });
     }
 
     // Source entrypoints also consume first-party runtime dependencies. Resolve

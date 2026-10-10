@@ -158,6 +158,8 @@ export type WorkspaceSyncTargetBootstrapAuthorityDependencies = Readonly<{
     materializationReceiptPath: string;
     originalTargetExists: boolean;
     targetFence: WorkspaceTargetMaterializationFence;
+    /** Actual prepare invocation; never serialized or retained globally. */
+    context?: RpcHandlerContext;
     signal?: AbortSignal;
   }>) => Promise<WorkspaceExportMaterializationCustody>;
   materializeLocalSeed?: (input: Readonly<{
@@ -2191,6 +2193,36 @@ export function createWorkspaceSyncTargetAuthority(
           ...(signal ? { signal } : {}),
         }, context));
       }
+      let targetWorkspace: WorkspaceRefV1 | undefined;
+      if (context?.callerInputAuthorization?.binding.actionId === 'projects.open'
+        && context.workspaceSyncSourceExecution && context.workspaceSyncSourceWriterTargetRouting) {
+        const writerTarget = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse(context.workspaceSyncSourceWriterTargetRouting);
+        const jointRouting = context.workspaceSyncTargetRouting
+          ? WorkspaceSyncTargetRoutingV1Schema.parse(context.workspaceSyncTargetRouting) : undefined;
+        if (jointRouting) {
+          const { targetContext: _targetContext, ...targetRouting } = jointRouting;
+          if (!isDeepStrictEqual(writerTarget.target, targetRouting)) {
+            throw authorityError('workspace_sync_child_unavailable', 'The qualified Project target placement is unavailable');
+          }
+        }
+        const own = jointRouting ? null : resolveWorkspaceRefV1(getSnapshot().workspaceRefs, {
+          serverId: localServerId, machineId: localMachineId, rootPath: target.rootPath,
+        });
+        const qualified = jointRouting ? target.endpoint : own?.kind === 'resolved' ? own.ref : null;
+        if (writerTarget.target.phase !== 'preflight' || writerTarget.target.operationId !== request.operationId
+          || writerTarget.target.accountServerId !== localServerId || writerTarget.target.targetMachineId !== request.machineId
+          || writerTarget.target.targetRootPath !== request.targetPath
+          || !jointRouting && (request.machineId !== localMachineId
+            || context.machineAdmission?.machineId !== localMachineId
+            || context.machineAdmission.installationId !== context.callerInputAuthorization.binding.installationId)
+          || !qualified || qualified.serverId.trim() !== localServerId
+          || qualified.machineId.trim() !== localMachineId || qualified.rootPath !== target.rootPath) {
+          throw authorityError('workspace_sync_child_unavailable', 'The qualified Project target Workspace is unavailable');
+        }
+        // The bound writer or independent D returns its own existing row.
+        // Neither materializes a row in the SOURCE graph.
+        targetWorkspace = qualified;
+      }
       const requested = normalize(resolve(target.rootPath));
       if (requested === resolve('/')) {
         throw authorityError('workspace_root_unsafe', 'Handoff target root is invalid');
@@ -2241,7 +2273,9 @@ export function createWorkspaceSyncTargetAuthority(
             rootPath: replayTarget.target.rootPath,
           });
           if (retainedRoot === canonicalRoot) {
-            return HandoffTargetReplacementPreflightResultV1Schema.parse({ type: 'not_required' });
+            await target.assertCurrent();
+            return HandoffTargetReplacementPreflightResultV1Schema.parse({ type: 'not_required',
+              ...(targetWorkspace ? { targetWorkspace } : {}) });
           }
         }
       }
@@ -2292,10 +2326,12 @@ export function createWorkspaceSyncTargetAuthority(
           ...(request.activatesExactMirror ? ['delete_target_only_files_during_exact_mirror'] as const : []),
         ];
         if (consequences.length === 0) {
-          return HandoffTargetReplacementPreflightResultV1Schema.parse({ type: 'not_required' });
+          return HandoffTargetReplacementPreflightResultV1Schema.parse({ type: 'not_required',
+            ...(targetWorkspace ? { targetWorkspace } : {}) });
         }
         return HandoffTargetReplacementPreflightResultV1Schema.parse({
           type: 'approval_required',
+          ...(targetWorkspace ? { targetWorkspace } : {}),
           approval: HandoffTargetReplacementApprovalV1Schema.parse({
             v: 1,
             consequences,
@@ -2502,13 +2538,36 @@ export function createWorkspaceSyncTargetAuthority(
       const targetRouting = await readTargetRouting(admittedContext, 'prepare', request.bootstrapOperationId);
       const sourceWriterTargetRouting = await readSourceWriterTargetRouting(context, 'prepare', request.bootstrapOperationId, targetRouting);
       let admittedTarget: Awaited<ReturnType<typeof bindReplacementTarget>> | undefined;
+      let independentTarget: WorkspaceRefV1 | undefined;
       if (sourceWriterTargetRouting && targetRouting) {
         assertWorkspaceSyncRequesterBootstrapSupported({ authorization: context?.callerInputAuthorization,
           ownerKind: request.owner.kind });
         assertPrepareWrites(request, targetRouting.targetContext);
         admittedTarget = await bindReplacementTarget(targetRouting.targetMachineId, targetRouting.targetRootPath, signal);
         const child = admittedTarget.facts.find(fact => fact.machineId === targetRouting.targetMachineId);
-        if (!child || child.installationId !== targetRouting.targetContext.machineAdmission.installationId
+        if (!child && context?.callerInputAuthorization?.binding.actionId === 'projects.open'
+          && context.workspaceSyncSourceExecution && !context.workspaceSyncTargetRouting
+          && targetRouting.targetMachineId === localMachineId
+          && targetRouting.targetContext.machineAdmission.installationId === context.callerInputAuthorization.binding.installationId) {
+          const own = resolveWorkspaceRefV1(getSnapshot().workspaceRefs, {
+            serverId: localServerId, machineId: localMachineId, rootPath: targetRouting.targetRootPath,
+          });
+          if (own.kind !== 'resolved') {
+            throw authorityError('workspace_sync_child_unavailable', 'The qualified Project target Workspace is unavailable');
+          }
+          independentTarget = own.ref;
+          const binding = admittedTarget;
+          admittedTarget = { ...binding, workspace: own.ref, endpoint: own.ref, assertCurrent: async () => {
+            await binding.assertCurrent();
+            const current = resolveWorkspaceRefV1(getSnapshot().workspaceRefs, {
+              serverId: localServerId, machineId: localMachineId, rootPath: targetRouting.targetRootPath,
+            });
+            if (current.kind !== 'resolved' || !isDeepStrictEqual(current.ref, own.ref)) {
+              throw authorityError('workspace_sync_child_unavailable', 'The qualified Project target Workspace changed before preparation');
+            }
+          } };
+        }
+        if ((!child && !independentTarget) || child && child.installationId !== targetRouting.targetContext.machineAdmission.installationId
           || !admittedTarget.endpoint) {
           throw authorityError('workspace_sync_child_unavailable', 'The admitted child target does not resolve to this endpoint');
         }
@@ -2550,7 +2609,7 @@ export function createWorkspaceSyncTargetAuthority(
         assertPrepareWrites(request, targetRouting.targetContext, owner.relationship);
         admittedTarget ??= await bindReplacementTarget(targetRouting.targetMachineId, targetRouting.targetRootPath, signal);
         const child = admittedTarget.facts.find(fact => fact.machineId === targetRouting.targetMachineId);
-        if (!child || child.installationId !== targetRouting.targetContext.machineAdmission.installationId
+        if ((!child && !independentTarget) || child && child.installationId !== targetRouting.targetContext.machineAdmission.installationId
           || admittedTarget.machineId !== localMachineId || admittedTarget.rootPath !== owner.targetRootPath
           || admittedTarget.endpoint?.id !== owner.targetWorkspaceRefId) {
           throw authorityError('workspace_sync_child_unavailable', 'The admitted child target does not resolve to this endpoint');
@@ -2727,6 +2786,7 @@ export function createWorkspaceSyncTargetAuthority(
                 materializationReceiptPath,
                 originalTargetExists,
                 targetFence,
+                ...(admittedContext ? { context: admittedContext } : {}),
                 ...(signal ? { signal } : {}),
               });
             }
