@@ -63,6 +63,28 @@ function createSnapshot(overrides: Partial<ProviderAccountUsageSnapshotV1> = {})
 }
 
 describe('provider account usage material fingerprint', () => {
+    it('coalesces subscription observation-only refreshes but retains paid/list fact changes', async () => {
+        const module = await loadFingerprintModule();
+        expect(module).not.toBeNull();
+        const key = new Uint8Array(32).fill(7);
+        const first = createSnapshot({ subscription: { status: 'subscribed', renewal: 'on', observedAtMs: 1000, staleAfterMs: 5000 } });
+        const refreshed = createSnapshot({ subscription: { ...first.subscription!, observedAtMs: 2000 } });
+        expect(module!.computeProviderAccountUsageSnapshotFingerprint(first, key)).toBe(module!.computeProviderAccountUsageSnapshotFingerprint(refreshed, key));
+        refreshed.subscription!.monetaryFacts = [{ kind: 'paid', amount: 16, currency: 'USD', period: { startAtMs: 0, endAtMs: 3000 }, source: { kind: 'provider', id: 'receipt', version: '1' }, effectiveAtMs: 0, asOfMs: 2000 }];
+        expect(module!.computeProviderAccountUsageSnapshotFingerprint(first, key)).not.toBe(module!.computeProviderAccountUsageSnapshotFingerprint(refreshed, key));
+    });
+    it('detects changes to a published quota refresh failure while keeping last-known meters', async () => {
+        const module = await loadFingerprintModule();
+        expect(module).not.toBeNull();
+        const key = new Uint8Array(32).fill(7);
+        const first = createSnapshot({ state: 'error_last_known_good',
+            diagnostics: [{ kind: 'provider_http', code: 'provider_backoff', status: 429 }] });
+        const changed = createSnapshot({ state: 'error_last_known_good',
+            diagnostics: [{ kind: 'provider_http', code: 'auth_failure', status: 401 }] });
+        expect(module!.computeProviderAccountUsageSnapshotFingerprint(first, key)).not.toBe(
+            module!.computeProviderAccountUsageSnapshotFingerprint(changed, key),
+        );
+    });
     it('ignores refresh timestamps and diagnostics while detecting material meter changes', async () => {
         const module = await loadFingerprintModule();
         expect(module).not.toBeNull();

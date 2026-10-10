@@ -203,6 +203,8 @@ export function createProviderAccountUsageStore(): ProviderAccountUsageStore {
         });
         const snapshotAdvanced = !existing
             || recency === 'incoming_newer'
+            // Facet freshness is latest state, but not a new material history sample.
+            || JSON.stringify(subscription) !== JSON.stringify(existing.subscription)
             || (
                 recency !== 'incoming_future'
                 && computeProviderAccountUsageSnapshotMaterialRevision(next)

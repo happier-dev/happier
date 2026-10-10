@@ -89,6 +89,18 @@ describe('provider account usage store', () => {
         vi.useRealTimers();
     });
 
+    it('retains independently fresher subscription facts without advancing the quota observation', async () => {
+        const module = await loadStoreModule();
+        const store = module!.createProviderAccountUsageStore();
+        const previous = createSnapshot({ subscription: { status: 'subscribed', renewal: 'on', observedAtMs: 900, staleAfterMs: 60_000 } });
+        store.recordSnapshot(previous);
+        const refreshed = createSnapshot({ subscription: { ...previous.subscription!, observedAtMs: 950 } });
+        expect(store.recordSnapshot(refreshed).status).toBe('snapshot_advanced');
+        expect(store.resolveRecordId(previous.recordId)).toMatchObject({ fetchedAtMs: 1_000, observedAtMs: 1_000, subscription: { observedAtMs: 950 } });
+        expect(store.recordSnapshot(previous).status).toBe('duplicate');
+        expect(store.resolveRecordId(previous.recordId)?.subscription?.observedAtMs).toBe(950);
+    });
+
     it('retains a valid subscription when a newer quota observation has no subscription result', async () => {
         const module = await loadStoreModule();
         expect(module).not.toBeNull();

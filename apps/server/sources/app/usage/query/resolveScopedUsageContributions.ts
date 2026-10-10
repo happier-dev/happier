@@ -1,10 +1,11 @@
 import type {
+    UsageAccountingCoverageReason,
     UsageObservationCost,
     UsageObservationTokens,
 } from "@happier-dev/protocol";
+import { createStoredReadSchema, UsageNativeAccountingSubjectSchema, readUsageAccountingMetadata } from "@happier-dev/protocol";
 
-import { subtractUsageCost, subtractUsageTokens } from "../usageMetrics";
-import { resolveEffectiveUsageCostUsd } from "./resolveUsageCostMode";
+import { addUsageCost, addUsageTokens, createEmptyUsageCost, createEmptyUsageTokens, subtractUsageCost, subtractUsageTokens, usageHasAnyValue } from "../usageMetrics";
 
 export interface ScopedUsageEventRow {
     id: string;
@@ -39,17 +40,35 @@ export interface ScopedUsageEventRow {
 
 export interface ScopedUsageContribution extends ScopedUsageEventRow {
     contributingEventIds: readonly string[];
+    coverageReasons?: readonly UsageAccountingCoverageReason[];
 }
 
 export interface ResolvedScopedUsageContributions {
     totalContributions: ScopedUsageContribution[];
     bucketAttributions: ScopedUsageContribution[];
+    coverageReasons: UsageAccountingCoverageReason[];
 }
 
-function buildGroupKey(row: ScopedUsageEventRow): string {
-    return row.sessionId && row.agentId
-        ? JSON.stringify([row.sessionId, row.agentId])
-        : JSON.stringify([row.sessionId, row.agentId, row.source]);
+const nativeSubjectReadSchema = createStoredReadSchema(UsageNativeAccountingSubjectSchema);
+
+export function usageAccountingSubjectKey(row: ScopedUsageEventRow): string {
+    // A witnessed native subject owns accounting across live and collector
+    // rows; the real Session remains attribution on the selected contribution.
+    const metadata = row.metadata;
+    const subject = nativeSubjectReadSchema.safeParse(metadata && typeof metadata === "object"
+        ? Reflect.get(metadata, "accountingSubject") : undefined);
+    if (subject.success) {
+        const native = subject.data;
+        return JSON.stringify(["native", native.machineId, native.agent.pluginId, native.agent.localId,
+            native.sourceRootKey, native.nativeSessionKey]);
+    }
+    if (row.sessionId) return JSON.stringify(["session", row.sessionId, row.agentId]);
+    const nativeSessionId = readUsageAccountingMetadata(row.metadata)?.nativeSessionId;
+    // Admission owns native identity. A missing subject cannot merge every
+    // nullable Session row into one counter stream.
+    return nativeSessionId
+        ? JSON.stringify(["native", row.machineId, row.agentId, nativeSessionId])
+        : JSON.stringify(["unidentified", row.id]);
 }
 
 function compareChronologically(left: ScopedUsageEventRow, right: ScopedUsageEventRow): number {
@@ -74,82 +93,76 @@ function asContribution(
     };
 }
 
-function buildSnapshotAttributions(rows: readonly ScopedUsageEventRow[]): ScopedUsageContribution[] {
-    let previous: ScopedUsageEventRow | null = null;
-    let contributions: ScopedUsageContribution[] = [];
-    for (const row of rows) {
-        if (!previous) {
-            contributions.push(asContribution(row));
-            previous = row;
+function resolveGroup(rows: readonly ScopedUsageEventRow[]): ResolvedScopedUsageContributions {
+    const reasons = new Set<UsageAccountingCoverageReason>();
+    const inferences = new Map<string, ScopedUsageEventRow>();
+    const uncorrelated: ScopedUsageEventRow[] = [];
+    for (const row of [...rows].sort(compareChronologically)) {
+        const identity = readUsageAccountingMetadata(row.metadata)?.inferenceId;
+        if (row.scope !== "turn_delta" || row.isCumulative || !identity) {
+            uncorrelated.push(row);
             continue;
         }
-
-        const countersReset = row.tokens.total < previous.tokens.total
-            || resolveEffectiveUsageCostUsd(row.cost, "auto") < resolveEffectiveUsageCostUsd(previous.cost, "auto");
-        if (countersReset) {
-            contributions = [asContribution(row)];
-        } else {
-            const cost = subtractUsageCost(row.cost, previous.cost);
-            contributions.push(asContribution(
-                row,
-                subtractUsageTokens(row.tokens, previous.tokens),
-                {
-                    ...cost,
-                    effectiveUsd: resolveEffectiveUsageCostUsd(row.cost, "auto")
-                        - resolveEffectiveUsageCostUsd(previous.cost, "auto"),
-                },
-            ));
+        const previous = inferences.get(identity);
+        if (previous && (previous.tokens.total !== row.tokens.total || previous.modelId !== row.modelId)) {
+            reasons.add("ambiguous_overlap");
         }
-        previous = row;
+        // Explicit replay identity is the only cross-source inference witness.
+        // Prefer the live observation when both paths witnessed the same request.
+        const previousPath = previous && readUsageAccountingMetadata(previous.metadata)?.path;
+        const path = readUsageAccountingMetadata(row.metadata)?.path;
+        if (!previous || previousPath !== "runtime" || path === "runtime") inferences.set(identity, row);
     }
-    return contributions;
-}
-
-function resolveGroup(rows: readonly ScopedUsageEventRow[]): ResolvedScopedUsageContributions {
-    const ordered = [...rows].sort(compareChronologically);
-    const finalRows = ordered.filter((row) => row.scope === "session_final");
-    const cumulativeRows = ordered.filter((row) => (
-        row.scope === "session_cumulative"
-        || (row.isCumulative && row.scope !== "session_final")
-    ));
-
-    if (finalRows.length > 0) {
-        const latest = finalRows[finalRows.length - 1]!;
-        const snapshotRowsThroughFinal = ordered.filter((row) => (
-            compareChronologically(row, latest) <= 0
-            && (
-                row.scope === "session_final"
-                || row.scope === "session_cumulative"
-                || row.isCumulative
-            )
-        ));
-        const laterDeltas = ordered.filter((row) => (
-            compareChronologically(row, latest) > 0
-            && row.scope === "turn_delta"
-            && !row.isCumulative
-        )).map((row) => asContribution(row));
-        return {
-            totalContributions: [asContribution(latest), ...laterDeltas],
-            bucketAttributions: [...buildSnapshotAttributions(snapshotRowsThroughFinal), ...laterDeltas],
-        };
+    const ordered = [...uncorrelated, ...inferences.values()].sort(compareChronologically);
+    const latestFinal = ordered.filter((row) => row.scope === "session_final").at(-1);
+    const deltas = ordered.filter((row) => row.scope === "turn_delta" && !row.isCumulative);
+    const snapshots = ordered.filter((row) => (row.isCumulative || row.scope !== "turn_delta")
+        && (!latestFinal || compareChronologically(row, latestFinal) <= 0));
+    const contributions: ScopedUsageContribution[] = [];
+    let previous: ScopedUsageEventRow | undefined;
+    let deltaIndex = 0;
+    for (const snapshot of snapshots) {
+        let intervalTokens = createEmptyUsageTokens();
+        let intervalCost = createEmptyUsageCost(snapshot.cost.currency);
+        while (deltaIndex < deltas.length && compareChronologically(deltas[deltaIndex]!, snapshot) <= 0) {
+            const delta = deltas[deltaIndex++]!;
+            contributions.push(asContribution(delta));
+            intervalTokens = addUsageTokens(intervalTokens, delta.tokens);
+            intervalCost = addUsageCost(intervalCost, delta.cost);
+        }
+        const epoch = readUsageAccountingMetadata(snapshot.metadata)?.counterEpoch;
+        const previousEpoch = previous && readUsageAccountingMetadata(previous.metadata)?.counterEpoch;
+        const witnessedReset = previous && epoch !== undefined && previousEpoch !== undefined && epoch !== previousEpoch;
+        const reset = previous && (witnessedReset || snapshot.tokens.total < previous.tokens.total);
+        if (reset && !witnessedReset) reasons.add("counter_discontinuity");
+        const baselineTokens = previous && !reset ? previous.tokens : createEmptyUsageTokens();
+        const baselineCost = previous && !reset ? previous.cost : createEmptyUsageCost(snapshot.cost.currency);
+        const missingBaseline = !previous && snapshot.tokens.total > intervalTokens.total
+            && readUsageAccountingMetadata(snapshot.metadata)?.historyComplete !== true;
+        const increaseTokens = subtractUsageTokens(snapshot.tokens, baselineTokens);
+        if (increaseTokens.total < intervalTokens.total) reasons.add("ambiguous_overlap");
+        const tokens = subtractUsageTokens(increaseTokens, intervalTokens);
+        const cost = subtractUsageCost(subtractUsageCost(snapshot.cost, baselineCost), intervalCost);
+        if (usageHasAnyValue(tokens, cost)) {
+            // A session counter establishes amount, not an inference's model,
+            // turn or exact earlier activity time. Retain that missing evidence.
+            contributions.push({
+                ...asContribution({ ...snapshot, modelId: null, turnId: null }, tokens, cost),
+                coverageReasons: missingBaseline ? ["missing_baseline"] : [],
+            });
+        }
+        previous = snapshot;
     }
-
-    if (cumulativeRows.length > 0) {
-        const latest = cumulativeRows[cumulativeRows.length - 1]!;
-        return {
-            totalContributions: [asContribution(latest)],
-            bucketAttributions: buildSnapshotAttributions(cumulativeRows),
-        };
-    }
-
-    return {
-        totalContributions: ordered.map((row) => asContribution(row)),
-        bucketAttributions: ordered.map((row) => asContribution(row)),
-    };
+    for (; deltaIndex < deltas.length; deltaIndex++) contributions.push(asContribution(deltas[deltaIndex]!));
+    const uncorrelatedSources = new Set(deltas.filter((row) => !readUsageAccountingMetadata(row.metadata)?.inferenceId).map((row) => row.source));
+    if (uncorrelatedSources.size > 1) reasons.add("ambiguous_overlap");
+    const resolved = contributions.sort(compareChronologically).map((row) => ({ ...row, coverageReasons: [...new Set([...reasons, ...row.coverageReasons ?? []])] }));
+    return { totalContributions: resolved, bucketAttributions: resolved, coverageReasons: [...new Set(resolved.flatMap((row) => row.coverageReasons ?? []))] };
 }
 
 export function resolveScopedUsageContributions(
     rows: readonly ScopedUsageEventRow[],
+    range?: Readonly<{ startMs?: number; endMs?: number }>,
 ): ResolvedScopedUsageContributions {
     const sessionsWithNativeUsage = new Set(
         rows.flatMap((row) => (
@@ -163,7 +176,7 @@ export function resolveScopedUsageContributions(
     ));
     const groups = new Map<string, ScopedUsageEventRow[]>();
     for (const row of eligibleRows) {
-        const key = buildGroupKey(row);
+        const key = usageAccountingSubjectKey(row);
         const group = groups.get(key) ?? [];
         group.push(row);
         groups.set(key, group);
@@ -171,14 +184,21 @@ export function resolveScopedUsageContributions(
 
     const totalContributions: ScopedUsageContribution[] = [];
     const bucketAttributions: ScopedUsageContribution[] = [];
+    const coverageReasons = new Set<UsageAccountingCoverageReason>();
     for (const group of groups.values()) {
         const resolved = resolveGroup(group);
-        totalContributions.push(...resolved.totalContributions);
-        bucketAttributions.push(...resolved.bucketAttributions);
+        const selected = resolved.totalContributions.filter((row) => (
+            (range?.startMs === undefined || row.observedAt.getTime() >= range.startMs)
+            && (range?.endMs === undefined || row.observedAt.getTime() <= range.endMs)
+        ));
+        totalContributions.push(...selected);
+        bucketAttributions.push(...selected);
+        for (const row of selected) for (const reason of row.coverageReasons ?? []) coverageReasons.add(reason);
     }
 
     return {
         totalContributions: totalContributions.sort(compareChronologically),
         bucketAttributions: bucketAttributions.sort(compareChronologically),
+        coverageReasons: [...coverageReasons],
     };
 }

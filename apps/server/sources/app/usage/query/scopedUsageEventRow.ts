@@ -1,5 +1,5 @@
 import type { UsageObservationCost } from "@happier-dev/protocol";
-import { UsageObservationCostSchema } from "@happier-dev/protocol";
+import { createStoredReadSchema, readUsageAccountingMetadata, resolveUsageCostBasis, UsageNativeAccountingSubjectSchema, UsageObservationCostSchema } from "@happier-dev/protocol";
 
 import type { ScopedUsageEventRow } from "./resolveScopedUsageContributions";
 
@@ -79,13 +79,40 @@ function readBillingContext(value: string | null): NonNullable<UsageObservationC
     return parsed.success && parsed.data !== undefined ? parsed.data : "unknown";
 }
 
-function readCostSource(value: string | null): NonNullable<UsageObservationCost["costSource"]> {
-    if (value === null) return "none";
-    const parsed = UsageObservationCostSchema.shape.costSource.safeParse(value);
+function readCostSource(value: string | null, cost: UsageObservationCost): NonNullable<UsageObservationCost["costSource"]> {
+    // Retained rows predate provenance columns. Positive named monetary columns
+    // remain witnessed facts; zero defaults cannot establish a free price.
+    const source = value === null ? resolveUsageCostBasis(cost, "auto")?.source ?? "none" : value;
+    const parsed = UsageObservationCostSchema.shape.costSource.safeParse(source);
     return parsed.success && parsed.data !== undefined ? parsed.data : "none";
 }
 
 export function toScopedUsageEventRow(row: ScopedUsageEventDbRow): ScopedUsageEventRow {
+    let metadata: unknown = row.metadata;
+    if (typeof metadata === "string") {
+        try { metadata = JSON.parse(metadata); } catch { metadata = null; }
+    }
+    const accounting = readUsageAccountingMetadata(metadata);
+    const subject = metadata && typeof metadata === "object" && !Array.isArray(metadata)
+        ? createStoredReadSchema(UsageNativeAccountingSubjectSchema).safeParse(Reflect.get(metadata, "accountingSubject"))
+        : undefined;
+    const accountingSubject = subject?.success ? subject.data : undefined;
+    // This internal mapper also serves Team usage coverage. Preserve its
+    // distinct evidence while normalizing only the accounting-owned fields.
+    const internalMetadata = metadata && typeof metadata === "object" && !Array.isArray(metadata)
+        ? Object.fromEntries(Object.entries(metadata).filter(([key]) => key !== "usageAccounting" && key !== "accountingSubject"))
+        : {};
+    const projectedMetadata = {
+        ...internalMetadata,
+        ...(accounting ? { usageAccounting: accounting } : {}),
+        ...(accountingSubject ? { accountingSubject } : {}),
+    };
+    const cost: UsageObservationCost = {
+        reportedUsd: row.reportedCostUsd,
+        estimatedUsd: row.estimatedCostUsd,
+        invoiceUsd: row.invoiceCostUsd,
+        currency: row.currency,
+    };
     return {
         id: row.id,
         sessionId: row.sessionId,
@@ -109,7 +136,7 @@ export function toScopedUsageEventRow(row: ScopedUsageEventDbRow): ScopedUsageEv
         teamCredentialSourceCredentialId: row.teamCredentialSourceCredentialId,
         brokerMachineId: row.brokerMachineId,
         credentialDeliveryMode: row.credentialDeliveryMode,
-        metadata: row.metadata,
+        metadata: Object.keys(projectedMetadata).length > 0 ? projectedMetadata : undefined,
         contextUsedTokens: row.contextUsedTokens,
         contextWindowTokens: row.contextWindowTokens,
         tokens: {
@@ -121,12 +148,9 @@ export function toScopedUsageEventRow(row: ScopedUsageEventDbRow): ScopedUsageEv
             total: row.totalTokens,
         },
         cost: {
-            reportedUsd: row.reportedCostUsd,
-            estimatedUsd: row.estimatedCostUsd,
-            invoiceUsd: row.invoiceCostUsd,
+            ...cost,
             billingContext: readBillingContext(row.billingContext),
-            costSource: readCostSource(row.costSource),
-            currency: row.currency,
+            costSource: readCostSource(row.costSource, cost),
             breakdown: readCostBreakdown(row.costBreakdown),
         },
     };

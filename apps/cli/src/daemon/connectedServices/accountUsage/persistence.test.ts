@@ -71,6 +71,24 @@ const plainCredentials = {
 } satisfies StoredCredentials;
 
 describe('provider account usage persistence scheduler', () => {
+    it('publishes subscription freshness separately from unchanged quota history material', async () => {
+        const writeQualifiedProviderAccountUsage = vi.fn<WriteQualifiedProviderAccountUsage>(async () => ({ success: true as const, source: { status: 'linked' as const } }));
+        const scheduler = createProviderAccountUsagePersistenceScheduler({ api: { getAccountEncryptionMode: async () => 'plain' }, credentials: plainCredentials, writeQualifiedProviderAccountUsage, now: () => 1_500, fingerprintKey: new Uint8Array(32).fill(3), minFreshnessMs: 60_000 });
+        const previous = createSnapshot({ subscription: { status: 'subscribed', renewal: 'on', observedAtMs: 900, staleAfterMs: 60_000 } });
+        const refreshed = createSnapshot({ subscription: { ...previous.subscription!, observedAtMs: 950 } });
+        const targets = [createTarget()];
+        try {
+            await scheduler.recordInBandSnapshot(previous, { targets });
+            await scheduler.flush(1_000);
+            expect(await scheduler.recordInBandSnapshot(refreshed, { targets })).toMatchObject({ status: 'enqueued' });
+            await scheduler.flush(1_000);
+            const first = writeQualifiedProviderAccountUsage.mock.calls[0]![0].write;
+            const latest = writeQualifiedProviderAccountUsage.mock.calls[1]![0].write;
+            expect(latest).toMatchObject({ fetchedAt: 1_000, snapshot: { subscription: { observedAtMs: 950 } }, metadata: { materialFingerprint: first.metadata?.materialFingerprint } });
+            expect(await scheduler.recordInBandSnapshot(previous, { targets })).toMatchObject({ status: 'already_persisted', reason: 'unchanged_fresh' });
+        } finally { scheduler.dispose(); }
+    });
+
     it('writes a caller-proven qualified source and basis through the V4 PAU owner', async () => {
         const writeQualifiedProviderAccountUsage = vi.fn<WriteQualifiedProviderAccountUsage>(async () => ({
             success: true as const,

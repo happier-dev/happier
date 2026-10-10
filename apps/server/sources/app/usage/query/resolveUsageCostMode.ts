@@ -1,67 +1,42 @@
-import type { UsageAnalyticsQueryRequest, UsageObservationCost } from "@happier-dev/protocol";
+import type { UsageCostMode, UsageObservationCost } from "@happier-dev/protocol";
+import { resolveUsageCostBasis } from "@happier-dev/protocol";
 import { addUsageCost } from "../usageMetrics";
 
-export type UsageCostMode = NonNullable<UsageAnalyticsQueryRequest["costMode"]> | "auto";
+export { resolveEffectiveUsageCostUsd, resolveUsageCostMode, resolveUsageCostPresentationSource, type UsageCostMode } from "@happier-dev/protocol";
 
-export function resolveUsageCostMode(mode: UsageAnalyticsQueryRequest["costMode"]): UsageCostMode {
-    return mode ?? "auto";
-}
-
-export function resolveEffectiveUsageCostUsd(cost: UsageObservationCost, mode: UsageCostMode): number {
-    if (mode === "reported") {
-        return cost.reportedUsd;
-    }
-    if (mode === "estimated") {
-        return cost.estimatedUsd;
-    }
-    if (cost.effectiveUsd !== undefined) {
-        return cost.effectiveUsd;
-    }
-    if ((cost.invoiceUsd ?? 0) > 0) {
-        return cost.invoiceUsd ?? 0;
-    }
-    if (cost.reportedUsd > 0) {
-        return cost.reportedUsd;
-    }
-    return cost.estimatedUsd;
-}
+// Aggregation-only evidence distinguishes an initial zero accumulator from a
+// zero-valued population that has already lost its monetary basis. Symbols do
+// not enter the serialized contract, and object spreads retain this local fact.
+const aggregateBasisAvailable = Symbol("aggregateBasisAvailable");
+type AggregatedUsageCost = UsageObservationCost & { [aggregateBasisAvailable]?: boolean };
 
 export function addUsageCostForMode(
     left: UsageObservationCost,
     right: UsageObservationCost,
     mode: UsageCostMode,
-): UsageObservationCost {
-    return {
-        ...addUsageCost(left, right),
-        effectiveUsd: resolveEffectiveUsageCostUsd(left, mode) + resolveEffectiveUsageCostUsd(right, mode),
-    };
+): AggregatedUsageCost {
+    const leftBasis = resolveUsageCostBasis(left, mode);
+    const rightBasis = resolveUsageCostBasis(right, mode);
+    const leftAggregate: AggregatedUsageCost = left;
+    const leftEmpty = leftAggregate[aggregateBasisAvailable] !== false && left.apiEquivalentUsd === undefined && left.costSource === "none" && left.reportedUsd === 0 && left.estimatedUsd === 0 && (left.invoiceUsd ?? 0) === 0;
+    const apiEquivalentUsd = leftEmpty ? right.apiEquivalentUsd
+        : left.apiEquivalentUsd !== undefined && right.apiEquivalentUsd !== undefined ? left.apiEquivalentUsd + right.apiEquivalentUsd : undefined;
+    const combined = { ...addUsageCost(left, right), ...(apiEquivalentUsd !== undefined ? {
+        apiEquivalentUsd, pricingSource: leftEmpty ? right.pricingSource
+            : left.pricingSource === right.pricingSource ? left.pricingSource : 'effective_model_prices',
+    } : {}) };
+    if (leftEmpty && rightBasis) return { ...combined, currency: right.currency, costSource: right.costSource, effectiveUsd: rightBasis.amountUsd, [aggregateBasisAvailable]: true } satisfies AggregatedUsageCost;
+    if (leftBasis && rightBasis && leftBasis.kind === rightBasis.kind && leftBasis.currency === rightBasis.currency) {
+        return { ...combined, costSource: left.costSource, effectiveUsd: leftBasis.amountUsd + rightBasis.amountUsd, [aggregateBasisAvailable]: true } satisfies AggregatedUsageCost;
+    }
+    return { ...combined, costSource: "none", [aggregateBasisAvailable]: false } satisfies AggregatedUsageCost;
 }
 
 export function withEffectiveUsageCost(
     cost: UsageObservationCost,
     mode: UsageCostMode,
 ): UsageObservationCost {
-    return {
-        ...cost,
-        effectiveUsd: resolveEffectiveUsageCostUsd(cost, mode),
-    };
-}
-
-export function resolveUsageCostPresentationSource(cost: UsageObservationCost, mode: UsageCostMode): string {
-    if (mode === "reported") {
-        return cost.reportedUsd > 0 ? cost.costSource ?? "provider_reported" : "none";
-    }
-    if (mode === "estimated") {
-        return cost.estimatedUsd > 0 ? "pricing_estimate" : "none";
-    }
-    if ((cost.invoiceUsd ?? 0) > 0) {
-        return "invoice";
-    }
-    if (cost.reportedUsd > 0) {
-        return cost.costSource ?? "provider_reported";
-    }
-    if (cost.estimatedUsd > 0) {
-        return "pricing_estimate";
-    }
-    return "none";
+    const basis = resolveUsageCostBasis(cost, mode);
+    const { effectiveUsd: _previous, ...raw } = cost;
+    return basis ? { ...raw, effectiveUsd: basis.amountUsd } : raw;
 }

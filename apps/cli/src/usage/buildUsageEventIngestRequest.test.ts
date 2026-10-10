@@ -3,6 +3,21 @@ import { describe, expect, it } from 'vitest';
 import { buildUsageEventIngestRequest } from './buildUsageEventIngestRequest';
 
 describe('buildUsageEventIngestRequest', () => {
+    it('maps a native subject without inventing a Happier Session or disclosing metadata', () => {
+        const subject = {
+            kind: 'native' as const, machineId: 'machine-1',
+            agent: { pluginId: 'happier.agent.codex', localId: 'codex' },
+            sourceRootKey: 'opaque-root', nativeSessionKey: 'opaque-native-session',
+        };
+        const request = buildUsageEventIngestRequest({
+            subject, observedAt: 10, externalKey: 'opaque-inference',
+            metadata: { path: '/private/project', prompt: 'private text' },
+            observation: { provider: 'codex', source: 'codex-native', scope: 'turn_delta', tokens: { total: 12 } },
+        });
+        expect(request).toMatchObject({ subject, machineId: 'machine-1', agentId: 'codex', externalKey: 'opaque-inference' });
+        expect(request).not.toHaveProperty('sessionId');
+        expect(request?.metadata).toBeUndefined();
+    });
     it('maps canonical usage observations into protocol usage events', () => {
         const request = buildUsageEventIngestRequest({
             sessionId: 'session-1',

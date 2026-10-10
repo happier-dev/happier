@@ -14,6 +14,7 @@ import type { ProviderAccountUsageWaitingWorkV1 } from '@happier-dev/protocol/co
 export type ProviderAccountUsageReadOptions = Readonly<{
   credentials: StoredCredentials;
   accountMode: 'plain' | 'e2ee';
+  readEnteredMonthlyPrice?: () => Promise<import('@happier-dev/protocol/connect/accountSubscription').ProviderAccountSubscriptionMonthlyPriceV1 | undefined>;
   signal?: AbortSignal;
   nowMs?: number;
   targets?: UsagePacingTargetsV1;
@@ -30,7 +31,9 @@ export async function readProviderAccountUsageQuotaV4(input: ConnectedServiceQuo
   const material = options.accountMode === 'e2ee' ? requireAccountEncryptionCredentials(options.credentials).encryption : undefined;
   const record = resolution ? await readQualifiedProviderAccountUsageRecordV4({ ...transport, recordId: resolution.recordId }) : null;
   await options.assertCurrent?.();
-  const current = record && resolution ? openProviderAccountUsageRecordV4({ recordId: resolution.recordId, account: request.source.ref, accountMode: options.accountMode, material, record }) : null;
+  const enteredMonthlyPrice = record ? await options.readEnteredMonthlyPrice?.() : undefined;
+  await options.assertCurrent?.();
+  const current = record && resolution ? openProviderAccountUsageRecordV4({ recordId: resolution.recordId, enteredMonthlyPrice, accountMode: options.accountMode, material, record }) : null;
   if (current && resolution && current.recordKey.accountSubjectId !== resolution.providerAccountId) throw new ProviderAccountUsageReadErrorV1('provider_account_usage_identity_mismatch');
   const page = request.history && resolution ? await readQualifiedProviderAccountUsageHistoryV4({ ...transport, query: { recordId: resolution.recordId, history: request.history } }) : null;
   await options.assertCurrent?.();

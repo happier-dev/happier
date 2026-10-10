@@ -1,8 +1,21 @@
 import { describe, expect, it } from "vitest";
 
-import { buildUsageCostPresentation, buildUsageLeaders, buildUsageModelTimeline } from "./buildUsagePremiumSections";
+import { buildUsageLeaders, buildUsageModelTimeline } from "./buildUsagePremiumSections";
 
 describe("buildUsagePremiumSections", () => {
+    it("retains unknown inference dimensions and does not rank mixed cost kinds as money", () => {
+        const base = { sessionId: "session", observedAt: new Date("2026-07-01T10:00:00Z"), agentId: "codex", backendMode: null,
+            projectKey: null, workspaceId: null, source: "runtime", contributingEventIds: ["event"],
+            tokens: { input: 1, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1 } };
+        const rows = [
+            { ...base, modelId: "mixed", cost: { reportedUsd: 10, estimatedUsd: 0, costSource: "provider_reported" as const, currency: "USD" } },
+            { ...base, modelId: "mixed", cost: { reportedUsd: 0, estimatedUsd: 10, costSource: "pricing_estimate" as const, currency: "USD" } },
+            { ...base, modelId: "known", tokens: { ...base.tokens, input: 2, total: 2 }, cost: { reportedUsd: 2, estimatedUsd: 0, costSource: "provider_reported" as const, currency: "USD" } },
+            { ...base, modelId: null, cost: { reportedUsd: 0, estimatedUsd: 0, costSource: "none" as const, currency: "USD" } },
+        ];
+        expect(buildUsageLeaders(rows, 10)?.models?.map((row) => row.key)).toEqual(["known", "mixed", "unknown"]);
+        expect(buildUsageModelTimeline(rows, "day", 10)?.[0].leaders.map((row) => row.key)).toEqual(["known", "mixed", "unknown"]);
+    });
     it("keeps aggregated tokens and cost on leaders and timelines", () => {
         const rows = [
             {
@@ -78,33 +91,4 @@ describe("buildUsagePremiumSections", () => {
         });
     });
 
-    it("prefers invoice cost in auto presentation and keeps explicit modes exact", () => {
-        const cost = {
-            reportedUsd: 0.12,
-            estimatedUsd: 0.09,
-            invoiceUsd: 0.08,
-            currency: "USD",
-        } as const;
-
-        expect(buildUsageCostPresentation(cost, undefined)).toMatchObject({
-            mode: "auto",
-            effectiveUsd: 0.08,
-            currency: "USD",
-            source: "invoice",
-        });
-
-        expect(buildUsageCostPresentation(cost, "reported")).toMatchObject({
-            mode: "reported",
-            effectiveUsd: 0.12,
-            currency: "USD",
-            source: "provider_reported",
-        });
-
-        expect(buildUsageCostPresentation(cost, "estimated")).toMatchObject({
-            mode: "estimated",
-            effectiveUsd: 0.09,
-            currency: "USD",
-            source: "pricing_estimate",
-        });
-    });
 });

@@ -6,6 +6,71 @@ import { createUsageObservationPublisher } from './createUsageObservationPublish
 import { logger } from '@/ui/logger';
 
 describe('createUsageObservationPublisher', () => {
+    it('keeps canceled native HTTP capture pending instead of acknowledging it', async () => {
+        const controller = new AbortController();
+        const publisher = createUsageObservationPublisher({
+            token: 'token', apiServerUrl: 'https://api.example.test', emitLegacyUsageReport: () => { throw new Error('Native cannot use legacy transport'); },
+            postJson: async (request) => {
+                controller.abort();
+                const signal = Reflect.get(request, 'signal');
+                if (signal instanceof AbortSignal && signal.aborted) throw new DOMException('Canceled', 'AbortError');
+                return { ok: true };
+            },
+            fetchServerFeaturesSnapshot: async () => ({ status: 'ready', features: FeaturesResponseSchema.parse({ features: {}, capabilities: { server: { usageAnalytics: {
+                version: 1, eventsIngest: { path: '/v2/usage-events' }, query: { path: '/v2/usage/query' },
+                legacy: { usageReportsPath: '/v2/usage-reports', usageQueryPath: '/v1/usage/query' },
+            } } } }) }),
+        });
+        expect(await publisher.publish({
+            signal: controller.signal,
+            subject: { kind: 'native', machineId: 'machine-1', agent: { pluginId: 'happier.agent.codex', localId: 'codex' }, sourceRootKey: 'root', nativeSessionKey: 'native' },
+            externalKey: 'inference',
+            observation: { provider: 'codex', source: 'codex-native', scope: 'turn_delta', key: null, modelId: null, tokens: { total: 12, input: 12, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 }, cost: null, contextUsedTokens: null, contextWindowTokens: null },
+        })).toEqual({ status: 'failed' });
+    });
+    it('re-probes native ingest on explicit replay after the server becomes supported', async () => {
+        let supported = false;
+        const emitLegacyUsageReport = vi.fn();
+        const publisher = createUsageObservationPublisher({
+            token: 'token', apiServerUrl: 'https://api.example.test', emitLegacyUsageReport,
+            postJson: async () => ({ ok: true }),
+            fetchServerFeaturesSnapshot: async () => supported ? {
+                status: 'ready', features: FeaturesResponseSchema.parse({ features: {}, capabilities: { server: { usageAnalytics: {
+                    version: 1, eventsIngest: { path: '/v2/usage-events' }, query: { path: '/v2/usage/query' },
+                    legacy: { usageReportsPath: '/v2/usage-reports', usageQueryPath: '/v1/usage/query' },
+                } } } }),
+            } : { status: 'unsupported', reason: 'endpoint_missing' },
+        });
+        const input = {
+            subject: { kind: 'native' as const, machineId: 'machine-1', agent: { pluginId: 'happier.agent.codex', localId: 'codex' }, sourceRootKey: 'root', nativeSessionKey: 'native' },
+            externalKey: 'inference',
+            observation: { provider: 'codex', source: 'codex-native', scope: 'turn_delta' as const, key: null, modelId: null, tokens: { total: 12, input: 12, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 }, cost: null, contextUsedTokens: null, contextWindowTokens: null },
+        };
+        expect(await publisher.publish(input)).toEqual({ status: 'unsupported' });
+        supported = true;
+        expect(await publisher.publish(input)).toEqual({ status: 'sent', transport: 'v2' });
+        expect(emitLegacyUsageReport).not.toHaveBeenCalled();
+    });
+    it.each([400, 404, 401])('never acknowledges native capture through legacy transport after HTTP %s', async (status) => {
+        const emitLegacyUsageReport = vi.fn();
+        const publisher = createUsageObservationPublisher({
+            token: 'token', apiServerUrl: 'https://api.example.test', emitLegacyUsageReport,
+            postJson: async () => { throw Object.assign(new Error('refused'), { response: { status } }); },
+            fetchServerFeaturesSnapshot: async () => ({
+                status: 'ready', features: FeaturesResponseSchema.parse({ features: {}, capabilities: { server: { usageAnalytics: {
+                    version: 1, eventsIngest: { path: '/v2/usage-events' }, query: { path: '/v2/usage/query' },
+                    legacy: { usageReportsPath: '/v2/usage-reports', usageQueryPath: '/v1/usage/query' },
+                } } } }),
+            }),
+        });
+        const result = await publisher.publish({
+            subject: { kind: 'native', machineId: 'machine-1', agent: { pluginId: 'happier.agent.codex', localId: 'codex' }, sourceRootKey: 'root', nativeSessionKey: 'native' },
+            externalKey: 'inference',
+            observation: { provider: 'codex', source: 'codex-native', scope: 'turn_delta', key: null, modelId: null, tokens: { total: 12, input: 12, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 }, cost: null, contextUsedTokens: null, contextWindowTokens: null },
+        });
+        expect(result).toEqual({ status: status === 401 ? 'failed' : 'unsupported' });
+        expect(emitLegacyUsageReport).not.toHaveBeenCalled();
+    });
     it('returns a failure and warns when v2 transport fails without losing the stable retry key', async () => {
         const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
         const postJson = vi.fn().mockRejectedValueOnce(new Error('network unavailable')).mockResolvedValueOnce({ ok: true });

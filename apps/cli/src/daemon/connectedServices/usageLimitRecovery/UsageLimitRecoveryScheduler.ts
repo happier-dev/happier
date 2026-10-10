@@ -20,6 +20,23 @@ import {
   type DurableRecoveryGateResult,
 } from '../recoveryScheduler/DurableBackoffRecoveryScheduler';
 import { deterministicStringify } from '@/utils/deterministicJson';
+import type { ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol';
+import type { PendingResetStartBindingV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
+import { evaluatePendingResetStartReadinessV1 } from '@happier-dev/protocol/sessions/pending/pendingResetStartReadinessV1';
+
+export type PendingResetStartDemand = Readonly<{ localId: string; reset: PendingResetStartBindingV1 }>;
+export type PendingResetStartSessionPorts = Readonly<{
+  read: () => Promise<readonly PendingResetStartDemand[]>;
+  readAuthority: (demand: PendingResetStartDemand) => Promise<boolean>;
+  isCurrent: () => Promise<boolean>;
+  readWitness: (reset: PendingResetStartBindingV1) => Promise<ProviderAccountUsageSnapshotV1 | null>;
+  readCurrent: (reset: PendingResetStartBindingV1) => Promise<ProviderAccountUsageSnapshotV1 | null>;
+  release: (input: PendingResetStartDemand) => Promise<void>;
+}>;
+export type PendingResetStartRecoveryPorts = Readonly<{
+  withSession: (sessionId: string, run: (ports: PendingResetStartSessionPorts) => Promise<void>) => Promise<void>;
+  onError?: (error: unknown) => void;
+}>;
 
 export const RUNTIME_USAGE_LIMIT_RECOVERY_FIELD = SESSION_USAGE_LIMIT_RECOVERY_STATE_FIELD_ID;
 export const METADATA_SESSION_USAGE_LIMIT_RECOVERY_V1_KEY = SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY;
@@ -96,6 +113,9 @@ function readResumePromptMode(value: unknown): SessionUsageLimitRecoveryResumePr
 export class UsageLimitRecoveryScheduler {
   private readonly checkNowRateLimiter: UsageLimitCheckNowRateLimiter;
   private readonly scheduler: DurableBackoffRecoveryScheduler<UsageLimitRecoveryIntent>;
+  private disposed = false;
+  private readonly pendingResetDemandKeys = new Map<string, Readonly<{ sessionId: string; localId: string }>>();
+  private readonly pendingResetReconciliations = new Map<string, Promise<void>>();
 
   constructor(private readonly deps: Readonly<{
     nowMs: () => number;
@@ -110,6 +130,7 @@ export class UsageLimitRecoveryScheduler {
      * surface it in the restart diagnostic instead of leaving agentId null at the quota seam.
      */
     resolveAgentId?: (sessionId: string) => string | null;
+    pendingResetStarts?: PendingResetStartRecoveryPorts;
   }>) {
     this.checkNowRateLimiter = new UsageLimitCheckNowRateLimiter({
       nowMs: deps.nowMs,
@@ -303,7 +324,70 @@ export class UsageLimitRecoveryScheduler {
    * hands its scheduler here before a replacement attempt hydrates the same durable store.
    */
   dispose(): void {
+    this.disposed = true;
+    this.pendingResetDemandKeys.clear();
     this.scheduler.dispose();
+  }
+
+  /** Pending owns persistence; restart and every wake re-read the exact held rows. */
+  async reconcilePendingResetStarts(sessionId: string): Promise<void> {
+    if (this.disposed || !this.deps.pendingResetStarts) return;
+    const existing = this.pendingResetReconciliations.get(sessionId);
+    if (existing) {
+      await existing;
+      return await this.reconcilePendingResetStarts(sessionId);
+    }
+    const operation = this.reconcilePendingResetStartsOnce(sessionId);
+    this.pendingResetReconciliations.set(sessionId, operation);
+    try { await operation; }
+    finally {
+      if (this.pendingResetReconciliations.get(sessionId) === operation) this.pendingResetReconciliations.delete(sessionId);
+    }
+  }
+
+  async reconcilePendingResetStartsForTrackedSessions(): Promise<void> {
+    const sessionIds = new Set([...this.pendingResetDemandKeys.values()].map(key => key.sessionId));
+    await Promise.all([...sessionIds].map(sessionId => this.reconcilePendingResetStarts(sessionId)));
+  }
+
+  private async reconcilePendingResetStartsOnce(sessionId: string): Promise<void> {
+    const ports = this.deps.pendingResetStarts;
+    if (!ports || this.disposed) return;
+    await ports.withSession(sessionId, async session => {
+      const rows = await session.read();
+      if (this.disposed || !await session.isCurrent()) return;
+      const localIds = new Set(rows.map(row => row.localId));
+      for (const [id, key] of this.pendingResetDemandKeys) {
+        if (key.sessionId === sessionId && !localIds.has(key.localId)) {
+          this.scheduler.clearDemand(key);
+          this.pendingResetDemandKeys.delete(id);
+        }
+      }
+      for (const row of rows) {
+        if (this.disposed) return;
+        const id = JSON.stringify([sessionId, row.localId]);
+        const key = this.pendingResetDemandKeys.get(id) ?? { sessionId, localId: row.localId };
+        this.pendingResetDemandKeys.set(id, key);
+        this.scheduler.clearDemand(key);
+        const authorityCurrent = await session.readAuthority(row);
+        if (!authorityCurrent || this.disposed || !await session.isCurrent()) continue;
+        const previous = await session.readWitness(row.reset);
+        const current = await session.readCurrent(row.reset);
+        const authorityCurrentAtDecision = !this.disposed && await session.isCurrent() && !this.disposed;
+        const readiness = evaluatePendingResetStartReadinessV1({ reset: row.reset, witness: previous, current,
+          nowMs: this.deps.nowMs(), authorityCurrent: authorityCurrentAtDecision });
+        if (readiness.status === 'waiting' && readiness.nextCheckAtMs !== undefined) {
+          this.scheduler.scheduleDemand({ key, notBeforeMs: readiness.nextCheckAtMs, wake: () => {
+            void this.reconcilePendingResetStarts(sessionId).catch(error => ports.onError?.(error));
+          } });
+          continue;
+        }
+        if (readiness.status !== 'ready') continue;
+        await session.release(row);
+        if (this.disposed) return;
+        this.pendingResetDemandKeys.delete(id);
+      }
+    });
   }
 
   private async recoverUsageLimitIntent(

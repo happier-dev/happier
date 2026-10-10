@@ -45,6 +45,21 @@ function row(overrides: Partial<Parameters<typeof toScopedUsageEventRow>[0]> = {
 }
 
 describe("toScopedUsageEventRow", () => {
+    it("opens stored metadata, preserves internal evidence, and normalizes canonical accounting fields", () => {
+        const mapped = toScopedUsageEventRow(row({ metadata: JSON.stringify({ usageAccounting: { inferenceId: "native-inference", path: "native", status: "partial", extra: "drop" }, private: "drop" }) }));
+        expect(mapped.metadata).toEqual({ usageAccounting: { inferenceId: "native-inference", path: "native", status: "partial" }, private: "drop" });
+        expect(toScopedUsageEventRow(row({ metadata: "{invalid" })).metadata).toBeUndefined();
+    });
+    it("preserves Team measurement evidence through the shared scoped row projection", () => {
+        const metadata = { measurement: "reported", usageAccounting: { path: "runtime", extra: "drop" } };
+        expect(toScopedUsageEventRow(row({ metadata })).metadata).toEqual({ measurement: "reported", usageAccounting: { path: "runtime" } });
+    });
+    it("retains validated native subject evidence without unknown fields or malformed identity", () => {
+        const subject = { kind: "native", machineId: "machine", agent: { pluginId: "happier.agent.codex", localId: "codex" }, sourceRootKey: "root", nativeSessionKey: "native-session" };
+        const mapped = toScopedUsageEventRow(row({ sessionId: null, metadata: { accountingSubject: { ...subject, extra: "drop" }, usageAccounting: { path: "native" } } }));
+        expect(mapped.metadata).toEqual({ accountingSubject: subject, usageAccounting: { path: "native" } });
+        expect(toScopedUsageEventRow(row({ metadata: { accountingSubject: { ...subject, machineId: 123 } } })).metadata).toBeUndefined();
+    });
     it("maps tokens, Team attribution, request count, and parsed cost breakdown through one owner", () => {
         const mapped = toScopedUsageEventRow(row({
             requestCount: 1,
@@ -63,10 +78,17 @@ describe("toScopedUsageEventRow", () => {
     });
 
     it("degrades missing cost provenance to the honest unknown and none sentinels", () => {
-        const mapped = toScopedUsageEventRow(row({ billingContext: null, costSource: null }));
+        const mapped = toScopedUsageEventRow(row({ billingContext: null, costSource: null, reportedCostUsd: 0, estimatedCostUsd: 0, invoiceCostUsd: 0 }));
 
         expect(mapped.cost.billingContext).toBe("unknown");
         expect(mapped.cost.costSource).toBe("none");
+    });
+
+    it("preserves positive pre-provenance columns without interpreting default zero as free", () => {
+        expect(toScopedUsageEventRow(row({ costSource: null })).cost.costSource).toBe("provider_reported");
+        expect(toScopedUsageEventRow(row({ costSource: null, reportedCostUsd: 0, estimatedCostUsd: 0.1 })).cost.costSource).toBe("pricing_estimate");
+        expect(toScopedUsageEventRow(row({ costSource: null, invoiceCostUsd: 0.08 })).cost.costSource).toBe("invoice");
+        expect(toScopedUsageEventRow(row({ costSource: "made_up" })).cost.costSource).toBe("none");
     });
 
     it("does not pass non-canonical cost provenance strings through to the wire", () => {

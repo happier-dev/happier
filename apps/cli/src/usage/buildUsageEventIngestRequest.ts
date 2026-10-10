@@ -1,4 +1,4 @@
-import type { UsageEventIngestRequest } from '@happier-dev/protocol';
+import type { UsageEventIngestRequest, UsageNativeAccountingSubject, UsageNativeAccountingEvidence } from '@happier-dev/protocol';
 
 import {
     normalizeUsageObservation,
@@ -59,7 +59,9 @@ function hasUsageData(request: Readonly<{
 }
 
 export function buildUsageEventIngestRequest(params: Readonly<{
-    sessionId: string;
+    sessionId?: string;
+    subject?: UsageNativeAccountingSubject;
+    accounting?: UsageNativeAccountingEvidence;
     observedAt: number;
     observation: UsageObservationBoundaryInput;
     backendMode?: string | null;
@@ -71,7 +73,8 @@ export function buildUsageEventIngestRequest(params: Readonly<{
     metadata?: Record<string, unknown>;
 }>): UsageEventIngestRequest | null {
     const sessionId = asNullableTrimmedString(params.sessionId);
-    if (!sessionId) return null;
+    if ((!sessionId && !params.subject) || (sessionId && params.subject)) return null;
+    if (params.subject && !asNullableTrimmedString(params.externalKey)) return null;
 
     const observation = normalizeUsageObservation(params.observation);
     if (!observation) return null;
@@ -96,20 +99,21 @@ export function buildUsageEventIngestRequest(params: Readonly<{
         return null;
     }
 
-    const metadata = {
+    const metadata = params.subject ? {} : {
         ...(observation.key ? { observationKey: observation.key } : {}),
         ...(params.metadata ?? {}),
     };
 
     return {
-        sessionId,
+        ...(params.subject ? { subject: params.subject } : { sessionId: sessionId! }),
+        ...(params.subject && params.accounting ? { accounting: params.accounting } : {}),
         observedAt: Math.max(0, Math.trunc(params.observedAt)),
         agentId: observation.provider,
         backendMode: asNullableTrimmedString(params.backendMode),
         modelId: asNullableTrimmedString(observation.modelId),
         projectKey: asNullableTrimmedString(params.projectKey),
         workspaceId: asNullableTrimmedString(params.workspaceId),
-        machineId: asNullableTrimmedString(params.machineId),
+        machineId: params.subject?.machineId ?? asNullableTrimmedString(params.machineId),
         source: observation.source,
         scope: observation.scope,
         externalKey: asNullableTrimmedString(params.externalKey),

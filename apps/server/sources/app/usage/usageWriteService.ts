@@ -2,9 +2,12 @@ import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type {
     UsageEventIngestRequest,
+    UsageNativeAccountingSubject,
+    UsageNativeHistoryDeleteRequest,
     UsageObservationCost,
     UsageObservationTokens,
 } from "@happier-dev/protocol";
+import { UsageEventIngestRequestSchema, UsageNativeAccountingSubjectSchema, readUsageAccountingMetadata } from "@happier-dev/protocol";
 import type { Prisma } from "@prisma/client";
 import { buildUsageEphemeral, eventRouter } from "@/app/events/eventRouter";
 import { publishTeamCredentialUsageChangedInTx } from "./teamCredentialUsageInvalidation";
@@ -13,6 +16,7 @@ import { afterTx, inTx, type Tx } from "@/storage/inTx";
 import { db } from "@/storage/db";
 import { requireDbProviderFromEnv } from "@/storage/prisma";
 import { AsyncLock } from "@/utils/runtime/lock";
+import { LegacyUsageReportDataSchema, legacyUsageReportCanonicalOrder, readLegacyUsageReportKey } from "./legacyUsageReportSchema";
 import {
     normalizeLegacyUsageCost,
     normalizeLegacyUsageTokens,
@@ -88,7 +92,7 @@ export type RecordUsageEventResult =
       }
     | {
         ok: false;
-        error: 'session-not-found';
+        error: 'session-not-found' | 'machine-not-found' | 'invalid-params' | 'native-link-not-found';
       };
 
 /** Internal-only authority for Team credential usage. Public Account ingest never accepts this shape. */
@@ -421,17 +425,17 @@ function toUsageEventCreateInput(
     accountId: string,
     request: UsageEventIngestRequest,
     attribution: SessionUsageAttribution = emptySessionUsageAttribution(),
-): Prisma.UsageEventUncheckedCreateInput {
+) {
     return {
         accountId,
-        sessionId: request.sessionId || null,
+        sessionId: request.sessionId || request.subject?.linkedSessionId || null,
         observedAt: new Date(request.observedAt),
         agentId: request.agentId,
         backendMode: request.backendMode ?? null,
         modelId: request.modelId ?? null,
         projectKey: request.projectKey ?? null,
         workspaceId: request.workspaceId ?? null,
-        machineId: request.machineId ?? null,
+        machineId: request.subject?.machineId ?? readStoredNativeSubject(request.metadata)?.machineId ?? request.machineId ?? null,
         source: request.source,
         scope: request.scope,
         externalKey: request.externalKey ?? null,
@@ -459,32 +463,111 @@ function toUsageEventCreateInput(
         costBreakdown: request.cost.breakdown ? JSON.stringify(request.cost.breakdown) : null,
         contextUsedTokens: request.context?.usedTokens ?? null,
         contextWindowTokens: request.context?.windowTokens ?? null,
-        metadata: request.metadata ?? null,
-    };
+        metadata: accountingMetadataForWrite(request),
+    } satisfies Prisma.UsageEventUncheckedCreateInput;
 }
 
 function buildUsageEventIdempotencyKey(
     accountId: string,
-    request: Readonly<{ sessionId: string | null; source: string; externalKey?: string | null }>,
+    request: Readonly<{ sessionId?: string | null; subject?: UsageNativeAccountingSubject; source: string; externalKey?: string | null }>,
 ): string | null {
     if (!request.externalKey) {
         return null;
     }
 
-    const rawKey = JSON.stringify([accountId, request.sessionId, request.source, request.externalKey]);
+    const rawKey = request.subject
+        ? JSON.stringify([accountId, 'native', nativeSubjectKey(request.subject), request.source, request.externalKey])
+        : JSON.stringify([accountId, request.sessionId, request.source, request.externalKey]);
     const digest = createHash("sha256").update(rawKey).digest("hex");
     return `usage_event:v1:${digest}`;
 }
 
 function buildLegacyUsageEventIdempotencyKey(
     accountId: string,
-    request: Pick<UsageEventIngestRequest, "sessionId" | "source" | "externalKey">,
+    request: Pick<UsageEventIngestRequest, "sessionId" | "subject" | "source" | "externalKey">,
 ): string | null {
-    if (!request.externalKey) {
+    if (request.subject || !request.externalKey) {
         return null;
     }
 
     return JSON.stringify([accountId, request.sessionId, request.source, request.externalKey]);
+}
+
+function nativeSubjectKey(subject: UsageNativeAccountingSubject): string {
+    return JSON.stringify([subject.machineId, subject.agent.pluginId, subject.agent.localId, subject.sourceRootKey, subject.nativeSessionKey]);
+}
+
+function readStoredNativeSubject(metadata: unknown): UsageNativeAccountingSubject | null {
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
+    const parsed = UsageNativeAccountingSubjectSchema.safeParse(Reflect.get(metadata, 'accountingSubject'));
+    return parsed.success ? parsed.data : null;
+}
+
+function accountingMetadataForWrite(request: UsageEventIngestRequest): Record<string, unknown> | null {
+    const subject = request.subject ?? readStoredNativeSubject(request.metadata);
+    if (!subject) return request.metadata ?? null;
+    const inferenceId = request.subject ? request.accounting?.inferenceKey : readUsageAccountingMetadata(request.metadata)?.inferenceId;
+    const evidence = request.subject ? (request.accounting ? {
+        status: request.accounting.status,
+        ...(request.accounting.historyComplete !== undefined ? { historyComplete: request.accounting.historyComplete } : {}),
+        ...(request.accounting.asOfMs !== undefined ? { asOfMs: request.accounting.asOfMs } : {}),
+        ...(request.accounting.counterEpoch !== undefined ? { counterEpoch: request.accounting.counterEpoch } : {}),
+        ...(request.accounting.inputIncludesCache !== undefined ? { inputIncludesCache: request.accounting.inputIncludesCache } : {}),
+        ...(request.accounting.outputIncludesReasoning !== undefined ? { outputIncludesReasoning: request.accounting.outputIncludesReasoning } : {}),
+    } : undefined) : readUsageAccountingMetadata(request.metadata);
+    return {
+        ...(request.subject ? {} : request.metadata),
+        accountingSubject: subject,
+        captureOrigin: request.subject ? 'native' : 'runtime',
+        usageAccounting: {
+            ...evidence,
+            path: request.subject ? 'native' : 'runtime',
+            status: evidence?.status ?? 'available',
+            nativeSessionId: nativeSubjectKey(subject),
+            ...(inferenceId !== undefined ? { inferenceId } : {}),
+        },
+    };
+}
+
+async function ensureNativeSubjectOwnedInTx(tx: Tx, accountId: string, subject: UsageNativeAccountingSubject): Promise<boolean> {
+    return Boolean(await tx.machine.findFirst({ where: { id: subject.machineId, accountId }, select: { id: true } }));
+}
+
+async function hasNativeSessionLinkWitnessInTx(tx: Tx, accountId: string, subject: UsageNativeAccountingSubject): Promise<boolean> {
+    if (!subject.linkedSessionId) return true;
+    if (!(await ensureSessionOwnedByAccount(tx, { accountId, sessionId: subject.linkedSessionId }))) return false;
+    const candidates = await tx.usageEvent.findMany({
+        where: { accountId, sessionId: subject.linkedSessionId, machineId: subject.machineId },
+        select: { metadata: true },
+    });
+    return candidates.some(({ metadata }) => {
+        const witness = readStoredNativeSubject(metadata);
+        return witness && metadata && typeof metadata === 'object' && Reflect.get(metadata, 'captureOrigin') === 'runtime' && nativeSubjectKey(witness) === nativeSubjectKey(subject);
+    });
+}
+
+export async function deleteNativeUsageHistory(accountId: string, request: UsageNativeHistoryDeleteRequest): Promise<Readonly<{ ok: true; deletedEventCount: number } | { ok: false; error: 'machine-not-found' }>> {
+    return inTx(async (tx) => {
+        if (!(await tx.machine.findFirst({ where: { id: request.machineId, accountId }, select: { id: true } }))) return { ok: false, error: 'machine-not-found' };
+        const candidates = await tx.usageEvent.findMany({
+            where: { accountId, machineId: request.machineId, observedAt: {
+                ...(request.dateRange?.startMs !== undefined ? { gte: new Date(request.dateRange.startMs) } : {}),
+                ...(request.dateRange?.endMs !== undefined ? { lte: new Date(request.dateRange.endMs) } : {}),
+            } },
+            select: { id: true, metadata: true },
+        });
+        const ids = candidates.filter(({ metadata }) => {
+            const subject = readStoredNativeSubject(metadata);
+            return subject?.machineId === request.machineId && subject.sourceRootKey === request.sourceRootKey && metadata && typeof metadata === 'object' && Reflect.get(metadata, 'captureOrigin') === 'native';
+        }).map(({ id }) => id);
+        const deleted = ids.length ? await tx.usageEvent.deleteMany({ where: { accountId, id: { in: ids } } }) : { count: 0 };
+        if (deleted.count > 0) afterTx(tx, () => eventRouter.emitEphemeral({
+            userId: accountId,
+            payload: buildUsageEphemeral(null, 'native_history_deleted', { total: 0 }, { total: 0 }),
+            recipientFilter: { type: 'user-scoped-only' },
+        }));
+        return { ok: true, deletedEventCount: deleted.count };
+    });
 }
 
 async function ensureSessionOwnedByAccount(
@@ -542,6 +625,7 @@ function buildLegacyDeltaRequest(
         context: undefined,
         metadata: {
             legacyKey: params.key,
+            usageAccounting: { path: 'legacy', status: 'unknown', historyComplete: false, asOfMs: params.observedAtMs },
         },
     };
 }
@@ -575,7 +659,7 @@ function emitUsageEventAfterTransaction(
         eventRouter.emitEphemeral({
             userId: accountId,
             payload: buildUsageEphemeral(
-                request.sessionId,
+                request.sessionId ?? request.subject?.linkedSessionId ?? null,
                 `${request.agentId}:${request.modelId ?? 'unknown'}`,
                 toLegacyUsageEphemeralTokens(request.tokens),
                 toLegacyUsageEphemeralCost(request.cost),
@@ -601,15 +685,25 @@ export async function recordUsageEvent(
     accountId: string,
     request: UsageEventIngestRequest,
 ): Promise<RecordUsageEventResult> {
+    if (!UsageEventIngestRequestSchema.safeParse(request).success) return { ok: false, error: 'invalid-params' };
     return await inTx(async (tx) => {
-        if (!(await ensureSessionOwnedByAccount(tx, { accountId, sessionId: request.sessionId }))) {
+        if (request.sessionId && !(await ensureSessionOwnedByAccount(tx, { accountId, sessionId: request.sessionId }))) {
             return { ok: false, error: 'session-not-found' };
         }
-        const attribution = await resolveSessionUsageAttributionInTx(tx, {
+        const subject = request.subject ?? readStoredNativeSubject(request.metadata);
+        if (request.metadata?.accountingSubject !== undefined && !subject) return { ok: false, error: 'invalid-params' };
+        if (subject) {
+            if (request.agentId !== subject.agent.localId && request.agentId !== `${subject.agent.pluginId}/${subject.agent.localId}`) return { ok: false, error: 'invalid-params' };
+            if (request.machineId && request.machineId !== subject.machineId) return { ok: false, error: 'invalid-params' };
+            if (!(await ensureNativeSubjectOwnedInTx(tx, accountId, subject))) return { ok: false, error: 'machine-not-found' };
+            if (request.subject && !(await hasNativeSessionLinkWitnessInTx(tx, accountId, subject))) return { ok: false, error: 'native-link-not-found' };
+            if (request.sessionId && subject.linkedSessionId && subject.linkedSessionId !== request.sessionId) return { ok: false, error: 'invalid-params' };
+        }
+        const attribution = request.sessionId ? await resolveSessionUsageAttributionInTx(tx, {
             accountId,
             sessionId: request.sessionId,
             turnId: request.turnId ?? null,
-        });
+        }) : emptySessionUsageAttribution();
 
         if (request.externalKey) {
             const idempotencyKey = buildUsageEventIdempotencyKey(accountId, request);
@@ -621,18 +715,27 @@ export async function recordUsageEvent(
                         in: [idempotencyKey, legacyIdempotencyKey].filter((key): key is string => key !== null),
                     },
                 },
-                select: { id: true, createdAt: true },
             });
             if (existing) {
-                return { ok: true, event: existing };
+                // A native reader can observe late settlement of the same inference.
+                // Its stable subject/key identifies one fact, not an append-only delta.
+                if (request.subject) {
+                    const next = toUsageEventCreateInput(accountId, request, attribution);
+                    if (Object.entries(next).some(([key, value]) => !isDeepStrictEqual(Reflect.get(existing, key), value))) {
+                        await tx.usageEvent.update({ where: { id: existing.id }, data: next });
+                        emitUsageEventAfterTransaction(tx, accountId, request);
+                    }
+                }
+                return { ok: true, event: { id: existing.id, createdAt: existing.createdAt } };
             }
 
+            const next = toUsageEventCreateInput(accountId, request, attribution);
             const created = await tx.usageEvent.upsert({
                 where: {
                     idempotencyKey: idempotencyKey ?? "",
                 },
-                update: {},
-                create: toUsageEventCreateInput(accountId, request, attribution),
+                update: request.subject ? next : {},
+                create: next,
                 select: { id: true, createdAt: true },
             });
             await accessUsageEventExecutionRunIdInTx(tx, {
@@ -640,7 +743,7 @@ export async function recordUsageEvent(
                 eventId: created.id,
                 executionRunId: attribution.executionRunId,
             });
-            if (created && attribution.resourceId && attribution.actorAccountId && request.turnId) {
+            if (created && attribution.resourceId && attribution.actorAccountId && request.turnId && request.sessionId) {
                 await copyAdmissionGroupAttributionInTx(tx, {
                     accountId,
                     sessionId: request.sessionId,
@@ -663,7 +766,7 @@ export async function recordUsageEvent(
             eventId: created.id,
             executionRunId: attribution.executionRunId,
         });
-        if (attribution.resourceId && attribution.actorAccountId && request.turnId) {
+        if (attribution.resourceId && attribution.actorAccountId && request.turnId && request.sessionId) {
             await copyAdmissionGroupAttributionInTx(tx, {
                 accountId,
                 sessionId: request.sessionId,
@@ -1041,11 +1144,7 @@ export async function recordLegacyUsageReport(
                     sessionId: null,
                     key,
                 },
-                orderBy: [
-                    { updatedAt: "desc" },
-                    { createdAt: "desc" },
-                    { id: "desc" },
-                ],
+                orderBy: legacyUsageReportCanonicalOrder,
                 select: { id: true, createdAt: true, updatedAt: true, data: true },
             });
             const [survivor, ...duplicates] = existingReports;
@@ -1138,30 +1237,32 @@ export async function recordLegacyUsageReport(
                 });
             })();
 
+        const previousData = LegacyUsageReportDataSchema.safeParse(previous?.data);
+        if (previous && previousData.success) {
+            const bridges = await tx.usageEvent.findMany({
+                where: { accountId, sessionId, source: 'legacy_usage_report' }, select: { metadata: true },
+            });
+            if (!bridges.some((bridge) => readLegacyUsageReportKey(bridge.metadata) === key)) {
+                // A retained predecessor counter predates the append-only bridge.
+                // Preserve it before writing the next delta; queries then retire
+                // the raw-format read adapter for this key rather than add both.
+                const baseline = buildLegacyDeltaRequest({ key, sessionId,
+                    nextUsage: previousData.data, previousUsage: null,
+                    observedAtMs: previous.updatedAt.getTime(),
+                });
+                if (baseline) await tx.usageEvent.create({ data: toUsageEventCreateInput(accountId, baseline) });
+            }
+        }
         const deltaRequest = buildLegacyDeltaRequest({
             key,
             sessionId,
             nextUsage: usageData,
-            previousUsage: (previous?.data as PrismaJson.UsageReportData | null | undefined) ?? null,
+            previousUsage: previousData.success ? previousData.data : null,
             observedAtMs: report.updatedAt.getTime(),
         });
 
         let usageEventId: string | null = null;
-        const nearbyNativeEvent = deltaRequest && sessionId
-            ? await tx.usageEvent.findFirst({
-                where: {
-                    accountId,
-                    sessionId,
-                    source: { not: 'legacy_usage_report' },
-                    observedAt: {
-                        gte: new Date(report.updatedAt.getTime() - 15 * 60_000),
-                        lte: new Date(report.updatedAt.getTime() + 15 * 60_000),
-                    },
-                },
-                select: { id: true },
-            })
-            : null;
-        if (deltaRequest && !nearbyNativeEvent) {
+        if (deltaRequest) {
             const created = await tx.usageEvent.create({
                 data: toUsageEventCreateInput(accountId, deltaRequest),
                 select: { id: true },

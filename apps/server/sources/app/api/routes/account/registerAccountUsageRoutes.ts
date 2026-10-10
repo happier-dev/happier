@@ -2,16 +2,18 @@ import {
     UsageAnalyticsQueryRequestSchema,
     UsageAnalyticsQueryResponseSchema,
     UsageEventIngestRequestSchema,
+    UsageNativeHistoryDeleteRequestSchema,
+    UsageModelPriceCatalogSchema,
 } from "@happier-dev/protocol";
 import { z } from "zod";
-import { db } from "@/storage/db";
+import { inTx, type Tx } from "@/storage/inTx";
 import { log } from "@/utils/logging/log";
-import { queryUsageAnalytics } from "@/app/usage/usageQueryService";
-import { recordLegacyUsageReport, recordUsageEvent } from "@/app/usage/usageWriteService";
-import { resolveBucketBounds } from "@/app/usage/query/bucketBounds";
+import { queryUsageAnalyticsInTx } from "@/app/usage/usageQueryService";
+import { recordLegacyUsageReport, recordUsageEvent, deleteNativeUsageHistory } from "@/app/usage/usageWriteService";
 import { LegacyUsageReportRouteBodySchema } from "@/app/usage/legacyUsageReportSchema";
 import { type Fastify } from "../../types";
 import { accountUsageRoutePaths } from "./accountUsageRoutePaths";
+import { readUsageModelPriceCatalog, refreshUsageModelPriceCatalog } from '@/app/usage/usageModelPriceCatalog';
 
 const LegacyUsageReportRouteResponseSchema = z.object({
     success: z.literal(true),
@@ -26,12 +28,12 @@ const UsageEventIngestRouteResponseSchema = z.object({
     createdAt: z.number(),
 });
 
-async function ensureOwnedSessionIds(accountId: string, sessionIds: readonly string[]): Promise<boolean> {
+async function ensureOwnedSessionIds(tx: Tx, accountId: string, sessionIds: readonly string[]): Promise<boolean> {
     if (sessionIds.length === 0) {
         return true;
     }
 
-    const count = await db.session.count({
+    const count = await tx.session.count({
         where: {
             accountId,
             id: { in: [...sessionIds] },
@@ -41,6 +43,16 @@ async function ensureOwnedSessionIds(accountId: string, sessionIds: readonly str
 }
 
 export function registerAccountUsageRoutes(app: Fastify): void {
+    app.get(accountUsageRoutePaths.prices, {
+        schema: { response: { 200: UsageModelPriceCatalogSchema } },
+        preHandler: app.authenticate,
+    }, async (_request, reply) => reply.send(await readUsageModelPriceCatalog()));
+
+    app.post(accountUsageRoutePaths.pricesRefresh, {
+        schema: { body: z.object({}).strict(), response: { 200: UsageModelPriceCatalogSchema } },
+        preHandler: app.authenticate,
+    }, async (_request, reply) => reply.send(await refreshUsageModelPriceCatalog()));
+
     app.post(accountUsageRoutePaths.legacyQuery, {
         schema: {
             body: z.object({
@@ -57,95 +69,37 @@ export function registerAccountUsageRoutes(app: Fastify): void {
         const actualGroupBy = groupBy || 'day';
 
         try {
-            const where: {
-                accountId: string;
-                sessionId?: string | null;
-                createdAt?: {
-                    gte?: Date;
-                    lte?: Date;
-                };
-            } = {
-                accountId: userId,
-            };
-
-            if (sessionId) {
-                const session = await db.session.findFirst({
-                    where: {
-                        id: sessionId,
-                        accountId: userId,
-                    },
-                    select: { id: true },
+            return await inTx(async tx => {
+                if (sessionId) {
+                    const session = await tx.session.findFirst({
+                        where: {
+                            id: sessionId,
+                            accountId: userId,
+                        },
+                        select: { id: true },
+                    });
+                    if (!session) {
+                        return reply.code(404).send({ error: 'Session not found' });
+                    }
+                }
+                const result = await queryUsageAnalyticsInTx(tx, userId, UsageAnalyticsQueryRequestSchema.parse({
+                    granularity: actualGroupBy, includeSeries: true,
+                    filters: sessionId ? { sessionIds: [sessionId] } : undefined,
+                    dateRange: startTime || endTime ? {
+                        ...(startTime ? { startMs: startTime * 1000 } : {}),
+                        ...(endTime ? { endMs: endTime * 1000 } : {}),
+                    } : undefined,
+                }));
+                return reply.send({
+                    usage: (result.series ?? []).map((bucket) => ({
+                        timestamp: Math.floor(bucket.bucketStartMs / 1000), tokens: bucket.tokens,
+                        cost: bucket.cost.effectiveUsd === undefined ? {} : { total: bucket.cost.effectiveUsd },
+                        reportCount: bucket.eventCount,
+                    })),
+                    groupBy: actualGroupBy,
+                    totalReports: result.totals.eventCount,
                 });
-                if (!session) {
-                    return reply.code(404).send({ error: 'Session not found' });
-                }
-                where.sessionId = sessionId;
-            }
-
-            if (startTime || endTime) {
-                where.createdAt = {};
-                if (startTime) {
-                    where.createdAt.gte = new Date(startTime * 1000);
-                }
-                if (endTime) {
-                    where.createdAt.lte = new Date(endTime * 1000);
-                }
-            }
-
-            const reports = await db.usageReport.findMany({
-                where,
-                orderBy: {
-                    createdAt: 'desc',
-                },
-            });
-
-            const aggregated = new Map<string, {
-                tokens: Record<string, number>;
-                cost: Record<string, number>;
-                count: number;
-                timestamp: number;
-            }>();
-
-            for (const report of reports) {
-                const data = report.data as PrismaJson.UsageReportData;
-                const { bucketStartMs } = resolveBucketBounds(actualGroupBy, report.createdAt.getTime(), 0);
-                const timestamp = Math.floor(bucketStartMs / 1000);
-
-                const current = aggregated.get(String(timestamp)) ?? {
-                    tokens: {},
-                    cost: {},
-                    count: 0,
-                    timestamp,
-                };
-                current.count += 1;
-
-                for (const [tokenKey, tokenValue] of Object.entries(data.tokens)) {
-                    if (typeof tokenValue === 'number') {
-                        current.tokens[tokenKey] = (current.tokens[tokenKey] || 0) + tokenValue;
-                    }
-                }
-
-                for (const [costKey, costValue] of Object.entries(data.cost)) {
-                    if (typeof costValue === 'number') {
-                        current.cost[costKey] = (current.cost[costKey] || 0) + costValue;
-                    }
-                }
-
-                aggregated.set(String(timestamp), current);
-            }
-
-            return reply.send({
-                usage: Array.from(aggregated.values())
-                    .map((entry) => ({
-                        timestamp: entry.timestamp,
-                        tokens: entry.tokens,
-                        cost: entry.cost,
-                        reportCount: entry.count,
-                    }))
-                    .sort((left, right) => left.timestamp - right.timestamp),
-                groupBy: actualGroupBy,
-                totalReports: reports.length,
-            });
+            }, { readOnly: true });
         } catch (error) {
             log({ module: 'api', level: 'error' }, `Failed to query usage reports: ${error}`);
             return reply.code(500).send({ error: 'Failed to query usage reports' });
@@ -164,15 +118,17 @@ export function registerAccountUsageRoutes(app: Fastify): void {
         preHandler: app.authenticate,
     }, async (request, reply) => {
         try {
-            if (request.body.filters?.sessionIds?.length) {
-                const isOwned = await ensureOwnedSessionIds(request.userId, request.body.filters.sessionIds);
-                if (!isOwned) {
-                    return reply.code(404).send({ error: 'Session not found' });
+            return await inTx(async tx => {
+                if (request.body.filters?.sessionIds?.length) {
+                    const isOwned = await ensureOwnedSessionIds(tx, request.userId, request.body.filters.sessionIds);
+                    if (!isOwned) {
+                        return reply.code(404).send({ error: 'Session not found' });
+                    }
                 }
-            }
 
-            const response = await queryUsageAnalytics(request.userId, request.body);
-            return reply.send(response);
+                const response = await queryUsageAnalyticsInTx(tx, request.userId, request.body);
+                return reply.send(response);
+            }, { readOnly: true });
         } catch (error) {
             log({ module: 'api', level: 'error' }, `Failed to query usage analytics: ${error}`);
             return reply.code(500).send({ error: 'Failed to query usage analytics' });
@@ -192,7 +148,8 @@ export function registerAccountUsageRoutes(app: Fastify): void {
             body: UsageEventIngestRequestSchema,
             response: {
                 200: UsageEventIngestRouteResponseSchema,
-                404: z.object({ error: z.literal('Session not found') }),
+                400: z.object({ error: z.enum(['Invalid parameters', 'Native Session link not found']) }),
+                404: z.object({ error: z.enum(['Session not found', 'Machine not found']) }),
                 500: z.object({ error: z.literal('Failed to save usage event') }),
             },
         },
@@ -201,7 +158,8 @@ export function registerAccountUsageRoutes(app: Fastify): void {
         try {
             const result = await recordUsageEvent(request.userId, request.body);
             if (!result.ok) {
-                return reply.code(404).send({ error: 'Session not found' });
+                if (result.error === 'invalid-params' || result.error === 'native-link-not-found') return reply.code(400).send({ error: result.error === 'native-link-not-found' ? 'Native Session link not found' : 'Invalid parameters' });
+                return reply.code(404).send({ error: result.error === 'machine-not-found' ? 'Machine not found' : 'Session not found' });
             }
             return reply.send({
                 success: true,
@@ -211,6 +169,27 @@ export function registerAccountUsageRoutes(app: Fastify): void {
         } catch (error) {
             log({ module: 'api', level: 'error' }, `Failed to save usage event: ${error}`);
             return reply.code(500).send({ error: 'Failed to save usage event' });
+        }
+    });
+
+    app.post(accountUsageRoutePaths.nativeHistoryDelete, {
+        schema: {
+            body: UsageNativeHistoryDeleteRequestSchema,
+            response: {
+                200: z.object({ success: z.literal(true), deletedEventCount: z.number().int().min(0) }),
+                404: z.object({ error: z.literal('Machine not found') }),
+                500: z.object({ error: z.literal('Failed to delete native usage history') }),
+            },
+        },
+        preHandler: app.authenticate,
+    }, async (request, reply) => {
+        try {
+            const result = await deleteNativeUsageHistory(request.userId, request.body);
+            if (!result.ok) return reply.code(404).send({ error: 'Machine not found' });
+            return reply.send({ success: true, deletedEventCount: result.deletedEventCount });
+        } catch (error) {
+            log({ module: 'api', level: 'error' }, `Failed to delete native usage history: ${error}`);
+            return reply.code(500).send({ error: 'Failed to delete native usage history' });
         }
     });
 

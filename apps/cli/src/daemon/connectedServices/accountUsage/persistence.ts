@@ -2,6 +2,7 @@ import { ConnectedServiceCredentialRevisionV1Schema } from '@happier-dev/protoco
 import { QualifiedConnectedServiceUsageSourceV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { sealProviderAccountUsageSnapshot } from '@happier-dev/protocol/connect/accountUsage';
+import { mergeProviderAccountSubscription, type ProviderAccountSubscriptionV1 } from '@happier-dev/protocol/connect/accountSubscription';
 import type { ConnectedServiceCredentialRevisionV1, QualifiedConnectedServiceUsageSourceV4, ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol';
 
 import {
@@ -190,7 +191,7 @@ export function createProviderAccountUsagePersistenceScheduler(params: Readonly<
         ?? DEFAULT_PROVIDER_ACCOUNT_USAGE_PERSISTENCE_MIN_FRESHNESS_MS,
     ),
   );
-  const stateByPersistenceKey = new Map<string, QuotaPersistenceMaterialState>();
+  const stateByPersistenceKey = new Map<string, QuotaPersistenceMaterialState & Readonly<{ subscription?: ProviderAccountSubscriptionV1 }>>();
   const writeProviderAccountUsage =
     params.writeQualifiedProviderAccountUsage
     ?? writeQualifiedProviderAccountUsageV4;
@@ -240,7 +241,7 @@ export function createProviderAccountUsagePersistenceScheduler(params: Readonly<
       token: params.credentials.token,
       write,
     });
-    stateByPersistenceKey.set(persistenceKey, payload.materialState);
+    stateByPersistenceKey.set(persistenceKey, { ...payload.materialState, ...(payload.snapshot.subscription ? { subscription: payload.snapshot.subscription } : {}) });
   }
 
   const scheduler = createConnectedServiceQuotaPersistenceScheduler<
@@ -274,33 +275,32 @@ export function createProviderAccountUsagePersistenceScheduler(params: Readonly<
         };
       }
       const status = deriveProviderAccountUsageStatus(snapshot);
-      const materialFingerprint = computeProviderAccountUsageSnapshotFingerprint(
-        snapshot,
-        fingerprintKey,
-      );
-      const materialState: QuotaPersistenceMaterialState = {
-        fingerprint: materialFingerprint,
-        fetchedAt: snapshot.fetchedAtMs,
-        staleAfterMs: snapshot.staleAfterMs,
-        status,
-      };
+      const inputMaterialFingerprint = computeProviderAccountUsageSnapshotFingerprint(snapshot, fingerprintKey);
       let accepted = false;
       let coalesced = false;
       let lastSuppressionReason = 'unchanged_fresh';
       for (const target of targets) {
         const persistenceKey = `${snapshot.recordId}\u0000${qualifiedTargetPersistenceKey(target)}`;
+        const previous = stateByPersistenceKey.get(persistenceKey);
+        const subscription = mergeProviderAccountSubscription(previous?.subscription, snapshot.subscription);
+        const mergedSnapshot = subscription === snapshot.subscription ? snapshot : { ...snapshot, subscription };
+        const materialFingerprint = mergedSnapshot === snapshot ? inputMaterialFingerprint : computeProviderAccountUsageSnapshotFingerprint(mergedSnapshot, fingerprintKey);
+        const materialState: QuotaPersistenceMaterialState = { fingerprint: materialFingerprint, fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs, status };
+        // Publish independently advanced facets without changing the material
+        // fingerprint used by the accepted history owner.
+        const subscriptionAdvanced = JSON.stringify(subscription) !== JSON.stringify(previous?.subscription);
         const decision = shouldPersistQuotaSnapshot({
-          previous: stateByPersistenceKey.get(persistenceKey) ?? null,
+          previous: previous ?? null,
           next: materialState,
           nowMs: Math.max(0, Math.trunc(params.now())),
           minFreshnessMs,
         });
-        if (!decision.persist) {
+        if (!decision.persist && !(decision.reason === 'unchanged_fresh' && subscriptionAdvanced)) {
           lastSuppressionReason = decision.reason;
           continue;
         }
         const enqueue = scheduler.enqueue(persistenceKey, {
-          snapshot,
+          snapshot: mergedSnapshot,
           target,
           status,
           materialFingerprint,

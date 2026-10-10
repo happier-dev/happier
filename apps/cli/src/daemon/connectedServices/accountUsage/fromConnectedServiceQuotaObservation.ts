@@ -73,7 +73,9 @@ export function buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObserv
         staleAfterMs: snapshot.staleAfterMs,
         source: mapQuotaSourceToUsageSource(snapshot.source),
         confidence: mapQuotaConfidenceToUsageConfidence(snapshot.confidence),
-        state: snapshot.confidence === 'stale'
+        state: snapshot.diagnostics?.some((entry) => entry.kind === 'provider_http')
+            ? 'error_last_known_good'
+            : snapshot.confidence === 'stale'
             ? 'stale_data'
             : snapshot.meters.length > 0
                 ? 'loaded_data'
@@ -83,6 +85,7 @@ export function buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObserv
         ...(snapshot.recoveryCredits ? { recoveryCredits: snapshot.recoveryCredits } : {}),
         ...(snapshot.subscription ? { subscription: snapshot.subscription } : {}),
         meters: snapshot.meters,
+        ...(snapshot.diagnostics ? { diagnostics: snapshot.diagnostics } : {}),
     });
 }
 

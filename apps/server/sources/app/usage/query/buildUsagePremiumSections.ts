@@ -7,9 +7,9 @@ import type {
 
 import type { UsageMessageCounts } from "./loadUsageMessageStatsForQuery";
 import type { ScopedUsageContribution } from "./resolveScopedUsageContributions";
-import { resolveBucketBounds } from "./bucketBounds";
+import { resolveUsageBucketBounds as resolveBucketBounds, resolveUsageCalendarInstant, resolveUsageContributionDimensionKey } from "@happier-dev/protocol";
 import { addUsageTokens, createEmptyUsageCost, createEmptyUsageTokens } from "../usageMetrics";
-import { addUsageCostForMode, resolveEffectiveUsageCostUsd, resolveUsageCostMode, resolveUsageCostPresentationSource, withEffectiveUsageCost } from "./resolveUsageCostMode";
+import { addUsageCostForMode, resolveEffectiveUsageCostUsd, resolveUsageCostMode, withEffectiveUsageCost } from "./resolveUsageCostMode";
 
 type UsageEventRow = Pick<
     ScopedUsageContribution,
@@ -20,6 +20,7 @@ type UsageEventRow = Pick<
     | "modelId"
     | "projectKey"
     | "workspaceId"
+    | "machineId"
     | "source"
     | "tokens"
     | "cost"
@@ -32,7 +33,6 @@ type UsageAnalyticsLeaderAggregate = UsageAnalyticsLeader & {
     tokens: UsageObservationTokens;
     cost: UsageObservationCost;
     totalTokens: number;
-    effectiveUsd: number;
 };
 type UsageInsights = NonNullable<UsageAnalyticsQueryResponse["insights"]>;
 type UsageActivity = NonNullable<UsageAnalyticsQueryResponse["activity"]>;
@@ -56,14 +56,8 @@ function getLocalBucketKey(
     return localBucketStart.toISOString().slice(0, 10);
 }
 
-function deriveEngineKey(row: UsageEventRow): string | null {
-    if (!row.agentId) {
-        return null;
-    }
-    if (!row.backendMode) {
-        return row.agentId;
-    }
-    return `${row.agentId}:${row.backendMode}`;
+export function deriveEngineKey(row: UsageEventRow): string | null {
+    return resolveUsageContributionDimensionKey(row, "engine");
 }
 
 function buildLeaderList(
@@ -76,10 +70,7 @@ function buildLeaderList(
     const mode = resolveUsageCostMode(requestedMode);
 
     for (const row of rows) {
-        const key = resolveKey(row);
-        if (!key) {
-            continue;
-        }
+        const key = resolveKey(row) ?? "unknown";
         const existing = grouped.get(key) ?? {
             key,
             label: key,
@@ -87,11 +78,9 @@ function buildLeaderList(
             tokens: createEmptyUsageTokens(),
             cost: createEmptyUsageCost(),
             totalTokens: 0,
-            effectiveUsd: 0,
         } satisfies UsageAnalyticsLeaderAggregate;
         existing.eventCount += row.contributingEventIds.length;
         existing.totalTokens += row.tokens.total;
-        existing.effectiveUsd += resolveEffectiveUsageCostUsd(row.cost, mode);
         existing.tokens = addUsageTokens(existing.tokens, row.tokens);
         existing.cost = addUsageCostForMode(existing.cost, row.cost, mode);
         grouped.set(key, existing);
@@ -106,8 +95,10 @@ function buildLeaderList(
             if (right.totalTokens !== left.totalTokens) {
                 return right.totalTokens - left.totalTokens;
             }
-            if (right.effectiveUsd !== left.effectiveUsd) {
-                return right.effectiveUsd - left.effectiveUsd;
+            const leftCost = resolveEffectiveUsageCostUsd(left.cost, mode);
+            const rightCost = resolveEffectiveUsageCostUsd(right.cost, mode);
+            if (rightCost !== leftCost) {
+                return rightCost - leftCost;
             }
             if (right.eventCount !== left.eventCount) {
                 return right.eventCount - left.eventCount;
@@ -115,7 +106,7 @@ function buildLeaderList(
             return left.key.localeCompare(right.key);
         })
         .slice(0, topLimit)
-        .map(({ totalTokens: _totalTokens, effectiveUsd: _effectiveUsd, ...leader }) => ({
+        .map(({ totalTokens: _totalTokens, ...leader }) => ({
             ...leader,
             cost: withEffectiveUsageCost(leader.cost, mode),
         }));
@@ -127,11 +118,11 @@ export function buildUsageLeaders(
     requestedMode?: UsageAnalyticsQueryRequest["costMode"],
 ): UsageLeaderGroup | undefined {
     const leaders: UsageLeaderGroup = {
-        agents: buildLeaderList(rows, topLimit, (row) => row.agentId, requestedMode),
-        models: buildLeaderList(rows, topLimit, (row) => row.modelId, requestedMode),
-        sessions: buildLeaderList(rows, topLimit, (row) => row.sessionId, requestedMode),
-        projects: buildLeaderList(rows, topLimit, (row) => row.projectKey, requestedMode),
-        workspaces: buildLeaderList(rows, topLimit, (row) => row.workspaceId, requestedMode),
+        agents: buildLeaderList(rows, topLimit, (row) => resolveUsageContributionDimensionKey(row, "agent"), requestedMode),
+        models: buildLeaderList(rows, topLimit, (row) => resolveUsageContributionDimensionKey(row, "model"), requestedMode),
+        sessions: buildLeaderList(rows, topLimit, (row) => resolveUsageContributionDimensionKey(row, "session"), requestedMode),
+        projects: buildLeaderList(rows, topLimit, (row) => resolveUsageContributionDimensionKey(row, "project"), requestedMode),
+        workspaces: buildLeaderList(rows, topLimit, (row) => resolveUsageContributionDimensionKey(row, "workspace"), requestedMode),
         engines: buildLeaderList(rows, topLimit, deriveEngineKey, requestedMode),
     };
 
@@ -150,9 +141,7 @@ export function buildUsageActivity(
         const dateKey = getLocalBucketKey(row.observedAt, "day", timeZoneOffsetMinutes);
         calendarDays.set(dateKey, (calendarDays.get(dateKey) ?? 0) + row.contributingEventIds.length);
 
-        const localObservedAt = new Date(row.observedAt.getTime() + timeZoneOffsetMinutes * MINUTES_TO_MILLISECONDS);
-        const weekday = localObservedAt.getUTCDay();
-        const hour = localObservedAt.getUTCHours();
+        const { weekday, hour } = resolveUsageCalendarInstant(row.observedAt.getTime(), timeZoneOffsetMinutes);
         const weekdayHourKey = `${weekday}:${hour}`;
         const currentBucket = weekdayHourBuckets.get(weekdayHourKey) ?? { weekday, hour, eventCount: 0 };
         currentBucket.eventCount += row.contributingEventIds.length;
@@ -308,10 +297,7 @@ function buildTimeline(
     }>();
 
     for (const row of rows) {
-        const key = resolveKey(row);
-        if (!key) {
-            continue;
-        }
+        const key = resolveKey(row) ?? "unknown";
         const bounds = resolveBucketBounds(granularity, row.observedAt.getTime(), timeZoneOffsetMinutes);
         const bucket = buckets.get(bounds.bucketStartMs) ?? {
             bucketStartMs: bounds.bucketStartMs,
@@ -323,13 +309,11 @@ function buildTimeline(
             label: key,
             eventCount: 0,
             totalTokens: 0,
-            effectiveUsd: 0,
             tokens: createEmptyUsageTokens(),
             cost: createEmptyUsageCost(),
         } satisfies UsageAnalyticsLeaderAggregate;
         existing.eventCount += row.contributingEventIds.length;
         existing.totalTokens += row.tokens.total;
-        existing.effectiveUsd += resolveEffectiveUsageCostUsd(row.cost, mode);
         existing.tokens = addUsageTokens(existing.tokens, row.tokens);
         existing.cost = addUsageCostForMode(existing.cost, row.cost, mode);
         bucket.leaders.set(key, existing);
@@ -350,8 +334,10 @@ function buildTimeline(
                     if (right[1].totalTokens !== left[1].totalTokens) {
                         return right[1].totalTokens - left[1].totalTokens;
                     }
-                    if (right[1].effectiveUsd !== left[1].effectiveUsd) {
-                        return right[1].effectiveUsd - left[1].effectiveUsd;
+                    const leftCost = resolveEffectiveUsageCostUsd(left[1].cost, mode);
+                    const rightCost = resolveEffectiveUsageCostUsd(right[1].cost, mode);
+                    if (rightCost !== leftCost) {
+                        return rightCost - leftCost;
                     }
                     if (right[1].eventCount !== left[1].eventCount) {
                         return right[1].eventCount - left[1].eventCount;
@@ -387,17 +373,4 @@ export function buildUsageEngineTimeline(
     requestedMode?: UsageAnalyticsQueryRequest["costMode"],
 ): UsageTimeline | undefined {
     return buildTimeline(rows, granularity, topLimit, deriveEngineKey, timeZoneOffsetMinutes, requestedMode);
-}
-
-export function buildUsageCostPresentation(
-    totalsCost: UsageObservationCost,
-    requestedMode: UsageAnalyticsQueryRequest["costMode"],
-): NonNullable<UsageAnalyticsQueryResponse["costPresentation"]> {
-    const mode = resolveUsageCostMode(requestedMode);
-    return {
-        mode,
-        effectiveUsd: resolveEffectiveUsageCostUsd(totalsCost, mode),
-        currency: totalsCost.currency,
-        source: resolveUsageCostPresentationSource(totalsCost, mode),
-    };
 }

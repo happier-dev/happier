@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveBucketBounds } from "./bucketBounds";
+import { resolveUsageBucketBounds as resolveBucketBounds } from "@happier-dev/protocol";
 
 describe("resolveBucketBounds", () => {
     it.each([

@@ -22,6 +22,62 @@ type ProviderAccountUsageRecordClient = Pick<typeof db, "providerAccountUsageRec
 
 type ParsedProviderAccountUsageRecordWrite = ReturnType<typeof validateProviderAccountUsageRecordWrite>;
 
+export function projectProviderAccountUsageRecordV4(record: StoredProviderAccountUsageRecord, sources: readonly import('@happier-dev/protocol').QualifiedConnectedServiceUsageSourceV4[]) {
+    if (record.payloadMode === 'plain_json_v1' ? !record.snapshot : !record.sealedPayload) throw new ProviderAccountUsagePayloadInvariantError('Provider usage payload is unavailable');
+    return {
+        content: record.payloadMode === 'plain_json_v1' ? { t: 'plain' as const, v: record.snapshot! } : { t: 'encrypted' as const, c: record.sealedPayload!.ciphertext, ...(record.sealedPayload!.subscription ? { subscription: record.sealedPayload!.subscription } : {}) },
+        metadata: { fetchedAt: record.fetchedAt ?? record.snapshot?.fetchedAtMs ?? 0, staleAfterMs: record.staleAfterMs ?? record.snapshot?.staleAfterMs ?? 0, status: record.status === 'unavailable' || record.status === 'estimated' || record.status === 'error' ? record.status : 'ok' as const, ...(record.refreshRequestedAt !== undefined ? { refreshRequestedAt: record.refreshRequestedAt } : {}) },
+        sources: [...sources],
+    };
+}
+
+export async function readProviderAccountUsageHistory(params: Readonly<{ accountId: string; recordId: string; history: import('@happier-dev/protocol/connect/providerAccountUsageHistory').ProviderAccountUsageHistoryRequestV1 }>, client: ProviderAccountUsageRecordClient = db) {
+    const { range, pageSize, cursor } = params.history;
+    const row = await client.providerAccountUsageRecord.findUnique({
+        where: { accountId_recordId: { accountId: params.accountId, recordId: params.recordId } },
+        select: { history: { where: {
+            observedAt: { gte: new Date(range.startAtMs), lt: new Date(range.endAtMs) },
+            ...(cursor ? { OR: [{ observedAt: { gt: new Date(cursor.observedAtMs) } }, { observedAt: new Date(cursor.observedAtMs), id: { gt: cursor.id } }] } : {}),
+        }, orderBy: [{ observedAt: 'asc' }, { id: 'asc' }], take: pageSize + 1, select: { id: true, observedAt: true, payload: true } } },
+    });
+    const rows = row?.history ?? [];
+    const entries = rows.slice(0, pageSize).map(entry => ({ id: entry.id, observedAtMs: entry.observedAt.getTime(), record: parseHistoryRecord(entry.payload) }));
+    const last = entries.at(-1);
+    return { entries, nextCursor: rows.length > pageSize && last ? { observedAtMs: last.observedAtMs, id: last.id } : null };
+}
+
+function parseHistoryRecord(payload: unknown): StoredProviderAccountUsageRecord {
+    const parsed = parseProviderAccountUsageRecordWrite(payload);
+    return { ...parsed, fetchedAt: parsed.fetchedAt ?? null, staleAfterMs: parsed.staleAfterMs ?? null };
+}
+
+export async function hasProviderAccountUsageHistory(params: Readonly<{ accountId: string; recordId: string }>, client: ProviderAccountUsageRecordClient): Promise<boolean> {
+    const row = await client.providerAccountUsageRecord.findUnique({
+        where: { accountId_recordId: params },
+        select: { history: { take: 1, select: { id: true } } },
+    });
+    return (row?.history.length ?? 0) > 0;
+}
+
+export async function readProviderAccountUsageHistoryWitness(params: Readonly<{ accountId: string; recordId: string; witness: import('@happier-dev/protocol/connect/providerAccountUsageHistory').ProviderAccountUsageHistoryWitnessV1 }>, client: ProviderAccountUsageRecordClient = db) {
+    const row = await client.providerAccountUsageRecord.findUnique({
+        where: { accountId_recordId: { accountId: params.accountId, recordId: params.recordId } },
+        select: { history: { where: { id: params.witness.id, observedAt: new Date(params.witness.observedAtMs) }, select: { id: true, observedAt: true, payload: true } } },
+    });
+    const entry = row?.history[0];
+    return entry ? { id: entry.id, observedAtMs: entry.observedAt.getTime(), record: parseHistoryRecord(entry.payload) } : null;
+}
+
+/** Only the accepted-write policy invokes this inside the same transaction as its CAS. */
+export async function retainProviderAccountUsageHistory(raw: UpsertProviderAccountUsageRecordParams, client: ProviderAccountUsageRecordClient) {
+    const parsed = parseProviderAccountUsageRecordWrite(raw);
+    if (parsed.fetchedAt === undefined || (!parsed.snapshot && !parsed.sealedPayload)) return;
+    await client.providerAccountUsageRecord.update({
+        where: { accountId_recordId: { accountId: parsed.accountId, recordId: parsed.recordId } },
+        data: { history: { create: { observedAt: new Date(parsed.fetchedAt), payload: parsed as Prisma.InputJsonValue } } },
+    });
+}
+
 export type ProviderAccountUsageRecordCurrentGuard = Readonly<{
     fetchedAt: number | null;
     refreshRequestedAt?: number;
@@ -47,7 +103,7 @@ function zodProviderAccountUsageMetadata(raw: unknown) {
     }
 }
 
-function parseProviderAccountUsageRecordWrite(raw: UpsertProviderAccountUsageRecordParams): ParsedProviderAccountUsageRecordWrite {
+function parseProviderAccountUsageRecordWrite(raw: unknown): ParsedProviderAccountUsageRecordWrite {
     try {
         return validateProviderAccountUsageRecordWrite(raw);
     } catch (error) {
