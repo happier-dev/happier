@@ -1095,6 +1095,9 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
       "nonInteractiveStatusProbe": true,
       "support": "login_terminal"
     },
+    "commandPolicy": {
+      "daemonAutostartDefault": "preferLocalTui"
+    },
     "displayName": "OpenAI Codex CLI",
     "executable": {
       "binaryName": "codex",

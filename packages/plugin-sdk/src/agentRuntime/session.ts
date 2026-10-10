@@ -286,6 +286,21 @@ export type AgentSessionRuntimeEvent =
       sequence: number;
       sessionId: string;
       emittedAtMs: number;
+      turnId: string;
+      agentTurnId?: string;
+      kind: 'mcp-tool-usage';
+      window: Readonly<{ startMs: number; endMs: number }>;
+      coverage: 'complete' | 'partial';
+      servers: Array<Readonly<{
+        serverName: string;
+        toolCallCount: number;
+        schemaBytes: number | null;
+      }>>;
+    }>
+  | Readonly<{
+      sequence: number;
+      sessionId: string;
+      emittedAtMs: number;
       /** Omit for Session output that does not belong to a foreground host turn. */
       turnId?: string;
       agentTurnId?: string;

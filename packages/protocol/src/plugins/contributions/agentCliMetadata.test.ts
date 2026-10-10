@@ -63,6 +63,20 @@ describe('native Agent CLI/auth metadata', () => {
     expect(parsed.cli).toEqual(validCliMetadata());
   });
 
+  it('admits the existing local-TUI command policy without admitting arbitrary dispatch policy', () => {
+    const cli = {
+      ...validCliMetadata(),
+      commandPolicy: { daemonAutostartDefault: 'preferLocalTui' },
+    };
+    expect(PluginAgentContributionV2Schema.parse(nativeAgent(cli)).cli).toEqual(cli);
+    expect(PluginAgentContributionV2Schema.safeParse(nativeAgent({
+      ...cli, commandPolicy: { daemonAutostartDefault: 'alwaysStart' },
+    })).success).toBe(false);
+    expect(PluginAgentContributionV2Schema.safeParse(nativeAgent({
+      ...cli, commandPolicy: { ...cli.commandPolicy, command: 'arbitrary' },
+    })).success).toBe(false);
+  });
+
   it('admits declared environment-relative install directories through the strict executable metadata', () => {
     const cli = validCliMetadata();
     const configured = {

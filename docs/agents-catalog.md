@@ -456,6 +456,14 @@ arguments, credential environment keys or JSON credential paths, and whether a
 status command is noninteractive. These fields never select an Agent parser or
 transfer process, environment, filesystem, or credential custody to plugin code.
 
+In 0.3 development source, `cli.commandPolicy` also carries the closed
+`daemonAutostartDefault: 'preferLocalTui'` declaration. The same manifest
+projector supplies the command descriptor consumed by CLI dispatch for bundled
+and installed Agents. Codex declares its existing direct-terminal default here:
+an unset daemon-autostart preference stays disabled in a TTY, while an explicit
+preference, a daemon-started invocation, or malformed start-origin arguments keep
+their existing admission behavior.
+
 In the development daemon inventory, `installed` means the Agent's own resolved
 CLI executed successfully; a version string alone or an installed server dependency
 does not establish that fact. Required setup dependencies come from the selected

@@ -1,9 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { resolveExplicitSpawnScopedEnvironmentFromProcessEnv } from '@/daemon/spawn/spawnExplicitEnvKeysMarker';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 
 // Vendor process execution is external; registry, command policy, argument
 // admission and executable resolution stay real.
@@ -18,6 +20,7 @@ vi.mock('node:child_process', async (importOriginal) => ({
 import { dispatchCli } from './dispatch';
 
 describe('dispatchCli (codex local TUI default)', () => {
+  let runtimeFixture: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
   let prevEnv: string | undefined;
   let prevInTty: boolean | undefined;
   let prevOutTty: boolean | undefined;
@@ -25,6 +28,19 @@ describe('dispatchCli (codex local TUI default)', () => {
   let executable: string;
   let envScope: ReturnType<typeof createEnvKeyScope>;
   const processExit = new Error('fixture-process-exit');
+
+  beforeAll(async () => {
+    // Codex owns this command policy. A cold native-help fallback is deliberately
+    // not an admitted Agent contribution and cannot supply that policy.
+    runtimeFixture = await createAdmittedPluginRuntimeFixture({
+      controller: pluginReloadController,
+      runtimeOptions: { pluginIds: ['happier.agent.codex'] },
+    });
+  });
+
+  afterAll(async () => {
+    await runtimeFixture?.dispose();
+  });
 
   beforeEach(async () => {
     directory = await mkdtemp(join(tmpdir(), 'happier-dispatch-codex-'));

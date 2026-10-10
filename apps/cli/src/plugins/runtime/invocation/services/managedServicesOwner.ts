@@ -1825,13 +1825,12 @@ type ManagedProviderEndpointAccessFacts = Readonly<{
  */
 function readHealthyServiceEndpoint(
     service: ManagedServiceHandle,
-): Readonly<{ baseUrl: URL; startedAtMs: number }> | null {
+): Readonly<{ baseUrl: URL; startedAtMs: number | null }> | null {
     try {
         const snapshot = service.snapshot();
         if (
             snapshot.state !== 'healthy'
             || snapshot.baseUrl === null
-            || snapshot.startedAtMs === null
         ) return null;
         const read = readManagedServiceEndpointUrl(snapshot.baseUrl, {
             hostPolicy: managedServiceEndpointHostPolicyForMode(snapshot.mode),
