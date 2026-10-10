@@ -4,8 +4,8 @@
  * DO NOT IMPORT THIS FROM A COMPONENT. It touches `node:fs`; importing it from
  * anything the client bundle reaches will break the build.
  *
- * UPCOMING is defined as the unreleased registry minus the shipped one, so the
- * guard in availability.test.ts has to see both. It read the shipped tree off
+ * Advertised UPCOMING agents must exist in the unreleased registry and not in
+ * the shipped one, so availability.test.ts has to see both. It read the shipped tree off
  * disk already, but reached the unreleased one through a static relative
  * import — which only resolves when this site sits inside the unreleased
  * checkout. Once the site is promoted into the release tree to be built, that
@@ -56,7 +56,8 @@ export function resolveUnreleasedTreeRoot(): string | null {
  * `AGENT_IDS` from the unreleased packages/agents/src/generated/agentIds.ts.
  *
  * Never the authority for what the site may claim — that is SHIPPED_AGENT_IDS.
- * This set exists only so UPCOMING can be computed rather than hand-asserted.
+ * This set backs advertised UPCOMING claims; it does not require advertising
+ * every development contribution.
  */
 export function readUnreleasedAgentIds(): string[] | null {
     const root = resolveUnreleasedTreeRoot();
