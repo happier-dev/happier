@@ -249,6 +249,51 @@ const GEMINI_STATIC_MODELS = Object.freeze([
   },
 ] satisfies readonly AgentModelDescriptor[]);
 
+export const AGY_STATIC_MODELS = Object.freeze([
+  {
+    id: 'gemini-3.8-flash',
+    name: 'Gemini 3.8 Flash',
+    description: 'Fast, high-performance multimodal Gemini 3.8 Flash model.',
+    contextWindowTokens: 1_048_576,
+  },
+  {
+    id: 'gemini-3.7-flash',
+    name: 'Gemini 3.7 Flash',
+    description: 'Fast, balanced multimodal Gemini 3.7 Flash model.',
+    contextWindowTokens: 1_048_576,
+  },
+  {
+    id: 'gemini-3.6-flash',
+    name: 'Gemini 3.6 Flash',
+    description: 'Fast multimodal Gemini 3.6 Flash model.',
+    contextWindowTokens: 1_048_576,
+  },
+  {
+    id: 'gemini-3.1-pro',
+    name: 'Gemini 3.1 Pro',
+    description: 'Advanced reasoning Gemini 3.1 Pro model for complex agentic workflows.',
+    contextWindowTokens: 1_048_576,
+  },
+  {
+    id: 'claude-sonnet-5-5',
+    name: 'Claude Sonnet 5.5 (thinking)',
+    description: 'Claude Sonnet 5.5 with reasoning and deep coding capabilities.',
+    contextWindowTokens: 1_000_000,
+  },
+  {
+    id: 'claude-opus-5-5',
+    name: 'Claude Opus 5.5 (thinking)',
+    description: 'Claude Opus 5.5 with maximum reasoning and coding depth.',
+    contextWindowTokens: 1_000_000,
+  },
+  {
+    id: 'gpt-oss-120b',
+    name: 'GPT-OSS-120b',
+    description: 'Open-weights 120B reasoning model.',
+    contextWindowTokens: 131_072,
+  },
+] satisfies readonly AgentModelDescriptor[]);
+
 export const AGENT_MODEL_CONFIG: Readonly<Record<AgentId, AgentModelConfig>> = Object.freeze({
   claude: {
     supportsSelection: true,
@@ -399,7 +444,11 @@ export const AGENT_MODEL_CONFIG: Readonly<Record<AgentId, AgentModelConfig>> = O
     acpModelConfigOptionId: 'model',
     dynamicProbe: 'auto',
     defaultMode: 'default',
-    allowedModes: ['default'],
+    allowedModes: [
+      'default',
+      ...AGY_STATIC_MODELS.map((model) => model.id),
+    ],
+    staticModels: AGY_STATIC_MODELS,
   },
   fx: {
     supportsSelection: true,

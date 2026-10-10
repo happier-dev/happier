@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { AGENTS_CORE } from './manifest.js';
-import { AGENT_MODEL_CONFIG } from './models.js';
+import { AGENT_MODEL_CONFIG, getAgentStaticModels } from './models.js';
 import { AGENT_SESSION_MODE_DESCRIPTORS } from './sessionModes.js';
 import { AGENT_AUTH_PROBE_CONFIG } from './auth.js';
 import { AGENT_LOCAL_CLI_CONFIG } from './localCli.js';
@@ -49,10 +49,32 @@ describe('agy shared agent facts (EU-3)', () => {
     expect(auth).toBeDefined();
   });
 
-  it('derives agy models/modes from negotiated ACP state (no static modes)', () => {
+  it('derives agy models/modes from negotiated ACP state', () => {
     const model = AGENT_MODEL_CONFIG['agy' as keyof typeof AGENT_MODEL_CONFIG] as unknown as Record<string, unknown> | undefined;
     expect(model).toMatchObject({ supportsSelection: true, dynamicProbe: 'auto' });
     const descriptor = AGENT_SESSION_MODE_DESCRIPTORS['agy' as keyof typeof AGENT_SESSION_MODE_DESCRIPTORS] as unknown as Record<string, unknown> | undefined;
     expect(descriptor).toMatchObject({ source: 'none', semantics: 'none' });
+  });
+
+  it('defines static models for Antigravity (agy) with context window sizes', () => {
+    const agyModels = getAgentStaticModels('agy');
+    expect(agyModels.length).toBe(7);
+    expect(agyModels.map((m) => m.id)).toEqual([
+      'gemini-3.8-flash',
+      'gemini-3.7-flash',
+      'gemini-3.6-flash',
+      'gemini-3.1-pro',
+      'claude-sonnet-5-5',
+      'claude-opus-5-5',
+      'gpt-oss-120b',
+    ]);
+
+    expect(agyModels.find((m) => m.id === 'gemini-3.8-flash')?.contextWindowTokens).toBe(1_048_576);
+    expect(agyModels.find((m) => m.id === 'gemini-3.7-flash')?.contextWindowTokens).toBe(1_048_576);
+    expect(agyModels.find((m) => m.id === 'gemini-3.6-flash')?.contextWindowTokens).toBe(1_048_576);
+    expect(agyModels.find((m) => m.id === 'gemini-3.1-pro')?.contextWindowTokens).toBe(1_048_576);
+    expect(agyModels.find((m) => m.id === 'claude-sonnet-5-5')?.contextWindowTokens).toBe(1_000_000);
+    expect(agyModels.find((m) => m.id === 'claude-opus-5-5')?.contextWindowTokens).toBe(1_000_000);
+    expect(agyModels.find((m) => m.id === 'gpt-oss-120b')?.contextWindowTokens).toBe(131_072);
   });
 });
