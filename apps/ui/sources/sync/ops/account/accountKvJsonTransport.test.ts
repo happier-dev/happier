@@ -133,6 +133,21 @@ describe('Account KV JSON transport', () => {
             .rejects.toMatchObject({ code: 'account_kv_scope_retired' });
     });
 
+    it('preserves a successful CAS receipt after retirement but does not disclose a retired conflict record', async () => {
+        let current = true;
+        const request = vi.fn<ServerFetch>().mockResolvedValueOnce(json(currentness))
+            .mockImplementationOnce(async () => { current = false; return json({ success: true, results: [{ key, version: 5 }] }); });
+        const transport = createAccountKvJsonTransport({ key, credentials, request, shouldContinue: () => current });
+        await expect(transport.compareAndSet({ tabs: ['captured'] }, 4)).resolves.toEqual({ success: true, version: 5 });
+
+        current = true;
+        request.mockResolvedValueOnce(json(currentness)).mockImplementationOnce(async () => {
+            current = false;
+            return json({ success: false, errors: [{ key, error: 'version-mismatch', value: plain({ private: 'Account-A' }), version: 6 }] }, 409);
+        });
+        await expect(transport.compareAndSet({ tabs: ['captured'] }, 5)).rejects.toMatchObject({ code: 'account_kv_scope_retired' });
+    });
+
     it('does not mutate after currentness retires the captured Account', async () => {
         let current = true;
         const request = vi.fn<ServerFetch>().mockResolvedValue(json({ success: true, results: [{ key, version: 1 }] }))

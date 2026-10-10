@@ -119,7 +119,7 @@ import {
   resolveSessionListRuntimePriorityRowNextFreshnessAtMs,
 } from '../domains/session/listing/sessionListRuntimePriorityRows';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
-import { getActiveServerAccountScope, selectActiveServerAccountScopeForServer } from '../domains/scope/activeServerAccountScope';
+import { captureActiveServerAccountScopeLifetime, getActiveServerAccountScope, selectActiveServerAccountScopeForServer, type ActiveServerAccountScopeLifetime } from '../domains/scope/activeServerAccountScope';
 import {
   subscribeAppliedActiveServer,
   subscribeAppliedActiveServerRuntimeAvailability,
@@ -3463,6 +3463,38 @@ export function useActiveServerAccountScope(serverId?: string | null) {
     : selectActiveServerAccountScopeForServer(getActiveServerAccountScope(), serverId), [serverId]));
   const read = React.useCallback(() => selectScope(undefined), [selectScope]);
   return React.useSyncExternalStore(subscribe, read, read);
+}
+
+/** Live readers renew demand and subscriptions together when even the same Account is restored. */
+export function useActiveServerAccountScopeLifetime(): ActiveServerAccountScopeLifetime | null {
+  const subscribe = React.useCallback((listener: () => void) => {
+    let disposed = false;
+    let retirement: Readonly<{ dispose(): void }> | undefined;
+    const changed = () => {
+      if (disposed) return;
+      retirement?.dispose();
+      retirement = captureActiveServerAccountScopeLifetime()?.onRetire(() => {
+        // Retirement can occur during a sibling's render; the incumbent owner finishes
+        // retiring its token before demand captures the replacement. This is not a reset bus.
+        queueMicrotask(changed);
+      });
+      listener();
+    };
+    const unsubscribeProfile = getStorage().subscribe((state, previous) => {
+      if (state.profileScope !== previous.profileScope) changed();
+    });
+    const unsubscribeApplied = subscribeAppliedActiveServer(changed);
+    const unsubscribeAvailability = subscribeAppliedActiveServerRuntimeAvailability(changed);
+    changed();
+    return () => {
+      disposed = true;
+      retirement?.dispose();
+      unsubscribeProfile();
+      unsubscribeApplied();
+      unsubscribeAvailability();
+    };
+  }, []);
+  return React.useSyncExternalStore(subscribe, captureActiveServerAccountScopeLifetime, captureActiveServerAccountScopeLifetime);
 }
 
 export function useFriends() {
