@@ -329,6 +329,20 @@ Art-directed imagery and narrative surfaces may need locally owned visual tokens
 
 - Use translucency to express a floating functional layer or preserve spatial context, not as a default decoration.
 - Ensure text and controls remain legible over changing backgrounds.
+- **Floating glass is the enabled default.** Auto, Everywhere and Clear all give menus, popovers,
+  dialogs, floating sheets, tooltips and toasts the same low-tint floating material. Web uses 24px
+  frost and a fixed dark/light backdrop treatment, not a near-opaque coat or content-reactive scrim;
+  native uses adaptive Liquid Glass or the existing tinted blur fallback. Solid and Reduce
+  Transparency remove translucency. Custom per-group opacity and blur remain exactly authored.
+  The web tone preserves at least a quarter of the black-to-white sRGB range and never reduces
+  saturation; dark uses `contrast(.55) brightness(.5) saturate(1.4)` with 2% tint,
+  retaining a .275 sRGB tone band, and light mirrors the same curve around white.
+  It lifts a dark page slightly. Glass identity and that lift take priority over forcing muted
+  ink to meet extreme-backdrop contrast. Accepted limits are secondary ink over saturated
+  colourful backdrops and primary ink on selection/hover at the pure-white dark-theme extreme;
+  do not darken or flatten the material to remove those limits.
+  Surrounding chrome, sidebar and content retain each preset's own recipe. Inner rows, fields,
+  controls and dividers use ink-alpha paint, not opaque islands inside the floating plane.
 - Do not stack multiple light translucent surfaces until hierarchy and contrast collapse.
 - Larger or higher surfaces may use stronger separation than small controls.
 - Pair modal tasks with appropriate focus treatment; do not dim the world for parallel, non-blocking work.
@@ -337,6 +351,11 @@ Art-directed imagery and narrative surfaces may need locally owned visual tokens
   edge and a very low elevation (a hair of grounding, about 5% on light) sized by how far it floats.
   The raised edge is one side of the border drawn a breath different — a dark lip along the bottom on
   light, a light line along the top on dark.
+  The default soft finish adds a quiet vertical ink-alpha overlay over that role's existing fill,
+  whether solid, tinted, blurred or Liquid Glass. Flat keeps the same border and edge without that
+  overlay. Appearance selects the finish globally or per role; card-framed widgets follow the card
+  role. Nested glass surfaces in the same material group inherit the containing finish rather than
+  stacking another coat. Fields, rows, chips and ghost buttons stay flat.
 - **Flat edge in flow; the rim only for what floats.** Controls, rows, cards, grouped sheets and the
   composer use the flat edge, in every theme. Popovers, menus, dialogs, sheets over content, toasts,
   tooltips and the message bubble use the directional rim: one corner light anchored top-left,

@@ -55,12 +55,31 @@ host-owned; the public role does not introduce another material policy or a wire
 The app's policy is [`glassMaterial.ts`](../apps/ui/sources/components/ui/glass/glassMaterial.ts),
 with one Account-synced table for chrome, sidebar, content and floating surfaces. Solid removes
 glass; Auto uses the W3 layered whole-app coats on a supported desktop and floating surfaces on
-phone/browser; Everywhere uses one uniform coat. Custom opacity runs from fully transparent to
+phone/browser; Everywhere uses one coat for chrome, sidebar and content. In 0.3 development,
+Auto, Everywhere and Clear share Strong/2% floating material, independent of the surrounding
+intensity choice. Web floating paint uses 24px blur and fixed theme-dependent contrast,
+brightness and saturation in that same backdrop filter: dark `contrast(.55) brightness(.5)
+saturate(1.4)` and the inverted-input/inverted-output light mirror. The tone's sRGB band is .275
+before tint, prioritizing glass identity and a slight page lift. Accepted design limits are
+secondary ink over saturated colourful backdrops and primary ink on selection/hover at the
+pure-white dark-theme extreme; these do not justify a darker or narrower material band.
+Native Liquid Glass adapts itself and
+the existing blur fallback uses its dark/light tint. Clear also lowers the other groups' coats;
+Auto remains the default. The shared Settings and Actions material binding writes the
+same four-group table, without another persisted mode. Custom opacity runs from fully transparent to
 solid without legibility floors or contrast overrides. Code, terminal, diff, composer and message
 backgrounds inherit the content material rather than introducing near-solid reading fills.
 The phone's floating composer, including a selected workflow, instead consumes the floating
 material; ordinary dialogs and sheets use the same floating owner through `ModalCardFrame`.
 Native material changes replace only the background, preserving child input/scroll state.
+Containing material roles reach shared and core field, row and control paint through
+`HappierMaterialRoleProvider`: opaque inner fills become theme ink over glass, while authored alpha
+fills and effective solid surfaces retain their original paint. Disabled glass surfaces publish the
+solid paint decision too. Native adapters consume the same host resolver; unhosted native surfaces
+do not invent a material policy.
+Web floating motion uses the existing overlay motion owner to animate unblurred content, leaving
+the material sibling still. An opacity fade on its ancestor would establish a CSS backdrop root;
+the settled content keeps no retained transform. Plain, nonmaterial overlays keep their frame motion.
 OS Reduce Transparency preserves the stored choice but resolves solid with a visible reason.
 Desktop and Android expose the OS accessibility destination with an observable failure result;
 an honest iOS settings destination remains unresolved in the current build lane. Browsers observe
@@ -69,6 +88,14 @@ flatten. The main-window owner reports successful
 native backing before the web root clears its opaque canvas. Blur Off can retain transparent
 backing. The 0.2 enable/intensity keys remain inputs; the old device-local backdrop switch is no
 longer a second runtime decision.
+
+Mounted web roots paint HTML, body and the app root through
+[`useWebRootCanvasPresentation`](../apps/ui/sources/theme/useWebRootCanvasPresentation.ts),
+which subscribes to the canonical theme. The main window supplies its existing
+native-backing decision; embedded roots use a solid canvas, and desktop overlay
+windows retain their own transparent presentation. Theme-profile changes do not
+imperatively repaint those web canvases. Startup paint remains pre-mount, while
+native root and system-background updates remain profile-runtime-owned.
 
 ## Loading indicators
 
@@ -81,6 +108,12 @@ Core injects device-local style, speed and pause preferences, including pending 
 [`SurfaceFreshnessLine`](../apps/ui/sources/components/ui/surfaces/SurfaceFreshnessLine.tsx) presents the retained observation's time, refresh/reconnect reason and optional recovery action. Show it alongside retained content, under the header; when there is no retained content, show the appropriate loading/error/unavailable card instead. It and the public Plugin UI freshness component consume the same `HappierFreshnessLine` renderer and freshness-text formatter. Domain adapters still own observation timestamps and recovery actions.
 
 Loading narration and diagnostic disclosure belong to the composition. The card does not own retries, availability, permissions or the underlying request lifecycle. Supply truthful state from that domain's owner, stop live activity at its terminal outcome and keep technical codes behind details. Avoid a second consumer-local spinner/error parser or timer for the same work.
+
+In 0.3 development source, a configuration page can pass `pageNoticeActive` to its existing `ItemList` when one notice explains a shared failure. The page renders that notice after its identity; `usePageNoticeActive` from [`listPresentation.tsx`](../apps/ui/sources/components/ui/lists/listPresentation.tsx) lets sections omit only repeated states with that same cause. Independent failures remain visible. Nested list and floating/grouped scopes reset the fact, so menus and separate lists retain their own explanations. This is presentation context, not request state or execution authority.
+
+The Plugins page owns retained-snapshot recovery notices for its collection and adjacent detail pane. Routine refresh keeps prior content quiet; failed reads retain one actionable notice. A standalone plugin page owns its own notice, and a cold detail without prior content keeps the loading state.
+
+Retained Plugin UI projections admit renderers against the bound controller's structurally installed Host API methods, separately from live invocation availability. Same-Account retained data can keep a page mounted with context and navigation available while effects return retryable `unavailable`; it does not grant fresh execution or semantic publication authority. Account, parent or containing-document retirement clears structural admission through that same controller, rather than borrowing another mount's authority.
 
 Plugin Resource hooks retain their store snapshot when host mount activity turns inactive, release their read/watch subscription, and refresh through the same owner when activity resumes. Providers without a host activity fact keep their existing live behavior. Imperative `hostApi.watchResource` subscriptions remain caller-owned until disposal; view consumers should use the Resource hooks rather than create another presentation-driven polling lifecycle.
 

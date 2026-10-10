@@ -48,6 +48,42 @@ Happier match the editor you already stare at all day. Imports are validated
 rather than trusted: a malformed file is rejected with a reason instead of
 producing a half-applied palette.
 
+## Surface finish (0.3 development)
+
+In the 0.3 development client, **Settings → Appearance → Surface finish** offers
+**Flat** and **Soft**. Soft is the default: a gentle gradient gives cards,
+floating surfaces, the composer and buttons a little depth. Flat keeps their
+existing borders and raised edges. Fields, rows and chips keep their flat fill.
+
+Expand **Customize surfaces** to choose a finish for each role. **Auto** follows
+the global choice. Card-framed widgets follow the card choice; plain widgets
+keep their unframed presentation. These preferences are saved on this device.
+
+Soft works over glass too, preserving the backdrop through its tint or blur.
+In a custom theme, the **Soft finish** colour controls the ink and its alpha
+controls the strength. Transparent removes the gradient.
+
+## Glass (0.3 development)
+
+In the 0.3 development client, floating menus, popovers, dialogs, sheets,
+tooltips and toasts use clear glass by default whenever glass is enabled.
+**Auto**, **Everywhere** and **Clear** share that floating material; their
+surrounding chrome, sidebar and content still have different coats.
+
+On the web, the floating layer uses 24px frost and a 2% tint, with a fixed
+dark/light backdrop treatment that keeps the backdrop's colour and variation
+visible, lifting dark surfaces slightly and mirroring that treatment in light
+mode. The dark treatment uses contrast 0.55, brightness 0.5 and saturation 1.4;
+light mirrors it around white. This preserves a 0.275-wide black-to-white tone
+range before tint. Secondary text over strongly saturated colour, and selected
+or hovered primary text over pure white in dark mode, can fall below their
+contrast targets; these are accepted design limits of the clear material.
+It does not turn a bright or dark page into a uniform fill. Native
+clients use Liquid Glass where available, or their existing tinted blur.
+**Solid** and the system's **Reduce Transparency** setting remove translucency;
+an unavailable native material also falls back to solid paint. Custom per-group
+opacity and blur are left exactly as you set them.
+
 ## Loading indicator
 
 The spinner that shows while an agent works has its own picker under
