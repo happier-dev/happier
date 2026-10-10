@@ -23,6 +23,7 @@ import type {
 } from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
 import { isConnectedServiceProfileOptionSelectable } from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
 import { buildNewSessionConnectedServicesSelectionListModel } from './buildNewSessionConnectedServicesSelectionListModel';
+import { useSessionRouteSourceSections, type SessionRouteSources } from './useSessionRouteSourceSections';
 import { Icon } from '@/components/ui/icons/Icon';
 
 export type NewSessionConnectedServicesSelectionContentProps = Readonly<{
@@ -30,6 +31,7 @@ export type NewSessionConnectedServicesSelectionContentProps = Readonly<{
     profileOptionsByServiceId: ConnectedServicesProfileOptionsByServiceId;
     groupOptionsByServiceId: ConnectedServicesAccountGroupOptionsByServiceId;
     bindingsByServiceId: Readonly<Record<string, ConnectedServicesServiceBinding | undefined>>;
+    bindingsKnown?: boolean;
     teamCredentialResources?: readonly TeamCredentialResourceCatalogEntryV1[];
     teamCredentialResourceCurrentKeys?: ReadonlySet<string>;
     teamNameById?: Readonly<Record<string, string>>;
@@ -48,6 +50,10 @@ export type NewSessionConnectedServicesSelectionContentProps = Readonly<{
     // serviceId, and modal hosts (default-auth picker) route per service.
     // Existing `() => void` callers stay assignable.
     onOpenSettings: (serviceId: string) => void;
+    /** Leads the list (the running session's pending route change); the list keeps the height left over. */
+    topContent?: React.ReactNode;
+    /** The "Runs through" popover also names the Agent's Gateways and Providers; other hosts omit it. */
+    routeSources?: SessionRouteSources;
     /** Close the hosting surface (popover/modal) — e.g. Escape inside the list. */
     requestClose?: () => void;
     maxHeight: number;
@@ -156,6 +162,7 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
             profileOptionsByServiceId: props.profileOptionsByServiceId,
             groupOptionsByServiceId: props.groupOptionsByServiceId,
             bindingsByServiceId: props.bindingsByServiceId,
+            bindingsKnown: props.bindingsKnown,
             teamCredentialResources: props.teamCredentialResources,
             teamCredentialResourceCurrentKeys: props.teamCredentialResourceCurrentKeys,
             teamNameById: props.teamNameById,
@@ -183,6 +190,7 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
         });
     }, [
         props.bindingsByServiceId,
+        props.bindingsKnown,
         openSettings,
         props.allowDefaultProfileFallback,
         props.defaultProfileIdByServiceId,
@@ -205,16 +213,37 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
         setBindingForService,
     ]);
 
+    const routeSourceSections = useSessionRouteSourceSections(props.routeSources);
+    const rootStep = React.useMemo(() => routeSourceSections.length === 0 ? listModel.rootStep : {
+        ...listModel.rootStep,
+        sections: [...listModel.rootStep.sections, ...routeSourceSections],
+    }, [listModel.rootStep, routeSourceSections]);
+
+    const [topContentHeight, setTopContentHeight] = React.useState(0);
+    const hasTopContent = Boolean(props.topContent);
+    const listMaxHeight = hasTopContent ? Math.max(0, props.maxHeight - topContentHeight) : props.maxHeight;
+
     return (
         <View style={[styles.container, resolvePopoverHeightStyle(props.maxHeight)]}>
+            {hasTopContent ? (
+                <View
+                    style={styles.topContent}
+                    onLayout={(event) => {
+                        const height = Math.round(event.nativeEvent.layout.height);
+                        setTopContentHeight((current) => current === height ? current : height);
+                    }}
+                >
+                    {props.topContent}
+                </View>
+            ) : null}
             <SelectionList
                 testID="new-session.connected-services.selection-list"
-                rootStep={listModel.rootStep}
+                rootStep={rootStep}
                 selectedOptionId={listModel.selectedOptionId}
                 // One radio choice per service, drawn by each row's leading mark; the list-level
                 // check would mark only the first service's choice.
                 selectionMark="none"
-                maxHeight={props.maxHeight}
+                maxHeight={listMaxHeight}
                 heightBehavior={resolvePopoverSelectionListHeightBehavior()}
                 keyboardHintsEnabled={false}
                 onRequestClose={props.requestClose ?? (() => {})}
@@ -229,5 +258,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         width: '100%',
         backgroundColor: theme.colors.background.canvas,
         flexShrink: 1,
+    },
+    topContent: {
+        flexShrink: 0,
+        paddingHorizontal: theme.margins.sm,
+        paddingTop: theme.margins.sm,
     },
 }));

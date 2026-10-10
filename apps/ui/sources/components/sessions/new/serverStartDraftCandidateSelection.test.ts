@@ -8,6 +8,19 @@ import {
 } from './serverStartDraftCandidateSelection';
 
 describe('Session server-start candidate selection', () => {
+    it('uses settled exact-machine absence for both candidate readiness and its machine caption', () => {
+        const stale = createMachineFixture({ id: 'machine-gone', active: true, activeAt: Date.now() });
+        const other = createMachineFixture({ id: 'machine-other' });
+        const candidate = { projectKey: { id: 'project-gone' }, serverId: 'server-a', machineId: stale.id,
+            rootPath: '/repo', reachable: true, worktrees: [] };
+        const context = { activeServerId: 'server-a', activeMachines: [stale],
+            machineListByServerId: { 'server-a': [other] }, machineListStatusByServerId: { 'server-a': 'idle' as const } };
+        expect(resolveSessionServerStartCandidateSelection({ mountedTarget: candidate, ...context })).toMatchObject({
+            machine: null, machineReady: false,
+        });
+        expect(presentSessionServerStartCandidate({ candidate, ...context })).toEqual({ title: '/repo', subtitle: undefined });
+    });
+
     it('keeps the selected server, machine, path, and readiness on one candidate', () => {
         const mountedMachine = createMachineFixture({
             id: 'shared-machine-id',

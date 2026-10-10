@@ -93,6 +93,17 @@ const { SessionModelPicker } = await import('./SessionModelPicker');
 const { NewSessionModelSelectionContent } = await import('@/components/sessions/new/components/NewSessionModelSelectionContent');
 
 describe('SessionModelPicker — the popup pattern survives every selection, single column', () => {
+    it('keeps the selected model controls inside its own row and withdraws them for provider models', async () => {
+        const element = (selected: typeof nativeSelection | typeof providerSelection) => <SessionModelPicker
+            agentTargetKey="agent:happier.agent.codex/codex" nativeModels={[{ value: 'gpt-5.6-sol', label: '5.6 Sol' }]}
+            providerGroups={providerGroups} providerProjectionAuthoritative selected={selected} effectiveLabel="5.6 Sol"
+            selectedOptionControls={optionControls}
+            onSelectOptionControlValue={() => {}} onSelect={() => {}} />;
+        const screen = await renderScreen(element(nativeSelection));
+        expect(screen.findByTestId('model-picker-overlay-selection-list')?.findAllByProps({ testID: CONTROLS_TEST_ID }).length).toBeGreaterThan(0);
+        await screen.update(element(providerSelection));
+        expect(screen.findByTestId(CONTROLS_TEST_ID)).toBeNull();
+    });
     it('keeps cached choices usable and exposes a failed discovery in the shared picker', async () => {
         const screen = await renderScreen(<NewSessionModelSelectionContent
             modelOptions={[{ value: 'cached-model', label: 'Cached model', description: '' }]}

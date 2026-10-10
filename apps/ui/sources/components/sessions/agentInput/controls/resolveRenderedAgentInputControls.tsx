@@ -10,6 +10,7 @@ export function resolveRenderedAgentInputControls(params: Readonly<{
     coreControlNodesById: ControlNodesById;
     extraControlNodesById: ControlNodesById;
     extraChips: readonly React.ReactNode[];
+    singleRow?: boolean;
     /**
      * Collapsed layout only: the controls the host keeps on its bar, in bar order. Everything
      * else is reached from the actions menu (which omits these). Unset: every control shows.
@@ -18,6 +19,7 @@ export function resolveRenderedAgentInputControls(params: Readonly<{
 }>): Readonly<{
     chips: readonly React.ReactNode[];
     secondaryLeadingControls: readonly React.ReactNode[];
+    hasPermissionControl: boolean;
 }> {
     const controlNodesById: ControlNodesById = {
         ...params.coreControlNodesById,
@@ -31,6 +33,7 @@ export function resolveRenderedAgentInputControls(params: Readonly<{
     const controlLines = resolveAgentInputControlLines({
         layout: params.layout,
         controlIds,
+        singleRow: params.singleRow,
     });
 
     const resolveControlNodes = (ids: readonly AgentInputControlId[]) =>
@@ -50,5 +53,9 @@ export function resolveRenderedAgentInputControls(params: Readonly<{
     return {
         chips,
         secondaryLeadingControls,
+        hasPermissionControl: (params.layout === 'collapsed'
+            ? params.barControlIds ?? controlLines.collapsed
+            : [...controlLines.primary, ...controlLines.secondary]).includes('permission')
+            && (controlNodesById.permission?.length ?? 0) > 0,
     };
 }

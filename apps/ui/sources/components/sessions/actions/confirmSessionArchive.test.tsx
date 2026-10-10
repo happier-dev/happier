@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { getStorage } from '@/sync/domains/state/storage';
 import { archiveSessionReports } from './confirmSessionArchive';
 import type { SessionActionExecutionContext } from './sessionActionTypes';
@@ -11,7 +12,7 @@ vi.mock('@/modal', async () => {
 });
 
 afterEach(() => {
-    getStorage().setState({ sessions: {} });
+    getStorage().setState({ sessions: {}, sessionListRowsByServerId: {} });
 });
 
 describe('archiveSessionReports', () => {
@@ -21,7 +22,9 @@ describe('archiveSessionReports', () => {
         const unqualified = createSessionFixture({ id: 'unqualified', reportsTo: { sessionId: 'lead' } });
         const archived = createSessionFixture({ id: 'archived', serverId: 'home-a', reportsTo: { sessionId: 'lead' }, archivedAt: 4 });
         const grandchild = createSessionFixture({ id: 'grandchild', serverId: 'home-a', reportsTo: { sessionId: 'child' } });
-        getStorage().setState({ sessions: { child, otherHome, unqualified, archived, grandchild } });
+        // The report was never opened: ordinary list hydration still has to make cascade reachable.
+        getStorage().setState({ sessions: { otherHome, unqualified, archived, grandchild },
+            sessionListRowsByServerId: { 'home-a': { child: buildSessionListRenderableFromSession(child) } } });
         const archivedAddresses: Array<{ sessionId: string; serverId: string | null | undefined }> = [];
         const context: SessionActionExecutionContext = {
             operations: {

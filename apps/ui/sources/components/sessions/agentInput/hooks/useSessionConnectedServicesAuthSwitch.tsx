@@ -1,5 +1,9 @@
 import * as React from 'react';
+import { presentNativeRouteSourceLabel, presentSessionRouteChange, presentSessionRouteChip, resolveSessionRoutePresentation, type SessionRoutePresentationInput } from '@/providers/session/resolveSessionRoutePresentation';
 import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
+import { selectConnectedMetadataLabels, useConnectedMetadataCatalog } from '@/hooks/server/connectedServices/useConnectedMetadataCatalog';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { useConnectedAccountCatalog } from '@/sync/store/settings/useConnectedAccountCatalog';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import type {
@@ -14,6 +18,7 @@ import type {
 } from '@happier-dev/protocol/teams';
 import { ConnectedAccountServiceKeySchema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { projectAgentConnectedAccountPurposeDefaultsToSessionBindings, resolveAgentConnectedAccountPurposeDefaults } from '@happier-dev/protocol/account/settings/connected-services';
 
 import type { AgentInputExtraActionChip, AgentInputStatusBadge } from '@/components/sessions/agentInput/agentInputContracts';
 import type { AgentInputContentPopoverRenderArgs } from '@/components/sessions/agentInput/components/AgentInputContentPopover';
@@ -28,10 +33,16 @@ import {
 } from '@/sync/domains/connectedServices/resolveConnectedServiceProfileActionRoute';
 import { useProjectedConnectedServicesRegistry } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { NewSessionConnectedServicesSelectionContent } from '@/components/sessions/new/components/NewSessionConnectedServicesSelectionContent';
+import type { SessionRouteSources } from '@/components/sessions/new/components/useSessionRouteSourceSections';
+import { SessionRoutePendingChange, type SessionRoutePendingChangeProps } from '@/components/sessions/agentInput/components/SessionRoutePendingChange';
 import { useTeamCredentialSelectionCoordinator } from '@/components/sessions/teamCredentials/useTeamCredentialSelectionCoordinator';
 import { buildConnectedServicesBindingsPayload } from '@/components/sessions/new/modules/connectedServicesNewSessionBindings';
 import { resolveQualifiedConnectedServiceRegistryDisplayName } from '@/components/settings/connectedServices/model/resolveConnectedServiceDisplayName';
-import { resolveConnectedServicesAuthLabel } from '@/components/settings/connectedServices/model/resolveConnectedServicesAuthLabel';
+import { resolveConnectedServicesAuthLabel, resolveConnectedServicesAuthWarningTranslationKey } from '@/components/settings/connectedServices/model/resolveConnectedServicesAuthLabel';
+import { ActionListSection } from '@/components/ui/lists/ActionListSection';
+import { buildConnectedAccountPurposeTargetChoices } from '@/sync/domains/connectedServices/connectedAccountPurposeTargetChoices';
+import { getConnectedAccountAuthentication } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import type { Settings } from '@/sync/domains/settings/settings';
 import { teamCredentialDetailPath } from '@/components/settings/teams/teamsRoutes';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { Modal } from '@/modal';
@@ -71,6 +82,9 @@ type SessionConnectedServicesAuthSwitchDisabledReason =
     | 'read_only';
 
 export type SessionConnectedServicesAuthSwitchResult = Readonly<{
+    routePresentation: ReturnType<typeof resolveSessionRoutePresentation> | null;
+    /** The applied account or pool the Agent's own models run through; null for its own sign-in. */
+    nativeSourceLabel: string | null;
     connectedServicesAuthChip: AgentInputExtraActionChip | null;
     statusBadges: ReadonlyArray<AgentInputStatusBadge>;
     restartState: SessionConnectedServicesAuthSwitchRestartState;
@@ -411,20 +425,34 @@ function buildExpectedGroupGenerationByServiceId(params: Readonly<{
 }
 
 export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
+    route?: Omit<SessionRoutePresentationInput, 'native'>;
+    /** The session Agent's Gateways and Providers for the "Runs through" popover; omitted, it names none. */
+    routeSources?: SessionRouteSources;
+    /**
+     * The session's existing restart for a changed route, offered from the popover's Now / Next block.
+     * `restart` is absent while the session has no restart to run for the pending change.
+     */
+    pendingRouteRestart?: Readonly<{ agentName: string; restart?: () => void | Promise<void>; disabled?: boolean }> | null;
     sessionId: string;
     agentId: string | null | undefined;
     machineId: string | null | undefined;
     serverId?: string | null;
     connectedAccounts: readonly PluginProjectedAgentConnectedAccountPurposeV2[];
     agentIdentity?: PluginContributionIdentityV1 | null;
+    armedContinuationAgent?: Readonly<{
+        agentId: string;
+        agentIdentity: PluginContributionIdentityV1 | null;
+        connectedAccounts: readonly PluginProjectedAgentConnectedAccountPurposeV2[];
+    }> | null;
     teamCredentialResources?: readonly TeamCredentialResourceCatalogEntryV1[];
     teamCredentialResourceCurrentKeys?: ReadonlySet<string>;
     teamNameById?: Readonly<Record<string, string>>;
     sessionMetadata: unknown;
     settings: {
-        connectedServicesProfileLabelByKey: Record<string, string | undefined>;
         connectedServicesDefaultProfileByServiceId: Record<string, string | undefined>;
         connectedServicesProviderStateSharingSettingsV1?: unknown;
+        connectedServicesDefaultAuthByAgentIdV1?: Settings['connectedServicesDefaultAuthByAgentIdV1'];
+        connectedServicesAdditionalDefaultAuthByAgentIdV1?: Settings['connectedServicesAdditionalDefaultAuthByAgentIdV1'];
     };
     switchingDisabledReason: SessionConnectedServicesAuthSwitchDisabledReason | null;
     sessionActive?: boolean;
@@ -434,6 +462,13 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
 }>): SessionConnectedServicesAuthSwitchResult {
     const accountProfile = useProfile();
     const { present } = useConnectedAccountIdentityPrivacy();
+    const needsConnectedLabels = params.connectedAccounts.length > 0 || Boolean(params.armedContinuationAgent?.connectedAccounts.length);
+    const { binding } = useServerCredentialAccountScopeBinding(needsConnectedLabels ? params.serverId : null);
+    const armedPurposeCatalog = useConnectedAccountCatalog('purposes', !params.armedContinuationAgent
+        ? null
+        : params.serverId ? binding?.scope ?? null : undefined);
+    const labelsByKey = useConnectedMetadataCatalog(!needsConnectedLabels ? null
+        : params.serverId ? binding?.scope ?? null : undefined, selectConnectedMetadataLabels);
     const router = useRouter();
     const connectedServicesRegistry = useProjectedConnectedServicesRegistry();
     const coordinateTeamCredentialSelection = useTeamCredentialSelectionCoordinator(params.serverId);
@@ -473,19 +508,20 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
             optionsByServiceId: buildQualifiedConnectedAccountProfileOptionsByServiceId({
             accounts: accountProfile?.connectedAccountsV4 ?? [],
             supportedServiceIds: supportedConnectedServiceIds,
-            labelsByKey: params.settings.connectedServicesProfileLabelByKey,
+            labelsByKey,
             presentIdentity: present,
             }),
             connectedAccounts: params.connectedAccounts,
         })
-    ), [accountProfile?.connectedAccountsV4, params.connectedAccounts, params.settings.connectedServicesProfileLabelByKey, supportedConnectedServiceIds, present]);
+    ), [accountProfile?.connectedAccountsV4, params.connectedAccounts, labelsByKey, supportedConnectedServiceIds, present]);
 
     const groupOptionsByServiceId = React.useMemo(() => (
         buildQualifiedConnectedAccountGroupOptionsByServiceId({
             groups: accountProfile?.connectedAccountGroupsV4 ?? [],
             supportedServiceIds: supportedConnectedServiceIds,
+            labelsByKey,
         })
-    ), [accountProfile?.connectedAccountGroupsV4, supportedConnectedServiceIds]);
+    ), [accountProfile?.connectedAccountGroupsV4, labelsByKey, supportedConnectedServiceIds]);
 
     const metadataBindingsByServiceId = React.useMemo<Readonly<Record<string, ConnectedServicesServiceBinding | undefined>>>(() => (
         readSessionConnectedServiceBindings({
@@ -889,8 +925,13 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         params.switchingDisabledReason,
     ]);
 
-    const popoverContent = React.useCallback(({ requestClose, maxHeight }: AgentInputContentPopoverRenderArgs) => (
+    const popoverContent = React.useCallback((
+        { requestClose, maxHeight }: AgentInputContentPopoverRenderArgs,
+        pendingChange?: Omit<SessionRoutePendingChangeProps, 'onKeepCurrent'> | null,
+    ) => (
         <NewSessionConnectedServicesSelectionContent
+            topContent={pendingChange ? <SessionRoutePendingChange {...pendingChange} onKeepCurrent={requestClose} /> : undefined}
+            routeSources={params.routeSources}
             supportedServiceIds={supportedConnectedServiceIds}
             profileOptionsByServiceId={profileOptionsByServiceId}
             groupOptionsByServiceId={groupOptionsByServiceId}
@@ -923,6 +964,7 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         params.teamCredentialResourceCurrentKeys,
         params.teamNameById,
         params.serverId,
+        params.routeSources,
         profileOptionsByServiceId,
         resolveOptionAvailability,
         resolveProfileActionRoute,
@@ -939,7 +981,103 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
             : t('connectedServices.fallbackName');
     }, [connectedServicesRegistry]);
 
+    const appliedNativeRoute = React.useMemo(() => {
+        const label = resolveConnectedServicesAuthLabel({
+            supportedServiceIds: supportedConnectedServiceIds, bindingsByServiceId: metadataBindingsByServiceId,
+            profileOptionsByServiceId, accountGroupOptionsByServiceId: groupOptionsByServiceId,
+            accountGroupsEnabled: accountGroupsFeatureEnabled,
+            defaultProfileIdByServiceId: params.settings.connectedServicesDefaultProfileByServiceId,
+            resolveServiceTitle, nativeLabel: t('connectedServices.authChip.nativeLabel'),
+            formatConnectedCountLabel: count => t('connectedServices.authChip.connectedCountLabel', { count }),
+        });
+        return {
+            label: label.label, connectedCount: label.connectedCount,
+            authSource: label.connectedCount === 0 ? 'native' as const : label.connectedCount === supportedConnectedServiceIds.length ? 'connected' as const : 'mixed' as const,
+        };
+    }, [params.settings.connectedServicesDefaultProfileByServiceId, supportedConnectedServiceIds,
+        metadataBindingsByServiceId, profileOptionsByServiceId, groupOptionsByServiceId, accountGroupsFeatureEnabled, resolveServiceTitle]);
+    const routePresentation = React.useMemo(() => params.route
+        ? resolveSessionRoutePresentation({ ...params.route, native: appliedNativeRoute })
+        : null, [appliedNativeRoute, params.route]);
+    const nativeSourceLabel = supportedConnectedServiceIds.length > 0 ? presentNativeRouteSourceLabel(appliedNativeRoute) : null;
+
     const connectedServicesAuthChip = React.useMemo<AgentInputExtraActionChip | null>(() => {
+        const target = params.armedContinuationAgent;
+        if (target) {
+            const serviceIds = resolveProjectedConnectedAccountServiceKeys(target.connectedAccounts);
+            if (serviceIds.length === 0) return null;
+            const defaultsReady = Boolean(target.agentIdentity && armedPurposeCatalog.status === 'ready'
+                && armedPurposeCatalog.value && !armedPurposeCatalog.stale);
+            const unavailableLabel = armedPurposeCatalog.status === 'loading' ? t('common.loading') : t('common.unavailable');
+            const defaults = target.agentIdentity && armedPurposeCatalog.value ? resolveAgentConnectedAccountPurposeDefaults({
+                    purposeBindings: armedPurposeCatalog.value,
+                    settings: defaultsReady ? params.settings : {},
+                    agentId: target.agentId,
+                    consumer: target.agentIdentity,
+                    declarations: target.connectedAccounts,
+                }) : [];
+            const bindings = projectAgentConnectedAccountPurposeDefaultsToSessionBindings(defaults);
+            const teamResourceChoicesByServiceId = Object.fromEntries(defaults.flatMap((selected) => {
+                if (!selected.teamResource) return [];
+                const serviceId = buildQualifiedPluginContributionKey(selected.service);
+                const choice = buildConnectedAccountPurposeTargetChoices({
+                    declaration: { purpose: selected.purpose.purpose, service: selected.service, required: true },
+                    selectedTarget: null,
+                    selectedTeamResource: selected.teamResource,
+                    accounts: accountProfile?.connectedAccountsV4 ?? [],
+                    groups: accountProfile?.connectedAccountGroupsV4 ?? [],
+                    labelsByKey,
+                    serviceTitle: resolveServiceTitle(serviceId),
+                    presentIdentity: present,
+                    resolveAuthentication: getConnectedAccountAuthentication,
+                    teamResources: params.teamCredentialResources,
+                    teamResourceCurrentKeys: params.teamCredentialResourceCurrentKeys,
+                    teamNameById: params.teamNameById,
+                }).find((candidate) => candidate.current);
+                return choice ? [[serviceId, choice]] : [];
+            }));
+            const label = resolveConnectedServicesAuthLabel({
+                supportedServiceIds: serviceIds,
+                bindingsByServiceId: bindings?.bindingsByServiceId ?? {},
+                profileOptionsByServiceId: applyProjectedCredentialKindRestrictions({
+                    optionsByServiceId: buildQualifiedConnectedAccountProfileOptionsByServiceId({
+                        accounts: accountProfile?.connectedAccountsV4 ?? [],
+                        supportedServiceIds: serviceIds,
+                        labelsByKey,
+                        presentIdentity: present,
+                    }),
+                    connectedAccounts: target.connectedAccounts,
+                }),
+                accountGroupOptionsByServiceId: buildQualifiedConnectedAccountGroupOptionsByServiceId({
+                    groups: accountProfile?.connectedAccountGroupsV4 ?? [],
+                    supportedServiceIds: serviceIds,
+                    labelsByKey,
+                }),
+                accountGroupsEnabled: accountGroupsFeatureEnabled,
+                defaultProfileIdByServiceId: params.settings.connectedServicesDefaultProfileByServiceId,
+                bindingPresentation: 'requested',
+                teamResourceChoicesByServiceId,
+                resolveServiceTitle,
+                nativeLabel: t('connectedServices.authChip.nativeLabel'),
+                formatConnectedCountLabel: (count) => t('connectedServices.authChip.connectedCountLabel', { count }),
+            });
+            const warningKey = resolveConnectedServicesAuthWarningTranslationKey(label.warningCodes[0]);
+            const displayLabel = defaultsReady || (armedPurposeCatalog.value && label.connectedCount > 0)
+                ? label.label : unavailableLabel;
+            return createConnectedServicesAuthActionChip({
+                label: displayLabel,
+                connectedCount: label.connectedCount,
+                authSource: !defaultsReady ? 'unknown'
+                    : label.connectedCount === 0 ? 'native' : label.connectedCount === serviceIds.length ? 'connected' : 'mixed',
+                popoverContent: () => <ActionListSection actions={[{
+                    id: 'armed-agent-auth-default', label: displayLabel,
+                    subtitle: !defaultsReady ? unavailableLabel : warningKey ? t(warningKey) : undefined,
+                    disabled: true,
+                }]} />,
+                maxHeightCap: 560, maxWidthCap: 560,
+                testID: 'session-connected-services-auth-chip',
+            });
+        }
         if (supportedConnectedServiceIds.length === 0) return null;
         const label = resolveConnectedServicesAuthLabel({
             supportedServiceIds: supportedConnectedServiceIds,
@@ -953,27 +1091,58 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
             formatConnectedCountLabel: (count) => t('connectedServices.authChip.connectedCountLabel', { count }),
         });
 
+        const authSource = label.connectedCount === 0
+            ? 'native' as const
+            : label.connectedCount === supportedConnectedServiceIds.length
+                ? 'connected' as const
+                : 'mixed' as const;
+        // "Runs through …", or "Now via …" + "Change pending" while the runtime still applies the old route.
+        const routeChip = routePresentation
+            ? presentSessionRouteChip(routePresentation, { label: label.label, authSource })
+            : null;
+        const routeChange = routePresentation && params.pendingRouteRestart
+            ? presentSessionRouteChange(routePresentation, { label: label.label })
+            : null;
+        const pendingChange = routeChange && params.pendingRouteRestart ? {
+            ...routeChange,
+            agentName: params.pendingRouteRestart.agentName,
+            onRestart: params.pendingRouteRestart.restart,
+            restartDisabled: params.pendingRouteRestart.disabled,
+        } : null;
         return createConnectedServicesAuthActionChip({
-            label: label.label,
+            label: routeChip?.label ?? label.label,
+            changePendingLabel: routeChip?.changePending ? t('connectedServices.authChip.changePending') : null,
             connectedCount: label.connectedCount,
-            authSource: label.connectedCount === 0
-                ? 'native'
-                : label.connectedCount === supportedConnectedServiceIds.length
-                    ? 'connected'
-                    : 'mixed',
-            popoverContent,
+            authSource,
+            popoverContent: pendingChange
+                ? (args: AgentInputContentPopoverRenderArgs) => popoverContent(args, pendingChange)
+                : popoverContent,
             maxHeightCap: 560,
             maxWidthCap: 560,
             testID: 'session-connected-services-auth-chip',
         });
     }, [
+        params.armedContinuationAgent,
+        armedPurposeCatalog.value,
+        armedPurposeCatalog.status,
+        armedPurposeCatalog.stale,
+        params.settings.connectedServicesDefaultAuthByAgentIdV1,
+        params.settings.connectedServicesAdditionalDefaultAuthByAgentIdV1,
+        labelsByKey,
+        params.teamCredentialResources,
+        params.teamCredentialResourceCurrentKeys,
+        params.teamNameById,
+        accountProfile,
+        present,
         accountGroupsFeatureEnabled,
         groupOptionsByServiceId,
         optimisticBindingsByServiceId,
         params.settings.connectedServicesDefaultProfileByServiceId,
         popoverContent,
+        params.pendingRouteRestart,
         profileOptionsByServiceId,
         resolveServiceTitle,
+        routePresentation,
         supportedConnectedServiceIds,
     ]);
 
@@ -1135,5 +1304,5 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         setBindingForService,
     ]);
 
-    return { connectedServicesAuthChip, statusBadges, restartState, actionableState };
+    return { routePresentation, nativeSourceLabel, connectedServicesAuthChip, statusBadges, restartState, actionableState };
 }

@@ -1,10 +1,14 @@
 import * as React from 'react';
-import { useUnistyles } from 'react-native-unistyles';
+import { View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { MENU_ROW_METRICS } from '@/components/ui/lists/itemDensityMetrics';
+import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
 import type { ExecutionRunIntent } from '@/components/sessions/runs/launcher/executionRunLauncherModel';
 import { useWorkflowDefinitionLibrary } from '@/components/workflows/library/workflowLibraryReads';
 import { formatWorkflowDefinitionContentUnavailableReason, formatWorkflowDefinitionLibraryTitle } from '@/components/workflows/presentation/workflowProblemPresentation';
@@ -18,6 +22,14 @@ const INTENT_COPY = {
     plan: { icon: 'list-checks', title: 'executionRuns.newRun.intents.plan', subtitle: 'sessionAgentActivity.roster.launch.planDescription' },
     delegate: { icon: 'arrow-elbow-down-right', title: 'executionRuns.newRun.intents.delegate', subtitle: 'sessionAgentActivity.roster.launch.delegateDescription' },
 } as const satisfies Record<ExecutionRunIntent, { icon: IconName; title: string; subtitle: string }>;
+
+/** Each built-in reads as what it does (lab `convo-W4`), from the catalog's own purpose. */
+const BUILTIN_PURPOSE_ICON: Readonly<Record<string, IconName>> = {
+    goal: 'target',
+    review: 'shield-check',
+    plan: 'list-checks',
+    pull_request: 'git-pull-request',
+};
 
 const WORKFLOW_ITEM_PREFIX = 'workflow:';
 const BUILTIN_ITEM_PREFIX = 'builtin:';
@@ -42,6 +54,8 @@ export const SessionAgentsLaunchMenu = React.memo((props: Readonly<{
     onAddTrigger?: (() => void) | null;
     /** Opens this Session's Goal control (FIN 04's one entry); absent where the session can't hold a goal. */
     onKeepGoing?: (() => void) | null;
+    /** Why agents cannot start here ("Starting agents needs ubuntu-02 online"), said once in the menu. */
+    unavailableText?: string | null;
     testID?: string;
 }>) => {
     const { theme } = useUnistyles();
@@ -111,7 +125,7 @@ export const SessionAgentsLaunchMenu = React.memo((props: Readonly<{
             category: builtInSection,
             title: tLoose(entry.titleKey),
             subtitle: tLoose(entry.descriptionKey),
-            icon: workflowIcon,
+            icon: <Icon name={BUILTIN_PURPOSE_ICON[entry.purpose] ?? 'tree-structure'} size={16} color={iconColor} />,
         }));
         // Last-known rows stay while the owner refreshes or after a failed refresh.
         for (const definition of workflowLibrary.definitions) {
@@ -236,6 +250,15 @@ export const SessionAgentsLaunchMenu = React.memo((props: Readonly<{
         else if (itemId === 'review' || itemId === 'plan' || itemId === 'delegate') launcher.openRun(itemId);
     }, [launcher, onAddTrigger, onKeepGoing, router, workflowLibrary]);
 
+    // The starts that cannot run are not drawn; one quiet note above what can still be done says why,
+    // whole: it is a sentence, not a choice, so it never truncates like a row title.
+    const unavailableNote = !canRun && props.unavailableText ? (
+        <View style={styles.note}>
+            <Icon name="lock" size={14} color={theme.colors.text.secondary} />
+            <Text testID="session-agents-launch:unavailable" style={styles.noteText}>{props.unavailableText}</Text>
+        </View>
+    ) : undefined;
+
     if (items.length === 0) return null;
 
     return (
@@ -244,6 +267,7 @@ export const SessionAgentsLaunchMenu = React.memo((props: Readonly<{
             testID={props.testID ?? 'session-agents-launch-menu'}
             open={open}
             onOpenChange={setOpen}
+            header={unavailableNote}
             items={items}
             onSelect={select}
             matchTriggerWidth={false}
@@ -264,3 +288,23 @@ export const SessionAgentsLaunchMenu = React.memo((props: Readonly<{
         </>
     );
 });
+
+const styles = StyleSheet.create((theme) => ({
+    // On the rows' text edge; secondary and a step smaller than a row title, so it reads as a note.
+    note: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        gap: 8,
+        paddingHorizontal: MENU_ROW_METRICS.insetPx + MENU_ROW_METRICS.paddingHorizontalPx,
+        paddingTop: 10,
+        paddingBottom: 6,
+    },
+    noteText: {
+        ...Typography.default(),
+        flex: 1,
+        minWidth: 0,
+        fontSize: 13,
+        lineHeight: 18,
+        color: theme.colors.text.secondary,
+    },
+}));

@@ -74,6 +74,52 @@ async function mount() {
 }
 
 describe('prompt picker: save what you sent in place (lab R1s)', () => {
+    it.each([
+        { nativeEvent: { key: 'Escape', isComposing: true } },
+        { nativeEvent: { key: 'Escape', keyCode: 229 } },
+        { nativeEvent: { key: 'Escape' }, isComposing: true },
+        { nativeEvent: { key: 'Escape' }, keyCode: 229 },
+    ])('leaves composing Escape to the input method (%j)', async (composition) => {
+        const { screen, serverId } = await mount();
+        await screen.pressByTestIdAsync(`prompt-picker-favorite:${HISTORY_ROW}`);
+        const preventDefault = vi.fn();
+        const stopPropagation = vi.fn();
+        await act(async () => { screen.findByTestId('prompt-picker-save-name')!.props.onKeyPress({ ...composition, preventDefault, stopPropagation }); });
+        expect(screen.findByTestId(`prompt-picker-save:${HISTORY_ROW}`)).not.toBeNull();
+        expect(preventDefault).not.toHaveBeenCalled();
+        expect(stopPropagation).not.toHaveBeenCalled();
+        await act(async () => { screen.findByTestId('prompt-picker-save-name')!.props.onKeyPress({ nativeEvent: { key: 'Escape' }, preventDefault, stopPropagation }); });
+        expect(screen.findByTestId(`prompt-picker-save:${HISTORY_ROW}`)).toBeNull();
+        expect(screen.findByTestId(`prompt-picker-row:${HISTORY_ROW}`)).not.toBeNull();
+        expect(harness.artifacts(serverId).list()).toHaveLength(0);
+    });
+    it('keeps focus in the name field when the platform reattaches the search input ref', async () => {
+        const { screen } = await mount();
+        const inputRef: unknown = screen.findHostByTestId('prompt-picker-search')?.props.ref;
+        if (typeof inputRef !== 'function') throw new Error('Expected the platform search input ref');
+        // Model the native/DOM input boundary, not picker logic. Ref reattachment is
+        // reachable on web; it must not repeat the opening focus after a user edits.
+        let focusedField = 'composer';
+        const searchNode = { focus: () => { focusedField = 'search'; } };
+        vi.useFakeTimers();
+        try {
+            await act(async () => { inputRef(searchNode); vi.runOnlyPendingTimers(); });
+            expect(focusedField).toBe('search');
+            await screen.pressByTestIdAsync(`prompt-picker-favorite:${HISTORY_ROW}`);
+            focusedField = 'name';
+            await act(async () => {
+                inputRef(null);
+                inputRef(searchNode);
+                vi.runOnlyPendingTimers();
+            });
+            expect(focusedField).toBe('name');
+            await screen.pressByTestIdAsync('prompt-picker-save-cancel');
+            expect(focusedField).toBe('search');
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('stars a Sent before row into a named favourite prompt where it stands, through the one save owner', async () => {
         const { screen, serverId, onApply } = await mount();
         expect(screen.findByTestId(`prompt-picker-row:${HISTORY_ROW}`)).not.toBeNull();

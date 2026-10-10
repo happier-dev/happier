@@ -336,6 +336,7 @@ function SessionAuthoringFieldControl(props: Readonly<{
             const chip = (
                 <SessionAuthoringOptionChip
                     controlId={control.field}
+                    fieldSpan="row"
                     title={control.title}
                     options={control.options}
                     selectedOptionId={control.selectedOptionId}
@@ -615,7 +616,7 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
                             ? { subtitle: control.preserved.repair, subtitleTestID: `${testIDPrefix}-${field}-repair` }
                             : {})}
                         mode="info"
-                        accessoryLayout="adaptive"
+                        accessoryLayout="stacked"
                         rightElement={rendered}
                     />
                 );

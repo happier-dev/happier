@@ -15,11 +15,6 @@ vi.mock('react-native-unistyles', async () => {
     return createUnistylesMock();
 });
 
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement('Text', props, props.children),
-}));
-
 function flattenStyle(style: unknown): Record<string, unknown> {
     if (Array.isArray(style)) {
         return style.reduce<Record<string, unknown>>((acc, entry) => ({
@@ -31,6 +26,12 @@ function flattenStyle(style: unknown): Record<string, unknown> {
 }
 
 describe('AgentInputStatusBadge', () => {
+    it('keeps required disclosure text fully visible in the composer status row', async () => {
+        const { AgentInputStatusBadge } = await import('./AgentInputStatusBadge');
+        const label = 'Full requester sign-in and computer administrator visibility';
+        const screen = await renderScreen(<AgentInputStatusBadge key="disclosure" label={label} labelNumberOfLines={0} emphasis="quiet" />);
+        expect(screen.find(node => node.props.children === label && node.props.numberOfLines === 0)).toBeTruthy();
+    });
     it('keeps quiet badges pressable while removing persistent border and background chrome', async () => {
         const onPress = vi.fn();
         const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});

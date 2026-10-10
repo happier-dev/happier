@@ -39,6 +39,8 @@ export function useNewSessionScreenPreflightState(params: Readonly<{
     cwd: string | null;
     connectedServicesBindingsPayload?: ConnectedServiceBindingsV2 | null;
     connectedServicesModelProbeCacheIdentity?: string | null;
+    /** Inherited authentication cannot be probed as Native while its catalog is unread. */
+    connectedAccountDefaultsReady?: boolean;
     /**
      * `false`: read cached probe results only and send no probe to the machine (an embedded
      * composer before the person reaches for it). Cache identity is unchanged, so the probes
@@ -56,9 +58,10 @@ export function useNewSessionScreenPreflightState(params: Readonly<{
     acpConfigOptions: ReturnType<typeof useNewSessionPreflightConfigOptionsState>['configOptions'];
     acpConfigOptionsProbeState: AcpConfigOptionsProbeState;
 }> {
-    const probesEnabled = params.pluginSettingsReadiness === null
+    const pluginSettingsReady = params.pluginSettingsReadiness === null
         || params.pluginSettingsReadiness === undefined
         || params.pluginSettingsReadiness.ready;
+    const probesEnabled = pluginSettingsReady && params.connectedAccountDefaultsReady !== false;
     const effectivePluginSettings = probesEnabled ? params.pluginSettings : null;
     const machineProbesEnabled = probesEnabled && params.machineProbesEnabled !== false;
     const operationalBackendTarget = React.useMemo(() => resolveNewSessionOperationalBackendTarget({

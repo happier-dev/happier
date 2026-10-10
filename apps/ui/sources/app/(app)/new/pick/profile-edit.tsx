@@ -9,9 +9,8 @@ import Constants from 'expo-constants';
 import { t } from '@/text';
 import { LaunchProfileEditForm } from '@/components/profiles/edit';
 import { layout } from '@/components/ui/layout/layout';
-import { useSetting, useSettingsSelector } from '@/sync/domains/state/storage';
+import { useSettingsSelector } from '@/sync/domains/state/storage';
 import { getBuiltInProfile } from '@/sync/domains/profiles/profileUtils';
-import { createEmptyCustomProfile, duplicateProfileForEdit } from '@/sync/domains/profiles/profileMutations';
 import { PopoverScope } from '@/components/ui/popover';
 import { KeyboardAwareScreen } from '@/components/ui/keyboardAvoidance';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
@@ -23,13 +22,21 @@ import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsave
 import { buildNewSessionPickerFallbackHref, pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } from '@/agents/backendCatalog/backendTargetRouteParams';
 import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
+import { useAcpCatalogForServer } from '@/sync/store/useAcpCatalog';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
 import { useNewSessionPickerRoutePresentation } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 import { readAiLaunchProfileCollection, type AiLaunchProfile } from '@happier-dev/protocol/profiles/read';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
+import { useProfileCatalog } from '@/sync/store/useProfileCatalog';
+import { useLaunchProfileEditorDraft } from '@/components/profiles/edit/useLaunchProfileEditorDraft';
 import { Icon } from '@/components/ui/icons/Icon';
 import { promptLaunchProfileUnsavedChanges, useSaveLaunchProfile } from '@/components/profiles/edit/useSaveLaunchProfile';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { useMountedRef } from '@/hooks/ui/useMountedRef';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 
 export default React.memo(function ProfileEditScreen() {
     const { theme } = useUnistyles();
@@ -50,7 +57,6 @@ export default React.memo(function ProfileEditScreen() {
         lastUsedAgent: settings.lastUsedAgent,
         lastUsedBackendTarget: settings.lastUsedBackendTarget,
         backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
-        acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
     }));
     const machineIdParam = Array.isArray(params.machineId) ? params.machineId[0] : params.machineId;
     const spawnServerIdParam = resolveSpawnServerRouteParam(Array.isArray(params.spawnServerId) ? params.spawnServerId[0] : params.spawnServerId);
@@ -60,12 +66,14 @@ export default React.memo(function ProfileEditScreen() {
         enabled: Boolean(machineIdParam),
         staleMs: 60_000,
     });
+    const { snapshot: acpCatalog } = useAcpCatalogForServer(spawnServerIdParam);
     const preferredBackendTarget = React.useMemo(() => {
+        if (!acpCatalog || acpCatalog.stale || acpCatalog.catalog.status !== 'ready') return null;
         return resolvePreferredBackendTargetFromProjection({
             lastUsedAgent: settings.lastUsedAgent,
             lastUsedBackendTarget: settings.lastUsedBackendTarget,
             backendEnabledByTargetKey: settings.backendEnabledByTargetKey ?? undefined,
-            acpCatalogSettingsV1: settings.acpCatalogSettingsV1 ?? undefined,
+            acpCatalogSnapshot: acpCatalog.catalog,
             daemonMergedProjectionInputs: daemonMergedProjection.inputs,
         });
     }, [
@@ -73,7 +81,7 @@ export default React.memo(function ProfileEditScreen() {
         settings.lastUsedAgent,
         settings.lastUsedBackendTarget,
         settings.backendEnabledByTargetKey,
-        settings.acpCatalogSettingsV1,
+        acpCatalog,
     ]);
     const roundTripFallbackTarget = React.useMemo(() => {
         return resolveRouteCloseoutFallbackTarget({
@@ -100,11 +108,12 @@ export default React.memo(function ProfileEditScreen() {
     const profileDataParam = Array.isArray(params.profileData) ? params.profileData[0] : params.profileData;
     const screenWidth = useWindowDimensions().width;
     const headerHeight = useHeaderHeight();
-    const rawProfiles = useSetting('profiles');
-    const launchProfiles = useAiLaunchProfiles(rawProfiles);
+    const launchProfiles = useAiLaunchProfiles();
+    const profileScope = useAccountSettingsScope();
     const [isDirty, setIsDirty] = React.useState(false);
     const isDirtyRef = React.useRef(false);
-    const saveRef = React.useRef<(() => boolean) | null>(null);
+    const saveRef = React.useRef<(() => boolean | Promise<boolean>) | null>(null);
+    const mountedRef = useMountedRef();
 
     React.useEffect(() => {
         isDirtyRef.current = isDirty;
@@ -128,8 +137,8 @@ export default React.memo(function ProfileEditScreen() {
         };
     }, [navigation]);
 
-    // Deserialize profile from URL params
-    const profile: AiLaunchProfile = React.useMemo(() => {
+    const catalog = useProfileCatalog(profileScope);
+    const providedProfile = React.useMemo(() => {
         if (profileDataParam) {
             try {
                 // Params may arrive already decoded (native) or URL-encoded (web / manual encodeURIComponent).
@@ -145,27 +154,17 @@ export default React.memo(function ProfileEditScreen() {
                 console.error('Failed to parse profile data:', error);
             }
         }
-        const resolveById = (id: string): AiLaunchProfile | null => (
-            launchProfiles.find((entry) => entry.id === id) ?? getBuiltInProfile(id)
-        );
-
-        if (cloneFromProfileIdParam) {
-            const base = resolveById(cloneFromProfileIdParam);
-            if (base) {
-                return duplicateProfileForEdit(base, { copySuffix: t('profiles.copySuffix') });
-            }
-        }
-
-        if (profileIdParam) {
-            const existing = resolveById(profileIdParam);
-            if (existing) {
-                return existing;
-            }
-        }
-
-        // Return empty profile for new profile creation
-        return createEmptyCustomProfile();
-    }, [cloneFromProfileIdParam, launchProfiles, profileDataParam, profileIdParam]);
+        return null;
+    }, [profileDataParam]);
+    const { draft } = useLaunchProfileEditorDraft({
+        enabled: !providedProfile && (Boolean(cloneFromProfileIdParam) || !profileIdParam),
+        cloneFrom: cloneFromProfileIdParam ?? null,
+    });
+    const saved = profileIdParam ? launchProfiles.find(entry => entry.id === profileIdParam)
+        ?? getBuiltInProfile(profileIdParam) : null;
+    const profile = providedProfile ?? (draft.status === 'ready' ? draft.profile : saved);
+    const draftSecretBindings = draft.status === 'ready' ? draft.secretBindings : undefined;
+    const loading = !profile && (draft.status === 'loading' || (!catalog || catalog.catalog.status === 'loading'));
 
     const confirmDiscard = React.useCallback(() => promptLaunchProfileUnsavedChanges(profile), [profile]);
 
@@ -191,9 +190,12 @@ export default React.memo(function ProfileEditScreen() {
     });
 
     const saveLaunchProfile = useSaveLaunchProfile();
-    const handleSave = (savedProfile: AiLaunchProfile, secretBindings?: Readonly<Record<string, string>>): boolean => {
-        const saved = saveLaunchProfile(savedProfile, secretBindings);
-        if (!saved) return false;
+    const handleSave = async (savedProfile: AiLaunchProfile, secretBindings?: Readonly<Record<string, string>>): Promise<boolean> => {
+        if (!profile) return false;
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        const saved = await saveLaunchProfile(savedProfile, secretBindings ?? draftSecretBindings);
+        if (!saved || !mountedRef.current || !lifetime?.isCurrent()
+            || !areServerAccountScopesEqual(lifetime.scope, profileScope)) return false;
         // Prevent the unsaved-changes guard from triggering on a successful save.
         isDirtyRef.current = false;
         setIsDirty(false);
@@ -221,7 +223,7 @@ export default React.memo(function ProfileEditScreen() {
         );
     }, [navigation, pickerFallbackHref, router, unsavedChangesGuard]);
 
-    const headerTitle = profile.name ? t('profiles.editProfile') : t('profiles.addProfile');
+    const headerTitle = profile?.name ? t('profiles.editProfile') : t('profiles.addProfile');
     const headerBackTitle = t('common.back');
 
     const headerLeft = React.useCallback(() => {
@@ -290,14 +292,21 @@ export default React.memo(function ProfileEditScreen() {
                     <View style={[
                         { maxWidth: layout.maxWidth, flex: 1, width: '100%', alignSelf: 'center' }
                     ]}>
-                        <LaunchProfileEditForm
+                        {!profile ? <SurfaceStateCard
+                            testID="profiles.edit.unavailable"
+                            kind={loading ? 'loading' : 'unavailable'}
+                            title={loading ? t('common.loading') : t('profilesPage.notFoundTitle')}
+                            reason={loading ? undefined : t('profilesPage.notFoundDescription')}
+                            diagnosticCode={draft.status === 'unavailable' ? draft.reason : undefined}
+                            action={loading ? undefined : { label: t('common.back'), onPress: handleCancel }}
+                        /> : <LaunchProfileEditForm
                             profile={profile}
                             machineId={machineIdParam || null}
                             onSave={handleSave}
                             onCancel={handleCancel}
                             onDirtyChange={setIsDirty}
                             saveRef={saveRef}
-                        />
+                        />}
                     </View>
                 </View>
             </KeyboardAwareScreen>

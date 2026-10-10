@@ -14,6 +14,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { createDeferred } from '@/dev/testkit';
+import { createSessionDraftCipher } from '@/sync/encryption/sessionDraftEncryption';
 
 import {
     createSessionDraftRepository,
@@ -103,6 +104,44 @@ function uuid(value: number): string {
 }
 
 describe('sessionDraftRepository', () => {
+    it('preserves unreadable retained Open custody instead of seeding over it', () => {
+        const storage = createMemoryStorage();
+        const repository = createSessionDraftRepository({ storage, cipher: plainCipher(), randomUUID: () => uuid(11), syncEnabled: false });
+        repository.writeProjectOpenDraft({ scope, draftId: uuid(10), patch: { selection: { serverId: scope.serverId } } });
+        const key = [...storage.values.keys()][0]!;
+        storage.values.set(key, '{unreadable retained custody');
+        const remounted = createSessionDraftRepository({ storage, cipher: plainCipher(), randomUUID: () => uuid(11), syncEnabled: false });
+        expect(() => remounted.writeProjectOpenDraft({ scope, draftId: uuid(10), patch: { selection: { serverId: scope.serverId } } }))
+            .toThrow('project_open_draft_unavailable');
+        expect(storage.values.get(key)).toBe('{unreadable retained custody');
+    });
+    it('retains an agent-free Open selection and uncertain effect across repository reload without a Session draft', async () => {
+        const storage = createMemoryStorage();
+        const address = { kind: 'projectOpen' as const, draftId: uuid(950) };
+        const input = { serverId: scope.serverId, machineId: 'machine', source: { kind: 'folder' as const, path: '/repo' }, materialization: { kind: 'attach' as const } };
+        let sequence = 960;
+        const repository = createSessionDraftRepository({ storage, cipher: plainCipher(), syncEnabled: false, randomUUID: () => uuid(sequence++) });
+        repository.writeProjectOpenDraft({ scope, draftId: address.draftId,
+            patch: { selection: input, uncertainInputs: [input], result: { kind: 'outcomeUnknown' } }, materializationIntent: 'seeded' });
+        await repository.flushProjectOpenDraftLocally({ scope, draftId: address.draftId });
+        const restored = createSessionDraftRepository({ storage, cipher: plainCipher(), syncEnabled: false });
+        expect(restored.getSessionDraftSnapshot(scope, address)?.document).toMatchObject({
+            v: 2, target: { kind: 'projectOpen' }, selection: { value: input },
+            uncertainInputs: { value: [input] }, result: { value: { kind: 'outcomeUnknown' } },
+        });
+        expect(restored.getSessionDraftSnapshot(scope, address)?.document).not.toHaveProperty('composer');
+        expect(restored.listNewSessionDraftProjections(scope)).toEqual([]);
+    });
+
+    it('does not admit Open after its recovery draft failed to persist', async () => {
+        const repository = createSessionDraftRepository({ storage: { ...createMemoryStorage(), flush: async () => { throw new Error('storage unavailable'); } },
+            cipher: plainCipher(), syncEnabled: false, randomUUID: () => uuid(970) });
+        const draftId = uuid(951);
+        repository.writeProjectOpenDraft({ scope, draftId, patch: { selection: null }, materializationIntent: 'seeded' });
+        await expect(repository.flushProjectOpenDraftLocally({ scope, draftId })).rejects.toThrow('storage unavailable');
+        expect(repository.getSessionDraftSnapshot(scope, { kind: 'projectOpen', draftId })?.status).toBe('error');
+    });
+
     it('moves one new-Session draft to the exact target Account before launch and retries idempotently', async () => {
         const address = { kind: 'newSession' as const, draftId: uuid(901) };
         const source = createRemote(undefined, address);
@@ -1466,6 +1505,14 @@ describe('sessionDraftRepository', () => {
             patch: { text: 'launch me', authoring: { directory: '/workspace/a' } },
             materializationIntent: 'userEdit',
         });
+        repository.writeSessionDraftLocalSupplement({ scope, address, patch: { newSessionLocalState: {
+            selectedSecretId: null,
+            sessionName: 'Consumed Bot',
+            initialSessionFacts: { bot: { kind: 'bot' }, createdAsBot: true },
+            promptStack: [{ id: 'session.instructions', enabled: true, required: true, placement: 'system_append',
+                ref: { kind: 'doc', serverId: scope.serverId, artifactId: 'consumed-instructions' } }],
+            instructionsDraft: null,
+        } } });
         await repository.flushSessionDraft({ scope, address });
         const currentness = repository.captureSessionDraftCurrentness({ scope, address });
 
@@ -1475,6 +1522,38 @@ describe('sessionDraftRepository', () => {
         expect(repository.listNewSessionDraftProjections(scope)).toEqual([]);
         expect(remote.readCurrent()).toMatchObject({ revision: 1, content: null });
         expect(vi.mocked(remote.transport.mutate).mock.calls.at(-1)?.[0]).toMatchObject({ expectedRevision: 0, content: null });
+    });
+
+    it('retains newer local Instructions through accepted launch clearing and an acknowledged draft flush', async () => {
+        const address = { kind: 'newSession', draftId: uuid(244) } as const;
+        const storage = createMemoryStorage();
+        const remote = createRemote(undefined, address);
+        const cipher = createSessionDraftCipher({ accountMode: 'plain', accountCryptoMaterial: null,
+            getSessionContext: () => null, randomBytes: length => new Uint8Array(length) });
+        const options = { storage, transport: remote.transport, cipher, syncEnabled: true,
+            randomUUID: (() => { let next = 600; return () => uuid(next++); })(), now: () => 4 };
+        const repository = createSessionDraftRepository(options);
+        repository.writeNewSessionDraft({ scope, draftId: address.draftId,
+            patch: { text: 'accepted turn', authoring: { directory: '/workspace/a' } },
+            materializationIntent: 'userEdit' });
+        repository.writeSessionDraftLocalSupplement({ scope, address,
+            patch: { newSessionLocalState: { selectedSecretId: null, instructionsDraft: null } } });
+        expect(await repository.flushSessionDraft({ scope, address })).toEqual({ status: 'clean' });
+        const currentness = repository.captureSessionDraftLaunchCurrentness({ scope, address, userAttemptId: 'accepted-launch' });
+        if (!currentness) throw new Error('Expected accepted launch capture');
+        const instructionsDraft = { title: 'Next remit', markdown: 'New Instructions authored while Send is pending.' };
+        repository.writeSessionDraftLocalSupplement({ scope, address,
+            patch: { newSessionLocalState: { selectedSecretId: null, instructionsDraft } } });
+
+        expect(await repository.clearSessionDraftCurrentness({ scope, address, currentness })).toBe(true);
+        repository.clearSessionDraftLaunchCurrentness({ scope, address, userAttemptId: 'accepted-launch' });
+        expect(await repository.flushSessionDraft({ scope, address })).toEqual({ status: 'clean' });
+
+        const reopened = createSessionDraftRepository(options).getSessionDraftSnapshot(scope, address);
+        expect(reopened).toMatchObject({ status: 'clean', materialized: true,
+            document: { composer: { text: { value: '' } } },
+            localSupplement: { newSessionLocalState: { instructionsDraft } } });
+        expect(reopened?.localSupplement.launchCurrentnessCapture).toBeUndefined();
     });
 
     it('removes a local-only new-session replica when launch currentness clears every meaningful field', async () => {
@@ -2176,6 +2255,56 @@ describe('sessionDraftRepository', () => {
             document: { composer: { text: { value: 'hello world' } } },
         });
         expect(transport.mutate).toHaveBeenCalledTimes(2);
+    });
+
+    it('retains local Instructions authored while accepted launch tombstone acknowledgement is in flight', async () => {
+        const address = { kind: 'newSession', draftId: uuid(650) } as const;
+        const storage = createMemoryStorage();
+        const cipher = createSessionDraftCipher({ accountMode: 'plain', accountCryptoMaterial: null,
+            getSessionContext: () => null, randomBytes: length => new Uint8Array(length) });
+        const remote = createRemote(undefined, address);
+        const tombstoneSubmitted = createDeferred<void>();
+        const tombstoneReleased = createDeferred<void>();
+        const transport: SessionDraftRepositoryTransport = { ...remote.transport,
+            mutate: vi.fn(async request => {
+                if (request.content === null) {
+                    tombstoneSubmitted.resolve();
+                    await tombstoneReleased.promise;
+                }
+                return remote.transport.mutate(request);
+            }),
+        };
+        const options = { storage, transport, cipher, syncEnabled: true,
+            randomUUID: (() => { let next = 651; return () => uuid(next++); })(), now: () => 4 };
+        const repository = createSessionDraftRepository(options);
+        repository.writeNewSessionDraft({ scope, draftId: address.draftId, patch: { text: 'accepted turn' },
+            materializationIntent: 'userEdit' });
+        repository.writeSessionDraftLocalSupplement({ scope, address,
+            patch: { newSessionLocalState: { selectedSecretId: null, instructionsDraft: null } } });
+        expect(await repository.flushSessionDraft({ scope, address })).toEqual({ status: 'clean' });
+        const currentness = repository.captureSessionDraftLaunchCurrentness({ scope, address, userAttemptId: 'accepted-launch' });
+        if (!currentness) throw new Error('Expected accepted launch capture');
+
+        const clearing = repository.clearSessionDraftCurrentness({ scope, address, currentness });
+        await tombstoneSubmitted.promise;
+        const instructionsDraft = { title: 'Next remit', markdown: 'Private authoring after accepted clear began.' };
+        repository.writeSessionDraftLocalSupplement({ scope, address,
+            patch: { newSessionLocalState: { ...repository.getSessionDraftSnapshot(scope, address)?.localSupplement.newSessionLocalState,
+                instructionsDraft } } });
+        tombstoneReleased.resolve();
+        expect(await clearing).toBe(true);
+        repository.clearSessionDraftLaunchCurrentness({ scope, address, userAttemptId: 'accepted-launch' });
+        expect(await repository.flushSessionDraft({ scope, address })).toEqual({ status: 'clean' });
+
+        const reopened = createSessionDraftRepository(options);
+        expect(reopened.getSessionDraftSnapshot(scope, address)).toMatchObject({ status: 'clean', materialized: true,
+            document: { composer: { text: { value: '' } } },
+            localSupplement: { newSessionLocalState: { instructionsDraft } } });
+        await reopened.materializeExact(scope, address);
+        expect(reopened.getSessionDraftSnapshot(scope, address)?.localSupplement.newSessionLocalState?.instructionsDraft)
+            .toEqual(instructionsDraft);
+        expect(reopened.listNewSessionDraftProjections(scope)).toHaveLength(1);
+        expect(JSON.stringify(remote.readCurrent()?.content)).not.toContain(instructionsDraft.markdown);
     });
 
     it('reconciles a remotely tombstoned row missing from the active snapshot', async () => {

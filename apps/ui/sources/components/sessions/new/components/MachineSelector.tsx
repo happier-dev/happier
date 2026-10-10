@@ -7,14 +7,21 @@ import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropd
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { getMachineDisplayName, resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
+import { describeMachineSharedOwnership } from '@/sync/domains/machines/machineOwnershipGroups';
 import { t } from '@/text';
 import { resolveMachinePickerPresence } from './resolveMachinePickerPresence';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { buildMachineSelectionBuckets } from './machineSelection/buildMachineSelectionBuckets';
+import type { MachineDestinationPurposeV1 } from '@happier-dev/protocol/machines/pools';
+import { describeMachineDestinationEligibility, resolveMachineDestinationPurposeEligibility, type MachineDestinationPlacementFacts } from './machineSelection/buildMachineDestinationModel';
+import { useMachineDestinationWorkerStatus, type MachineDestinationWorkerPlacement } from '@/components/sessions/new/hooks/machines/useMachineDestinationWorkerStatus';
 
 const EMPTY_MACHINES: readonly Machine[] = [];
 
 export interface MachineSelectorProps {
+    purpose?: MachineDestinationPurposeV1;
+    workerPlacement?: MachineDestinationWorkerPlacement;
+    resolveMachinePlacementFacts?: (machine: Machine, serverId: string) => MachineDestinationPlacementFacts;
     machines: ReadonlyArray<Machine>;
     selectedMachine: Machine | null;
     recentMachines?: ReadonlyArray<Machine>;
@@ -63,6 +70,9 @@ export interface MachineSelectorProps {
 }
 
 export function MachineSelector({
+    purpose = 'session',
+    workerPlacement,
+    resolveMachinePlacementFacts: suppliedMachinePlacementFacts,
     machines,
     selectedMachine,
     recentMachines = [],
@@ -92,6 +102,13 @@ export function MachineSelector({
 }: MachineSelectorProps) {
     const { theme } = useUnistyles();
     const [dropdownOpen, setDropdownOpen] = React.useState(false);
+    const demandedWorkerFacts = useMachineDestinationWorkerStatus({
+        purpose,
+        workerPlacement: presentation === 'dropdown' ? workerPlacement : undefined,
+        groups: [{ serverId: serverId ?? '', machines, loading: false, signedOut: false }],
+    });
+    const resolveMachinePlacementFacts = presentation === 'dropdown' && workerPlacement && (purpose === 'finite' || purpose === 'service-start')
+        ? demandedWorkerFacts : suppliedMachinePlacementFacts;
 
     const searchPlaceholder = searchPlaceholderProp ?? t('newSession.machinePicker.searchPlaceholder');
     const recentSectionTitle = recentSectionTitleProp ?? t('newSession.machinePicker.recentTitle');
@@ -170,14 +187,17 @@ export function MachineSelector({
         iconName: IconName,
     ): DropdownMenuItem => {
         const presence = resolveMachinePickerPresence(machine);
-        const unavailable = !presence.selectable;
+        const eligibility = resolveMachineDestinationPurposeEligibility(purpose, resolveMachinePlacementFacts?.(machine, serverId ?? ''), machine);
+        const purposeEligible = eligibility.eligible;
+        const unavailable = !presence.selectable || !purposeEligible;
         return {
             id: machine.id,
             testID: getMachineOptionTestID(machine),
             title: machineName(machine),
-            subtitle: unavailable ? t('common.unavailable') : t('status.online'),
+            subtitle: [describeMachineSharedOwnership(machine), describeMachineDestinationEligibility(eligibility, machine)
+                ?? (unavailable ? t('common.unavailable') : t('status.online'))].filter(Boolean).join(' · '),
             category,
-            disabled: disableOfflineMachines && unavailable,
+            disabled: !purposeEligible || (disableOfflineMachines && unavailable),
             icon: (
                 <Icon
                     name={iconName}
@@ -187,7 +207,7 @@ export function MachineSelector({
             ),
             rightElement: renderFavoriteToggle(machine, isFavorite),
         };
-    }, [disableOfflineMachines, getMachineOptionTestID, renderFavoriteToggle, theme.colors.text.secondary]);
+    }, [disableOfflineMachines, getMachineOptionTestID, purpose, resolveMachinePlacementFacts, serverId, renderFavoriteToggle, theme.colors.text.secondary]);
 
     const dropdownItems = React.useMemo(() => {
         const favoriteItems = showFavorites
@@ -206,18 +226,17 @@ export function MachineSelector({
                 'clock',
             ))
             : [];
-        const allItems = visibleAllMachines.map((machine) => toDropdownItem(
-            machine,
-            allSectionTitle,
-            favoriteMachineIdSet.has(machine.id),
-            'desktop',
-        ));
+        const allItems = bucketModel.buckets.filter((bucket) => bucket.id === 'all' || bucket.id === 'shared').flatMap((bucket) =>
+            bucket.machines.map((machine) => toDropdownItem(machine, bucket.id === 'shared'
+                ? t('machines.destinations.shared', { team: bucket.custodian?.displayName || t('common.unknown') })
+                : allSectionTitle, favoriteMachineIdSet.has(machine.id), 'desktop')));
 
         return favoriteGroupPlacement === 'beforeRecent'
             ? [...favoriteItems, ...recentItems, ...allItems]
             : [...recentItems, ...favoriteItems, ...allItems];
     }, [
         allSectionTitle,
+        bucketModel.buckets,
         favoriteGroupPlacement,
         favoriteMachineIdSet,
         favoritesSectionTitle,
@@ -241,6 +260,7 @@ export function MachineSelector({
                     onSelect={(machineId) => {
                         const machine = machineById.get(machineId);
                         if (!machine) return;
+                        if (!resolveMachineDestinationPurposeEligibility(purpose, resolveMachinePlacementFacts?.(machine, serverId ?? ''), machine).eligible) return;
                         if (disableOfflineMachines && !resolveMachinePickerPresence(machine).selectable) return;
                         onSelect(machine);
                     }}
@@ -248,7 +268,7 @@ export function MachineSelector({
                     variant="selectable"
                     search={showSearch}
                     searchPlaceholder={searchPlaceholder}
-                    showCategoryTitles={showFavorites || showRecent}
+                    showCategoryTitles={showFavorites || showRecent || visibleAllMachines.some((machine) => machine.isShared)}
                     matchTriggerWidth
                     connectToTrigger
                     popoverBoundaryRef={popoverBoundaryRef}
@@ -272,6 +292,7 @@ export function MachineSelector({
     }
 
     return <MachineSelectorList
+        purpose={purpose} workerPlacement={workerPlacement} resolveMachinePlacementFacts={resolveMachinePlacementFacts}
         machines={machines} selectedMachine={selectedMachine} recentMachines={recentMachines} favoriteMachines={favoriteMachines}
         onSelect={onSelect} onToggleFavorite={onToggleFavorite} showFavorites={showFavorites} showRecent={showRecent}
         showSearch={showSearch} showCliGlyphs={showCliGlyphs} autoDetectCliGlyphs={autoDetectCliGlyphs} serverId={serverId}
@@ -304,6 +325,7 @@ function MachineSelectorList(props: MachineSelectorProps) {
         if (original) props.onToggleFavorite?.(original);
     }, [props.machines, props.onToggleFavorite]);
     const model = useMachineSelectionListModel({
+        purpose: props.purpose ?? 'session', workerPlacement: props.workerPlacement, resolveMachinePlacementFacts: props.resolveMachinePlacementFacts,
         groups, selectedMachine: props.selectedMachine, selectedServerId: groupServerId,
         recentMachines: props.recentMachines ?? EMPTY_MACHINES, favoriteMachines: props.favoriteMachines ?? EMPTY_MACHINES,
         onSelectMachine: selectMachine, onSelectScopedMachine: selectMachine,

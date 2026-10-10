@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import type { PersistedBackendTargetRefV2, SessionModelSelectionV1 } from '@happier-dev/protocol';
+import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
 
 import {
     NewSessionEngineOptionDetail,
@@ -39,6 +40,7 @@ export function buildSessionAgentPickerDetailContent(params: Readonly<{
     capabilityServerId: string;
     cwd: string | null;
     settings: Settings;
+    connectedServices?: ConnectedServiceBindingsV2 | null;
     refreshProbe?: OptionPickerProbeState | null;
     /**
      * One short line under the section label saying what choosing here means on
@@ -61,6 +63,7 @@ export function buildSessionAgentPickerDetailContent(params: Readonly<{
         backendTarget: params.backendTarget,
         settings: params.settings,
         runtimeCarrierAgentId: params.runtimeCarrierAgentId ?? null,
+        connectedServices: params.connectedServices,
     });
 
     return (

@@ -15,7 +15,7 @@ import {
 import { getSessionDraftSnapshot, writeExistingSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 
 import { useSessionRecipientState } from './useSessionRecipientState';
-import { createScmDiffSummaryResultOperations } from '@/sync/ops/scmDiffSummary/results';
+import { createScmDiffSummaryResultOperationsWithTransport as createScmDiffSummaryResultOperations } from '@/dev/testkit/harness/scmActionTransport';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 

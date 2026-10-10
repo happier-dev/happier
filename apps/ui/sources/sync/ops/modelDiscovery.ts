@@ -13,9 +13,11 @@ import {
 } from '@/sync/domains/models/dynamicModelProbeCache';
 import { parsePreflightModelListFromProbeModelsResult } from '@/sync/domains/models/parsePreflightModelListFromProbeModelsResult';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
+import { invokeAgentInventoryProbeAction } from './actions/agentInventoryActionDeps';
+import type { MachineCapabilitiesInvokeResult } from './capabilities';
 
 /** Shared discovery lifecycle for model pickers and voice catalog requests. */
-export async function discoverMachineModels(params: Readonly<{
+type MachineModelDiscoveryParams = Readonly<{
     cacheKey: string;
     agentType: string;
     machineId: string;
@@ -25,21 +27,34 @@ export async function discoverMachineModels(params: Readonly<{
     timeoutMs?: number;
     capabilityParams: Readonly<Record<string, unknown>>;
     bypassCache?: boolean;
-}>): Promise<DynamicModelProbeCacheEntry | null> {
+}>;
+
+export async function discoverMachineModels(params: MachineModelDiscoveryParams): Promise<DynamicModelProbeCacheEntry | null> {
+    return discoverMachineModelsWithTransport(params, () => invokeAgentInventoryProbeAction({
+        agentId: params.agentType, machineId: params.machineId, serverId: params.serverId,
+        backendTarget: params.backendTarget,
+        capabilityParams: params.capabilityParams,
+        transportTimeoutMs: params.timeoutMs,
+        bypassCache: params.bypassCache,
+    }, 'probeModels'));
+}
+
+/** The inventory Action is already admitted; do not recurse into its own front door. */
+export async function discoverMachineModelsForActions(params: MachineModelDiscoveryParams): Promise<DynamicModelProbeCacheEntry | null> {
+    return discoverMachineModelsWithTransport(params, () => machineCapabilitiesInvoke(params.machineId, {
+        id: buildProviderCliCapabilityId(params.agentType), method: 'probeModels',
+        params: { ...params.capabilityParams, ...(params.backendTarget ? { backendTarget: params.backendTarget } : {}),
+            ...(params.bypassCache ? { bypassCache: true } : {}) },
+    }, { ...(params.serverId ? { serverId: params.serverId } : {}), ...(params.timeoutMs ? { timeoutMs: params.timeoutMs } : {}) }));
+}
+
+async function discoverMachineModelsWithTransport(params: MachineModelDiscoveryParams, invoke: () => Promise<MachineCapabilitiesInvokeResult>): Promise<DynamicModelProbeCacheEntry | null> {
     const cached = readDynamicModelProbeCache(params.cacheKey, params.successMaxAgeMs);
     if (!params.bypassCache && isDynamicModelProbeCacheFresh(cached)) return cached;
 
     return runDynamicModelProbeDedupe(params.cacheKey, async () => {
         try {
-            const response = await machineCapabilitiesInvoke(params.machineId, {
-                id: buildProviderCliCapabilityId(params.agentType),
-                method: 'probeModels',
-                params: {
-                    ...params.capabilityParams,
-                    ...(params.backendTarget ? { backendTarget: params.backendTarget } : {}),
-                    ...(params.bypassCache ? { bypassCache: true } : {}),
-                },
-            }, { ...(params.serverId ? { serverId: params.serverId } : {}), ...(params.timeoutMs ? { timeoutMs: params.timeoutMs } : {}) });
+            const response = await invoke();
             if (response.supported && response.response.ok) {
                 const result = response.response.result;
                 const record = result && typeof result === 'object' && !Array.isArray(result)

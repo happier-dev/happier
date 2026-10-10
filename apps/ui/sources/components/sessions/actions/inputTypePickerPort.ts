@@ -4,7 +4,7 @@ import {
     type PluginContributionIdentityV1,
 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readActionInputOptionValue } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
-import type { InputOption } from '@happier-dev/protocol/inputs';
+import type { InputOption, InputTypeReferenceV1 } from '@happier-dev/protocol/inputs';
 import {
     invokeInputTypePicker,
     type InputTypePickerHostV1,
@@ -20,6 +20,7 @@ export type InputTypePickerPortHost = Readonly<{
     canOpenPicker: (picker: PluginContributionIdentityV1, type: ResolvedInputTypeV1) => boolean;
     /** The incumbent ephemeral plugin-surface mount; it owns the renderer, its lifetime and disposal. */
     openPicker: InputTypePickerHostV1['openPicker'];
+    openHostPicker?: InputTypePickerHostV1['openHostPicker'];
 }>;
 
 /**
@@ -29,8 +30,9 @@ export type InputTypePickerPortHost = Readonly<{
  * This adapter only says whether a picker is offered and puts the outcome in the reader's words.
  */
 export function createInputTypePickerPort(host: InputTypePickerPortHost): HappierInputPickerPort {
-    const pickerFor = (identity: PluginContributionIdentityV1 | undefined): PluginContributionIdentityV1 | null => {
+    const pickerFor = (identity: InputTypeReferenceV1 | undefined): PluginContributionIdentityV1 | null => {
         if (identity === undefined) return null;
+        if ('hostType' in identity) return null;
         const type = host.resolveType(identity);
         const picker = type?.definition.picker;
         if (type === null || picker === undefined) return null;
@@ -38,14 +40,20 @@ export function createInputTypePickerPort(host: InputTypePickerPortHost): Happie
         return host.canOpenPicker(qualified, type) ? qualified : null;
     };
     return {
-        describe: (field) => pickerFor(field.inputType) === null ? null : {
+        describe: (field) => (field.inputType && 'hostType' in field.inputType
+            ? field.inputType.hostType === 'usageQuery' && host.openHostPicker !== undefined
+            : pickerFor(field.inputType) !== null) ? {
             label: t('inputPicker.browse'),
             accessibilityLabel: t('inputPicker.browseField', { field: field.title }),
-        },
+        } : null,
         pick: async (request): Promise<HappierInputPickerResult> => {
             const inputType = request.field.inputType;
             if (inputType === undefined) return { status: 'error', message: describePickerError('input_type_unavailable') };
-            const options = request.options?.flatMap((option): InputOption[] => {
+            // Host semantic pickers have no discovery Resource. The shared select control's
+            // empty presentation list is not an authoritative empty inventory.
+            const presentedOptions = 'hostType' in inputType && inputType.hostType === 'usageQuery'
+                && request.options?.length === 0 ? undefined : request.options;
+            const options = presentedOptions?.flatMap((option): InputOption[] => {
                 const value = readActionInputOptionValue(option.value);
                 return value === undefined ? [] : [{
                     value,
@@ -56,13 +64,20 @@ export function createInputTypePickerPort(host: InputTypePickerPortHost): Happie
             });
             const current = readActionInputOptionValue(request.value);
             const result = await invokeInputTypePicker({
-                field: { path: request.field.path, title: request.field.title, widget: 'select', inputType },
+                field: {
+                    path: request.field.path,
+                    title: request.field.title,
+                    widget: 'select',
+                    inputType,
+                    ...(options === undefined ? {} : { options }),
+                },
                 ...(current === undefined ? {} : { value: current }),
                 signal: request.signal,
                 host: {
                     resolveType: async (identity) => host.resolveType(identity),
                     resolveOptions: async () => options ?? { errorCode: 'input_type_options_unavailable' },
                     openPicker: host.openPicker,
+                    ...(host.openHostPicker ? { openHostPicker: host.openHostPicker } : {}),
                 },
             });
             if (result.status === 'selected') return { status: 'selected', value: result.value };

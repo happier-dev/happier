@@ -13,6 +13,7 @@ import { t } from '@/text';
 
 import { resolveSessionSubagentKindLabelKey } from './resolveSessionSubagentKindLabelKey';
 import { resolveSessionSubagentPrimaryTitle } from './resolveSessionSubagentPrimaryTitle';
+import { WORKER_KIND_GLYPHS } from '@/components/sessions/work/workerKindGlyphs';
 
 /**
  * Everything a surface needs to draw one unit of Session agent work — resolved once, for everyone.
@@ -47,7 +48,7 @@ export type SessionAgentActivityAttentionPresentation = Readonly<{
  * finished. It decides the mark's corner (amber dot, live ring, none), the subtitle's lead and
  * whether time reads as a running clock or as "when".
  */
-export type SessionAgentActivityPhase = 'attention' | 'live' | 'finished';
+export type SessionAgentActivityPhase = 'attention' | 'live' | 'idle' | 'finished';
 
 export type SessionAgentActivityPresentation = Readonly<{
     title: string;
@@ -106,11 +107,11 @@ function statusVariant(status: AgentActivityStatusV1): StatusPillVariant {
 }
 
 const KIND_ICON_NAMES = {
-    execution_run: 'play-circle',
+    execution_run: WORKER_KIND_GLYPHS.execution_run,
     agent_team_member: 'users',
-    subagent: 'stack-simple',
-    workflow_run: 'stack-simple',
-    workflow_agent: 'stack-simple',
+    subagent: WORKER_KIND_GLYPHS.session,
+    workflow_run: WORKER_KIND_GLYPHS.workflow_run,
+    workflow_agent: WORKER_KIND_GLYPHS.session,
 } as const satisfies Record<AgentActivityEntryKind, IconName>;
 
 /**
@@ -132,11 +133,12 @@ export function readExecutionRunAgentActivityStatus(status: unknown): AgentActiv
  * The words and colour of one canonical status, for surfaces that show a status without a roster
  * entry around it (the running Agent conversation's header). Same vocabulary as every roster row.
  */
-export function resolveAgentActivityStatusPresentation(status: AgentActivityStatusV1): Readonly<{
+export function resolveAgentActivityStatusPresentation(status: AgentActivityStatusV1, isActive?: boolean): Readonly<{
     label: string;
     variant: StatusPillVariant;
 }> {
-    return { label: t(STATUS_LABEL_KEYS[status]), variant: statusVariant(status) };
+    return { label: status === 'running' && isActive === false
+        ? t('diagnosis.machineRuns.idle') : t(STATUS_LABEL_KEYS[status]), variant: statusVariant(status) };
 }
 
 function resolveAttention(
@@ -150,17 +152,17 @@ function resolveAttention(
         // line exactly when the row most needs to be legible at a glance.
         return {
             label: t('sessionAgentActivity.attention.both'),
-            variant: 'warning',
+            variant: WORK_STATUS_PILL_VARIANT.attention,
             description: t('sessionAgentActivity.attention.bothDescription'),
         };
     }
     if (wantsApproval) {
         const label = t('sessionAgentActivity.attention.permission');
-        return { label, variant: 'warning', description: label };
+        return { label, variant: WORK_STATUS_PILL_VARIANT.attention, description: label };
     }
     if (wantsAnswer) {
         const label = t('sessionAgentActivity.attention.userAction');
-        return { label, variant: 'warning', description: label };
+        return { label, variant: WORK_STATUS_PILL_VARIANT.attention, description: label };
     }
     return null;
 }
@@ -230,8 +232,10 @@ function resolveFacts(
 function resolvePhase(
     status: AgentActivityStatusV1,
     attention: SessionAgentActivityAttentionPresentation | null,
+    isActive?: boolean,
 ): SessionAgentActivityPhase {
     if (attention) return 'attention';
+    if (status === 'running' && isActive === false) return 'idle';
     return isInProgressAgentActivityStatus(status) ? 'live' : 'finished';
 }
 
@@ -272,9 +276,9 @@ export function resolveSessionAgentActivityPresentation(params: Readonly<{
     const { entry } = params;
     const subagent = params.subagent ?? null;
     const title = resolveTitle(entry, subagent);
-    const statusLabel = t(STATUS_LABEL_KEYS[entry.status]);
+    const statusLabel = resolveAgentActivityStatusPresentation(entry.status, entry.isActive).label;
     const attention = resolveAttention(entry.attentionKinds);
-    const phase = resolvePhase(entry.status, attention);
+    const phase = resolvePhase(entry.status, attention, entry.isActive);
     const startedAtMs = readFiniteMs(entry.startedAtMs) ?? readFiniteMs(subagent?.timestamps.startedAtMs);
     const endedAtMs = readFiniteMs(entry.endedAtMs) ?? readFiniteMs(subagent?.timestamps.finishedAtMs);
 
@@ -282,14 +286,14 @@ export function resolveSessionAgentActivityPresentation(params: Readonly<{
         title,
         phase,
         agentId: resolveAgentId(subagent, params.sessionAgentId ?? null),
-        startedAtMs,
-        atMs: phase === 'finished'
+        startedAtMs: phase === 'idle' ? null : startedAtMs,
+        atMs: phase === 'idle' ? null : phase === 'finished'
             ? endedAtMs ?? readFiniteMs(subagent?.timestamps.updatedAtMs) ?? startedAtMs
             : readFiniteMs(subagent?.timestamps.updatedAtMs) ?? startedAtMs,
         facts: resolveFacts(entry, subagent, params.originLabel ?? null),
         statusLabel,
         statusTone: statusTone(entry.status),
-        statusShownByActivity: entry.status === 'running',
+        statusShownByActivity: entry.isActive !== false && entry.status === 'running',
         attention,
         iconName: KIND_ICON_NAMES[entry.kind],
         accentName: subagent?.display.accentName?.trim() || null,

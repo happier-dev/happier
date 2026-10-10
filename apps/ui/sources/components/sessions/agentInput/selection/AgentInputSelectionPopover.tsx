@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { Platform } from 'react-native';
 import { Popover } from '@/components/ui/popover';
+import { SessionModelSourceBrowseHandoffContext } from '@/components/sessions/modelPicker/SessionModelSourceBrowseHandoff';
 import { useAgentInputPopoverLayout } from './useAgentInputPopoverLayout';
 
 export type AgentInputSelectionPopoverProps = Readonly<{
@@ -28,6 +29,9 @@ function OpenAgentInputSelectionPopover(props: AgentInputSelectionPopoverProps) 
         Platform.OS === 'web' && props.boundaryRef === undefined
             ? null
             : props.boundaryRef;
+    // Native popovers render through the overlay portal host, outside the composer's subtree, so the
+    // composer's browse hand-off is read here and provided again inside the portalled content.
+    const modelSourceBrowseHandoff = React.useContext(SessionModelSourceBrowseHandoffContext);
     return (
         <Popover
             open={props.open}
@@ -63,7 +67,9 @@ function OpenAgentInputSelectionPopover(props: AgentInputSelectionPopoverProps) 
             keyboardBottomInset={popoverLayout.keyboardBottomInset}
         >
             {({ maxHeight }) => (
-                props.children({ maxHeight })
+                <SessionModelSourceBrowseHandoffContext.Provider value={modelSourceBrowseHandoff}>
+                    {props.children({ maxHeight })}
+                </SessionModelSourceBrowseHandoffContext.Provider>
             )}
         </Popover>
     );

@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { SelectionList, resolvePopoverSelectionListHeightBehavior } from '@/components/ui/selectionList';
-import type { SelectionListHeightBehavior, SelectionListStep } from '@/components/ui/selectionList';
+import type { SelectionListHeightBehavior, SelectionListOptionPresentation, SelectionListStep } from '@/components/ui/selectionList';
 
 import { AgentInputSelectionPopover } from '../selection/AgentInputSelectionPopover';
 import { deferAgentInputPopoverClose } from '../selection/deferAgentInputPopoverClose';
@@ -29,6 +29,7 @@ export type AgentInputSelectionListPopoverProps = Readonly<{
     heightBehavior?: SelectionListHeightBehavior;
     /** Preserve the list primitive's declared grid semantics for interactive expanded content. */
     optionsHostInlineControls?: boolean;
+    optionPresentation?: SelectionListOptionPresentation;
     testID?: string;
 }>;
 
@@ -87,6 +88,7 @@ export function AgentInputSelectionListPopover(props: AgentInputSelectionListPop
                         maxHeight={maxHeight}
                         heightBehavior={resolvePopoverSelectionListHeightBehavior(props.heightBehavior)}
                         optionsHostInlineControls={props.optionsHostInlineControls}
+                        optionPresentation={props.optionPresentation}
                     />
                 </AgentInputPopoverSurface>
             )}

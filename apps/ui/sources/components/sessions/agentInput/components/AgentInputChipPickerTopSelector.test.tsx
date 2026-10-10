@@ -5,14 +5,12 @@ import { renderScreen } from '@/dev/testkit';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
 import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
+import { HorizontalScrollableRow } from '@/components/ui/scroll/HorizontalScrollableRow';
 
 import { installAgentInputCommonModuleMocks } from '../agentInputTestHelpers';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-let capturedDropdownMenuProps: Record<string, unknown> | null = null;
-let capturedHorizontalRowProps: Record<string, unknown> | null = null;
 
 function flattenStyle(style: unknown): Record<string, unknown> {
     if (!style) return {};
@@ -49,31 +47,11 @@ installAgentInputCommonModuleMocks({
     }),
 });
 
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: (props: Record<string, unknown>) => {
-        capturedDropdownMenuProps = props;
-        return React.createElement('DropdownMenu', props);
-    },
-}));
-
-vi.mock('@/components/ui/scroll/HorizontalScrollableRow', () => ({
-    HorizontalScrollableRow: (props: Record<string, unknown> & { children?: React.ReactNode }) => {
-        capturedHorizontalRowProps = props;
-        return React.createElement('HorizontalScrollableRow', props, props.children);
-    },
-}));
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-}));
-
 describe('AgentInputChipPickerTopSelector', () => {
-    it('renders a one-tap icon rail using the shared horizontal scroll row', async () => {
+    it('names every one-tap tab and keeps the last tab reachable in the shared horizontal scroll row', async () => {
         const { AgentInputChipPickerTopSelector } = await import('./AgentInputChipPickerTopSelector');
         const { AGENT_INPUT_CHIP_PICKER_OPTION_ICON_SIZE } = await import('./agentInputChipPickerOptionStyles');
         const { resolveMinimumInteractiveTargetSize } = await import('@/components/ui/interactiveTargetSize');
-        capturedDropdownMenuProps = null;
-        capturedHorizontalRowProps = null;
         const onFocusOption = vi.fn();
 
         const screen = await renderScreen(<AgentInputChipPickerTopSelector
@@ -84,6 +62,7 @@ describe('AgentInputChipPickerTopSelector', () => {
                             options: [
                                 { id: 'codex', label: 'Codex', subtitle: 'OpenAI', icon: React.createElement('EngineIcon', { testID: 'codex-icon', size: 24 }) },
                                 { id: 'claude', label: 'Claude' },
+                                { id: 'contributed-agent', label: 'A contributed coding Agent' },
                             ],
                         },
                     ]}
@@ -92,8 +71,7 @@ describe('AgentInputChipPickerTopSelector', () => {
                     onFocusOption={onFocusOption}
                 />);
 
-        expect(capturedDropdownMenuProps).toBeNull();
-        expect(capturedHorizontalRowProps).toEqual(expect.objectContaining({
+        expect(screen.findByType(HorizontalScrollableRow).props).toEqual(expect.objectContaining({
             testID: 'agent-input-chip-picker.top-selector-scroll',
             contentTestID: 'agent-input-chip-picker.top-selector-content',
             fadeColor: expect.any(String),
@@ -105,6 +83,9 @@ describe('AgentInputChipPickerTopSelector', () => {
 
         expect(codexButton).toBeTruthy();
         expect(claudeButton).toBeTruthy();
+        expect(codexButton?.findAll((node) => String(node.type) === 'Text').map(node => node.props.children)).toContain('Codex');
+        expect(claudeButton?.findAll((node) => String(node.type) === 'Text').map(node => node.props.children)).toContain('Claude');
+        expect(screen.findByTestId('agent-input-chip-picker.top-selector-option:contributed-agent')?.findAll((node) => String(node.type) === 'Text').map(node => node.props.children)).toContain('A contributed coding Agent');
         // The compact rail has no checkmark at all, so the selected row's name is the only
         // place its state can live — `accessibilityState.selected` is dropped on a button role.
         expect(codexButton?.props.accessibilityLabel).not.toBe('Codex');
@@ -114,10 +95,9 @@ describe('AgentInputChipPickerTopSelector', () => {
         const claudeStyle = flattenStyle(claudeButton?.props.style({ pressed: false }));
         expect(codexStyle.minWidth).toBe(resolveMinimumInteractiveTargetSize('web'));
         expect(codexStyle.minHeight).toBe(resolveMinimumInteractiveTargetSize('web'));
-        // The declared size must match the enforced minimum. When width/height are smaller,
-        // Yoga measures the horizontal ScrollView from the smaller flex bases before the
-        // minimum expands each button, leaving the final options beyond its legal scroll end.
-        expect(codexStyle.width).toBe(codexStyle.minWidth);
+        // Content-sized tabs retain their full name and never shrink past the scroll end.
+        expect(codexStyle.width).toBeUndefined();
+        expect(codexStyle.flexShrink).toBe(0);
         expect(codexStyle.height).toBe(codexStyle.minHeight);
         expect(codexStyle.backgroundColor).toEqual(expect.any(String));
         expect(Boolean(codexStyle.boxShadow || codexStyle.elevation)).toBe(true);
@@ -129,8 +109,8 @@ describe('AgentInputChipPickerTopSelector', () => {
         const codexIcon = screen.findByTestId('codex-icon');
         expect(codexIcon?.props.size).toBe(AGENT_INPUT_CHIP_PICKER_OPTION_ICON_SIZE);
 
-        await screen.pressByTestIdAsync('agent-input-chip-picker.top-selector-option:claude');
-        expect(onFocusOption).toHaveBeenCalledWith('claude');
+        await screen.pressByTestIdAsync('agent-input-chip-picker.top-selector-option:contributed-agent');
+        expect(onFocusOption).toHaveBeenCalledWith('contributed-agent');
     });
 
     it('separates a labelled group with a divider and badges its rows with their state mark unless selected', async () => {

@@ -4,9 +4,11 @@ import {
     NO_SESSION_AGENT_ACTIVITY_ATTENTION,
     type AgentActivityEntry,
 } from '@/sync/domains/session/agentActivity';
+import type { ToolCallMessage } from '@happier-dev/session-core/messages';
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 
 import { resolveSessionAgentActivityPresentation } from './sessionAgentActivityPresentation';
+import { WORKER_KIND_GLYPHS } from '@/components/sessions/work/workerKindGlyphs';
 
 function entry(overrides: Partial<AgentActivityEntry> = {}): AgentActivityEntry {
     return {
@@ -51,12 +53,18 @@ function subagent(overrides: Partial<SessionSubagent> = {}): SessionSubagent {
 }
 
 describe('resolveSessionAgentActivityPresentation', () => {
+    it('uses the shared session worker mark for session-like agents without a brand mark', () => {
+        for (const kind of ['subagent', 'workflow_agent'] as const) {
+            expect(resolveSessionAgentActivityPresentation({ entry: entry({ kind }) }).iconName)
+                .toBe(WORKER_KIND_GLYPHS.session);
+        }
+    });
     it('says a permission request needs approval', () => {
         const presentation = resolveSessionAgentActivityPresentation({
             entry: entry({ status: 'waiting', attentionKinds: ['permission'] }),
         });
 
-        expect(presentation.attention).toMatchObject({ label: 'Needs approval', variant: 'warning' });
+        expect(presentation.attention).toMatchObject({ label: 'Needs approval', variant: 'attention' });
         expect(presentation.accessibilityLabel).toContain('Needs approval');
     });
 
@@ -65,7 +73,7 @@ describe('resolveSessionAgentActivityPresentation', () => {
             entry: entry({ status: 'waiting', attentionKinds: ['user_action'] }),
         });
 
-        expect(presentation.attention?.label).toBe('Needs your answer');
+        expect(presentation.attention).toMatchObject({ label: 'Needs your answer', variant: 'attention' });
     });
 
     it('shows one concise label for both kinds while naming both to a screen reader', () => {
@@ -73,7 +81,7 @@ describe('resolveSessionAgentActivityPresentation', () => {
             entry: entry({ status: 'waiting', attentionKinds: ['permission', 'user_action'] }),
         });
 
-        expect(presentation.attention?.label).toBe('Needs attention');
+        expect(presentation.attention).toMatchObject({ label: 'Needs attention', variant: 'attention' });
         expect(presentation.accessibilityLabel).toContain('Needs approval and needs your answer');
     });
 
@@ -158,5 +166,65 @@ describe('resolveSessionAgentActivityPresentation', () => {
         });
 
         expect(presentation.facts.slice(0, 2)).toEqual(['Conversation', 'from Relay retry plan']);
+    });
+});
+
+
+describe('retained execution-run current work', () => {
+    it('retains sendable idle handles while only current work contributes to activity', async () => {
+        const { deriveExecutionRunSubagents } = await import('@/sync/domains/session/subagents/executionRuns/deriveExecutionRunSubagents');
+        const { toLocalAgentActivityEntry, deriveAgentActivityEntries, deriveAgentActivityCounts, toAgentActivityCountable, sortAgentActivityEntries } = await import('@/sync/domains/session/agentActivity');
+        const project = (turnInFlight: boolean) => {
+            const subagents = deriveExecutionRunSubagents({ messages: [], activeExecutionRuns: [
+                { runId: 'a-idle', status: 'running', runClass: 'long_lived', turnInFlight },
+                { runId: 'z-busy', status: 'running', runClass: 'long_lived', turnInFlight: true },
+            ] });
+            const merged = deriveAgentActivityEntries({ headline: null, local: subagents.map((subagent) => toLocalAgentActivityEntry({ subagent })) });
+            return { subagents, merged, sorted: sortAgentActivityEntries(merged.entries, merged.evidenceAtMsById), counts: deriveAgentActivityCounts(merged.entries.map(toAgentActivityCountable)) };
+        };
+        const idle = project(false);
+        expect(idle.counts.live).toBe(1);
+        expect(idle.sorted[0]?.runId).toBe('z-busy');
+        expect(idle.subagents[0]).toMatchObject({ status: 'running', isActive: false, capabilities: { canSend: true, canStop: true } });
+        expect(resolveSessionAgentActivityPresentation({ entry: idle.merged.entries[0]!, subagent: idle.subagents[0] }))
+            .toMatchObject({ phase: 'idle', startedAtMs: null, atMs: null, statusShownByActivity: false });
+        expect(project(true).counts.live).toBe(2);
+        expect(project(false).counts.live).toBe(1);
+    });
+
+    it('keeps permission attention separate from idle work counts and still counts a failed run', async () => {
+        const { deriveExecutionRunSubagents } = await import('@/sync/domains/session/subagents/executionRuns/deriveExecutionRunSubagents');
+        const { toLocalAgentActivityEntry, deriveAgentActivityEntries, deriveAgentActivityCounts, toAgentActivityCountable } = await import('@/sync/domains/session/agentActivity');
+        const failedMessage: ToolCallMessage = {
+            kind: 'tool-call', id: 'failed-message', localId: null, createdAt: 1_000,
+            tool: {
+                id: 'failed-tool', name: 'SubAgentRun', state: 'completed',
+                input: { runId: 'failed', intent: 'delegate', runClass: 'long_lived', ioMode: 'streaming' },
+                result: { runId: 'failed', status: 'failed' },
+                createdAt: 1_000, startedAt: 1_000, completedAt: 2_000,
+                description: null,
+            }, children: [],
+        };
+        const subagents = deriveExecutionRunSubagents({ messages: [failedMessage], activeExecutionRuns: [
+            { runId: 'idle', status: 'running', runClass: 'long_lived', turnInFlight: false },
+            { runId: 'busy', status: 'running', runClass: 'long_lived', turnInFlight: true },
+        ] });
+        const local = subagents.map((subagent) => toLocalAgentActivityEntry({
+            subagent,
+            attentionKinds: subagent.runRef?.runId === 'idle' ? ['permission'] : [],
+        }));
+        expect(local.find((entry) => entry.runId === 'idle')).toMatchObject({ status: 'waiting', isActive: false });
+        const merged = deriveAgentActivityEntries({ headline: null, local });
+        expect(deriveAgentActivityCounts(merged.entries.map(toAgentActivityCountable))).toMatchObject({ live: 1, total: 3 });
+        expect(merged.entries.find((entry) => entry.runId === 'failed')).toMatchObject({ status: 'failed', isActive: false });
+    });
+
+    it('keeps missing turn evidence conservative and bounded running work active', async () => {
+        const { deriveExecutionRunSubagents } = await import('@/sync/domains/session/subagents/executionRuns/deriveExecutionRunSubagents');
+        const subagents = deriveExecutionRunSubagents({ messages: [], activeExecutionRuns: [
+            { runId: 'legacy', status: 'running', runClass: 'long_lived' },
+            { runId: 'bounded', status: 'running', runClass: 'bounded', turnInFlight: false },
+        ] });
+        expect(subagents.map((subagent) => subagent.isActive)).toEqual([true, true]);
     });
 });

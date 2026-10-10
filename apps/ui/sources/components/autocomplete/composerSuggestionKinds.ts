@@ -671,6 +671,7 @@ async function resolveSlashCommandSuggestions(
     context: ComposerSuggestionResolveContext,
 ): Promise<readonly AutocompleteSuggestion[]> {
     return await getCommandSuggestions(context.sessionId, context.scopedQuery, {
+        serverId: context.serverId,
         limit: context.limit,
         contributedActions: context.contributedActions,
         ...(context.catalogs.commands ? { nativeCommands: context.catalogs.commands } : {}),

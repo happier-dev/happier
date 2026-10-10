@@ -39,6 +39,12 @@ async function renderChip(overrides: Partial<ChipProps>) {
     return { screen, onPress, onRemove };
 }
 
+function flattenStyle(style: unknown): Record<string, unknown> {
+    if (typeof style === 'function') return flattenStyle(style({ pressed: false }));
+    if (Array.isArray(style)) return Object.assign({}, ...style.filter(Boolean).map(flattenStyle));
+    return style && typeof style === 'object' ? { ...style } as Record<string, unknown> : {};
+}
+
 function textsOf(node: { findAll: (predicate: (node: { type?: unknown }) => boolean) => Array<{ props: unknown }> }): unknown[] {
     return node
         .findAll((candidate) => candidate?.type === 'Text')
@@ -48,31 +54,44 @@ function textsOf(node: { findAll: (predicate: (node: { type?: unknown }) => bool
 describe('AgentInputFolderChip', () => {
     afterEach(() => { platformBoundary.os = 'web'; });
 
-    it('offers the remove accelerator when a native keyboard focuses the folder', async () => {
+    it('reserves no × slot on a touch device: removal stays on the picker row and the screen-reader action', async () => {
         platformBoundary.os = 'ios';
         const { screen, onRemove } = await renderChip({});
-        await act(async () => { screen.findByTestId('agent-input-path-chip')!.props.onFocus({}); });
-        const remove = screen.findByTestId('agent-input-path-chip-remove');
-        expect(remove).toBeTruthy();
-        expect(remove!.props.accessible).toBe(true);
-        await act(async () => { remove!.props.onPress(); });
+        const chip = screen.findByTestId('agent-input-path-chip')!;
+        await act(async () => { chip.props.onFocus({}); });
+        expect(screen.findByTestId('agent-input-path-chip-remove')).toBeFalsy();
+        expect(flattenStyle(chip.props.style).paddingRight).not.toBe(2);
+        await act(async () => { chip.props.onAccessibilityAction({ nativeEvent: { actionName: 'remove' } }); });
         expect(onRemove).toHaveBeenCalledOnce();
+    });
+
+    it('paints the canonical focus ring on the chip and on × for keyboard focus', async () => {
+        const { screen } = await renderChip({});
+        const chip = screen.findByTestId('agent-input-path-chip')!;
+        expect(flattenStyle(chip.props.style).outlineStyle).not.toBe('solid');
+        await act(async () => { chip.props.onFocus({}); });
+        expect(flattenStyle(screen.findByTestId('agent-input-path-chip')!.props.style)).toMatchObject({ outlineStyle: 'solid', outlineWidth: 2 });
+
+        const remove = screen.findByTestId('agent-input-path-chip-remove')!;
+        await act(async () => { remove.props.onFocus({}); });
+        expect(flattenStyle(screen.findByTestId('agent-input-path-chip-remove')!.props.style)).toMatchObject({ outlineStyle: 'solid', outlineWidth: 2 });
     });
     it('opens the picker from the chip and removes the folder only from ×, never both', async () => {
         const { screen, onPress, onRemove } = await renderChip({});
         const chip = screen.findByTestId('agent-input-path-chip');
         expect(chip).toBeTruthy();
         expect(textsOf(chip!)).toContain('~/code/happier');
-        expect(screen.findByTestId('agent-input-path-chip-remove')!.props.accessible).toBe(false);
+        expect(screen.findByTestId('agent-input-path-chip-remove')!.props.disabled).toBe(true);
 
         await act(async () => { (chip!.props as { onPress: () => void }).onPress(); });
         expect(onPress).toHaveBeenCalledTimes(1);
         expect(onRemove).not.toHaveBeenCalled();
 
-        await act(async () => { chip!.props.onHoverIn(); });
+        // One hover region covers the chip and ×, so moving onto × never hides it.
+        await act(async () => { screen.findByTestId('agent-input-path-chip-region')!.props.onPointerEnter(); });
         const remove = screen.findByTestId('agent-input-path-chip-remove');
         expect(remove).toBeTruthy();
-        expect(remove!.props.accessible).toBe(true);
+        expect(remove!.props.disabled).toBe(false);
         await act(async () => { (remove!.props as { onPress: () => void }).onPress(); });
         expect(onRemove).toHaveBeenCalledTimes(1);
         expect(onPress).toHaveBeenCalledTimes(1);
@@ -82,14 +101,18 @@ describe('AgentInputFolderChip', () => {
         const { screen, onRemove } = await renderChip({});
         const chip = screen.findByTestId('agent-input-path-chip')!;
         const props = chip.props as {
-            onKeyDown?: (event: { key: string; preventDefault: () => void }) => void;
             onAccessibilityAction?: (event: { nativeEvent: { actionName: string } }) => void;
             accessibilityActions?: ReadonlyArray<{ name: string; label?: string }>;
         };
         expect(props.accessibilityActions?.map((action) => action.name)).toContain('remove');
+        // Keys reach the chip through the shared pressable's key hook; a handled key is consumed.
+        const pressable = screen.root.findAll((node) => typeof node.type !== 'string'
+            && node.props.testID === 'agent-input-path-chip' && typeof node.props.onKeyDown === 'function')[0]!;
+        const onKeyDown = pressable.props.onKeyDown as (key: string, event: unknown) => boolean;
 
-        await act(async () => { props.onKeyDown?.({ key: 'Delete', preventDefault: () => {} }); });
-        await act(async () => { props.onKeyDown?.({ key: 'Backspace', preventDefault: () => {} }); });
+        let consumed: boolean[] = [];
+        await act(async () => { consumed = [onKeyDown('Delete', {}), onKeyDown('Backspace', {}), onKeyDown('a', {})]; });
+        expect(consumed).toEqual([true, true, false]);
         await act(async () => { props.onAccessibilityAction?.({ nativeEvent: { actionName: 'remove' } }); });
         expect(onRemove).toHaveBeenCalledTimes(3);
     });
@@ -101,10 +124,11 @@ describe('AgentInputFolderChip', () => {
         expect(screen.findByTestId('agent-input-path-chip-remove')).toBeFalsy();
         await act(async () => { (chip.props as { onPress: () => void }).onPress(); });
         expect(onPress).toHaveBeenCalledTimes(1);
-        await act(async () => {
-            (chip.props as { onKeyDown?: (event: { key: string; preventDefault: () => void }) => void })
-                .onKeyDown?.({ key: 'Delete', preventDefault: () => {} });
-        });
+        const pressable = screen.root.findAll((node) => typeof node.type !== 'string'
+            && node.props.testID === 'agent-input-path-chip' && typeof node.props.onKeyDown === 'function')[0]!;
+        let consumed = true;
+        await act(async () => { consumed = (pressable.props.onKeyDown as (key: string, event: unknown) => boolean)('Delete', {}); });
+        expect(consumed).toBe(false);
         expect(onRemove).not.toHaveBeenCalled();
     });
 

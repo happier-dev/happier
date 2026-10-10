@@ -449,7 +449,7 @@ describe('useInSessionAgentPickerControls arm draft', () => {
         expect(readPersistedArm()?.submission?.localId).toBe(submittedLocalId);
     });
 
-    it('offers the other Agents again once canonical custody consumes the submitted switch', async () => {
+    it.each([false, true])('offers the other Agents again once custody consumes the switch (target metadata landed: %s)', async (targetMetadataLanded) => {
         const hook = await renderControls();
         await armTarget(hook, 'agent:happier.agent.codex/codex');
         const submittedLocalId = hook.getCurrent().armedContinuationLocalId;
@@ -471,27 +471,27 @@ describe('useInSessionAgentPickerControls arm draft', () => {
             expect(hook.getCurrent().recordArmedContinuationSubmission(submission)).toBe(true);
         });
 
-        // The admitted switch makes the prior arm ineligible; its exact submission
-        // keeps the Agent rail hidden until the custody owner consumes it.
-        await hook.rerender({
-            currentAgentId: 'codex',
-            source: { ...supportedSource, currentBackendTargetKey: 'agent:happier.agent.codex/codex' },
-        });
+        // Custody can arrive before the target runtime's metadata projection.
+        if (targetMetadataLanded) {
+            await hook.rerender({
+                currentAgentId: 'codex',
+                source: { ...supportedSource, currentBackendTargetKey: 'agent:happier.agent.codex/codex' },
+            });
+        }
         await act(async () => { await Promise.resolve(); });
         await act(async () => { await Promise.resolve(); });
-        expect(readTargetOptionIds(hook)).toEqual([]);
+        if (targetMetadataLanded) expect(readTargetOptionIds(hook)).toEqual([]);
 
         await act(async () => {
             expect(hook.getCurrent().clearArmedContinuationSubmissionIfCurrent(submission)).toBe(true);
         });
-        await hook.rerender({
-            currentAgentId: 'codex',
-            source: { ...supportedSource, currentBackendTargetKey: 'agent:happier.agent.codex/codex' },
-        });
-
         expect(readPersistedArm()).toBeNull();
         expect(hook.getCurrent().armedContinuationSubmission).toBeNull();
-        expect(readTargetOptionIds(hook)).toEqual(['agent:happier.agent.claude/claude']);
+        expect(hook.getCurrent().armedContinuation).toBeNull();
+        expect(hook.getCurrent().armedContinuationLocalId).toBeNull();
+        expect(readTargetOptionIds(hook)).toEqual([
+            targetMetadataLanded ? 'agent:happier.agent.claude/claude' : 'agent:happier.agent.codex/codex',
+        ]);
     });
 
     it('leaves a newer arm alone when custody consumes the submission it replaced', async () => {

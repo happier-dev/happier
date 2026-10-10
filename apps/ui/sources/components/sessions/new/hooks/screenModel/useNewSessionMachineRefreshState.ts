@@ -66,7 +66,7 @@ export function useNewSessionMachineRefreshState(params: Readonly<{
             fireAndForget(prefetchMachineCapabilities({
                 machineId: params.selectedMachineId,
                 serverId: params.capabilityServerId,
-                cacheKeySalt: resolveDaemonCapabilitiesCacheKeySalt(selectedMachine),
+                cacheKeySalt: resolveDaemonCapabilitiesCacheKeySalt(selectedMachine, params.capabilityServerId),
                 request: { ...CAPABILITIES_REQUEST_NEW_SESSION, bypassCache: true },
             }), { tag: 'NewSessionScreenModel.prefetchMachineCapabilities' });
         }

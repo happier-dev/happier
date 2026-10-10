@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { shallow } from 'zustand/shallow';
 
 import type { SessionAgentActivityRow } from '@/components/sessions/agents/presentation/sessionAgentActivityRows';
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -47,7 +48,7 @@ const stylesheet = StyleSheet.create((theme) => ({
 
 type TeamCommand = 'add-teammate' | 'delete-team';
 
-export const SessionSubagentGroup = React.memo((props: Readonly<{
+type SessionSubagentGroupProps = Readonly<{
     sessionId: string;
     serverId?: string | null;
     session?: Session | null;
@@ -65,7 +66,31 @@ export const SessionSubagentGroup = React.memo((props: Readonly<{
     expandable?: boolean;
     expandedId?: string | null;
     onToggleExpanded?: (subagentId: string) => void;
-}>) => {
+}>;
+
+/** Bind actions at the row, so updating a sibling never replaces this row's callbacks. */
+const BoundSubagentRow = React.memo(function BoundSubagentRow(props: Pick<SessionSubagentGroupProps,
+    'sessionId' | 'serverId' | 'session' | 'sessionAgentId' | 'onOpenPreview' | 'onOpenFull' | 'onOpenAdvanced' | 'onToggleExpanded'> & Readonly<{
+        row: SessionAgentActivityRow; activityPreview: string | null; originLabel: string | null; expandable: boolean; expanded: boolean;
+    }>) {
+    const { subagent } = props.row;
+    const { onOpenPreview, onOpenFull, onOpenAdvanced } = props;
+    const openPreview = React.useCallback(() => onOpenPreview(subagent), [onOpenPreview, subagent]);
+    const openFull = React.useCallback(() => onOpenFull(subagent), [onOpenFull, subagent]);
+    const openAdvanced = React.useCallback(() => onOpenAdvanced(subagent), [onOpenAdvanced, subagent]);
+    const shared = { sessionId: props.sessionId, serverId: props.serverId, row: props.row, activityPreview: props.activityPreview,
+        originLabel: props.originLabel, sessionAgentId: props.sessionAgentId,
+        onOpenFull: openFull, onOpenAdvanced: subagent.capabilities.canOpenAdvancedRun ? openAdvanced : null };
+    return props.expandable && props.onToggleExpanded
+        ? <SessionAgentNeedsYouItem {...shared} session={props.session ?? null} expanded={props.expanded} onToggle={props.onToggleExpanded} onOpen={onOpenPreview} />
+        : <SessionSubagentRow {...shared} onPress={openPreview} />;
+}, (a, b) => {
+    const { row: rowA, ...restA } = a;
+    const { row: rowB, ...restB } = b;
+    return rowA.entry === rowB.entry && rowA.subagent === rowB.subagent && shallow(restA, restB);
+});
+
+export const SessionSubagentGroup = React.memo((props: SessionSubagentGroupProps) => {
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const [menuOpen, setMenuOpen] = React.useState(false);
@@ -111,29 +136,13 @@ export const SessionSubagentGroup = React.memo((props: Readonly<{
 
     const renderRow = (row: SessionAgentActivityRow) => {
         const { subagent } = row;
-        const shared = {
-            sessionId: props.sessionId,
-            serverId: props.serverId,
-            row,
-            activityPreview: props.activityPreviewById.get(subagent.id) ?? null,
-            originLabel: props.originLabelById?.get(subagent.id) ?? null,
-            sessionAgentId: props.sessionAgentId ?? null,
-            onOpenFull: () => props.onOpenFull(subagent),
-            onOpenAdvanced: subagent.capabilities.canOpenAdvancedRun ? () => props.onOpenAdvanced(subagent) : null,
-        };
-        if (props.expandable && props.onToggleExpanded) {
-            return (
-                <SessionAgentNeedsYouItem
-                    key={subagent.id}
-                    {...shared}
-                    session={props.session ?? null}
-                    expanded={props.expandedId === subagent.id}
-                    onToggle={props.onToggleExpanded}
-                    onOpen={props.onOpenPreview}
-                />
-            );
-        }
-        return <SessionSubagentRow key={subagent.id} {...shared} onPress={() => props.onOpenPreview(subagent)} />;
+        return <BoundSubagentRow key={subagent.id}
+            sessionId={props.sessionId} serverId={props.serverId} session={props.session}
+            row={row} activityPreview={props.activityPreviewById.get(subagent.id) ?? null}
+            originLabel={props.originLabelById?.get(subagent.id) ?? null} sessionAgentId={props.sessionAgentId ?? null}
+            onOpenPreview={props.onOpenPreview} onOpenFull={props.onOpenFull} onOpenAdvanced={props.onOpenAdvanced}
+            expandable={props.expandable === true} expanded={props.expandedId === subagent.id} onToggleExpanded={props.onToggleExpanded}
+        />;
     };
 
     if (!props.label) {

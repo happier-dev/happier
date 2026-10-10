@@ -1,16 +1,21 @@
 import * as React from 'react';
-import { listPromptLibrary, readPromptDocInLibrary, setPromptDocFavorite, type PromptLibraryListItem } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
+import { readPromptDocInLibrary, setPromptDocFavorite, type PromptLibraryListItem } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
+import type { PublicActionResultById } from '@happier-dev/protocol/actions/actionSpecs';
 import type { PromptInvocationEntryV1 } from '@happier-dev/protocol/prompts/library/promptInvocationsV1';
+import type { PromptFoldersV1 } from '@happier-dev/protocol';
+import { readPromptLibraryCatalogRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
 import { captureLazyActionAccountContext, type LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
-import { createUiPromptLibraryArtifactStore } from '@/sync/ops/promptLibrary/promptLibraryArtifactStore';
+import { createUiPromptLibraryArtifactStore, withUiPromptLibraryArtifactReader } from '@/sync/ops/promptLibrary/promptLibraryArtifactStore';
+import { readPromptLibraryCatalogProjectionInContext } from '@/sync/api/account/apiPromptLibraryCatalog';
 
 type Inventory = Readonly<{
     serverId: string | null;
     documents: readonly PromptLibraryListItem[];
     invocations: readonly PromptInvocationEntryV1[];
+    folders: readonly PromptFoldersV1['folders'][number][];
     coverage: 'complete' | 'partial' | 'unavailable';
 }>;
-const EMPTY: Inventory = { serverId: null, documents: [], invocations: [], coverage: 'unavailable' };
+const EMPTY: Inventory = { serverId: null, documents: [], invocations: [], folders: [], coverage: 'unavailable' };
 
 /** Mounted only while the picker is open; all work shares this exact Account lifetime. */
 export function usePromptPickerLibrary(serverId: string) {
@@ -41,14 +46,24 @@ export function usePromptPickerLibrary(serverId: string) {
                 setLoading(false);
                 controller.abort();
             });
-            const store = createUiPromptLibraryArtifactStore(captured.workflowArtifacts);
-            const [library, settings] = await Promise.all([
-                listPromptLibrary({ store, request: { includeBundles: false }, signal: controller.signal }),
-                captured.readSettings(),
+            const { executeDefaultActionInCapturedAccount } = await import('@/sync/ops/actions/defaultActionExecutor');
+            const [library, projection] = await Promise.all([
+                executeDefaultActionInCapturedAccount(captured, 'prompts.library.list', { includeBundles: false }, {
+                    surface: 'ui', authority: 'present_user', serverId, expectedAccountId: captured.accountId, signal: controller.signal,
+                }).then((result) => {
+                    if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
+                    return result.result as PublicActionResultById['prompts.library.list'];
+                }),
+                readPromptLibraryCatalogProjectionInContext(captured, controller.signal),
             ]);
             captured.assertCurrent();
+            const invocations = readPromptLibraryCatalogRecordV1({ ...projection, key: 'invocations' });
+            const folders = readPromptLibraryCatalogRecordV1({ ...projection, key: 'folders' });
+            if (invocations.status !== 'ready' || invocations.record.key !== 'invocations'
+                || folders.status !== 'ready' || folders.record.key !== 'folders') throw new Error('prompt_picker_catalog_unavailable');
             if (resource.current === current && !controller.signal.aborted) {
-                setInventory({ serverId, documents: library.items, invocations: settings.promptInvocationsV1.entries, coverage: library.coverage });
+                setInventory({ serverId, documents: library.items, invocations: invocations.record.value.entries,
+                    folders: folders.record.value.folders, coverage: library.coverage });
             }
         }).catch(() => {
             if (!controller.signal.aborted && resource.current === current) setError(true);
@@ -63,21 +78,26 @@ export function usePromptPickerLibrary(serverId: string) {
         };
     }, [serverId, refresh]);
 
-    const read = React.useCallback((artifactId: string): Promise<string> => {
+    const read = React.useCallback((artifactId: string, targetServerId?: string | null): Promise<string> => {
         const current = resource.current;
         if (!current || current.signal.aborted) return Promise.reject(new Error('prompt_picker_closed'));
-        const existing = current.reads.get(artifactId);
+        const ref = { kind: 'doc' as const, artifactId, ...(targetServerId ? { serverId: targetServerId } : {}) };
+        const key = JSON.stringify([ref.serverId ?? null, artifactId]);
+        const existing = current.reads.get(key);
         if (existing) return existing;
         const pending = current.account.then(async (account) => {
             account.assertCurrent();
-            const result = await readPromptDocInLibrary({ store: createUiPromptLibraryArtifactStore(account.workflowArtifacts), artifactId, signal: current.signal });
+            const result = await withUiPromptLibraryArtifactReader((reader) => readPromptDocInLibrary({
+                store: { ...createUiPromptLibraryArtifactStore(account.workflowArtifacts), read: () => reader.readArtifact(ref) },
+                artifactId, signal: current.signal,
+            }), { accountContext: account, signal: current.signal });
             account.assertCurrent();
             if (!result.ok) throw new Error(result.errorCode);
             return result.markdown;
         });
-        current.reads.set(artifactId, pending);
+        current.reads.set(key, pending);
         void pending.finally(() => {
-            if (current.reads.get(artifactId) === pending) current.reads.delete(artifactId);
+            if (current.reads.get(key) === pending) current.reads.delete(key);
         }).catch(() => {});
         return pending;
     }, []);

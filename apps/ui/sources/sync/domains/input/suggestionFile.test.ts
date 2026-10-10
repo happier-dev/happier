@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 const machineRipgrepMock = vi.fn();
 const machineFilesystemListDirectoryMock = vi.fn();
@@ -34,11 +35,14 @@ vi.mock('@/sync/domains/session/resolveWorkspaceTargetForSession', () => ({
     resolveWorkspaceTargetForSession: (...args: unknown[]) => resolveWorkspaceTargetForSessionMock(...args),
 }));
 
-const SCOPE_A = { serverId: 'server', machineId: 'm1', rootPath: '/repo' } as const;
+const credentialHarness = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(credentialHarness);
+const SCOPE_A = { serverId: 'server', machineId: 'm1', rootPath: '/repo' };
 
 describe('searchFiles', () => {
     beforeEach(async () => {
-        vi.resetModules();
+        await credentialHarness.reset();
+        SCOPE_A.serverId = await credentialHarness.addHome({ name: 'Suggestions', serverUrl: 'https://suggestions.test', accountId: 'account' });
         machineRipgrepMock.mockReset();
         machineFilesystemListDirectoryMock.mockReset();
         resolveWorkspaceTargetForSessionMock.mockReset();
@@ -75,12 +79,12 @@ describe('searchFiles', () => {
         expect(machineFilesystemListDirectoryMock).toHaveBeenCalledWith(
             'm1',
             { path: '/repo', includeFiles: true },
-            { serverId: 'server' },
+            { serverId: SCOPE_A.serverId, accountId: 'account' },
         );
         expect(machineFilesystemListDirectoryMock).toHaveBeenCalledWith(
             'm1',
             { path: '/repo/src', includeFiles: true },
-            { serverId: 'server' },
+            { serverId: SCOPE_A.serverId, accountId: 'account' },
         );
         expect(results.map((entry) => entry.fullPath)).toContain('README.md');
         expect(results.map((entry) => entry.fullPath)).toContain('src/');
@@ -161,9 +165,9 @@ describe('searchFiles', () => {
      * per-composer would pass the isolation half alone.
      */
     it('shares one file index per workspace and never across workspaces', async () => {
-        const scopeSameFolderOtherSpelling = { serverId: 'server', machineId: 'm1', rootPath: '/repo/' } as const;
-        const scopeOtherFolder = { serverId: 'server', machineId: 'm1', rootPath: '/other' } as const;
-        const scopeOtherMachine = { serverId: 'server', machineId: 'm2', rootPath: '/repo' } as const;
+        const scopeSameFolderOtherSpelling = { ...SCOPE_A, rootPath: '/repo/' };
+        const scopeOtherFolder = { ...SCOPE_A, rootPath: '/other' };
+        const scopeOtherMachine = { ...SCOPE_A, machineId: 'm2' };
 
         machineRipgrepMock.mockImplementation(async (_machineId: string, input: Readonly<{ rootPath: string }>) => ({
             success: true,
@@ -234,18 +238,18 @@ describe('searchFiles', () => {
             workspaceCacheKey: 'server:m1:/repo',
             machineId: 'm1',
             rootPath: '/repo',
-            serverId: 'server',
+            serverId: SCOPE_A.serverId,
         });
 
         const { searchFiles, fileSearchCache } = await import('./suggestionFile');
         await searchFiles(SCOPE_A, '', { limit: 10 });
-        await searchFiles({ serverId: 'server', machineId: 'm1', rootPath: '/other' }, '', { limit: 10 });
+        await searchFiles({ ...SCOPE_A, rootPath: '/other' }, '', { limit: 10 });
         expect(machineRipgrepMock).toHaveBeenCalledTimes(2);
 
         fileSearchCache.clearCache('session-1');
 
         // Only the cleared session's folder re-indexes; the untouched one is still cached.
-        await searchFiles({ serverId: 'server', machineId: 'm1', rootPath: '/other' }, '', { limit: 10 });
+        await searchFiles({ ...SCOPE_A, rootPath: '/other' }, '', { limit: 10 });
         expect(machineRipgrepMock).toHaveBeenCalledTimes(2);
         await searchFiles(SCOPE_A, '', { limit: 10 });
         expect(machineRipgrepMock).toHaveBeenCalledTimes(3);

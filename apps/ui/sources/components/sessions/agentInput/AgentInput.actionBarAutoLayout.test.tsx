@@ -1,14 +1,14 @@
 // @vitest-environment jsdom
 import React from 'react';
 import { act, type ReactTestInstance } from 'react-test-renderer';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { storage } from '@/sync/domains/state/storageStore';
 import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
 import { projectAgentInputAttachmentRowItems } from './agentInputContracts';
-import { findAllHostTestInstances } from '@/dev/testkit';
+import { findAllHostTestInstances, flattenTestStyle as flattenStyle } from '@/dev/testkit';
 import { createLayoutChangeEvent } from '@/dev/testkit/fixtures/nativeEventFixtures';
 
 vi.mock('expo-haptics', () => ({
@@ -59,18 +59,6 @@ let storageSettings: Settings = {
     sessionPermissionModeApplyTiming: 'immediate',
 };
 
-function flattenStyle(style: unknown): Record<string, unknown> {
-    if (!style) return {};
-    if (Array.isArray(style)) {
-        return style.reduce<Record<string, unknown>>((merged, entry) => ({
-            ...merged,
-            ...flattenStyle(entry),
-        }), {});
-    }
-    if (typeof style === 'object') return style as Record<string, unknown>;
-    return {};
-}
-
 function findNearestHostParent(node: ReactTestInstance | null | undefined): ReactTestInstance | null {
     let parent = node?.parent ?? null;
     while (parent && typeof parent.type !== 'string') {
@@ -86,6 +74,17 @@ async function renderAgentInput(element: React.ReactElement) {
 }
 
 installAgentInputCommonModuleMocks({ reactNative: createAgentInputReactNativeModule });
+const originalLocks = Object.getOwnPropertyDescriptor(navigator, 'locks');
+beforeAll(() => {
+    // jsdom has no Web Locks; this serial suite retains the real Home mutation owner.
+    Object.defineProperty(navigator, 'locks', { configurable: true, value: {
+        request: async (_name: string, run: () => unknown) => await run(),
+    } });
+});
+afterAll(() => {
+    if (originalLocks) Object.defineProperty(navigator, 'locks', originalLocks);
+    else Reflect.deleteProperty(navigator, 'locks');
+});
 const runtime = installSessionPaneRuntimeTestHarness({ sessionId: 'session-1' });
 
 let restoreViewport: (() => void) | undefined;
@@ -99,6 +98,52 @@ describe('AgentInput (action bar auto layout)', () => {
         layoutMockState.platform = 'ios';
         layoutMockState.width = 700;
         layoutMockState.height = 800;
+    });
+
+    it('separates the real Send and Voice targets in the 430px narrow web stack', async () => {
+        // Unistyles creates platform styles at module load. Load the actual web
+        // owner first, rather than relabeling a stylesheet created for native.
+        layoutMockState.platform = 'web';
+        layoutMockState.width = 430;
+        storageSettings = { ...storageSettings, agentInputActionBarLayout: 'wrap' };
+        const { AgentInput } = await import('./AgentInput');
+        const { VoiceComposerPlanet } = await import('@/components/voice/composer/VoiceComposerPlanet');
+        const screen = await renderAgentInput(<AgentInput
+            value="Ready" placeholder="Type" onChangeText={() => {}} onSend={() => {}}
+            onPathClick={() => {}} currentPath="/repo" autocompleteKinds={[]}
+            autocompleteSuggestions={async () => []}
+            trailingAccessory={<VoiceComposerPlanet pose="mic" muted={false} accessibilityLabel="Start Voice"
+                accessibilityHint="Start a spoken conversation" onPress={() => {}} />}
+        />);
+        const submit = findAllHostTestInstances(screen.tree.root, node => (
+            node.props.testID === 'new-session-composer-send'
+        ))[0];
+        if (!submit) throw new Error('Expected the real submit target');
+        const circle = findNearestHostParent(submit);
+        const shape = findNearestHostParent(circle);
+        if (!shape) throw new Error('Expected the real submit shape');
+        const geometry = flattenStyle(shape.props.style);
+        const hitSlop = submit.props.hitSlop as { top: number; bottom: number };
+        // The shape clips the native target: its padding must contain the reach,
+        // and its flow footprint must include that space rather than spending it
+        // again through a negative margin into the neighboring control.
+        const reservedTop = Number(geometry.paddingTop ?? 0) + Number(geometry.marginTop ?? 0);
+        const reservedBottom = Number(geometry.paddingBottom ?? 0) + Number(geometry.marginBottom ?? 0);
+        expect(reservedTop).toBeGreaterThanOrEqual(hitSlop.top);
+        expect(reservedBottom).toBeGreaterThanOrEqual(hitSlop.bottom);
+        const stack = findNearestHostParent(shape);
+        const stackGeometry = flattenStyle(stack?.props.style);
+        expect(stackGeometry.flexDirection).toBe('column-reverse');
+        const voice = findAllHostTestInstances(screen.tree.root, node => node.props.testID === 'session-composer-voice')[0];
+        if (!voice) throw new Error('Expected the real Voice target');
+        const voiceGeometry = flattenStyle(voice.props.style);
+        // Voice's declared 8px INLINE row gap must not be spent against the narrower stack gap (web: 1px).
+        // Include the neighbor's real target margin and any Send reach not allocated in flow, not only its glyph.
+        const gap = Number(stackGeometry.rowGap ?? stackGeometry.gap ?? 0);
+        expect(gap).toBe(1);
+        const voiceTopMargin = Number(voiceGeometry.marginTop ?? voiceGeometry.marginVertical ?? 0);
+        const targetSeparation = gap + voiceTopMargin + Math.min(0, reservedBottom - hitSlop.bottom);
+        expect(targetSeparation).toBeGreaterThanOrEqual(0);
     });
 
     it('does not subscribe to passive keyboard height while rendering the native composer', async () => {
@@ -135,12 +180,16 @@ describe('AgentInput (action bar auto layout)', () => {
         expect(subscribe.mock.calls.filter(([event]) => event === 'resize' || event === 'scroll')).toEqual([]);
     });
 
-    it('uses the scrollable action bar layout in auto mode on sub-tablet widths', async () => {
+    it.each(['ios', 'web'] as const)('keeps automatic phone Session controls on one scroll track on %s', async (platform) => {
+        layoutMockState.platform = platform;
+        layoutMockState.width = 390;
         storageSettings = { ...storageSettings, agentInputChipDensity: 'labels' };
         const { AgentInput } = await import('./AgentInput');
+        const onComposerActionBarLayoutChange = vi.fn();
 
         const screen = await renderAgentInput(
             <AgentInput
+                sessionId="session-1"
                 value=""
                 placeholder="Type"
                 onChangeText={() => {}}
@@ -152,17 +201,70 @@ describe('AgentInput (action bar auto layout)', () => {
                 currentPath="/tmp"
                 autocompleteKinds={[]}
                 autocompleteSuggestions={async () => []}
+                onComposerActionBarLayoutChange={onComposerActionBarLayoutChange}
             />,
         );
 
         const scrollViews = findAllHostTestInstances(screen.tree.root, (node) => (
             node?.type === 'ScrollView' && node?.props?.horizontal === true
         ));
-        expect(scrollViews.length).toBeGreaterThan(0);
-        expect(scrollViews[0]?.props?.scrollEnabled).toBe(true);
+        expect(onComposerActionBarLayoutChange).toHaveBeenLastCalledWith('scroll');
+        expect(scrollViews).toHaveLength(1);
+        expect(findAllHostTestInstances(scrollViews[0], node => (
+            node.type === 'Text' && node.props.children === 'Builder'
+        ))).toHaveLength(1);
+        expect(findAllHostTestInstances(scrollViews[0], node => (
+            node.props.testID === 'agent-input-path-chip'
+        ))).toHaveLength(1);
+    });
+
+    it.each(['ios', 'web'] as const)('keeps the embedded Home collapsed controls on one reachable scroll track on %s', async (platform) => {
+        layoutMockState.platform = platform;
+        layoutMockState.width = 390;
+        const { AgentInput } = await import('./AgentInput');
+        const input = <AgentInput
+            value="" placeholder="Type" onChangeText={() => {}} onSend={() => {}}
+            autoActionBarLayout="collapsed"
+            barControlIds={['machine', 'engine', 'actionMenu']}
+            onMachineClick={() => {}} machineName="Unnamed machine"
+            onAgentClick={() => {}} agentType="claude" agentLabel="Claude" engineLabel="Sonnet 4.6"
+            onPermissionClick={() => {}}
+            onPathClick={() => {}} currentPath="/repo"
+            autocompleteKinds={[]} autocompleteSuggestions={async () => []}
+        />;
+        const screen = await renderAgentInput(input);
+
+        const tracks = findAllHostTestInstances(screen.tree.root, node => (
+            node.type === 'ScrollView' && node.props.horizontal === true
+        ));
+        expect(tracks).toHaveLength(1);
+        const track = tracks[0];
+        expect(findAllHostTestInstances(track, node => (
+            node.type === 'Text' && node.props.children === 'Unnamed machine'
+        ))).toHaveLength(1);
+        expect(findAllHostTestInstances(track, node => (
+            node.type === 'Text' && node.props.children === 'Sonnet 4.6'
+        ))).toHaveLength(1);
+        expect(findAllHostTestInstances(track, node => (
+            node.props.testID === 'agent-input-action-menu-button'
+        ))).toHaveLength(1);
+        // Sending remains fixed beside the overflow, not scrolled off with chips.
+        expect(findAllHostTestInstances(track, node => (
+            node.props.testID === 'new-session-composer-send'
+        ))).toHaveLength(0);
+
+        // The person's explicit Wrap preference continues to override Home's
+        // automatic collapsed presentation.
+        storageSettings = { ...storageSettings, agentInputActionBarLayout: 'wrap' };
+        await act(async () => { storage.setState({ settings: storageSettings }); });
+        await screen.update(React.cloneElement(input, { value: 'Updated draft' }));
+        expect(findAllHostTestInstances(screen.tree.root, node => (
+            node.type === 'ScrollView' && node.props.horizontal === true
+        ))).toHaveLength(0);
     });
 
     it('publishes the mounted action-bar layout when the resolved mode changes', async () => {
+        layoutMockState.width = 900;
         storageSettings = {
             ...storageSettings,
             agentInputActionBarLayout: 'auto',
@@ -185,6 +287,12 @@ describe('AgentInput (action bar auto layout)', () => {
 
         const screen = await renderAgentInput(render());
 
+        expect(onComposerActionBarLayoutChange).toHaveBeenLastCalledWith('wrap');
+
+        storageSettings = { ...storageSettings, agentInputActionBarLayout: 'scroll' };
+        await act(async () => { storage.setState({ settings: storageSettings }); });
+        renderRevision += 1;
+        await screen.update(render());
         expect(onComposerActionBarLayoutChange).toHaveBeenLastCalledWith('scroll');
 
         storageSettings = {
@@ -263,12 +371,6 @@ describe('AgentInput (action bar auto layout)', () => {
         );
 
         const panel = screen.tree.root.findByType(WebDropTargetView);
-        const panelStyle = Object.assign(
-            {},
-            ...(Array.isArray(panel.props.style) ? panel.props.style : [panel.props.style]).filter(Boolean),
-        );
-        expect(panelStyle.maxHeight).toBe(640);
-
         const input = screen.tree.root.findByProps({ testID: 'new-session-composer-input' });
         const inputContainer = input.parent;
         const actionFooter = screen.tree.root.findAll((node) => {
@@ -299,7 +401,7 @@ describe('AgentInput (action bar auto layout)', () => {
         expect(screen.tree.root.findByProps({ testID: 'new-session-composer-input' }).props.maxHeight).toBe(468);
     });
 
-    it('honors the host panel max height on native where the absolutely-positioned composer needs the keyboard-driven cap', async () => {
+    it('caps native input to the measured space remaining in the host panel', async () => {
         layoutMockState.platform = 'ios';
         layoutMockState.width = 420;
         layoutMockState.height = 900;
@@ -319,11 +421,17 @@ describe('AgentInput (action bar auto layout)', () => {
         );
 
         const panel = screen.tree.root.findByType(WebDropTargetView);
-        const panelStyle = Object.assign(
-            {},
-            ...(Array.isArray(panel.props.style) ? panel.props.style : [panel.props.style]).filter(Boolean),
-        );
-        expect(panelStyle.maxHeight).toBe(300);
+        const input = screen.tree.root.findByProps({ testID: 'new-session-composer-input' });
+        const onPanelLayout = panel.props.onLayout;
+        expect(onPanelLayout).toEqual(expect.any(Function));
+        if (!onPanelLayout) throw new Error('Expected the composer panel to report its layout');
+        await act(async () => {
+            onPanelLayout(createLayoutChangeEvent({ x: 0, y: 0, width: 420, height: 300 }));
+            input.parent?.props.onLayout(createLayoutChangeEvent({ x: 0, y: 0, width: 420, height: 200 }));
+        });
+        const availableInputHeight = screen.tree.root.findByProps({ testID: 'new-session-composer-input' }).props.maxHeight;
+        expect(availableInputHeight).toBeGreaterThan(0);
+        expect(availableInputHeight).toBeLessThanOrEqual(200);
     });
 
     it('keeps web composer chrome fixed while capped input content scrolls', async () => {
@@ -507,6 +615,7 @@ describe('AgentInput (action bar auto layout)', () => {
     });
 
     it('reserves existing-session input expansion toggle space before the toggle appears', async () => {
+        storageSettings = { ...storageSettings, composerPromptLibraryButtonEnabled: false };
         layoutMockState.platform = 'ios';
         const { act } = await import('react-test-renderer');
         const { AgentInput } = await import('./AgentInput');

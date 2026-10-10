@@ -84,7 +84,7 @@ describe('useNewSessionSimplePanelProps', () => {
                 acpSessionModeProbeState: { phase: 'idle' as const, onRefresh: () => {} },
                 acpConfigOptionsProbeState: { phase: 'idle' as const, onRefresh: () => {} },
             },
-            machineAndResume: { ...panel, machineDisplayName: 'Mac Studio development rack', destination },
+            machineAndResume: { ...panel, selectedMachine: { id: 'machine-1', metadata: { displayName: 'Mac Studio development rack' } }, destination },
             profile: panel,
             targetServerId: 'home-a',
             attachmentFlowId: undefined,

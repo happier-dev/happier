@@ -67,7 +67,7 @@ export function useNewSessionCapabilitiesPrefetch(params: Readonly<{
                         Promise.resolve().then(() => params.prefetchMachineCapabilitiesIfStale({
                             machineId,
                             serverId: params.serverId,
-                            cacheKeySalt: resolveDaemonCapabilitiesCacheKeySalt(machine),
+                            cacheKeySalt: resolveDaemonCapabilitiesCacheKeySalt(machine, params.serverId),
                             staleMs: params.staleMs,
                             request: params.request,
                         })),
@@ -112,7 +112,7 @@ export function useNewSessionCapabilitiesPrefetch(params: Readonly<{
 
         const nextKey = [
             machine.id,
-            String(machine.daemonStateVersion ?? ''),
+            String(resolveDaemonCapabilitiesCacheKeySalt(machine, params.serverId)),
             String(params.serverId ?? ''),
         ].join('|');
         if (selectedMachinePrefetchStateRef.current.completedKey === nextKey) return;
@@ -131,7 +131,7 @@ export function useNewSessionCapabilitiesPrefetch(params: Readonly<{
                 Promise.resolve().then(() => params.prefetchMachineCapabilitiesIfStale({
                     machineId: params.selectedMachineId!,
                     serverId: params.serverId,
-                    cacheKeySalt: resolveDaemonCapabilitiesCacheKeySalt(machine),
+                    cacheKeySalt: resolveDaemonCapabilitiesCacheKeySalt(machine, params.serverId),
                     staleMs: params.staleMs,
                     request: params.request,
                 })),

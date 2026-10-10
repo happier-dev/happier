@@ -235,6 +235,9 @@ describe('useCreateNewSession (embedded new chat)', () => {
   beforeAll(async () => {
     restoreBrowserLocks = installWebLockManagerMock().restore;
     harness = await createHarness();
+    // This real presentation host is used by every case. Load its screen graph
+    // during canonical harness setup, not inside the first timed contract.
+    await import('@/components/sessions/shell/embedded/EmbeddedSessionNewChat');
     const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
     await prepareSessionDraftPersistenceStorage();
   }, 180_000);
@@ -337,8 +340,11 @@ describe('useCreateNewSession (embedded new chat)', () => {
     await runtime.initialize({ parentOrigin: 'https://parent.example', credential: {
       token: 'creation-child', expiresAt: '2100-01-01T00:00:00.000Z',
     } });
+    const creationScope = runtime.getSnapshot().creationConfig?.draftScope;
+    if (!creationScope) throw new Error('The admitted creation host did not publish its draft scope');
     const onCreate = vi.fn(runtime.createSession);
     const params = createRetryParams(storageState.settings, {
+      draftScope: creationScope,
       directoryKind: 'managed',
       selectedMachine: null,
       targetServerId: endpointUrl,
@@ -386,11 +392,13 @@ describe('useCreateNewSession (embedded new chat)', () => {
     });
     await flushHookEffects({ cycles: 8, turns: 4 });
     const { sync } = await import('@/sync/syncEngine');
+    expect(modalAlertSpy.mock.calls, JSON.stringify({ phase: runtime.getSnapshot().phase,
+      error: runtime.getSnapshot().error, hostCreates: onCreate.mock.calls.length, serverSpawns: spawnRequests.length })).toEqual([]);
+    expect(runtime.getSnapshot()).toMatchObject({ phase: 'ready', displayedSessionId: 'embed-created' });
     // Read the server's acknowledged queue through the real owner, rather than
     // requiring a transient optimistic projection to remain in the store.
     await act(async () => { await sync.fetchPendingMessages('embed-created'); });
 
-    expect(modalAlertSpy.mock.calls).toEqual([]);
     expect(sessionSpawnNewActionBoundarySpy).not.toHaveBeenCalled();
     expect(onCreate).toHaveBeenCalledTimes(1);
     const [draft, attempt] = onCreate.mock.calls[0] as unknown as [SessionSpawnNewInputV2, { attemptId: string }];
@@ -405,7 +413,6 @@ describe('useCreateNewSession (embedded new chat)', () => {
     expect(spawnRequests[0].input).not.toHaveProperty('initialInput');
     expect(pendingRequests).toEqual([expect.objectContaining({ localId: firstTurnLocalId })]);
     expect(handedOffPendingLocalIds).toEqual([firstTurnLocalId]);
-    expect(runtime.getSnapshot()).toMatchObject({ phase: 'ready', displayedSessionId: 'embed-created' });
     // The frame's admitted Account, not saved ambient credentials, binds the
     // reached existing-session composer repository and attachment owner.
     const { useServerCredentialAccountScopeBinding } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
@@ -509,8 +516,13 @@ describe('useCreateNewSession (embedded new chat)', () => {
     await runtime.initialize({ parentOrigin: 'https://parent.example', credential: {
       token: 'child', expiresAt: '2100-01-01T00:00:00.000Z',
     } });
+    const creationScope = runtime.getSnapshot().creationConfig?.draftScope;
+    if (!creationScope) throw new Error('The admitted creation host did not publish its draft scope');
     const onCreate = vi.fn(runtime.createSession);
     const params = createRetryParams(storageState.settings, {
+      draftScope: creationScope,
+      targetServerId: creationScope.serverId,
+      allowedTargetServerIds: [creationScope.serverId],
       directoryKind: 'managed',
       promptStore: createNewSessionPromptStore('Keep me'),
     });

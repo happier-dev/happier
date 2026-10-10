@@ -10,6 +10,7 @@ import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/scr
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import { RunnerActivationClientError, type RunnerActivationClient } from '@/sync/api/ephemeralRunner/runnerActivationClient';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
+import { resolveSavedSecretReference } from '@/sync/store/settings/savedSecretCatalogSnapshot';
 import {
     assertLaunchProfileReviewCurrent,
     LaunchProfileEnvironmentUnavailableError,
@@ -120,6 +121,7 @@ describe('New Session Send on a Temporary computer with an unresolvable Profile'
                         profile: currentProfile,
                         selectedAgentProviderOwnedEnvironmentKeys: [],
                         secrets: input.secrets,
+                        resolveSavedSecretReference: (ref) => resolveSavedSecretReference(SCOPE, input.secrets, ref),
                         selectedSecretIds: { RUNNER_PROFILE_TOKEN: 'secret-work' },
                         machineEnvReadyByName: { RUNNER_PROFILE_TOKEN: false },
                         decryptSecretValue: (value) => value?.value ?? null,

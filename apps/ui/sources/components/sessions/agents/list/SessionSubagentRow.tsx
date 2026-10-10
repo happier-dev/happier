@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { View } from 'react-native';
+import { HappierWorkRowShell } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { useSessionSubagentActions } from '@/components/sessions/agents/actions/useSessionSubagentActions';
@@ -7,9 +8,12 @@ import { SessionAgentActivitySummary } from '@/components/sessions/agents/presen
 import { resolveSessionAgentActivityPresentation } from '@/components/sessions/agents/presentation/sessionAgentActivityPresentation';
 import type { SessionAgentActivityRow } from '@/components/sessions/agents/presentation/sessionAgentActivityRows';
 import { ContextMenu } from '@/components/ui/forms/dropdown/ContextMenu';
-import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { useWorkTheme } from '@/components/work/map/WorkMapView';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
+import { t } from '@/text';
 
 /**
  * One roster row (agents lab AG1): the Agent's mark, the title, one line that says where the work
@@ -22,13 +26,6 @@ import { Typography } from '@/constants/Typography';
  */
 
 const stylesheet = StyleSheet.create((theme) => ({
-    // A flat row on the pane's paper: no card around each unit of work.
-    row: {
-        borderRadius: 10,
-        paddingHorizontal: 8,
-        paddingVertical: 8,
-        minHeight: 52,
-    },
     activity: {
         ...Typography.default(),
         marginTop: 3,
@@ -39,23 +36,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         lineHeight: 16,
     },
 }));
-
-const ViewWithClick = View as unknown as React.ComponentType<
-    React.ComponentPropsWithRef<typeof View> & {
-        onClick?: (event: unknown) => void;
-        onKeyDown?: (event: unknown) => void;
-        onContextMenu?: (event: unknown) => void;
-        tabIndex?: number;
-        'aria-expanded'?: boolean;
-    }
->;
-
-type KeyboardLikeEvent = Readonly<{
-    key?: string;
-    preventDefault?: () => void;
-    stopPropagation?: () => void;
-    nativeEvent?: { stopPropagation?: () => void };
-}>;
 
 export const SessionSubagentRow = React.memo((props: Readonly<{
     sessionId: string;
@@ -70,10 +50,13 @@ export const SessionSubagentRow = React.memo((props: Readonly<{
     onPress: () => void;
     /** Set on a row that opens in place; announced as a disclosure. */
     expanded?: boolean;
+    selected?: boolean;
     onOpenFull: (() => void) | null;
     onOpenAdvanced: (() => void) | null;
 }>) => {
     const styles = stylesheet;
+    const router = useRouter();
+    const workTheme = useWorkTheme();
     const { entry, subagent } = props.row;
     const originLabel = props.originLabel ?? null;
     const sessionAgentId = props.sessionAgentId ?? null;
@@ -130,52 +113,29 @@ export const SessionSubagentRow = React.memo((props: Readonly<{
         />
     ) : null;
 
-    if (Platform.OS === 'web') {
-        return (<>
-            <ViewWithClick
-                ref={anchorRef}
-                testID={`session-subagent-row:${subagent.id}`}
-                accessibilityLabel={presentation.accessibilityLabel}
-                aria-expanded={props.expanded}
-                onClick={(event) => {
-                    const maybe = event as KeyboardLikeEvent | undefined;
-                    try { maybe?.stopPropagation?.(); } catch {}
-                    onPress();
-                }}
-                onKeyDown={(event) => {
-                    const maybe = event as KeyboardLikeEvent | undefined;
-                    const key = String(maybe?.key ?? '');
-                    if (key !== 'Enter' && key !== ' ') return;
-                    maybe?.preventDefault?.();
-                    onPress();
-                }}
-                onContextMenu={hasActions ? (event) => {
-                    const maybe = event as KeyboardLikeEvent | undefined;
-                    maybe?.preventDefault?.();
-                    openMenu();
-                } : undefined}
-                tabIndex={0}
-                style={styles.row}
-            >
-                {body}
-            </ViewWithClick>
-            {menu}
-        </>);
-    }
-
     return (<>
-        <Pressable
-            ref={anchorRef}
+        <HappierWorkRowShell
+            // The shared pressable publishes its actual RN View through the portable focus boundary.
+            controlRef={(instance) => { anchorRef.current = instance as View | null; }}
             testID={`session-subagent-row:${subagent.id}`}
-            accessibilityRole="button"
             accessibilityLabel={presentation.accessibilityLabel}
-            accessibilityState={props.expanded === undefined ? undefined : { expanded: props.expanded }}
+            selected={props.selected ?? props.expanded}
+            expanded={props.expanded}
             onPress={onPress}
             onLongPress={hasActions ? openMenu : undefined}
-            style={({ pressed }) => [styles.row, { opacity: pressed ? motionTokens.press.opacitySubtle : 1 }]}
+            onContextMenu={hasActions ? (event) => {
+                if (event && typeof event === 'object' && 'preventDefault' in event && typeof event.preventDefault === 'function') event.preventDefault();
+                openMenu();
+            } : undefined}
+            theme={workTheme}
         >
             {body}
-        </Pressable>
+        </HappierWorkRowShell>
+        {actions.approval.approvalPending && actions.approval.approvalId && props.serverId ? (
+            <ActionApprovalPendingNotice testID={`session-subagent-stop-approval:${subagent.id}`}
+                message={t('approvals.status.open')}
+                onOpenApproval={() => router.push(`/inbox/approvals/${encodeURIComponent(actions.approval.approvalId!)}?serverId=${encodeURIComponent(props.serverId!)}`)} />
+        ) : null}
         {menu}
     </>);
 });

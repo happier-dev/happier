@@ -43,6 +43,15 @@ function buildModel(overrides: Partial<Parameters<typeof buildNewSessionConnecte
 }
 
 describe('buildNewSessionConnectedServicesSelectionListModel', () => {
+    it('does not check Native for unread inherited bindings while retaining explicit Native recovery', () => {
+        const setBindingForService = vi.fn();
+        const model = buildModel({ bindingsByServiceId: {}, bindingsKnown: false, setBindingForService });
+        expect(model.selectedOptionId).toBeNull();
+        const native = firstStaticSection(model).options.find(option => option.id === createNativeServiceOptionId('anthropic'));
+        expect(native?.icon).toBe('unselected-icon');
+        native?.onSelect?.();
+        expect(setBindingForService).toHaveBeenCalledWith('anthropic', { source: 'native' });
+    });
     it('keeps routing identity out of an account row after device identity presentation', () => {
         const setBindingForService = vi.fn();
         const model = buildModel({

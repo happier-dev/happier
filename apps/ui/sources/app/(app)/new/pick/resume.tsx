@@ -8,6 +8,7 @@ import { buildBackendTargetRouteParams, resolveBackendTargetFromRouteParams } fr
 import { getResolvedBackendCatalogEntries, resolveBackendTargetOperationalAgentId, resolveCatalogAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { resolvePersistedAgentIdForBackendTarget } from '@/agents/backendCatalog/resolvePersistedAgentIdForBackendTarget';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { useAcpCatalogForServer } from '@/sync/store/useAcpCatalog';
 import { NewSessionResumeSelectionContent } from '@/components/sessions/new/components/NewSessionResumeSelectionContent';
 import { openExternalSessionsResumeIdPickerModal } from '@/components/sessions/external/browse/openExternalSessionsResumeIdPickerModal';
 import { NewSessionScreenPortalScope, useNewSessionContainedModalScreenOptions } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
@@ -84,10 +85,12 @@ export default function ResumePickerScreen() {
         serverId: effectiveServerId,
     });
     const daemonMergedProjectionInputs = daemonMergedProjection.phase === 'ready' ? daemonMergedProjection.inputs : null;
+    const { snapshot: acpCatalog } = useAcpCatalogForServer(effectiveServerId);
+    const catalogReady = acpCatalog?.catalog.status === 'ready' && !acpCatalog.stale;
     const resolvedBackendEntries = React.useMemo(() => {
         return getResolvedBackendCatalogEntries({
             enabledAgentIds: getEnabledAgentIds({ backendEnabledByTargetKey: settings.backendEnabledByTargetKey }),
-            acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
+            acpCatalogSnapshot: acpCatalog?.catalog,
             backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
             collapseConfiguredBackendProviderSentinels: true,
             mergedProviderProjectionById: daemonMergedProjectionInputs?.mergedProviderProjectionById ?? null,
@@ -98,7 +101,7 @@ export default function ResumePickerScreen() {
         daemonMergedProjectionInputs?.discoveredBackendIds,
         daemonMergedProjectionInputs?.mergedBackendProjectionById,
         daemonMergedProjectionInputs?.mergedProviderProjectionById,
-        settings.acpCatalogSettingsV1,
+        acpCatalog,
         settings.backendEnabledByTargetKey,
     ]);
     const routeBackendTarget = React.useMemo(() => {
@@ -162,7 +165,7 @@ export default function ResumePickerScreen() {
         const map = readBackendNewSessionOptionStateByTargetKey(tempSessionData);
         return map?.[effectiveBackendTargetKey] ?? null;
     }, [effectiveBackendTargetKey, tempSessionData]);
-    const resumeBrowseEnabled = externalSessionsFeatureEnabled
+    const resumeBrowseEnabled = catalogReady && externalSessionsFeatureEnabled
         && Boolean(effectiveMachineId)
         && operationalAgentId !== null
         && canBrowseExternalSessions({

@@ -1,7 +1,7 @@
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { resolveMachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import { resolveExactServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachines';
-import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
+import { formatSessionPath } from '@/utils/sessions/formatPathRelativeToHome';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 
 import type {
@@ -17,6 +17,7 @@ export function resolveSessionServerStartCandidateSelection(params: Readonly<{
     activeServerId: string;
     activeMachines: readonly Machine[];
     machineListByServerId: Readonly<Record<string, readonly Machine[] | null | undefined>>;
+    machineListStatusByServerId?: Readonly<Record<string, 'idle' | 'loading' | 'signedOut' | 'error' | undefined>>;
 }>): Readonly<{
     candidate?: Candidate;
     target: SessionServerStartDraftTarget;
@@ -36,6 +37,7 @@ export function resolveSessionServerStartCandidateSelection(params: Readonly<{
         activeServerId: params.activeServerId,
         activeMachines: params.activeMachines,
         machineListByServerId: params.machineListByServerId,
+        machineListStatusByServerId: params.machineListStatusByServerId,
     });
 
     return {
@@ -60,6 +62,7 @@ export function presentSessionServerStartCandidate(params: Readonly<{
     activeServerId: string;
     activeMachines: readonly Machine[];
     machineListByServerId: Readonly<Record<string, readonly Machine[] | null | undefined>>;
+    machineListStatusByServerId?: Readonly<Record<string, 'idle' | 'loading' | 'signedOut' | 'error' | undefined>>;
 }>): Readonly<{ title: string; subtitle: string | undefined }> {
     const machine = resolveExactServerScopedMachine({
         machineId: params.candidate.machineId,
@@ -67,10 +70,11 @@ export function presentSessionServerStartCandidate(params: Readonly<{
         activeServerId: params.activeServerId,
         activeMachines: params.activeMachines,
         machineListByServerId: params.machineListByServerId,
+        machineListStatusByServerId: params.machineListStatusByServerId,
     });
     return {
         title: params.candidate.label
-            ?? formatPathRelativeToHome(params.candidate.rootPath, machine?.metadata?.homeDir ?? undefined),
+            ?? formatSessionPath(params.candidate.rootPath, machine?.metadata?.homeDir ?? undefined),
         subtitle: getMachineDisplayName(machine) ?? undefined,
     };
 }

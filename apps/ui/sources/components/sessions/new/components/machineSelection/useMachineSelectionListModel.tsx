@@ -620,7 +620,9 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                     id: offer.id,
                     testID: params.testIdPrefix ? `${params.testIdPrefix}-${offer.id}` : undefined,
                     label: offer.title,
-                    subtitle: offer.unavailableText ?? offer.subtitle,
+                    subtitle: offer.unavailableText ?? (purpose === 'finite'
+                        ? [offer.subtitle, t('managedMachines.picker.createdOnRun')].filter(Boolean).join(' · ')
+                        : offer.subtitle),
                     // A preset reads as a saved recipe; "One-off machine…" as making a new one.
                     icon: <Icon name={offer.kind === 'one-off' ? 'plus' : 'stack'} size={24} color={theme.colors.text.secondary} />,
                     disabled: offer.disabled === true || (offer.draft

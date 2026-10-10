@@ -1,8 +1,6 @@
 import type * as React from 'react';
 
-import { t } from '@/text';
-
-import { getSessionActionMetadata } from './sessionActionMetadata';
+import { getSessionActionMetadata, resolveSessionActionTitle } from './sessionActionMetadata';
 import type { IconName } from '@/components/ui/icons/Icon';
 import {
     SESSION_BULK_ACTION_IDS,
@@ -27,7 +25,7 @@ function createBulkDescriptor(actionId: SessionBulkActionId): SessionBulkActionD
     }
     return {
         id: actionId,
-        title: t(metadata.titleKey),
+        title: resolveSessionActionTitle(metadata),
         icon: metadata.icon,
         requiresConfirmation: metadata.requiresConfirmation,
         destructive: metadata.destructive,

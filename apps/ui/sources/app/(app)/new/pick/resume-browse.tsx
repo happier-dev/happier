@@ -8,6 +8,7 @@ import { getEnabledAgentIds } from '@/agents/catalog/enabled';
 import { buildBackendTargetRouteParams, resolveBackendTargetFromRouteParams } from '@/agents/backendCatalog/backendTargetRouteParams';
 import { getResolvedBackendCatalogEntries, resolveBackendTargetOperationalAgentId } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { useAcpCatalogForServer } from '@/sync/store/useAcpCatalog';
 import { ExternalSessionsBrowseScreen } from '@/components/sessions/external/browse/ExternalSessionsBrowseScreen';
 import { ExternalSessionsBrowseRouteGate } from '@/components/sessions/external/browse/ExternalSessionsBrowseRouteGate';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -85,10 +86,12 @@ function ResumeBrowsePickerScreenContent(props: Readonly<{
         serverId: effectiveServerId,
     });
     const daemonMergedProjectionInputs = daemonMergedProjection.phase === 'ready' ? daemonMergedProjection.inputs : null;
+    const { snapshot: acpCatalog } = useAcpCatalogForServer(effectiveServerId);
+    const catalogReady = acpCatalog?.catalog.status === 'ready' && !acpCatalog.stale;
     const resolvedBackendEntries = React.useMemo(() => {
         return getResolvedBackendCatalogEntries({
             enabledAgentIds: getEnabledAgentIds({ backendEnabledByTargetKey: settings.backendEnabledByTargetKey }),
-            acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
+            acpCatalogSnapshot: acpCatalog?.catalog,
             backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
             collapseConfiguredBackendProviderSentinels: true,
             mergedProviderProjectionById: daemonMergedProjectionInputs?.mergedProviderProjectionById ?? null,
@@ -99,7 +102,7 @@ function ResumeBrowsePickerScreenContent(props: Readonly<{
         daemonMergedProjectionInputs?.discoveredBackendIds,
         daemonMergedProjectionInputs?.mergedBackendProjectionById,
         daemonMergedProjectionInputs?.mergedProviderProjectionById,
-        settings.acpCatalogSettingsV1,
+        acpCatalog,
         settings.backendEnabledByTargetKey,
     ]);
     const routeBackendTarget = React.useMemo(() => {
@@ -158,9 +161,10 @@ function ResumeBrowsePickerScreenContent(props: Readonly<{
      * phase (`ready`, `unsupported`, `error`, or `idle` when there is no machine at all)
      * may prove the lock unavailable.
      */
-    const awaitingProjection = daemonMergedProjection.phase === 'loading';
+    const awaitingProjection = !catalogReady || daemonMergedProjection.phase === 'loading';
 
     const lockScope = React.useMemo(() => {
+        if (!catalogReady) return null;
         if (!effectiveMachineId) return null;
         if (!operationalAgentId) return null;
         if (!canBrowseExternalSessions({
@@ -187,7 +191,7 @@ function ResumeBrowsePickerScreenContent(props: Readonly<{
             providerId: operationalAgentId,
             source,
         };
-    }, [accountProfile, agentOptionState, daemonMergedProjectionInputs?.pluginProjectionV2, effectiveMachineId, effectiveServerId, operationalAgentId, settings]);
+    }, [accountProfile, agentOptionState, catalogReady, daemonMergedProjectionInputs?.pluginProjectionV2, effectiveMachineId, effectiveServerId, operationalAgentId, settings]);
 
     React.useEffect(() => {
         if (lockScope || awaitingProjection) return;

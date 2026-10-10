@@ -4,8 +4,9 @@ import { createResolvedAgentCatalogEntryFixture } from '@/dev/testkit/fixtures/a
 import { renderScreen } from '@/dev/testkit';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import { getResolvedBackendCatalogEntries, type ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
-import { getAgentCliGlyph } from '@/agents/catalog/catalog';
-import { applyAcpBackendUpsertV1 } from '@happier-dev/protocol';
+import { AgentIcon } from '@/agents/registry/AgentIcon';
+import { Icon } from '@/components/ui/icons/Icon';
+import { AcpCatalogRecordV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 
 
@@ -17,23 +18,21 @@ installNewSessionComponentsCommonModuleMocks({
 });
 
 function configuredBackendEntries() {
-    const result = applyAcpBackendUpsertV1({
-        settings: { v: 2, backends: [] },
-        backend: { id: 'custom-acp', name: 'custom-acp', title: 'Custom ACP', command: 'custom-acp', args: [] },
-        nowMs: 1,
+    const record = AcpCatalogRecordV1Schema.parse({
+        v: 1,
+        definitions: [{ id: 'custom-acp', name: 'custom-acp', title: 'Custom ACP', command: 'custom-acp', args: [], createdAt: 1, updatedAt: 1 }],
     });
-    if (!result.ok) throw new Error(`Invalid configured ACP fixture: ${result.code}`);
-    const entries = getResolvedBackendCatalogEntries({ enabledAgentIds: [], acpCatalogSettingsV1: result.settings });
+    const entries = getResolvedBackendCatalogEntries({ enabledAgentIds: [], acpCatalogSnapshot: { status: 'ready', revision: 1, record } });
     expect(entries).toHaveLength(1);
     return entries;
 }
 
 function bundledEntries(enabledAgentIds: string[]) {
-    return getResolvedBackendCatalogEntries({ enabledAgentIds, acpCatalogSettingsV1: { v: 2, backends: [] } });
+    return getResolvedBackendCatalogEntries({ enabledAgentIds, acpCatalogSnapshot: { status: 'ready', revision: 1, record: { v: 1, definitions: [] } } });
 }
 
 describe('ProfileCompatibilityIcon', () => {
-    it('shows only the first two compatible backend glyphs followed by ellipsis when more than two backends are supported', async () => {
+    it('uses one profile mark for many compatible Agents instead of shrinking their identities into an ellipsis', async () => {
         const { ProfileCompatibilityIcon } = await import('./ProfileCompatibilityIcon');
         const backendEntries = bundledEntries(['claude', 'codex', 'opencode', 'auggie']);
 
@@ -54,7 +53,9 @@ describe('ProfileCompatibilityIcon', () => {
         );
 
         const glyphs = screen.findAllByType('Text').map((node) => node.props.children);
-        expect(glyphs).toEqual([getAgentCliGlyph('claude'), getAgentCliGlyph('codex'), '...']);
+        expect(screen.findAllByType(AgentIcon)).toHaveLength(0);
+        expect(screen.findAllByType(Icon).map((node) => node.props.name)).toContain('sliders-horizontal');
+        expect(glyphs).not.toContain('...');
     });
 
     it('shows a neutral configured ACP glyph alongside a bundled Agent glyph without borrowing its icon', async () => {
@@ -74,7 +75,8 @@ describe('ProfileCompatibilityIcon', () => {
         );
 
         const glyphs = screen.findAllByType('Text').map((node) => node.props.children);
-        expect(glyphs).toEqual(['•', getAgentCliGlyph('codex')]);
+        expect(glyphs).toEqual(['•']);
+        expect(screen.findAllByType(AgentIcon).map((node) => node.props.agentId)).toEqual(['codex']);
     });
 
     it('shows the neutral fallback glyph when legacy customAcp compatibility resolves to a configured backend with no canonical icon carrier', async () => {
@@ -95,7 +97,8 @@ describe('ProfileCompatibilityIcon', () => {
         );
 
         const glyphs = screen.findAllByType('Text').map((node) => node.props.children);
-        expect(glyphs).toEqual(['•', getAgentCliGlyph('claude')]);
+        expect(glyphs).toEqual(['•']);
+        expect(screen.findAllByType(AgentIcon).map((node) => node.props.agentId)).toEqual(['claude']);
     });
 
     it('never borrows a bundled carrier glyph for an external Agent target', async () => {
@@ -129,6 +132,7 @@ describe('ProfileCompatibilityIcon', () => {
             />,
         );
 
-        expect(screen.findAllByType('Text').map((node) => node.props.children)).toEqual(['•', getAgentCliGlyph('codex')]);
+        expect(screen.findAllByType('Text').map((node) => node.props.children)).toEqual(['•']);
+        expect(screen.findAllByType(AgentIcon).map((node) => node.props.agentId)).toEqual(['codex']);
     });
 });

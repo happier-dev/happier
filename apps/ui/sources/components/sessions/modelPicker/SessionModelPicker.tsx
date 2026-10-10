@@ -11,6 +11,7 @@ import type {
 } from '@happier-dev/protocol/teams';
 
 import { ProviderErrorItems } from '@/components/settings/providers/ProviderErrorItems';
+import { useProviderModelProjection } from '@/providers/hooks/useProviderModelProjection';
 import {
     OptionPickerOverlay,
     type OptionPickerFavoriteOptions,
@@ -25,9 +26,18 @@ import { t } from '@/text';
 import {
     buildSessionModelPickerSections,
     sessionModelConnectionTitle,
+    withSessionModelSourceSuffixes,
+    type SessionModelPickerSection,
     type SessionModelProjectionGroup,
     type SessionNativeModelOption,
 } from './buildSessionModelPickerSections';
+import {
+    SessionModelHiddenSourcesLine,
+    SessionModelSourceScopeBar,
+    type SessionModelBrowseScope,
+    type SessionModelHiddenSource,
+} from './SessionModelSourceScope';
+import { SessionModelNativeSourceLabelContext, SessionModelSourceBrowseHandoffContext } from './SessionModelSourceBrowseHandoff';
 import {
     isTeamCredentialProviderModelPickerValue,
     sessionModelSelectionKey,
@@ -113,7 +123,10 @@ export function resolveSessionModelPickerSelection(input: Readonly<{
     return { kind: 'select', ref: input.ref };
 }
 
-export function SessionModelPicker(props: Readonly<{
+const EMPTY_NATIVE_MODELS: readonly SessionNativeModelOption[] = [];
+const EMPTY_PROJECTION_GROUPS: readonly SessionModelProjectionGroup[] = [];
+
+export type SessionModelPickerProps = Readonly<{
     agentTargetKey: string;
     nativeModels: readonly SessionNativeModelOption[];
     providerGroups: readonly SessionModelProjectionGroup[];
@@ -161,8 +174,98 @@ export function SessionModelPicker(props: Readonly<{
     onSelect: (ref: SessionModelPickerValue) => void;
     onSelectTeamCredentialModel?: (selection: TeamCredentialProviderModelSelectionV1) => void;
     onRecoverTeamCredentialResource?: (resource: TeamCredentialResourceCatalogEntryV1) => void;
+    /** Heading and "via" name for the Agent's own models: its signed-in account or pool. */
+    nativeSourceLabel?: string | null;
+    /** Sources switched off for the picker that still offer this Agent models (the projection's `hiddenSources`). */
+    hiddenSources?: readonly SessionModelHiddenSource[];
+    /**
+     * Where to project one source while it is browsed in place. Hosts that omit it offer no browsing.
+     * Browsing is local to this picker: it never writes the selection; only picking a model does.
+     */
+    sourceBrowse?: Readonly<{ machineId: string | null; serverId: string | null }>;
+}>;
+
+/**
+ * The engine popover's model pane (D13: Agent rail + model cards, the selected card with its own
+ * options). It also owns the one piece of local navigation Design A adds: browsing a single source
+ * that is hidden from the main list. The scope is forgotten when the pane closes.
+ */
+export function SessionModelPicker(props: SessionModelPickerProps) {
+    // "Runs through" can ask the pane to open on one source; the request names the Agent it was made for.
+    const handoff = React.useContext(SessionModelSourceBrowseHandoffContext);
+    const requested = props.sourceBrowse && handoff?.request?.agentTargetKey === props.agentTargetKey ? handoff.request : null;
+    const requestedScopeRef = React.useRef(requested?.scope ?? null);
+    requestedScopeRef.current = requested?.scope ?? null;
+    const [browseScope, setBrowseScope] = React.useState<SessionModelBrowseScope | null>(requestedScopeRef.current);
+    const requestKey = requested?.key ?? null;
+    React.useEffect(() => {
+        if (requestedScopeRef.current) setBrowseScope(requestedScopeRef.current);
+    }, [requestKey]);
+    const exitBrowse = React.useCallback(() => setBrowseScope(null), []);
+    if (browseScope && props.sourceBrowse) {
+        return <SessionModelSourceBrowse picker={props} sourceBrowse={props.sourceBrowse} scope={browseScope} onExit={exitBrowse} />;
+    }
+    return <SessionModelPickerPane {...props} onBrowseSource={props.sourceBrowse ? setBrowseScope : undefined} />;
+}
+
+/** One source, in the same pane: its models, the scope bar, nothing committed until a card is picked. */
+function SessionModelSourceBrowse(props: Readonly<{
+    picker: SessionModelPickerProps;
+    sourceBrowse: NonNullable<SessionModelPickerProps['sourceBrowse']>;
+    scope: SessionModelBrowseScope;
+    onExit: () => void;
+}>) {
+    const { picker } = props;
+    const projection = useProviderModelProjection({
+        enabled: true,
+        machineId: props.sourceBrowse.machineId,
+        serverId: props.sourceBrowse.serverId,
+        agentTargetKey: picker.agentTargetKey,
+        sourceConnectionId: props.scope.connectionId,
+        ...(picker.selected ? { currentSelection: picker.selected } : {}),
+    });
+    const scope = React.useMemo(() => ({ scope: props.scope, onExit: props.onExit }), [props.onExit, props.scope]);
+    const notes = React.useMemo(() => [t('agentInput.model.nativeSubagentNote')], []);
+    return (
+        <SessionModelPickerPane
+            agentTargetKey={picker.agentTargetKey}
+            nativeModels={EMPTY_NATIVE_MODELS}
+            providerGroups={projection.data?.groups ?? EMPTY_PROJECTION_GROUPS}
+            providerProjectionAuthoritative={projection.status === 'success'}
+            projectionError={projection.error}
+            projectionFailures={projection.refreshFailures}
+            retryProjection={projection.refresh}
+            allowAutomatic={false}
+            canEnterCustomValue={false}
+            selected={picker.selected}
+            effectiveLabel={picker.effectiveLabel}
+            reportedModel={picker.reportedModel}
+            notes={notes}
+            probe={projection.loading
+                ? { phase: 'loading' }
+                : { phase: 'idle', onRefresh: () => { void projection.refresh(); } }}
+            experimentalConfirmation={picker.experimentalConfirmation}
+            fillAvailableSpace={picker.fillAvailableSpace}
+            showTitle={picker.showTitle}
+            maxHeight={picker.maxHeight}
+            heightBehavior={picker.heightBehavior}
+            autoFocusInputOnWeb={picker.autoFocusInputOnWeb}
+            onRequestClose={picker.onRequestClose}
+            multiColumn={picker.multiColumn}
+            onSelect={picker.onSelect}
+            scope={scope}
+        />
+    );
+}
+
+function SessionModelPickerPane(props: SessionModelPickerProps & Readonly<{
+    onBrowseSource?: (scope: SessionModelBrowseScope) => void;
+    /** Set while one source is browsed: the scope bar and its way back to every shown source. */
+    scope?: Readonly<{ scope: SessionModelBrowseScope; onExit: () => void }>;
 }>) {
     const canConfirmExperimental = Boolean(props.experimentalConfirmation);
+    const hostNativeSourceLabel = React.useContext(SessionModelNativeSourceLabelContext);
+    const nativeSourceLabel = props.nativeSourceLabel ?? hostNativeSourceLabel;
     const baseSections = React.useMemo(() => buildSessionModelPickerSections({
         agentTargetKey: props.agentTargetKey,
         nativeModels: props.nativeModels,
@@ -179,9 +282,13 @@ export function SessionModelPicker(props: Readonly<{
         homeNameByTeamId: props.homeNameByTeamId,
         currentTeamCredentialResourceKeys: props.currentTeamCredentialResourceKeys,
         onRecoverTeamCredentialResource: props.onRecoverTeamCredentialResource,
+        nativeSourceLabel,
+        recoverMissingSelection: props.scope === undefined,
     }), [
         props.agentTargetKey,
         props.allowAutomatic,
+        nativeSourceLabel,
+        props.scope,
         props.currentSelectionRecovery,
         props.hiddenNativeModelKeys,
         props.nativeModels,
@@ -242,6 +349,7 @@ export function SessionModelPicker(props: Readonly<{
             const projected = optionByKey.get(key);
             return [{
                 value: entry.ref,
+                source: projected?.source,
                 label: projected?.label ?? entry.label ?? entry.ref.modelId,
                 description: projected?.description ?? entry.description,
                 accessibilityLabel: projected?.accessibilityLabel ?? entry.accessibilityLabel,
@@ -266,11 +374,16 @@ export function SessionModelPicker(props: Readonly<{
     // "Built-in" only tells the agent's own models apart from provider and team groups; over the
     // only group it is noise (0.2 had none). A lone Favorites group keeps its label: it still says
     // what the list is.
-    const labeledSections = React.useMemo(() => (
-        sections.length === 1 && sections[0]!.id === 'native'
-            ? [{ ...sections[0]!, title: undefined }]
-            : sections
-    ), [sections]);
+    const labeledSections = React.useMemo((): ReadonlyArray<SessionModelPickerSection> => {
+        const suffixed = withSessionModelSourceSuffixes(sections, 'favorites');
+        return suffixed.length === 1 && suffixed[0]!.id === 'native'
+            ? [{ ...suffixed[0]!, title: undefined }]
+            : suffixed;
+    }, [sections]);
+    const hiddenSources = props.hiddenSources ?? [];
+    const footerContent = !props.scope && props.onBrowseSource && hiddenSources.length > 0 ? (
+        <SessionModelHiddenSourcesLine sources={hiddenSources} onBrowse={props.onBrowseSource} />
+    ) : undefined;
     const favoriteOptions = React.useMemo<OptionPickerFavoriteOptions<SessionModelPickerOptionValue> | undefined>(() => {
         if (!props.favoriteKeys || !props.onToggleFavorite) return undefined;
         return {
@@ -359,6 +472,8 @@ export function SessionModelPicker(props: Readonly<{
             getValueKey={sessionModelSelectionKey}
             emptyText={t('settingsProviders.models.empty')}
             headerAccessory={props.headerAccessory}
+            footerContent={footerContent}
+            {...(props.scope ? { searchPlaceholder: t('agentInput.model.searchSource', { source: props.scope.scope.label }) } : {})}
             {...(customTarget ? {
                 canEnterCustomValue: true as const,
                 customLabel: t('modelPickerOverlay.customTitle'),
@@ -393,6 +508,7 @@ export function SessionModelPicker(props: Readonly<{
                 || currentSelectionRecovery
                 || props.projectionError
                 || (props.projectionFailures?.length ?? 0) > 0
+                || props.scope
                 || props.experimentalConfirmation?.error ? (
                 <>
                     {props.reportedModel && reportedModelPresentation.label ? (
@@ -432,6 +548,7 @@ export function SessionModelPicker(props: Readonly<{
                                 : undefined}
                         />
                     ) : null}
+                    {props.scope ? <SessionModelSourceScopeBar scope={props.scope.scope} onExit={props.scope.onExit} /> : null}
                 </>
             ) : undefined}
             onSelect={(ref) => {

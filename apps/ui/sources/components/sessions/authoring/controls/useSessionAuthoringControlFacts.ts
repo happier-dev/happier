@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useAcpCatalogForServer } from '@/sync/store/useAcpCatalog';
 
 import type { AgentExecutionTargetV1 } from '@happier-dev/protocol';
 
@@ -61,11 +62,10 @@ export function useSessionAuthoringControlFacts(params: Readonly<{
     const machines = useAllMachines();
     const settings = useSettings();
     const preferredLanguage = getPreferredLanguage();
-    const acpCatalogSettingsV1 = useSetting('acpCatalogSettingsV1');
+    const { snapshot: acpCatalog } = useAcpCatalogForServer(params.serverId);
     const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
     const lastUsedAgent = useSetting('lastUsedAgent');
     const lastUsedBackendTarget = useSetting('lastUsedBackendTarget');
-    const rawProfiles = useSetting('profiles');
     const useProfiles = useSetting('useProfiles') === true;
     // The same scoped feature decisions New Session consults for this spawn target.
     const spawnFeatureScope = React.useMemo(
@@ -91,7 +91,7 @@ export function useSessionAuthoringControlFacts(params: Readonly<{
     const agentTargets = React.useMemo<readonly SessionAuthoringAgentTargetOption[]>(() => {
         const entries = getResolvedBackendCatalogEntries({
             enabledAgentIds: getEnabledAgentIds({ backendEnabledByTargetKey }),
-            acpCatalogSettingsV1,
+            acpCatalogSnapshot: acpCatalog?.catalog,
             backendEnabledByTargetKey,
             collapseConfiguredBackendProviderSentinels: true,
             mergedProviderProjectionById: projectionInputs?.mergedProviderProjectionById ?? null,
@@ -175,7 +175,7 @@ export function useSessionAuthoringControlFacts(params: Readonly<{
             });
         }
         return options;
-    }, [acpCatalogSettingsV1, backendEnabledByTargetKey, directTranscriptsEnabled, machineId, pluginUiProjection, preferredLanguage, projectionInputs, settings]);
+    }, [acpCatalog, backendEnabledByTargetKey, directTranscriptsEnabled, machineId, pluginUiProjection, preferredLanguage, projectionInputs, settings]);
 
     /**
      * Which Agent New Session would preselect here, resolved by that same owner
@@ -186,18 +186,18 @@ export function useSessionAuthoringControlFacts(params: Readonly<{
      * it would be the bundled fallback wearing the contextual answer's name.
      */
     const contextualDefaultAgentTarget = React.useMemo<AgentExecutionTargetV1 | null>(() => {
-        if (projectionInputs === null || agentTargets.length === 0) return null;
+        if (projectionInputs === null || agentTargets.length === 0 || !acpCatalog || acpCatalog.stale || acpCatalog.catalog.status !== 'ready') return null;
         const preferred = resolvePreferredBackendTargetFromProjection({
             lastUsedAgent,
             lastUsedBackendTarget,
-            acpCatalogSettingsV1,
+            acpCatalogSnapshot: acpCatalog.catalog,
             backendEnabledByTargetKey,
             daemonMergedProjectionInputs: projectionInputs,
         });
         const preferredKey = resolveBackendTargetKeyV2(preferred);
         return agentTargets.find((option) => option.id === preferredKey)?.target ?? null;
     }, [
-        acpCatalogSettingsV1,
+        acpCatalog,
         agentTargets,
         backendEnabledByTargetKey,
         lastUsedAgent,
@@ -205,7 +205,7 @@ export function useSessionAuthoringControlFacts(params: Readonly<{
         projectionInputs,
     ]);
 
-    const launchProfiles = useAiLaunchProfilesForLegacyUi(rawProfiles);
+    const launchProfiles = useAiLaunchProfilesForLegacyUi();
     const profiles = React.useMemo(() => {
         if (!useProfiles) return [];
         return launchProfiles.map((profile) => ({

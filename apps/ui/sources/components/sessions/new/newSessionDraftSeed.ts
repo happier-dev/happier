@@ -3,6 +3,7 @@ import type {
     PluginUiNewSessionPlacementV1,
     PluginUiSessionCheckoutIntentV1,
     PluginUiSessionPlacementCandidateV1,
+    PluginUiNewSessionSeedOriginV1,
 } from '@happier-dev/protocol/plugins/ui';
 
 import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
@@ -64,6 +65,10 @@ export type NewSessionDraftAttachmentSeedV1 = Readonly<{
 }>;
 
 export type NewSessionDraftSeedV1 = Readonly<{
+    sessionName?: NewSessionDraft['sessionName'];
+    initialSessionFacts?: NewSessionDraft['initialSessionFacts'];
+    promptStack?: NewSessionDraft['promptStack'];
+    origin?: PluginUiNewSessionSeedOriginV1;
     zenTaskSource?: NewSessionDraft['zenTaskSource'];
     prompt?: NewSessionDraftPromptSeedV1;
     profileId?: string;
@@ -97,7 +102,10 @@ function joinDraftInput(existingInput: string, promptText: string): string {
  * `updatedAt` and force `entryIntent` on a draft the reader is still editing.
  */
 export function newSessionDraftSeedDeclaresChangeV1(seed: NewSessionDraftSeedV1): boolean {
-    return normalizedNonEmpty(seed.prompt?.text) !== null
+    return seed.sessionName !== undefined
+        || seed.initialSessionFacts !== undefined
+        || seed.promptStack !== undefined
+        || normalizedNonEmpty(seed.prompt?.text) !== null
         || normalizedNonEmpty(seed.profileId) !== null
         // An explicit checkout question opens the established picker route. It
         // is not persisted into this draft because it is not yet a concrete
@@ -151,7 +159,11 @@ export function applyNewSessionDraftSeedV1(input: Readonly<{
 
     return {
         ...base,
+        ...(input.seed.sessionName === undefined ? {} : { sessionName: input.seed.sessionName }),
+        ...(input.seed.initialSessionFacts === undefined ? {} : { initialSessionFacts: input.seed.initialSessionFacts }),
+        ...(input.seed.promptStack === undefined ? {} : { promptStack: input.seed.promptStack }),
         ...(input.seed.zenTaskSource === undefined ? {} : { zenTaskSource: input.seed.zenTaskSource }),
+        ...(input.seed.origin === undefined ? {} : { authoringOrigin: input.seed.origin }),
         ...(promptText === null
             ? {}
             : {
@@ -184,15 +196,19 @@ export function seedNewSessionDraftV1(input: Readonly<{
     nowMs?: () => number;
     createDraftId?: () => string;
     writeDraft?: typeof writeNewSessionDraftToRepository;
+    /** Host configuration translation; subsequent edits belong only to the repository. */
+    configurationDraft?: NewSessionDraft;
     /** Device-local pending Composer requests, retained with the draft across restart. */
     attachmentSeeds?: readonly NewSessionComposerAttachmentSeedV1[];
 }>): string | null {
-    if (!newSessionDraftSeedDeclaresChangeV1(input.seed) || !input.scope) return null;
+    // Credited pending attachments are a complete intent even when the public
+    // seed has no prompt or placement. Their mounted admission stays separate.
+    if ((!newSessionDraftSeedDeclaresChangeV1(input.seed) && (input.attachmentSeeds?.length ?? 0) === 0) || !input.scope) return null;
     const scope = input.scope;
     const draftId = (input.createDraftId ?? randomUUID)();
     const draft = applyNewSessionDraftSeedV1({
         seed: input.seed,
-        existingDraft: null,
+        existingDraft: input.configurationDraft ?? null,
         updatedAt: input.nowMs?.() ?? Date.now(),
     });
     (input.writeDraft ?? writeNewSessionDraftToRepository)({

@@ -1,13 +1,14 @@
 import type { ModelMode } from '../permissions/permissionTypes';
 import type { ProviderModelDescriptorV1 } from '@happier-dev/protocol';
 import { t } from '@/text';
-import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
+import { isBundledAgentId } from '@/agents/catalog/catalog';
 import { buildAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUniverse';
 import type { ComposerOptionsInputV1 } from '@happier-dev/protocol/embed';
 import { normalizeAcpConfigOptionsArray, type AcpConfigOption } from '@/sync/domains/sessionControl/configOptionsControl';
 import { readSessionModelsState } from '@/sync/domains/sessionControl/readSessionControlMetadata';
 import {
     getAgentStaticModels,
+    getAgentModelConfig,
     isFreeformModelIdAllowed,
 } from '@happier-dev/agents';
 import { readSessionModelSelectionIntentFromMetadata } from '@/sync/domains/models/readSessionModelSelectionIntent';
@@ -137,7 +138,7 @@ function readSelectedModelOverrideId(agentType: AgentType, metadata: ComposerOpt
 }
 
 function supportsDynamicSessionModelList(agentType: AgentType): boolean {
-    return !isBundledAgentId(agentType) || getAgentCore(agentType).model?.dynamicProbe !== 'static-only';
+    return getAgentModelConfig(agentType)?.dynamicProbe !== 'static-only';
 }
 
 function normalizeTargetKey(value: unknown): string {
@@ -212,7 +213,7 @@ function resolveSessionModelList(
             ...model,
             modelOptions: normalizeAcpConfigOptionsArray(model.modelOptions) ?? undefined,
         })),
-        supportsFreeform: getAgentCore(agentType)?.model?.supportsFreeform === true,
+        supportsFreeform: getAgentModelConfig(agentType)?.supportsFreeform === true,
     } : null;
 }
 
@@ -221,7 +222,7 @@ export function supportsFreeformModelSelectionForSession(
     metadata: ComposerOptionsInputV1 | null | undefined,
     context?: SessionModelOptionsContext,
 ): boolean {
-    const modelConfig = getAgentCore(agentType)?.model;
+    const modelConfig = getAgentModelConfig(agentType);
     if (modelConfig?.supportsSelection === false) return false;
     return resolveSessionModelList(agentType, metadata, context)?.supportsFreeform
         ?? modelConfig?.supportsFreeform === true;
@@ -290,8 +291,7 @@ function getStaticModelOptionsForAgentType(agentType: AgentType): readonly Model
 
 export function getModelOptionsForAgentType(agentType: AgentType): readonly ModelOption[] {
     if (!isBundledAgentId(agentType)) return [];
-    const core = getAgentCore(agentType);
-    if (core.model?.supportsSelection === false) return [];
+    if (getAgentModelConfig(agentType)?.supportsSelection === false) return [];
     return getStaticModelOptionsForAgentType(agentType);
 }
 
@@ -342,7 +342,7 @@ export function isModelSelectableForSession(agentType: AgentType, metadata: Comp
     const options = resolveModelOptionsForSession(agentType, metadata, context);
     if (findModelOptionForEffectiveModelId(options, normalized)) return true;
     if (!supportsFreeformModelSelectionForSession(agentType, metadata, context)) return false;
-    const modelConfig = getAgentCore(agentType)?.model;
+    const modelConfig = getAgentModelConfig(agentType);
     return modelConfig ? isFreeformModelIdAllowed(modelConfig, normalized) : true;
 }
 

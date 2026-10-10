@@ -4,6 +4,7 @@ import { createProviderErrorV1, ProviderConnectionIdSchema, serializeModelVisibi
 import {
     buildSessionModelPickerSections,
     hiddenModelVisibilityKeys,
+    withSessionModelSourceSuffixes,
 } from './buildSessionModelPickerSections';
 import { presentProviderError } from '@/providers/connection/errorPresentation';
 import { t } from '@/text';
@@ -56,6 +57,64 @@ function providerGroup(input: Readonly<{
 }
 
 describe('buildSessionModelPickerSections', () => {
+    it('keeps same-name source labels after Favorites move out of their original sections', () => {
+        const sections = buildSessionModelPickerSections({
+            agentTargetKey: 'agent:happier.agent.codex/codex', hiddenNativeModelKeys: new Set(),
+            nativeModels: [{ value: 'same', label: 'Provider same' }],
+            nativeSourceLabel: 'Work pool', providerProjectionAuthoritative: true,
+            providerGroups: [providerGroup({ connectionId: 'pc_work', modelId: 'same', connectionName: 'Work' })],
+        });
+        const [native, provider] = sections;
+        const displayed = withSessionModelSourceSuffixes([
+            { id: 'favorites', title: 'Favorites', options: native!.options },
+            provider!,
+        ], 'favorites');
+        expect(displayed.flatMap(section => section.options.map(option => option.labelSuffix))).toEqual([
+            t('agentInput.model.viaSource', { source: 'Work pool' }),
+            t('agentInput.model.viaSource', { source: 'Gateway · Work' }),
+        ]);
+    });
+    it('retains source identity when same-name model rows are flattened into search or favorites', () => {
+        const sections = buildSessionModelPickerSections({
+            agentTargetKey: 'agent:happier.agent.codex/codex', nativeModels: [], hiddenNativeModelKeys: new Set(),
+            providerProjectionAuthoritative: true,
+            providerGroups: [providerGroup({ connectionId: 'pc_work', modelId: 'same', connectionName: 'Work' }),
+                providerGroup({ connectionId: 'pc_lab', modelId: 'same', connectionName: 'Lab' })],
+        });
+        const options = sections.flatMap(section => section.options);
+        expect(options).toHaveLength(2);
+        expect(options.map(option => option.value && sessionModelSelectionKey(option.value))).toEqual([
+            sessionModelSelectionKey({ agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: 'pc_work', modelId: 'same' }),
+            sessionModelSelectionKey({ agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: 'pc_lab', modelId: 'same' }),
+        ]);
+        const suffixed = withSessionModelSourceSuffixes(sections, 'favorites').flatMap(section => section.options);
+        expect(suffixed.map(option => option.labelSuffix)).toEqual([
+            t('agentInput.model.viaSource', { source: 'Gateway · Work' }),
+            t('agentInput.model.viaSource', { source: 'Gateway · Lab' }),
+        ]);
+    });
+    it('says "via" only where a heading cannot: ambiguous names and Provider favorites', () => {
+        const sections = buildSessionModelPickerSections({
+            agentTargetKey: 'agent:happier.agent.codex/codex', hiddenNativeModelKeys: new Set(),
+            nativeModels: [{ value: 'unique-native', label: 'Opus' }, { value: 'shared', label: 'Provider same' }],
+            nativeSourceLabel: 'Claude: Work pool',
+            providerProjectionAuthoritative: true,
+            providerGroups: [providerGroup({ connectionId: 'pc_work', modelId: 'same', connectionName: 'Work' }),
+                providerGroup({ connectionId: 'pc_lab', modelId: 'only-here', connectionName: 'Lab' })],
+        });
+        expect(sections.map(section => section.title)).toEqual(['Claude: Work pool', 'Gateway · Work', 'Gateway · Lab']);
+        const nativeRow = sections[0]!.options[0]!;
+        const favorites = { id: 'favorites', title: 'Favorites', options: [nativeRow, sections[2]!.options[0]!] };
+        const suffixed = withSessionModelSourceSuffixes([favorites, ...sections], 'favorites');
+        const suffixOf = (label: string, sectionId: string) => suffixed.find(section => section.id === sectionId)
+            ?.options.find(option => option.label === label)?.labelSuffix;
+        expect(suffixOf('Opus', 'native')).toBeUndefined();
+        expect(suffixOf('Opus', 'favorites')).toBeUndefined();
+        expect(suffixOf('Provider only-here', 'favorites')).toBe(t('agentInput.model.viaSource', { source: 'Gateway · Lab' }));
+        expect(suffixOf('Provider only-here', 'connection:pc_lab')).toBeUndefined();
+        expect(suffixOf('Provider same', 'native')).toBe(t('agentInput.model.viaSource', { source: 'Claude: Work pool' }));
+        expect(suffixOf('Provider same', 'connection:pc_work')).toBe(t('agentInput.model.viaSource', { source: 'Gateway · Work' }));
+    });
     it('projects an entitled direct Team resource into the canonical picker without exposing source authority', () => {
         const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
             id: 'resource-1', teamId: 'team-1', displayName: 'Claude Enterprise',

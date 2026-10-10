@@ -2,7 +2,8 @@ import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { getAgentCore, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
+import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
 import { InputBrowseButton } from '@/components/ui/buttons/InputBrowseButton';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -123,7 +124,7 @@ export function NewSessionResumeSelectionContent(props: NewSessionResumeSelectio
     const styles = stylesheet;
     const agentType = isBundledAgentId(props.agentType) ? props.agentType : null;
     const agentLabel = props.agentLabel?.trim()
-        || (agentType ? t(getAgentCore(agentType).displayNameKey) : tLoose('common.unknown'));
+        || (agentType ? resolveAgentCatalogTitle(agentType) : tLoose('common.unknown'));
 
     // A pasted or typed resume id is the Agent's own opaque session identity.
     // Whitespace, newlines and base64 punctuation are part of those bytes, so

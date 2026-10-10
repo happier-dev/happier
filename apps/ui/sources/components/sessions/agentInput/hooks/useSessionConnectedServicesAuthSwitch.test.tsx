@@ -17,6 +17,7 @@ import {
     type ConnectedAccountDescriptorProjectionState,
 } from '@/sync/domains/connectedServices/connectedAccountDescriptorProjection';
 import { installConnectedAccountDescriptorProjection } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { applyConnectedAccountCatalogSnapshot } from '@/sync/store/settings/connectedAccountCatalogSnapshot';
 
 const useFeatureEnabledMock = vi.hoisted(() => vi.fn());
 const setSessionConnectedServiceAuthBindingMock = vi.hoisted(() => vi.fn());
@@ -74,6 +75,7 @@ function v4Account(params: Readonly<{
         authenticationModeId: null,
         configurationReady: true,
         configurationRevision: null,
+        credentialRevision: null,
         kind: params.kind ?? null,
         expiresAt: null,
         lastUsedAt: null,
@@ -344,6 +346,10 @@ vi.mock('@/components/sessions/agentInput/components/AgentInputChipLabel', () =>
     AgentInputChipLabel: 'AgentInputChipLabel',
 }));
 
+// Load the canonical runtime once, after its transport boundaries are installed.
+// Cold source-module compilation is file setup, not a per-test lifecycle hook.
+await loadSyncSingletonForTests();
+
 type PopoverConnectedBinding = {
     source: 'connected';
     selection: 'profile' | 'group';
@@ -389,8 +395,7 @@ function renderChipPopover(
 }
 
 describe('useSessionConnectedServicesAuthSwitch', () => {
-    beforeEach(async () => {
-        await loadSyncSingletonForTests();
+    beforeEach(() => {
         installConnectedAccountDescriptorProjection(authSwitchConnectedAccountProjection);
         useFeatureEnabledMock.mockReset();
         useFeatureEnabledMock.mockReturnValue(true);
@@ -427,20 +432,64 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             },
             settings: {
                 connectedServicesProfileLabelByKey: {}, connectedServicesDefaultProfileByServiceId: {},
-                connectedAccountPurposeBindingsV1: { v: 1, bindings: profileId === null ? [] : [{
-                    purpose: { consumer, purpose: 'primary' },
-                    target: { kind: 'account', account: { service, accountId: profileId } },
-                }] },
             },
             switchingDisabledReason: null,
         }));
+        await act(async () => { applyConnectedAccountCatalogSnapshot({ serverId: 'server-1', accountId: 'account-a' }, 'purposes', {
+            status: 'ready', revision: 1, record: { key: 'purposes', value: { v: 1, bindings: profileId === null ? [] : [{
+                purpose: { consumer, purpose: 'primary' },
+                target: { kind: 'account', account: { service, accountId: profileId } },
+            }] } },
+        }, true); });
         const chip = hook.getCurrent().connectedServicesAuthChip;
         expect(chip?.collapsedContentPopover?.label).toBe(profileId === null
             ? 'Native' : `Anthropic API key: ${profileId === 'work' ? 'Work' : profileId}`);
-        const content = chip?.collapsedContentPopover?.renderContent({ requestClose: vi.fn(), maxHeight: 320 }) as {
+        const renderContent = chip?.collapsedContentPopover?.renderContent;
+        if (typeof renderContent !== 'function') throw new Error('Expected target auth content renderer');
+        const content = renderContent({ requestClose: vi.fn(), maxHeight: 320 }) as {
             props: { actions: readonly { disabled?: boolean; onPress?: () => void }[] };
         };
         expect(content.props.actions).toEqual([expect.objectContaining({ disabled: true })]);
+        expect(content.props.actions[0].onPress).toBeUndefined();
+        expect(setSessionConnectedServiceAuthBindingMock).not.toHaveBeenCalled();
+    });
+
+    it.each(['available', 'missing', 'stale'] as const)('previews the exact armed Team default and its catalog readiness (%s)', async (availability) => {
+        const consumer = { pluginId: 'happier.agent.claude', localId: 'claude' };
+        const service = { pluginId: 'happier.agent.claude', localId: 'anthropic' };
+        const selection = { source: 'team_resource' as const, resourceId: 'resource-1', deliveryMode: 'brokered' as const };
+        const resource = {
+            id: 'resource-1', teamId: 'team-1', displayName: 'Shared Claude', resourceRevision: 4,
+            readiness: { kind: 'available' as const }, recoveryAction: null,
+            mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered' as const,
+            sessionUsePolicy: 'personal_allowed' as const, providerModels: [],
+            connectedServiceSelections: [selection], sourcePresentation: { kind: 'connected_service' as const, service },
+        };
+        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
+        const hook = await renderHook(() => useSessionConnectedServicesAuthSwitch({
+            sessionId: 'session-1', agentId: 'codex', machineId: 'machine-1', connectedAccounts: CODEX_CONNECTED_ACCOUNTS,
+            armedContinuationAgent: { agentId: 'claude', agentIdentity: consumer, connectedAccounts: [{ purpose: 'primary', service }] },
+            teamCredentialResources: availability === 'missing' ? [] : [resource],
+            teamCredentialResourceCurrentKeys: new Set(availability === 'available' ? ['team-1:resource-1'] : []),
+            teamNameById: { 'team-1': 'Acme' }, sessionMetadata: {}, switchingDisabledReason: null,
+            settings: {
+                connectedServicesProfileLabelByKey: {}, connectedServicesDefaultProfileByServiceId: {},
+            },
+        }));
+        await act(async () => { applyConnectedAccountCatalogSnapshot({ serverId: 'server-1', accountId: 'account-a' }, 'purposes', {
+            status: 'ready', revision: 1, record: { key: 'purposes', value: { v: 1, bindings: [], teamResourceSelections: [{
+                purpose: { consumer, purpose: 'primary' }, teamId: 'team-1', selection,
+            }] } },
+        }, true); });
+        const chip = hook.getCurrent().connectedServicesAuthChip;
+        expect(chip?.collapsedContentPopover?.label).toContain(availability === 'missing' ? 'common.unavailable' : 'Shared Claude');
+        const renderContent = chip?.collapsedContentPopover?.renderContent;
+        if (typeof renderContent !== 'function') throw new Error('Expected target auth content renderer');
+        const content = renderContent({ requestClose: vi.fn(), maxHeight: 320 }) as {
+            props: { actions: readonly { disabled?: boolean; subtitle?: string; onPress?: () => void }[] };
+        };
+        expect(content.props.actions[0]).toMatchObject({ disabled: true });
+        expect(content.props.actions[0].subtitle).toBe(availability === 'available' ? undefined : 'common.unavailable');
         expect(content.props.actions[0].onPress).toBeUndefined();
         expect(setSessionConnectedServiceAuthBindingMock).not.toHaveBeenCalled();
     });
@@ -2169,10 +2218,10 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
 
         expect(requestClose).toHaveBeenCalledOnce();
         expect(routerPushMock).toHaveBeenCalledWith({
-            pathname: '/(app)/settings/connected-services/account',
+            pathname: '/(app)/settings/connected-services',
             params: {
-                pluginId: 'happier.agent.claude',
-                localId: 'anthropic',
+                connect: '1',
+                service: CLAUDE_SERVICE_KEY,
             },
         });
     });

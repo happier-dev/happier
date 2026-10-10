@@ -3,6 +3,7 @@ import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/
 import { Pressable, View, type LayoutChangeEvent } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withDelay, withTiming } from 'react-native-reanimated';
 import { useUnistyles } from 'react-native-unistyles';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 import { INSTRUMENT_DURATIONS, staggerDelayForIndex, useMotionPreferences } from '@/components/instrument';
 import { StatusDot } from '@/components/ui/status/StatusDot';
@@ -34,6 +35,7 @@ export type SessionInstrumentStripConnectionStatus = Readonly<{
     color: string;
     dotColor: string;
     isPulsing?: boolean;
+    action?: Readonly<{ label: string; onPress: () => void }>;
 }>;
 
 export type SessionInstrumentStripPermission = Readonly<{
@@ -282,10 +284,22 @@ export const SessionInstrumentStrip = React.memo(function SessionInstrumentStrip
                     <Text
                         testID="agent-input-connection-status-text"
                         style={[instrumentStripStyles.connectionText, { color: props.connectionStatus.color }]}
-                        numberOfLines={1}
+                        numberOfLines={props.connectionStatus.action ? 2 : 1}
                     >
                         {props.connectionStatus.text}
                     </Text>
+                    {props.connectionStatus.action ? (
+                        <HappierPressable
+                            testID="agent-input-connection-recovery"
+                            accessibilityRole="button"
+                            accessibilityLabel={props.connectionStatus.action.label}
+                            onPress={props.connectionStatus.action.onPress}
+                        >
+                            <Text style={{ color: theme.colors.text.primary, fontSize: 12, textDecorationLine: 'underline' }}>
+                                {props.connectionStatus.action.label}
+                            </Text>
+                        </HappierPressable>
+                    ) : null}
                 </View>
             ) : null}
 

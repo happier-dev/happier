@@ -5,6 +5,7 @@ import { projectInputOptionsDependencies } from '@happier-dev/protocol/inputs';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { resolveUiAccountActionFallbackMachineId } from '@/sync/ops/actions/accountActionDeps';
 import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { ResolveSessionActionFieldOptions, InputFieldOptionsContext } from './sessionActionFieldOptions';
 import {
     EMPTY_INPUT_OPTIONS, INPUT_OPTIONS_LOADING, readInputFieldOptionsState, subscribeInputFieldOptions,
@@ -31,7 +32,7 @@ export function useInputFieldOptions(params: Readonly<{
     /** Inventory facts invalidate choices; they never implement a source locally. */
     refreshKey?: string;
     /** Explicit routed Account custody; null is unavailable, never ambient fallback. */
-    accountLifetime?: ServerCredentialAccountScopeBinding | null;
+    accountLifetime?: (ServerAccountScopeLifetime & Partial<Pick<ServerCredentialAccountScopeBinding, 'revision'>>) | null;
 }>) {
     const scope = useActiveServerAccountScope();
     const accountScope = params.accountLifetime === undefined ? scope : params.accountLifetime?.scope;
@@ -97,10 +98,14 @@ export function useInputFieldOptions(params: Readonly<{
         return index === -1 ? INPUT_OPTIONS_LOADING : snapshot[index] ?? INPUT_OPTIONS_LOADING;
     }, [activeReads, keys, defaultContexts, snapshot]);
     const retry = React.useCallback(() => activeReads.forEach(retryInputFieldOptions), [activeReads]);
+    const pickerContextKey = JSON.stringify([signature, snapshot, params.requests[0]?.draftInput]);
     const resolveOptions: ResolveSessionActionFieldOptions = React.useMemo(() => Object.assign(
         (field: Parameters<ResolveSessionActionFieldOptions>[0], context?: InputFieldOptionsContext) => state({ ...field, path: field.path ?? '' }, context).options,
         { state, retry, pickerContext: { machineId, sessionId: params.sessionId,
-            serverId: params.serverId ?? accountScope?.serverId, contextKey: JSON.stringify([signature, snapshot]) } },
-    ), [state, retry, signature, snapshot]);
+            draftInput: params.requests[0]?.draftInput,
+            ...(params.accountLifetime ? { accountLifetime: params.accountLifetime } : {}),
+            serverId: params.serverId ?? accountScope?.serverId,
+            contextKey: pickerContextKey } },
+    ), [state, retry, signature, snapshot, pickerContextKey, params.accountLifetime]);
     return { resolveOptions, state, retry, snapshot };
 }

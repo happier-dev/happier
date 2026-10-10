@@ -34,6 +34,7 @@ function buildParams(
             acpConfigOptionsProbeState: { phase: 'idle', onRefresh: vi.fn() },
         } as unknown as Params['acp'],
         machineAndResume: {
+            selectedMachine: null,
             destination: { machineGroups: [{ serverId: 'home-a', serverName: 'Home A' }], poolGroups: [] },
             ...machineAndResume,
         } as Params['machineAndResume'],
@@ -44,6 +45,13 @@ function buildParams(
 }
 
 describe('useNewSessionScreenSimplePanelProps destination naming', () => {
+    it('leaves the machine chip unselected when no Machine is selected', async () => {
+        const rendered = await renderHook(() => useNewSessionScreenSimplePanelProps(buildParams({})));
+
+        expect(rendered.getCurrent().machineName).toBeUndefined();
+        await rendered.unmount();
+    });
+
     it('names a committed Temporary computer rather than asking for a machine that will never exist', async () => {
         const rendered = await renderHook(() => useNewSessionScreenSimplePanelProps(buildParams({
             executionTarget: {
@@ -77,11 +85,21 @@ describe('useNewSessionScreenSimplePanelProps destination naming', () => {
     it('leaves an exact-Machine destination to the Machine naming owner', async () => {
         const rendered = await renderHook(() => useNewSessionScreenSimplePanelProps(buildParams({
             executionTarget: { kind: 'machine', target: { serverId: 'home-a', machineId: 'machine-a' } },
-            machineDisplayName: 'Mac Studio',
-            machineHost: 'studio.local',
+            selectedMachine: { id: 'machine-a', metadata: { displayName: 'Mac Studio', host: 'studio.local' } },
         })));
 
         expect(rendered.getCurrent().machineName).toBe('Mac Studio');
+        await rendered.unmount();
+    });
+
+    it('preserves the naming owner distinction between locked and unnamed Machine records', async () => {
+        const rendered = await renderHook((params: Params) => useNewSessionScreenSimplePanelProps(params), {
+            initialProps: buildParams({ selectedMachine: { id: 'machine-a', metadata: null } }),
+        });
+
+        expect(rendered.getCurrent().machineName).toBe('machine.lockedMachine');
+        await rendered.rerender(buildParams({ selectedMachine: { id: 'machine-a', metadata: {} } }));
+        expect(rendered.getCurrent().machineName).toBe('machine.unnamedMachine');
         await rendered.unmount();
     });
 });

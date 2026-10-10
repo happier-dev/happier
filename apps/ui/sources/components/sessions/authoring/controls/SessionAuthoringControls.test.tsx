@@ -114,6 +114,7 @@ vi.mock('@/hooks/teams/useHomeTeamCredentialModelCatalog', () => ({
         teamNameById: teamCredentialCatalog.teamNameById,
         homeNameByTeamId: {},
         current: true,
+        condition: null,
     }),
 }));
 vi.mock('@/components/sessions/new/components/NewSessionConnectedServicesSelectionContent', () => ({

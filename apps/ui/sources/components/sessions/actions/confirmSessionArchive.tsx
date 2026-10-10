@@ -148,7 +148,8 @@ export async function archiveSessionReports(params: Readonly<{
     serverId: string | null;
     context?: SessionActionExecutionContext;
 }>): Promise<void> {
-    const reports = selectSessionReportSubtree(getStorage().getState().sessions, params.leadSessionId, params.serverId).filter((session) => (
+    const state = getStorage().getState();
+    const reports = selectSessionReportSubtree(state.sessions, params.leadSessionId, params.serverId, state.sessionListRowsByServerId).filter((session) => (
         session.reportsTo?.sessionId === params.leadSessionId && session.archivedAt == null
     ));
     const notArchived: string[] = [];

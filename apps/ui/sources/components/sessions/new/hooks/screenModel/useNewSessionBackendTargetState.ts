@@ -26,6 +26,10 @@ function isPluginLikeBackendTarget(target: PersistedBackendTargetRefV2 | null | 
     return !target.configuredBackendId && !isBundledAgentId(target.backendId);
 }
 
+function isConfiguredTarget(target: PersistedBackendTargetRefV2): boolean {
+    return target.kind === 'agent' ? target.definitionId !== undefined : Boolean(target.configuredBackendId);
+}
+
 function parsePreservedPluginTarget(value: unknown): PersistedBackendTargetRefV2 | null {
     const parsed = PersistedBackendTargetRefV2Schema.safeParse(value);
     return parsed.success && isPluginLikeBackendTarget(parsed.data) ? parsed.data : null;
@@ -37,6 +41,7 @@ function shouldPreserveUnresolvedPluginTarget(phase: 'idle' | 'loading' | 'ready
 
 export function useNewSessionBackendTargetState(params: Readonly<{
     entries: ReadonlyArray<ResolvedBackendCatalogEntry>;
+    configuredCatalogReady?: boolean;
     lastUsedAgent: unknown;
     lastUsedBackendTarget?: unknown;
     routeBackendTarget?: unknown;
@@ -79,18 +84,21 @@ export function useNewSessionBackendTargetState(params: Readonly<{
         if (preservedPluginTarget) {
             return preservedPluginTarget;
         }
+        const availableBackendTargets = params.entries.map((entry) => entry.backendTarget);
         return resolvePreferredBackendTarget({
-            candidateBackendTargets: [params.tempBackendTarget, params.persistedBackendTarget],
+            candidateBackendTargets: [params.routeBackendTarget, params.tempBackendTarget, params.persistedBackendTarget],
             preferredBuiltInAgentIds: [params.tempAgentType],
-            availableBackendTargets: params.entries.map((entry) => entry.backendTarget),
+            availableBackendTargets,
             lastUsedAgent: params.lastUsedAgent,
             lastUsedBackendTarget: params.lastUsedBackendTarget,
         });
     }, [
         params.entries,
+        params.configuredCatalogReady,
         params.lastUsedAgent,
         params.lastUsedBackendTarget,
         params.persistedBackendTarget,
+        params.routeBackendTarget,
         params.tempBackendTarget,
         params.tempAgentType,
         preservedPluginTarget,
@@ -104,21 +112,26 @@ export function useNewSessionBackendTargetState(params: Readonly<{
         () => findEntryByTarget(params.entries, backendTarget),
         [backendTarget, params.entries],
     );
+    const configuredTargetUnavailable = isConfiguredTarget(backendTarget)
+        && (params.configuredCatalogReady === false || matched === null);
 
     React.useEffect(() => {
+        if (configuredTargetUnavailable) return;
         if (matched) return;
         const shouldKeepExplicitRoutePluginTarget = explicitRoutePluginTarget
             && backendTargetKeysMatch(explicitRoutePluginTarget, backendTarget);
         if ((shouldPreserveUnresolvedPluginTarget(params.projectionPhase) || shouldKeepExplicitRoutePluginTarget) && isPluginLikeBackendTarget(backendTarget)) {
             return;
         }
-        setBackendTarget(initialBackendTarget);
-    }, [backendTarget, explicitRoutePluginTarget, initialBackendTarget, matched, params.entries, params.projectionPhase]);
+        if (backendTargetKeysMatch(backendTarget, initialBackendTarget)) return;
+        setBackendTargetState(initialBackendTarget);
+    }, [backendTarget, configuredTargetUnavailable, explicitRoutePluginTarget, initialBackendTarget, matched, params.entries, params.projectionPhase]);
 
     const selectedCatalogAgentId = React.useMemo<AgentId | null>(() => {
         if (matched?.catalogAgentId && isBundledAgentId(matched.catalogAgentId)) {
             return matched.catalogAgentId;
         }
+        if (isConfiguredTarget(backendTarget)) return null;
         if (matched?.kind === 'pluginBackend' || isPluginLikeBackendTarget(backendTarget)) {
             return null;
         }
@@ -135,6 +148,7 @@ export function useNewSessionBackendTargetState(params: Readonly<{
             : backendTarget.backendId;
     }, [backendTarget, matched?.agentId]);
     const selectedRuntimeCarrierAgentId = React.useMemo(() => {
+        if (configuredTargetUnavailable) return null;
         const shouldKeepExplicitRoutePluginTarget = explicitRoutePluginTarget
             && backendTargetKeysMatch(explicitRoutePluginTarget, backendTarget);
         if (
@@ -151,17 +165,15 @@ export function useNewSessionBackendTargetState(params: Readonly<{
             return matched.agentId.trim() || null;
         }
         if (matched?.kind === 'configuredBackend') {
-            return matched.catalogAgentId ?? null;
+            return matched.agentId.trim() || null;
         }
         return selectedCatalogAgentId;
-    }, [backendTarget, explicitRoutePluginTarget, matched?.kind, matched?.agentId, matched?.catalogAgentId, params.projectionPhase, selectedCatalogAgentId]);
+    }, [backendTarget, configuredTargetUnavailable, explicitRoutePluginTarget, matched?.kind, matched?.agentId, matched?.catalogAgentId, params.projectionPhase, selectedCatalogAgentId]);
     React.useEffect(() => {
+        if (configuredTargetUnavailable || !hasExplicitUserSelection) return;
         const currentLastUsedBackendTargetKey = (() => {
-            try {
-                return resolveBackendTargetKeyV2(params.lastUsedBackendTarget as any);
-            } catch {
-                return null;
-            }
+            const parsed = PersistedBackendTargetRefV2Schema.safeParse(params.lastUsedBackendTarget);
+            return parsed.success ? resolveBackendTargetKeyV2(parsed.data) : null;
         })();
         const nextBackendTargetKey = resolveBackendTargetKeyV2(backendTarget);
         const persistedSelection = buildLastUsedBackendTargetSettings({
@@ -187,7 +199,7 @@ export function useNewSessionBackendTargetState(params: Readonly<{
                 ? { lastUsedBackendTarget: persistedSelection.lastUsedBackendTarget }
                 : {}),
         });
-    }, [applySettings, backendTarget, params.lastUsedAgent, params.lastUsedBackendTarget, selectedCatalogAgentId]);
+    }, [applySettings, backendTarget, configuredTargetUnavailable, hasExplicitUserSelection, params.lastUsedAgent, params.lastUsedBackendTarget, selectedCatalogAgentId]);
 
     return {
         backendTarget,

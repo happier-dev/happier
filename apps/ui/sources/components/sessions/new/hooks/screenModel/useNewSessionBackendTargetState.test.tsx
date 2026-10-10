@@ -30,7 +30,7 @@ vi.mock('@/sync/store/settingsWriters', () => ({
 const entries: ReadonlyArray<ResolvedBackendCatalogEntry> = [
     resolvedEntryFixture({
         backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot', sourceKind: 'configured' },
-        backendTargetKey: 'backend:review-bot:configured:review-bot',
+        backendTargetKey: 'agent:happier.agent.custom-acp/custom-acp:definition:review-bot',
         kind: 'configuredBackend',
         backendId: 'review-bot',
         agentId: 'review-bot',
@@ -57,7 +57,7 @@ const configuredPreferredEntries: ReadonlyArray<ResolvedBackendCatalogEntry> = [
     }),
     resolvedEntryFixture({
         backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot', sourceKind: 'configured' },
-        backendTargetKey: 'backend:review-bot:configured:review-bot',
+        backendTargetKey: 'agent:happier.agent.custom-acp/custom-acp:definition:review-bot',
         kind: 'configuredBackend',
         backendId: 'review-bot',
         agentId: 'review-bot',
@@ -70,8 +70,75 @@ const configuredPreferredEntries: ReadonlyArray<ResolvedBackendCatalogEntry> = [
 ];
 
 describe('useNewSessionBackendTargetState', () => {
+    it('retains definition-qualified intent through loading and deletion without a bundled fallback', async () => {
+        const target = { kind: 'agent' as const,
+            identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' }, definitionId: 'review-a' };
+        let currentEntries = [configuredPreferredEntries[0]!];
+        let configuredCatalogReady = false;
+        let observed: ReturnType<typeof useNewSessionBackendTargetState> | null = null;
+        function Probe() {
+            observed = useNewSessionBackendTargetState({ entries: currentEntries, configuredCatalogReady,
+                persistedBackendTarget: target, lastUsedAgent: 'codex', projectionPhase: 'ready' });
+            return null;
+        }
+        const screen = await renderScreen(React.createElement(Probe));
+        const readObserved = () => observed;
+        expect(readObserved()?.backendTarget).toEqual(target);
+        expect(readObserved()?.selectedRuntimeCarrierAgentId).toBeNull();
+        configuredCatalogReady = true;
+        currentEntries = [...currentEntries];
+        await act(async () => screen.tree.update(React.createElement(Probe)));
+        expect(readObserved()?.backendTarget).toEqual(target);
+        expect(readObserved()?.selectedRuntimeCarrierAgentId).toBeNull();
+        expect(applySettingsMock).not.toHaveBeenCalled();
+        await act(async () => screen.tree.unmount());
+    });
     beforeEach(() => {
         applySettingsMock.mockReset();
+    });
+    it('retains the same selected target when equivalent catalog inputs are recreated', async () => {
+        let currentEntries: readonly ResolvedBackendCatalogEntry[] = [];
+        let observed: ReturnType<typeof useNewSessionBackendTargetState> | null = null;
+        function Probe() {
+            observed = useNewSessionBackendTargetState({
+                entries: currentEntries, lastUsedAgent: 'codex', lastUsedBackendTarget: null,
+                projectionPhase: 'ready',
+            });
+            return null;
+        }
+        const screen = await renderScreen(React.createElement(Probe));
+        const readSelectedTarget = () => {
+            if (!observed) throw new Error('Selection owner did not render');
+            return observed.backendTarget;
+        };
+        const selectedTarget = readSelectedTarget();
+        applySettingsMock.mockClear();
+        currentEntries = [];
+        await act(async () => screen.tree.update(React.createElement(Probe)));
+        // The selection is unchanged; catalog identity churn must not replace
+        // it or turn automatic reconciliation into an explicit user selection.
+        expect(applySettingsMock).not.toHaveBeenCalled();
+        expect(readSelectedTarget()).toBe(selectedTarget);
+        await act(async () => screen.tree.unmount());
+    });
+
+    it('preserves the selected target and remembered settings while the Account catalog is unavailable', async () => {
+        const lastUsedBackendTarget = { kind: 'backend' as const, backendId: 'codex' };
+        const unavailableEntries: readonly ResolvedBackendCatalogEntry[] = [];
+        let observed: ReturnType<typeof useNewSessionBackendTargetState> | null = null;
+        function Probe() {
+            observed = useNewSessionBackendTargetState({
+                entries: unavailableEntries, configuredCatalogReady: false,
+                lastUsedAgent: 'codex', lastUsedBackendTarget,
+                projectionPhase: 'ready',
+            });
+            return null;
+        }
+        const screen = await renderScreen(React.createElement(Probe));
+        const readObserved = () => observed;
+        expect(readObserved()?.backendTarget).toEqual(lastUsedBackendTarget);
+        expect(applySettingsMock).not.toHaveBeenCalled();
+        await act(async () => screen.tree.unmount());
     });
 
     it('restores the last used configured ACP backend target instead of the provider sentinel', async () => {
@@ -89,12 +156,12 @@ describe('useNewSessionBackendTargetState', () => {
         await renderScreen(React.createElement(Probe));
 
         expect(observed).not.toBeNull();
-        expect(resolveBackendTargetKeyV2(observed!.backendTarget)).toBe('backend:review-bot:configured:review-bot');
+        expect(resolveBackendTargetKeyV2(observed!.backendTarget)).toBe('agent:happier.agent.custom-acp/custom-acp:definition:review-bot');
         expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.selectedCatalogAgentId).toBeNull();
         expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.selectedUiAgentType).toBe('review-bot');
     });
 
-    it('persists the canonical ACP provider sentinel while keeping the configured ACP backend target', async () => {
+    it('persists the definition-qualified target without rewriting the last-used bundled Agent', async () => {
         let observed: ReturnType<typeof useNewSessionBackendTargetState> | null = null;
 
         function Probe() {
@@ -116,7 +183,8 @@ describe('useNewSessionBackendTargetState', () => {
         });
 
         expect(applySettingsMock).toHaveBeenCalledWith({
-            lastUsedBackendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot', sourceKind: 'configured' },
+            lastUsedBackendTarget: { kind: 'agent',
+                identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' }, definitionId: 'review-bot' },
         });
 
         act(() => {
@@ -172,7 +240,7 @@ describe('useNewSessionBackendTargetState', () => {
         await renderScreen(React.createElement(Probe));
 
         expect(observed).not.toBeNull();
-        expect(resolveBackendTargetKeyV2(observed!.backendTarget)).toBe('backend:review-bot:configured:review-bot');
+        expect(resolveBackendTargetKeyV2(observed!.backendTarget)).toBe('agent:happier.agent.custom-acp/custom-acp:definition:review-bot');
         expect((observed as ReturnType<typeof useNewSessionBackendTargetState> | null)?.selectedCatalogAgentId).toBeNull();
     });
 

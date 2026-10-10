@@ -1,14 +1,25 @@
 import { showPutUnderSessionModal } from '@/components/sessions/work/PutUnderSessionModal';
 import { roleActions } from '@/sync/ops/roles/roleActions';
+import { sessionDisplayActions, undoSessionBotChange } from '@/sync/ops/sessions/sessionDisplayActions';
+import { readSessionBotV1, type SessionBotV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
+import { publishPresentationNotice, retirePresentationNotice } from '@/components/sessions/presentation/presentationNotices';
+import { getStorage } from '@/sync/domains/state/storageStore';
+import * as React from 'react';
+import { Avatar } from '@/components/ui/avatar/Avatar';
+import { getSessionAvatarId, getSessionName } from '@/utils/sessions/sessionUtils';
+import { fireAndForget } from '@/utils/system/fireAndForget';
+import { resolveSessionToolCallsMenuState } from './sessionToolCallsMenuState';
+import { sessionOrganizationActions } from '@/sync/ops/sessionOrganization/sessionOrganizationActions';
 import { t } from '@/text';
 import { HappyError } from '@/utils/errors/errors';
+import { router } from 'expo-router';
+import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
+import { serializeSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
+import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { VoiceConversationActionOutputSchemas } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 import {
-    sessionArchiveWithServerScope,
-    sessionDeleteWithServerScope,
-    sessionRename,
     sessionSetManualReadStateWithServerScope,
-    sessionStopWithServerScope,
-    sessionUnarchiveWithServerScope,
 } from '@/sync/ops';
 import { sessionSetAttentionStandingWithServerScope } from '@/sync/ops/sessionOrganization';
 import { normalizeSessionAddress, type SessionAddress } from '@/sync/domains/session/sessionAddress';
@@ -19,6 +30,14 @@ import {
 } from '@/components/sessions/sessionStopArchiveFlow';
 
 import {
+    SESSION_ACTION_MAKE_BOT_ID,
+    SESSION_ACTION_MAKE_REGULAR_ID,
+    SESSION_ACTION_RAIL_PIN_ID,
+    SESSION_ACTION_RAIL_UNPIN_ID,
+    SESSION_ACTION_WORK_OPEN_ID,
+    SESSION_ACTION_TALK_ID,
+    SESSION_ACTION_TOOL_CALLS_TOGGLE_ID,
+    SESSION_ACTION_TOOL_CALLS_USE_DEFAULT_ID,
     SESSION_ACTION_ARCHIVE_ID,
     SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID,
     SESSION_ACTION_DELETE_ID,
@@ -41,37 +60,112 @@ import {
 import type {
     SessionActionExecutionContext,
     SessionActionExecutionInput,
+    SessionActionExecutionOperations,
     SessionActionId,
     SessionActionOperationResult,
     SessionActionTarget,
 } from './sessionActionTypes';
 
+const executeVoiceAction = createFrontDoorActionExecute();
+
+export async function executeSessionLifecycleAction(
+    actionId: 'session.stop' | 'session.archive' | 'session.unarchive' | 'session.delete' | 'session.title.set',
+    sessionId: string,
+    options?: Readonly<{ serverId?: string | null }>,
+    title?: string,
+): Promise<SessionActionOperationResult> {
+    const outcome = await executeVoiceAction(actionId, { sessionId, ...(title === undefined ? {} : { title }) }, {
+        surface: 'ui', defaultSessionId: sessionId, ...(options?.serverId ? { serverId: options.serverId } : {}),
+    });
+    if (!outcome.ok) {
+        const details = outcome.details;
+        const message = details && typeof details === 'object' && 'error' in details && typeof details.error === 'string'
+            ? details.error : outcome.error;
+        return { success: false, message, code: outcome.errorCode,
+            ...(details === undefined ? {} : { details }) };
+    }
+    const result = outcome.result;
+    const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result);
+    if (approval.success) return { success: false, code: approval.data.kind, message: approval.data.kind, details: approval.data };
+    // The title Action acknowledges a metadata write; lifecycle transports retain
+    // their success/recovery envelope for the incumbent stop/archive flow.
+    if (actionId === 'session.title.set') return { success: true };
+    if (!result || typeof result !== 'object' || !('success' in result) || typeof result.success !== 'boolean') {
+        return { success: false, code: 'invalid_action_output', message: 'invalid_action_output' };
+    }
+    return {
+        success: result.success,
+        ...('message' in result && typeof result.message === 'string' ? { message: result.message } : {}),
+        ...('code' in result && typeof result.code === 'string' ? { code: result.code } : {}),
+        ...('recovery' in result && (result.recovery === 'wait_for_inactive' || result.recovery === 'retry_when_runtime_available')
+            ? { recovery: result.recovery } : {}),
+    };
+}
+/** The picture beside the notice's one line of text. */
+const BOT_CHANGE_NOTICE_AVATAR_SIZE_PX = 18;
+
+/**
+ * The accepted Make this a bot / Make a regular session outcome (60s1, lab `b-promote T`): one notice on the
+ * app's presentation-notice owner, whose Undo runs the current-value-guarded inverse. Only an accepted write
+ * reaches here; a refused inverse reports through the same owner.
+ */
+function publishSessionBotChangeNotice(params: Readonly<{
+    target: SessionActionTarget;
+    address: SessionAddress;
+    accepted: SessionBotV1 | null;
+    previous: SessionBotV1 | null;
+}>) {
+    const name = getSessionName(params.target.session, params.target.serverId);
+    const key = `session-bot:${params.address.serverId}:${params.address.sessionId}`;
+    publishPresentationNotice({
+        key,
+        severity: 'info',
+        message: params.accepted ? t('bots.promoted', { name }) : t('bots.demoted', { name }),
+        // Lab `b-promote T`: the session's own picture, then its name in the stronger weight.
+        leading: React.createElement(Avatar, {
+            id: getSessionAvatarId(params.target.session, params.target.serverId),
+            size: BOT_CHANGE_NOTICE_AVATAR_SIZE_PX,
+        }),
+        emphasis: name,
+        undo: {
+            label: t('bots.undo'),
+            run: () => {
+                retirePresentationNotice(key);
+                fireAndForget((async () => {
+                    const undone = await undoSessionBotChange({ address: params.address, accepted: params.accepted, previous: params.previous });
+                    if (!undone.ok) publishPresentationNotice({ key, severity: 'error', message: t('bots.refused') });
+                })(), { tag: 'sessionActionExecution.undoSessionBotChange' });
+            },
+        },
+    });
+}
+
 function resolveStopArchiveFlow(context: SessionActionExecutionContext | undefined) {
     return context?.operations?.stopArchiveFlow ?? stopSessionAndMaybeArchive;
 }
 
-function resolveStopSession(context: SessionActionExecutionContext | undefined) {
-    return context?.operations?.stopSession ?? sessionStopWithServerScope;
+function resolveStopSession(context: SessionActionExecutionContext | undefined): NonNullable<SessionActionExecutionOperations['stopSession']> {
+    return context?.operations?.stopSession ?? ((sessionId, options) => executeSessionLifecycleAction('session.stop', sessionId, options));
 }
 
-function resolveArchiveSession(context: SessionActionExecutionContext | undefined) {
-    return context?.operations?.archiveSession ?? sessionArchiveWithServerScope;
+function resolveArchiveSession(context: SessionActionExecutionContext | undefined): NonNullable<SessionActionExecutionOperations['archiveSession']> {
+    return context?.operations?.archiveSession ?? ((sessionId, options) => executeSessionLifecycleAction('session.archive', sessionId, options));
 }
 
-function resolveUnarchiveSession(context: SessionActionExecutionContext | undefined) {
-    return context?.operations?.unarchiveSession ?? sessionUnarchiveWithServerScope;
+function resolveUnarchiveSession(context: SessionActionExecutionContext | undefined): NonNullable<SessionActionExecutionOperations['unarchiveSession']> {
+    return context?.operations?.unarchiveSession ?? ((sessionId, options) => executeSessionLifecycleAction('session.unarchive', sessionId, options));
 }
 
-function resolveRenameSession(context: SessionActionExecutionContext | undefined) {
-    return context?.operations?.renameSession ?? sessionRename;
+function resolveRenameSession(context: SessionActionExecutionContext | undefined): NonNullable<SessionActionExecutionOperations['renameSession']> {
+    return context?.operations?.renameSession ?? ((sessionId, title, options) => executeSessionLifecycleAction('session.title.set', sessionId, options, title));
 }
 
 function resolveSetSessionRole(context: SessionActionExecutionContext | undefined) {
     return context?.operations?.setSessionRole ?? roleActions.setSessionRole;
 }
 
-function resolveDeleteSession(context: SessionActionExecutionContext | undefined) {
-    return context?.operations?.deleteSession ?? sessionDeleteWithServerScope;
+function resolveDeleteSession(context: SessionActionExecutionContext | undefined): NonNullable<SessionActionExecutionOperations['deleteSession']> {
+    return context?.operations?.deleteSession ?? ((sessionId, options) => executeSessionLifecycleAction('session.delete', sessionId, options));
 }
 
 function resolveResumeSession(context: SessionActionExecutionContext | undefined) {
@@ -109,7 +203,7 @@ function resolveClearSessionVisibleWhenInactive(context: SessionActionExecutionC
 
 function throwIfFailed(result: SessionActionOperationResult | void, fallbackMessage: string): void {
     if (!result || result.success) return;
-    throw new HappyError(result.message || fallbackMessage, false);
+    throw new HappyError(result.message || fallbackMessage, false, { code: result.code, details: result.details });
 }
 
 function throwUnsupportedSingleTargetAction(): never {
@@ -168,6 +262,25 @@ export async function executeSessionAction(params: Readonly<{
 }>): Promise<void> {
     const targetAddress = normalizeSessionAddress(params.target.serverId, params.target.sessionId);
     switch (params.actionId) {
+        case SESSION_ACTION_TALK_ID: {
+            if (!targetAddress || params.target.session.access?.capabilities.readTranscript !== true) {
+                throw new HappyError('session_not_selected', false, { code: 'session_not_selected' });
+            }
+            const result = await executeVoiceAction('ui.voice_global.start', {
+                target: { kind: 'session', sessionAddress: targetAddress }, expectedAttempt: null,
+            }, { surface: 'ui', serverId: targetAddress.serverId });
+            if (!result.ok) throw new HappyError(result.error, false, { code: result.errorCode });
+            const output = VoiceConversationActionOutputSchemas['ui.voice_global.start'].parse(result.result);
+            if (output.status === 'unavailable') throw new HappyError(output.code, false, { code: output.code });
+            return;
+        }
+        case SESSION_ACTION_WORK_OPEN_ID: {
+            if (!targetAddress || params.target.session.access?.capabilities.readTranscript !== true) return;
+            router.push(buildScopedSessionRouteHref({ ...targetAddress,
+                query: serializeSessionPaneUrlState({ rightTabId: 'agents' }),
+            }) as Parameters<typeof router.push>[0]);
+            return;
+        }
         case 'ui.session.follow': {
             if (params.target.followEnabled !== true || !params.target.serverId?.trim()) return;
             const openEditor = params.context?.operations?.openFollowEditor;
@@ -202,6 +315,30 @@ export async function executeSessionAction(params: Readonly<{
         case SESSION_ACTION_MAKE_ORCHESTRATOR_ID: {
             const result = await resolveSetSessionRole(params.context)(params.target.sessionId, ORCHESTRATOR_ROLE_ID, { serverId: params.target.serverId });
             if (!result.ok) throw new HappyError(t('sessionWork.actions.makeOrchestratorFailed'), false);
+            return;
+        }
+        case SESSION_ACTION_MAKE_BOT_ID:
+        case SESSION_ACTION_MAKE_REGULAR_ID: {
+            const accepted = params.actionId === SESSION_ACTION_MAKE_BOT_ID ? { kind: 'bot' as const } : null;
+            const previous = readSessionBotV1(params.target.session.metadata?.bot);
+            const result = await sessionDisplayActions.setBot(params.target.sessionId, accepted,
+                { serverId: params.target.serverId });
+            if (!result.ok) throw new HappyError(result.error, false);
+            if (targetAddress) publishSessionBotChangeNotice({ target: params.target, address: targetAddress, accepted, previous });
+            return;
+        }
+        case SESSION_ACTION_TOOL_CALLS_TOGGLE_ID:
+        case SESSION_ACTION_TOOL_CALLS_USE_DEFAULT_ID: {
+            // A surface without its own reading flips what the transcript shows now (same precedence owner).
+            const showToolCalls = params.actionId === SESSION_ACTION_TOOL_CALLS_USE_DEFAULT_ID
+                ? null
+                : params.input?.showToolCalls ?? !resolveSessionToolCallsMenuState({
+                    target: params.target,
+                    accountShowToolCalls: getStorage().getState().settings.transcriptShowToolCalls,
+                }).showToolCalls;
+            const result = await sessionDisplayActions.setToolCalls(params.target.sessionId, showToolCalls,
+                { serverId: params.target.serverId });
+            if (!result.ok) throw new HappyError(result.error, false);
             return;
         }
         case SESSION_ACTION_PUT_UNDER_ID: {
@@ -248,6 +385,13 @@ export async function executeSessionAction(params: Readonly<{
                 await setPinned(params.target.sessionId, params.actionId === SESSION_ACTION_PIN_ID, { serverId: params.target.serverId }),
                 t('errors.unknownError'),
             );
+            return;
+        }
+        case SESSION_ACTION_RAIL_PIN_ID:
+        case SESSION_ACTION_RAIL_UNPIN_ID: {
+            const result = await sessionOrganizationActions.setPin(params.target.sessionId,
+                params.actionId === SESSION_ACTION_RAIL_PIN_ID, { serverId: params.target.serverId, surface: 'rail' });
+            if (!result.ok) throw new HappyError(result.error, false, { code: result.errorCode });
             return;
         }
         case SESSION_ACTION_SET_ATTENTION_STANDING_ID:

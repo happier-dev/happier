@@ -361,6 +361,35 @@ describe('sessionAuthoringDraftAdapters', () => {
         });
     });
 
+    it('matches the exact configured definition and refuses a missing definition without a fallback', () => {
+        const identity = { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' };
+        const spawn = SessionServerStartSpawnDraftV1Schema.parse({
+            executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+            directory: { kind: 'path', path: '/workspace/project' },
+            agentTarget: { kind: 'agent', identity, definitionId: 'review-a' },
+            permissionMode: 'default',
+            configuration: {
+                mode: { value: null, updatedAtMs: 10 },
+                model: { value: null, updatedAtMs: 10 },
+                permissionIntent: { value: 'default', updatedAtMs: 10 },
+                options: {},
+            },
+        });
+        const catalog = ['review-a', 'review-b'].map((definitionId) => ({
+            agentTarget: { kind: 'agent' as const, identity, definitionId },
+            agentId: 'custom-acp',
+            backendTarget: { kind: 'backend' as const, backendId: definitionId, configuredBackendId: definitionId },
+        }));
+        const available = buildSessionAuthoringDraftFromServerStartSpawnDraftV1({
+            spawn, prompt: 'Review', agentTargetCatalog: catalog,
+        });
+        expect(available).toMatchObject({ kind: 'available', draft: { agentTarget: spawn.agentTarget } });
+        expect(buildSessionAuthoringDraftFromServerStartSpawnDraftV1({
+            spawn, prompt: 'Review', agentTargetCatalog: [catalog[1]!],
+        })).toEqual({ kind: 'unavailable', reason: 'agent_target_unavailable' });
+        expect(spawn.agentTarget.definitionId).toBe('review-a');
+    });
+
     it('rejects a server-start configuration that cannot be represented without changing its target-bound model', () => {
         const spawn = SessionServerStartSpawnDraftV1Schema.parse({
             executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
@@ -1103,7 +1132,7 @@ describe('sessionAuthoringDraftAdapters', () => {
             profileId: 'profile-1',
             permissionMode: 'safe-yolo',
             permissionModeUpdatedAt: 123,
-            modelSelection: modelSelection('backend:review-bot:configured:review-bot'),
+            modelSelection: modelSelection('agent:happier.agent.custom-acp/custom-acp:definition:review-bot'),
             terminal: { mode: 'tmux', tmux: { sessionName: 'happy-dev' } },
             runtimeDescriptorV1: {
                 v: 1,

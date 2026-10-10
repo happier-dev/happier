@@ -68,6 +68,8 @@ type BuildNewSessionAgentPickerOptionsParams = Readonly<{
     onRemoveFavoriteModelSelection?: (favorite: FavoriteModelSelectionV1) => void;
     onRememberAgentPickerView?: (view: NewSessionAgentPickerViewV1) => void;
     providerProjection?: NewSessionEngineOptionDetailProps['providerProjection'];
+    /** Known only for the selected Agent: the hook that resolves it follows the selection. */
+    selectedNativeSourceLabel?: string | null;
     experimentalConfirmation?: SessionModelPickerExperimentalConfirmationController;
     /** The agent on the composer's machine, from the one inventory owner (null: nothing known yet). */
     getBackendEntryMachineAgent?: (entry: ResolvedBackendCatalogEntry) => MachineAgent | null;
@@ -219,6 +221,7 @@ export function buildNewSessionAgentPickerOptions(
                     },
                 } : undefined,
                 ...(params.providerProjection ? { providerProjection: params.providerProjection } : {}),
+                nativeSourceLabel: entry.backendTargetKey === params.selectedBackendTargetKey ? params.selectedNativeSourceLabel : null,
                 experimentalConfirmation: params.experimentalConfirmation,
                 onRememberAgentPickerView: params.onRememberAgentPickerView,
                 getEngineSelectionForTargetKey: params.getEngineSelectionForTargetKey,

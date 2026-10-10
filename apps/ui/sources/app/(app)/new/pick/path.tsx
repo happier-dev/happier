@@ -14,6 +14,7 @@ import { Text } from '@/components/ui/text/Text';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } from '@/agents/backendCatalog/backendTargetRouteParams';
 import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
+import { useAcpCatalogForServer } from '@/sync/store/useAcpCatalog';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { NewSessionScreenPortalScope, useNewSessionContainedModalScreenOptions } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 import { buildNewSessionPickerFallbackHref, pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
@@ -51,7 +52,6 @@ export default React.memo(function PathPickerScreen() {
         lastUsedAgent: settings.lastUsedAgent,
         lastUsedBackendTarget: settings.lastUsedBackendTarget,
         backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
-        acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
     }));
     const favoriteDirectories = favoriteDirectoriesRaw ?? [];
     const currentRouteParams = React.useMemo(() => {
@@ -73,17 +73,19 @@ export default React.memo(function PathPickerScreen() {
         enabled: Boolean(machineIdParam),
         staleMs: 60_000,
     });
+    const { snapshot: acpCatalog } = useAcpCatalogForServer(spawnServerId);
     const preferredBackendTarget = React.useMemo(() => {
+        if (!acpCatalog || acpCatalog.stale || acpCatalog.catalog.status !== 'ready') return null;
         return resolvePreferredBackendTargetFromProjection({
             lastUsedAgent: settings.lastUsedAgent,
             lastUsedBackendTarget: settings.lastUsedBackendTarget,
             backendEnabledByTargetKey: settings.backendEnabledByTargetKey ?? undefined,
-            acpCatalogSettingsV1: settings.acpCatalogSettingsV1 ?? undefined,
+            acpCatalogSnapshot: acpCatalog.catalog,
             daemonMergedProjectionInputs: daemonMergedProjection.inputs,
         });
     }, [
         daemonMergedProjection.inputs,
-        settings.acpCatalogSettingsV1,
+        acpCatalog,
         settings.backendEnabledByTargetKey,
         settings.lastUsedAgent,
         settings.lastUsedBackendTarget,

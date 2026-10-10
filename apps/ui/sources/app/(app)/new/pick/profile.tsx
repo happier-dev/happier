@@ -34,6 +34,7 @@ import { buildSecretRequirementRouteParams } from '@/components/sessions/new/nav
 import { buildProfileEditPickerRouteParams } from '@/components/sessions/new/navigation/buildProfileEditPickerRouteParams';
 import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } from '@/agents/backendCatalog/backendTargetRouteParams';
 import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
+import { useAcpCatalogForServer } from '@/sync/store/useAcpCatalog';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { useNewSessionPickerRoutePresentation } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -57,15 +58,13 @@ export default React.memo(function ProfilePickerScreen() {
     const useProfiles = useSetting('useProfiles');
     const [secrets, setSecrets] = useSavedSecretsMutable();
     const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useCurrentSecretBindingsByProfileIdMutable();
-    const rawProfiles = useSetting('profiles');
     const deleteAiLaunchProfile = useDeleteAiLaunchProfile();
-    const profiles = useAiLaunchProfilesForLegacyUi(rawProfiles);
+    const profiles = useAiLaunchProfilesForLegacyUi();
     const [favoriteProfileIds, setFavoriteProfileIds] = useSettingMutable('favoriteProfiles');
     const settings = useSettingsSelector((settings) => ({
         lastUsedAgent: settings.lastUsedAgent,
         lastUsedBackendTarget: settings.lastUsedBackendTarget,
         backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
-        acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
     }));
 
     const selectedId = typeof params.selectedId === 'string' ? params.selectedId : '';
@@ -91,17 +90,19 @@ export default React.memo(function ProfilePickerScreen() {
         enabled: Boolean(machineId),
         staleMs: 60_000,
     });
+    const { snapshot: acpCatalog } = useAcpCatalogForServer(spawnServerId);
     const preferredBackendTarget = React.useMemo(() => {
+        if (!acpCatalog || acpCatalog.stale || acpCatalog.catalog.status !== 'ready') return null;
         return resolvePreferredBackendTargetFromProjection({
             lastUsedAgent: settings.lastUsedAgent,
             lastUsedBackendTarget: settings.lastUsedBackendTarget,
             backendEnabledByTargetKey: settings.backendEnabledByTargetKey ?? undefined,
-            acpCatalogSettingsV1: settings.acpCatalogSettingsV1 ?? undefined,
+            acpCatalogSnapshot: acpCatalog.catalog,
             daemonMergedProjectionInputs: daemonMergedProjection.inputs,
         });
     }, [
         daemonMergedProjection.inputs,
-        settings.acpCatalogSettingsV1,
+        acpCatalog,
         settings.backendEnabledByTargetKey,
         settings.lastUsedAgent,
         settings.lastUsedBackendTarget,

@@ -6,6 +6,7 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import { useServerScopedMachineOptions } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
 import { storage } from '@/sync/domains/state/storageStore';
 import { renderScreen } from '@/dev/testkit';
+import { adoptHomeProfile } from '@/sync/domains/server/serverProfiles';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -100,6 +101,31 @@ function createMachine(id: string): Machine {
 }
 
 describe('useServerScopedMachineOptions', () => {
+    it('updates an equivalent profile route when canonical inventory removes a machine', async () => {
+        const identity = 'srv_launch_inventory_owner';
+        const profile = await adoptHomeProfile({ descriptor: {
+            v: 1, homeServerIdentityId: identity, canonicalServerUrl: 'https://launch-inventory-owner.example.test',
+            revision: 1, endpoints: [{ kind: 'https', url: 'https://launch-inventory-owner.example.test' }],
+        }, source: 'manual' });
+        expect(profile.id).not.toBe(identity);
+        const row = createMachine('machine-launch');
+        const captured: Array<ReturnType<typeof useServerScopedMachineOptions>> = [];
+        act(() => storage.setState({
+            machineListByServerId: { [profile.id]: [row] },
+            machineListStatusByServerId: { [profile.id]: 'idle' },
+        }));
+        await renderScreen(<Probe allowedServerIds={[profile.id]} activeServerId="foreign-home" activeMachines={[]}
+            onGroups={(groups) => captured.push(groups)} />);
+        expect(captured.at(-1)?.[0]?.machines.map((machine) => machine.id)).toEqual([row.id]);
+        await act(async () => {
+            storage.setState((state) => ({
+                machineListByServerId: { ...state.machineListByServerId, [identity]: [] },
+                machineListStatusByServerId: { ...state.machineListStatusByServerId, [identity]: 'idle' },
+            }));
+        });
+        expect(captured.at(-1)?.[0]?.machines).toEqual([]);
+    });
+
     it('refreshes groups when active machine freshness changes', async () => {
         const captured: Array<ReturnType<typeof useServerScopedMachineOptions>> = [];
         const activeMachine = createMachine('machine-a');

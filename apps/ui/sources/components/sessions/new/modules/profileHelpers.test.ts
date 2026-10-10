@@ -1,13 +1,31 @@
 import { describe, expect, it, vi } from 'vitest';
-import { AIBackendProfileSchema, type SavedSecret } from '@happier-dev/protocol';
+import { AIBackendProfileSchema, type SavedSecret } from '@happier-dev/protocol/profiles/backendProfileSchema';
+import { resolveSavedSecretReference, applySavedSecretCatalogPage, resetSavedSecretCatalogSnapshotsForTests } from '@/sync/store/settings/savedSecretCatalogSnapshot';
+import { createProfileOperations } from '@happier-dev/protocol/profiles/profileOperations';
+import { ProfileRecordV1Schema } from '@happier-dev/protocol/profiles/profileRecordV1';
+import { readAiLaunchProfileRecords } from '@happier-dev/protocol/profiles/read';
+import { SavedSecretResourceMaterialV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import { decryptSecretValueWithKeysV1 } from '@happier-dev/protocol/crypto/settingsSecretStringsV1';
+import { materializeSavedSecretResources } from '@/sync/engine/settings/materializeSavedSecretResources';
 
 import {
     assertLaunchProfileReviewCurrent,
     isLaunchProfileReviewCurrent,
     LaunchProfileEnvironmentUnavailableError,
     LaunchProfileReviewChangedError,
-    materializeLaunchProfileEnvironment,
+    materializeLaunchProfileEnvironment as materializeLaunchProfileEnvironmentOwner,
 } from './profileHelpers';
+
+type TestProfileInput = Omit<Parameters<typeof materializeLaunchProfileEnvironmentOwner>[0], 'resolveSavedSecretReference'>
+    & Partial<Pick<Parameters<typeof materializeLaunchProfileEnvironmentOwner>[0], 'resolveSavedSecretReference'>>;
+
+function materializeLaunchProfileEnvironment(input: TestProfileInput) {
+    return materializeLaunchProfileEnvironmentOwner({
+        ...input,
+        resolveSavedSecretReference: input.resolveSavedSecretReference
+            ?? ((ref) => resolveSavedSecretReference(null, input.secrets, ref)),
+    });
+}
 
 function profile(updatedAt = 1) {
     return AIBackendProfileSchema.parse({
@@ -21,6 +39,67 @@ function profile(updatedAt = 1) {
 }
 
 describe('New Session launch Profile materialization', () => {
+    it('does not open an inherited Artifact secret after actual select-none while retaining neighboring launch material', async () => {
+        const defaults = { TOKEN: 'happier:shared-secret:v1:default', NEIGHBOR: 'happier:shared-secret:v1:neighbor' };
+        const privateRef = 'happier:shared-secret:v1:private';
+        const definition = AIBackendProfileSchema.parse({ id: 'work', name: 'Work', environmentVariables: [],
+            envVarRequirements: [{ name: 'TOKEN', kind: 'secret', required: false },
+                { name: 'NEIGHBOR', kind: 'secret', required: true }, { name: 'KEEP', kind: 'secret', required: true }],
+            createdAt: 1, updatedAt: 1 });
+        let record = ProfileRecordV1Schema.parse({ v: 1, id: 'work', enabled: true, promptStack: [],
+            definition: { kind: 'artifact', artifactId: 'published-work' }, secretBindings: { KEEP: privateRef } });
+        const artifact = { artifactId: 'published-work', access: 'view' as const, revision: { headerVersion: 1, bodyVersion: 1 },
+            header: { kind: 'launch-profile.v1', profileId: 'work', name: 'Work' },
+            body: JSON.stringify({ kind: 'launch-profile.v1', profile: definition, secretBindings: defaults }) };
+        const artifactsById = new Map([[artifact.artifactId, artifact]]);
+        const operations = createProfileOperations({ readCatalog: () => ({ status: 'ready', source: 'destination', authority: 'active',
+            records: [{ record, revision: 4 }], diagnostics: [], referenceGuardRevision: 5, controlRevision: 1,
+            control: { revision: 1, record: { v: 1, phase: 'active', sourceSettingsVersion: 0, migratedLogicalRevision: 0, inventory: [] } } }),
+            artifactsById: () => artifactsById,
+            writeRecord: async input => { record = ProfileRecordV1Schema.parse(input.record); return { status: 'updated', id: record.id, revision: 5 }; },
+            deleteRecord: async input => ({ status: 'updated', id: input.id, revision: 5 }) });
+        await expect(operations.selectSecret({ id: record.id, expectedRevision: 4, envName: 'TOKEN', selection: { kind: 'none' } }))
+            .resolves.toMatchObject({ status: 'updated' });
+        const selected = readAiLaunchProfileRecords([record], { artifactsById }).entries[0];
+        if (!selected || selected.kind === 'opaque') throw new Error('profile_definition_unavailable');
+        const scope = { serverId: 'material-home', accountId: 'material-account' };
+        const material = await materializeSavedSecretResources({ resources: ['default', 'neighbor', 'private'].map(resourceId =>
+            SavedSecretResourceMaterialV1Schema.parse({ resourceId, encryptionMode: 'plain', recipientEnvelope: null,
+                storedContent: { t: 'plain', v: { v: 1, name: resourceId, kind: 'token', value: `${resourceId}-material` } },
+                entry: { ref: `happier:shared-secret:v1:${resourceId}`, source: 'shared_resource', relationship: 'owner',
+                    name: resourceId, kind: 'token', revision: 1, materialStatus: 'ready',
+                    capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } } })),
+            decryptDataKeyEnvelope: async () => null });
+        applySavedSecretCatalogPage({ scope, ...material, observedAt: 1, current: true });
+        try {
+            expect(materializeLaunchProfileEnvironmentOwner({ profile: AIBackendProfileSchema.parse(selected.profile),
+                selectedAgentProviderOwnedEnvironmentKeys: [], secrets: [], defaultBindings: selected.profile.secretBindings,
+                resolveSavedSecretReference: ref => resolveSavedSecretReference(scope, [], ref),
+                decryptSecretValue: value => value ? decryptSecretValueWithKeysV1(value, []) : null,
+            })).toEqual({ ok: true, environmentVariables: { NEIGHBOR: 'neighbor-material', KEEP: 'private-material' } });
+        } finally {
+            resetSavedSecretCatalogSnapshotsForTests();
+        }
+    });
+    it('refuses retained shared material without current catalog admission', () => {
+        const ref = 'happier:shared-secret:v1:profile-token';
+        expect(materializeLaunchProfileEnvironment({
+            profile: profile(),
+            selectedAgentProviderOwnedEnvironmentKeys: [],
+            secrets: [{
+                id: ref, name: 'Retained shared token', kind: 'token',
+                encryptedValue: { _isSecretValue: true, value: 'stale-material' },
+                createdAt: 1, updatedAt: 1,
+            }],
+            selectedSecretIds: { RUNNER_PROFILE_TOKEN: ref },
+            machineEnvReadyByName: { RUNNER_PROFILE_TOKEN: false },
+            resolveSavedSecretReference: (selectedRef) => resolveSavedSecretReference(
+                { serverId: 'unloaded-home', accountId: 'owner' }, [], selectedRef,
+            ),
+            decryptSecretValue: (value) => value?.value ?? null,
+        })).toEqual({ ok: false, reason: 'secret_requirement_unsatisfied' });
+    });
+
     it('materializes the exact selected secret into the reviewed environment snapshot', () => {
         const result = materializeLaunchProfileEnvironment({
             profile: profile(),

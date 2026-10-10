@@ -6,6 +6,8 @@ import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 
 export type SessionActionSurface =
     | 'rowMenu'
+    /** A Bot's row in the Bots roster: only what you do with a bot from there. */
+    | 'botsRoster'
     | 'nativeContextMenu'
     | 'sessionHeader'
     | 'sessionInfo'
@@ -16,6 +18,10 @@ export type SessionActionId =
     | 'ui.session.mark-read'
     | 'ui.session.mark-unread'
     | 'ui.session.rename'
+    | 'ui.session.make-bot'
+    | 'ui.session.make-regular'
+    | 'ui.session.tool-calls.toggle'
+    | 'ui.session.tool-calls.use-default'
     | 'ui.session.resume'
     | 'ui.session.stop'
     | 'ui.session.archive'
@@ -23,6 +29,10 @@ export type SessionActionId =
     | 'ui.session.delete'
     | 'ui.session.pin'
     | 'ui.session.unpin'
+    | 'ui.session.rail.pin'
+    | 'ui.session.rail.unpin'
+    | 'ui.session.work.open'
+    | 'ui.session.talk'
     | 'ui.session.tags.edit'
     | 'ui.session.move-to-folder'
     | 'ui.session.set-attention-standing'
@@ -62,11 +72,16 @@ export type SessionActionTarget = Readonly<{
     isConnected: boolean;
     hasRecoverableTerminalHost: boolean;
     isPinned: boolean;
+    isRailPinned: boolean;
     isOwnedByCurrentUser: boolean;
     canUnarchive: boolean;
     canStop: boolean;
     canArchive: boolean;
     canRename: boolean;
+    /** Owner-private field edits require a readable same-Home owner projection. */
+    canWriteOwnerMetadata: boolean;
+    /** The Session's own Show tool calls choice from its owner metadata; `null`/absent follows the default. */
+    toolCallsOverride?: boolean | null;
     canResume: boolean;
     canDelete: boolean;
     followEnabled?: boolean;
@@ -79,6 +94,7 @@ export type SessionActionOperationResult = Readonly<{
     success: boolean;
     message?: string;
     code?: string;
+    details?: unknown;
     recovery?: SessionStopRecovery;
 }>;
 
@@ -87,6 +103,8 @@ export type SessionActionExecutionInput = Readonly<{
     readState?: 'read' | 'unread';
     tags?: readonly string[];
     folderId?: string | null;
+    /** The requested visibility, computed from the transcript owner's effective choice. */
+    showToolCalls?: boolean;
 }>;
 
 export type SessionActionExecutionOperations = Readonly<{

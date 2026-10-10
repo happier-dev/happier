@@ -281,6 +281,9 @@ describe('ScopedAuthoringComposer', () => {
 
         const composerProps = agentInputSpy.mock.calls.at(-1)?.[0] as Record<string, unknown> | undefined;
         expect(composerProps).toBeDefined();
+        // A document card's chips wrap under its words on a phone, never a sideways strip that
+        // truncates the engine to "Choos…" (DESIGN-7 N34, lab editor-P1).
+        expect(composerProps?.autoActionBarLayout).toBe('wrap');
         // No Session is fabricated for a portable document.
         expect(composerProps?.sessionId).toBeUndefined();
         expect(composerProps?.sessionAddress).toBeNull();

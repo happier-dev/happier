@@ -121,14 +121,12 @@ export function installNewSessionScreenModelCommonModuleMocks(
     });
 
     vi.mock('expo-router', async () => {
-        const routerState = newSessionScreenModelModuleState.options;
-
         const pushSpy = vi.fn<(value: unknown) => unknown>();
         const replaceSpy = vi.fn<(value: unknown) => unknown>();
         const backSpy = vi.fn<() => unknown>();
         const setParamsSpy = vi.fn<(value: ExpoRouterParams) => unknown>();
 
-        const resolveConfig = () => routerState.routerConfig ?? {};
+        const resolveConfig = () => newSessionScreenModelModuleState.options.routerConfig ?? {};
         const syncParams = () => {
             const cfg = resolveConfig();
             return {

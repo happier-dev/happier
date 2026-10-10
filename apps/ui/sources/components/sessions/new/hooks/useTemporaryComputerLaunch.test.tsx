@@ -30,6 +30,7 @@ import {
     materializeLaunchProfileEnvironment,
 } from '../modules/profileHelpers';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
+import { resolveSavedSecretReference } from '@/sync/store/settings/savedSecretCatalogSnapshot';
 
 // The mounted owner retains one API client per Home. Inline boundary fixtures
 // would otherwise create a new client on every hook render and falsely retrigger
@@ -1018,6 +1019,7 @@ describe('useTemporaryComputerLaunch', () => {
                     profile: currentProfile,
                     selectedAgentProviderOwnedEnvironmentKeys: [],
                     secrets: input.secrets,
+                    resolveSavedSecretReference: (ref) => resolveSavedSecretReference(null, input.secrets, ref),
                     selectedSecretIds: { RUNNER_PROFILE_TOKEN: 'secret-work' },
                     machineEnvReadyByName: { RUNNER_PROFILE_TOKEN: false },
                     decryptSecretValue: (value) => value?.value ?? null,

@@ -236,6 +236,9 @@ describe('useMachineSelectionListModel', () => {
         expect(model.selectedOptionId).toBe('managed-machine:server-a:preset:recipe:3');
         expect(managed.options[0]?.rightAccessory).toBeUndefined();
         expect(managed.options[0]?.subtitle).not.toContain('1.25');
+        expect(managed.options[0]?.subtitle).toBe(purpose === 'finite'
+            ? 'host · Keep · managedMachines.picker.createdOnRun' : 'host · Keep');
+        expect(managed.options[1]?.subtitle).toBe(purpose === 'finite' ? 'managedMachines.picker.createdOnRun' : undefined);
         managed.options[0]?.onSelect?.();
         expect(onSelectManagedMachine).toHaveBeenCalledWith(draft);
         managed.options[1]?.onSelect?.();

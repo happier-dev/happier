@@ -15,7 +15,7 @@ import { resolveMachinePickerPresence } from '../resolveMachinePickerPresence';
 import { t } from '@/text';
 import { describeMachineLockedReason } from '@/utils/sessions/machineDisplayNames';
 import { formatByteSize } from '@/utils/files/formatByteSize';
-import { formatRelativeTimeShort } from '@/components/ui/selectionList/formatRelativeTimeShort';
+import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import type { ManagedMachineDestinationProjection } from './managedMachineSelection';
 
 /** Current admitted projection facts, supplied on demand; never inferred from CPU or Session count. */

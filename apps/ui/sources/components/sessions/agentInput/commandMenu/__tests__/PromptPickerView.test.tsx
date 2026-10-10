@@ -53,6 +53,14 @@ async function mount(options: Readonly<{ hardwareKeyboard?: boolean; initialQuer
 }
 
 describe('prompt picker presentation controls', () => {
+    it('places the empty favourites invitation inside the list without adding a selectable row', async () => {
+        const { screen, onApply } = await mount();
+        const list = screen.findByTestId('agent-input-prompt-picker:list');
+        expect(list?.findAll((node) => node.props.children === 'agentInput.promptPicker.favoritesInvite').length).toBeGreaterThan(0);
+        await act(async () => screen.findByTestId('prompt-picker-search')?.props.onSubmitEditing?.());
+        expect(onApply).toHaveBeenCalledWith(expect.any(Function), 'insert');
+    });
+
     it.each(['', 'kubernetes'])('keeps partial coverage visible with results or no match (query=%s)', async (initialQuery) => {
         const { screen } = await mount({ hardwareKeyboard: false, initialQuery });
         expect(screen.findByTestId('prompt-picker-history-coverage')).not.toBeNull();

@@ -16,6 +16,7 @@ export type SessionComposerSendResolution =
         token: string;
         title: string;
         targetArtifactId: string;
+        targetServerId?: string;
         behavior: PromptInvocationBehaviorV1;
         allowArgs: boolean;
         rest: string;
@@ -117,7 +118,7 @@ export function resolveSessionComposerSend(args: {
         }
     }
 
-    // NOTE: Template invocations are opt-in via settings and never override reserved tokens.
+    // Template invocations come from the admitted Account catalog and never override reserved tokens.
     const invocations = args.promptInvocationsV1?.entries;
     if (Array.isArray(invocations) && invocations.length > 0) {
         const trimmed = args.input.trim();
@@ -153,6 +154,7 @@ export function resolveSessionComposerSend(args: {
                         token,
                         title,
                         targetArtifactId,
+                        ...(entry.target.serverId ? { targetServerId: entry.target.serverId } : {}),
                         behavior,
                         allowArgs,
                         rest,

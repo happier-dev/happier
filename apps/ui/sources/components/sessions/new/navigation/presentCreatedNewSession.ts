@@ -1,4 +1,5 @@
-import { getAgentCore, isBundledAgentId, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
+import { resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
+import { getAgentModelConfig } from '@happier-dev/agents';
 import { actionOperationPresentationCoordinator } from '@/components/inbox/actionOperations/actionOperationPresentationRuntime';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import {
@@ -35,7 +36,7 @@ export function projectAcceptedNewSessionFirstTurn(params: Readonly<{
     const agentId = sessionAgentId ?? params.fallbackAgentId ?? null;
     const modelMode = session?.modelMode
         || params.fallbackModelMode
-        || (agentId && isBundledAgentId(agentId) ? getAgentCore(agentId).model?.defaultMode : null)
+        || (agentId ? getAgentModelConfig(agentId)?.defaultMode : null)
         || 'default';
     const permissionMode = session?.permissionMode || params.fallbackPermissionMode || 'default';
     const rawRecord = buildOutgoingUserTextRecord({

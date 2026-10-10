@@ -10,6 +10,7 @@ import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibil
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
 import { getTempData } from '@/utils/sessions/tempDataStore';
+import { t } from '@/text';
 
 export function useSecretRequirementFlow(params: Readonly<{
     router: { push: (options: any) => void };
@@ -30,7 +31,7 @@ export function useSecretRequirementFlow(params: Readonly<{
     secrets: SavedSecret[];
     setSecrets: (secrets: SavedSecret[]) => void;
     secretBindingsByProfileId: Record<string, Record<string, string>>;
-    setSecretBindingsByProfileId: (next: Record<string, Record<string, string>>) => void;
+    setSecretBindingsByProfileId: (next: Record<string, Record<string, string>>) => Promise<void>;
     selectedSecretIdByProfileIdByEnvVarName: SecretChoiceByProfileIdByEnvVarName;
     setSelectedSecretIdByProfileIdByEnvVarName: React.Dispatch<React.SetStateAction<SecretChoiceByProfileIdByEnvVarName>>;
     sessionOnlySecretValueByProfileIdByEnvVarName: SecretChoiceByProfileIdByEnvVarName;
@@ -94,7 +95,7 @@ export function useSecretRequirementFlow(params: Readonly<{
                 ? selectedRaw
                 : null;
 
-        const handleResolve = (result: SecretRequirementModalResult) => {
+        const handleResolve = async (result: SecretRequirementModalResult) => {
             if (result.action === 'cancel') {
                 params.isSecretRequirementModalOpenRef.current = false;
                 // Always allow future prompts for this profile.
@@ -161,13 +162,15 @@ export function useSecretRequirementFlow(params: Readonly<{
                     },
                 }));
                 if (result.setDefault) {
-                    params.setSecretBindingsByProfileId({
+                    try { await params.setSecretBindingsByProfileId({
                         ...params.secretBindingsByProfileId,
                         [profile.id]: {
                             ...(params.secretBindingsByProfileId[profile.id] ?? {}),
                             [result.envVarName]: result.secretId,
                         },
-                    });
+                    }); } catch (error) {
+                        Modal.alert(t('common.error'), error instanceof Error ? error.message : t('common.error'));
+                    }
                 }
             }
         };
@@ -185,15 +188,17 @@ export function useSecretRequirementFlow(params: Readonly<{
                 selectedSecretIdByEnvVarName: selectedSecretIdByEnvVarName,
                 sessionOnlySecretValueByEnvVarName: sessionOnlySecretValueByEnvVarName,
                 defaultSecretIdByEnvVarName: params.secretBindingsByProfileId[profile.id] ?? null,
-                onSetDefaultSecretId: (id) => {
+                onSetDefaultSecretId: async (id) => {
                     if (!id) return;
-                    params.setSecretBindingsByProfileId({
+                    try { await params.setSecretBindingsByProfileId({
                         ...params.secretBindingsByProfileId,
                         [profile.id]: {
                             ...(params.secretBindingsByProfileId[profile.id] ?? {}),
                             [targetEnvVarName]: id,
                         },
-                    });
+                    }); } catch (error) {
+                        Modal.alert(t('common.error'), error instanceof Error ? error.message : t('common.error'));
+                    }
                 },
                 onChangeSecrets: params.setSecrets,
                 allowSessionOnly: true,
@@ -333,7 +338,9 @@ export function useSecretRequirementFlow(params: Readonly<{
             params.setSelectedSecretIdByProfileIdByEnvVarName(applied.nextSelectedSecretIdByProfileIdByEnvVarName);
             params.setSessionOnlySecretValueByProfileIdByEnvVarName(applied.nextSessionOnlySecretValueByProfileIdByEnvVarName);
             if (applied.nextSecretBindingsByProfileId !== params.secretBindingsByProfileId) {
-                params.setSecretBindingsByProfileId(applied.nextSecretBindingsByProfileId);
+                void params.setSecretBindingsByProfileId(applied.nextSecretBindingsByProfileId).catch((error: unknown) => {
+                    Modal.alert(t('common.error'), error instanceof Error ? error.message : t('common.error'));
+                });
             }
         }
 

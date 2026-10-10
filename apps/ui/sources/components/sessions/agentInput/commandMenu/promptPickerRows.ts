@@ -2,6 +2,7 @@ import { isPromptInvocationAvailable, type PromptInvocationEntryV1 } from '@happ
 import type { PromptLibraryListItem } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
 import type { BuiltInPrompt } from '@/sync/domains/input/slashCommands/builtInPrompts';
 import type { UserMessageHistoryEntry } from '@/hooks/session/useUserMessageHistoryEntries';
+import { isPromptLibraryReferenceInHome } from '@/sync/ops/promptLibrary/promptLibraryReferences';
 
 export type PromptPickerRow = Readonly<{
     id: string;
@@ -20,6 +21,7 @@ export function buildPromptPickerRows(input: Readonly<{
     builtIns: readonly BuiltInPrompt[];
     history: readonly UserMessageHistoryEntry[];
     sessionId: string | null;
+    serverId?: string | null;
     query: string;
 }>): readonly PromptPickerRow[] {
     const query = input.query.trim().toLocaleLowerCase();
@@ -28,6 +30,7 @@ export function buildPromptPickerRows(input: Readonly<{
     const tokensByDocument = new Map<string, string[]>();
     for (const entry of input.invocations) {
         if (!isPromptInvocationAvailable(entry, { sessionId: input.sessionId })) continue;
+        if (!isPromptLibraryReferenceInHome(entry.target, entry.target.artifactId, input.serverId ?? undefined)) continue;
         const tokens = tokensByDocument.get(entry.target.artifactId) ?? [];
         tokens.push(entry.token);
         tokensByDocument.set(entry.target.artifactId, tokens);

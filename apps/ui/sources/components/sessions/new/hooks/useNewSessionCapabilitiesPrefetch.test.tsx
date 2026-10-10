@@ -1,194 +1,96 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createMachineFixture, renderHook, standardCleanup } from '@/dev/testkit';
+import { getMachineCapabilitiesCacheState, prefetchMachineCapabilitiesIfStale } from '@/hooks/server/useMachineCapabilitiesCache';
+import { resolveDaemonCapabilitiesCacheKeySalt } from '@/hooks/server/useDaemonScopedMachineCapabilitiesCache';
+import { publishMachineContributionRegistryProjectionInvalidation } from '@/sync/ops/machineContributionRegistryProjectionRevision';
+import { isMachineOnline } from '@/utils/sessions/machineUtils';
+import { useNewSessionCapabilitiesPrefetch } from './useNewSessionCapabilitiesPrefetch';
+import { act } from 'react-test-renderer';
 
-import { renderHook } from '@/dev/testkit/hooks/renderHook';
-import { installNewSessionComponentsCommonModuleMocks } from '../components/newSessionComponentsTestHelpers';
-
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-installNewSessionComponentsCommonModuleMocks({
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            InteractionManager: {
-                runAfterInteractions: (fn: () => void) => {
-                    fn();
-                    return { cancel: () => {} };
-                },
-            },
-        });
-    },
+// Exercise real scheduling/cache logic beneath the machine RPC transport boundary.
+const machineRpc = vi.hoisted(() => vi.fn());
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: machineRpc }));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
 });
+afterEach(() => { standardCleanup(); machineRpc.mockReset(); vi.useRealTimers(); });
 
-describe('useNewSessionCapabilitiesPrefetch', () => {
-    it('does not repeatedly prefetch when only machines array identity churns', async () => {
-        vi.resetModules();
+const request = { requests: [{ id: 'tool.tmux' as const }] };
 
-        const prefetchMachineCapabilitiesIfStale = vi.fn(async () => {});
-
-        const { useNewSessionCapabilitiesPrefetch } = await import('./useNewSessionCapabilitiesPrefetch');
-
-        const baseMachine = { id: 'm1', daemonStateVersion: 1 };
-        const request = { checklistId: 'new_session' };
-
-        const hook = await renderHook(
-            ({ churn }: { churn: number }) => {
-                useNewSessionCapabilitiesPrefetch({
-                    enabled: true,
-                    serverId: 's1',
-                    machines: [{ ...baseMachine, daemonStateVersion: 1 + (churn * 0) }],
-                    favoriteMachineItems: [],
-                    recentMachines: [],
-                    selectedMachineId: 'm1',
-                    isMachineOnline: () => true,
-                    staleMs: 60_000,
-                    request,
-                    prefetchMachineCapabilitiesIfStale,
-                });
-            },
-            { initialProps: { churn: 0 } },
-        );
-
-        await new Promise((resolve) => setTimeout(resolve, 0));
-        // One call for wizard glyph prefetch + one for the actively selected machine.
-        expect(prefetchMachineCapabilitiesIfStale).toHaveBeenCalledTimes(2);
-
+describe('new-session capability prefetch', () => {
+    it('does not lose the selected prefetch when rerender precedes its web deferral', async () => {
+        vi.useFakeTimers();
+        const machine = createMachineFixture({ id: 'prefetch-deferred', activeAt: Date.now() });
+        machineRpc.mockResolvedValue({ protocolVersion: 1, results: { 'tool.tmux': { ok: true, checkedAt: 12, data: { available: true } } } });
+        const hook = await renderHook(({ churn }: { churn: number }) => useNewSessionCapabilitiesPrefetch({
+            enabled: true, serverId: 'prefetch-deferred-home', machines: [{ ...machine, seq: machine.seq + churn }],
+            favoriteMachineItems: [], recentMachines: [], selectedMachineId: machine.id, isMachineOnline,
+            staleMs: 60_000, request, prefetchMachineCapabilitiesIfStale,
+        }), { initialProps: { churn: 0 }, flushOptions: { cycles: 0 } });
+        expect(machineRpc).not.toHaveBeenCalled();
         await hook.rerender({ churn: 1 });
-        await new Promise((resolve) => setTimeout(resolve, 0));
-        // Should not prefetch again just because the machines array identity changed.
-        expect(prefetchMachineCapabilitiesIfStale).toHaveBeenCalledTimes(2);
+        await act(async () => vi.advanceTimersByTimeAsync(0));
+        expect(getMachineCapabilitiesCacheState(machine.id, 'prefetch-deferred-home', 0)).toMatchObject({ status: 'loaded' });
+        await hook.unmount();
     });
 
-    it('does not lose prefetch when rerender happens before the web deferral tick', async () => {
-        vi.resetModules();
-
-        const prefetchMachineCapabilitiesIfStale = vi.fn(async () => {});
-        const { useNewSessionCapabilitiesPrefetch } = await import('./useNewSessionCapabilitiesPrefetch');
-
-        const baseMachine = { id: 'm1', daemonStateVersion: 1 };
-        const request = { checklistId: 'new_session' };
-
-        const hook = await renderHook(
-            ({ churn }: { churn: number }) => {
-                useNewSessionCapabilitiesPrefetch({
-                    enabled: true,
-                    serverId: 's1',
-                    machines: [{ ...baseMachine, daemonStateVersion: 1 + (churn * 0) }],
-                    favoriteMachineItems: [],
-                    recentMachines: [],
-                    selectedMachineId: 'm1',
-                    isMachineOnline: () => true,
-                    staleMs: 60_000,
-                    request,
-                    prefetchMachineCapabilitiesIfStale,
-                });
-            },
-            { initialProps: { churn: 0 } },
-        );
-
-        // Immediately rerender before the deferred callback fires; we still expect one prefetch wave to happen.
-        await hook.rerender({ churn: 1 });
-        await new Promise((resolve) => setTimeout(resolve, 0));
-        expect(prefetchMachineCapabilitiesIfStale).toHaveBeenCalledTimes(2);
+    it('keeps valid facts across array/version churn and reads a changed registry namespace', async () => {
+        const machine = createMachineFixture({ id: 'prefetch-currentness', activeAt: Date.now(), daemonStateVersion: 1 });
+        const serverId = 'prefetch-currentness-home';
+        let available = true;
+        machineRpc.mockImplementation(async () => ({ protocolVersion: 1, results: {
+            'tool.tmux': { ok: true, checkedAt: 12, data: { available } },
+        } }));
+        const hook = await renderHook(({ version }: { version: number }) => useNewSessionCapabilitiesPrefetch({
+            enabled: true, serverId, machines: [{ ...machine, daemonStateVersion: version }],
+            favoriteMachineItems: [], recentMachines: [], selectedMachineId: machine.id,
+            isMachineOnline, staleMs: 60_000, request, prefetchMachineCapabilitiesIfStale,
+        }), { initialProps: { version: 1 } });
+        const read = () => getMachineCapabilitiesCacheState(machine.id, serverId, resolveDaemonCapabilitiesCacheKeySalt(machine, serverId));
+        await vi.waitFor(() => expect(read()?.status).toBe('loaded'));
+        const ready = read();
+        available = false;
+        machineRpc.mockClear();
+        await hook.rerender({ version: 1 });
+        await hook.rerender({ version: 2 });
+        expect(read()).toBe(ready);
+        expect(machineRpc).not.toHaveBeenCalled();
+        publishMachineContributionRegistryProjectionInvalidation({ serverId, machineId: machine.id });
+        await hook.rerender({ version: 3 });
+        await vi.waitFor(() => expect(read()).toMatchObject({ status: 'loaded', snapshot: {
+            response: { results: { 'tool.tmux': { data: { available: false } } } },
+        } }));
+        await hook.unmount();
     });
 
-    it('re-prefetches wizard glyphs when serverId changes (server-scoped cache)', async () => {
-        vi.resetModules();
-
-        const prefetchMachineCapabilitiesIfStale = vi.fn(async () => {});
-        const { useNewSessionCapabilitiesPrefetch } = await import('./useNewSessionCapabilitiesPrefetch');
-
-        const baseMachine = { id: 'm1', daemonStateVersion: 1 };
-        const machines = [baseMachine];
-        const favoriteMachineItems = [baseMachine];
-        const recentMachines: ReadonlyArray<typeof baseMachine> = [];
-        const request = { checklistId: 'new_session' };
-
-        const hook = await renderHook(
-            ({ serverId }: { serverId: string }) => {
-                useNewSessionCapabilitiesPrefetch({
-                    enabled: true,
-                    serverId,
-                    machines,
-                    favoriteMachineItems,
-                    recentMachines,
-                    selectedMachineId: 'm1',
-                    isMachineOnline: () => true,
-                    staleMs: 60_000,
-                    request,
-                    prefetchMachineCapabilitiesIfStale,
-                });
-            },
-            { initialProps: { serverId: 's1' } },
-        );
-
-        await new Promise((resolve) => setTimeout(resolve, 0));
-        // One call for wizard glyph prefetch + one for selected machine.
-        expect(prefetchMachineCapabilitiesIfStale).toHaveBeenCalledTimes(2);
-
-        await hook.rerender({ serverId: 's2' });
-        await new Promise((resolve) => setTimeout(resolve, 0));
-        // Selected-machine prefetch key includes serverId, so +1. Wizard glyphs should also re-prefetch (+1).
-        expect(prefetchMachineCapabilitiesIfStale).toHaveBeenCalledTimes(4);
+    it('keeps the same machine separate across Homes', async () => {
+        const machine = createMachineFixture({ id: 'prefetch-two-homes', activeAt: Date.now() });
+        machineRpc.mockImplementation(async ({ serverId }: { serverId: string }) => ({ protocolVersion: 1, results: {
+            'tool.tmux': { ok: true, checkedAt: 12, data: { available: serverId === 'prefetch-home-a' } },
+        } }));
+        const hook = await renderHook(({ serverId }: { serverId: string }) => useNewSessionCapabilitiesPrefetch({
+            enabled: true, serverId, machines: [machine], favoriteMachineItems: [machine], recentMachines: [],
+            selectedMachineId: machine.id, isMachineOnline, staleMs: 60_000, request, prefetchMachineCapabilitiesIfStale,
+        }), { initialProps: { serverId: 'prefetch-home-a' } });
+        const read = (serverId: string) => getMachineCapabilitiesCacheState(machine.id, serverId, resolveDaemonCapabilitiesCacheKeySalt(machine, serverId));
+        await vi.waitFor(() => expect(read('prefetch-home-a')?.status).toBe('loaded'));
+        await hook.rerender({ serverId: 'prefetch-home-b' });
+        await vi.waitFor(() => expect(read('prefetch-home-b')).toMatchObject({ status: 'loaded', snapshot: {
+            response: { results: { 'tool.tmux': { data: { available: false } } } },
+        } }));
+        expect(read('prefetch-home-a')).toMatchObject({ snapshot: { response: { results: { 'tool.tmux': { data: { available: true } } } } } });
+        await hook.unmount();
     });
 
-    it('re-prefetches when the selected machine daemonStateVersion changes', async () => {
-        vi.resetModules();
-
-        const prefetchMachineCapabilitiesIfStale = vi.fn(async () => {});
-
-        const { useNewSessionCapabilitiesPrefetch } = await import('./useNewSessionCapabilitiesPrefetch');
-
-        const request = { checklistId: 'new_session' };
-
-        const hook = await renderHook(
-            ({ daemonStateVersion }: { daemonStateVersion: number }) => {
-                useNewSessionCapabilitiesPrefetch({
-                    enabled: true,
-                    serverId: 's1',
-                    machines: [{ id: 'm1', daemonStateVersion }],
-                    favoriteMachineItems: [],
-                    recentMachines: [],
-                    selectedMachineId: 'm1',
-                    isMachineOnline: () => true,
-                    staleMs: 60_000,
-                    request,
-                    prefetchMachineCapabilitiesIfStale,
-                });
-            },
-            { initialProps: { daemonStateVersion: 1 } },
-        );
-
-        await new Promise((resolve) => setTimeout(resolve, 0));
-        expect(prefetchMachineCapabilitiesIfStale).toHaveBeenCalledTimes(2);
-
-        await hook.rerender({ daemonStateVersion: 2 });
-        await new Promise((resolve) => setTimeout(resolve, 0));
-        expect(prefetchMachineCapabilitiesIfStale).toHaveBeenCalledTimes(3);
-    });
-
-    it('does not prefetch when disabled', async () => {
-        vi.resetModules();
-
-        const prefetchMachineCapabilitiesIfStale = vi.fn(async () => {});
-
-        const { useNewSessionCapabilitiesPrefetch } = await import('./useNewSessionCapabilitiesPrefetch');
-
-        await renderHook(() => {
-            useNewSessionCapabilitiesPrefetch({
-                enabled: false,
-                serverId: 's1',
-                machines: [{ id: 'm1', daemonStateVersion: 1 }],
-                favoriteMachineItems: [],
-                recentMachines: [],
-                selectedMachineId: 'm1',
-                isMachineOnline: () => true,
-                staleMs: 60_000,
-                request: { checklistId: 'new_session' },
-                prefetchMachineCapabilitiesIfStale,
-            });
-        });
-
-        await new Promise((resolve) => setTimeout(resolve, 0));
-        expect(prefetchMachineCapabilitiesIfStale).toHaveBeenCalledTimes(0);
+    it('does not demand capability work while disabled', async () => {
+        const machine = createMachineFixture({ id: 'prefetch-disabled', activeAt: Date.now() });
+        const hook = await renderHook(() => useNewSessionCapabilitiesPrefetch({
+            enabled: false, serverId: 'prefetch-disabled-home', machines: [machine], favoriteMachineItems: [], recentMachines: [],
+            selectedMachineId: machine.id, isMachineOnline, staleMs: 60_000, request, prefetchMachineCapabilitiesIfStale,
+        }));
+        expect(getMachineCapabilitiesCacheState(machine.id, 'prefetch-disabled-home', 0)).toBeNull();
+        expect(machineRpc).not.toHaveBeenCalled();
+        await hook.unmount();
     });
 });

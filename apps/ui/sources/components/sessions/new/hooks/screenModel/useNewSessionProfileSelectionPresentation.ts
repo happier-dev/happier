@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import { getAgentCore, isBundledAgentId, resolveAgentIdFromCliDetectKey } from '@/agents/catalog/catalog';
+import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
 import { consumeProfileIdParam } from '@/profileRouteParams';
 import { t } from '@/text';
 
@@ -36,9 +37,10 @@ export function useNewSessionProfileSelectionPresentation(params: Readonly<{
     const getProfileSubtitleExtra = React.useCallback((profile: { id: string }) => {
         const availability = params.profileAvailabilityById.get(profile.id) ?? { available: true };
         if (availability.available || !availability.reason) return null;
+        if (availability.reason.startsWith('agent-not-ready:')) return t('common.unavailable');
         if (availability.reason.startsWith('requires-agent:')) {
             const required = availability.reason.split(':')[1];
-            const agentLabel = isBundledAgentId(required) ? t(getAgentCore(required).displayNameKey) : required;
+            const agentLabel = isBundledAgentId(required) ? resolveAgentCatalogTitle(required) : required;
             return t('newSession.profileAvailability.requiresAgent', { agent: agentLabel });
         }
         if (availability.reason.startsWith('logged-out:')) {

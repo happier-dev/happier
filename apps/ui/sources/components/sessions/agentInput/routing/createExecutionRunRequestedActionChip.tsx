@@ -8,11 +8,11 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
 
 import { ExecutionRunRequestedActionChip } from './ExecutionRunRequestedActionChip';
-import { buildExecutionRunRequestedActionPickerOptions, resolveExecutionRunRequestedActionLabel } from './executionRunRequestedActionOptions';
+import { buildExecutionRunRequestedActionPickerOptions, resolveExecutionRunRequestedActionLabel, type ExecutionRunRequestedActionKind } from './executionRunRequestedActionOptions';
 
 /** Shared picker definition for the action-menu and inline chip routes. */
 export function buildExecutionRunRequestedActionRootStep(params: Readonly<{
-    onSelect?: (selectedId: PendingRequestedActionV1['kind']) => void;
+    onSelect?: (selectedId: ExecutionRunRequestedActionKind) => void;
 }> = {}): SelectionListStep {
     const options = buildExecutionRunRequestedActionPickerOptions();
     return {
@@ -26,7 +26,7 @@ export function buildExecutionRunRequestedActionRootStep(params: Readonly<{
                 label: option.label,
                 subtitle: option.subtitle,
                 onSelect: params.onSelect
-                    ? () => params.onSelect!(option.id as PendingRequestedActionV1['kind'])
+                    ? () => params.onSelect!(option.id)
                     : undefined,
             })),
         }],

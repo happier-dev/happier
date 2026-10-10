@@ -4,6 +4,7 @@ import type { SavedSecret } from '@happier-dev/protocol/profiles/backendProfileS
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { getProfileEnvironmentVariables, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { isRunnerProviderOwnedEnvironmentKey } from '@/sync/domains/ephemeralRunner/runnerAuthoringCompatibility';
+import type { SavedSecretReferenceResolution } from '@/sync/store/settings/savedSecretCatalogSnapshot';
 
 // Optimized profile lookup utility
 export const useProfileMap = (profiles: AIBackendProfile[]) => {
@@ -47,6 +48,7 @@ export function materializeLaunchProfileEnvironment(input: Readonly<{
     selectedSecretIds?: Record<string, string | null | undefined> | null;
     sessionOnlyValues?: Record<string, string | null | undefined> | null;
     machineEnvReadyByName?: Record<string, boolean | null | undefined> | null;
+    resolveSavedSecretReference: (ref: string) => SavedSecretReferenceResolution;
     decryptSecretValue: (encryptedValue: SavedSecret['encryptedValue'] | null | undefined) => string | null;
 }>): MaterializedLaunchProfileEnvironment {
     const isProviderOwned = (name: string) => isRunnerProviderOwnedEnvironmentKey({
@@ -79,8 +81,11 @@ export function materializeLaunchProfileEnvironment(input: Readonly<{
         if (item.satisfiedBy === 'sessionOnly') {
             injected = input.sessionOnlyValues?.[item.envVarName] ?? null;
         } else if (item.savedSecretId) {
-            const secret = input.secrets.find((candidate) => candidate.id === item.savedSecretId) ?? null;
-            injected = input.decryptSecretValue(secret?.encryptedValue ?? null);
+            const resolved = input.resolveSavedSecretReference(item.savedSecretId);
+            if (resolved.status !== 'ready' || !resolved.secret) {
+                return { ok: false, reason: 'secret_requirement_unsatisfied' };
+            }
+            injected = input.decryptSecretValue(resolved.secret.encryptedValue);
         }
         if (typeof injected !== 'string' || injected.length === 0) {
             return { ok: false, reason: 'secret_requirement_unsatisfied' };

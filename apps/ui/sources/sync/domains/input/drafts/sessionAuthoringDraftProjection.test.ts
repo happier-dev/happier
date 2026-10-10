@@ -1,8 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
-import { projectNewSessionDraftSyncedAuthoringFields, projectSyncedSessionAuthoringFields } from './sessionAuthoringDraftProjection';
+import { projectNewSessionDraftSyncedAuthoringFields, projectSyncedSessionAuthoringFields, projectPredecessorSessionDraftAuthoringFields } from './sessionAuthoringDraftProjection';
 
 describe('projectSyncedSessionAuthoringFields', () => {
+    it('maps the predecessor configured selection and retains its definition without bundled fallback', () => {
+        // ../0.2 e087d15a backendTargets/backendTargetRef.ts writes this exact selection.
+        expect(projectPredecessorSessionDraftAuthoringFields({ agentId: 'customAcp',
+            backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-a' } }, 10))
+            .toMatchObject({ agentTarget: { kind: 'agent',
+                identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' }, definitionId: 'review-a' } });
+    });
     it('projects every catalogued synchronized launch selection and excludes private or duplicate owners', () => {
         const projected = projectSyncedSessionAuthoringFields({
             targetType: 'new_session',

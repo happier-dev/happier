@@ -10,6 +10,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } from '@/agents/backendCatalog/backendTargetRouteParams';
 import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
+import { useAcpCatalogForServer } from '@/sync/store/useAcpCatalog';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { buildNewSessionPickerFallbackHref, pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
@@ -40,7 +41,6 @@ export default React.memo(function SecretPickerScreen() {
         lastUsedAgent: settings.lastUsedAgent,
         lastUsedBackendTarget: settings.lastUsedBackendTarget,
         backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
-        acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
     }));
     const currentRouteParams = React.useMemo(() => {
         return pickNewSessionRouteParams(params);
@@ -54,17 +54,19 @@ export default React.memo(function SecretPickerScreen() {
         enabled: Boolean(machineIdParam),
         staleMs: 60_000,
     });
+    const { snapshot: acpCatalog } = useAcpCatalogForServer(spawnServerId);
     const preferredBackendTarget = React.useMemo(() => {
+        if (!acpCatalog || acpCatalog.stale || acpCatalog.catalog.status !== 'ready') return null;
         return resolvePreferredBackendTargetFromProjection({
             lastUsedAgent: settings.lastUsedAgent,
             lastUsedBackendTarget: settings.lastUsedBackendTarget,
             backendEnabledByTargetKey: settings.backendEnabledByTargetKey ?? undefined,
-            acpCatalogSettingsV1: settings.acpCatalogSettingsV1 ?? undefined,
+            acpCatalogSnapshot: acpCatalog.catalog,
             daemonMergedProjectionInputs: daemonMergedProjection.inputs,
         });
     }, [
         daemonMergedProjection.inputs,
-        settings.acpCatalogSettingsV1,
+        acpCatalog,
         settings.backendEnabledByTargetKey,
         settings.lastUsedAgent,
         settings.lastUsedBackendTarget,
@@ -114,7 +116,6 @@ export default React.memo(function SecretPickerScreen() {
         params.machineId,
         params.spawnServerId,
         router,
-        settings.acpCatalogSettingsV1,
         settings.backendEnabledByTargetKey,
         settings.lastUsedAgent,
         settings.lastUsedBackendTarget,

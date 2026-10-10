@@ -116,6 +116,13 @@ import {
 } from '@/components/sessions/collaboration/SessionCollaborationHeaderEntry';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import {
+  SESSION_HEADER_MENU_SPEC_PRESENTATION,
+  composeSessionHeaderMenu,
+  resolveSessionHeaderExtraItemGroup,
+  type SessionHeaderMenuGroup,
+} from './sessionHeaderMenuGroups';
+import { getSessionActionMetadata } from './sessionActionMetadata';
 
 const SESSION_FOLLOW_IN_ANOTHER_SESSION_ACTION_ID = 'session.follow.sources.add';
 
@@ -488,12 +495,14 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     followEnabled: followEditor.enabled,
     attentionStanding: isAttentionStandingSession,
     resumeCapabilityOptions,
+    isRailPinned: organizationProjection?.pinsBySessionId[props.sessionId]?.railPinned === true,
   }), [
     attentionStandingEnabled,
     followEditor.enabled,
     currentUserId,
     isAttentionStandingSession,
     resumeCapabilityOptions,
+    organizationProjection,
     session,
     sessionActionSnapshot,
     sessionServerId,
@@ -590,6 +599,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     props.sessionId,
     currentUiContextReader,
   ]);
+  const accountShowToolCalls = useSetting('transcriptShowToolCalls');
   const actions = React.useMemo(() => {
     const actionItems: DropdownMenuItem[] = listActionSpecs()
       .filter((spec) => spec.surfaces.ui === true)
@@ -612,11 +622,13 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
           : {}),
       }));
 
-    const out: DropdownMenuItem[] = [];
-    out.push({ id: 'header.findChat', title: t('find.surface.chat') });
+    const iconColor = theme.colors.chrome.header.foreground;
+    const out: Array<Readonly<{ group: SessionHeaderMenuGroup; item: DropdownMenuItem }>> = [];
+    const push = (group: SessionHeaderMenuGroup, item: DropdownMenuItem) => { out.push({ group, item }); };
+    push('open', { id: 'header.findChat', title: t('find.surface.chat'), icon: <Icon name="magnifying-glass" size={16} color={iconColor} /> });
 
     if (props.collaborationHeader && collaborationHeaderState.overflow) {
-      out.push(createSessionCollaborationHeaderMenuItem({
+      push('open', createSessionCollaborationHeaderMenuItem({
         iconColor: theme.colors.chrome.header.foreground,
         attentionColor: theme.colors.text.link,
         attentionLabel: collaborationHeaderState.attentionLabel,
@@ -624,27 +636,29 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     }
 
     if (externalSessionLink && supportsExternalSessionBackgroundFollowForLink) {
-      out.push({
+      push('session', {
         id: 'session.externalSession.backgroundFollow',
         title: t('session.actionMenu.backgroundFollow'),
+        icon: <Icon name="arrows-clockwise" size={16} color={iconColor} />,
         subtitle: externalSessionFollowPolicy === 'background_follow' ? t('common.enabled') : t('common.disabled'),
       });
     }
 
     if (followEditor.enabled && sessionServerId) {
-      out.push({
+      push('session', {
         id: SESSION_FOLLOW_IN_ANOTHER_SESSION_ACTION_ID,
+        icon: <Icon name="share-network" size={16} color={iconColor} />,
         title: t('session.follow.sources.add'),
         subtitle: t('session.follow.sources.includeNextTurn'),
       });
     }
 
     if (Array.isArray(props.extraItems) && props.extraItems.length > 0) {
-      out.push(...props.extraItems);
+      for (const item of props.extraItems) push(resolveSessionHeaderExtraItemGroup(item.id), item);
     }
 
     if (showCompanionInOverflow && companionHeaderIntent) {
-      out.push({
+      push('open', {
         id: 'header.openCompanion',
         title: t('sessionBoard.companion.a11y.headerAction', {
           count: companionHeaderIntent.itemCount,
@@ -656,32 +670,41 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     }
 
     if (props.pluginHeaderActionPlacement === 'overflow') {
-      out.push(...(props.pluginHeaderActions ?? []).map((action): DropdownMenuItem => ({
+      for (const item of (props.pluginHeaderActions ?? []).map((action): DropdownMenuItem => ({
         id: action.menuActionId,
         title: action.title,
         icon: <Icon name={action.iconName} size={16} color={theme.colors.chrome.header.foreground} />,
         ...(action.enabled ? {} : { disabled: true }),
-      })));
+      }))) push('open', item);
     }
 
     for (const actionId of listVisibleSessionActionIds({ target: sessionActionTarget, surface: 'sessionHeader' })) {
       const item = createSessionActionDropdownItem({
         actionId,
+        target: sessionActionTarget,
         iconColor: theme.colors.chrome.header.foreground,
+        accountShowToolCalls,
       });
-      if (item) out.push(item);
+      if (item) push(getSessionActionMetadata(actionId)?.group ?? 'session', item);
     }
 
     if (showTeleportAction) {
-      out.push({
+      push('open', {
         id: 'voice.teleport',
         title: t('voiceSurface.a11y.teleport'),
         subtitle: undefined,
+        icon: <Icon name="microphone" size={16} color={iconColor} />,
       });
     }
 
-    out.push(...actionItems);
-    return out;
+    for (const item of actionItems) {
+      const presentation = SESSION_HEADER_MENU_SPEC_PRESENTATION[item.id];
+      push(presentation?.group ?? 'work', presentation
+        ? { ...item, icon: <Icon name={presentation.icon} size={16} color={iconColor} /> }
+        : item);
+    }
+    // Grouped by what each row does; destructive operations close the menu, after everything else.
+    return composeSessionHeaderMenu(out);
   }, [
     collaborationHeaderState.attentionLabel,
     collaborationHeaderState.overflow,
@@ -706,6 +729,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     followEditor.enabled,
     sessionServerId,
     sessionActionTarget,
+    accountShowToolCalls,
     props.pluginHeaderActionPlacement,
     props.pluginHeaderActions,
     theme.colors.chrome.header.foreground,
@@ -765,6 +789,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
       open={open}
       onOpenChange={setOpen}
       items={actions}
+      showCategoryTitles
       onSelect={(actionId) => {
         setOpen(false);
         if (actionId === 'header.findChat') {

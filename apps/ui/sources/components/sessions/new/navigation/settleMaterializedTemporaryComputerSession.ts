@@ -28,6 +28,9 @@ import { RunnerActivationClientError } from '@/sync/api/ephemeralRunner/runnerAc
 import { storage } from '@/sync/domains/state/storage';
 import { buildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { followUpSpawnedSessionWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { persistCreatedSessionAuthoringOrigin } from '@/components/sessions/new/modules/newSessionAuthoringOrigin';
+import { sync } from '@/sync/sync';
 
 export function buildTemporaryComputerFirstPrompt(input: Readonly<{
     reviewedText: string;
@@ -261,6 +264,13 @@ export async function settlePersistedMaterializedTemporaryComputerSession(
             || input.projection.materialization?.sessionId !== input.sessionId) {
             throw new Error('runner_activation_binding_mismatch');
         }
+        // Hot Send owns its completion. A cold authoring or Session-shell
+        // recovery must retain provenance before retiring the persisted draft.
+        const reopenedAuthoringOrigin = input.complete ? undefined : readNewSessionDraftFromRepository({
+            scope: input.draftScope ?? input.scope,
+            draftId: input.draftId,
+        })?.authoringOrigin;
+        const authoringOriginAccountLifetime = reopenedAuthoringOrigin ? captureActiveServerAccountScopeLifetime() : null;
         // The Session identity is already authoritative. Present it before any
         // creator-local custody, anchor recovery, upload, or prompt follow-up.
         await (input.present ?? (async () => undefined))();
@@ -302,6 +312,15 @@ export async function settlePersistedMaterializedTemporaryComputerSession(
                     metaOverrides: delivery.metaOverrides,
                     messageLocalId: attachmentUpload.firstTurnLocalId,
                 });
+                if (reopenedAuthoringOrigin) {
+                    await persistCreatedSessionAuthoringOrigin({
+                        sessionId: input.sessionId,
+                        serverId: input.scope.serverId,
+                        origin: reopenedAuthoringOrigin,
+                        shouldContinue: () => authoringOriginAccountLifetime?.isCurrent() === true,
+                        updateSessionMetadataWithRetry: sync.patchSessionMetadataWithRetry,
+                    });
+                }
             }
             promptAdmitted = true;
         };

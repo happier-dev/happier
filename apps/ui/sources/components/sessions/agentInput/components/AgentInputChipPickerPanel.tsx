@@ -1,6 +1,6 @@
 import React from "react";
 import { ScrollView, useWindowDimensions, View } from 'react-native';
-import { StyleSheet } from "react-native-unistyles";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 
 import { Item } from "@/components/ui/lists/Item";
 import { ItemGroup } from "@/components/ui/lists/ItemGroup";
@@ -9,6 +9,8 @@ import { Text } from "@/components/ui/text/Text";
 import { Typography } from "@/constants/Typography";
 import { t } from "@/text";
 import { ModalCloseButton } from '@/modal/components/card';
+import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
+import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
 
 import { AgentInputChipPickerDetailPane } from "./AgentInputChipPickerDetailPane";
 import { shouldShowAgentInputChipPickerRail } from "./AgentInputChipPickerLayout";
@@ -35,6 +37,8 @@ export function AgentInputChipPickerPanel(
   props: AgentInputChipPickerPanelProps,
 ) {
   const { width: windowWidth } = useWindowDimensions();
+  const { theme } = useUnistyles();
+  const railFades = useScrollEdgeFades({ enabledEdges: { top: true, bottom: true } });
   const styles = stylesheet;
   const sections = React.useMemo(
     () => buildAgentInputChipPickerSections(props.options),
@@ -113,8 +117,8 @@ export function AgentInputChipPickerPanel(
     detailedLayout === "split"
       ? styles.detailScroll
       : styles.detailStackedWithSelector;
-  const railWidth = props.railWidth ?? styles.railScroll.width;
-  const railMaxWidth = props.railMaxWidth ?? styles.railScroll.maxWidth;
+  const railWidth = props.railWidth ?? styles.railFrame.width;
+  const railMaxWidth = props.railMaxWidth ?? styles.railFrame.maxWidth;
   const railMaxHeight =
     typeof props.maxHeight === "number"
       ? props.maxHeight
@@ -180,6 +184,7 @@ export function AgentInputChipPickerPanel(
           <View
             style={[
               styles.bodyDetailed,
+              boundedDetailStyle ? { minHeight: 0 } : null,
               showDetailedSelector && detailedLayout === "stacked"
                 ? styles.bodyDetailedStacked
                 : null,
@@ -187,25 +192,30 @@ export function AgentInputChipPickerPanel(
           >
             {showDetailedSelector ? (
               detailedLayout === "split" ? (
-                <ScrollView
-                  testID="agent-input-chip-picker.option-rail-scroll"
-                  style={[
-                    styles.railScroll,
-                    { width: railWidth, maxWidth: railMaxWidth, maxHeight: railMaxHeight },
-                  ]}
-                  contentContainerStyle={styles.railScrollContent}
-                  keyboardShouldPersistTaps="handled"
-                  nestedScrollEnabled
-                  showsVerticalScrollIndicator={false}
-                >
-                  <AgentInputChipPickerOptionSelector
-                    sections={sections}
-                    focusedOptionId={focusedOption?.id ?? null}
-                    selectedOptionId={props.selectedOptionId}
-                    onFocusOption={handleDetailedOptionFocus}
-                    variant="rail"
-                  />
-                </ScrollView>
+                <View style={[styles.railFrame, { width: railWidth, maxWidth: railMaxWidth, maxHeight: railMaxHeight }]}>
+                  <ScrollView
+                    testID="agent-input-chip-picker.option-rail-scroll"
+                    style={styles.railScroll}
+                    contentContainerStyle={styles.railScrollContent}
+                    keyboardShouldPersistTaps="handled"
+                    nestedScrollEnabled
+                    showsVerticalScrollIndicator
+                    onLayout={railFades.onViewportLayout}
+                    onContentSizeChange={railFades.onContentSizeChange}
+                    onScroll={railFades.onScroll}
+                    onMomentumScrollEnd={railFades.onMomentumScrollEnd}
+                    scrollEventThrottle={32}
+                  >
+                    <AgentInputChipPickerOptionSelector
+                      sections={sections}
+                      focusedOptionId={focusedOption?.id ?? null}
+                      selectedOptionId={props.selectedOptionId}
+                      onFocusOption={handleDetailedOptionFocus}
+                      variant="rail"
+                    />
+                  </ScrollView>
+                  <ScrollEdgeFades color={theme.colors.background.canvas} size={theme.margins.lg} edges={railFades.visibility} />
+                </View>
               ) : (
                 <View>
                   <AgentInputChipPickerOptionSelector
@@ -320,12 +330,19 @@ const stylesheet = StyleSheet.create((theme) => ({
     gap: 0,
     minHeight: 0,
   },
-  railScroll: {
+  railFrame: {
+    position: 'relative',
+    flexShrink: 1,
+    minHeight: 0,
     width: 190,
     maxWidth: "30%",
     backgroundColor: theme.colors.background.canvas,
     borderRightWidth: 1,
     borderRightColor: theme.colors.border.default,
+  },
+  railScroll: {
+    flex: 1,
+    minHeight: 0,
   },
   railScrollContent: {
     paddingBottom: 10,

@@ -78,16 +78,23 @@ export function useNewSessionAvailabilityState(params: Readonly<{
     const selectedAgentSettingsReady = params.pluginSettingsReadiness === null
         || params.pluginSettingsReadiness === undefined
         || params.pluginSettingsReadiness.ready;
-    const machineAgents = useMachineAgents({ machineId: params.selectedMachineId, serverId: params.capabilityServerId, load: params.agentInventoryDemanded === true });
+    // Admission needs the selected Agent's facts even while the full picker stays closed.
+    const selectedInventoryAgentId = params.selectedBackendEntry && params.selectedBackendEntry.kind !== 'configuredBackend'
+        ? params.selectedBackendEntry.agentId : undefined;
+    const machineAgents = useMachineAgents({
+        machineId: params.selectedMachineId,
+        serverId: params.capabilityServerId,
+        agentId: params.agentInventoryDemanded === true ? undefined : selectedInventoryAgentId,
+        load: params.agentInventoryDemanded === true || Boolean(selectedInventoryAgentId),
+    });
     const machineAgentsById = React.useMemo(() => Object.fromEntries(machineAgents.agents.map((agent) => [agent.agentId, agent])), [machineAgents.agents]);
     const systemRequest = React.useMemo(() => ({ requests: [
         { id: 'tool.tmux' as const }, { id: 'tool.windowsTerminal' as const },
         ...getInstallablesRegistryEntries({ pluginProjection: params.pluginProjectionV2 ?? undefined }).map((entry) => ({ id: entry.capabilityId })),
     ] }), [params.pluginProjectionV2]);
-    const { state: selectedMachineCapabilities, refresh: refreshSelectedMachineCapabilities } = useDaemonScopedMachineCapabilitiesCache({
+    const { state: selectedMachineCapabilities, refresh: refreshSelectedMachineCapabilities, cacheKeySalt } = useDaemonScopedMachineCapabilitiesCache({
         machineId: params.selectedMachineId,
         serverId: params.capabilityServerId,
-        daemonStateVersion: params.selectedMachine?.daemonStateVersion ?? 0,
         enabled: false,
         request: systemRequest,
     });
@@ -234,8 +241,8 @@ export function useNewSessionAvailabilityState(params: Readonly<{
         const machineId = String(params.selectedMachineId ?? '').trim();
         if (!machineId) return null;
         const serverId = String(params.capabilityServerId ?? '').trim() || 'active';
-        return `${serverId}:${machineId}`;
-    }, [params.capabilityServerId, params.selectedMachineId]);
+        return JSON.stringify([serverId, machineId, cacheKeySalt]);
+    }, [params.capabilityServerId, params.selectedMachineId, cacheKeySalt]);
 
     const initialRefreshHandledKeyRef = React.useRef<string | null>(null);
 
@@ -248,7 +255,7 @@ export function useNewSessionAvailabilityState(params: Readonly<{
 
         // Guard against effect churn (e.g. refresh callback identity changes due to
         // upstream server switching / hot reload / hook rebuilds). The initial “probe wave”
-        // should run once per (serverId,machineId) while the machine remains online.
+        // should run once per daemon-scoped cache namespace while the machine remains online.
         if (initialRefreshHandledKeyRef.current === initialRefreshKey) return;
         initialRefreshHandledKeyRef.current = initialRefreshKey;
 

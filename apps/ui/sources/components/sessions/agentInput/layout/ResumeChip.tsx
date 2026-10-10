@@ -1,6 +1,9 @@
 import * as React from 'react';
-import { Pressable, type View } from 'react-native';
+import type { View } from 'react-native';
+import { useUnistyles } from 'react-native-unistyles';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { t } from '@/text';
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { Text } from '@/components/ui/text/Text';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
@@ -39,6 +42,11 @@ export type ResumeChipProps = {
 };
 
 export function ResumeChip(props: ResumeChipProps) {
+    const { theme } = useUnistyles();
+    const { anchorRef } = props;
+    const setAnchor = React.useCallback((node: unknown) => {
+        if (anchorRef) (anchorRef as React.MutableRefObject<View | null>).current = node as View | null;
+    }, [anchorRef]);
     const label = props.showLabel
         ? formatResumeChipLabel({
             resumeSessionId: props.resumeSessionId,
@@ -48,12 +56,16 @@ export function ResumeChip(props: ResumeChipProps) {
         : null;
 
     return (
-        <Pressable
-            ref={props.anchorRef}
+        <HappierPressable
+            controlRef={setAnchor}
             testID="agent-input-resume-chip"
+            accessibilityLabel={label ?? props.labelTitle}
             onPress={props.onPress}
             hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
-            style={(p) => props.pressableStyle(p.pressed)}
+            style={({ pressed, focused }) => [
+                props.pressableStyle(pressed),
+                focusRingStyle({ focused, color: theme.colors.border.focus }),
+            ]}
         >
             {props.isChecking ? (
                 <ActivitySpinner
@@ -77,6 +89,6 @@ export function ResumeChip(props: ResumeChipProps) {
                     {label}
                 </Text>
             ) : null}
-        </Pressable>
+        </HappierPressable>
     );
 }

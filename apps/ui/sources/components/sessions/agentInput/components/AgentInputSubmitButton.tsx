@@ -24,9 +24,8 @@ import {
  * The submit control's touch target reaches above and below its box.
  *
  * The shape wrapper has to clip while it resizes, and a clip would eat that
- * reach, so the wrapper is grown by exactly the same amount and pulled back by a
- * matching negative margin: the row's layout is untouched and the hit area still
- * lands inside the clip.
+ * reach, so the wrapper reserves exactly the same amount in flow. Negative
+ * margins would spend that space again and let a stacked Voice target overlap it.
  */
 const SUBMIT_HIT_SLOP = { top: 5, bottom: 10, left: 0, right: 0 } as const;
 
@@ -39,8 +38,6 @@ const stylesheet = StyleSheet.create(() => ({
         flexShrink: 0,
         marginLeft: 8,
         marginRight: 8,
-        marginTop: -SUBMIT_HIT_SLOP.top,
-        marginBottom: -SUBMIT_HIT_SLOP.bottom,
         paddingTop: SUBMIT_HIT_SLOP.top,
         paddingBottom: SUBMIT_HIT_SLOP.bottom,
     },

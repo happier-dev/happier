@@ -182,6 +182,7 @@ export function useNewSessionMcpSelection(params: Readonly<{
 
     const contentProps = React.useMemo(() => ({
         machineId: params.selectedMachineId,
+        targetServerId: params.targetServerId,
         machineName: params.selectedMachineName,
         directory: params.selectedPath.trim(),
         ...(params.portableOnly !== undefined ? { portableOnly: params.portableOnly } : {}),

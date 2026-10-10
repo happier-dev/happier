@@ -3,6 +3,19 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { storage } from '../state/storage';
 
 describe('suggestionCommands', () => {
+    it('uses the admitted Account catalog and never resurrects stale Settings tokens', async () => {
+        storage.setState({ sessions: {}, settings: { promptInvocationsV1: { v: 1, entries: [{
+            id: 'stale', token: '/stale', title: 'Stale', target: { kind: 'doc', artifactId: 'stale-doc' },
+            behavior: 'insert', allowArgs: false, availableIn: 'global',
+        }] } } } as any);
+        const { getAllCommands } = await import('./suggestionCommands');
+        const invocations = { v: 1 as const, entries: [{ id: 'current', token: '/current', title: 'Current',
+            target: { kind: 'doc' as const, artifactId: 'current-doc' }, behavior: 'insert' as const,
+            allowArgs: false, availableIn: 'global' as const }] };
+        expect(getAllCommands(null, { invocations }).filter(row => row.promptInvocation).map(row => row.command)).toEqual(['current']);
+        expect(getAllCommands(null, { invocations: { v: 1, entries: [] } }).some(row => row.command === 'stale')).toBe(false);
+        expect(getAllCommands(null).some(row => row.command === 'stale')).toBe(false);
+    });
     it('merges pre-session native commands with provider commands while preserving local built-in and template precedence', async () => {
         storage.setState({ sessions: {}, settings: { promptInvocationsV1: { v: 1, entries: [{
             id: 'local-template', token: '/template', title: 'Local template',
@@ -17,9 +30,10 @@ describe('suggestionCommands', () => {
             { command: 'memory', description: 'Open project memory' },
         ];
 
-        expect(await searchCommands(null, 'project-check', { nativeCommands }))
+        const invocations = storage.getState().settings.promptInvocationsV1;
+        expect(await searchCommands(null, 'project-check', { nativeCommands, invocations }))
             .toEqual([{ command: 'project-check', description: 'Check this project' }]);
-        const commands = await searchCommands(null, '', { nativeCommands, limit: 100 });
+        const commands = await searchCommands(null, '', { nativeCommands, invocations, limit: 100 });
         expect(commands.filter((command) => command.command === 'clear')).toEqual([
             { command: 'clear', description: 'Clear the conversation' },
         ]);
@@ -33,7 +47,7 @@ describe('suggestionCommands', () => {
             { command: 'memory', description: 'Open project memory' },
         ]);
         storage.setState({ sessions: { live: { metadata: { slashCommandDetails: nativeCommands } } } } as any);
-        const liveCommands = await searchCommands('live', '', { limit: 100 });
+        const liveCommands = await searchCommands('live', '', { invocations, limit: 100 });
         expect(liveCommands).toEqual(commands);
 
     });
@@ -42,10 +56,11 @@ describe('suggestionCommands', () => {
         const settings = { ...storage.getState().settings, promptInvocationsV1: { v: 1 as const, entries: [{ id: 'local', token: '/local', title: 'Local', target: { kind: 'doc' as const, artifactId: 'doc' }, behavior: 'insert' as const, allowArgs: false, availableIn: 'session_only' as const }] } };
         storage.setState({ settings });
         const { getAllCommands } = await import('./suggestionCommands');
-        expect(getAllCommands(null).some((c) => c.command === 'local')).toBe(false);
-        expect(getAllCommands('missing').some((c) => c.command === 'local')).toBe(false);
+        const options = { invocations: settings.promptInvocationsV1 };
+        expect(getAllCommands(null, options).some((c) => c.command === 'local')).toBe(false);
+        expect(getAllCommands('missing', options).some((c) => c.command === 'local')).toBe(false);
         storage.setState({ sessions: { s1: { metadata: undefined } } } as any);
-        expect(getAllCommands('s1').some((c) => c.command === 'local')).toBe(true);
+        expect(getAllCommands('s1', options).some((c) => c.command === 'local')).toBe(true);
     });
     afterEach(() => {
         // Keep tests isolated; reset to an empty-ish state.
@@ -147,7 +162,7 @@ describe('suggestionCommands', () => {
         } as any);
 
         const { getAllCommands } = await import('./suggestionCommands');
-        const commands = getAllCommands('s1');
+        const commands = getAllCommands('s1', { invocations: storage.getState().settings.promptInvocationsV1 });
         expect(commands.find((c) => c.command === 'foo')).toMatchObject({
             command: 'foo',
             promptInvocation: {
@@ -204,7 +219,7 @@ describe('suggestionCommands', () => {
         } as any);
 
         const { getAllCommands } = await import('./suggestionCommands');
-        const commands = getAllCommands('s1');
+        const commands = getAllCommands('s1', { invocations: storage.getState().settings.promptInvocationsV1 });
         expect(commands.filter((c) => c.command === 'clear').length).toBe(1);
         expect(commands.filter((c) => c.command === 'h.review').length).toBe(1);
     });

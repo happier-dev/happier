@@ -8,9 +8,8 @@ import { Text } from '@/components/ui/text/Text';
 import { useWorkTheme, WORK_HOST } from '@/components/work/map/WorkMapView';
 import { workStatusWordStyle } from '@/components/work/status/workStatusTreatment';
 import { Typography } from '@/constants/Typography';
-import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
 
-import { useAgentActivityClockNow } from './agentActivityClock';
+import { useAgentActivityClockNow, useWorkRelativeTime } from './agentActivityClock';
 import {
     formatAgentActivityElapsed,
     type SessionAgentActivityPresentation,
@@ -47,6 +46,11 @@ const ElapsedClock = React.memo((props: Readonly<{ startedAtMs: number; testID?:
     );
 });
 
+const RelativeClock = React.memo((props: Readonly<{ atMs: number }>) => {
+    const value = useWorkRelativeTime(props.atMs);
+    return value;
+});
+
 export const SessionAgentActivitySummary = React.memo((props: Readonly<{
     presentation: SessionAgentActivityPresentation;
     /** Prefix for this instance's test ids, so a host keeps its existing addressing. */
@@ -58,6 +62,8 @@ export const SessionAgentActivitySummary = React.memo((props: Readonly<{
      * then says where the work stands once, on the right, and the line keeps only its facts.
      */
     trailingState?: Readonly<{ word: string; tone: 'neutral' | 'attention' | 'danger' }>;
+    /** Where the title's distinguishing end starts; that end stays whole when the row truncates. */
+    titleTailStart?: number;
 }>) => {
     const { theme } = useUnistyles();
     const workTheme = useWorkTheme();
@@ -72,7 +78,7 @@ export const SessionAgentActivitySummary = React.memo((props: Readonly<{
         : phase === 'live' && presentation.statusShownByActivity !== true
             ? <Text testID={testID ? `${testID}:state:label` : undefined}>{presentation.statusLabel}</Text>
             : null;
-    const ending = trailingState ? null : phase === 'finished'
+    const ending = trailingState ? null : (phase === 'finished' || phase === 'idle')
         ? (
             <Text
                 testID={testID ? `${testID}:state:label` : undefined}
@@ -89,7 +95,7 @@ export const SessionAgentActivitySummary = React.memo((props: Readonly<{
     for (const fact of presentation.facts) facts.push(fact);
     if (ending) facts.push(ending);
     const trailingTime = props.showTime === true && phase !== 'live' && presentation.atMs !== null
-        ? formatShortRelativeTime(presentation.atMs)
+        ? <RelativeClock atMs={presentation.atMs} />
         : null;
 
     return (
@@ -97,8 +103,9 @@ export const SessionAgentActivitySummary = React.memo((props: Readonly<{
             testID={testID}
             accessibilityLabel={presentation.accessibilityLabel}
             title={presentation.title}
-            phase={phase}
-            mark={<ExecutionRunAgentMark agentId={presentation.agentId} size={MARK_SIZE} />}
+            titleTailStart={props.titleTailStart}
+            phase={phase === 'idle' ? 'finished' : phase}
+            mark={<ExecutionRunAgentMark agentId={presentation.agentId} iconName={presentation.iconName} size={MARK_SIZE} />}
             liveIndicator={<ActivitySpinner size={9} color={theme.colors.text.secondary} />}
             facts={facts}
             trailingTime={trailingTime}

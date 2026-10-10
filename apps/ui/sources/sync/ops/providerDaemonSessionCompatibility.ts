@@ -1,12 +1,18 @@
 import { SessionModelSelectionIntentV1Schema, type ProviderBoundModelRef, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
 import { readSessionProviderBindingMetadataStateV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
 import {
+    createRpcCallError,
     isRpcMethodNotAvailableError,
     isRpcMethodNotFoundError,
 } from '@happier-dev/protocol/rpcErrors';
 
 export function isProviderSafeDaemonSessionMethodAbsent(error: unknown): boolean {
-    return isRpcMethodNotAvailableError(error) || isRpcMethodNotFoundError(error);
+    if (isRpcMethodNotAvailableError(error) || isRpcMethodNotFoundError(error)) return true;
+    if (!error || typeof error !== 'object') return false;
+    const response = error as { error?: unknown; errorCode?: unknown };
+    if (typeof response.error !== 'string' || typeof response.errorCode !== 'string') return false;
+    const transportError = createRpcCallError({ error: response.error, errorCode: response.errorCode });
+    return isRpcMethodNotAvailableError(transportError) || isRpcMethodNotFoundError(transportError);
 }
 
 export function requiresProviderSafeModelSelectionRpc(

@@ -347,6 +347,19 @@ function seedComposerSettings(): void {
 }
 
 describe('AgentInput voice accessory slots', () => {
+    it('puts a document composer\'s library and mic at the end of its chip row, not the field corner (voiceAffordance dictation; DESIGN-6 P1)', async () => {
+        platformState.os = 'web';
+        const screen = await renderComposer({ voiceAffordance: 'dictation', trailingAccessory: undefined });
+        expect(screen.findByTestId('agent-input-prompt-library')).not.toBeNull();
+        expect(screen.findByTestId('agent-input-dictation')).not.toBeNull();
+        const cluster = screen.findByTestId('agent-input-field-accessories');
+        expect(flattenStyle(cluster?.props.style).position).not.toBe('absolute');
+        // The field no longer reserves a corner for them.
+        const field = screen.root.findByType('MultiTextInput');
+        expect(field.props.paddingRight ?? 0).toBeLessThan(44);
+        await screen.unmount();
+    });
+
     it.each(['web', 'ios'] as const)('reserves a distinct library target beside dictation on %s and keeps it with dictation disabled', async (os) => {
         platformState.os = os;
         const screen = await renderComposer();

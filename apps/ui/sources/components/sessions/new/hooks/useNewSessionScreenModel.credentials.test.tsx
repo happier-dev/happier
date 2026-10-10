@@ -174,12 +174,14 @@ describe('New Session selected credential launch gate', () => {
         { native: 'signedIn' as const, connected: true, selected: 'native', acpReady: false, ready: true },
         { native: 'signedOut' as const, connected: false, selected: 'provider', acpReady: true, ready: true },
         { native: 'signedOut' as const, connected: false, selected: 'native-with-provider', acpReady: true, ready: false },
+        { native: 'signedOut' as const, connected: false, selected: 'provider-unconfirmed', acpReady: true, ready: false },
     ])('loads readiness with the picker closed and keeps Start on the exact launch credential: %j', async (scenario) => {
         await prepareSessionDraftPersistenceStorage();
         const bridge = await loadSyncSingletonForTests();
         const accountId = 'credential-launcher';
         const http = createHomeHubArtifactHttpBoundary(accountId);
         const features = buildServerFeaturesResponse();
+        features.features.providers.enabled = true;
         features.capabilities.connectedServices.qualifiedAccounts = { protocolVersion: 4 };
         const consumer = { pluginId: 'happier.agent.claude', localId: 'claude' };
         const purposeValue = { v: 1 as const, bindings: scenario.selected === 'connected'
@@ -231,7 +233,7 @@ describe('New Session selected credential launch gate', () => {
                 descriptor: modelDescriptor, sources: { probe: true, manual: false, static: false }, confidence: 'probe',
                 compatibility: { ...resolveProviderBindingCompatibilityWithFingerprintV1({ agentTargetKey,
                     endpoints: lmstudio.endpointTemplates, credential: lmstudio.credential, agent: agentRequirements,
-                    model: modelDescriptor, adapterVersion: 3 }), confirmed: true },
+                    model: modelDescriptor, adapterVersion: 3 }), confirmed: scenario.selected !== 'provider-unconfirmed' },
                 endpointHealth: 'available', catalog: { stale: false }, loadState: 'loaded', visibility: 'visible' }],
         });
         const providerProjection = createProviderModelProjectionFixture({ agentTargetKey, groups: [providerGroup] });
@@ -242,10 +244,11 @@ describe('New Session selected credential launch gate', () => {
             return { jobs: [] };
         });
         const draftId = `credential-${scenario.native}-${scenario.connected}-${scenario.selected}`;
-        if (scenario.selected === 'provider') writeNewSessionDraftToRepository({ scope, draftId, draft: {
+        if (scenario.selected.startsWith('provider') || scenario.selected === 'native-with-provider') writeNewSessionDraftToRepository({ scope, draftId, draft: {
             input: 'hello', selectedMachineId: machine.id, selectedPath: '/repo', targetServerId: scope.serverId,
             backendTarget: { kind: 'backend', backendId: 'claude' },
-            modelSelection: { v: 1, updatedAt: 1, ref: providerGroup.rows[0]!.ref },
+            modelSelection: { v: 1, updatedAt: 1, ref: scenario.selected.startsWith('provider')
+                ? providerGroup.rows[0]!.ref : { agentTargetKey, providerConnectionId: null, modelId: 'default' } },
             permissionMode: 'default', updatedAt: 1,
         } });
         const hook = await renderHook(() => useNewSessionScreenModel({ draftId }));
@@ -253,8 +256,12 @@ describe('New Session selected credential launch gate', () => {
             await vi.waitFor(() => expect(machineAgentInventoryStore.read(serverAccountScopedResourceKey(scope, 'machine-agents', machine.id)))
                 .toMatchObject({ status: 'ready', agents: [{ agentId: 'claude', installed: true }] }));
             await flushHookEffects();
-            if (scenario.selected === 'provider') await vi.waitFor(() => {
+            if (scenario.selected.startsWith('provider')) await vi.waitFor(() => {
                 expect(rpc.mock.calls.some(([request]) => request.method === RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION)).toBe(true);
+                const current = hook.getCurrent();
+                if (current.variant !== 'simple') throw new Error('Expected real simple launcher');
+                expect(current.simpleProps.agentInputExtraActionChips?.some(chip =>
+                    chip.collapsedContentPopover?.label?.includes(lmstudio.name))).toBe(true);
             });
             const model = hook.getCurrent();
             if (model.variant !== 'simple') throw new Error('Expected real simple launcher');
@@ -280,10 +287,11 @@ describe('New Session selected credential launch gate', () => {
                 observedAdmission).toBe(!scenario.ready);
             if (!scenario.ready) {
                 const { t } = await import('@/text');
+                const statusLabel = t(scenario.selected === 'provider-unconfirmed' ? 'machineAgents.unknown' : 'machineAgents.needsSignIn');
                 expect(model.simpleProps.statusBadges?.find((badge) => badge.key === 'new-session-create-blocked'),
                     observedAdmission).toMatchObject({
-                    label: expect.stringContaining(t('machineAgents.needsSignIn')),
-                    accessibilityLabel: expect.stringContaining(t('machineAgents.needsSignIn')),
+                    label: expect.stringContaining(statusLabel),
+                    accessibilityLabel: expect.stringContaining(statusLabel),
                 });
             }
             const screen = await renderScreen(<>{model.simpleProps.composerTopContent}</>);

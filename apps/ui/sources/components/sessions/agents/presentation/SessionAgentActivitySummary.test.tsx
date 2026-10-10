@@ -46,7 +46,7 @@ describe('SessionAgentActivitySummary', () => {
         // Ended work reads the same here as on the Work row, the run row and the worker card (INT T4).
         expect(await stateWordStyle('timedOut')).toMatchObject(StyleSheet.flatten(workStatusWordStyle('attention')));
         expect(await stateWordStyle('failed')).toMatchObject(StyleSheet.flatten(workStatusWordStyle('danger')));
-        expect(await stateWordStyle('succeeded')).not.toHaveProperty('color');
+        expect(await stateWordStyle('succeeded')).toMatchObject(StyleSheet.flatten(workStatusWordStyle('neutral')));
     });
 
     it('draws through the shared Work summary leaf plugin authors use', async () => {

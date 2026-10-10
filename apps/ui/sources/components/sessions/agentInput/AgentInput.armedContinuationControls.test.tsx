@@ -27,12 +27,44 @@ vi.mock('@/agents/registry/AgentIcon', () => ({
     AgentIcon: (props: Record<string, unknown>) => React.createElement('AgentIcon', props),
 }));
 vi.mock('expo-image', () => ({ Image: 'Image' }));
-vi.mock('react-native-svg', () => ({ SvgXml: 'SvgXml' }));
+vi.mock('react-native-svg', () => ({ SvgXml: 'SvgXml', Svg: 'Svg', Circle: 'Circle' }));
 
 const { AgentInput } = await import('./AgentInput');
 const { getPermissionModeBadgeLabelForAgentType } = await import('@/sync/domains/permissions/permissionModeOptions');
 
 describe('AgentInput armed continuation controls', () => {
+    it('shows safety intent once when its editable control is already in the action row', async () => {
+        const props: React.ComponentProps<typeof AgentInput> = {
+            value: '', placeholder: '', onChangeText: () => {}, onSend: () => {},
+            agentType: 'codex', permissionMode: 'yolo',
+            metadata: { path: '/repo', host: 'host', flavor: 'codex' },
+            autocompleteKinds: [], autocompleteSuggestions: async () => [],
+        };
+        const screen = await renderScreen(<AgentInput {...props} />);
+        const label = getPermissionModeBadgeLabelForAgentType('codex', 'yolo');
+        const visibleLabels = () => screen.findAll((node) => typeof node.type === 'string' && node.props.children === label);
+        expect(visibleLabels()).toHaveLength(1);
+        await screen.update(<AgentInput {...props} onPermissionModeChange={() => {}} />);
+        expect(screen.findByTestId('agent-input-permission-chip')).not.toBeNull();
+        expect(visibleLabels()).toHaveLength(1);
+        await screen.unmount();
+    });
+
+    it('opens the existing machine picker from an unavailable target recovery action', async () => {
+        const onMachineClick = vi.fn();
+        const screen = await renderScreen(<AgentInput
+            value="" placeholder="" onChangeText={() => {}} onSend={() => {}}
+            autocompleteKinds={[]} autocompleteSuggestions={async () => []}
+            onMachineClick={onMachineClick}
+            connectionStatus={{ text: 'Selected machine unavailable', color: 'rose', dotColor: 'rose', recovery: 'machine' }}
+        />);
+        const action = screen.findByTestId('agent-input-connection-recovery');
+        expect(action).not.toBeNull();
+        await screen.pressByTestIdAsync('agent-input-connection-recovery');
+        expect(onMachineClick).toHaveBeenCalledTimes(1);
+        await screen.unmount();
+    });
+
     it('keeps Session safety intent but removes the source runtime mode editor while another Agent is armed', async () => {
         const onModeChange = vi.fn();
         const props: React.ComponentProps<typeof AgentInput> = {
@@ -40,7 +72,7 @@ describe('AgentInput armed continuation controls', () => {
             agentType: 'codex',
             metadata: {
                 path: '/repo', host: 'host', flavor: 'codex',
-                sessionModesV1: { v: 1, updatedAt: 1, provider: 'codex', currentModeId: 'build', availableModes: [
+                sessionModesV1: { v: 1, updatedAt: 1, agentId: 'codex', currentModeId: 'build', availableModes: [
                     { id: 'build', name: 'Build' }, { id: 'plan', name: 'Plan' },
                 ] },
             },

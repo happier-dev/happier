@@ -26,6 +26,7 @@ type BuildNewSessionAgentPickerOptionInteractionsParams = Readonly<{
         onToggle: () => void;
     }>;
     providerProjection?: NewSessionEngineOptionDetailProps['providerProjection'];
+    nativeSourceLabel?: NewSessionEngineOptionDetailProps['nativeSourceLabel'];
     experimentalConfirmation?: SessionModelPickerExperimentalConfirmationController;
     onRememberAgentPickerView?: (view: NewSessionAgentPickerViewV1) => void;
     getEngineSelectionForTargetKey: (targetKey: string) => SessionAgentPickerSelection;
@@ -83,6 +84,7 @@ export function buildNewSessionAgentPickerOptionInteractions(
                     : undefined,
                 favoriteEngine: params.favoriteEngine,
                 ...(params.providerProjection ? { providerProjection: params.providerProjection } : {}),
+                nativeSourceLabel: params.nativeSourceLabel,
                 experimentalConfirmation: params.experimentalConfirmation,
                 onSelectionChange: (nextSelection) => {
                     params.selectEngineSelection(params.entry, nextSelection);

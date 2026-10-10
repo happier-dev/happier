@@ -128,7 +128,7 @@ describe('AgentInputChipPickerPanel', () => {
         const railScroll = screen.findByTestId('agent-input-chip-picker.option-rail-scroll');
         expect(railScroll).toBeTruthy();
         expect(railScroll?.type).toBe('ScrollView');
-        expect(railScroll?.props.style).toEqual(expect.arrayContaining([
+        expect(railScroll?.parent?.props.style).toEqual(expect.arrayContaining([
             expect.objectContaining({ maxHeight: 321 }),
         ]));
         expect(screen.findByTestId('agent-input-chip-picker.option-rail')).toBeTruthy();

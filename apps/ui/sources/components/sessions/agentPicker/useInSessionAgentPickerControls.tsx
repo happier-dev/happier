@@ -5,6 +5,10 @@ import { isNativeAutomaticModelSelectionInputV1, type SessionModelSelectionV1 } 
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 import type { FeatureDecision } from '@happier-dev/protocol/features/decision';
 import type { SessionAgentTransitionSelectionV1 } from '@happier-dev/protocol/sessions/agentTransition';
+import {
+    projectAgentConnectedAccountPurposeDefaultsToSessionBindings,
+    resolveAgentConnectedAccountPurposeDefaults,
+} from '@happier-dev/protocol/account/settings/connected-services';
 
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
@@ -31,6 +35,8 @@ import {
     type ServerAccountScope,
 } from '@/sync/domains/scope/serverAccountScope';
 import type { Settings } from '@/sync/domains/settings/settings';
+import { useConnectedAccountCatalog } from '@/sync/store/settings/useConnectedAccountCatalog';
+import { getConnectedAccountCatalogValue } from '@/sync/store/settings/connectedAccountCatalogSnapshot';
 
 import {
     buildSessionAgentPickerDetailContent,
@@ -331,7 +337,7 @@ export type InSessionAgentPickerControls = Readonly<{
      */
     armedContinuationSubmissionIntent: ArmedAgentContinuation['intent'] | null;
     clearArmedContinuation: () => void;
-    /** Clears exactly the persisted submission that canonical custody consumed. */
+    /** Spends the matching live and persisted submission once canonical custody consumes it. */
     clearArmedContinuationSubmissionIfCurrent: (submission: SessionArmedAgentContinuationSubmission) => boolean;
     /**
      * Captures the exact canonical user-message request before the transition
@@ -458,6 +464,14 @@ export function useInSessionAgentPickerControls(
     const targetEntries = React.useMemo(() => entries.filter((entry) => (
         entry.backendTargetKey !== source.currentBackendTargetKey
     )), [entries, source.currentBackendTargetKey]);
+    const purposeCatalog = useConnectedAccountCatalog('purposes', pickerVisible
+        && targetEntries.some(entry => entry.agentCatalogEntry.connectedAccounts.length > 0) ? accountScope : null);
+    const purposeDefaultsReady = React.useCallback((entry: ResolvedBackendCatalogEntry) => {
+        if (entry.agentCatalogEntry.connectedAccounts.length === 0) return true;
+        const current = getConnectedAccountCatalogValue(accountScope, 'purposes');
+        return Boolean(accountScopeIsCurrent() && entry.agentCatalogEntry.identity && accountScope
+            && current.status === 'ready' && !current.stale && current.value);
+    }, [accountScope, accountScopeIsCurrent]);
 
     // This is the existing picker/authoring selection owner. A restored arm
     // projects into it so the detail pane continues to show the exact model,
@@ -638,12 +652,19 @@ export function useInSessionAgentPickerControls(
         expected: SessionArmedAgentContinuationSubmission,
     ): boolean => {
         if (!accountScopeIsCurrent()) return false;
-        if (draftSessionId === null) {
-            return isSameArmedContinuationSubmission(armed?.submission, expected);
+        // Custody spends both projections, even before target metadata arrives.
+        // Ordinary disarming retains submitted custody; this owner consumes only
+        // the exact snapshot and preserves any newer choice.
+        const persisted = draftSessionId === null
+            ? undefined
+            : readPersistedArmedContinuation(accountScope, draftSessionId);
+        const persistedMatches = isSameArmedContinuationSubmission(persisted?.submission, expected);
+        const liveMatches = isSameArmedContinuationSubmission(armed?.submission, expected);
+        if (!persistedMatches && !liveMatches) return false;
+        if (persistedMatches && draftSessionId !== null) {
+            writePersistedArmedContinuation(accountScope, draftSessionId, null);
         }
-        const persisted = readPersistedArmedContinuation(accountScope, draftSessionId);
-        if (!isSameArmedContinuationSubmission(persisted?.submission, expected)) return false;
-        writePersistedArmedContinuation(accountScope, draftSessionId, null);
+        setArmed((current) => isSameArmedContinuationSubmission(current?.submission, expected) ? null : current);
         return true;
     }, [accountScope, accountScopeIsCurrent, armed?.submission, draftSessionId]);
 
@@ -796,6 +817,11 @@ export function useInSessionAgentPickerControls(
         sourceAgentId: string,
         selection: SessionAgentPickerSelection,
     ) => {
+        if (!purposeDefaultsReady(entry)) {
+            pendingArmRef.current = null;
+            persistArmedContinuation(null);
+            return;
+        }
         const eligibility = resolveSessionAgentContinuationEligibility({
             entry,
             source,
@@ -813,7 +839,7 @@ export function useInSessionAgentPickerControls(
         pendingArmRef.current = eligibility.status === 'checking'
             ? { backendTargetKey: entry.backendTargetKey, sourceAgentId, selection }
             : null;
-    }, [persistArmedContinuation, readInspection, source]);
+    }, [persistArmedContinuation, purposeDefaultsReady, readInspection, source]);
 
     React.useEffect(() => {
         const pending = pendingArmRef.current;
@@ -823,7 +849,7 @@ export function useInSessionAgentPickerControls(
             return;
         }
         const entry = targetEntries.find((candidate) => candidate.backendTargetKey === pending.backendTargetKey);
-        if (!entry || JSON.stringify(readTargetSelection(entry.backendTargetKey)) !== JSON.stringify(pending.selection)) {
+        if (!entry || !purposeDefaultsReady(entry) || JSON.stringify(readTargetSelection(entry.backendTargetKey)) !== JSON.stringify(pending.selection)) {
             pendingArmRef.current = null;
             return;
         }
@@ -837,7 +863,7 @@ export function useInSessionAgentPickerControls(
         if (eligibility.status === 'eligible') {
             persistArmedContinuation(buildArmedContinuation(entry, pending.sourceAgentId, pending.selection));
         }
-    }, [currentAgentId, featureEnabled, persistArmedContinuation, readInspection, readTargetSelection, source, targetEntries]);
+    }, [currentAgentId, featureEnabled, persistArmedContinuation, purposeCatalog, purposeDefaultsReady, readInspection, readTargetSelection, source, targetEntries]);
 
     const targetOptions = React.useMemo(() => {
         // A retained submitted snapshot is already in custody reconciliation. It
@@ -861,6 +887,7 @@ export function useInSessionAgentPickerControls(
             },
             favoriteBackendTargetKeys: params.favoriteBackendTargetKeys ?? [],
             resolvePresentation: (entry) => {
+                if (!purposeDefaultsReady(entry)) return { disabled: true, muted: true };
                 const eligibility = eligibilityByTargetKey.get(entry.backendTargetKey);
                 // A row still being asked about is held in the same restrained
                 // treatment as an unavailable one, so nothing can be armed before
@@ -895,7 +922,9 @@ export function useInSessionAgentPickerControls(
                     const eligibility = eligibilityByTargetKey.get(entry.backendTargetKey);
                     return {
                         detailTitle: entry.title,
-                        detailDescription: eligibility?.status === 'unavailable'
+                        detailDescription: !purposeDefaultsReady(entry)
+                            ? t(purposeCatalog.status === 'loading' ? 'common.loading' : 'common.unavailable')
+                            : eligibility?.status === 'unavailable'
                             ? resolveTargetRowUnavailableText(eligibility, entry.title) ?? undefined
                             : t('session.agentContinuation.checking'),
                     };
@@ -912,14 +941,28 @@ export function useInSessionAgentPickerControls(
                     // the model section's single subtitle line rather than a paragraph
                     // of prose above an empty pane.
                     deferRenderDetailContent: true,
-                    deferredDetailContentCacheKey: `session-continuation-engine:${entry.backendTargetKey}`,
-                    renderDetailContent: () => buildSessionAgentPickerDetailContent({
+                    deferredDetailContentCacheKey: `session-continuation-engine:${entry.backendTargetKey}:${purposeCatalog.status}:${purposeCatalog.revision}`,
+                    renderDetailContent: () => {
+                        if (!purposeDefaultsReady(entry)) return null;
+                        const current = getConnectedAccountCatalogValue(accountScope, 'purposes');
+                        return buildSessionAgentPickerDetailContent({
                         backendTarget: entry.backendTarget,
                         runtimeCarrierAgentId: entry.agentId as never,
                         selectedMachineId: params.detail.machineId,
                         capabilityServerId: params.detail.capabilityServerId,
                         cwd: params.detail.cwd,
                         settings: params.detail.settings,
+                        connectedServices: entry.agentCatalogEntry.identity && current.value
+                            ? projectAgentConnectedAccountPurposeDefaultsToSessionBindings(
+                                resolveAgentConnectedAccountPurposeDefaults({
+                                    settings: params.detail.settings,
+                                    purposeBindings: current.value,
+                                    agentId: entry.agentId,
+                                    consumer: entry.agentCatalogEntry.identity,
+                                    declarations: entry.agentCatalogEntry.connectedAccounts,
+                                }),
+                            )
+                            : null,
                         // The same disclosure, told truthfully for this Session:
                         // an empty transcript has no conversation to carry, so the
                         // line keeps only the half that still holds.
@@ -940,7 +983,8 @@ export function useInSessionAgentPickerControls(
                             // re-mints itself for what is genuinely a different switch.
                             armExactSelection(entry, sourceAgentId, next);
                         },
-                    }),
+                    });
+                    },
                     // Fired on deliberate activation of the row — tap, click, Enter or
                     // Space — never on hover or pointer travel.
                     onSelectImmediate: () => {
@@ -959,11 +1003,14 @@ export function useInSessionAgentPickerControls(
         });
     }, [
         armedTargetKey,
+        accountScope,
         currentAgentId,
         featureEnabled,
         params.detail,
         params.favoriteBackendTargetKeys,
         armExactSelection,
+        purposeCatalog,
+        purposeDefaultsReady,
         railOffersRows,
         readTargetSelection,
         retainedSubmissionArm,

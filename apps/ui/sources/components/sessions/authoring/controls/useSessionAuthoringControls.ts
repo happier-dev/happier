@@ -80,6 +80,8 @@ export type SessionAuthoringAppliedModelPresentation = Readonly<{
 export type SessionAuthoringControlsInput = Readonly<{
     /** The Agent identity whose static policy answers these questions. */
     agentId: string;
+    /** Present when Session safety intent is previewed for an armed continuation. */
+    permissionTargetAgentId?: string | null;
     metadata?: Metadata | null;
     composerOptionsInput?: ComposerOptionsInputV1 | null;
     sessionId?: string;
@@ -133,6 +135,8 @@ export function useSessionAuthoringControls(
         canChangeSessionMode,
     } = input;
     const metadata = input.metadata ?? null;
+    const permissionAgentId = input.permissionTargetAgentId ?? agentId;
+    const permissionMetadata = input.permissionTargetAgentId ? null : metadata;
     const composerOptionsInput = input.composerOptionsInput === undefined ? metadata : input.composerOptionsInput;
     const modelOptionsOverride = input.modelOptionsOverride ?? null;
     const acpConfigOptionsOverride = input.acpConfigOptionsOverride ?? null;
@@ -146,8 +150,8 @@ export function useSessionAuthoringControls(
 
     const allowedPermissionModes = input.allowedPermissionModes ?? null;
     const permissionModeOptions = React.useMemo(() => {
-        return restrictPermissionModeOptions(getPermissionModeOptionsForSession(agentId, metadata), allowedPermissionModes);
-    }, [agentId, allowedPermissionModes, metadata]);
+        return restrictPermissionModeOptions(getPermissionModeOptionsForSession(permissionAgentId, permissionMetadata), allowedPermissionModes);
+    }, [permissionAgentId, allowedPermissionModes, permissionMetadata]);
 
     const permissionModeOrder = React.useMemo(() => {
         return permissionModeOptions.map((option) => option.value);
@@ -155,20 +159,20 @@ export function useSessionAuthoringControls(
 
     const effectivePermissionPolicy = React.useMemo(() => {
         return describeEffectivePermissionMode({
-            agentType: agentId,
+            agentType: permissionAgentId,
             selectedMode: input.permissionMode ?? 'default',
-            metadata,
+            metadata: permissionMetadata,
             applyTiming: sessionPermissionModeApplyTiming ?? 'immediate',
         });
-    }, [agentId, input.permissionMode, metadata, sessionPermissionModeApplyTiming]);
+    }, [permissionAgentId, input.permissionMode, permissionMetadata, sessionPermissionModeApplyTiming]);
 
     const effectivePermissionLabel = React.useMemo(() => {
-        return effectivePermissionPolicy.nativeModeLabel ?? getPermissionModeLabelForAgentType(agentId, effectivePermissionPolicy.effectiveMode);
-    }, [agentId, effectivePermissionPolicy.effectiveMode, effectivePermissionPolicy.nativeModeLabel]);
+        return effectivePermissionPolicy.nativeModeLabel ?? getPermissionModeLabelForAgentType(permissionAgentId, effectivePermissionPolicy.effectiveMode);
+    }, [permissionAgentId, effectivePermissionPolicy.effectiveMode, effectivePermissionPolicy.nativeModeLabel]);
 
     const permissionChipLabel = React.useMemo(() => {
-        return getPermissionModeBadgeLabelForAgentType(agentId, effectivePermissionPolicy.effectiveMode);
-    }, [agentId, effectivePermissionPolicy.effectiveMode]);
+        return getPermissionModeBadgeLabelForAgentType(permissionAgentId, effectivePermissionPolicy.effectiveMode);
+    }, [permissionAgentId, effectivePermissionPolicy.effectiveMode]);
 
     const effectiveModelPolicy = React.useMemo(() => {
         return describeEffectiveModelMode({

@@ -20,6 +20,7 @@ type SessionModeChipControlLike = Pick<Parameters<typeof resolveSessionModeChipP
 export function useRenderedAgentInputControlRows(params: Readonly<{
     readOnly?: boolean;
     layout: 'scroll' | 'wrap' | 'collapsed';
+    singleRow?: boolean;
     /** Collapsed layout: the controls the host keeps on its bar (see `resolveRenderedAgentInputControls`). */
     barControlIds?: readonly AgentInputControlId[];
     chips: ReadonlyArray<AgentInputExtraActionChip> | undefined;
@@ -86,6 +87,7 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
     sourceControlWrapperStyle: any;
 }>): Readonly<{
     controlNodes: ReadonlyArray<React.ReactNode>;
+    hasPermissionControl: boolean;
     readOnlyEngineNodes: ReadonlyArray<React.ReactNode>;
     extraChipNodes: ReadonlyArray<React.ReactNode>;
     secondaryLeadingControls: ReadonlyArray<React.ReactNode>;
@@ -181,6 +183,7 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
 
         const renderedControls = resolveRenderedAgentInputControls({
             layout: params.layout,
+            singleRow: params.singleRow,
             coreControlNodesById,
             extraControlNodesById: extraControlNodesById.extraControlNodesById,
             extraChips: extraControlNodesById.extraChips,
@@ -189,6 +192,7 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
 
         return {
             controlNodes: renderedControls.chips,
+            hasPermissionControl: renderedControls.hasPermissionControl,
             readOnlyEngineNodes: coreControlNodesById.engine ?? [],
             extraChipNodes: [
                 ...extraControlNodesById.extraChips,
@@ -199,6 +203,7 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
         };
     }, [
         params.readOnly,
+        params.singleRow,
         params.actionBarIsCollapsed,
         params.barControlIds,
         params.actionButtonPressedStyle,

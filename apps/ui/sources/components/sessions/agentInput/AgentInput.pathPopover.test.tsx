@@ -66,7 +66,7 @@ describe('AgentInput (path popover)', () => {
         expect(open?.props.maxHeightCap).toBe(maxHeightCap);
         expect(open?.props.maxWidthCap).toBe(maxWidthCap);
         expect(screen.findByTestId(`${kind}-popover-content`)).toBeTruthy();
-        expect(screen.root.findAllByType(FloatingOverlay).some(node => node.props.scrollEnabled === true)).toBe(true);
+        expect(screen.findAllByType(FloatingOverlay).some(node => node.props.scrollEnabled === true)).toBe(true);
 
         // A second press closes the same intent without navigating to a fallback route.
         await screen.pressByTestIdAsync(`agent-input-${kind}-chip`);

@@ -1,14 +1,21 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 
-import type { McpServersSettingsV1, SessionMcpSelectionV1 } from '@happier-dev/protocol';
+import type { McpServersSettingsV1 } from '@happier-dev/protocol';
 import { createCapturingComponent, createPassThroughComponent, createPassThroughModule } from '@/dev/testkit/mocks/components';
-import { createUseSettingMock, installPartialStorageModuleMock } from '@/dev/testkit/mocks/storage';
 import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
-import { renderScreen } from '@/dev/testkit';
+import { renderScreen as renderScreenBase, standardCleanup } from '@/dev/testkit';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { upsertServerProfileOnly } from '@/sync/domains/server/serverRuntime';
+import { setRuntimeFetch, resetRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { refreshMcpServerCatalog, resetMcpServerCatalogEngineForTests } from '@/sync/engine/settings/mcpServerCatalogEngine';
+import { resetMcpServerCatalogSnapshotsForTests } from '@/sync/store/settings/mcpServerCatalogSnapshot';
+import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileTransferV1';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -58,6 +65,41 @@ const emptyMcpServersSettingsFixture: McpServersSettingsV1 = {
     servers: [],
     bindings: [],
 };
+let targetServerId: string;
+let accountScope: { serverId: string; accountId: string };
+let catalogFixture = mcpServersSettingsFixture;
+
+beforeEach(async () => {
+    catalogFixture = mcpServersSettingsFixture;
+    const home = await upsertServerProfileOnly({ serverUrl: 'https://mcp-selection.test', name: 'Selection' });
+    targetServerId = home.id;
+    accountScope = { serverId: home.id, accountId: 'selection-account' };
+    await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, {
+        token: `e30.${Buffer.from(JSON.stringify({ sub: accountScope.accountId })).toString('base64url')}.signature`,
+    });
+    // Network is the replaced boundary; selected-Home scope, row opening and projection stay real.
+    setRuntimeFetch(async url => {
+        const path = new URL(String(url)).pathname;
+        if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture({ settingsVersion: 7 }));
+        if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+        if (path === '/v2/account/settings') return Response.json({ version: 7, content: { t: 'plain', v: {} } });
+        if (path === PROFILE_TRANSFER_ROUTE_V1) return Response.json({ status: 'absent' });
+        if (path === '/v1/account/entity-rows/mcp') return Response.json({ status: 'present', revision: 3,
+            content: { t: 'plain', v: { v: 1, servers: catalogFixture.servers, bindings: catalogFixture.bindings } } });
+        return Response.json({ error: 'not_found' }, { status: 404 });
+    });
+});
+afterEach(async () => {
+    await standardCleanup();
+    resetMcpServerCatalogEngineForTests();
+    resetMcpServerCatalogSnapshotsForTests();
+    resetRuntimeFetch();
+});
+async function renderScreen(element: React.ReactElement) {
+    const screen = await renderScreenBase(element);
+    await act(async () => { await refreshMcpServerCatalog(accountScope); });
+    return screen;
+}
 
 installNewSessionComponentsCommonModuleMocks({
     icons: () => ({
@@ -83,13 +125,7 @@ installNewSessionComponentsCommonModuleMocks({
             },
         },
     }),
-    storage: installPartialStorageModuleMock({
-        useSetting: createUseSettingMock({
-            values: {
-                mcpServersSettingsV1: mcpServersSettingsFixture,
-            },
-        }),
-    }),
+    storage: importOriginal => importOriginal(),
 });
 
 vi.mock('@/components/ui/lists/ItemList', () => createPassThroughModule(['ItemListStatic']));
@@ -129,23 +165,13 @@ vi.mock('@/components/settings/mcpServers/mcpServerUi', () => ({
     resolvePreviewScopeLabel: () => 'Scope',
 }));
 
-vi.mock('@/components/sessions/new/modules/sessionMcpSelectionState', () => ({
-    setManagedSessionMcpServersEnabled: vi.fn((selection: SessionMcpSelectionV1, enabled: boolean) => ({
-        ...selection,
-        managedServersEnabled: enabled,
-    })),
-    toggleManagedSessionMcpSelection: vi.fn((selection: SessionMcpSelectionV1, entry: { serverId: string; selected?: boolean }) => ({
-        ...selection,
-        forceIncludeServerIds: entry.selected ? [] : [entry.serverId],
-        forceExcludeServerIds: entry.selected ? [entry.serverId] : [],
-    })),
-}));
 
 describe('NewSessionMcpSelectionContent', () => {
     it('keeps native MCP content-sized under the computed popover height cap', async () => {
         const { NewSessionMcpSelectionContent } = await import('./NewSessionMcpSelectionContent');
 
         const screen = await renderScreen(<NewSessionMcpSelectionContent
+            targetServerId={targetServerId}
             machineId="machine-1"
             machineName="Builder"
             directory="/repo"
@@ -181,6 +207,7 @@ describe('NewSessionMcpSelectionContent', () => {
         const { NewSessionMcpSelectionContent } = await import('./NewSessionMcpSelectionContent');
 
         await renderScreen(<NewSessionMcpSelectionContent
+            targetServerId={targetServerId}
                     machineId="machine-1"
                     machineName="Builder"
                     directory="/repo"
@@ -248,6 +275,7 @@ describe('NewSessionMcpSelectionContent', () => {
         const { NewSessionMcpSelectionContent } = await import('./NewSessionMcpSelectionContent');
 
         await renderScreen(<NewSessionMcpSelectionContent
+            targetServerId={targetServerId}
                     machineId={null}
                     machineName={null}
                     directory=""
@@ -298,7 +326,8 @@ describe('NewSessionMcpSelectionContent', () => {
 
         const { NewSessionMcpSelectionContent } = await import('./NewSessionMcpSelectionContent');
 
-        await renderScreen(<NewSessionMcpSelectionContent
+        const screen = await renderScreen(<NewSessionMcpSelectionContent
+            targetServerId={targetServerId}
                     machineId="machine-1"
                     machineName="Builder"
                     directory="/repo"
@@ -367,8 +396,8 @@ describe('NewSessionMcpSelectionContent', () => {
 
         expect(capturedItems.some((item) => item.testID === 'new-session.mcp.built-in.happier')).toBe(false);
         expect(capturedItems.some((item) => item.testID === 'new-session.mcp.managed-enabled')).toBe(true);
-        expect(capturedItems.filter((item) => item.testID === 'new-session.mcp.row.server-playwright')).toHaveLength(1);
-        const managed = capturedItems.find((item) => item.testID === 'new-session.mcp.row.server-playwright');
+        expect(screen.findAllByType('Item').filter(item => item.props.testID === 'new-session.mcp.row.server-playwright')).toHaveLength(1);
+        const managed = screen.findByTestId('new-session.mcp.row.server-playwright').props;
         expect(managed?.selected).toBe(false);
         expect(capturedItems.some((item) => item.testID === 'new-session.mcp.detected.sequential-thinking')).toBe(true);
         expect(capturedItemGroups.some((group) => group.title === 'settings.mcpServersSourceBuiltIn')).toBe(false);
@@ -391,6 +420,7 @@ describe('NewSessionMcpSelectionContent', () => {
         const { NewSessionMcpSelectionContent } = await import('./NewSessionMcpSelectionContent');
 
         await renderScreen(<NewSessionMcpSelectionContent
+            targetServerId={targetServerId}
                     machineId="machine-1"
                     machineName="Builder"
                     directory="/repo"
@@ -427,88 +457,12 @@ describe('NewSessionMcpSelectionContent', () => {
         capturedItems.length = 0;
         capturedItemGroups.length = 0;
 
-        vi.resetModules();
-
-        vi.doMock('@/components/ui/lists/ItemList', () => createPassThroughModule(['ItemListStatic']));
-        vi.doMock('@/components/ui/lists/ItemGroup', () => ({
-            ItemGroup: createCapturingComponent('ItemGroup', (props) => {
-                capturedItemGroups.push(props);
-            }),
-        }));
-        vi.doMock('@/components/ui/lists/Item', () => ({
-            Item: createCapturingComponent('Item', (props) => {
-                capturedItems.push(props);
-            }),
-        }));
-        vi.doMock('@/components/ui/forms/Switch', () => createPassThroughModule(['Switch']));
-        vi.doMock('@/components/ui/rendering/normalizeNodeForView', () => ({
-            normalizeNodeForView: (node: React.ReactNode) => node,
-        }));
-        vi.doMock('@/components/settings/mcpServers/mcpServerUi', () => ({
-            resolveAuthBadgeLabel: () => 'Auth',
-            resolveManagedServerAuthMode: () => 'Auth',
-            resolveDetectedAvailabilityLabel: () => 'Detected',
-            resolvePreviewScopeLabel: () => 'Scope',
-        }));
-        vi.doMock('@/components/sessions/new/modules/sessionMcpSelectionState', () => ({
-            setManagedSessionMcpServersEnabled: vi.fn((selection: SessionMcpSelectionV1, enabled: boolean) => ({
-                ...selection,
-                managedServersEnabled: enabled,
-            })),
-            toggleManagedSessionMcpSelection: vi.fn((selection: SessionMcpSelectionV1, entry: { serverId: string; selected?: boolean }) => ({
-                ...selection,
-                forceIncludeServerIds: entry.selected ? [] : [entry.serverId],
-                forceExcludeServerIds: entry.selected ? [entry.serverId] : [],
-            })),
-        }));
-
-        vi.doMock('@/agents/catalog/catalog', async (importOriginal) => {
-            const actual = await importOriginal<typeof import('@/agents/catalog/catalog')>();
-            return {
-                ...actual,
-                getAgentCore: () => ({
-                    tools: { delivery: 'full' },
-                    displayNameKey: 'agents.mock.displayName',
-                }),
-            };
-        });
-
-        vi.doMock('react-native', async () => createReactNativeWebMock({
-            View: createPassThroughComponent('View'),
-            Pressable: createPassThroughComponent('Pressable'),
-            ScrollView: createPassThroughComponent('ScrollView'),
-        }));
-        vi.doMock('@expo/vector-icons', () => ({
-            Ionicons: createPassThroughComponent('Ionicons'),
-        }));
-        vi.doMock('react-native-unistyles', async () => createUnistylesMock({
-            theme: {
-                colors: {
-                    groupped: { background: '#f5f5f5' },
-                    surface: '#fff',
-                    divider: '#ddd',
-                    textSecondary: '#666',
-                },
-            },
-        }));
-        vi.doMock('@/text', async () => createTextModuleMock({
-            translate: (key) => key,
-        }));
-
-        vi.doMock('@/sync/domains/state/storage', () => ({
-            useSetting: createUseSettingMock({
-                values: {
-                    mcpServersSettingsV1: emptyMcpServersSettingsFixture,
-                },
-            }),
-        }));
-        vi.doMock('@/sync/domains/settings/mcpServers/normalizeMcpServersSettingsV1', () => ({
-            normalizeMcpServersSettingsV1: (value: McpServersSettingsV1) => value,
-        }));
+        catalogFixture = emptyMcpServersSettingsFixture;
 
         const { NewSessionMcpSelectionContent } = await import('./NewSessionMcpSelectionContent');
 
         const screen = await renderScreen(<NewSessionMcpSelectionContent
+            targetServerId={targetServerId}
             machineId="machine-1"
             machineName="Builder"
             directory="/repo"

@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Platform } from 'react-native';
 
 import { isNativeAutomaticModelSelectionInputV1, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
-import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol/providers/settings/readFromAccountSettingsV1';
+import { useProviderSettingsForServer } from '@/providers/hooks/useProviderSettings';
 import type { PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 import { resolveCatalogAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
@@ -40,7 +40,6 @@ import {
 import { hiddenModelVisibilityKeys } from '@/components/sessions/modelPicker/buildSessionModelPickerSections';
 import { sessionModelSelectionKey } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { useSettingsSelector } from '@/sync/domains/state/storage';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 
 export type NewSessionEngineOptionDetailProps = Readonly<{
@@ -81,6 +80,8 @@ export type NewSessionEngineOptionDetailProps = Readonly<{
      * In-session callers omit this and retain the detail pane's local projection.
      */
     providerProjection?: ReturnType<typeof useProviderModelProjection>;
+    /** The account or pool this Agent's own models run through, for the picker's native heading. */
+    nativeSourceLabel?: string | null;
     experimentalConfirmation?: SessionModelPickerExperimentalConfirmationController;
     onSelectionChange?: (selection: Readonly<{
         modelId: string;
@@ -142,9 +143,7 @@ function EngineFavoriteToggle(props: Readonly<{
 }
 
 export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetailProps) {
-    const settings = useSettingsSelector((settings) => ({
-        providerSettingsV1: settings.providerSettingsV1,
-    }));
+    const providerSettings = useProviderSettingsForServer(props.capabilityServerId);
     const operationalBackendTarget = React.useMemo(() => resolveNewSessionOperationalBackendTarget({
         backendTarget: props.backendTarget,
         runtimeCarrierAgentId: props.runtimeCarrierAgentId,
@@ -369,6 +368,8 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         machineId: props.selectedMachineId,
         serverId: props.capabilityServerId,
         agentTargetKey,
+        favoriteSelections: (props.favoriteModelSelections ?? []).map(favorite => favorite.selection.ref)
+            .filter(ref => ref.agentTargetKey === agentTargetKey),
         ...(selectedModelSelection ? { currentSelection: selectedModelSelection.ref } : {}),
     });
     const providerProjection = props.providerProjection ?? localProviderProjection;
@@ -400,10 +401,14 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
             .map(sessionModelSelectionKey),
     ), [agentTargetKey, props.favoriteModelSelections]);
     const providerGroups = providersFeatureEnabled ? (providerProjection.data?.groups ?? []) : [];
+    const providerSourceBrowse = React.useMemo(() => ({
+        machineId: props.selectedMachineId,
+        serverId: props.capabilityServerId,
+    }), [props.capabilityServerId, props.selectedMachineId]);
     const hiddenNativeModelKeys = React.useMemo(() => hiddenModelVisibilityKeys(
-        readProviderSettingsFromAccountSettingsV1(settings).settings,
+        providerSettings,
         { providersFeatureEnabled },
-    ), [providersFeatureEnabled, settings]);
+    ), [providersFeatureEnabled, providerSettings]);
     const modelHeaderAccessory = props.favoriteEngine ? (
         <EngineFavoriteToggle
             favorite={props.favoriteEngine.favorite}
@@ -416,6 +421,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
             multiColumn
             agentTargetKey={agentTargetKey}
             nativeModels={modelOptions}
+            nativeSourceLabel={props.nativeSourceLabel}
             providerGroups={providerGroups}
             providerProjectionAuthoritative={providerProjection.status === 'success'}
             projectionError={providersFeatureEnabled ? providerProjection.error : null}
@@ -425,6 +431,8 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
                 ? providerProjection.data?.currentSelectionRecovery ?? null
                 : null}
             hiddenNativeModelKeys={hiddenNativeModelKeys}
+            hiddenSources={providersFeatureEnabled ? providerProjection.data?.hiddenSources : undefined}
+            sourceBrowse={providersFeatureEnabled ? providerSourceBrowse : undefined}
             selected={canonicalSelectedRef}
             effectiveLabel={selectedModelSelection?.ref.providerConnectionId
                 ? providerGroups.flatMap((group) => group.rows)

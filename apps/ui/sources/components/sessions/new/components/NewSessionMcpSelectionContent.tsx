@@ -9,7 +9,8 @@ import type {
 } from '@happier-dev/protocol';
 import { resolveManagedSessionMcpSelectionV1 } from '@happier-dev/protocol/mcp/servers/resolveManagedSessionMcpSelectionV1';
 
-import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
+import { isBundledAgentId } from '@/agents/catalog/catalog';
+import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
 import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 import {
     resolveAuthBadgeLabel,
@@ -30,8 +31,8 @@ import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeFor
 import { StatusPill, type StatusPillVariant } from '@/components/ui/status/StatusPill';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
-import { useSetting } from '@/sync/domains/state/storage';
-import { normalizeMcpServersSettingsV1 } from '@/sync/domains/settings/mcpServers/normalizeMcpServersSettingsV1';
+import { useMcpServerCatalogForServer } from '@/components/settings/mcpServers/useMcpServersSettings';
+import { emptyMcpServerCatalogV1 } from '@happier-dev/protocol/mcp/servers/serverCatalogV1';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
@@ -40,6 +41,7 @@ type PreviewSuccess = Extract<DaemonMcpServersPreviewResponse, { ok: true }>;
 
 export type NewSessionMcpSelectionContentProps = Readonly<{
     machineId?: string | null;
+    targetServerId?: string | null;
     machineName?: string | null;
     directory: string;
     /** Temporary computers can select only portable bindings before an endpoint exists. */
@@ -170,10 +172,10 @@ export function NewSessionMcpSelectionContent(props: NewSessionMcpSelectionConte
     const showNoContextState = !props.loading && !props.hasContext;
     const preview = props.preview;
 
-    const mcpServersSettingsRaw = useSetting('mcpServersSettingsV1');
+    const catalogSnapshot = useMcpServerCatalogForServer(props.targetServerId);
     const mcpServersSettings = React.useMemo(
-        () => normalizeMcpServersSettingsV1(mcpServersSettingsRaw),
-        [mcpServersSettingsRaw],
+        () => ({ ...(catalogSnapshot.value ?? emptyMcpServerCatalogV1()), strictMode: false }),
+        [catalogSnapshot.value],
     );
 
     const happierServerCount = mcpServersSettings.servers.length;
@@ -185,7 +187,7 @@ export function NewSessionMcpSelectionContent(props: NewSessionMcpSelectionConte
     }, [mcpServersSettings.servers]);
 
     const agentDisplayName = isBundledAgentId(props.agentType)
-        ? t(getAgentCore(props.agentType).displayNameKey)
+        ? resolveAgentCatalogTitle(props.agentType)
         : formatAgentLikeIdForDisplay(props.agentType);
     const detectedSectionTitle = t('newSession.mcpDetectedSectionTitleForAgent', { agentName: agentDisplayName });
 
@@ -205,6 +207,7 @@ export function NewSessionMcpSelectionContent(props: NewSessionMcpSelectionConte
     }, [props.onSelectionChange, props.selection]);
 
     const managedResolution = React.useMemo(() => {
+        if (catalogSnapshot.status !== 'ready' || catalogSnapshot.authority !== 'active' || catalogSnapshot.stale) return null;
         if (!props.portableOnly && (!props.machineId || !props.directory.trim())) return null;
         try {
             return resolveManagedSessionMcpSelectionV1(mcpServersSettings, {
@@ -215,7 +218,7 @@ export function NewSessionMcpSelectionContent(props: NewSessionMcpSelectionConte
         } catch {
             return null;
         }
-    }, [mcpServersSettings, props.directory, props.machineId, props.portableOnly, props.selection]);
+    }, [catalogSnapshot.status, catalogSnapshot.authority, catalogSnapshot.stale, mcpServersSettings, props.directory, props.machineId, props.portableOnly, props.selection]);
 
     const renderManagedServerRow = React.useCallback((server: McpServerCatalogEntryV1) => {
         const item = managedResolution?.itemsByName[server.name] ?? null;

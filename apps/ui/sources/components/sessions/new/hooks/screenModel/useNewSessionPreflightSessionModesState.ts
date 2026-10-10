@@ -4,7 +4,7 @@ import { readBackendTargetRefV2, type BackendTargetRefV2 } from '@happier-dev/pr
 import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
 import { resolveCatalogAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
-import { machineCapabilitiesInvoke } from '@/sync/ops/capabilities';
+import { invokeAgentInventoryProbeAction } from '@/sync/ops/actions/agentInventoryActionDeps';
 import { tLoose, type TranslationKeyNoParams } from '@/text';
 import {
     getSessionModeOptionsForPreflightModeList,
@@ -26,7 +26,6 @@ import {
     type NewSessionCapabilityProbeContext,
 } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import { NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS } from '@/components/sessions/new/modules/newSessionCapabilityProbeTimeoutMs';
-import { buildProviderCliCapabilityId } from '@/capabilities/cliCapabilityId';
 import {
     scheduleProbedResourceRetryAfterDelay,
     scheduleProbedResourceRetryAfterExpiry,
@@ -235,22 +234,17 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
                 list: PreflightSessionModeList;
                 cacheable: boolean;
             }> | null>(preflightModesKey, async () => {
-                const res = await machineCapabilitiesInvoke(
-                    params.selectedMachineId!,
-                    {
-                        id: buildProviderCliCapabilityId(probeAgentType),
-                        method: 'probeModes',
-                        params: {
+                const res = await invokeAgentInventoryProbeAction({
+                    agentId: probeAgentType,
+                    machineId: params.selectedMachineId!,
+                    serverId: params.capabilityServerId,
+                    backendTarget: backendTargetForProbe,
+                    capabilityParams: {
                             timeoutMs: NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS,
-                            backendTarget: backendTargetForProbe,
                             ...(probeContextCapabilityParams ? probeContextCapabilityParams : {}),
                             ...(cwd ? { cwd } : {}),
-                        },
                     },
-                    {
-                        serverId: params.capabilityServerId,
-                    },
-                );
+                }, 'probeModes');
 
                 if (!res.supported) return null;
                 if (!res.response.ok) return null;

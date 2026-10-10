@@ -1,8 +1,21 @@
 import { describe, expect, it } from 'vitest';
 
 import { ProviderBoundModelRefSchema } from '@happier-dev/protocol';
+import { createRpcCallError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 
-import { requiresProviderSafeModelSelectionRpc } from './providerDaemonSessionCompatibility';
+import { isProviderSafeDaemonSessionMethodAbsent, requiresProviderSafeModelSelectionRpc } from './providerDaemonSessionCompatibility';
+
+describe('isProviderSafeDaemonSessionMethodAbsent', () => {
+    it('recognizes missing-method responses and thrown transport errors without treating refusals as absence', () => {
+        for (const errorCode of [RPC_ERROR_CODES.METHOD_NOT_FOUND, RPC_ERROR_CODES.METHOD_NOT_AVAILABLE]) {
+            const response = { error: 'This host cannot serve the method', errorCode };
+            expect(isProviderSafeDaemonSessionMethodAbsent(response)).toBe(true);
+            expect(isProviderSafeDaemonSessionMethodAbsent(createRpcCallError(response))).toBe(true);
+        }
+        expect(isProviderSafeDaemonSessionMethodAbsent({ error: 'Method not found', errorCode: RPC_ERROR_CODES.FORBIDDEN })).toBe(false);
+        expect(isProviderSafeDaemonSessionMethodAbsent({ errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND })).toBe(false);
+    });
+});
 
 describe('requiresProviderSafeModelSelectionRpc', () => {
     const nativeSelection = ProviderBoundModelRefSchema.parse({

@@ -11,11 +11,12 @@ import { act } from 'react-test-renderer';
 import { flattenTestStyle } from '@/dev/testkit';
 import Color from 'color';
 
-const platformState = vi.hoisted(() => ({ os: 'web' as 'web' | 'android' }));
+const platformState = vi.hoisted(() => ({ os: 'web' as 'web' | 'android', width: 1440 }));
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({
+        useWindowDimensions: () => ({ width: platformState.width, height: 844, scale: 1, fontScale: 1 }),
         Platform: {
             get OS() { return platformState.os; },
             select: (values: Record<string, unknown>) => values[platformState.os] ?? values.default,
@@ -31,7 +32,10 @@ vi.mock('@/components/ui/popover', async (importOriginal) => {
     const { createInlinePopoverModuleMock } = await import('@/dev/testkit/mocks/popover');
     return createInlinePopoverModuleMock(importOriginal);
 });
-vi.mock('expo-router', () => ({ useRouter: () => ({ push: vi.fn() }) }));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock().module;
+});
 vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
     getAppliedActiveServerSnapshot: () => ({ serverId: 'server-a' }),
     isAppliedActiveServerRuntimeAvailable: () => true,
@@ -59,6 +63,31 @@ function panelProps(): NewSessionSimplePanelProps {
 }
 
 describe('New workflow entry', () => {
+    it('retains the selected workflow and its inputs when the screen panel recomposes across phone width', async () => {
+        const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
+        const previous = getStorage().getState().profileScope;
+        const props = { ...panelProps(), selectedMachineId: 'machine-1', targetServerId: 'server-a' };
+        platformState.width = 1440;
+        try {
+            await act(async () => {
+                getStorage().setState({ profileScope: { serverId: 'server-a', accountId: 'account-a' } });
+            });
+            const screen = await renderScreen(<NewSessionSimplePanel {...props} />);
+            await screen.pressByTestIdAsync('new-session-workflow-chip');
+            await screen.pressByTestIdAsync('workflow-choice:builtin:plan-with-a-panel');
+            const input = screen.findByTestId('workflow-run-inputs');
+            expect(input).not.toBeNull();
+            for (const width of [390, 430, 1440]) {
+                platformState.width = width;
+                await screen.update(<NewSessionSimplePanel {...props} />);
+                expect(screen.findByTestId('workflow-run-inputs')).toBe(input);
+                expect(screen.findByTestId('new-session-composer-input')?.props.value).toBe('Keep this brief');
+            }
+        } finally {
+            platformState.width = 1440;
+            await act(async () => { getStorage().setState({ profileScope: previous }); });
+        }
+    });
     it('keeps the admitted read-only document on the same floating material plane', async () => {
         const { AgentInput } = await import('@/components/sessions/agentInput');
         const store = getStorage();

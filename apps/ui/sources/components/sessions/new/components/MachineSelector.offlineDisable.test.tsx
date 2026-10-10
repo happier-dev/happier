@@ -17,6 +17,26 @@ function machine(id: string, active: boolean): Machine {
 }
 
 describe('MachineSelector', () => {
+    it.each(['list', 'dropdown'] as const)('refuses shared workflow destinations in the %s activation path', async (presentation) => {
+        const shared: Machine = { ...machine('shared', true), isShared: true, access: {
+            custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use',
+            resourceMode: 'plain', accessState: 'ready',
+        } };
+        const onSelect = vi.fn();
+        const screen = await renderScreen(<MachineSelector purpose="workflow" machines={[shared]} selectedMachine={null}
+            presentation={presentation} onSelect={onSelect} showCliGlyphs={false} />);
+        if (presentation === 'dropdown') {
+            const props = screen.tree.findByType(DropdownMenu).props as React.ComponentProps<typeof DropdownMenu>;
+            expect(props.items[0]?.disabled).toBe(true);
+            await act(async () => { props.onSelect(shared.id); });
+        } else {
+            const props = screen.tree.findByType(SelectionList).props as React.ComponentProps<typeof SelectionList>;
+            const option = props.rootStep.sections.flatMap((section) => section.kind === 'static' ? section.options : [])[0];
+            expect(option?.disabled).toBe(true);
+            await act(async () => { option?.onSelect?.(); });
+        }
+        expect(onSelect).not.toHaveBeenCalled();
+    });
     it('preserves the selected-machine dropdown trigger and offline activation guard', async () => {
         const online = machine('online', true);
         const offline = machine('offline', false);

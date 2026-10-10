@@ -71,7 +71,7 @@ export function useNewSessionSecretSelectionState(params: Readonly<{
     shouldShowSecretSection: boolean;
     resolveSavedSecretReference: (ref: string) => SavedSecretReferenceResolution;
 }> {
-    const savedSecretCatalog = useSavedSecretCatalog();
+    const savedSecretCatalog = useSavedSecretCatalog({ personalSecrets: params.secrets });
     const [selectedSecretIdByProfileIdByEnvVarName, setSelectedSecretIdByProfileIdByEnvVarName] = React.useState<SecretChoiceByProfileIdByEnvVarName>(() => {
         const raw = params.persistedDraft?.selectedSecretIdByProfileIdByEnvVarName;
         if (!raw || typeof raw !== 'object') return {};
@@ -216,10 +216,8 @@ export function useNewSessionSecretSelectionState(params: Readonly<{
 
     const selectedSavedSecret = React.useMemo(() => {
         if (!selectedSecretId) return null;
-        return params.secrets.find((secret) => secret.id === selectedSecretId)
-            ?? savedSecretCatalog.materializedSecrets.find((secret) => secret.id === selectedSecretId)
-            ?? null;
-    }, [params.secrets, savedSecretCatalog.materializedSecrets, selectedSecretId]);
+        return savedSecretCatalog.resolveReference(selectedSecretId).secret;
+    }, [savedSecretCatalog.resolveReference, selectedSecretId]);
 
     React.useEffect(() => {
         if (!params.selectedProfileId) return;

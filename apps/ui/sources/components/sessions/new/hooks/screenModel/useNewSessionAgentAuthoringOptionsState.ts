@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
+import { getAgentModelConfig } from '@happier-dev/agents';
 import { resolveInitialNewSessionModelMode } from '@/components/sessions/new/hooks/newSessionModelModePolicy';
 import type { ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import { buildAcpConfigOptionOverridesV1, type AcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
@@ -310,9 +311,7 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
         setModelState({
             backendTargetKey: currentBackendTargetKey,
             value: {
-                modelMode: parsed?.ref.modelId ?? (isBundledAgentId(params.agentType)
-                    ? getAgentCore(params.agentType).model?.defaultMode ?? 'default'
-                    : 'default'),
+                modelMode: parsed?.ref.modelId ?? getAgentModelConfig(params.agentType)?.defaultMode ?? 'default',
                 modelSelection: parsed,
             },
         });

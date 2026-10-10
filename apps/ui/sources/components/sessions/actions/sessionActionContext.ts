@@ -40,6 +40,7 @@ export function createSessionActionTarget(params: Readonly<{
     currentUserId?: string | null;
     isConnected?: boolean;
     isPinned?: boolean;
+    isRailPinned?: boolean;
     attentionStandingEnabled?: boolean;
     attentionStanding?: boolean;
     followEnabled?: boolean;
@@ -83,12 +84,18 @@ export function createSessionActionTarget(params: Readonly<{
         isConnected: params.isConnected ?? isActive,
         hasRecoverableTerminalHost,
         isPinned: params.isPinned === true,
+        isRailPinned: params.isRailPinned === true,
         isOwnedByCurrentUser,
         canUnarchive,
         canStop,
         followEnabled: params.followEnabled === true,
         canArchive,
         canRename: session.access?.capabilities.renameSession === true,
+        canWriteOwnerMetadata: isOwnedByCurrentUser && serverId !== null && ownerMetadata !== null
+            && session.access?.capabilities.renameSession === true,
+        toolCallsOverride: typeof ownerMetadata?.work?.viewPreferences?.showToolCalls === 'boolean'
+            ? ownerMetadata.work.viewPreferences.showToolCalls
+            : null,
         canResume,
         canDelete:
             session.access?.capabilities.deleteSession === true

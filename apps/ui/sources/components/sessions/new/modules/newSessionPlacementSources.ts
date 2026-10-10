@@ -11,6 +11,7 @@ export function resolveNewSessionTargetMachines(input: Readonly<{
     activeServerId: string | null;
     activeMachines: ReadonlyArray<Machine>;
     machineListByServerId: Readonly<Record<string, ReadonlyArray<Machine> | null | undefined>>;
+    machineListStatusByServerId?: Readonly<Record<string, 'idle' | 'loading' | 'signedOut' | 'error' | undefined>>;
 }>): Machine[] {
     const targetServerId = String(input.targetServerId ?? '').trim();
     if (!targetServerId) return [];
@@ -19,6 +20,7 @@ export function resolveNewSessionTargetMachines(input: Readonly<{
         activeServerId: String(input.activeServerId ?? '').trim(),
         activeMachines: input.activeMachines,
         machineListByServerId: input.machineListByServerId,
+        machineListStatusByServerId: input.machineListStatusByServerId,
     });
     return scopedMachines ? [...scopedMachines] : [];
 }

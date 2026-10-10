@@ -1,14 +1,17 @@
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
 import { isMachineVisibleForLaunchSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
+import { buildMachineOwnershipGroups } from '@/sync/domains/machines/machineOwnershipGroups';
 
 import { resolveMachinePickerPresence } from '../resolveMachinePickerPresence';
 
-export type MachineSelectionBucketId = 'recent' | 'favorites' | 'all';
+export type MachineSelectionBucketId = 'recent' | 'favorites' | 'all' | 'shared';
 export type MachineSelectionFavoriteGroupPlacement = 'beforeRecent' | 'afterRecent';
 
 export type MachineSelectionBucket<TMachine extends MachineDisplayRenderable = Machine> = Readonly<{
     id: MachineSelectionBucketId;
+    key?: string;
+    custodian?: NonNullable<Machine['access']>['custodian'];
     machines: ReadonlyArray<TMachine>;
 }>;
 
@@ -98,17 +101,19 @@ export function buildMachineSelectionBuckets<TMachine extends MachineDisplayRend
         id: 'favorites',
         machines: showFavorites ? launchPinnedFavoriteMachines : [],
     };
-    const allBucket: MachineSelectionBucket<TMachine> = {
-        id: 'all',
-        machines: allMachines,
-    };
+    const allBuckets: MachineSelectionBucket<TMachine>[] = buildMachineOwnershipGroups(allMachines).map((group) => ({
+        id: group.key.startsWith('shared:') ? 'shared' : 'all',
+        key: group.key === 'owned' ? 'all' : group.key,
+        ...(group.custodian ? { custodian: group.custodian } : {}),
+        machines: group.machines,
+    }));
 
     const leadingBuckets = favoriteGroupPlacement === 'beforeRecent'
         ? [favoritesBucket, recentBucket]
         : [recentBucket, favoritesBucket];
 
     return {
-        buckets: [...leadingBuckets, allBucket].filter((bucket) => bucket.machines.length > 0),
+        buckets: [...leadingBuckets, ...allBuckets].filter((bucket) => bucket.machines.length > 0),
         visibleMachines,
         recentMachinesWithoutFavorites,
         favoriteMachines: launchPinnedFavoriteMachines,

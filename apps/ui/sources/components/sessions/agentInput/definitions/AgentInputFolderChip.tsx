@@ -1,12 +1,8 @@
 import * as React from 'react';
 import {
-    Platform,
-    Pressable,
     View,
-    type GestureResponderEvent,
     type StyleProp,
     type TextStyle,
-    type ViewStyle,
 } from 'react-native';
 import Animated, {
     FadeIn,
@@ -17,15 +13,17 @@ import Animated, {
     withTiming,
 } from 'react-native-reanimated';
 import { useUnistyles } from 'react-native-unistyles';
-import { HappierSkeletonBlock, isHappierFocusVisible } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, HappierSkeletonBlock, isHappierFocusVisible, type HappierPressableProps } from '@happier-dev/plugin-ui/presentation';
 
 import { Icon } from '@/components/ui/icons/Icon';
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { reanimatedMotionTokens } from '@/components/ui/motion/reanimatedMotionTokens';
 import { Text } from '@/components/ui/text/Text';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { t } from '@/text';
-import { isCoarsePrimaryPointerEnvironment } from '@/utils/platform/webMobileHeuristics';
+import { useRowActionHoverHost } from '@/components/sessions/transcript/messageActions/rowActionRevealHost';
+import { isHoverCapablePrimaryPointer } from '@/utils/platform/webMobileHeuristics';
 
 import {
     AGENT_INPUT_CHIP_ICON_SIZE_PX,
@@ -64,11 +62,14 @@ export function resolveAgentInputFolderChipState(
     return path ? { kind: 'folder', path } : { kind: 'resolving', lastKnownPath: null };
 }
 
+/** A static style the shared pressable accepts (its portable style, not a style callback). */
+type ChipPressableStyle = Exclude<HappierPressableProps['style'], (state: never) => unknown>;
+
 export type AgentInputFolderChipProps = Readonly<{
     anchorRef?: React.RefObject<View | null>;
     state: AgentInputFolderChipState;
     tint: string;
-    chipStyle: (pressed: boolean) => StyleProp<ViewStyle>;
+    chipStyle: (pressed: boolean) => ChipPressableStyle;
     textStyle: StyleProp<TextStyle>;
     /** Opens the folder choices (popover or pushed picker). */
     onPress: () => void;
@@ -85,23 +86,10 @@ const SHRINK_STYLE = { flexShrink: 1, minWidth: 0 } as const;
 const WRAP_STYLE = { flexShrink: 0, minWidth: 0, maxWidth: '100%' } as const;
 const ROW_STYLE = { flexDirection: 'row', alignItems: 'center' } as const;
 const REMOVE_KEYS = new Set(['Delete', 'Backspace']);
+const CHIP_HIT_SLOP = { top: 5, bottom: 10, left: 0, right: 0 } as const;
 
-type WebKeyEvent = Readonly<{ key: string; preventDefault?: () => void }>;
-type WebPressableProps = React.ComponentProps<typeof Pressable> & Readonly<{
-    onKeyDown?: (event: WebKeyEvent) => void;
-    onHoverIn?: () => void;
-    onHoverOut?: () => void;
-}>;
-const WebPressable = Pressable as unknown as React.ComponentType<WebPressableProps & React.RefAttributes<View>>;
-
-/** × is a pointer/keyboard accelerator: touch-only surfaces use the picker's "No folder" row. */
-function canOfferRemoveAccelerator(): boolean {
-    return Platform.OS !== 'web' || !isCoarsePrimaryPointerEnvironment();
-}
-
-function isKeyboardFocus(event: { target?: unknown } | undefined): boolean {
-    return Platform.OS !== 'web' || isHappierFocusVisible(event?.target);
-}
+/** The chip's pressable host, handed out by the shared pressable for focus and popover anchoring. */
+type ChipControl = Parameters<NonNullable<HappierPressableProps['controlRef']>>[0];
 
 function resolveChipAccessibilityLabel(state: AgentInputFolderChipState): string {
     switch (state.kind) {
@@ -129,20 +117,22 @@ export function AgentInputFolderChip(props: AgentInputFolderChipProps): React.Re
     const reducedMotion = useReducedMotionPreference();
     const { state, onRemove } = props;
     const removable = state.kind === 'folder' && typeof onRemove === 'function';
-    const reservesRemoveSlot = removable && canOfferRemoveAccelerator();
+    // × is a hover/keyboard accelerator (plan 03 §4.1): only a hover-capable primary pointer gets it
+    // and its reserved slot. Touch-only devices remove through the picker's "No folder" row and the
+    // screen-reader action, so the chip keeps its natural width there.
+    const reservesRemoveSlot = removable && isHoverCapablePrimaryPointer();
     const disabled = state.kind === 'machine_unavailable';
-    const [chipHovered, setChipHovered] = React.useState(false);
+    // One hover region spans the chip and ×, so moving onto × never hides it.
+    const hoverRegion = useRowActionHoverHost();
     const [chipFocusVisible, setChipFocusVisible] = React.useState(false);
-    const [removeHovered, setRemoveHovered] = React.useState(false);
     const [removeFocusVisible, setRemoveFocusVisible] = React.useState(false);
-    const [pressed, setPressed] = React.useState(false);
-    const openRef = React.useRef<View | null>(null);
+    const openRef = React.useRef<ChipControl>(null);
     const focusAfterRemoveRef = React.useRef(false);
-    const showRemove = reservesRemoveSlot && (chipHovered || chipFocusVisible || removeHovered || removeFocusVisible);
+    const showRemove = reservesRemoveSlot && (hoverRegion.isHovered || chipFocusVisible || removeFocusVisible);
 
-    const setOpenRef = React.useCallback((node: View | null) => {
+    const setOpenRef = React.useCallback((node: ChipControl) => {
         openRef.current = node;
-        if (props.anchorRef) (props.anchorRef as React.MutableRefObject<View | null>).current = node;
+        if (props.anchorRef) (props.anchorRef as React.MutableRefObject<View | null>).current = node as unknown as View | null;
     }, [props.anchorRef]);
 
     const remove = React.useCallback(() => {
@@ -155,14 +145,21 @@ export function AgentInputFolderChip(props: AgentInputFolderChipProps): React.Re
     React.useEffect(() => {
         if (!focusAfterRemoveRef.current || state.kind !== 'none') return;
         focusAfterRemoveRef.current = false;
-        (openRef.current as unknown as { focus?: () => void } | null)?.focus?.();
+        openRef.current?.focus?.();
     }, [state.kind]);
 
-    const handleKeyDown = React.useCallback((event: WebKeyEvent) => {
-        if (!removable || !REMOVE_KEYS.has(event.key)) return;
-        event.preventDefault?.();
+    // The shared pressable consumes a handled key (preventDefault) when this returns true.
+    const handleKeyDown = React.useCallback((key: string) => {
+        if (!removable || !REMOVE_KEYS.has(key)) return false;
         remove();
+        return true;
     }, [remove, removable]);
+    const handleChipFocusChange = React.useCallback((focused: boolean) => {
+        setChipFocusVisible(focused && isHappierFocusVisible());
+    }, []);
+    const handleRemoveFocusChange = React.useCallback((focused: boolean) => {
+        setRemoveFocusVisible(focused && isHappierFocusVisible());
+    }, []);
 
     const handleAccessibilityAction = React.useCallback((event: { nativeEvent: { actionName: string } }) => {
         if (event.nativeEvent.actionName === 'remove') remove();
@@ -192,32 +189,28 @@ export function AgentInputFolderChip(props: AgentInputFolderChipProps): React.Re
 
     return (
         <Animated.View
+            testID="agent-input-path-chip-region"
             layout={layoutTransition}
             style={[ROW_STYLE, props.layout === 'wrap' ? WRAP_STYLE : SHRINK_STYLE]}
+            {...(reservesRemoveSlot ? hoverRegion.hoverProps : {})}
         >
-            <WebPressable
-                ref={setOpenRef}
+            <HappierPressable
+                controlRef={setOpenRef}
                 testID="agent-input-path-chip"
-                accessibilityRole="button"
                 accessibilityLabel={resolveChipAccessibilityLabel(state)}
                 accessibilityHint={state.kind === 'machine_unavailable' ? state.reason : undefined}
-                accessibilityState={{ disabled }}
                 accessibilityActions={removable ? [{ name: 'remove', label: t('newSession.folder.removeFolder') }] : undefined}
                 onAccessibilityAction={removable ? handleAccessibilityAction : undefined}
                 disabled={disabled}
                 onPress={props.onPress}
-                onPressIn={() => setPressed(true)}
-                onPressOut={() => setPressed(false)}
-                onKeyDown={Platform.OS === 'web' ? handleKeyDown : undefined}
-                onHoverIn={() => setChipHovered(true)}
-                onHoverOut={() => setChipHovered(false)}
-                onFocus={(event) => setChipFocusVisible(isKeyboardFocus(event))}
-                onBlur={() => setChipFocusVisible(false)}
-                hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
-                style={[
+                onKeyDown={handleKeyDown}
+                onFocusChange={handleChipFocusChange}
+                hitSlop={CHIP_HIT_SLOP}
+                style={({ pressed, focused }) => [
                     props.chipStyle(pressed),
                     props.layout === 'wrap' ? WRAP_STYLE : SHRINK_STYLE,
                     reservesRemoveSlot ? { paddingRight: 2 } : null,
+                    focusRingStyle({ focused, color: theme.colors.border.focus }),
                 ]}
             >
                 <Animated.View key={labelState.kind} entering={labelEntering} style={[ROW_STYLE, SHRINK_STYLE, { gap: 6 }]}>
@@ -243,15 +236,14 @@ export function AgentInputFolderChip(props: AgentInputFolderChipProps): React.Re
                         </View>
                     )}
                 </Animated.View>
-            </WebPressable>
+            </HappierPressable>
             {reservesRemoveSlot ? (
                 <FolderChipRemoveButton
                     visible={showRemove}
                     tint={props.tint}
                     reducedMotion={reducedMotion}
                     onPress={remove}
-                    onHoverChange={setRemoveHovered}
-                    onFocusVisibleChange={setRemoveFocusVisible}
+                    onFocusChange={handleRemoveFocusChange}
                 />
             ) : null}
         </Animated.View>
@@ -263,12 +255,9 @@ const FolderChipRemoveButton = React.memo(function FolderChipRemoveButton(props:
     tint: string;
     reducedMotion: boolean;
     onPress: () => void;
-    onHoverChange: (hovered: boolean) => void;
-    onFocusVisibleChange: (visible: boolean) => void;
+    onFocusChange: (focused: boolean) => void;
 }>) {
     const { theme } = useUnistyles();
-    const [hovered, setHovered] = React.useState(false);
-    const [pressed, setPressed] = React.useState(false);
     const shown = useSharedValue(props.visible ? 1 : 0);
     React.useEffect(() => {
         // Enter at the fast step, exit quicker: attention is moving on.
@@ -283,42 +272,56 @@ const FolderChipRemoveButton = React.memo(function FolderChipRemoveButton(props:
         transform: [{ scale: reducedMotion ? 1 : 0.7 + 0.3 * shown.value }],
     }), [reducedMotion]);
 
-    const handlePress = React.useCallback((event?: GestureResponderEvent) => {
+    const { onPress } = props;
+    const handlePress = React.useCallback((event?: { stopPropagation?: () => void }) => {
         // A press on × is never a press on the chip.
         event?.stopPropagation?.();
-        props.onPress();
-    }, [props.onPress]);
+        onPress();
+    }, [onPress]);
 
     return (
-        <WebPressable
-            testID="agent-input-path-chip-remove"
-            accessibilityRole="button"
-            accessibilityLabel={t('newSession.folder.removeFolder')}
-            accessible={props.visible}
+        // Hidden × leaves the accessibility tree; the chip's "Remove folder" action stays the AT path.
+        <View
+            style={REMOVE_SLOT_STYLE}
             accessibilityElementsHidden={!props.visible}
             importantForAccessibility={props.visible ? 'auto' : 'no-hide-descendants'}
-            disabled={!props.visible}
-            onPress={handlePress}
-            onPressIn={() => setPressed(true)}
-            onPressOut={() => setPressed(false)}
-            onHoverIn={() => { setHovered(true); props.onHoverChange(true); }}
-            onHoverOut={() => { setHovered(false); props.onHoverChange(false); }}
-            onFocus={(event) => props.onFocusVisibleChange(isKeyboardFocus(event))}
-            onBlur={() => props.onFocusVisibleChange(false)}
-            style={{
-                width: AGENT_INPUT_CHIP_REMOVE_TARGET_WIDTH_PX,
-                alignSelf: 'stretch',
-                marginRight: 4,
-                alignItems: 'center',
-                justifyContent: 'center',
-                borderRadius: AGENT_INPUT_CHIP_REMOVE_TARGET_WIDTH_PX / 2,
-                backgroundColor: hovered && props.visible ? theme.colors.surface.pressedOverlay : 'transparent',
-                transform: [{ scale: pressed && !reducedMotion ? motionTokens.press.scale : 1 }],
-            }}
+            aria-hidden={props.visible ? undefined : true}
         >
-            <Animated.View style={glyphStyle}>
-                <Icon name="x" size={AGENT_INPUT_CHIP_OPTION_ICON_SIZE_PX} color={hovered ? theme.colors.text.primary : props.tint} />
-            </Animated.View>
-        </WebPressable>
+            <HappierPressable
+                testID="agent-input-path-chip-remove"
+                accessibilityLabel={t('newSession.folder.removeFolder')}
+                disabled={!props.visible}
+                onPress={handlePress}
+                onFocusChange={props.onFocusChange}
+                style={({ focused }) => [REMOVE_TARGET_STYLE, focusRingStyle({ focused, color: theme.colors.border.focus })]}
+            >
+                {({ pressed, hovered }) => (
+                    // Hover fill and the canonical press scale (down on press, back on release).
+                    <View
+                        style={[REMOVE_FILL_STYLE, {
+                            backgroundColor: hovered && props.visible ? theme.colors.surface.pressedOverlay : 'transparent',
+                            transform: [{ scale: pressed && !reducedMotion ? motionTokens.press.scale : 1 }],
+                        }]}
+                    >
+                        <Animated.View style={glyphStyle}>
+                            <Icon name="x" size={AGENT_INPUT_CHIP_OPTION_ICON_SIZE_PX} color={hovered ? theme.colors.text.primary : props.tint} />
+                        </Animated.View>
+                    </View>
+                )}
+            </HappierPressable>
+        </View>
     );
 });
+
+const REMOVE_SLOT_STYLE = { alignSelf: 'stretch', marginRight: 4 } as const;
+const REMOVE_TARGET_STYLE = {
+    width: AGENT_INPUT_CHIP_REMOVE_TARGET_WIDTH_PX,
+    flex: 1,
+    borderRadius: AGENT_INPUT_CHIP_REMOVE_TARGET_WIDTH_PX / 2,
+} as const;
+const REMOVE_FILL_STYLE = {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: AGENT_INPUT_CHIP_REMOVE_TARGET_WIDTH_PX / 2,
+} as const;

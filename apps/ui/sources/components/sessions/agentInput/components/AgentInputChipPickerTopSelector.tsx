@@ -5,6 +5,8 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { HorizontalScrollableRow } from '@/components/ui/scroll/HorizontalScrollableRow';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
+import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
 
 import { resolveAgentInputChipPickerOptionAccessibilityLabel } from "./AgentInputChipPickerTypes";
 import type {
@@ -98,10 +100,13 @@ export function AgentInputChipPickerTopSelector(props: AgentInputChipPickerTopSe
                                 ];
                             }}
                         >
-                            {normalizeAgentInputChipPickerOptionIcon(option.icon)}
-                            {option.statusMarker && props.selectedOptionId !== option.id ? (
-                                <View style={styles.statusBadge} pointerEvents="none">{normalizeNodeForView(option.statusMarker)}</View>
-                            ) : null}
+                            <View style={styles.iconSlot}>
+                                {normalizeAgentInputChipPickerOptionIcon(option.icon)}
+                                {option.statusMarker && props.selectedOptionId !== option.id ? (
+                                    <View style={styles.statusBadge} pointerEvents="none">{normalizeNodeForView(option.statusMarker)}</View>
+                                ) : null}
+                            </View>
+                            <Text style={styles.optionLabel}>{option.label}</Text>
                         </Pressable>
                         </React.Fragment>
                     );
@@ -129,14 +134,24 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: 10,
     },
     optionButton: {
-        width: PICKER_OPTION_TOUCH_TARGET_SIZE,
         height: PICKER_OPTION_TOUCH_TARGET_SIZE,
         minWidth: PICKER_OPTION_TOUCH_TARGET_SIZE,
         minHeight: PICKER_OPTION_TOUCH_TARGET_SIZE,
+        flexShrink: 0,
+        flexDirection: 'row',
+        gap: theme.margins.sm,
+        paddingHorizontal: theme.margins.md,
         borderRadius: AGENT_INPUT_CHIP_PICKER_OPTION_ROW_RADIUS,
         alignItems: 'center',
         justifyContent: 'center',
         backgroundColor: 'transparent',
+    },
+    optionLabel: {
+        ...Typography.rowMeta(),
+        color: theme.colors.text.primary,
+    },
+    iconSlot: {
+        position: 'relative',
     },
     groupDivider: {
         width: StyleSheet.hairlineWidth,

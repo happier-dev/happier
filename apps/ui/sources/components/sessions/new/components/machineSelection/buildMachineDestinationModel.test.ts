@@ -12,7 +12,7 @@ import {
 } from './buildMachineDestinationModel';
 import { t } from '@/text';
 import { formatByteSize } from '@/utils/files/formatByteSize';
-import { formatRelativeTimeShort } from '@/components/ui/selectionList/formatRelativeTimeShort';
+import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 
 function machine(id: string, overrides: Partial<Machine> = {}): Machine & { serverId: string; serverName: string } {
     return {

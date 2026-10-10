@@ -25,7 +25,7 @@ import {
 } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import { computeAcpConfigOptionControlsForProvider } from '@/sync/domains/sessionControl/configOptionsControl';
 import type { Settings } from '@/sync/domains/settings/settings';
-import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol/providers/settings/readFromAccountSettingsV1';
+import { useProviderSettingsForServer } from '@/providers/hooks/useProviderSettings';
 import { serializeModelVisibilityRefV1, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
 import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type {
@@ -256,10 +256,11 @@ function FavoriteBackendModelsCollector(props: Readonly<{
         serverId: props.capabilityServerId,
         agentTargetKey: props.entry.backendTargetKey,
     });
+    const providerSettings = useProviderSettingsForServer(props.capabilityServerId);
     const hiddenNativeKeys = React.useMemo(() => hiddenModelVisibilityKeys(
-        readProviderSettingsFromAccountSettingsV1(props.settings).settings,
+        providerSettings,
         { providersFeatureEnabled },
-    ), [props.settings, providersFeatureEnabled]);
+    ), [providerSettings, providersFeatureEnabled]);
     const selectableModelAvailability = React.useMemo(() => {
         const baseNativeModelIds = new Set(modelOptions.map((option) => option.value));
         const sections = buildSessionModelPickerSections({

@@ -104,6 +104,33 @@ describe('SessionAgentsLaunchMenu — Keep going until done…', () => {
     });
 });
 
+describe('SessionAgentsLaunchMenu — when agents cannot start here', () => {
+    it('says why once, above the choices, as a note rather than a disabled choice', () => {
+        const reason = 'This session has stopped. Resume it to start agents here.';
+        let tree: renderer.ReactTestRenderer | undefined;
+        act(() => {
+            tree = renderer.create(
+                <SessionAgentsLaunchMenu
+                    launcher={{ ...launcher(), unavailableReason: 'sessionInactive' } as SessionAgentLauncher}
+                    unavailableText={reason}
+                />,
+            );
+        });
+        const menu = tree!.root.findByType('DropdownMenu' as never) as unknown as {
+            props: { items: ReadonlyArray<{ id: string; disabled?: boolean }>; header?: React.ReactNode };
+        };
+        // A sentence is not an option: it is never a (one-line, disabled) row among the choices.
+        expect(menu.props.items.map((item) => item.id)).not.toContain('unavailable');
+        let header: renderer.ReactTestRenderer | undefined;
+        act(() => { header = renderer.create(<>{menu.props.header}</>); });
+        const note = header!.root.findByProps({ testID: 'session-agents-launch:unavailable' });
+        expect(note.props.children).toBe(reason);
+        // The whole sentence is readable: the note wraps instead of ending in an ellipsis.
+        expect(note.props.numberOfLines).toBeUndefined();
+        act(() => { header?.unmount(); tree?.unmount(); });
+    });
+});
+
 describe('SessionAgentsLaunchMenu — Second opinion and Run a workflow ›', () => {
     afterEach(async () => {
         const { resetWorkflowLibraryReadsForTests } = await import('@/components/workflows/library/workflowLibraryReads');
@@ -195,6 +222,9 @@ describe('SessionAgentsLaunchMenu — Second opinion and Run a workflow ›', ()
 
         act(() => readMenu(tree!).props.onSelect('builtin:builtin:plan-with-a-panel'));
         expect(start.startBuiltinWorkflow).toHaveBeenCalledWith('builtin:plan-with-a-panel');
+        // Selection closes the menu. Reopen before choosing its saved-workflow
+        // row so the real demand-scoped library can publish that choice again.
+        await open(tree!);
         act(() => readMenu(tree!).props.onSelect('workflow:wf-1'));
         expect(routerPush).toHaveBeenCalledWith({ pathname: '/workflows/[id]', params: { id: 'wf-1', intent: 'run' } });
         act(() => tree?.unmount());

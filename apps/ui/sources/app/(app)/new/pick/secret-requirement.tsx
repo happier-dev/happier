@@ -4,8 +4,6 @@ import { Stack, useLocalSearchParams, useNavigation, useRouter } from 'expo-rout
 
 import {
     useCurrentSecretBindingsByProfileIdMutable,
-    useSetting,
-    useSettingMutable,
     useSettingsSelector,
 } from '@/sync/domains/state/storage';
 import { resolveProfileById } from '@/sync/domains/profiles/profileUtils';
@@ -16,6 +14,7 @@ import { PopoverScope } from '@/components/ui/popover';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } from '@/agents/backendCatalog/backendTargetRouteParams';
 import { resolvePreferredBackendTargetFromProjection } from '@/agents/backendCatalog/resolvePreferredBackendTargetFromProjection';
+import { useAcpCatalogForServer } from '@/sync/store/useAcpCatalog';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { buildNewSessionPickerFallbackHref, pickNewSessionRouteParams, setNewSessionPickerReturnParams } from '@/components/sessions/new/navigation/setNewSessionPickerReturnParams';
 import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
@@ -68,15 +67,13 @@ export default React.memo(function SecretRequirementPickerScreen() {
     const machineId = typeof params.machineId === 'string' ? params.machineId : null;
     const revertOnCancel = params.revertOnCancel === '1';
 
-    const rawProfiles = useSetting('profiles');
-    const profiles = useAiLaunchProfilesForLegacyUi(rawProfiles);
+    const profiles = useAiLaunchProfilesForLegacyUi();
     const [secrets, setSecrets] = useSavedSecretsMutable();
     const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useCurrentSecretBindingsByProfileIdMutable();
     const settings = useSettingsSelector((settings) => ({
         lastUsedAgent: settings.lastUsedAgent,
         lastUsedBackendTarget: settings.lastUsedBackendTarget,
         backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
-        acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
     }));
 
     const profile = profileId ? resolveProfileById(profileId, profiles) : null;
@@ -100,17 +97,19 @@ export default React.memo(function SecretRequirementPickerScreen() {
         enabled: Boolean(machineId),
         staleMs: 60_000,
     });
+    const { snapshot: acpCatalog } = useAcpCatalogForServer(spawnServerId);
     const preferredBackendTarget = React.useMemo(() => {
+        if (!acpCatalog || acpCatalog.stale || acpCatalog.catalog.status !== 'ready') return null;
         return resolvePreferredBackendTargetFromProjection({
             lastUsedAgent: settings.lastUsedAgent,
             lastUsedBackendTarget: settings.lastUsedBackendTarget,
             backendEnabledByTargetKey: settings.backendEnabledByTargetKey ?? undefined,
-            acpCatalogSettingsV1: settings.acpCatalogSettingsV1 ?? undefined,
+            acpCatalogSnapshot: acpCatalog.catalog,
             daemonMergedProjectionInputs: daemonMergedProjection.inputs,
         });
     }, [
         daemonMergedProjection.inputs,
-        settings.acpCatalogSettingsV1,
+        acpCatalog,
         settings.backendEnabledByTargetKey,
         settings.lastUsedAgent,
         settings.lastUsedBackendTarget,
@@ -184,7 +183,6 @@ export default React.memo(function SecretRequirementPickerScreen() {
         profileId,
         revertOnCancel,
         router,
-        settings.acpCatalogSettingsV1,
         settings.backendEnabledByTargetKey,
         settings.lastUsedAgent,
         settings.lastUsedBackendTarget,

@@ -1,11 +1,12 @@
 import * as React from 'react';
+import { useAcpCatalogForServer } from '@/sync/store/useAcpCatalog';
 import { ScrollView, View } from 'react-native';
 
 import type { SessionServerStartSpawnDraftV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 
 import type { CustomModalInjectedProps } from '@/modal';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
-import { useAllMachines, useMachineListByServerId, useSettingsSelector } from '@/sync/domains/state/storage';
+import { useAllMachines, useMachineListByServerId, useMachineListStatusByServerId, useSettingsSelector } from '@/sync/domains/state/storage';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
@@ -68,9 +69,9 @@ function resolveInitialAgentKey(params: Readonly<{
 export function SessionServerStartDraftComposerModal(props: Props): React.ReactElement {
     const machines = useAllMachines();
     const machineListByServerId = useMachineListByServerId();
+    const machineListStatusByServerId = useMachineListStatusByServerId();
     const activeServer = useActiveServerSnapshot();
     const settings = useSettingsSelector((settings) => ({
-        acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
         backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
     }));
     const enabledAgentIds = useEnabledAgentIds();
@@ -91,8 +92,10 @@ export function SessionServerStartDraftComposerModal(props: Props): React.ReactE
         activeServerId: String(activeServer.serverId ?? ''),
         activeMachines: machines,
         machineListByServerId,
-    }), [activeServer.serverId, machineListByServerId, machines, props.target, selectedPlacementCandidate]);
+        machineListStatusByServerId,
+    }), [activeServer.serverId, machineListByServerId, machineListStatusByServerId, machines, props.target, selectedPlacementCandidate]);
     const selectedTarget = selectedPlacement.target;
+    const { snapshot: acpCatalog } = useAcpCatalogForServer(selectedTarget.serverId);
     const daemonMergedProjection = useDaemonMergedProjectionInputs({
         machineId: selectedTarget.machineId,
         serverId: selectedTarget.serverId,
@@ -104,7 +107,7 @@ export function SessionServerStartDraftComposerModal(props: Props): React.ReactE
         if (daemonMergedProjection.phase !== 'ready') return [];
         return getResolvedBackendCatalogEntries({
             enabledAgentIds,
-            acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
+            acpCatalogSnapshot: acpCatalog?.catalog,
             backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
             collapseConfiguredBackendProviderSentinels: true,
             mergedProviderProjectionById: daemonMergedProjection.inputs?.mergedProviderProjectionById ?? null,
@@ -130,7 +133,7 @@ export function SessionServerStartDraftComposerModal(props: Props): React.ReactE
         daemonMergedProjection.inputs,
         daemonMergedProjection.phase,
         enabledAgentIds,
-        settings.acpCatalogSettingsV1,
+        acpCatalog,
         settings.backendEnabledByTargetKey,
     ]);
     const [selectedAgentKey, setSelectedAgentKey] = React.useState<string | null>(() => (
@@ -148,10 +151,11 @@ export function SessionServerStartDraftComposerModal(props: Props): React.ReactE
     const [error, setError] = React.useState(false);
 
     React.useEffect(() => {
+        if (!acpCatalog || acpCatalog.stale || acpCatalog.catalog.status !== 'ready' || daemonMergedProjection.phase !== 'ready') return;
         if (!selectedAgent) {
             setSelectedAgentKey(resolveInitialAgentKey({ candidates, seedAgentId: props.seed.agentId }));
         }
-    }, [candidates, props.seed.agentId, selectedAgent]);
+    }, [acpCatalog, candidates, daemonMergedProjection.phase, props.seed.agentId, selectedAgent]);
 
     React.useEffect(() => {
         if (!directory.trim() && (props.seed.directory ?? machine?.metadata?.homeDir)) {
@@ -230,6 +234,7 @@ export function SessionServerStartDraftComposerModal(props: Props): React.ReactE
                         activeServerId: String(activeServer.serverId ?? ''),
                         activeMachines: machines,
                         machineListByServerId,
+                        machineListStatusByServerId,
                     });
                     return <Item
                         key={'id' in candidate.projectKey

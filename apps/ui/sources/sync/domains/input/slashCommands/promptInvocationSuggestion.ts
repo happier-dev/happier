@@ -7,6 +7,7 @@ export type PromptInvocationSuggestionMetadata = Readonly<{
     invocationId: string;
     token: string;
     targetArtifactId: string;
+    targetServerId?: string;
     behavior: PromptInvocationBehaviorV1;
     allowArgs: boolean;
 }>;
@@ -44,6 +45,7 @@ export async function resolvePromptInvocationAutocompleteSelection(params: Reado
 
     const expanded = await expandPromptTemplateInvocation({
         targetArtifactId: promptInvocation.targetArtifactId,
+        serverId: promptInvocation.targetServerId,
         argsText: '',
     });
     const replacementStart = activeWord.offset;

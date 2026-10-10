@@ -1,20 +1,23 @@
 import * as React from 'react';
-import { Animated, ScrollView, View, type StyleProp, type TextStyle } from 'react-native';
+import { Animated, Platform, ScrollView, View, type StyleProp, type TextStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { matchFindText, type FindTextRange } from '@happier-dev/plugin-ui/presentation';
 import { Icon } from '@/components/ui/icons/Icon';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { resolveOverlayMotionPreset, useOverlayMotionAnimation } from '@/components/ui/overlays/motion/overlayMotion';
 import { KeyHint } from '@/components/ui/keyboard/KeyHint';
-import { PathFavoriteToggleButton } from '@/components/ui/pathPicker/PathFavoriteToggleButton';
+import { FavoriteToggleButton } from '@/components/ui/buttons/FavoriteToggleButton';
 import { SelectionListSkeletonRow } from '@/components/ui/selectionList/SelectionListSkeletonRow';
-import { formatRelativeTimeShort } from '@/components/ui/selectionList/formatRelativeTimeShort';
+import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { FindHighlightedText } from '@/components/ui/text/FindHighlightedText';
+import { queryRanges } from '@/components/ui/text/queryRanges';
+import { ITEM_SUBTITLE_TEXT_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import type { UserMessageHistoryEntriesSnapshot } from '@/hooks/session/useUserMessageHistoryEntries';
 import { useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
+import { isEscapeKeyEvent } from '@/keyboard/escape';
 import { formatKeybindingLabel } from '@/keyboard/bindings';
 import { resolveKeyboardPlatform } from '@/keyboard/runtime';
 import { t } from '@/text';
@@ -49,23 +52,15 @@ function MetaLine(props: Readonly<{ parts: readonly MetaPart[]; style: StyleProp
     </React.Fragment>)}{props.trailing ? ` · ${props.trailing}` : ''}</Text>;
 }
 
-function queryRanges(text: string, query: string): readonly FindTextRange[] | undefined {
-    const needle = query.trim();
-    if (!needle) return undefined;
-    const result = matchFindText(text, needle, { matchCase: false, regex: false });
-    return 'ranges' in result ? result.ranges.map(([start, end]) => ({ start, end, current: false })) : undefined;
-}
-
 export function PromptPickerRowContent(props: RowLabels & Readonly<{
     row: PromptPickerRow;
     query: string;
-    onHighlight: () => void;
     onToggleFavorite: () => void;
 }>) {
     const { theme } = useUnistyles();
     const { row } = props;
     const title = row.kind === 'history' ? row.title.replace(/\s+/g, ' ').trim() : row.title;
-    return <View style={styles.row} testID={`prompt-picker-row:${row.id}`} {...{ onMouseEnter: props.onHighlight }}>
+    return <View style={styles.row} testID={`prompt-picker-row:${row.id}`}>
         <View style={styles.lead}>
             <Icon name={row.kind === 'history' ? 'clock-counter-clockwise' : 'chat'} size={16} color={theme.colors.text.secondary} />
         </View>
@@ -73,11 +68,11 @@ export function PromptPickerRowContent(props: RowLabels & Readonly<{
             <Text style={styles.title} numberOfLines={1}><FindHighlightedText text={title} ranges={queryRanges(title, props.query)} /></Text>
             <MetaLine style={styles.meta} parts={describeRow(row, props)} />
         </View>
-        {row.kind === 'doc' ? <PathFavoriteToggleButton path={row.document.artifactId} isFavorite={row.document.favorite}
+        {row.kind === 'doc' ? <FavoriteToggleButton id={row.document.artifactId} isFavorite={row.document.favorite}
             addLabel={t('agentInput.promptPicker.addFavorite')} removeLabel={t('agentInput.promptPicker.removeFavorite')}
             onToggle={props.onToggleFavorite} testID={`prompt-picker-favorite:${row.id}`} />
             // Starring something you sent turns it into a favourite prompt where it stands (lab R1s).
-            : row.kind === 'history' ? <PathFavoriteToggleButton path={row.id} isFavorite={false}
+            : row.kind === 'history' ? <FavoriteToggleButton id={row.id} isFavorite={false}
                 addLabel={t('agentInput.promptPicker.saveAsFavorite')} removeLabel={t('agentInput.promptPicker.saveAsFavorite')}
                 onToggle={props.onToggleFavorite} testID={`prompt-picker-favorite:${row.id}`} /> : null}
     </View>;
@@ -132,19 +127,21 @@ export function PromptPickerNotice(props: Readonly<{
 }>) {
     return <View style={styles.notice} testID={props.testID}>
         {props.title ? <Text style={styles.noticeTitle}>{props.title}</Text> : null}
-        <Text style={[styles.noticeText, props.tone === 'error' ? styles.noticeError : null]} accessibilityLiveRegion="polite">
-            {props.text}
-            {props.action ? <>
-                {' · '}
-                <Text style={styles.link} accessibilityRole="button" onPress={props.action.onPress}
-                    testID={props.testID ? `${props.testID}:action` : undefined}>{props.action.label}</Text>
-            </> : null}
-        </Text>
+        <View style={styles.actionLine}>
+            <Text style={[styles.noticeText, props.tone === 'error' ? styles.noticeError : null]} accessibilityLiveRegion="polite">{props.text}</Text>
+            {props.action ? <View style={styles.action}>
+                <Text style={styles.noticeText}>{' · '}</Text>
+                <TextLinkButton label={props.action.label} onPress={props.action.onPress}
+                    tone={props.tone === 'error' ? 'strong' : 'quiet'} testID={props.testID ? `${props.testID}:action` : undefined} />
+            </View> : null}
+        </View>
     </View>;
 }
 
 export function PromptPickerSkeletonRow(props: Readonly<{ testID?: string }>) {
-    return <View style={styles.skeleton} testID={props.testID}><SelectionListSkeletonRow index={1} /></View>;
+    return <View style={styles.skeleton} testID={props.testID}>
+        {[0, 1, 2].map((index) => <SelectionListSkeletonRow key={index} index={index} />)}
+    </View>;
 }
 
 /** The move from Sent before into Favourites: the row rises into its new group (lab R1s, 200 ms; reduced motion fades). */
@@ -177,7 +174,7 @@ export function PromptPickerSaveRow(props: Readonly<{
                     value={form.title} onChangeText={form.setTitle} autoFocus selectTextOnFocus returnKeyType="done"
                     onSubmitEditing={submit} style={styles.saveField}
                     onKeyPress={(event) => {
-                        if (event.nativeEvent.key !== 'Escape') return;
+                        if (!isEscapeKeyEvent(event)) return;
                         event.preventDefault?.();
                         (event as unknown as { stopPropagation?: () => void }).stopPropagation?.();
                         props.onCancel();
@@ -185,13 +182,17 @@ export function PromptPickerSaveRow(props: Readonly<{
                 <RoundButton testID="prompt-picker-save-confirm" size="small" title={t('common.save')}
                     disabled={!form.canSave} loading={form.isSaving} action={form.save} />
             </View>
-            <Text style={[styles.meta, styles.saveMeta, form.error ? styles.noticeError : null]} accessibilityLiveRegion="polite">
-                {form.error ?? t(form.favorite ? 'agentInput.promptPicker.saveInPlaceStarred' : 'agentInput.promptPicker.saveInPlace', { time })}
-                {' · '}<Text style={styles.link} accessibilityRole="button" onPress={props.onCancel} testID="prompt-picker-save-cancel">{t('common.cancel')}</Text>
-            </Text>
+            <View style={[styles.actionLine, styles.saveMeta]}>
+                <Text style={[styles.meta, form.error ? styles.noticeError : null]} accessibilityLiveRegion="polite">
+                    {form.error ?? t(form.favorite ? 'agentInput.promptPicker.saveInPlaceStarred' : 'agentInput.promptPicker.saveInPlace', { time })}
+                </Text>
+                <View style={styles.action}><Text style={styles.meta}>{' · '}</Text>
+                    <TextLinkButton label={t('common.cancel')} onPress={props.onCancel} testID="prompt-picker-save-cancel" />
+                </View>
+            </View>
         </View>
         <View style={styles.saveStar}>
-            <PathFavoriteToggleButton path={props.row.id} isFavorite={form.favorite} testID="prompt-picker-save-favorite"
+            <FavoriteToggleButton id={props.row.id} isFavorite={form.favorite} testID="prompt-picker-save-favorite"
                 addLabel={t('agentInput.promptPicker.addFavorite')} removeLabel={t('agentInput.promptPicker.removeFavorite')}
                 onToggle={() => form.setFavorite((value) => !value)} />
         </View>
@@ -212,16 +213,22 @@ export function PromptPickerFooter(props: Readonly<{
     const platform = resolveKeyboardPlatform();
     const pickerShortcut = useKeyboardShortcutLabel('composer.prompts.open');
     const status = props.applyError ? <Text style={[styles.status, styles.noticeError]} accessibilityLiveRegion="polite">{t('agentInput.promptPicker.applyError')}</Text>
-        : history.error ? <Text style={[styles.status, styles.noticeError]} accessibilityLiveRegion="polite">
-            {t('agentInput.promptPicker.historyError')}{' · '}<FooterLink label={t('common.retry')} onPress={history.retry} />
-        </Text>
-        : history.isLoading ? <Text style={styles.status} accessibilityLiveRegion="polite">
-            {t('agentInput.promptPicker.searchingOlder', { searched: history.progress.sessionsSearched, total: history.progress.totalSessions })}
-            {' · '}<FooterLink label={t('agentInput.promptPicker.stop')} onPress={history.stop} testID="prompt-picker-history-stop" />
-        </Text>
-        : history.hasMore ? <Text style={styles.status}>
-            <FooterLink label={t('agentInput.promptPicker.loadOlder')} onPress={() => { void history.loadMore(); }} testID="prompt-picker-history-more" />
-        </Text>
+        : history.error ? <View style={styles.actionLine}>
+            <Text style={[styles.status, styles.noticeError]} accessibilityLiveRegion="polite">{t('agentInput.promptPicker.historyError')}</Text>
+            <View style={styles.action}><Text style={styles.status}>{' · '}</Text>
+                <TextLinkButton label={t('common.retry')} onPress={history.retry} tone="strong" />
+            </View>
+        </View>
+        : history.isLoading ? <View style={styles.actionLine}>
+            <Text style={styles.status} accessibilityLiveRegion="polite">
+                {t('agentInput.promptPicker.searchingOlder', { searched: history.progress.sessionsSearched, total: history.progress.totalSessions })}
+            </Text>
+            <View style={styles.action}><Text style={styles.status}>{' · '}</Text>
+                <TextLinkButton label={t('agentInput.promptPicker.stop')} onPress={history.stop} testID="prompt-picker-history-stop" />
+            </View>
+        </View>
+        : history.hasMore ? <TextLinkButton label={t('agentInput.promptPicker.loadOlder')}
+            onPress={() => { void history.loadMore(); }} testID="prompt-picker-history-more" />
         : null;
     const coverage = history.coverage === 'partial' ? t('agentInput.promptPicker.partialHistory')
         : history.coverage === 'loaded' ? t('agentInput.promptPicker.loadedHistory') : null;
@@ -244,15 +251,11 @@ function Hint(props: Readonly<{ keys: string; label: string }>) {
     return <View style={styles.hint}><KeyHint label={props.keys} /><Text style={styles.hintLabel}>{props.label}</Text></View>;
 }
 
-function FooterLink(props: Readonly<{ label: string; onPress: () => void; testID?: string }>) {
-    return <Text style={styles.link} accessibilityRole="button" onPress={props.onPress} testID={props.testID}>{props.label}</Text>;
-}
-
 const styles = StyleSheet.create((theme) => ({
     row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingLeft: 14, paddingRight: 10, paddingVertical: 7, minHeight: 48 },
     lead: { width: 20, alignItems: 'center', justifyContent: 'center' },
     body: { flex: 1, minWidth: 0, gap: 1 },
-    title: { ...Typography.default(), fontSize: 14, lineHeight: 19, color: theme.colors.text.primary },
+    title: { ...Typography.rowTitle(), ...Typography.default(), color: theme.colors.text.primary },
     meta: { ...Typography.rowMeta(), color: theme.colors.text.secondary },
     token: Typography.mono(),
     // The in-place save row: the field and Save share one line; the meta says where it goes.
@@ -267,14 +270,16 @@ const styles = StyleSheet.create((theme) => ({
     previewMeta: { ...Typography.timestamp(), color: theme.colors.text.tertiary },
     previewScroll: { flex: 1, minHeight: 0 },
     previewScrollContent: { paddingBottom: 4 },
-    previewText: { ...Typography.default(), fontSize: 13, lineHeight: 19, color: theme.colors.text.primary },
-    previewError: { ...Typography.default(), fontSize: 13, lineHeight: 19, color: theme.colors.state.danger.foreground },
-    argument: { ...Typography.mono('semiBold'), fontSize: 12, color: theme.colors.text.link, backgroundColor: theme.colors.state.info.background },
+    previewText: { ...Typography.default(), ...ITEM_SUBTITLE_TEXT_METRICS.compact, color: theme.colors.text.primary },
+    previewError: { ...Typography.default(), ...ITEM_SUBTITLE_TEXT_METRICS.compact, color: theme.colors.state.danger.foreground },
+    argument: { ...Typography.rowMeta(), ...Typography.mono('semiBold'), color: theme.colors.text.link,
+        backgroundColor: theme.colors.state.info.background, ...(Platform.OS === 'web' ? { borderRadius: 4, paddingHorizontal: 2 } : {}) },
     notice: { paddingHorizontal: 16, paddingTop: 10, paddingBottom: 8, gap: 6 },
-    noticeTitle: { ...Typography.default('semiBold'), fontSize: 12, lineHeight: 16, color: theme.colors.text.secondary },
-    noticeText: { ...Typography.default(), fontSize: 13, lineHeight: 18, color: theme.colors.text.secondary },
+    noticeTitle: { ...Typography.rowMeta(), ...Typography.default('semiBold'), color: theme.colors.text.secondary },
+    noticeText: { ...Typography.default(), ...ITEM_SUBTITLE_TEXT_METRICS.cozy, color: theme.colors.text.secondary },
     noticeError: { color: theme.colors.state.danger.foreground },
-    link: { color: theme.colors.text.link },
+    actionLine: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', minWidth: 0 },
+    action: { flexDirection: 'row', alignItems: 'center' },
     skeleton: { paddingHorizontal: 4 },
     footer: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 14, rowGap: 4, minHeight: 34,
         paddingHorizontal: 12, paddingVertical: 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.colors.border.default },

@@ -4,6 +4,17 @@ import { describe, expect, it } from 'vitest';
 import { resolveRenderedAgentInputControls } from './resolveRenderedAgentInputControls';
 
 describe('resolveRenderedAgentInputControls', () => {
+    it('keeps document controls in one wrapping row without hiding controls outside the collapsed bar', () => {
+        const node = (key: string) => <React.Fragment key={key}>{key}</React.Fragment>;
+        const controls = resolveRenderedAgentInputControls({
+            layout: 'wrap', singleRow: true,
+            coreControlNodesById: { machine: [node('machine')] },
+            extraControlNodesById: { workflow: [node('workflow')], workflowInputs: [node('inputs')], workflowRoles: [node('roles')] },
+            extraChips: [node('unregistered')], barControlIds: ['workflow'],
+        });
+        expect(controls.chips.map((chip) => (chip as React.ReactElement).key)).toEqual(['workflow', 'inputs', 'roles', 'machine', 'unregistered']);
+        expect(controls.secondaryLeadingControls).toEqual([]);
+    });
     it('renders admitted plugin controls at the one plugin insertion point and keeps them in collapsed overflow', () => {
         const pluginControl = <React.Fragment key="plugin-control">Plugin control</React.Fragment>;
         const coreControl = <React.Fragment key="engine-control">Engine control</React.Fragment>;

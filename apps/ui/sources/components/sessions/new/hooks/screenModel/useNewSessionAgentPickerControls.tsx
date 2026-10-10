@@ -79,6 +79,7 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
      */
     refreshProbe?: OptionPickerProbeState | null;
     providerProjection?: NewSessionEngineOptionDetailProps['providerProjection'];
+    selectedNativeSourceLabel?: string | null;
     experimentalConfirmation?: SessionModelPickerExperimentalConfirmationController;
 }>): Readonly<{
     agentPickerOptions?: ReadonlyArray<AgentInputChipPickerOption>;
@@ -222,6 +223,7 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
         onRemoveFavoriteModelSelection: handleRemoveFavoriteModelSelection,
         onRememberAgentPickerView: params.onRememberAgentPickerView,
         ...(params.providerProjection ? { providerProjection: params.providerProjection } : {}),
+        selectedNativeSourceLabel: params.selectedNativeSourceLabel,
         experimentalConfirmation: params.experimentalConfirmation,
         ...(params.getBackendEntryMachineAgent && params.selectedMachineId ? {
             getBackendEntryMachineAgent: params.getBackendEntryMachineAgent,
@@ -251,6 +253,7 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
         params.profileMap,
         params.projectionCurrent,
         params.providerProjection,
+        params.selectedNativeSourceLabel,
         params.refreshProbe,
         params.resolvedBackendEntries,
         params.selectedMachineId,

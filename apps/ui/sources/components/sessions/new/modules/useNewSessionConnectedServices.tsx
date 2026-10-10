@@ -1,5 +1,5 @@
 import React from 'react';
-import { presentSessionRouteChip, resolveSessionRoutePresentation, projectProviderRouteSignInPurposes, readProviderConnectionDisclosureSource, providerConnectionSourceLabel, type RouteSelection, type ProviderRouteSource, type SessionRoutePresentationInput } from '@/providers/session/resolveSessionRoutePresentation';
+import { presentNativeRouteSourceLabel, presentSessionRouteChip, resolveSessionRoutePresentation, projectProviderRouteSignInPurposes, readProviderConnectionDisclosureSource, providerConnectionSourceLabel, type RouteSelection, type ProviderRouteSource, type SessionRoutePresentationInput } from '@/providers/session/resolveSessionRoutePresentation';
 import { useConnectedAccountIdentityPrivacy } from '@/hooks/ui/useConnectedAccountIdentityPrivacy';
 
 import { t } from '@/text';
@@ -30,6 +30,7 @@ import type { ProviderSettingsV1 } from '@happier-dev/protocol/providers/setting
 import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams';
 
 import { NewSessionConnectedServicesSelectionContent } from '@/components/sessions/new/components/NewSessionConnectedServicesSelectionContent';
+import type { SessionRouteSources } from '@/components/sessions/new/components/useSessionRouteSourceSections';
 import { useTeamCredentialSelectionCoordinator } from '@/components/sessions/teamCredentials/useTeamCredentialSelectionCoordinator';
 import { teamCredentialDetailPath } from '@/components/settings/teams/teamsRoutes';
 import {
@@ -60,9 +61,12 @@ import { parseConnectedServicesBindingsByServiceIdFromAgentOptionState } from '@
 import { projectMachineAgentForCredential } from '@/agents/machineAgents/machineAgentModel';
 import type { MachineAgent } from '@/agents/machineAgents/machineAgentTypes';
 import type { AttentionBannerAction } from '@/components/ui/lists/AttentionBanner';
+import { presentProviderModelRow } from '@/providers/models/presentProviderModelRow';
 
 export type NewSessionConnectedServicesResult = Readonly<{
   routePresentation: ReturnType<typeof resolveSessionRoutePresentation>;
+  /** The account or pool the selected Agent's own models would run through; null for its own sign-in. */
+  nativeSourceLabel: string | null;
   requesterSignInPurposes: readonly string[];
   connectedAccountDefaultsStatus: 'loading' | 'ready' | 'unavailable';
   requireConnectedAccountDefaultsReady: () => void;
@@ -82,6 +86,8 @@ function resolveDefaultAuthWarningLabel(warningCode: ConnectedServicesAuthWarnin
 export function useNewSessionConnectedServices(params: Readonly<{
   modelSelection?: RouteSelection;
   providerSources?: readonly ProviderRouteSource[];
+  /** The selected Agent's Gateways and Providers for the "Runs through" popover; omitted, it names none. */
+  routeSources?: SessionRouteSources;
   modelRouteTeamSources?: SessionRoutePresentationInput['teamSources'];
   providerSettings?: Pick<ProviderSettingsV1, 'connections' | 'secretBindingsByConnectionId'>;
   providerProjection?: PluginProjectionV2 | null;
@@ -458,6 +464,7 @@ export function useNewSessionConnectedServices(params: Readonly<{
         router.push(teamCredentialDetailPath({ serverId: targetServerId, teamId: resource.teamId }, resource.id));
       }}
       setBindingForService={setBindingForService}
+      routeSources={params.routeSources}
       defaultProfileIdByServiceId={settings.connectedServicesDefaultProfileByServiceId}
       resolveOptionAvailability={resolveOptionAvailability}
       onOpenSettings={(serviceId) => {
@@ -488,6 +495,7 @@ export function useNewSessionConnectedServices(params: Readonly<{
     params.teamCredentialResources,
     params.teamCredentialResourceCurrentKeys,
     params.teamNameById,
+    params.routeSources,
     targetServerId,
   ]);
 
@@ -499,6 +507,23 @@ export function useNewSessionConnectedServices(params: Readonly<{
     native: { label: authLabel.label, connectedCount: authLabel.connectedCount, authSource: nativeAuthSource },
     teamSources: params.modelRouteTeamSources,
   }), [params.modelSelection, params.providerSources, params.modelRouteTeamSources, authLabel, nativeAuthSource]);
+  const selectedProviderSource = React.useMemo(() => {
+    const route = routePresentation.applied;
+    return route.kind === 'provider'
+      ? params.providerSources?.find(source => source.connectionId === route.connectionId) ?? null : null;
+  }, [params.providerSources, routePresentation]);
+  const selectedProviderRoute = React.useMemo(() => {
+    const route = routePresentation.applied;
+    if (route.kind !== 'provider') return null;
+    const row = selectedProviderSource?.rows?.find(row => row.ref.modelId === route.modelId);
+    return {
+      ready: selectedProviderSource?.authorization?.authorized === true && Boolean(row && !presentProviderModelRow({
+        modelId: row.ref.modelId, authorization: selectedProviderSource.authorization, compatibility: row.compatibility,
+        visibility: row.visibility,
+      }).selectionDisabled),
+      suppressedConnectedServiceIds: selectedProviderSource?.suppressedConnectedServiceIds ?? [],
+    };
+  }, [routePresentation, selectedProviderSource]);
 
   const requesterSignInPurposes = React.useMemo(() => {
     if (connectedAccountDefaultsStatus !== 'ready') return [];
@@ -517,17 +542,15 @@ export function useNewSessionConnectedServices(params: Readonly<{
       machineId: params.sourceMachineId ?? '', secretBindings: params.providerSettings?.secretBindingsByConnectionId[route.connectionId],
       credentialSlotId: source.credentialSlotId, managedSignInPurposes: source.managedSignInPurposes,
     }) : [];
-    const selectedSource = route.kind === 'provider'
-      ? params.providerSources?.find(source => source.connectionId === route.connectionId) : null;
-    const nativePurposes = route.kind === 'provider' && !selectedSource ? [] : projectSessionCredentialSignInPurposes({ declarations: connectedAccounts,
+    const nativePurposes = route.kind === 'provider' && !selectedProviderSource ? [] : projectSessionCredentialSignInPurposes({ declarations: connectedAccounts,
       bindings: connectedServicesBindingsPayload, resolveServiceTitle: resolveTitle,
       formatNativeTitle: service => t('machineRequester.nativeSignInPurpose', { service }),
       // A Provider replaces native authentication only through its Agent adapter's actual suppression projection.
-      suppressedServiceIds: selectedSource?.suppressedConnectedServiceIds,
+      suppressedServiceIds: selectedProviderSource?.suppressedConnectedServiceIds,
     });
     return [...new Set([...providerPurposes, ...nativePurposes])];
   }, [connectedAccountDefaultsStatus, connectedAccounts, connectedServicesBindingsPayload,
-    params.providerProjection, params.providerSettings, params.providerSources, params.sourceMachineId, routePresentation, targetServerId]);
+    params.providerProjection, params.providerSettings, selectedProviderSource, params.sourceMachineId, routePresentation, targetServerId]);
 
   const connectedServicesAuthChip = React.useMemo<AgentInputExtraActionChip | null>(() => {
         if (supportedConnectedServiceIds.length === 0) return null;
@@ -548,9 +571,10 @@ export function useNewSessionConnectedServices(params: Readonly<{
 
   const selectedCredentialMachineAgent = React.useMemo(() => projectMachineAgentForCredential(params.machineAgent, {
     credentialBindings: connectedServicesBindingsPayload,
+    providerRoute: selectedProviderRoute,
     groupOptionsByServiceId: connectedServiceAccountGroupOptionsByServiceId,
     teamCredentialResources: params.teamCredentialResources,
-  }), [params.machineAgent, connectedServicesBindingsPayload, connectedServiceAccountGroupOptionsByServiceId, params.teamCredentialResources]);
+  }), [params.machineAgent, connectedServicesBindingsPayload, selectedProviderRoute, connectedServiceAccountGroupOptionsByServiceId, params.teamCredentialResources]);
   const connectedServicesRecoveryAction = React.useMemo<AttentionBannerAction | null>(() => {
     if (connectedAccountDefaultsStatus !== 'ready' || selectedCredentialMachineAgent?.state !== 'needsSignIn'
         || selectedCredentialMachineAgent.signIn.native?.status !== 'signedOut'
@@ -568,6 +592,9 @@ export function useNewSessionConnectedServices(params: Readonly<{
   }, [connectedAccountDefaultsStatus, selectedCredentialMachineAgent, connectedServicesBindingsPayload, supportedConnectedServiceIds,
     params.machineAgent, connectedServiceProfileOptionsByServiceId, resolveServiceTitle, setBindingForService]);
 
-  return { routePresentation, requesterSignInPurposes, connectedAccountDefaultsStatus, requireConnectedAccountDefaultsReady, connectedServicesBindingsPayload, connectedServicesModelProbeCacheIdentity, connectedServicesAuthChip,
+  const nativeSourceLabel = supportedConnectedServiceIds.length > 0
+    ? presentNativeRouteSourceLabel({ label: authLabel.label, authSource: nativeAuthSource }) : null;
+
+  return { routePresentation, nativeSourceLabel, requesterSignInPurposes, connectedAccountDefaultsStatus, requireConnectedAccountDefaultsReady, connectedServicesBindingsPayload, connectedServicesModelProbeCacheIdentity, connectedServicesAuthChip,
     selectedCredentialMachineAgent, connectedServicesRecoveryAction };
 }

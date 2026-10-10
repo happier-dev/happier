@@ -1,10 +1,11 @@
 import { z } from 'zod';
-import { canonicalSessionDraftAddressV2, NewSessionDraftDocumentV2Schema, SessionDraftAddressV2Schema, type SessionDraftAddressV2, type SessionDraftDocumentV2, type SessionDraftListResponseV2, type SessionDraftListRequestV2, type SessionDraftMutateRequestV2, type SessionDraftMutateResponseV2, type SessionDraftReadResponseV2, type SessionDraftRecordV2, type SessionDraftStoredContentEnvelopeV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
+import { canonicalSessionDraftAddressV2, isAccountOwnedDraftAddressV2, NewSessionDraftDocumentV2Schema, SessionDraftAddressV2Schema, type AccountOwnedDraftAddressV2, type SessionDraftAddressV2, type SessionDraftDocumentV2, type SessionDraftListResponseV2, type SessionDraftListRequestV2, type SessionDraftMutateRequestV2, type SessionDraftMutateResponseV2, type SessionDraftReadResponseV2, type SessionDraftRecordV2, type SessionDraftStoredContentEnvelopeV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 import { pluginJsonValuesEqual as areJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { SessionDraftDocumentV1Schema, isMeaningfulSessionDraftRecipientValueV1, type SessionDraftDocumentV1, type SessionDraftExpectedRevisionV1, type StrictJsonValue } from '@happier-dev/protocol/drafts/sessionDrafts';
 import { SessionDiscussionSelectionSourceV1Schema, type SessionDiscussionSelectionSourceV1 } from '@happier-dev/protocol/sessions/discussions/content';
 import { SYNCED_SESSION_AUTHORING_FIELD_IDS_V2, SyncedSessionAuthoringValueV2Schema, type SyncedSessionAuthoringValueV2 } from '@happier-dev/protocol/sessions/authoring/index';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import { ProjectOpenDraftDocumentV2Schema, type ProjectOpenDraftDocumentV2 } from '@happier-dev/protocol/projects/openProjectDraftV1';
 
 import { randomUUID as platformRandomUUID } from '@/platform/randomUUID';
 import { log } from '@/log';
@@ -14,6 +15,7 @@ import { getSessionDraftPersistenceStorage } from './sessionDraftPersistenceStor
 import { isSessionDraftContextUnavailableError } from './sessionDraftCipherError';
 import { isSessionDraftEpochUnavailableError } from './sessionDraftEpochError';
 import type { NewSessionDraftLocalState } from './newSessionDraftLocalState';
+import { readSessionInstructionsAuthoringDraft } from '@/sync/ops/promptLibrary/sessionInstructions';
 import { getSessionDraftDocumentField as getField, type DraftFieldPathV1 } from './sessionDraftDocumentFields';
 import { parseSerializedSessionDraftScope, serializeSessionDraftReplica } from './sessionDraftSerializedScope';
 import { clearNewSessionAttachmentDrafts } from '@/components/sessions/new/attachments/newSessionAttachmentDraftStore';
@@ -202,6 +204,10 @@ export type NewSessionDraftPatch = Readonly<{
     authoring?: Partial<SyncedSessionAuthoringValueV2>;
 }>;
 
+export type ProjectOpenDraftPatch = Partial<Readonly<{
+    [K in 'selection' | 'uncertainInputs' | 'result' | 'retiredAttempt']: ProjectOpenDraftDocumentV2[K]['value'];
+}>>;
+
 export type SessionDraftCurrentness = Readonly<{
     address: SessionDraftAddressV2;
     mutationIds: Readonly<Record<string, string>>;
@@ -248,7 +254,7 @@ export type ExistingSessionDraftProjection = Readonly<{
  * stays openable by its route but is not listed.
  */
 export function isNewSessionDraftListed(draft: Pick<NewSessionDraftProjection, 'document' | 'localSupplement'>): boolean {
-    return hasMeaningfulContent(draft.document)
+    return hasMeaningfulContent(draft.document, undefined, { localSupplement: draft.localSupplement })
         || (draft.localSupplement.launchUserAttemptId?.trim().length ?? 0) > 0;
 }
 
@@ -297,7 +303,8 @@ type PersistedReplica = {
     localSupplement: SessionDraftLocalSupplement;
 };
 
-type ScopeState = { loaded: boolean; replicas: Map<string, PersistedReplica>; persistenceError?: boolean; envelopeFields?: Readonly<Record<string, unknown>> };
+type ScopeState = { loaded: boolean; replicas: Map<string, PersistedReplica>; persistenceError?: boolean;
+    unreadableRetainedContent?: boolean; envelopeFields?: Readonly<Record<string, unknown>> };
 type Listener = () => void;
 type ScopeMutationBatch = {
     originalReplicas: Map<string, PersistedReplica>;
@@ -365,10 +372,15 @@ function cloneDocument(document: SessionDraftDocumentV2): SessionDraftDocumentV2
     return JSON.parse(JSON.stringify(document)) as SessionDraftDocumentV2;
 }
 
+function isProjectOpenDocument(document: SessionDraftDocumentV2): document is ProjectOpenDraftDocumentV2 {
+    return document.target.kind === 'projectOpen';
+}
+
 function pathKey(path: DraftFieldPathV1): string {
     if (path.kind === 'composer') return `composer.${path.field}`;
     if (path.kind === 'routing') return `target.routing.${path.field}`;
     if (path.kind === 'title') return 'title';
+    if (path.kind === 'projectOpen') return path.field;
     if (path.kind === 'authoring') return `target.authoring.${path.fieldId}`;
     return `extensions.${path.pluginId}.${path.fieldId}`;
 }
@@ -379,6 +391,12 @@ function setField(
     field: { mutationId: string; value: StrictJsonValue } | null,
 ): SessionDraftDocumentV2 {
     let next = cloneDocument(document);
+    if (isProjectOpenDocument(next)) {
+        if (path.kind !== 'projectOpen' || !field) return next;
+        const parsed = ProjectOpenDraftDocumentV2Schema.safeParse({ ...next, [path.field]: field });
+        return parsed.success ? parsed.data : next;
+    }
+    if (path.kind === 'projectOpen') return next;
     if (path.kind === 'composer') {
         if (field) Object.assign(next.composer[path.field], field);
         return next;
@@ -440,6 +458,10 @@ function isDiscussionDocument(document: SessionDraftDocumentV2): document is Ext
 }
 
 function listFieldPaths(document: SessionDraftDocumentV2): DraftFieldPathV1[] {
+    if (isProjectOpenDocument(document)) return [
+        { kind: 'projectOpen', field: 'selection' }, { kind: 'projectOpen', field: 'uncertainInputs' },
+        { kind: 'projectOpen', field: 'result' }, { kind: 'projectOpen', field: 'retiredAttempt' },
+    ];
     const paths: DraftFieldPathV1[] = [
         { kind: 'composer', field: 'text' },
         { kind: 'composer', field: 'mentions' },
@@ -484,6 +506,11 @@ function hasNewSessionAuthoredContent(authoring: NewSessionDraftDocument['target
     return record.automation?.value != null;
 }
 
+function hasLocalInstructionsAuthoring(localSupplement?: SessionDraftLocalSupplement): boolean {
+    const instructions = readSessionInstructionsAuthoringDraft(localSupplement?.newSessionLocalState?.instructionsDraft);
+    return Boolean(instructions && (instructions.title.trim() || instructions.markdown.trim()));
+}
+
 /**
  * The one "does this draft hold something the user wrote" decision, used both to
  * keep/sync a draft and to list it. A Run address seeds its own manual recipient
@@ -493,14 +520,21 @@ function hasNewSessionAuthoredContent(authoring: NewSessionDraftDocument['target
 function hasMeaningfulContent(
     document: SessionDraftDocumentV2,
     address?: SessionDraftAddressV2,
-    options?: Readonly<{ excludeScmDrafts?: boolean }>,
+    options?: Readonly<{ excludeScmDrafts?: boolean; localSupplement?: SessionDraftLocalSupplement }>,
 ): boolean {
+    if (isProjectOpenDocument(document)) {
+        return document.selection.value !== null || document.uncertainInputs.value.length > 0
+            || document.result.value !== null || document.retiredAttempt.value !== null;
+    }
     if (document.composer.text.value.trim().length > 0) return true;
     if (isNonEmptyArray(document.composer.mentions.value) || isNonEmptyArray(document.composer.attachments.value)) return true;
     if (isDiscussionDocument(document)) return (document.title?.value.trim().length ?? 0) > 0;
     const counted = (pluginId: string, fieldId: string) => !(options?.excludeScmDrafts && SESSION_SCM_DRAFT_FIELD_KEYS.has(`extensions.${pluginId}.${fieldId}`));
     if (Object.keys(document.extensions).some((pluginId) => Object.keys(document.extensions[pluginId] ?? {}).some((fieldId) => counted(pluginId, fieldId)))) return true;
-    if (document.target.kind === 'newSession') return hasNewSessionAuthoredContent(document.target.authoring);
+    if (document.target.kind === 'newSession') {
+        return hasNewSessionAuthoredContent(document.target.authoring)
+            || hasLocalInstructionsAuthoring(options?.localSupplement);
+    }
     const recipientIsStructural = address?.kind === 'run'
         && areJsonValuesEqual(document.target.routing.recipient.value, runRecipientValue(address.runId));
     return (!recipientIsStructural && isMeaningfulSessionDraftRecipientValueV1(document.target.routing.recipient.value))
@@ -514,6 +548,10 @@ function runRecipientValue(runId: string): StrictJsonValue {
 
 function createEmptyDocument(address: SessionDraftAddressV2, randomUUID: () => string): SessionDraftDocumentV2 {
     const field = <T extends StrictJsonValue>(value: T) => ({ mutationId: randomUUID(), value });
+    if (address.kind === 'projectOpen') return {
+        v: 2, target: { kind: 'projectOpen' }, selection: field(null), uncertainInputs: field([]),
+        result: field(null), retiredAttempt: field(null),
+    };
     if (address.kind === 'discussion' || address.kind === 'newDiscussion') {
         return {
             v: 2,
@@ -779,11 +817,12 @@ export class SessionDraftRepository {
                                     : 0,
                                 localSupplement: normalizeLocalSupplement(replica.localSupplement, replica.address),
                             });
-                        }
+                        } else state.unreadableRetainedContent = true;
                     }
-                }
+                } else state.unreadableRetainedContent = true;
             } catch {
                 // Preserve the unreadable bytes. A later compatible build may recover them.
+                state.unreadableRetainedContent = true;
             }
         }
         this.scopeStates.set(scopeKey, state);
@@ -1067,7 +1106,7 @@ export class SessionDraftRepository {
                 ? hasMeaningfulContent(document, address)
                 : changed || hasMeaningfulContent(document, address)));
         if (!materialized && address.kind === 'newSession') return;
-        const meaningfulContent = hasMeaningfulContent(document, address);
+        const meaningfulContent = hasMeaningfulContent(document, address, { localSupplement: existing?.localSupplement });
         this.writeReplica(scope, {
             address,
             baseRevision: existing?.baseRevision ?? 'absent',
@@ -1128,7 +1167,11 @@ export class SessionDraftRepository {
         else if (params.patch.legacyNewSessionDraftV1 === true) nextSupplement.legacyNewSessionDraftV1 = true;
         if (params.patch.legacyExistingSessionDraftV1 === null) delete nextSupplement.legacyExistingSessionDraftV1;
         else if (params.patch.legacyExistingSessionDraftV1 === true) nextSupplement.legacyExistingSessionDraftV1 = true;
-        this.writeReplica(params.scope, { ...existing, localSupplement: nextSupplement });
+        const meaningfulContent = existing.localRawDocument
+            && hasMeaningfulContent(existing.localRawDocument, params.address, { localSupplement: nextSupplement });
+        this.writeReplica(params.scope, { ...existing, localSupplement: nextSupplement,
+            ...(meaningfulContent ? { materialized: true, deleteWhenEmpty: false } : {}),
+        });
     }
 
     /**
@@ -1220,6 +1263,39 @@ export class SessionDraftRepository {
             if (value !== undefined) writes.push({ path: { kind: 'authoring', fieldId: fieldId as keyof SyncedSessionAuthoringValueV2 }, value: value as StrictJsonValue });
         }
         this.applyWrites(params.scope, { kind: 'newSession', draftId: params.draftId }, writes, params.materializationIntent);
+    }
+
+    /** Open remains agent-free while sharing retained draft field conflicts and storage. */
+    writeProjectOpenDraft(params: Readonly<{
+        scope: SessionDraftRepositoryScope;
+        draftId: string;
+        patch: ProjectOpenDraftPatch;
+        materializationIntent?: SessionDraftMaterializationIntent;
+    }>): void {
+        const address = SessionDraftAddressV2Schema.parse({ kind: 'projectOpen', draftId: params.draftId });
+        const state = this.getScopeState(params.scope);
+        const existing = this.readReplica(params.scope, address);
+        if (state.unreadableRetainedContent || (existing && (!existing.localRawDocument
+            || !ProjectOpenDraftDocumentV2Schema.safeParse(existing.localRawDocument).success))) {
+            throw new Error('project_open_draft_unavailable');
+        }
+        const writes = Object.entries(params.patch).filter((entry) => entry[1] !== undefined).map(([field, value]) => ({
+            path: { kind: 'projectOpen' as const, field: field as Extract<DraftFieldPathV1, { kind: 'projectOpen' }>['field'] },
+            value: StrictJsonValueSchema.parse(value),
+        }));
+        this.applyWrites(params.scope, address, writes, params.materializationIntent ?? 'userEdit');
+    }
+
+    /** Effect admission waits for local recovery custody, not a network acknowledgement. */
+    async flushProjectOpenDraftLocally(params: Readonly<{ scope: SessionDraftRepositoryScope; draftId: string }>): Promise<void> {
+        if (this.storage.prepare) await this.storage.prepare();
+        if (this.storage.flush) await this.flushStorage(params.scope);
+    }
+
+    /** Unsupported/offline Homes preserve choices but cannot admit an Open effect. */
+    async flushProjectOpenDraftForAdmission(params: Readonly<{ scope: SessionDraftRepositoryScope; draftId: string }>): Promise<void> {
+        const result = await this.flushSessionDraft({ scope: params.scope, address: { kind: 'projectOpen', draftId: params.draftId } });
+        if (result.status !== 'clean') throw new Error('project_open_draft_unavailable');
     }
 
     captureSessionDraftCurrentness(params: Readonly<{
@@ -1364,7 +1440,7 @@ export class SessionDraftRepository {
             changed = true;
         }
         if (!changed) return false;
-        const meaningfulContent = hasMeaningfulContent(document, params.address);
+        const meaningfulContent = hasMeaningfulContent(document, params.address, { localSupplement: replica.localSupplement });
         this.writeReplica(params.scope, {
             ...replica,
             localRawDocument: document,
@@ -1679,7 +1755,8 @@ export class SessionDraftRepository {
                         .map((mutation) => acknowledged.has(pathKey(mutation.path))
                             ? { ...mutation, baseMutationId: null }
                             : mutation);
-                    if (!latest.localRawDocument || !hasMeaningfulContent(latest.localRawDocument, params.address) || remaining.length === 0) {
+                    if (!latest.localRawDocument || !hasMeaningfulContent(latest.localRawDocument, params.address,
+                        { localSupplement: latest.localSupplement })) {
                         this.deleteReplica(params.scope, params.address, { authoritativeRemoval: true });
                         return { status: 'clean' };
                     }
@@ -1688,10 +1765,13 @@ export class SessionDraftRepository {
                         baseRevision: response.record.revision,
                         baseRawDocument: null,
                         pendingFieldMutations: remaining,
-                        status: 'pending',
+                        status: remaining.length > 0 ? 'pending' : 'clean',
                         conflict: null,
                         createdAt: response.record.createdAt,
+                        materialized: true,
+                        deleteWhenEmpty: false,
                     });
+                    if (remaining.length === 0) return { status: 'clean' };
                     continue;
                 }
                 const latest = this.readReplica(params.scope, params.address) ?? replica;
@@ -1782,7 +1862,7 @@ export class SessionDraftRepository {
                 synced: remoteField?.value ?? null,
             });
         }
-        const meaningfulContent = hasMeaningfulContent(localDocument, address);
+        const meaningfulContent = hasMeaningfulContent(localDocument, address, { localSupplement: replica.localSupplement });
         if (remoteDocument === null && remaining.length === 0 && conflicts.length === 0 && !meaningfulContent) {
             this.deleteReplica(scope, address, { authoritativeRemoval: true });
             return 'rebased';
@@ -1941,6 +2021,11 @@ export class SessionDraftRepository {
         }
         if (response.status === 'absent') {
             if (!local) return false;
+            if (address.kind === 'newSession' && hasLocalInstructionsAuthoring(local.localSupplement)
+                && local.pendingFieldMutations.length === 0) {
+                this.rebaseConflictWithDocument(scope, address, local, null, null);
+                return false;
+            }
             if (local.baseRevision === 'absent') {
                 if (local.deleteWhenEmpty) this.deleteReplica(scope, address);
                 return local.pendingFieldMutations.length > 0 && !local.deleteWhenEmpty;
@@ -1965,7 +2050,9 @@ export class SessionDraftRepository {
             return false;
         }
         if (response.status === 'deleted') {
-            if (!local?.pendingFieldMutations.length) {
+            if (local && address.kind === 'newSession' && hasLocalInstructionsAuthoring(local.localSupplement)) {
+                this.rebaseConflictWithDocument(scope, address, local, response.record, null);
+            } else if (!local?.pendingFieldMutations.length) {
                 this.deleteReplica(scope, address, { authoritativeRemoval: true });
             } else {
                 this.rebaseConflictWithDocument(scope, address, local, response.record, null);
@@ -2217,17 +2304,17 @@ export class SessionDraftRepository {
     }
 
     listNewSessionDraftEncryptionMigrationCandidates(scope: SessionDraftRepositoryScope): readonly Readonly<{
-        address: Extract<SessionDraftAddressV2, { kind: 'newSession' }>;
+        address: AccountOwnedDraftAddressV2;
         baseRevision: number;
         document: SessionDraftDocumentV2;
     }>[] {
         return [...this.getScopeState(scope).replicas.values()]
             .filter((replica): replica is PersistedReplica & {
-                address: Extract<SessionDraftAddressV2, { kind: 'newSession' }>;
+                address: AccountOwnedDraftAddressV2;
                 baseRevision: number;
                 baseRawDocument: SessionDraftDocumentV2;
             } => (
-                replica.address.kind === 'newSession'
+                isAccountOwnedDraftAddressV2(replica.address)
                 && replica.materialized
                 && typeof replica.baseRevision === 'number'
                 && replica.baseRawDocument !== null
@@ -2263,7 +2350,7 @@ export class SessionDraftRepository {
         }
         const openedRecords: Array<Readonly<{ record: SessionDraftRecordV2; document: SessionDraftDocumentV2 }>> = [];
         for (const record of records) {
-            if (record.address.kind !== 'newSession' || record.content === null) {
+            if (!isAccountOwnedDraftAddressV2(record.address) || record.content === null) {
                 throw new Error('Session draft encryption migration returned an invalid record');
             }
             const document = await runtime.cipher.open(record.address, record.content);
@@ -2278,7 +2365,7 @@ export class SessionDraftRepository {
                 const replica = this.readReplica(scope, record.address);
                 if (
                     !replica
-                    || replica.address.kind !== 'newSession'
+                    || !isAccountOwnedDraftAddressV2(replica.address)
                     || replica.baseRevision !== candidateRevisionByKey.get(canonicalSessionDraftAddressV2(record.address))
                 ) {
                     throw new Error('Session draft encryption migration candidate changed before acknowledgement');
@@ -2328,6 +2415,9 @@ export const subscribeSessionDraftList = singleton.subscribeSessionDraftList.bin
 export const writeExistingSessionDraft = singleton.writeExistingSessionDraft.bind(singleton);
 export const writeDiscussionSessionDraft = singleton.writeDiscussionSessionDraft.bind(singleton);
 export const writeNewSessionDraft = singleton.writeNewSessionDraft.bind(singleton);
+export const writeProjectOpenDraft = singleton.writeProjectOpenDraft.bind(singleton);
+export const flushProjectOpenDraftLocally = singleton.flushProjectOpenDraftLocally.bind(singleton);
+export const flushProjectOpenDraftForAdmission = singleton.flushProjectOpenDraftForAdmission.bind(singleton);
 export const writeSessionDraftLocalSupplement = singleton.writeSessionDraftLocalSupplement.bind(singleton);
 export const captureSessionDraftCurrentness = singleton.captureSessionDraftCurrentness.bind(singleton);
 export const captureSessionDraftLaunchCurrentness = singleton.captureSessionDraftLaunchCurrentness.bind(singleton);

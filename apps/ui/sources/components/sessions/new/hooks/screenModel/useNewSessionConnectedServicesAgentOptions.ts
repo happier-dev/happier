@@ -61,6 +61,7 @@ export function useNewSessionConnectedServicesAgentOptions(params: Readonly<{
     teamCredentialResources?: ConnectedServicesParams['teamCredentialResources'];
     modelSelection?: ConnectedServicesParams['modelSelection'];
     providerSources?: ConnectedServicesParams['providerSources'];
+    routeSources?: ConnectedServicesParams['routeSources'];
     providerSettings?: ConnectedServicesParams['providerSettings'];
     providerProjection?: ConnectedServicesParams['providerProjection'];
     modelRouteTeamSources?: ConnectedServicesParams['modelRouteTeamSources'];
@@ -76,6 +77,7 @@ export function useNewSessionConnectedServicesAgentOptions(params: Readonly<{
     setAgentOptionStateForCurrentAgent: (key: string, value: unknown) => void;
     connectedServicesAuthChip: NewSessionConnectedServicesResult['connectedServicesAuthChip'];
     routePresentation: NewSessionConnectedServicesResult['routePresentation'];
+    nativeSourceLabel: NewSessionConnectedServicesResult['nativeSourceLabel'];
     requesterSignInPurposes: NewSessionConnectedServicesResult['requesterSignInPurposes'];
     connectedServicesBindingsPayload: NewSessionConnectedServicesResult['connectedServicesBindingsPayload'];
     connectedServicesModelProbeCacheIdentity: NewSessionConnectedServicesResult['connectedServicesModelProbeCacheIdentity'];
@@ -106,9 +108,10 @@ export function useNewSessionConnectedServicesAgentOptions(params: Readonly<{
 
     const { connectedAccountDefaultsStatus, requireConnectedAccountDefaultsReady,
         connectedServicesBindingsPayload, connectedServicesModelProbeCacheIdentity, connectedServicesAuthChip,
-        selectedCredentialMachineAgent, connectedServicesRecoveryAction, routePresentation, requesterSignInPurposes } = useNewSessionConnectedServices({
+        selectedCredentialMachineAgent, connectedServicesRecoveryAction, routePresentation, nativeSourceLabel, requesterSignInPurposes } = useNewSessionConnectedServices({
         modelSelection: params.modelSelection,
         providerSources: params.providerSources,
+        routeSources: params.routeSources,
         providerSettings: params.providerSettings,
         providerProjection: params.providerProjection,
         modelRouteTeamSources: params.modelRouteTeamSources,
@@ -146,6 +149,7 @@ export function useNewSessionConnectedServicesAgentOptions(params: Readonly<{
 
     return {
         routePresentation,
+        nativeSourceLabel,
         requesterSignInPurposes,
         setAgentOptionStateForCurrentAgent,
         connectedServicesAuthChip,

@@ -1,4 +1,14 @@
+import { readSessionBotV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import {
+    SESSION_ACTION_MAKE_BOT_ID,
+    SESSION_ACTION_MAKE_REGULAR_ID,
+    SESSION_ACTION_RAIL_PIN_ID,
+    SESSION_ACTION_RAIL_UNPIN_ID,
+    SESSION_ACTION_WORK_OPEN_ID,
+    SESSION_ACTION_TALK_ID,
+    SESSION_ACTION_TOOL_CALLS_TOGGLE_ID,
+    SESSION_ACTION_TOOL_CALLS_USE_DEFAULT_ID,
     SESSION_ACTION_ARCHIVE_ID,
     SESSION_ACTION_CLEAR_ATTENTION_STANDING_ID,
     SESSION_ACTION_DELETE_ID,
@@ -36,6 +46,32 @@ export function listVisibleSessionActionIds(params: Readonly<{
 }>): SessionActionId[] {
     const { target, surface } = params;
     const ids: SessionActionId[] = [];
+    if (surface === 'botsRoster') {
+        // The roster's compact menu (lab `b-rail M`): Talk, the rail choice, Instructions and voice,
+        // then the way back to a regular session. Everything else stays in the session's own menu.
+        if (target.serverId === null || target.session.access?.capabilities.readTranscript !== true) return ids;
+        const isBot = readSessionBotV1(target.session.metadata?.bot)?.kind === 'bot';
+        const voiceAction = getActionSpec('ui.voice_global.start');
+        if (isBot && voiceAction.surfaces.ui && voiceAction.executionPlacement === 'client') ids.push(SESSION_ACTION_TALK_ID);
+        if (target.isRailPinned) ids.push(SESSION_ACTION_RAIL_UNPIN_ID);
+        else if (isBot) ids.push(SESSION_ACTION_RAIL_PIN_ID);
+        if (isBot) ids.push(SESSION_ACTION_WORK_OPEN_ID);
+        if (isBot && target.canRename && target.canWriteOwnerMetadata) ids.push(SESSION_ACTION_MAKE_REGULAR_ID);
+        return ids;
+    }
+    // The session's own menu opens its "This session" rows with the name, then the rail choice and
+    // Talk (lab `b-promote`); the other surfaces keep their established order.
+    if (surface === 'sessionHeader' && target.canRename) ids.push(SESSION_ACTION_RENAME_ID);
+    if (surface !== 'selectionActionBar' && target.serverId !== null
+        && target.session.access?.capabilities.readTranscript === true) {
+        if (target.isRailPinned) ids.push(SESSION_ACTION_RAIL_UNPIN_ID);
+        else if (readSessionBotV1(target.session.metadata?.bot)?.kind === 'bot') ids.push(SESSION_ACTION_RAIL_PIN_ID);
+        if (readSessionBotV1(target.session.metadata?.bot)?.kind === 'bot') {
+            ids.push(SESSION_ACTION_WORK_OPEN_ID);
+            const voiceAction = getActionSpec('ui.voice_global.start');
+            if (voiceAction.surfaces.ui && voiceAction.executionPlacement === 'client') ids.push(SESSION_ACTION_TALK_ID);
+        }
+    }
     if (surface !== 'selectionActionBar' && target.followEnabled === true && target.serverId?.trim()) {
         ids.push(SESSION_ACTION_FOLLOW_ID);
     }
@@ -51,7 +87,14 @@ export function listVisibleSessionActionIds(params: Readonly<{
     }
 
     if (target.canRename) {
-        ids.push(SESSION_ACTION_RENAME_ID);
+        if (surface !== 'sessionHeader') ids.push(SESSION_ACTION_RENAME_ID);
+        if (surface !== 'selectionActionBar' && target.canWriteOwnerMetadata) {
+            const marker = readSessionBotV1(target.session.metadata?.bot);
+            ids.push(marker?.kind === 'bot' ? SESSION_ACTION_MAKE_REGULAR_ID : SESSION_ACTION_MAKE_BOT_ID);
+        }
+    }
+    if (surface !== 'selectionActionBar' && target.canWriteOwnerMetadata) {
+        ids.push(SESSION_ACTION_TOOL_CALLS_TOGGLE_ID, SESSION_ACTION_TOOL_CALLS_USE_DEFAULT_ID);
     }
 
     // "Make this an orchestrator" lives in the Session's own ⋯ (ORC §3.8); choosing a Session's role

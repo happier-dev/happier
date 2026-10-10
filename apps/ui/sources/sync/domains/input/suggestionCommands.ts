@@ -4,7 +4,7 @@
  */
 
 import Fuse from 'fuse.js';
-import { isPromptInvocationAvailable, PromptInvocationsV1Schema } from '@happier-dev/protocol/prompts/library/promptInvocationsV1';
+import { isPromptInvocationAvailable, PromptInvocationsV1Schema, type PromptInvocationsV1 } from '@happier-dev/protocol/prompts/library/promptInvocationsV1';
 import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 import { storage } from '../state/storage';
 import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
@@ -27,6 +27,8 @@ export interface CommandItem {
 }
 
 export interface SearchOptions {
+    /** Admitted Account catalog value; absence is not permission to read Settings. */
+    invocations?: PromptInvocationsV1 | null;
     nativeCommands?: readonly Pick<CommandItem, 'command' | 'description'>[];
     limit?: number;
     threshold?: number;
@@ -73,9 +75,9 @@ function buildActionSlashCommands(state: any): CommandItem[] {
     return out;
 }
 
-function buildPromptInvocationSlashCommands(state: Pick<ReturnType<typeof storage.getState>, 'settings'>, sessionId: string | null): CommandItem[] {
+function buildPromptInvocationSlashCommands(invocations: PromptInvocationsV1 | null | undefined, sessionId: string | null): CommandItem[] {
     const out: CommandItem[] = [];
-    const parsed = PromptInvocationsV1Schema.removeCatch().safeParse(state.settings?.promptInvocationsV1 ?? {});
+    const parsed = PromptInvocationsV1Schema.removeCatch().safeParse(invocations);
     if (!parsed.success) return out;
     for (const entry of parsed.data.entries) {
         if (!isPromptInvocationAvailable(entry, { sessionId })) continue;
@@ -86,6 +88,7 @@ function buildPromptInvocationSlashCommands(state: Pick<ReturnType<typeof storag
                 invocationId: entry.id,
                 token: entry.token,
                 targetArtifactId: entry.target.artifactId,
+                ...(entry.target.serverId ? { targetServerId: entry.target.serverId } : {}),
                 behavior: entry.behavior,
                 allowArgs: entry.allowArgs,
             },
@@ -213,6 +216,7 @@ function getCommandsFromSession(
     sessionId: string | null,
     contributedActions: readonly PluginContributedActionDescriptor[] = [],
     nativeCommands: readonly Pick<CommandItem, 'command' | 'description'>[] = [],
+    invocations?: PromptInvocationsV1 | null,
 ): CommandItem[] {
     const state = storage.getState();
     const session = sessionId ? state.sessions?.[sessionId] : undefined;
@@ -223,7 +227,7 @@ function getCommandsFromSession(
     ];
 
     // Add prompt template tokens (never overriding action/default commands).
-    for (const invocation of buildPromptInvocationSlashCommands(state, session ? sessionId : null)) {
+    for (const invocation of buildPromptInvocationSlashCommands(invocations, session ? sessionId : null)) {
         if (commands.find((c) => c.command === invocation.command)) continue;
         commands.push(invocation);
     }
@@ -256,7 +260,7 @@ export async function searchCommands(
     const { limit = 10, threshold = 0.3, contributedActions = [] } = options;
     
     // Get commands from session metadata (no caching)
-    const commands = getCommandsFromSession(sessionId, contributedActions, options.nativeCommands);
+    const commands = getCommandsFromSession(sessionId, contributedActions, options.nativeCommands, options.invocations);
     
     // If query is empty, return all commands
     if (!query || query.trim().length === 0) {
@@ -285,6 +289,6 @@ export async function searchCommands(
 }
 
 // Get all available commands for a session
-export function getAllCommands(sessionId: string | null, options: Pick<SearchOptions, 'contributedActions'> = {}): CommandItem[] {
-    return getCommandsFromSession(sessionId, options.contributedActions);
+export function getAllCommands(sessionId: string | null, options: Pick<SearchOptions, 'contributedActions' | 'invocations'> = {}): CommandItem[] {
+    return getCommandsFromSession(sessionId, options.contributedActions, [], options.invocations);
 }

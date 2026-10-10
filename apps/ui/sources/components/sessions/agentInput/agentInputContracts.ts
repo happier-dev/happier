@@ -142,6 +142,8 @@ export type AgentInputStatusBadgeEmphasis = 'quiet' | 'prominent';
 export type AgentInputStatusBadge = Readonly<{
     key: string;
     label: string;
+    /** Required disclosure text remains fully visible instead of truncating on phones. */
+    labelNumberOfLines?: number;
     testID?: string;
     accessibilityLabel?: string;
     accessibilityHint?: string;

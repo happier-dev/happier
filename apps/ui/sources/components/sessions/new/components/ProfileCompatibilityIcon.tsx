@@ -5,11 +5,13 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { isProfileCompatibleWithBackendTarget, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { getResolvedBackendCatalogEntries, type ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
-import { getAgentCliGlyph, getAgentCore } from '@/agents/catalog/catalog';
+import { getAgentCore } from '@/agents/catalog/catalog';
+import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { isLegacyCompatAgentType } from '@/agents/backendCatalog/legacyCompatAgents';
 import { Text } from '@/components/ui/text/Text';
 import { useSetting } from '@/sync/domains/state/storage';
+import { Icon } from '@/components/ui/icons/Icon';
 
 
 type Props = {
@@ -25,10 +27,16 @@ const stylesheet = StyleSheet.create((theme) => ({
         justifyContent: 'center',
     },
     stack: {
-        flexDirection: 'column',
+        flexDirection: 'row',
+        flexWrap: 'wrap',
         alignItems: 'center',
+        alignContent: 'center',
         justifyContent: 'center',
         gap: 0,
+    },
+    cell: {
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     glyph: {
         color: theme.colors.text.secondary,
@@ -37,7 +45,7 @@ const stylesheet = StyleSheet.create((theme) => ({
 }));
 
 export function ProfileCompatibilityIcon({ profile, backendEntries: backendEntriesOverride, size = 32, style }: Props) {
-    useUnistyles(); // Subscribe to theme changes for re-render
+    const { theme } = useUnistyles();
     const styles = stylesheet;
     const enabledAgentIds = useEnabledAgentIds();
     const { snapshot: acpCatalog } = useAcpCatalog();
@@ -54,68 +62,55 @@ export function ProfileCompatibilityIcon({ profile, backendEntries: backendEntri
     }, [acpCatalog, backendEnabledByTargetKey, backendEntriesOverride, enabledAgentIds]);
 
     const glyphs = React.useMemo(() => {
-        const items: Array<{ key: string; glyph: string; factor: number }> = [];
+        const items: Array<{ key: string; agentId: string | null; glyph: string }> = [];
         for (const entry of backendEntries) {
             if (!isProfileCompatibleWithBackendTarget(profile, entry.backendTarget)) continue;
             const displayAgentId = entry.agentCatalogEntry.isBuiltIn
                 ? (entry.iconAgentId ?? entry.catalogAgentId ?? entry.builtInAgentId)
                 : null;
-            if (!displayAgentId || isLegacyCompatAgentType(displayAgentId)) {
+            const core = displayAgentId ? getAgentCore(displayAgentId) : null;
+            if (!displayAgentId || !core || isLegacyCompatAgentType(displayAgentId)) {
                 items.push({
                     key: entry.backendTargetKey,
+                    agentId: null,
                     glyph: '•',
-                    factor: 0.85,
                 });
                 continue;
             }
-            const core = getAgentCore(displayAgentId);
             items.push({
                 key: entry.backendTargetKey,
-                glyph: getAgentCliGlyph(displayAgentId),
-                factor: core.ui.profileCompatibilityGlyphScale ?? 1.0,
+                agentId: displayAgentId,
+                glyph: '',
             });
         }
-        if (items.length === 0) items.push({ key: 'none', glyph: '•', factor: 0.85 });
+        if (items.length === 0) items.push({ key: 'none', agentId: null, glyph: '•' });
         return items;
     }, [backendEntries, profile]);
 
-    const visibleGlyphs = React.useMemo(() => {
-        if (glyphs.length <= 2) return glyphs;
-        return [
-            ...glyphs.slice(0, 2),
-            { key: 'more', glyph: '...', factor: 0.75 },
-        ];
-    }, [glyphs]);
-
-    const multiScale = visibleGlyphs.length === 1 ? 1 : visibleGlyphs.length === 2 ? 0.6 : 0.5;
+    // Compatibility is described beside the profile. A broad profile gets one recognizable
+    // configuration mark instead of shrinking Agent identities and an ellipsis into one slot.
+    if (glyphs.length > 2) {
+        return <Icon name="sliders-horizontal" size={size} color={theme.colors.text.secondary} style={style} />;
+    }
+    const cellSize = glyphs.length === 1 ? size : size / 2;
 
     return (
         <View style={[styles.container, { width: size, height: size }, style]}>
-            {visibleGlyphs.length === 1 ? (
-                <Text style={[styles.glyph, { fontSize: Math.round(size * visibleGlyphs[0].factor) }]}>
-                    {visibleGlyphs[0].glyph}
-                </Text>
-            ) : (
-                <View style={styles.stack}>
-                    {visibleGlyphs.map((item) => {
-                        const fontSize = Math.round(size * multiScale * item.factor);
-                        return (
-                            <Text
-                                key={item.key}
-                                style={[
-                                    styles.glyph,
-                                    {
-                                        fontSize,
-                                        lineHeight: Math.max(10, Math.round(fontSize * 0.92)),
-                                    },
-                                ]}
-                            >
+            <View style={[styles.stack, { width: size, height: size }]}>
+                {glyphs.map((item) => (
+                    <View key={item.key} style={[styles.cell, {
+                        width: cellSize, height: cellSize,
+                    }]}>
+                        {item.agentId ? (
+                            <AgentIcon agentId={item.agentId} size={cellSize} color={theme.colors.text.secondary} />
+                        ) : (
+                            <Text style={[styles.glyph, { fontSize: cellSize, lineHeight: cellSize }]}>
                                 {item.glyph}
                             </Text>
-                        );
-                    })}
-                </View>
-            )}
+                        )}
+                    </View>
+                ))}
+            </View>
         </View>
     );
 }

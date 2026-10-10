@@ -19,6 +19,8 @@ import {
 } from './sessionActionIds';
 import { executeSessionAction } from './sessionActionExecution';
 
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
+
 function createTarget(overrides: Partial<SessionListRenderableSession> = {}) {
     const session: SessionListRenderableSession = {
         id: 'session_1',
@@ -50,6 +52,20 @@ function createTarget(overrides: Partial<SessionListRenderableSession> = {}) {
 }
 
 describe('executeSessionAction', () => {
+    it('opens the existing Work pane for the captured Home without navigating unqualified or unreadable targets', async () => {
+        const { router } = await import('expo-router');
+        const push = vi.mocked(router.push);
+        push.mockClear();
+        const target = createTarget({ metadata: { path: '/project', bot: { kind: 'bot' } } });
+        await executeSessionAction({ actionId: 'ui.session.work.open', target });
+        const route = new URL(String(push.mock.calls[0]?.[0]), 'https://happier.test');
+        expect(route.pathname).toBe('/session/session_1');
+        expect(route.searchParams.get('serverId')).toBe('server_1');
+        expect(route.searchParams.get('right')).toBe('agents');
+        await executeSessionAction({ actionId: 'ui.session.work.open', target: { ...target, serverId: null } });
+        await executeSessionAction({ actionId: 'ui.session.work.open', target: { ...target, session: { ...target.session, access: null } } });
+        expect(push.mock.calls.map(([href]) => String(href))).toEqual([route.pathname + route.search]);
+    });
     it('opens Follow for the captured Home and preserves archived state without permitting unqualified or disabled targets', async () => {
         const opened: Array<{ address: { serverId: string; sessionId: string }; archived: boolean }> = [];
         const context = { operations: { openFollowEditor: (target: typeof opened[number]) => { opened.push(target); } } };

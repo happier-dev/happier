@@ -11,10 +11,15 @@ import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permi
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
 import { createDeferred, renderHook, renderScreen } from '@/dev/testkit';
+import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { installNewSessionScreenModelCommonModuleMocks, selectNewSessionTestHome } from './newSessionScreenModelTestHelpers';
 import type { HandleCreateSessionOptions } from './useCreateNewSession';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+installDisconnectedServerSocketBoundary(socket => { socket.connected = true; });
 
 const modalAlertSpy = vi.hoisted(() => vi.fn());
 const scopedSocketEmitWithAckSpy = vi.hoisted(() => vi.fn());
@@ -65,7 +70,32 @@ async function createHarness() {
   const persistence = await import('@/sync/domains/state/persistence');
   const clearNewSessionDraftSpy = vi.spyOn(persistence, 'clearNewSessionDraft');
   await loadSyncSingletonForTests();
-  await selectNewSessionTestHome();
+  const account = await restoreServerAccountForTest({
+    serverUrl: 'https://server-a', accountId: 'account-a',
+    request: async (url, init) => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/features' || path === '/v1/features/authenticated') {
+        const features = createRootLayoutFeaturesResponse();
+        // This manually added Home has no portable identity. Its real profile
+        // scope stays server-a, matching the authenticated authoring fixture.
+        return Response.json({ ...features, capabilities: { ...features.capabilities, serverIdentity: { serverIdentityId: null } } });
+      }
+      if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+      if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+      if (path === '/v1/account/profile') return Response.json({ id: 'account-a' });
+      if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+      if (path === '/v2/cursor') return Response.json({ cursor: 0, changesFloor: 0 });
+      if (path === '/v1/machines/m1') return Response.json({ machine: { id: 'm1', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER } });
+      if (path === '/v1/machines/m1/access') {
+        const custodian = { accountId: 'account-a', displayName: 'Account A' };
+        return Response.json({ machineId: 'm1', custodian,
+          access: { custodian, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
+          canManage: true, grants: [], ownDirectGrant: false, ownAccessSources: [],
+        });
+      }
+      return Response.json({ error: 'not_found' }, { status: 404 });
+    },
+  });
   const { storage } = await import('@/sync/domains/state/storageStore');
   storage.getState().activateProfileScope({ serverId: 'server-a', accountId: 'account-a' });
   storage.getState().activateSettingsScope({ serverId: 'server-a', accountId: 'account-a' });
@@ -102,6 +132,7 @@ async function createHarness() {
   const initialStore = storage.getState();
   const defaultSpawn = sessionSpawnNewRpcSpy.getMockImplementation()!;
   return {
+    dispose: account.dispose,
     async reset(options?: HarnessOptions) {
       currentHarnessOptions = options;
       sessionSpawnNewRpcSpy.mockReset().mockImplementation(defaultSpawn);
@@ -131,6 +162,7 @@ async function createHarness() {
 }
 
 let harness: Awaited<ReturnType<typeof createHarness>>;
+let restoreActionExecutorModuleLoader: (() => void) | undefined;
 async function setupHarness(options?: HarnessOptions) {
   await harness.reset(options);
   return harness;
@@ -177,11 +209,14 @@ function buildCreateSessionHookParams(overrides: Record<string, unknown> = {}): 
 }
 
 beforeAll(async () => {
+  restoreActionExecutorModuleLoader = await installRealActionExecutorModuleLoader();
   harness = await createHarness();
   const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
   await prepareSessionDraftPersistenceStorage();
 });
-afterAll(() => {
+afterAll(async () => {
+  await harness?.dispose();
+  restoreActionExecutorModuleLoader?.();
   vi.restoreAllMocks();
 });
 

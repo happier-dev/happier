@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import tweetnacl from 'tweetnacl';
 import { readHappierStructuredInputV1FromMeta } from '@happier-dev/protocol';
-import { computeRunnerAuthoringCommitmentV1, type RunnerPreparedAuthoringV1 } from '@happier-dev/protocol/ephemeralRunner/launchManifest';
+import type { RunnerPreparedAuthoringV1 } from '@happier-dev/protocol/ephemeralRunner/launchManifest';
+import { createMaterializedRunnerProjectionFixture } from '@/dev/testkit/fixtures/runnerMaterializationFixtures';
 import type { RunnerActivationProjectionV1 } from '@happier-dev/protocol/ephemeralRunner/projection';
 
 const boundaries = vi.hoisted(() => ({
@@ -63,7 +63,6 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession', (
     },
 }));
 
-import { encodeBase64 } from '@/encryption/base64';
 import { stageRunnerAttachments } from '@/sync/domains/ephemeralRunner/stageRunnerAttachments';
 import {
     acceptRunnerCreatorActivationBinding,
@@ -94,129 +93,8 @@ function materializedProjection(input: Readonly<{
     activationId: string;
     preparedAuthoring: RunnerPreparedAuthoringV1;
 }>): RunnerActivationProjectionV1 {
-    const activationKey = tweetnacl.sign.keyPair();
-    const installationKey = tweetnacl.sign.keyPair();
-    const runnerBox = tweetnacl.box.keyPair();
-    const signature = encodeBase64(new Uint8Array(64), 'base64url');
-    const launchManifestCommitment = encodeBase64(new Uint8Array(32).fill(7), 'base64url');
-    const binding = {
-        activationId: input.activationId,
-        homeServerIdentityId: scope.serverId,
-        creatorAccountId: scope.accountId,
-        creatorTokenEpoch: 1,
-        activationExpiresAt: null,
-        workspace: { kind: 'choose_on_endpoint' as const },
-        sessionId: 'session-a',
-        machineId: workspace.machineId,
-        activationSigningPublicKey: encodeBase64(activationKey.publicKey, 'base64url'),
-        authoringCommitment: computeRunnerAuthoringCommitmentV1(input.preparedAuthoring),
-        artifact: {
-            product: 'happier-runner' as const,
-            version: '0.3.0',
-            target: 'linux-x64' as const,
-            sha256: 'a'.repeat(64),
-        },
-        endpointFactsRecipient: { mode: 'plain' as const, creatorAccountId: scope.accountId },
-    };
-    const claimPayload = {
-        v: 1 as const,
-        purpose: 'happier.ephemeral-session-runner.claim' as const,
-        binding,
-        runnerBoxPublicKey: encodeBase64(runnerBox.publicKey, 'base64url'),
-        installation: {
-            installationId: 'runner-installation',
-            publicKey: encodeBase64(installationKey.publicKey, 'base64url'),
-            proof: { version: 1 as const, algorithm: 'ed25519' as const, signature },
-        },
-        protocolEpoch: 1 as const,
-    };
-    const claim = { payload: claimPayload, signature };
-    const credentialSelectionBinding = {
-        v: 1 as const,
-        resourceId: 'resource-a',
-        brokerMachineId: 'broker-machine-a',
-        revision: 1,
-        application: {
-            agentTargetKey: 'agent:happier.codex/codex',
-            implementationIdentity: { pluginId: 'happier.provider.openai', localId: 'openai' },
-            endpointTemplateId: 'responses',
-            protocol: 'openai-responses' as const,
-        },
-        sourceRevision: 'source-a',
-    };
-    const review = {
-        sealedLaunchManifest: 'sealed-launch-manifest',
-        authoringCommitment: binding.authoringCommitment,
-        launchManifestCommitment,
-        endpointFactsProof: { activationSignature: signature, installationSignature: signature },
-        agentTargetKey: 'agent:happier.codex/codex',
-        machineContentKeyBinding: null,
-        credentialSelectionBinding,
-        displayFacts: {
-            v: 1 as const,
-            homeId: scope.serverId,
-            homeName: 'Runner Home',
-            requesterId: scope.accountId,
-            requesterName: 'Creator',
-            teamId: 'team-a',
-            teamName: 'Team',
-        },
-    };
-    const brokerReadinessRequest = {
-        v: 1 as const,
-        kind: 'provider_broker_readiness' as const,
-        homeServerIdentityId: scope.serverId,
-        activationId: input.activationId,
-        launchManifestCommitment,
-        resourceId: credentialSelectionBinding.resourceId,
-        agentTargetKey: review.agentTargetKey,
-        modelId: 'gpt-5',
-        protocol: 'openai-responses' as const,
-        initiator: { installationId: 'runner-installation', endpointId: 'a'.repeat(64) },
-        target: { machineId: credentialSelectionBinding.brokerMachineId, endpointId: 'b'.repeat(64) },
-        activationSignature: signature,
-        installationSignature: signature,
-    };
-    return {
-        ...binding,
-        draftId: 'draft-a',
-        state: 'materialized',
-        closeReason: null,
-        progressPhase: null,
-        claim,
-        endpointFacts: null,
-        review,
-        consent: {
-            payload: {
-                v: 1,
-                purpose: 'happier.ephemeral-session-runner.consent',
-                allow: true,
-                claim: claimPayload,
-                launchManifestCommitment,
-            },
-            activationSignature: signature,
-            installationSignature: signature,
-        },
-        readiness: {
-            payload: {
-                v: 1,
-                purpose: 'happier.ephemeral-session-runner.readiness',
-                claim: claimPayload,
-                launchManifestCommitment,
-                installation: {
-                    agentTarget: { kind: 'agent', identity: { pluginId: 'happier.codex', localId: 'codex' } },
-                    agentRuntimeId: 'codex',
-                    executablePath: '/runner/codex',
-                    authoritativeVersion: null,
-                },
-                credentialSelectionBinding,
-                brokerReadinessRequest,
-            },
-            activationSignature: signature,
-            installationSignature: signature,
-        },
-        materialization: { sessionId: binding.sessionId, machineId: binding.machineId },
-    };
+    return createMaterializedRunnerProjectionFixture({ ...input, scope, draftId: 'draft-a',
+        sessionId: 'session-a', machineId: workspace.machineId });
 }
 
 describe('materialized Runner attachment recovery integration', () => {

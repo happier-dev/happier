@@ -9,6 +9,7 @@ import {
     isAgentSelectableForNewSession,
     resolveNextSelectableBackendEntryForNewSession,
     resolveNextSelectableAgentForNewSession,
+    resolveBackendEntryUnavailabilityReasonForNewSession,
     resolveProfileAvailabilityForNewSession,
     type NewSessionSelectableBackendEntry,
 } from './newSessionAgentSelection';
@@ -113,7 +114,24 @@ describe('newSessionAgentSelection', () => {
         })).toEqual({ available: true });
         expect(resolveProfileAvailabilityForNewSession({
             candidateBackendEntries: [claudeEntry, codexEntry], machineAgentsById: {},
-        })).toEqual({ available: false, reason: 'cli-not-detected:any' });
+        })).toEqual({ available: false, reason: 'agent-not-ready:any' });
+    });
+
+    it('does not describe unknown or stale inventory as a missing CLI and still fails closed', () => {
+        for (const agent of [
+            undefined,
+            createMachineAgent('codex', { state: 'unknown', stale: true }),
+            createMachineAgent('codex', { stale: true }),
+            createMachineAgent('codex', { dependencies: [{ key: 'dep.acp', title: 'ACP server', installed: false, version: null }] }),
+        ]) {
+            const machineAgentsById = { codex: agent };
+            expect(resolveBackendEntryUnavailabilityReasonForNewSession({ entry: codexEntry, machineAgentsById }))
+                .toBe('agent-not-ready:codex');
+            expect(isBackendEntrySelectableForNewSession({ entry: codexEntry, machineAgentsById })).toBe(false);
+        }
+        expect(resolveBackendEntryUnavailabilityReasonForNewSession({
+            entry: codexEntry, machineAgentsById: { codex: createMachineAgent('codex', { installed: false }) },
+        })).toBe('cli-not-detected:codex');
     });
 
     it('preserves profile sign-in failure reasons from inventory state', () => {

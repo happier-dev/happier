@@ -10,6 +10,7 @@ import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { buildServerFeaturesResponse } from '@/hooks/server/serverFeaturesTestUtils';
 import { setRuntimeFetch, resetRuntimeFetch } from '@/utils/system/runtimeFetch';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
+import type { DaemonMergedProjectionInputsState } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import type { NewSessionConnectedServicesSelectionContentProps } from '../components/NewSessionConnectedServicesSelectionContent';
 import { act } from 'react-test-renderer';
 import * as React from 'react';
@@ -242,8 +243,10 @@ installNewSessionModulesCommonModuleMocks({
     },
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        const { en } = await import('@/text/translations/en');
         return createTextModuleMock({
-            translate: (key: string) => key,
+            translate: (key: string, params) => key === 'connectedServices.authChip.runsThrough' && typeof params?.source === 'string'
+                ? en.connectedServices.authChip.runsThrough({ source: params.source }) : key,
         });
     },
 });
@@ -251,7 +254,8 @@ installNewSessionModulesCommonModuleMocks({
 // Load real owners during collection, after native boundary factories are set.
 const { adaptDaemonContributionRegistryProjectionToMergedProjectionInputs } = await import('@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters');
 const { getResolvedBackendCatalogEntries } = await import('@/agents/backendCatalog/getResolvedBackendCatalogEntries');
-const { useNewSessionConnectedServicesAgentOptions } = await import('../hooks/screenModel/useNewSessionConnectedServicesAgentOptions');
+const { resolveNewSessionConnectedServicesAgent, useNewSessionConnectedServicesAgentOptions } = await import('../hooks/screenModel/useNewSessionConnectedServicesAgentOptions');
+const { useAgentInputSelectionOverlayController } = await import('@/components/sessions/agentInput/selection/useAgentInputSelectionOverlayController');
 
 function requireCollapsedContentPopover(chip: AgentInputExtraActionChip | null) {
     const popover = chip?.collapsedContentPopover;
@@ -289,7 +293,7 @@ afterEach(async () => {
 });
 
 describe('new Session Connected Accounts from the machine catalog', () => {
-    it('offers both Claude subscription profiles without a pool through the machine catalog and spawn option owner', async () => {
+    it('keeps both Claude subscription choices and the open overlay through offline recovery and background projection refresh', async () => {
         const service = { pluginId: 'happier.agent.claude', localId: 'claude-subscription' };
         const serviceKey = 'happier.agent.claude/claude-subscription';
         // This is the daemon's public declaration, not the bundled scalar catalog.
@@ -310,11 +314,11 @@ describe('new Session Connected Accounts from the machine catalog', () => {
                 },
             },
         });
-        const entries = getResolvedBackendCatalogEntries({
+        const inputs = adaptDaemonContributionRegistryProjectionToMergedProjectionInputs(projection);
+        const catalog = {
             enabledAgentIds: ['claude'],
-            acpCatalogSnapshot: { status: 'ready', revision: 1, record: { v: 1, definitions: [] } },
-            ...adaptDaemonContributionRegistryProjectionToMergedProjectionInputs(projection),
-        });
+        };
+        const entries = getResolvedBackendCatalogEntries({ ...catalog, ...inputs });
         const entry = entries.find((candidate) => candidate.builtInAgentId === 'claude');
         expect(entry).toBeDefined();
         if (!entry) throw new Error('Expected projected Claude target');
@@ -324,28 +328,56 @@ describe('new Session Connected Accounts from the machine catalog', () => {
             })),
             connectedAccountGroupsV4: [],
         };
-        const hook = await renderHook(() => {
+        const hook = await renderHook((phase: DaemonMergedProjectionInputsState['phase']) => {
             const [optionStateByTarget, setOptionStateByTarget] = React.useState<Record<string, Record<string, unknown>>>({});
-            return useNewSessionConnectedServicesAgentOptions({
+            const accountAgent = resolveNewSessionConnectedServicesAgent({
+                projection: { phase, inputs }, selectedBackendTargetKey: entry.backendTargetKey, catalog,
+            });
+            const connected = useNewSessionConnectedServicesAgentOptions({
                 staticAgentId: entry.catalogAgentId,
                 runtimeCarrierAgentId: entry.agentId,
                 selectedMachineId: 'machine-claude',
                 targetServerId: null,
                 selectedBackendTargetKey: entry.backendTargetKey,
-                connectedAccounts: entry.agentCatalogEntry.connectedAccounts,
-                agentIdentity: entry.agentCatalogEntry.identity,
+                connectedAccounts: accountAgent?.connectedAccounts,
+                agentIdentity: accountAgent?.identity,
                 setBackendNewSessionOptionStateByTargetKey: setOptionStateByTarget,
                 agentOptionState: optionStateByTarget[entry.backendTargetKey] ?? null,
                 settings: { connectedServicesDefaultProfileByServiceId: {} },
                 router: { push: vi.fn() },
             });
-        });
+            const overlay = useAgentInputSelectionOverlayController({
+                extraActionChips: connected.connectedServicesAuthChip ? [connected.connectedServicesAuthChip] : [],
+                shouldRenderSessionModeChip: false, canChangePermission: false, hasMachinePopover: false,
+                hasPathPopover: false, hasResumePopover: false, hasProfilePopover: false,
+                hasEnvVarsPopover: false, hasAgentPickerOptions: false,
+            });
+            return { ...connected, overlay };
+        }, { initialProps: 'ready' });
         const popover = requireCollapsedContentPopover(hook.getCurrent().connectedServicesAuthChip);
         if (typeof popover.renderContent !== 'function') throw new Error('Expected account picker content renderer');
         const content = popover.renderContent({ maxHeight: 560, requestClose: vi.fn() }) as React.ReactElement<NewSessionConnectedServicesSelectionContentProps>;
         expect(content.props.supportedServiceIds).toEqual([serviceKey]);
         expect(content.props.profileOptionsByServiceId[serviceKey]?.map((profile) => profile.profileId)).toEqual(['personal', 'work']);
         expect(content.props.groupOptionsByServiceId).toEqual({});
+        await act(async () => {
+            hook.getCurrent().overlay.openSelectionOverlay('collapsedExtra', 'chip', 'new-session-connected-services-auth');
+        });
+        // The projection owner retains the same scope's metadata while offline,
+        // after a transport failure and during the reconnect/refresh read.
+        for (const phase of ['idle', 'error', 'loading', 'ready'] as const) {
+            await hook.rerender(phase);
+            const current = hook.getCurrent();
+            expect(current.connectedServicesAuthChip, phase).not.toBeNull();
+            expect(current.overlay.activeSelectionOverlay, phase).toMatchObject({
+                id: 'collapsedExtra', chipKey: 'new-session-connected-services-auth',
+            });
+            const currentPopover = requireCollapsedContentPopover(current.overlay.activeExtraCollapsedPopoverChip);
+            if (typeof currentPopover.renderContent !== 'function') throw new Error('Expected picker renderer');
+            const currentContent = currentPopover.renderContent({ maxHeight: 560, requestClose: vi.fn() }) as React.ReactElement<NewSessionConnectedServicesSelectionContentProps>;
+            expect(currentContent.props.profileOptionsByServiceId[serviceKey]?.map((profile) => profile.profileId), phase)
+                .toEqual(['personal', 'work']);
+        }
         await act(async () => {
             await content.props.setBindingForService(serviceKey, { source: 'connected', selection: 'profile', profileId: 'work' });
         });
@@ -354,6 +386,15 @@ describe('new Session Connected Accounts from the machine catalog', () => {
                 [serviceKey]: { source: 'connected', selection: 'profile', profileId: 'work' },
             } },
         });
+        // Bundled Agent declarations remain available without a Machine
+        // projection; credential admission still belongs to the scoped owner.
+        const withdrawnAgent = resolveNewSessionConnectedServicesAgent({
+            projection: { phase: 'loading', inputs: null },
+            selectedBackendTargetKey: entry.backendTargetKey,
+            catalog,
+        });
+        expect(withdrawnAgent?.identity).toEqual(entry.agentCatalogEntry.identity);
+        expect(withdrawnAgent?.connectedAccounts).toContainEqual(expect.objectContaining({ service }));
     });
 });
 
@@ -454,6 +495,86 @@ describe('New Session purpose catalog authority', () => {
                 }
             } finally { await screen.unmount(); }
         } finally { await hook.unmount(); await connection.dispose(); bridge.dispose(); }
+    });
+
+    it.each([false, true])('inherits the credential-bound target Home purpose row while another Home is focused (empty: %s)', async (empty) => {
+        const { useNewSessionConnectedServices } = await import('./useNewSessionConnectedServices');
+        const { useServerCredentialAccountScopeBinding } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const { upsertServerProfileOnly } = await import('@/sync/domains/server/serverRuntime');
+        const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const bridge = await loadSyncSingletonForTests();
+        const focusedAccountId = `borrowed-purpose-focus-${empty}`;
+        const targetAccountId = `borrowed-purpose-target-${empty}`;
+        const focusedUrl = `https://borrowed-purpose-focus-${empty}.test`;
+        const targetUrl = `https://borrowed-purpose-target-${empty}.test`;
+        const focusedHttp = createHomeHubArtifactHttpBoundary(focusedAccountId);
+        const targetHttp = createHomeHubArtifactHttpBoundary(targetAccountId);
+        const features = buildServerFeaturesResponse();
+        features.capabilities.connectedServices.qualifiedAccounts = { protocolVersion: 4 };
+        const consumer = { pluginId: 'happier.agent.claude', localId: 'claude' };
+        const service = CLAUDE_CONNECTED_ACCOUNTS[0]!.service;
+        const value: QualifiedConnectedAccountPurposeBindingsV1 = { v: 1, bindings: empty ? [] : [{
+            purpose: { consumer, purpose: 'primary' },
+            target: { kind: 'account', account: { service, accountId: 'target-work' } },
+        }] };
+        const targetCredentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: targetAccountId })).toString('base64url')}.signature` };
+        const targetReadTokens: Array<string | null> = [];
+        const request: typeof fetch = async (input, init) => {
+            const url = new URL(String(input));
+            if (url.pathname === '/v1/features') return Response.json(features);
+            if (url.origin === targetUrl && url.pathname === '/v1/account/entity-rows/connected-accounts/purposes') {
+                targetReadTokens.push(new Headers(init?.headers).get('authorization'));
+                return Response.json({ status: 'present', revision: 5,
+                    content: { t: 'plain', v: { key: 'purposes', value } } });
+            }
+            return (url.origin === targetUrl ? targetHttp : focusedHttp).request(input, init);
+        };
+        const connection = await restoreServerAccountForTest({ serverUrl: focusedUrl, accountId: focusedAccountId, request });
+        const target = await upsertServerProfileOnly({ serverUrl: targetUrl, name: 'Target Home' });
+        let targetSignedIn = true;
+        // Device credential storage is the external boundary; credential resolution and retirement remain real.
+        const credentialRead = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async (url) =>
+            url === targetUrl ? targetSignedIn ? targetCredentials : null : url === focusedUrl ? connection.credentials : null);
+        setRuntimeFetch(request);
+        const focusedScope = { serverId: connection.home.id, accountId: focusedAccountId };
+        storage.setState({ profileScope: focusedScope, profile: AccountProfileSchema.parse({ id: focusedAccountId }) });
+        const hook = await renderHook(() => ({
+            targetBinding: useServerCredentialAccountScopeBinding(target.id),
+            defaults: useNewSessionConnectedServices({
+                agentCore: null, defaultAuthAgentId: 'claude', defaultAuthConsumer: consumer,
+                connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS, agentOptionState: null,
+                settings: { connectedServicesDefaultProfileByServiceId: {},
+                    connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {
+                        claude: { [CLAUDE_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'retired-legacy' } },
+                    } } },
+                targetServerId: target.id, sourceMachineId: 'target-machine',
+                router: { push() {} }, setAgentOptionStateForCurrentAgent() {},
+            }),
+        }));
+        try {
+            await vi.waitFor(() => expect(hook.getCurrent().targetBinding.resolution).toEqual({
+                kind: 'bound', scope: { serverId: target.id, accountId: targetAccountId },
+            }));
+            expect(getActiveServerAccountScope()).toEqual(focusedScope);
+            await vi.waitFor(() => expect(hook.getCurrent().defaults.connectedAccountDefaultsStatus).toBe('ready'));
+            expect(targetReadTokens).toContain(`Bearer ${targetCredentials.token}`);
+            if (empty) expect(hook.getCurrent().defaults.connectedServicesBindingsPayload).toBeNull();
+            else expect(hook.getCurrent().defaults.connectedServicesBindingsPayload).toMatchObject({ bindingsByServiceId: {
+                [CLAUDE_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'target-work' },
+            } });
+            const admitted = hook.getCurrent().defaults.requireConnectedAccountDefaultsReady;
+            expect(() => admitted()).not.toThrow();
+            await act(async () => {
+                targetSignedIn = false;
+                expect(await TokenStorage.removeCredentialsForServerUrl(targetUrl, { serverId: target.id })).toBe(true);
+            });
+            expect(() => admitted()).toThrow();
+            await vi.waitFor(() => expect(hook.getCurrent().targetBinding.resolution.kind).toBe('signed_out'));
+            expect(hook.getCurrent().defaults.connectedAccountDefaultsStatus).not.toBe('ready');
+            expect(hook.getCurrent().defaults.connectedServicesBindingsPayload).toBeNull();
+            expect(getActiveServerAccountScope()).toEqual(focusedScope);
+        } finally { await hook.unmount(); credentialRead.mockRestore(); await connection.dispose(); bridge.dispose(); }
     });
 
     it('retires an optimistic authored authentication choice when its mounted Account scope changes before controlled echo', async () => {
@@ -607,8 +728,8 @@ describe('useNewSessionConnectedServices', () => {
         );
         expect(chip?.collapsedAction).toBeUndefined();
         expect(chip?.collapsedContentPopover).toEqual(expect.objectContaining({
-            title: 'connectedServices.authChip.nativeLabel',
-            label: 'connectedServices.authChip.nativeLabel',
+            title: 'connectedServices.authChip.runsThroughOwnSignIn',
+            label: 'connectedServices.authChip.runsThroughOwnSignIn',
             scrollEnabled: false,
             renderContent: expect.any(Function),
         }));
@@ -684,7 +805,9 @@ describe('useNewSessionConnectedServices', () => {
             { [CLAUDE_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'work' } },
         );
         expect(requireCollapsedContentPopover(hook.getCurrent().connectedServicesAuthChip).label)
-            .toBe('Anthropic API key: Work');
+            .toBe('Runs through Anthropic API key: Work');
+        // "Runs through <account>": the account is the route's native source.
+        expect(hook.getCurrent().routePresentation.applied).toMatchObject({ kind: 'native', sourceLabel: 'Anthropic API key: Work' });
 
         const reopenedPopoverRenderer = requireCollapsedContentPopover(
             hook.getCurrent().connectedServicesAuthChip,
@@ -829,7 +952,9 @@ describe('useNewSessionConnectedServices', () => {
             },
         });
         expect(requireCollapsedContentPopover(hook.getCurrent().connectedServicesAuthChip).label)
-            .toBe('Anthropic API key: Work');
+            .toBe('Runs through Anthropic API key: Work');
+        // "Runs through <account>": the account is the route's native source.
+        expect(hook.getCurrent().routePresentation.applied).toMatchObject({ kind: 'native', sourceLabel: 'Anthropic API key: Work' });
 
         await hook.unmount();
     });
@@ -1026,7 +1151,9 @@ describe('useNewSessionConnectedServices', () => {
             },
         });
         expect(requireCollapsedContentPopover(hook.getCurrent().connectedServicesAuthChip).label)
-            .toBe('Codex: Primary pool');
+            .toBe('Runs through Codex: Primary pool');
+        // "Runs through <account>": the account is the route's native source.
+        expect(hook.getCurrent().routePresentation.applied).toMatchObject({ kind: 'native', sourceLabel: 'Codex: Primary pool' });
 
         await hook.unmount();
     });
@@ -1096,7 +1223,7 @@ describe('useNewSessionConnectedServices', () => {
             },
         });
         expect(requireCollapsedContentPopover(hook.getCurrent().connectedServicesAuthChip).label)
-            .toBe('connectedServices.authChip.nativeLabel');
+            .toBe('connectedServices.authChip.runsThroughOwnSignIn');
 
         const popoverRenderer = requireCollapsedContentPopover(
             hook.getCurrent().connectedServicesAuthChip,
@@ -1162,7 +1289,7 @@ describe('useNewSessionConnectedServices', () => {
 
         // Neutral/public presentation from the applied descriptor projection.
         expect(requireCollapsedContentPopover(hook.getCurrent().connectedServicesAuthChip).label)
-            .toBe('connectedServices.authChip.nativeLabel');
+            .toBe('connectedServices.authChip.runsThroughOwnSignIn');
 
         const popoverRenderer = requireCollapsedContentPopover(
             hook.getCurrent().connectedServicesAuthChip,
@@ -1194,7 +1321,12 @@ describe('useNewSessionConnectedServices', () => {
             },
         });
         expect(requireCollapsedContentPopover(hook.getCurrent().connectedServicesAuthChip).label)
-            .toBe('Acme Reviewer Auth: Reviewer');
+            .toBe('Runs through Acme Reviewer Auth: Reviewer');
+        expect(hook.getCurrent().routePresentation).toEqual({
+            applied: { kind: 'native', sourceLabel: 'Acme Reviewer Auth: Reviewer',
+                authSource: 'connected', connectedCount: 1, modelId: null },
+            pending: null,
+        });
 
         await hook.unmount();
     });

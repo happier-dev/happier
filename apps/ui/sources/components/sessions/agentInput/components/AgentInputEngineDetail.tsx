@@ -39,6 +39,8 @@ type AgentInputEngineDetailProps = Readonly<{
   modelHeaderAccessory?: React.ReactNode;
   /** Optional canonical model surface used when the caller carries typed model identities. */
   modelContentOverride?: React.ReactNode;
+  /** The disableable routing hint for the selected Agent's pools; it owns its own setting gate. */
+  modelRoutingHint?: React.ReactNode;
   favoriteModelValues?: ReadonlySet<string>;
   isModelFavoritable?: (option: AgentInputEngineModelOption) => boolean;
   onToggleFavoriteModel?: (option: AgentInputEngineModelOption) => void;
@@ -216,6 +218,7 @@ export function AgentInputEngineDetail(props: AgentInputEngineDetailProps) {
 
   return (
     <View style={[styles.container, props.fillAvailableSpace ? styles.containerFill : null]}>
+      {hasModelSection ? props.modelRoutingHint ?? null : null}
       {sectionOrder.map((sectionId) => sections[sectionId])}
     </View>
   );

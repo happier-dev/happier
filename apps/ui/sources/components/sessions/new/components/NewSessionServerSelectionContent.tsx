@@ -208,6 +208,7 @@ export function NewSessionServerSelectionContent(props: NewSessionServerSelectio
               * the popover; the route shows the native title with Cancel.
               */}
             <SelectionList
+                presentation="grouped"
                 style={styles.list}
                 containerStyle={styles.listContent}
             >

@@ -3,9 +3,10 @@ import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { createProviderErrorV1, ProviderConnectionIdSchema } from '@happier-dev/protocol';
 
-import { renderScreen, withPopoverWebGlobals } from '@/dev/testkit';
+import { createProviderModelProjectionGroupFixture, renderScreen, withPopoverWebGlobals } from '@/dev/testkit';
 import {
     buildSessionModelPickerNotes,
+    resolveSessionModelPickerSelection,
     SessionModelPicker,
     type SessionModelPickerExperimentalConfirmationController,
 } from './SessionModelPicker';
@@ -30,6 +31,24 @@ function submitCustomModelValue(screen: Readonly<{
 }
 
 describe('SessionModelPicker', () => {
+    it('does not turn declaration-only experimental compatibility into runtime confirmation', () => {
+        const ref = { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: 'pc_a', modelId: 'manual-model' };
+        const group = createProviderModelProjectionGroupFixture({ modelLoadAction: 'machine_required', rows: [{
+            ref, descriptor: { id: ref.modelId, name: 'Manual model' },
+            confidence: 'account_unverified', loadState: 'unknown', visibility: 'visible',
+            sources: { manual: true, static: false, probe: false }, endpointHealth: 'not_checked', catalog: { stale: false },
+            compatibility: { compatibilityFingerprint: 'declaration-fingerprint', confirmed: false,
+                result: { status: 'experimental' as const, selectedProtocol: 'openai-responses' as const,
+                    reasons: ['compatibility_evidence_missing' as const],
+                    confirmationScope: { kind: 'model' as const, modelId: ref.modelId } } },
+        }] });
+        expect(resolveSessionModelPickerSelection({ groups: [group], ref }))
+            .toEqual({ kind: 'select', ref });
+        // A managed machine runtime may have no checked catalog row yet, but
+        // its adapter-backed compatibility evidence remains actionable.
+        expect(resolveSessionModelPickerSelection({ groups: [{ ...group, modelLoadAction: 'available' }], ref }))
+            .toMatchObject({ kind: 'confirm-experimental', modelId: ref.modelId });
+    });
     it('labels model groups only when there is more than one to tell apart', async () => {
         const selected = { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'gpt-5.6-sol' } as const;
         const render = (favoriteEntries?: React.ComponentProps<typeof SessionModelPicker>['favoriteEntries']) => renderScreen(

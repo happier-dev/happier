@@ -27,7 +27,7 @@ function normalizeModelId(value: string | null | undefined): string {
     return typeof value === 'string' ? value.trim() : '';
 }
 
-function readAppliedModelSelection(params: Readonly<{
+export function readAppliedModelSelection(params: Readonly<{
     agentId: string;
     agentTargetKey: string;
     metadata: Metadata | null | undefined;

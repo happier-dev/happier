@@ -42,7 +42,7 @@ vi.mock('@/utils/system/fireAndForget', () => ({
 }));
 
 describe('SessionSubagentRow', () => {
-    it('renders a non-button web row wrapper for clickable rows with nested action buttons', async () => {
+    it('announces a selectable disclosure through the shared button row', async () => {
         const { SessionSubagentRow } = await import('./SessionSubagentRow');
         const onOpenPreview = vi.fn();
 
@@ -63,6 +63,7 @@ describe('SessionSubagentRow', () => {
                     serverId="server-a"
                     row={createSessionAgentActivityRowForTest(subagent)}
                     onPress={onOpenPreview}
+                    expanded
                     onOpenFull={vi.fn()}
                     onOpenAdvanced={vi.fn()}
                 />);
@@ -72,9 +73,8 @@ describe('SessionSubagentRow', () => {
         if (!row) {
             throw new Error('Expected execution-run row to be present');
         }
-        expect(row.type).toBe('View');
-        expect(row.props.accessibilityRole).toBeUndefined();
-        expect(row.props.tabIndex).toBe(0);
+        expect(row.props.accessibilityRole).toBe('button');
+        expect(row.props.accessibilityState).toMatchObject({ selected: true, expanded: true });
 
         await screen.pressByTestIdAsync('session-subagent-row:execution_run:run_web');
 

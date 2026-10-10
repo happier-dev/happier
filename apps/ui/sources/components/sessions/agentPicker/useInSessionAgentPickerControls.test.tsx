@@ -1,3 +1,5 @@
+import type { AcpBackendDefinitionV1 } from '@happier-dev/protocol/acp/catalog/settingsV1';
+import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -132,13 +134,14 @@ type HookProps = Readonly<{
     machine?: SessionAgentContinuationMachineTarget;
     featureDecision?: SessionAgentContinuationFeatureDecision;
     sessionActive?: boolean | null;
+    currentAgentId?: string;
 }>;
 
 async function renderControls(props: HookProps = {}) {
     return renderHook((hookProps: HookProps) => useInSessionAgentPickerControls({
         sessionId: hookProps.sessionId ?? 'session-1',
         accountScope: hookProps.accountScope === undefined ? DEFAULT_DRAFT_SCOPE : hookProps.accountScope,
-        currentAgentId: 'claude',
+        currentAgentId: hookProps.currentAgentId ?? 'claude',
         currentAgentLabel: 'Claude Code',
         projectionCurrent: true,
         currentAgentSessionActive: hookProps.sessionActive ?? true,
@@ -187,6 +190,47 @@ describe('useInSessionAgentPickerControls', () => {
         ));
         detailSelectionChangeRef.current = null;
         detailModelSummaryRef.current = null;
+    });
+
+    it('arms the exact configured backend when two configurations share an engine projection', async () => {
+        const entries = getResolvedBackendCatalogEntries({
+            enabledAgentIds: [],
+            acpCatalogSnapshot: {
+                status: 'ready', revision: 1,
+                record: { v: 1, definitions: ['review-a', 'review-b'].map((id): AcpBackendDefinitionV1 => ({
+                    id, name: id, title: id, description: '', command: 'kiro-cli', args: ['acp'], env: {},
+                    capabilities: {
+                        supportsLoadSession: true, supportsModes: 'unknown', supportsModels: 'unknown',
+                        supportsConfigOptions: 'unknown', promptImageSupport: 'unknown',
+                    },
+                    createdAt: 1, updatedAt: 1,
+                })) },
+            },
+            mergedBackendProjectionById: {
+                'review-a': { backendId: 'review-a', agentId: 'kiro', title: 'Review A' },
+                'review-b': { backendId: 'review-b', agentId: 'kiro', title: 'Review B' },
+            },
+        });
+        const hook = await renderControls({
+            entries,
+            currentAgentId: 'acp:review-a',
+            source: { ...supportedSource, currentBackendTargetKey: 'backend:review-a:configured:review-a' },
+        });
+        await openPicker(hook);
+        await act(async () => {
+            optionsOf(hook.getCurrent()).find((option) => option.id === 'backend:review-b:configured:review-b')?.onSelectImmediate?.();
+        });
+
+        expect(hook.getCurrent().armedContinuation).toEqual({
+            v: 1, mode: 'same_session', sourceAgentId: 'acp:review-a',
+            selection: { v: 1, agentId: 'acp:review-b' },
+        });
+        expect(machineRpcWithServerScope).toHaveBeenCalledWith(expect.objectContaining({
+            method: 'session.continuation.inspectBatch',
+            payload: {
+                v: 1, sourceSessionId: 'session-1', selections: [{ v: 1, agentId: 'acp:review-b' }],
+            },
+        }));
     });
 
     it('offers the rest of the Agent catalog beside the Agent already running', async () => {

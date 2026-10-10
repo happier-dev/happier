@@ -112,6 +112,8 @@ export function resolveNewSessionCapabilityProbeContext(params: Readonly<{
     machineId?: string | null;
     pluginSettings?: AgentPluginSettingsSnapshot | null;
     runtimeDescriptorV1?: RuntimeDescriptorV1 | null;
+    connectedServices?: ConnectedServiceBindingsV2 | null;
+    connectedServicesCacheIdentity?: string | null;
 }>): NewSessionCapabilityProbeContext | null {
     const backendTarget = resolveNewSessionOperationalBackendTarget(params);
     // The selected operational identity is authoritative for both bundled and
@@ -132,16 +134,21 @@ export function resolveNewSessionCapabilityProbeContext(params: Readonly<{
         ...(params.machineId?.trim() ? { machineId: params.machineId } : {}),
     });
     const selectedProfileId = params.selectedProfileId?.trim() || null;
-    if (!runtimeKind && !selectedProfileId && !params.runtimeDescriptorV1) return null;
+    const parsedBindings = ConnectedServiceBindingsV2IngressSchema.safeParse(params.connectedServices);
+    const connectedServices = parsedBindings.success ? parsedBindings.data : null;
+    if (!runtimeKind && !selectedProfileId && !params.runtimeDescriptorV1 && !connectedServices) return null;
 
     const cacheKeySuffixParts = [
         ...(params.runtimeDescriptorV1 ? [`runtime:${stableJsonStringify(params.runtimeDescriptorV1)}`] : []),
         ...(runtimeKind ? [runtimeKind] : []),
         ...(selectedProfileId ? [`profile:${selectedProfileId}`] : []),
+        ...(connectedServices ? [`connected-services:${stableJsonStringify(connectedServices)}`] : []),
+        ...(connectedServices && params.connectedServicesCacheIdentity ? [params.connectedServicesCacheIdentity] : []),
     ];
     const capabilityParams = {
         ...(selectedProfileId ? { profileId: selectedProfileId } : {}),
         ...(params.runtimeDescriptorV1 ? { runtimeDescriptorV1: params.runtimeDescriptorV1 } : {}),
+        ...(connectedServices ? { connectedServices } : {}),
     };
     return getOrCreateProbeContext({
         key: stableJsonStringify({ cacheKeySuffixParts, capabilityParams }),
@@ -161,7 +168,13 @@ export function resolveNewSessionModelCapabilityProbeContext(params: Readonly<{
     connectedServices?: ConnectedServiceBindingsV2 | null;
     connectedServicesCacheIdentity?: string | null;
 }>): NewSessionCapabilityProbeContext | null {
-    const shared = resolveNewSessionCapabilityProbeContext(params);
+    const bindings = ConnectedServiceBindingsV2IngressSchema.safeParse(params.connectedServices);
+    if (bindings.success && Object.values(bindings.data.bindingsByServiceId).some((selection) => selection.source === 'team_resource')) {
+        // A Team operation probe must reach the canonical preflight refusal with
+        // its exact requested identity, rather than reuse the Native catalog.
+        return resolveNewSessionCapabilityProbeContext({ ...params, connectedServices: bindings.data });
+    }
+    const shared = resolveNewSessionCapabilityProbeContext({ ...params, connectedServices: null });
     const backendTarget = resolveNewSessionOperationalBackendTarget(params);
     const agentId = params.runtimeCarrierAgentId?.trim()
         || resolveCatalogAgentIdForBackendTarget(backendTarget);
@@ -174,25 +187,15 @@ export function resolveNewSessionModelCapabilityProbeContext(params: Readonly<{
     const observationServiceKey = observation
         ? resolveQualifiedConnectedAccountServiceKey(observation.connectedServiceId)
         : null;
-    const bindings = ConnectedServiceBindingsV2IngressSchema.safeParse(params.connectedServices);
     const selection = observationServiceKey && bindings.success
         ? bindings.data.bindingsByServiceId[observationServiceKey]
         : null;
     if (!observation || !observationServiceKey || selection?.source !== 'connected') return shared;
-    const selectedIdentity = selection.selection === 'group'
-        ? `${observationServiceKey}:group:${selection.groupId}`
-        : `${observationServiceKey}:profile:${selection.profileId}`;
-    const cacheKeySuffixParts = [
-        ...(shared?.cacheKeySuffixParts ?? []),
-        selectedIdentity,
-        ...(params.connectedServicesCacheIdentity ? [params.connectedServicesCacheIdentity] : []),
-    ];
-    const capabilityParams = {
-        ...(shared?.capabilityParams ?? {}),
-        connectedServices: bindings.data,
-    };
+    const observed = resolveNewSessionCapabilityProbeContext({ ...params, connectedServices: bindings.data });
+    const cacheKeySuffixParts = observed?.cacheKeySuffixParts ?? [];
+    const capabilityParams = observed?.capabilityParams ?? {};
     return getOrCreateProbeContext({
-        key: stableJsonStringify({ cacheKeySuffixParts, capabilityParams }),
+        key: stableJsonStringify({ cacheKeySuffixParts, capabilityParams, modelSuccessCacheMaxAgeMs: 5 * 60_000 }),
         cacheKeySuffixParts,
         capabilityParams,
         modelSuccessCacheMaxAgeMs: 5 * 60_000,

@@ -35,7 +35,7 @@ function createOwnedRawSession(overrides: Partial<Session> = {}): Session {
         metadataVersion: 1,
         agentStateVersion: 1,
         metadata: { path: '/shared', host: 'shared' },
-        ownerMetadataView: null,
+        ownerMetadataView: { path: '/shared', host: 'shared' },
         agentState: null,
         thinking: false,
         thinkingAt: 0,
@@ -45,6 +45,74 @@ function createOwnedRawSession(overrides: Partial<Session> = {}): Session {
 }
 
 describe('session action availability', () => {
+    it('offers the existing Work pane to exact-Home Bot readers across single-session menus only', () => {
+        const target = createSessionActionTarget({ session: createOwnedRawSession({
+            owner: 'someone_else', access: createSessionAccessFixture('view'),
+            metadata: { path: '/shared', bot: { kind: 'bot' } },
+        }), serverId: 'home', isConnected: false });
+        for (const surface of ['rowMenu', 'nativeContextMenu', 'sessionHeader', 'sessionInfo'] as const) {
+            expect(listVisibleSessionActionIds({ target, surface })).toContain('ui.session.work.open');
+            expect(listVisibleSessionActionIds({ target, surface })).toContain('ui.session.talk');
+        }
+        expect(listVisibleSessionActionIds({ target, surface: 'selectionActionBar' })).not.toContain('ui.session.work.open');
+        expect(listVisibleSessionActionIds({ target, surface: 'selectionActionBar' })).not.toContain('ui.session.talk');
+        expect(listVisibleSessionActionIds({ target: { ...target, serverId: null }, surface: 'rowMenu' })).not.toContain('ui.session.work.open');
+        expect(listVisibleSessionActionIds({ target: { ...target, serverId: null }, surface: 'rowMenu' })).not.toContain('ui.session.talk');
+        expect(listVisibleSessionActionIds({ target: { ...target, session: { ...target.session, access: null } }, surface: 'rowMenu' }))
+            .not.toContain('ui.session.work.open');
+        expect(listVisibleSessionActionIds({ target: { ...target, session: { ...target.session, access: null } }, surface: 'rowMenu' }))
+            .not.toContain('ui.session.talk');
+    });
+    it('offers an independent personal rail choice to Bot readers and allows clearing a demoted retained choice', () => {
+        const ordinary = createSessionActionTarget({ session: createOwnedRawSession({
+            owner: 'someone_else', access: createSessionAccessFixture('view'),
+        }), currentUserId: 'current_user', serverId: 'home', isConnected: false });
+        const bot = { ...ordinary, session: createOwnedRawSession({
+            owner: 'someone_else', access: createSessionAccessFixture('view'),
+            metadata: { path: '/shared', host: 'shared', bot: { kind: 'bot' } },
+        }), isRailPinned: false };
+        const visible = listVisibleSessionActionIds({ target: bot, surface: 'rowMenu' });
+        expect(visible).toContain('ui.session.rail.pin');
+        expect(visible).not.toContain('ui.session.make-bot');
+        expect(listVisibleSessionActionIds({ target: ordinary, surface: 'rowMenu' })).not.toContain('ui.session.rail.pin');
+        expect(listVisibleSessionActionIds({ target: ordinary, surface: 'rowMenu' })).not.toContain('ui.session.talk');
+        expect(listVisibleSessionActionIds({ target: { ...ordinary, isRailPinned: true }, surface: 'rowMenu' }))
+            .toContain('ui.session.rail.unpin');
+        expect(listVisibleSessionActionIds({ target: { ...bot, serverId: null }, surface: 'rowMenu' }))
+            .not.toContain('ui.session.rail.pin');
+        expect(listVisibleSessionActionIds({ target: bot, surface: 'selectionActionBar' })).not.toContain('ui.session.rail.pin');
+    });
+
+    it('offers the reversible Bot marker and owner-private tool choices without requiring a connected execution host', () => {
+        const target = createSessionActionTarget({ session: createOwnedRawSession(), currentUserId: 'current_user', serverId: 'home', isConnected: false });
+        expect(listVisibleSessionActionIds({ target, surface: 'sessionHeader' })).toEqual(expect.arrayContaining([
+            'ui.session.make-bot', 'ui.session.tool-calls.toggle', 'ui.session.tool-calls.use-default',
+        ]));
+        const bot = { ...target, session: createOwnedRawSession({ metadata: { path: '/shared', host: 'shared', bot: { kind: 'bot' } } }) };
+        expect(listVisibleSessionActionIds({ target: bot, surface: 'rowMenu' })).toContain('ui.session.make-regular');
+        expect(listVisibleSessionActionIds({ target: bot, surface: 'rowMenu' })).not.toContain('ui.session.make-bot');
+        const viewer = { ...target, canRename: false, canWriteOwnerMetadata: false, isOwnedByCurrentUser: false };
+        expect(listVisibleSessionActionIds({ target: viewer, surface: 'sessionHeader' })).not.toContain('ui.session.make-bot');
+        expect(listVisibleSessionActionIds({ target: viewer, surface: 'sessionHeader' })).not.toContain('ui.session.tool-calls.toggle');
+    });
+    it('keeps owner-work setters unavailable to shared editors even when they may rename the shared record', () => {
+        const editor = createSessionActionTarget({ session: createOwnedRawSession({
+            owner: 'someone_else', access: createSessionAccessFixture('admin', { renameSession: true }),
+        }), currentUserId: 'current_user', serverId: 'home' });
+        expect(editor.canRename).toBe(true);
+        const visible = listVisibleSessionActionIds({ target: editor, surface: 'sessionHeader' });
+        expect(visible).toContain(SESSION_ACTION_RENAME_ID);
+        expect(visible).not.toContain('ui.session.make-bot');
+        expect(visible).not.toContain('ui.session.make-regular');
+        expect(visible).not.toContain('ui.session.tool-calls.toggle');
+    });
+    it('does not offer owner-work setters when the owner projection is unreadable', () => {
+        const target = createSessionActionTarget({ session: createOwnedRawSession({ ownerMetadataView: null }),
+            serverId: 'home', currentUserId: 'current_user' });
+        const visible = listVisibleSessionActionIds({ target, surface: 'sessionHeader' });
+        expect(visible).not.toContain('ui.session.make-bot');
+        expect(visible).not.toContain('ui.session.tool-calls.toggle');
+    });
     it('offers "Put under…" to whoever can send to the Session, in its menus, never when archived', () => {
         const target = createSessionActionTarget({ session: createOwnedRawSession() });
         for (const surface of ['rowMenu', 'nativeContextMenu', 'sessionHeader'] as const) {

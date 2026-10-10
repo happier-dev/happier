@@ -31,7 +31,6 @@ import { AIBackendProfileSchema } from '@/sync/domains/profiles/profileCompatibi
 import { renderScreen as renderTestScreen } from '@/dev/testkit';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
-import type { AutomationEditorDraft } from '@/sync/domains/automations/automationEditorDraft';
 import type { ServerScopedMachineRpcParams } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 import type {
     HandleCreateSessionOptions,
@@ -68,8 +67,6 @@ const routerSearchParamsState = vi.hoisted(() => ({
 type SpawnPayloadCapture = SessionSpawnNewInputV2 | null;
 type SessionSpawnNewRpcRequest = ServerScopedMachineRpcParams<SessionSpawnNewInputV2>;
 type SessionSpawnNewSuccessResult = Extract<SessionSpawnNewResultV1, Readonly<{ type: 'success' }>>;
-
-type AutomationEditorSaveCapture = AutomationEditorDraft | null;
 
 function createCompatibleTestProfile(id = 'profile-test') {
     return AIBackendProfileSchema.parse({
@@ -213,6 +210,7 @@ async function createUseCreateNewSessionHarness(accountMode: 'plain' | 'e2ee' = 
         exitCode: 0,
     }));
     let lastCreatedAutomation: Record<string, unknown> | null = null;
+    const automationWriteRequests: string[] = [];
     const authoringMemoryHttp = createAuthoringMemoryHttpBoundary();
     const fetchSpy = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
         const authoringResponse = await authoringMemoryHttp.handle(input, init);
@@ -256,6 +254,7 @@ async function createUseCreateNewSessionHarness(accountMode: 'plain' | 'e2ee' = 
             const body = input instanceof Request
                 ? await input.clone().text()
                 : String(init?.body ?? '{}');
+            automationWriteRequests.push(body);
             const request = JSON.parse(body) as Record<string, any>;
             const createdAt = 1_786_257_600_000;
             const executionRecipe = request.executionRecipe as Record<string, any>;
@@ -382,12 +381,11 @@ async function createUseCreateNewSessionHarness(accountMode: 'plain' | 'e2ee' = 
             ? { kind: 'available' as const, sessionId }
             : { kind: 'missing' as const, sessionId, cause: 'not_found' as const }
     ));
-    const saveAutomationEditorDraftSpy = vi.spyOn(sync, 'saveAutomationEditorDraft');
     const refreshAutomationsSpy = vi.spyOn(sync, 'refreshAutomations');
     const syncSendMessageSpy = vi.spyOn(sync, 'sendMessage');
-    const automationCaptured: { readonly value: AutomationEditorSaveCapture } = {
+    const automationCaptured = {
         get value() {
-            return saveAutomationEditorDraftSpy.mock.calls.at(-1)?.[0] ?? null;
+            return automationWriteRequests.at(-1) ?? null;
         },
     };
     // The daemon transport is the boundary; Action dispatch and local launch custody stay real.
@@ -461,8 +459,8 @@ async function createUseCreateNewSessionHarness(accountMode: 'plain' | 'e2ee' = 
             spawnActions.length = 0;
             sessionSpawnNewRpcRequest.value = null;
             lastCreatedAutomation = null;
+            automationWriteRequests.length = 0;
             sessionSpawnNewRpcSpy.mockReset().mockImplementation(defaultSpawn);
-            saveAutomationEditorDraftSpy.mockClear();
             refreshAutomationsSpy.mockClear();
             syncSendMessageSpy.mockClear();
             scopeStorage.setState({ ...initialStore, sessions: {}, sessionPending: {} });
@@ -516,7 +514,6 @@ async function createUseCreateNewSessionHarness(accountMode: 'plain' | 'e2ee' = 
         },
         captured,
         automationCaptured,
-        saveAutomationEditorDraftSpy,
         modalAlertSpy,
         modalConfirmSpy,
         clearNewSessionDraftSpy,

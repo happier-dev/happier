@@ -8,6 +8,7 @@ import type { OptionPickerOption, OptionPickerSection } from '@/components/sessi
 import { buildActionRowAccessibilityLabel } from '@/components/ui/lists/actionRowAccessibility';
 import { presentProviderError } from '@/providers/connection/errorPresentation';
 import { presentProviderModelRow } from '@/providers/models/presentProviderModelRow';
+import { providerConnectionSourceLabel } from '@/providers/session/resolveSessionRoutePresentation';
 import { t } from '@/text';
 import {
     formatLimitResetUtc,
@@ -33,6 +34,48 @@ export type SessionNativeModelOption = Readonly<{
     description?: string;
 }>;
 
+/** Where a picker row's model comes from; the picker shows it only where a name alone is ambiguous. */
+export type SessionModelPickerOptionSource = Readonly<{ label: string; native: boolean }>;
+export type SessionModelPickerOption = OptionPickerOption<SessionModelPickerOptionValue> & Readonly<{
+    source?: SessionModelPickerOptionSource;
+}>;
+export type SessionModelPickerSection = Omit<OptionPickerSection<SessionModelPickerOptionValue>, 'options'> & Readonly<{
+    options: ReadonlyArray<SessionModelPickerOption>;
+}>;
+
+/**
+ * Design A labels: a model name that appears under more than one source, and a Provider or Team model
+ * listed under Favorites (whose heading names no source), carry "· via <source>". Everything else is
+ * already named by its section heading, so it stays plain. Equal names are never merged.
+ */
+export function withSessionModelSourceSuffixes(
+    sections: ReadonlyArray<SessionModelPickerSection>,
+    favoritesSectionId: string,
+): ReadonlyArray<SessionModelPickerSection> {
+    const sourcesByName = new Map<string, Set<string>>();
+    for (const section of sections) {
+        if (section.id === favoritesSectionId) continue;
+        for (const option of section.options) {
+            if (!option.source) continue;
+            const name = option.label.trim().toLowerCase();
+            const sources = sourcesByName.get(name) ?? new Set<string>();
+            sources.add(option.source.label);
+            sourcesByName.set(name, sources);
+        }
+    }
+    return sections.map((section) => {
+        let changed = false;
+        const options = section.options.map((option) => {
+            if (!option.source) return option;
+            const ambiguous = (sourcesByName.get(option.label.trim().toLowerCase())?.size ?? 0) > 1;
+            if (!ambiguous && !(section.id === favoritesSectionId && !option.source.native)) return option;
+            changed = true;
+            return { ...option, labelSuffix: t('agentInput.model.viaSource', { source: option.source.label }) };
+        });
+        return changed ? { ...section, options } : section;
+    });
+}
+
 export type SessionModelSelectedTriggerPresentation = Readonly<{
     subtitle: string;
     detail?: string;
@@ -48,9 +91,7 @@ export function hiddenModelVisibilityKeys(
 }
 
 export function sessionModelConnectionTitle(group: SessionModelProjectionGroup): string {
-    return group.connectionRole === 'default' && group.connectionDisplayNameMode === 'automatic'
-        ? group.providerName
-        : `${group.providerName} · ${group.connectionName}`;
+    return providerConnectionSourceLabel(group);
 }
 
 function teamCredentialDeliveryLabel(deliveryMode: TeamCredentialProviderModelSelectionV1['deliveryMode']): string {
@@ -118,7 +159,15 @@ export function buildSessionModelPickerSections(input: Readonly<{
     currentTeamCredentialResourceKeys?: ReadonlySet<string>;
     selectedTeamCredentialModel?: SessionModelPickerOptionValue;
     onRecoverTeamCredentialResource?: (resource: TeamCredentialResourceCatalogEntryV1) => void;
-}>): readonly OptionPickerSection<SessionModelPickerOptionValue>[] {
+    /** The Agent's own source (its signed-in account or pool); headings fall back to "Built-in". */
+    nativeSourceLabel?: string | null;
+    /**
+     * Default `true`: a selection the list cannot show gets a recovery row. Browsing one source shows
+     * only that source, so a selection elsewhere is simply not in view, not missing.
+     */
+    recoverMissingSelection?: boolean;
+}>): readonly SessionModelPickerSection[] {
+    const nativeSource = { label: input.nativeSourceLabel || t('settingsProviders.models.builtIn'), native: true };
     const shouldShowDescriptions = input.nativeModels.some((model) => (
         model.value !== 'default'
         && typeof model.description === 'string'
@@ -131,7 +180,7 @@ export function buildSessionModelPickerSections(input: Readonly<{
                 : model
         ))
         : input.nativeModels;
-    const nativeOptions = nativeModels.flatMap((model): OptionPickerOption<SessionModelPickerValue>[] => {
+    const nativeOptions = nativeModels.flatMap((model): SessionModelPickerOption[] => {
         const value = nativeModelRef(input.agentTargetKey, model.value);
         if (value === null && input.allowAutomatic === false) return [];
         const hidden = value !== null && input.hiddenNativeModelKeys.has(serializeModelVisibilityRefV1({
@@ -156,13 +205,15 @@ export function buildSessionModelPickerSections(input: Readonly<{
                 label: presentation.label,
                 description: presentation.description,
                 disabled: true,
+                source: nativeSource,
             }];
         }
-        return [{ value, label: model.label, description: model.description }];
+        return [{ value, label: model.label, description: model.description, source: nativeSource }];
     });
 
-    const providerSections = input.providerGroups.flatMap((group): OptionPickerSection<SessionModelPickerValue>[] => {
-        const options = group.rows.flatMap((row): OptionPickerOption<SessionModelPickerValue>[] => {
+    const providerSections = input.providerGroups.flatMap((group): SessionModelPickerSection[] => {
+        const source = { label: sessionModelConnectionTitle(group), native: false };
+        const options = group.rows.flatMap((row): SessionModelPickerOption[] => {
             const hiddenCurrentSelection = row.visibility === 'hidden_current_selection';
             if (row.visibility !== 'visible' && !hiddenCurrentSelection) return [];
             const presentation = presentProviderModelRow({
@@ -181,6 +232,7 @@ export function buildSessionModelPickerSections(input: Readonly<{
                 value: row.ref,
                 label: presentation.label,
                 description: presentation.description,
+                source,
                 disabled: presentation.selectionDisabled
                     || (
                         group.modelLoadPreflightPolicy === 'required'
@@ -190,12 +242,12 @@ export function buildSessionModelPickerSections(input: Readonly<{
             }];
         });
         return options.length > 0
-            ? [{ id: `connection:${group.connectionId}`, title: sessionModelConnectionTitle(group), options }]
+            ? [{ id: `connection:${group.connectionId}`, title: source.label, options }]
             : [];
     });
 
-    const teamSections = (input.teamCredentialResources ?? []).flatMap((resource): OptionPickerSection<SessionModelPickerOptionValue>[] => {
-        const options = resource.providerModels.flatMap((row): OptionPickerOption<SessionModelPickerOptionValue>[] => {
+    const teamSections = (input.teamCredentialResources ?? []).flatMap((resource): SessionModelPickerSection[] => {
+        const options = resource.providerModels.flatMap((row): SessionModelPickerOption[] => {
             if (row.selection.agentTargetKey !== input.agentTargetKey) return [];
             const current = input.currentTeamCredentialResourceKeys?.has(`${resource.teamId}:${resource.id}`) ?? true;
             const available = current && resource.readiness.kind === 'available'
@@ -222,6 +274,7 @@ export function buildSessionModelPickerSections(input: Readonly<{
             return [{
                 value: row.selection,
                 label: row.descriptor.name || row.selection.modelId,
+                source: { label: resource.displayName, native: false },
                 description: [resource.displayName, delivery, unavailableReason, recovery]
                     .filter((value): value is string => Boolean(value))
                     .join(' · '),
@@ -250,9 +303,9 @@ export function buildSessionModelPickerSections(input: Readonly<{
         }];
     });
 
-    const sections: OptionPickerSection<SessionModelPickerOptionValue>[] = [
+    const sections: SessionModelPickerSection[] = [
         ...(nativeOptions.length > 0
-            ? [{ id: 'native', title: t('settingsProviders.models.builtIn'), options: nativeOptions }]
+            ? [{ id: 'native', title: nativeSource.label, options: nativeOptions }]
             : []),
         ...providerSections,
         ...teamSections,
@@ -262,7 +315,8 @@ export function buildSessionModelPickerSections(input: Readonly<{
         || isTeamCredentialProviderModelPickerValue(selectedValue)
         || selectedValue.providerConnectionId == null
         || input.providerProjectionAuthoritative;
-    if (selectedValue && selectedProviderProjectionAuthoritative && !sections.some((section) => section.options.some((option) => (
+    if (selectedValue && selectedProviderProjectionAuthoritative && input.recoverMissingSelection !== false
+        && !sections.some((section) => section.options.some((option) => (
         sessionModelSelectionKey(option.value) === sessionModelSelectionKey(selectedValue)
     )))) {
         const recovery = !isTeamCredentialProviderModelPickerValue(selectedValue) && input.currentSelectionRecovery

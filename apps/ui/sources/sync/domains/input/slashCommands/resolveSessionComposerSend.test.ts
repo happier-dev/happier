@@ -3,6 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { resolveSessionComposerSend } from './resolveSessionComposerSend';
 
 describe('resolveSessionComposerSend', () => {
+    it('preserves the selected invocation target Home through composer admission', () => {
+        const promptInvocationsV1 = { v: 1 as const, entries: [{ id: 'foreign', token: '/foreign', title: 'Foreign',
+            target: { kind: 'doc' as const, artifactId: 'same-id', serverId: 'bravo' },
+            behavior: 'insert' as const, allowArgs: false, availableIn: 'global' as const }] };
+        expect(resolveSessionComposerSend({ input: '/foreign', executionRunsEnabled: true, promptInvocationsV1 }))
+            .toMatchObject({ kind: 'template', targetArtifactId: 'same-id', targetServerId: 'bravo' });
+    });
     it('admits session-only invocations only for an addressed session', () => {
         const promptInvocationsV1 = { v: 1 as const, entries: [{ id: 'local', token: '/local', title: 'Local', target: { kind: 'doc' as const, artifactId: 'doc' }, behavior: 'insert' as const, allowArgs: false, availableIn: 'session_only' as const }] };
         expect(resolveSessionComposerSend({ input: '/local', executionRunsEnabled: true, promptInvocationsV1, sessionId: null })).toEqual({ kind: 'send', text: '/local' });

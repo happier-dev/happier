@@ -9,6 +9,9 @@ import type {
 } from '@happier-dev/protocol';
 import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
 import type { SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol/teams';
+import type { SessionIdentityAdditions } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
+import type { SessionPromptStackV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
+import type { SessionInstructionsAuthoringDraft } from '@/sync/ops/promptLibrary/sessionInstructions';
 
 type SessionAuthoringDraftBase = Readonly<Omit<
     SessionAuthoringValueV1,
@@ -26,6 +29,11 @@ type SessionAuthoringDraftBase = Readonly<Omit<
 }>;
 
 export type SessionAuthoringDraft = Readonly<SessionAuthoringDraftBase & {
+    sessionName?: string;
+    initialSessionFacts?: SessionIdentityAdditions;
+    memoryEnabled?: boolean;
+    promptStack?: SessionPromptStackV1;
+    instructionsDraft?: SessionInstructionsAuthoringDraft | null;
     connectedServices: SessionAuthoringValueV1['connectedServices'];
     terminal: SessionAuthoringTerminalV1 | null;
     primaryTeamId?: string | null;

@@ -13,6 +13,7 @@ import { readPluginSurfaceEphemeralMountBinding } from '@/components/plugins/sur
 import { normalizePluginUiProjection } from '@/sync/domains/plugins/ui/projection';
 import { resolvePluginLocalizedText } from '@/sync/domains/plugins/ui/i18n';
 import { createInputTypePickerPort } from './inputTypePickerPort';
+import { createHostInputTypePickerForm } from './hostInputTypePickerForm';
 
 export type InputTypePickerHostContext = Readonly<{
     machineId?: string | null;
@@ -20,12 +21,14 @@ export type InputTypePickerHostContext = Readonly<{
     serverId?: string | null;
     /** The admitted consumer and its current dependency context, not an authority token. */
     contextKey?: string;
+    /** Semantic input dependencies only; Account/read authority remains captured separately. */
+    draftInput?: Readonly<Record<string, unknown>>;
+    accountLifetime?: ActiveServerAccountScopeLifetime;
 }>;
 
 type HostProps = InputTypePickerHostContext & Readonly<{
     children: React.ReactNode;
     enabled: boolean;
-    accountLifetime?: ActiveServerAccountScopeLifetime;
     isCurrent?: () => boolean;
 }>;
 
@@ -44,6 +47,13 @@ export function InputTypePickerHostProvider(props: HostProps): React.ReactElemen
     const current = React.useRef({ props, accountLifetime, machineId, serverId, state });
     current.current = { props, accountLifetime, machineId, serverId, state };
     const port = React.useMemo(() => {
+        const readHost = () => {
+            const now = current.current;
+            return now.props.enabled && now.props.contextKey === props.contextKey
+                && now.props.isCurrent === props.isCurrent && now.serverId === serverId
+                && now.accountLifetime === accountLifetime && now.accountLifetime?.isCurrent()
+                && now.props.isCurrent?.() !== false ? now : null;
+        };
         const read = () => {
             const now = current.current;
             if (!now.props.enabled || now.props.contextKey !== props.contextKey
@@ -64,6 +74,20 @@ export function InputTypePickerHostProvider(props: HostProps): React.ReactElemen
             return now && entry?.occurrenceId && plugin?.enabled === true ? { now, entry } : null;
         };
         return createInputTypePickerPort({
+            openHostPicker: async (request) => {
+                const admitted = readHost();
+                if (!admitted || request.signal.aborted || request.reference.hostType !== 'usageQuery') return { kind: 'cancelled' };
+                // Reuse the incumbent generic form; host inputs do not require a daemon/plugin mount.
+                const { presentActionInputForm } = await import('@/components/plugins/actions/presentActionInputForm');
+                if (!readHost() || request.signal.aborted) return { kind: 'cancelled' };
+                const picker = createHostInputTypePickerForm({ request, nowMs: Date.now(),
+                    serverId: admitted.accountLifetime!.scope.serverId, draftInput: admitted.props.draftInput,
+                    accountLifetime: admitted.accountLifetime, isCurrent: () => readHost() !== null });
+                presentActionInputForm({ form: picker.form, signal: request.signal,
+                    pickerContext: { serverId: admitted.accountLifetime!.scope.serverId,
+                        accountLifetime: admitted.accountLifetime! } });
+                return picker.result;
+            },
             resolveType: (identity) => {
                 const admitted = entryFor(identity);
                 return admitted ? { identity, occurrenceId: admitted.entry.occurrenceId!, definition: admitted.entry.definition } : null;

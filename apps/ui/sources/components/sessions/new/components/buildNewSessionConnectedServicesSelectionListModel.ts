@@ -78,6 +78,8 @@ export type BuildNewSessionConnectedServicesSelectionListModelParams = Readonly<
     profileOptionsByServiceId: ConnectedServicesProfileOptionsByServiceId;
     groupOptionsByServiceId: ConnectedServicesAccountGroupOptionsByServiceId;
     bindingsByServiceId: Readonly<Record<string, ConnectedServicesServiceBinding | undefined>>;
+    /** Unread inherited defaults are indeterminate, not an implicit Native selection. */
+    bindingsKnown?: boolean;
     teamCredentialResources?: readonly TeamCredentialResourceCatalogEntryV1[];
     /** Exact currentness projection from the Home catalog; stale rows stay visible but cannot be selected. */
     teamCredentialResourceCurrentKeys?: ReadonlySet<string>;
@@ -411,7 +413,7 @@ export function buildNewSessionConnectedServicesSelectionListModel(
 
         if (params.includeNativeAuthOption !== false) {
             const nativeOptionId = createNativeServiceOptionId(serviceId);
-            const nativeSelected = !usesConnectedProfile && !usesConnectedGroup && !usesTeamResource;
+            const nativeSelected = params.bindingsKnown !== false && !usesConnectedProfile && !usesConnectedGroup && !usesTeamResource;
             const nativeBinding = { source: 'native' } satisfies ConnectedServicesServiceBinding;
             const nativeAvailability = resolveAvailability({
                 rootParams: params,

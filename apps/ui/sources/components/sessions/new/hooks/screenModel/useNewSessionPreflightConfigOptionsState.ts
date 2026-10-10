@@ -4,7 +4,7 @@ import { readBackendTargetRefV2, type BackendTargetRefV2 } from '@happier-dev/pr
 import { resolveCatalogAgentIdForBackendTarget } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { isBundledAgentId } from '@/agents/catalog/catalog';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
-import { machineCapabilitiesInvoke } from '@/sync/ops/capabilities';
+import { invokeAgentInventoryProbeAction } from '@/sync/ops/actions/agentInventoryActionDeps';
 import { normalizeAcpConfigOptionsArray, type AcpConfigOption } from '@/sync/domains/sessionControl/configOptionsControl';
 import { buildDynamicConfigOptionsProbeCacheKey } from '@/sync/domains/sessionControl/dynamicConfigOptionsProbeCacheKey';
 import {
@@ -21,7 +21,6 @@ import {
     type NewSessionCapabilityProbeContext,
 } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import { NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS } from '@/components/sessions/new/modules/newSessionCapabilityProbeTimeoutMs';
-import { buildProviderCliCapabilityId } from '@/capabilities/cliCapabilityId';
 import {
     scheduleProbedResourceRetryAfterDelay,
     scheduleProbedResourceRetryAfterExpiry,
@@ -187,22 +186,17 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
                 cacheable: boolean;
                 unavailable?: boolean;
             }> | null>(cacheKey, async () => {
-                const response = await machineCapabilitiesInvoke(
-                    params.selectedMachineId!,
-                    {
-                        id: buildProviderCliCapabilityId(probeAgentType),
-                        method: 'probeConfigOptions',
-                        params: {
+                const response = await invokeAgentInventoryProbeAction({
+                    agentId: probeAgentType,
+                    machineId: params.selectedMachineId!,
+                    serverId: params.capabilityServerId,
+                    backendTarget: backendTargetForProbe,
+                    capabilityParams: {
                             timeoutMs: NEW_SESSION_CAPABILITY_PROBE_TIMEOUT_MS,
-                            backendTarget: backendTargetForProbe,
                             ...(probeContextCapabilityParams ? probeContextCapabilityParams : {}),
                             ...(cwd ? { cwd } : {}),
-                        },
                     },
-                    {
-                        serverId: params.capabilityServerId,
-                    },
-                );
+                }, 'probeConfigOptions');
 
                 if (!response.supported) return null;
                 if (!response.response.ok) return null;

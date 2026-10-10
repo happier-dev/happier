@@ -11,7 +11,7 @@ import { useHardwareKeyboard } from '@/components/ui/selectionList/useHardwareKe
 import { useCommandMenuKeyboard, type CommandMenuAnchor, type CommandMenuItem } from '@/components/ui/commandMenu';
 import { useUserMessageHistoryEntries, type UserMessageHistoryEntriesSnapshot } from '@/hooks/session/useUserMessageHistoryEntries';
 import { BUILT_IN_PROMPTS } from '@/sync/domains/input/slashCommands/builtInPrompts';
-import { getStorage, useSetting } from '@/sync/domains/state/storage';
+import { getStorage } from '@/sync/domains/state/storage';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { t } from '@/text';
 import { resolveKeyboardPlatform } from '@/keyboard/runtime';
@@ -32,7 +32,7 @@ export type PromptPickerLibrarySnapshot = Readonly<{
     coverage: 'complete' | 'partial' | 'unavailable';
     isLoading: boolean;
     error: boolean;
-    read: (artifactId: string) => Promise<string>;
+    read: (artifactId: string, serverId?: string | null) => Promise<string>;
     setFavorite: (artifactId: string, favorite: boolean) => Promise<void>;
     /** Adds a prompt this picker just created (Save in place) without re-listing the library. */
     adopt: (item: PromptLibraryListItem) => void;
@@ -57,9 +57,9 @@ const EMPTY_FOLDERS: ReadonlyMap<string, string> = new Map();
 export function AgentInputPromptPicker(props: AgentInputPromptPickerProps) {
     const library = usePromptPickerLibrary(props.serverId);
     const history = useUserMessageHistoryEntries({ scope: 'global', enabled: true, serverId: props.serverId });
-    const folders = useSetting('promptFoldersV1');
-    const folderNames = React.useMemo(() => folders.folders?.length
-        ? new Map(folders.folders.map((folder) => [folder.id, folder.name]))
+    const folders = library.folders;
+    const folderNames = React.useMemo(() => folders.length
+        ? new Map(folders.map((folder) => [folder.id, folder.name]))
         : EMPTY_FOLDERS, [folders]);
     const sessionNames = usePromptPickerSessionNames(history.entries);
     return <PromptPickerView {...props} library={library} history={history} folderNames={folderNames} sessionNames={sessionNames} />;
@@ -100,8 +100,8 @@ export function PromptPickerView(props: PromptPickerViewProps) {
     const hardwareKeyboard = props.hardwareKeyboard ?? detectedKeyboard;
     const { width } = useWindowDimensions();
     const builtRows = React.useMemo(() => buildPromptPickerRows({ documents: library.documents, invocations: library.invocations,
-        builtIns: BUILT_IN_PROMPTS, history: history.entries, sessionId: props.sessionId, query }),
-    [library.documents, library.invocations, history.entries, props.sessionId, query]);
+        builtIns: BUILT_IN_PROMPTS, history: history.entries, sessionId: props.sessionId, serverId: props.serverId, query }),
+    [library.documents, library.invocations, history.entries, props.sessionId, props.serverId, query]);
     // Save in place (lab R1s): a starred Sent before row rises into Favourites as a name field; once
     // saved it is a library prompt, so for the rest of this open it no longer repeats under Sent before.
     const [saving, setSaving] = React.useState<Extract<PromptPickerRow, { kind: 'history' }> | null>(null);
@@ -117,8 +117,15 @@ export function PromptPickerView(props: PromptPickerViewProps) {
         return [...remaining.slice(0, at), { ...saving, group: 'favorites' as const }, ...remaining.slice(at)];
     }, [builtRows, moved, saving]);
     const searchInput = React.useRef<{ focus?: () => void } | null>(null);
-    // Stable, so the field takes focus once on open and never again on a later render.
-    const searchInputRef = React.useCallback((node: { focus?: () => void } | null) => { searchInput.current = node; focusOnMount(node); }, []);
+    const openingFocusAssigned = React.useRef(false);
+    // A platform ref can detach and reattach during an ordinary render. Opening
+    // focus belongs to this picker instance, not each attachment of its input.
+    const searchInputRef = React.useCallback((node: { focus?: () => void } | null) => {
+        searchInput.current = node;
+        if (!node || openingFocusAssigned.current) return;
+        openingFocusAssigned.current = true;
+        focusOnMount(node);
+    }, []);
     const startSave = React.useCallback((row: PromptPickerRow) => {
         if (row.kind !== 'history') return;
         setSaving(row);
@@ -143,9 +150,9 @@ export function PromptPickerView(props: PromptPickerViewProps) {
         if (rows.length) setSelectedId(rows[(selectedIndex + direction + rows.length) % rows.length]!.id);
     };
     const readRow = React.useCallback(async (row: PromptPickerRow): Promise<string> => {
-        if (row.kind === 'doc') return library.read(row.document.artifactId);
+        if (row.kind === 'doc') return library.read(row.document.artifactId, props.serverId);
         return row.kind === 'builtIn' ? row.prompt.body : row.entry.text;
-    }, [library.read]);
+    }, [library.read, props.serverId]);
     const apply = React.useCallback(async (row: PromptPickerRow | undefined, mode: 'insert' | 'send') => {
         // The row being named is a form, not a prompt to insert.
         if (!row || row.id === saving?.id || (mode === 'send' && !props.canSend)) return;
@@ -199,12 +206,13 @@ export function PromptPickerView(props: PromptPickerViewProps) {
         history: t('agentInput.promptPicker.sentBefore'),
     }), []);
     const items: readonly CommandMenuItem[] = React.useMemo(() => rows.map((row) => ({ id: row.id, label: row.title,
+        // While a row is being named, the pointer resting where it rose from never takes the selection.
+        onHighlight: () => { if (!savingRef.current) setSelectedId(row.id); },
         group: groups[row.group], renderRow: () => row.kind === 'history' && row.id === saving?.id
             ? <PromptPickerSaveRow row={row} serverId={props.serverId} nowMs={openedAtMs} onSaved={finishSave} onCancel={cancelSave} />
             : <PromptPickerRowContent row={row} query={query} nowMs={openedAtMs}
                 folderNames={props.folderNames} sessionNames={props.sessionNames}
-                // While a row is being named, the pointer resting where it rose from never takes the selection.
-                onHighlight={() => { if (!savingRef.current) setSelectedId(row.id); }} onToggleFavorite={() => { void toggleFavorite(row); }} /> })),
+                onToggleFavorite={() => { void toggleFavorite(row); }} /> })),
     [rows, groups, query, openedAtMs, props.folderNames, props.sessionNames, props.serverId, toggleFavorite, saving?.id, finishSave, cancelSave]);
     const libraryUnavailable = library.error || (!library.isLoading && library.coverage === 'unavailable');
     const hasFavorites = rows.some((row) => row.group === 'favorites');
@@ -212,9 +220,11 @@ export function PromptPickerView(props: PromptPickerViewProps) {
     return <AgentInputCommandMenu
         open anchor={props.anchor} query={query} items={items} selectedIndex={selected ? selectedIndex : -1}
         onMoveUp={() => move(-1)} onMoveDown={() => move(1)} onSelect={(_, index) => { void apply(rows[index], 'insert'); }}
-        onRequestClose={props.onRequestClose} preserveHostFocus={false} maxWidth={width} placement="top"
+        onRequestClose={props.onRequestClose} preserveHostFocus={false} maxWidth={width} placement="top" flip={false}
         matchAnchorWidth fillHeight maxHeight={wide ? PICKER_HEIGHT_WITH_PREVIEW : PICKER_HEIGHT}
         testID="agent-input-prompt-picker"
+        leadingEmptyGroup={!query && !library.isLoading && !libraryUnavailable && !hasFavorites && rows.length > 0
+            ? { title: groups.favorites, hint: t('agentInput.promptPicker.favoritesInvite') } : undefined}
         emptyState={library.isLoading && !rows.length ? <PromptPickerSkeletonRow testID="prompt-picker-loading" />
             : <PromptPickerNotice testID="prompt-picker-empty" text={query
                 ? t('agentInput.promptPicker.noMatchesFor', { query: query.trim() })
@@ -231,8 +241,7 @@ export function PromptPickerView(props: PromptPickerViewProps) {
             {libraryUnavailable ? <PromptPickerNotice testID="prompt-picker-library-error" tone="error" text={t('agentInput.promptPicker.libraryError')}
                 action={{ label: t('common.retry'), onPress: library.retry }} />
                 : library.coverage === 'partial' && !library.isLoading ? <PromptPickerNotice text={t('agentInput.promptPicker.partialLibrary')} />
-                : !query && !library.isLoading && !hasFavorites && rows.length > 0 ? <PromptPickerNotice testID="prompt-picker-invite"
-                    title={groups.favorites} text={t('agentInput.promptPicker.favoritesInvite')} /> : null}
+                : null}
         </View>}
         preview={wide && selected ? <PromptPickerPreview row={selected} read={readRow} nowMs={openedAtMs}
             folderNames={props.folderNames} sessionNames={props.sessionNames} /> : null}

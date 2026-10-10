@@ -1,5 +1,6 @@
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
-import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
+import { isBundledAgentId } from '@/agents/catalog/catalog';
+import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
 import type { NewSessionProfileAvailabilityReason } from '@/components/sessions/new/modules/newSessionAgentSelection';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { t } from '@/text';
@@ -24,7 +25,7 @@ function resolveBackendUnavailableSubtitle(
     if (reason?.startsWith('cli-not-detected:')) {
         const agentId = reason.split(':')[1];
         const cli = agentId && isBundledAgentId(agentId)
-            ? t(getAgentCore(agentId).displayNameKey)
+            ? resolveAgentCatalogTitle(agentId)
             : agentId || t('common.unavailable');
         return t('newSession.aiBackendCliNotDetectedOnMachine', { cli });
     }

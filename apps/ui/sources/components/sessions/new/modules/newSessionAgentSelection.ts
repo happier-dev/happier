@@ -16,17 +16,21 @@ export type NewSessionProfileAvailabilityReason =
     | 'no-supported-cli'
     | 'cli-not-detected:any'
     | `cli-not-detected:${AgentId}`
+    | 'agent-not-ready:any'
+    | `agent-not-ready:${AgentId}`
     | 'logged-out:any'
     | `logged-out:${AgentId}`;
 
 function resolveAgentUnavailabilityReasonForNewSession(
     params: BaseSelectionParams & Readonly<{ agentId: AgentId }>,
-): Exclude<NewSessionProfileAvailabilityReason, 'no-supported-cli' | 'cli-not-detected:any' | 'logged-out:any'> | null {
+): Exclude<NewSessionProfileAvailabilityReason, 'no-supported-cli' | 'cli-not-detected:any' | 'agent-not-ready:any' | 'logged-out:any'> | null {
     const agent = params.machineAgentsById[params.agentId];
     if (isMachineAgentReady(agent)) return null;
-    return agent?.state === 'needsSignIn'
-        ? `logged-out:${params.agentId}`
-        : `cli-not-detected:${params.agentId}`;
+    if (!agent || agent.stale) return `agent-not-ready:${params.agentId}`;
+    if (agent.state === 'needsSignIn') return `logged-out:${params.agentId}`;
+    return agent.state === 'notInstalled' && !agent.installed
+        ? `cli-not-detected:${params.agentId}`
+        : `agent-not-ready:${params.agentId}`;
 }
 
 export function resolveBackendEntryUnavailabilityReasonForNewSession(
@@ -85,7 +89,9 @@ export function resolveProfileAvailabilityForNewSession(
     }
     return {
         available: false,
-        reason: unavailabilityReasons.some((reason) => reason?.startsWith('cli-not-detected:'))
+        reason: unavailabilityReasons.some((reason) => reason?.startsWith('agent-not-ready:'))
+            ? 'agent-not-ready:any'
+            : unavailabilityReasons.some((reason) => reason?.startsWith('cli-not-detected:'))
             ? 'cli-not-detected:any'
             : 'logged-out:any',
     };
