@@ -1,5 +1,6 @@
 import Fastify from 'fastify';
 import { io as ioClient } from 'socket.io-client';
+import { Server } from 'socket.io';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { renderPrismaCompatibleSqliteDatabaseUrl } from '@happier-dev/cli-common/firstPartyRuntime/server';
@@ -88,6 +89,8 @@ describe('shared QA schema errors at the Prisma and socket boundaries', () => {
         const token = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
         const app = Fastify({ logger: false }) as unknown as AppFastify;
         startSocket(app);
+        const io = app.machineDaemonPresence;
+        if (!(io instanceof Server)) throw new Error('Missing socket test server');
         await app.listen({ port: 0, host: '127.0.0.1' });
         const address = app.server.address();
         if (typeof address !== 'object' || address === null) throw new Error('Missing test server address');
@@ -96,13 +99,15 @@ describe('shared QA schema errors at the Prisma and socket boundaries', () => {
         });
         let changedSchema = false;
         // Pino is the log-output boundary; preserve all real socket and domain logic.
-        const output = vi.spyOn(logger, 'info');
+        const output = vi.spyOn(logger, 'error');
         try {
             await new Promise<void>((resolve, reject) => {
                 socket.once('connect', resolve);
                 socket.once('connect_error', reject);
             });
-            await socket.timeout(5_000).emitWithAck('ping');
+            // Client connect precedes asynchronous server admission. Observe
+            // the real transport's installed handler before sending the query.
+            await vi.waitFor(() => expect(io.sockets.sockets.get(socket.id!)?.listeners('access-key-get').length).toBe(1));
             await db.$executeRawUnsafe('ALTER TABLE "Machine" RENAME TO "EventMissingMachine"');
             changedSchema = true;
             const response = await socket.timeout(5_000).emitWithAck('access-key-get', {

@@ -246,27 +246,28 @@ export async function importLegacySessionOrganization(params: Readonly<{
                 }
             }
 
+            let importedOrderEntries = 0;
             for (const orderRequest of orderGroups.values()) {
                 if (orderRequest.scopeKind === "pinned") {
                     const result = await reorderSessionPinsInTx(tx, {
                         accountId: params.accountId,
-                    request: orderRequest,
-                    authentication: params.authentication,
-                    });
-                    if ("error" in result) {
-                        failSessionOrganizationImport(result.error === "session-pin-limit-exceeded"
-                            ? result.error
-                            : "invalid-session-organization-import");
-                    }
-                } else {
-                    const result = await reorderSessionOrganizationInTx(tx, {
-                        accountId: params.accountId,
-                    request: orderRequest,
-                    authentication: params.authentication,
+                        request: orderRequest,
+                        authentication: params.authentication,
                     });
                     if ("error" in result) {
                         failSessionOrganizationImport("invalid-session-organization-import");
                     }
+                    importedOrderEntries += result.orderEntries.length;
+                } else {
+                    const result = await reorderSessionOrganizationInTx(tx, {
+                        accountId: params.accountId,
+                        request: orderRequest,
+                        authentication: params.authentication,
+                    });
+                    if ("error" in result) {
+                        failSessionOrganizationImport("invalid-session-organization-import");
+                    }
+                    importedOrderEntries += result.orderEntries.length;
                 }
             }
 
@@ -289,7 +290,7 @@ export async function importLegacySessionOrganization(params: Readonly<{
                     pins: importedPins,
                     folders: importedFolders,
                     tags: importedTags,
-                    orderEntries: params.request.orderEntries.length,
+                    orderEntries: importedOrderEntries,
                     labels: importedLabels,
                 },
             };
@@ -302,22 +303,39 @@ export async function importLegacySessionOrganization(params: Readonly<{
     }
 }
 
+/** Change only the requested personal membership, retaining shared pin identity and order. */
 export async function setSessionPinInTx(tx: SessionOrganizationTx, params: Readonly<{
     accountId: string;
     sessionId: string;
     request: SetSessionPinRequest;
     authentication: SessionAccessAuthentication;
 }>): Promise<Readonly<{ pin: ReturnType<typeof mapSessionOrganizationPin> | null }> | { error: "session-pin-limit-exceeded" | "session-not-found" }> {
+    const surface = params.request.surface ?? "list";
+    const membership = surface === "rail" ? { railPinned: params.request.pinned } : { listPinned: params.request.pinned };
+    const select = { sessionId: true, sortKey: true, pinnedAt: true, listPinned: true, railPinned: true } as const;
     if (!params.request.pinned) {
-        await tx.sessionPin.deleteMany({
+        // Update only this membership. The row write keeps a concurrent other-surface
+        // change intact, and clearing a missing row must never recreate a saved choice.
+        const updated = await tx.sessionPin.updateMany({
             where: { accountId: params.accountId, sessionId: params.sessionId },
+            data: membership,
         });
+        if (updated.count === 0) return { pin: null };
+        const retained = await tx.sessionPin.findUnique({
+            where: { accountId_sessionId: { accountId: params.accountId, sessionId: params.sessionId } },
+            select,
+        });
+        if (retained && !retained.listPinned && !retained.railPinned) {
+            await tx.sessionPin.deleteMany({
+                where: { accountId: params.accountId, sessionId: params.sessionId, listPinned: false, railPinned: false },
+            });
+        }
         await markSessionOrganizationChanged(tx, {
             accountId: params.accountId,
             scope: "pins",
             sessionIds: [params.sessionId],
         });
-        return { pin: null };
+        return { pin: retained && (retained.listPinned || retained.railPinned) ? mapSessionOrganizationPin(retained) : null };
     }
 
     const visible = await canAccessVisibleUnarchivedSessionForOrganizationInTx(tx, {
@@ -351,9 +369,11 @@ export async function setSessionPinInTx(tx: SessionOrganizationTx, params: Reado
             accountId: params.accountId,
             sessionId: params.sessionId,
             sortKey: params.request.sortKey ?? null,
+            listPinned: surface === "list",
+            railPinned: surface === "rail",
         },
-        update: { sortKey: params.request.sortKey ?? null },
-        select: { sessionId: true, sortKey: true, pinnedAt: true },
+        update: membership,
+        select,
     });
 
     await markSessionOrganizationChanged(tx, {

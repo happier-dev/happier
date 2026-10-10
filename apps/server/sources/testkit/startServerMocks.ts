@@ -76,7 +76,10 @@ export function installStartServerCommonWiringMocks(): void {
     initFilesLocalFromEnv: vi.fn(() => {}),
     initFilesS3FromEnv: vi.fn(() => {}),
   }))
-  vi.mock('@/utils/logging/log', () => ({ log: vi.fn() }))
+  vi.mock('@/utils/logging/log', async () => ({
+    ...await vi.importActual<typeof import('@/utils/logging/log')>('@/utils/logging/log'),
+    log: vi.fn(),
+  }))
   vi.mock('@/app/retention/runtime/startRetentionWorker', () => ({
     startRetentionWorker: vi.fn(() => null),
   }))
@@ -180,6 +183,9 @@ export function createStartServerDbMocks(options: StartServerDbMockOptions = {})
         account: {
           count: (...args: any[]) => accountCount(...args),
         },
+        // Most startup fixtures describe an unconfigured Home; keep its real overlay path.
+        homeSettings: { findUnique: vi.fn(async () => null) },
+        homeGovernancePolicy: { findUnique: vi.fn(async () => null) },
       },
       getDbProviderFromEnv: (...args: Parameters<StartServerDbProviderReader>) => getDbProviderFromEnv(...args),
       initDbPostgres: (...args: any[]) => initDbPostgres(...args),

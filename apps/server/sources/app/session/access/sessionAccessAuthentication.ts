@@ -42,13 +42,14 @@ export function readSessionAccessAuthenticationFromRequest(request: Readonly<{
         env: process.env,
         authority: request.authAuthority,
         authenticationEvidence: request.authTokenAuthenticationEvidence,
-        ...(request.apiTokenPrincipal ? {
-            callerInputConstraints: request.externalActionExecutionAuthorized === true
-                ? request.externalActionInputConstraints : {
+        ...(request.externalActionExecutionAuthorized === true ? {
+            callerInputConstraints: request.externalActionInputConstraints,
+        } : request.apiTokenPrincipal ? {
+            callerInputConstraints: {
                 models: request.apiTokenPrincipal.grant.models,
                 permissionModes: request.apiTokenPrincipal.grant.permissionModes,
             },
-            ...(request.externalActionExecutionAuthorized === true ? {} : { apiTokenGrant: request.apiTokenPrincipal.grant }),
+            apiTokenGrant: request.apiTokenPrincipal.grant,
         } : {}),
         ...(request.authTokenEpoch !== undefined ? { tokenEpoch: request.authTokenEpoch } : {}),
         ...(request.sessionRuntimePrincipal

@@ -7,7 +7,8 @@ import { markSessionProjectionRecipientsChanged, type SessionRecipientCursor } f
 import { observeCreateSessionMessageStage } from "@/app/monitoring/metrics/sessionWriteMetrics";
 import { db } from "@/storage/db";
 import { afterTx, inTx, type Tx } from "@/storage/inTx";
-import { isPrismaErrorCode } from "@/storage/prisma";
+import { isPrismaErrorCode, prismaRuntime } from "@/storage/prisma";
+import type { SessionTranscriptSurfaceItemReferenceV1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 import { log, warn } from "@/utils/logging/log";
 import type { Prisma } from "@prisma/client";
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
@@ -85,6 +86,7 @@ import {
 } from "./pending/hasExactCurrentPublisherAuthorityInTx";
 import {
     compareSessionMessageContentAndRole,
+    admitSessionTranscriptSurfaceItemReferenceInTx,
     resolveSurvivingSessionMessageAuthorAccountIdInTx,
     validateSessionTranscriptWriteAuthorityInTx,
     validateSessionTranscriptStoredContent,
@@ -607,7 +609,12 @@ async function updateSessionMessageAtCurrentRevisionInTx(params: Readonly<{
     try {
         const updated = await params.tx.sessionMessage.update({
             where: { id: params.id, rowRevision: params.rowRevision },
-            data: params.data,
+            data: {
+                ...params.data,
+                // A content correction cannot retain publication authority from the old ciphertext.
+                ...(params.data.content !== undefined && params.data.surfaceItemReference === undefined
+                    ? { surfaceItemReference: prismaRuntime.DbNull } : {}),
+            },
             select: SESSION_MESSAGE_WRITE_SELECT,
         });
         notifySessionTranscriptMutationAfterCommit(params.tx, {
@@ -998,6 +1005,7 @@ type CreateSessionMessageParamsBase = Readonly<{
     publisherAuthority?: CurrentSessionPublisherAuthority;
     trustedSourceTimestamps?: Readonly<{ createdAt: number; updatedAt: number }>;
     trustedTranscriptObservationProvenance?: SessionTranscriptObservationProvenanceV1;
+    trustedSurfaceItemReference?: SessionTranscriptSurfaceItemReferenceV1;
 }>;
 
 type CreateSessionMessageParams = CreateSessionMessageParamsBase & (
@@ -1058,6 +1066,7 @@ async function reconcileExistingTrustedLocalIdInTx(params: Readonly<{
     sourceCreatedAt: Date;
     sourceUpdatedAt: Date;
     provenance: SessionTranscriptObservationProvenanceV1;
+    surfaceItemReference?: SessionTranscriptSurfaceItemReferenceV1;
     storagePolicy: SessionTranscriptStoragePolicy;
 }>): Promise<TrustedLocalIdReconciliation> {
     if (
@@ -1264,12 +1273,17 @@ async function reconcileExistingTrustedLocalIdInTx(params: Readonly<{
         };
     }
 
+    const admittedSurfaceItemReference = await admitSessionTranscriptSurfaceItemReferenceInTx(params.tx, {
+        accountId: access.sessionOwnerId, sessionId: params.sessionId,
+        sessionEncryptionMode: access.sessionEncryptionMode, surfaceItemReference: params.surfaceItemReference,
+    });
     const updated = await updateSessionMessageAtCurrentRevisionInTx({
         tx: params.tx,
         id: existing.id,
         rowRevision: existing.rowRevision,
         data: {
             content: params.content,
+            surfaceItemReference: admittedSurfaceItemReference ?? prismaRuntime.DbNull,
             sidechainId: params.sidechainId,
             messageRole: resolvedRole,
             sourceUpdatedAt: params.sourceUpdatedAt,
@@ -1313,6 +1327,7 @@ async function createSessionMessageAttempt(
         params.messageRole !== undefined && params.messageRole !== null && params.messageRole !== "user"
         || params.trustedSessionEventType !== undefined
         || params.trustedTranscriptObservationProvenance !== undefined
+        || params.trustedSurfaceItemReference !== undefined
     )) return { ok: false, error: "invalid-params" };
     const localId = typeof params.localId === "string" ? params.localId : null;
     const parsedSidechainId = parseSessionMessageSidechainId(params.sidechainId, { emptyString: "invalid" });
@@ -1322,6 +1337,9 @@ async function createSessionMessageAttempt(
     const sidechainId = parsedSidechainId.sidechainId;
     const sourceTimestamps = params.trustedSourceTimestamps;
     const hasTrustedProvenance = params.trustedTranscriptObservationProvenance !== undefined;
+    if (params.trustedSurfaceItemReference !== undefined && !hasTrustedProvenance) {
+        return { ok: false, error: 'invalid-params' };
+    }
     if ((sourceTimestamps === undefined) !== !hasTrustedProvenance) {
         return { ok: false, error: "invalid-params" };
     }
@@ -1394,6 +1412,7 @@ async function createSessionMessageAttempt(
                     sourceCreatedAt,
                     sourceUpdatedAt,
                     provenance: params.trustedTranscriptObservationProvenance,
+                    surfaceItemReference: params.trustedSurfaceItemReference,
                     storagePolicy: encryptionPolicy.storagePolicy,
                 });
                 if (reconciliation.status === "reconciled") {
@@ -1462,6 +1481,7 @@ async function createSessionMessageAttempt(
                 localId,
                 sidechainId,
                 messageRole: resolvedRole,
+                surfaceItemReference: params.trustedSurfaceItemReference,
                 ...(params.inputAdmission === "authenticatedAccount" && !hasTrustedProvenance && resolvedRole === "user"
                     ? { inputAdmissionReceipt: buildSessionInputAdmissionReceipt({ issuer: "authenticatedAccount", access: access.access,
                         callerInputConstraints: params.authentication.callerInputConstraints ?? params.authentication.apiTokenGrant }) }

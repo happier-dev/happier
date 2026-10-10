@@ -179,6 +179,7 @@ describe("external Action server-to-daemon request carrier", () => {
             data: {
                 id: machineId,
                 accountId: account.id,
+                installationId: "installation-external-action-carrier",
                 metadata: "metadata",
                 metadataVersion: 1,
                 daemonState: null,

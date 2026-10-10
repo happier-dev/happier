@@ -1,6 +1,7 @@
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { inTx } from "@/storage/inTx";
 import { isPrismaErrorCode } from "@/storage/prisma";
+import type { SessionTranscriptSurfaceItemReferenceV1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 
 import { resolveSessionMessageRole } from "./messageRole/resolveSessionMessageRole";
 import type { SessionAccessAuthentication } from "./access/sessionAccessAuthentication";
@@ -14,6 +15,7 @@ export type HistoricalSessionTranscriptImportItem = Readonly<{
     localId: string;
     content: PrismaJson.SessionMessageContent;
     messageRole?: unknown;
+    surfaceItemReference?: SessionTranscriptSurfaceItemReferenceV1;
 }>;
 
 export type HistoricalSessionTranscriptImportResult =
@@ -60,6 +62,7 @@ export async function importHistoricalSessionTranscript(
                 localId: item.localId,
                 sidechainId: null,
                 content: item.content,
+                ...(item.surfaceItemReference ? { surfaceItemReference: item.surfaceItemReference } : {}),
                 messageRole: resolveSessionMessageRole({
                     content: item.content,
                     suppliedRole: item.messageRole,

@@ -1,4 +1,6 @@
 import type { Fastify } from "@/app/api/types";
+import { eventRouter } from '@/app/events/connectionEventRouter';
+import { readLocalServicePreviewAdmission } from '@/app/local/services/preview/admission';
 import { readAvailableMachineIrohEndpointAuthority } from '@/app/machines/machineStateGuards';
 import { resolveApiTrustProxy } from '@/app/api/utils/apiRateLimitPolicy';
 import {
@@ -206,7 +208,11 @@ export function registerLocalServiceRoutes(
     const env = options.env ?? process.env;
     const featureEnv = readLocalServicesFeatureEnv(env);
     const runtimes = options.runtimes ?? createLocalServiceRouteRuntimes(env);
-    app.addHook('preClose', async () => runtimes.preview.closeNativeRegistrations());
+    const releaseMachineAccessLoss = eventRouter.onMachineAccessLoss(input => {
+        runtimes.preview.retireMachineAccess(input);
+        runtimes.public.retireMachineAccess(input);
+    });
+    app.addHook('preClose', async () => { releaseMachineAccessLoss(); runtimes.preview.closeNativeRegistrations(); });
     const externalProtocol = isHttpsUrl(resolvePublicBaseUrl(env)) ? "https" : "http";
     const authorizeSessionAccess = options.authorizeSessionAccess ?? createLocalServiceRouteSessionAccessAuthorizer();
     const openTunnel = options.openTunnel
@@ -227,6 +233,7 @@ export function registerLocalServiceRoutes(
         nativeDirectEnabled: (request) => isServerFeatureEnabledForHome(resolvePeerRouteFeatureId({ flowKind: 'tcp_tunnel', routeKind: 'iroh_peer' }), { env, request }),
         openNativeRegistration: (binding, grantId) => runtimes.preview.openNativeRegistration(binding, grantId),
         unregisterPreview: (previewId) => runtimes.preview.unregisterPreview(previewId),
+        retainConnection: (previewId, close, rawToken) => runtimes.preview.retainConnection(previewId, close, rawToken),
         resolvePreview: (previewId) => runtimes.preview.resolvePreview(previewId),
         resolvePreviewByHost: (hostname) => runtimes.preview.resolvePreviewByHost(hostname),
         hostOriginBaseDomain: featureEnv.previewHostOriginBaseDomain,
@@ -248,11 +255,17 @@ export function registerLocalServiceRoutes(
         resolveExposure: (exposureId) => runtimes.public.resolveExposure(exposureId),
         trustProxy: resolveApiTrustProxy(env),
         externalProtocol,
-        retainConnection: (exposureId, close) => runtimes.public.retainConnection(exposureId, close),
+        retainConnection: (exposureId, close, actorAccountId) => {
+            const exposure = runtimes.public.resolveExposure(exposureId);
+            const releaseExposure = runtimes.public.retainConnection(exposureId, close, actorAccountId);
+            const releasePreview = exposure ? runtimes.preview.retainConnection(exposure.previewId, close) : undefined;
+            return () => { releaseExposure(); releasePreview?.(); };
+        },
         revokeExposure: (exposureId, input) => runtimes.public.revokeExposure(exposureId, input),
         validateAccess: (input) => runtimes.public.validateAccess(input),
         exchangeAccessToken: (input) => runtimes.public.exchangeAccessToken(input),
         authorizeSessionAccess,
+        authorizeServiceAccess: async ({ userId, preview }) => Boolean(await readLocalServicePreviewAdmission({ accountId: userId, resource: preview })),
         dnsTlsValid: resolveLocalServicePublicDnsTlsValid(env),
         featureEnabled: (request) => isServerFeatureEnabledForHome("localServices.publicPreview", { env, request }),
         openTunnel,

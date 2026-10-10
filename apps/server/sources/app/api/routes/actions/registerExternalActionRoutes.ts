@@ -266,7 +266,7 @@ async function readAdmittedRootRelay(app: Fastify, request: FastifyRequest, acti
     body: ReturnType<typeof ExternalActionExecutionAuthorizationRequestV1Schema.parse>) {
     const authorization = body.executionAuthorization;
     if (!authorization || body.sessionActionOrigin || body.sessionActionSource || body.installationProof
-        || body.managedContinuation || body.handoffContinuation) return null;
+        || body.managedContinuation || body.handoffContinuation || body.handoffPreflight) return null;
     const root = await auth.verifyExternalActionExecutionAuthorization(authorization.token);
     if (!root || root.serverIdentityId !== await getOrCreateServerIdentityId() || root.accountId !== request.userId
         || !sameManagedInput(root, authorization.binding)
@@ -301,7 +301,7 @@ async function readHandoffContinuation(request: FastifyRequest, actionId: string
     if (typeof token !== 'string' || token !== continuation.authorization.token) return null;
     const root = await auth.verifyExternalActionExecutionAuthorization(token);
     if (!root || !sameManagedInput(root, continuation.authorization.binding)
-        || root.actionId !== 'session.handoff' || !root.handoffAdmission || root.handoffContinuation
+        || root.actionId !== 'session.handoff' || !root.handoffAdmission || root.handoffContinuation || root.handoffPreflight
         || root.accountId !== request.userId || root.requestId !== body.envelope.requestId
         || body.envelope.target?.kind !== 'machine' || body.envelope.target.machineId !== body.machineId
         || ![root.handoffAdmission.sourceMachineId, root.handoffAdmission.targetMachineId].includes(body.machineId)) return null;
@@ -331,6 +331,40 @@ async function readHandoffContinuation(request: FastifyRequest, actionId: string
     const principal = await verifyCurrentExternalActionPrincipalInTx(db, child);
     if (!principal) return null;
     return { binding: child, principal };
+}
+
+/** The original publisher can inspect only its admitted peers before accepting transfer custody. */
+async function readHandoffPreflight(request: FastifyRequest, actionId: string,
+    body: ReturnType<typeof ExternalActionExecutionAuthorizationRequestV1Schema.parse>) {
+    const preflight = body.handoffPreflight;
+    const token = request.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER];
+    if (!preflight || request.externalActionExecutionAuthorized !== true || actionId !== 'session.handoff'
+        || request.externalActionEffectActionId !== actionId || typeof token !== 'string' || token !== preflight.authorization.token) return null;
+    const root = await auth.verifyExternalActionExecutionAuthorization(token);
+    const handoff = root?.handoffAdmission;
+    if (!root || !handoff || !sameManagedInput(root, preflight.authorization.binding) || root.accountId !== request.userId
+        || root.actionId !== actionId || root.handoffContinuation || root.handoffPreflight
+        || root.machineId !== handoff.sourceMachineId || root.installationId !== handoff.sourceInstallationId
+        || !sameManagedInput(body.envelope.handoffAdmission, { sessionId: handoff.sessionId,
+            sourceMachineId: handoff.sourceMachineId, targetMachineId: handoff.targetMachineId })
+        || body.envelope.requestId !== root.requestId || body.envelope.target?.kind !== 'machine'
+        || body.envelope.target.machineId !== body.machineId
+        || ![handoff.sourceMachineId, handoff.targetMachineId].includes(body.machineId)) return null;
+    if (body.envelope.v === 1) {
+        const input = body.envelope.input;
+        const phase = input && typeof input === 'object' && !Array.isArray(input)
+            && Reflect.get(input, 'kind') === 'requester_session_handoff_preflight_bootstrap_v1' ? Reflect.get(input, 'input') : input;
+        if (!phase || typeof phase !== 'object' || Array.isArray(phase)
+            || Reflect.get(phase, 'sessionId') !== handoff.sessionId
+            || Reflect.get(phase, 'sourceMachineId') !== handoff.sourceMachineId
+            || Reflect.get(phase, 'targetMachineId') !== handoff.targetMachineId) return null;
+    }
+    const child = { ...root, machineId: body.machineId, actionId, target: body.envelope.target,
+        installationId: body.machineId === handoff.sourceMachineId ? handoff.sourceInstallationId : handoff.targetInstallationId,
+        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(body.envelope),
+        handoffPreflight: { rootRequestId: root.requestId, rootRequestEnvelopeDigest: root.requestEnvelopeDigest } };
+    const principal = await verifyCurrentExternalActionPrincipalInTx(db, child);
+    return principal ? { binding: child, principal } : null;
 }
 
 /** The controller root may originate only its retained creation's actual guest. */
@@ -446,6 +480,13 @@ export function registerExternalActionRoutes(
             let principal = readExternalActionRequestPrincipal(request, request.params.actionId, body.success ? body.data : undefined);
             let continuation: Awaited<ReturnType<typeof readManagedGuestContinuation>> = null;
             let handoffContinuation: Awaited<ReturnType<typeof readHandoffContinuation>> = null;
+            let handoffPreflight: Awaited<ReturnType<typeof readHandoffPreflight>> = null;
+            if (actionId.success && body.success && body.data.handoffPreflight) {
+                handoffPreflight = await readHandoffPreflight(request, actionId.data, body.data);
+                const verified = handoffPreflight?.principal;
+                const binding = handoffPreflight?.binding;
+                principal = verified && binding ? projectExternalActionBoundPrincipal(binding, verified) : null;
+            }
             if (actionId.success && body.success && body.data.handoffContinuation) {
                 handoffContinuation = await readHandoffContinuation(request, actionId.data, body.data);
                 const verified = handoffContinuation?.principal;
@@ -499,10 +540,10 @@ export function registerExternalActionRoutes(
                 if (!isOriginalAccountHandoffAction(actionId.data) && !(actionId.data === 'session.spawn_new' && handoffContinuation)) {
                     return sendExternalActionHttpError(reply, 'invalid_envelope');
                 }
-                handoffAdmission = handoffContinuation?.binding.handoffAdmission
+                handoffAdmission = handoffPreflight?.binding.handoffAdmission ?? handoffContinuation?.binding.handoffAdmission
                     ?? await readCurrentExternalActionHandoffBindingInTx(db, { accountId: principal.accountId,
                         handoffAdmission: body.data.envelope.handoffAdmission }) ?? undefined;
-                if (!handoffAdmission || (!handoffContinuation && (actionId.data !== 'session.handoff'
+                if (!handoffAdmission || (!handoffContinuation && !handoffPreflight && (actionId.data !== 'session.handoff'
                     || body.data.machineId !== handoffAdmission.sourceMachineId
                     || body.data.sessionActionSource && body.data.sessionActionSource.machineId !== handoffAdmission.sourceMachineId))) {
                     return sendExternalActionHttpError(reply, 'invalid_token', body.data.envelope.requestId);
@@ -549,6 +590,9 @@ export function registerExternalActionRoutes(
                     requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(body.data.envelope),
                     target,
                     ...(handoffAdmission ? { handoffAdmission } : {}),
+                    ...(handoffPreflight ? { handoffPreflight: handoffPreflight.binding.handoffPreflight,
+                        sessionActionOrigin: handoffPreflight.binding.sessionActionOrigin,
+                        sessionActionSource: handoffPreflight.binding.sessionActionSource } : {}),
                     ...(handoffContinuation ? { handoffContinuation: handoffContinuation.binding.handoffContinuation,
                         sessionActionOrigin: handoffContinuation.binding.sessionActionOrigin,
                         sessionActionSource: handoffContinuation.binding.sessionActionSource } : {}),

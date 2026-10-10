@@ -1,30 +1,29 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
     findAccount: vi.fn(),
-    listAccountPetsForAccount: vi.fn(),
-    readAccountPetAssetForAccount: vi.fn(),
+    listPets: vi.fn(),
+    findPet: vi.fn(),
 }));
 
-vi.mock("@/storage/db", () => ({
-    db: {
-        account: {
-            findUnique: mocks.findAccount,
-        },
-    },
-}));
-
-vi.mock("./accountPetLibraryRuntime", () => ({
-    getDefaultAccountPetLibraryServices: () => ({
-        listAccountPetsForAccount: mocks.listAccountPetsForAccount,
-        readAccountPetAssetForAccount: mocks.readAccountPetAssetForAccount,
-    }),
-}));
+// Only the persistent database boundary is replaced; Account mode, runtime,
+// domain service and persistence mapping stay real beneath it.
+vi.mock("@/storage/db", () => {
+    const reader = {
+        account: { findUnique: mocks.findAccount },
+        accountPetPackage: { findMany: mocks.listPets, findFirst: mocks.findPet },
+    };
+    return { db: { ...reader, $transaction: async (read: (tx: typeof reader) => Promise<unknown>) => await read(reader) } };
+});
 
 describe("accountPetLibraryReadService", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        vi.stubEnv("HAPPIER_DB_PROVIDER", "postgres");
+        mocks.listPets.mockResolvedValue([]);
+        mocks.findPet.mockResolvedValue(null);
     });
+    afterEach(() => { vi.unstubAllEnvs(); });
 
     it.each([
         "e2ee",
@@ -54,8 +53,8 @@ describe("accountPetLibraryReadService", () => {
             errorCode: "custom_pet_sync_unavailable",
             error: "custom_pet_sync_unavailable",
         });
-        expect(mocks.listAccountPetsForAccount).not.toHaveBeenCalled();
-        expect(mocks.readAccountPetAssetForAccount).not.toHaveBeenCalled();
+        expect(mocks.listPets).not.toHaveBeenCalled();
+        expect(mocks.findPet).not.toHaveBeenCalled();
     });
 
     it("returns typed unavailable for a missing Account instead of an empty list or not found asset", async () => {
@@ -80,12 +79,11 @@ describe("accountPetLibraryReadService", () => {
         });
     });
 
-    it("passes the canonical persisted plain mode into the domain service", async () => {
+    it("reads the real empty library from canonical persisted plain mode", async () => {
         mocks.findAccount.mockResolvedValue({
             encryptionMode: "plain",
             publicKey: "retained-public-key",
         });
-        mocks.listAccountPetsForAccount.mockResolvedValue({ ok: true, pets: [] });
         const { listAccountPetsForAccount } = await import(
             "./accountPetLibraryReadService"
         );
@@ -93,9 +91,5 @@ describe("accountPetLibraryReadService", () => {
         await expect(listAccountPetsForAccount({
             accountId: "account-1",
         })).resolves.toEqual({ ok: true, pets: [] });
-        expect(mocks.listAccountPetsForAccount).toHaveBeenCalledWith({
-            accountId: "account-1",
-            accountEncryptionMode: "plain",
-        });
     });
 });

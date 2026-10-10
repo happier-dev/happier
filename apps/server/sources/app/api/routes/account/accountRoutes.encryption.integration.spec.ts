@@ -1476,21 +1476,33 @@ describe("accountRoutes (encryption mode integration)", () => {
             name: "Plain snapshot race",
             enabled: false,
             executionRecipe: {
-                v: 1,
+                v: 2,
                 templateVersion: 1,
-                template: { t: "plain", v: { v: 1, prompt: "must not survive an e2ee flip" } },
-                triggerEvidence: null,
-                target: {
-                    kind: "newSession",
-                    spawn: {
-                        executionTarget: { serverId: "server-1", machineId: "machine-1" },
-                        directory: { kind: "path", path: "/repo" },
-                        agentTarget: {
-                            kind: "agent",
-                            identity: { pluginId: "happier.agent.codex", localId: "codex" },
+                workflow: {
+                    t: "plain",
+                    v: {
+                        workspace: { directory: "/repo" },
+                        executionTarget: { kind: "session" },
+                        inlineDefinition: {
+                            version: 1,
+                            inputs: [],
+                            defaults: {
+                                agentTarget: {
+                                    kind: "agent",
+                                    identity: { pluginId: "happier.agent.codex", localId: "codex" },
+                                },
+                            },
+                            blocks: [{
+                                kind: "step",
+                                id: "work",
+                                document: { text: "must not survive an e2ee flip", references: [], attachments: [] },
+                                input: [],
+                                result: { kind: "text" },
+                            }],
                         },
                     },
                 },
+                triggerEvidence: null,
             },
             triggers: [],
             assignments: [],

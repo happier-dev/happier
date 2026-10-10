@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { FastifyReply, FastifyRequest } from "fastify";
 
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
@@ -339,11 +340,23 @@ describe("sessionRoutes current shared-participant reads (integration)", () => {
 
     it("does not page messages after a collaborator share is revoked before the deciding transaction", async () => {
         const fixture = await createSharedSessionFixture();
-        const barrier = installPauseBeforeReadTransaction();
+        const reached = deferred();
+        const release = deferred();
+        const barrier = { reached: reached.promise, release: release.resolve };
 
         try {
             await withAuthenticatedTestApp(
-                (app) => sessionRoutes(app),
+                (app) => {
+                    // Pause the real authentication boundary before the route opens its
+                    // read snapshot. The database and access decisions remain real.
+                    const authenticate = app.authenticate;
+                    app.authenticate = async (request: FastifyRequest, reply: FastifyReply) => {
+                        await authenticate(request, reply);
+                        reached.resolve();
+                        await release.promise;
+                    };
+                    sessionRoutes(app);
+                },
                 async (app) => {
                     const responsePromise = app.inject({
                         method: "GET",
@@ -360,7 +373,7 @@ describe("sessionRoutes current shared-participant reads (integration)", () => {
                 },
             );
         } finally {
-            barrier.restore();
+            barrier.release();
         }
     });
 

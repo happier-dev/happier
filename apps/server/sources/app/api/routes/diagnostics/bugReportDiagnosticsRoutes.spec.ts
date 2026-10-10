@@ -1,10 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { createEnvReset } from "../../testkit/env";
 import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
+import { createDbTransactionMock } from '../../testkit/dbMocks';
 
 const resetEnv = createEnvReset();
 
@@ -14,11 +15,21 @@ const resetEnv = createEnvReset();
  * stand in for.
  */
 const accountFindUnique = vi.hoisted(() => vi.fn());
-vi.mock("@/storage/db", () => ({ db: { account: { findUnique: accountFindUnique } } }));
+vi.mock("@/storage/db", () => {
+    const tables = {
+        account: { findUnique: accountFindUnique },
+        homeSettings: { findUnique: async () => null },
+        homeGovernancePolicy: { findUnique: async () => null },
+    };
+    return { db: createDbTransactionMock(() => tables).wrapDb(tables) };
+});
 
 describe("bugReportDiagnosticsRoutes", () => {
+    let bugReportDiagnosticsRoutes: typeof import('./bugReportDiagnosticsRoutes').bugReportDiagnosticsRoutes;
+    beforeAll(async () => {
+        ({ bugReportDiagnosticsRoutes } = await import('./bugReportDiagnosticsRoutes'));
+    }, 120_000);
     beforeEach(() => {
-        vi.resetModules();
         resetEnv();
         accountFindUnique.mockResolvedValue({ status: "active" });
     });
@@ -28,7 +39,6 @@ describe("bugReportDiagnosticsRoutes", () => {
     });
 
     async function createDiagnosticsRoute() {
-        const { bugReportDiagnosticsRoutes } = await import("./bugReportDiagnosticsRoutes");
         return createRouteTestBuilder({
             method: "GET",
             path: "/v1/diagnostics/bug-report-snapshot",

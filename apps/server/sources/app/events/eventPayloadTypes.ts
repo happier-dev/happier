@@ -1,6 +1,8 @@
 import { Socket } from "socket.io";
-import type { SessionPersonalEventEphemeralV1 } from "@happier-dev/protocol/updates";
+import type { EphemeralUpdate, SessionPersonalEventEphemeralV1 } from "@happier-dev/protocol/updates";
 import type { LinkedProvider } from "@/app/auth/providers/linkedProviders";
+import type { MachineKeyBasisV1 } from "@happier-dev/protocol/machines/machineContentKeyTransitionV1";
+import type { DevcontainerChildProjectionV1 } from "@happier-dev/protocol/machines/managed/devcontainerV1";
 import type {
     MachineKind,
     AutomationRunStateV3,
@@ -20,6 +22,8 @@ import type {
     SessionDraftSocketUpdateV2,
     SessionTranscriptObservationProvenanceV1,
 } from "@happier-dev/protocol";
+import type { PendingActivationRequestedEphemeralV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import type { UsageSourcesInvalidationV1 } from '@happier-dev/protocol/usage/usageSources';
 
 // === CONNECTION TYPES ===
 
@@ -207,6 +211,8 @@ export type UpdateEvent = {
     settingsVersion: number;
 } | {
     type: 'new-machine';
+    devcontainerChild?: DevcontainerChildProjectionV1 | null;
+    keyBasis?: MachineKeyBasisV1;
     kind?: MachineKind;
     machineId: string;
     seq: number;
@@ -230,13 +236,16 @@ export type UpdateEvent = {
     updatedAt: number;
 } | {
     type: 'update-machine';
+    devcontainerChild?: DevcontainerChildProjectionV1 | null;
+    keyBasis?: MachineKeyBasisV1;
     machineId: string;
+    dataEncryptionKey?: string | null;
     metadata?: {
         value: string;
         version: number;
     };
     daemonState?: {
-        value: string;
+        value: string | null;
         version: number;
     };
     activeAt?: number;
@@ -342,7 +351,7 @@ export type UpdateEvent = {
 
 // === EPHEMERAL EVENT TYPES (Transient) ===
 
-export type EphemeralEvent = SessionPersonalEventEphemeralV1 | {
+export type EphemeralEvent = SessionPersonalEventEphemeralV1 | PendingActivationRequestedEphemeralV1 | UsageSourcesInvalidationV1 | {
     type: 'activity';
     id: string;
     active: boolean;
@@ -389,14 +398,7 @@ export type EphemeralEvent = SessionPersonalEventEphemeralV1 | {
     id: string;
     active: boolean;
     activeAt: number;
-} | {
-    type: 'usage';
-    id: string;
-    key: string;
-    tokens: Record<string, number>;
-    cost: Record<string, number>;
-    timestamp: number;
-} | {
+} | Extract<EphemeralUpdate, { type: 'usage' }> | {
     /**
      * Content-free invalidation: a new immutable usage fact was recorded for this
      * Team credential resource. Readers re-query the authorized usage projection.

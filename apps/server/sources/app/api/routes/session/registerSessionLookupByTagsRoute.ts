@@ -6,7 +6,7 @@ import {
 } from "@happier-dev/protocol";
 import { z } from "zod";
 
-import { db } from "@/storage/db";
+import { inTx } from "@/storage/inTx";
 import { type Fastify } from "../../types";
 import {
     createV2SessionOwnerRowSelect,
@@ -38,52 +38,54 @@ export function registerSessionLookupByTagsRoute(app: Fastify) {
         },
     }, async (request, reply) => {
         const userId = request.userId;
-        const sessions = await db.session.findMany({
-            where: {
-                accountId: userId,
-                tag: { in: request.body.tags },
-            },
-            orderBy: { tag: "asc" },
-            take: SESSION_LOOKUP_BY_TAGS_MAX_TAGS_V2,
-            select: createV2SessionOwnerRowSelect(request.userId),
-        });
-        if (
-            sessions.some((session) =>
-                session.metadataLayoutVersion
-                    === SESSION_METADATA_LAYOUT_VERSION_V1)
-            && !await enforceCurrentAccountStoredContentCompatibilityForHttpRequest(
-                request,
-                reply,
-            )
-        ) {
-            return;
-        }
-
-        try {
-            const requiresOwnerAccountMode = sessions.some(
-                (session) => session.metadataLayoutVersion
-                    === SESSION_METADATA_LAYOUT_VERSION_V1,
-            );
-            const ownerAccountMode = requiresOwnerAccountMode
-                ? await readSessionMetadataOwnerAccountMode(
-                    db,
-                    userId,
-                )
-                : undefined;
-            const discussionFacts = await readSessionListViewerDiscussionFacts(sessions, userId);
-            return reply.send({
-                sessions: sessions.map((session) =>
-                    mapV2SessionOwnerRow(
-                        session,
-                        ownerAccountMode,
-                        discussionFacts,
-                    )),
+        return await inTx(async (tx) => {
+            const sessions = await tx.session.findMany({
+                where: {
+                    accountId: userId,
+                    tag: { in: request.body.tags },
+                },
+                orderBy: { tag: "asc" },
+                take: SESSION_LOOKUP_BY_TAGS_MAX_TAGS_V2,
+                select: createV2SessionOwnerRowSelect(request.userId),
             });
-        } catch (error) {
-            if (isSessionMetadataPrivacyUpgradeRequiredError(error)) {
-                return reply.code(409).send(createSessionMetadataPrivacyUpgradeRequiredResponse());
+            if (
+                sessions.some((session) =>
+                    session.metadataLayoutVersion
+                        === SESSION_METADATA_LAYOUT_VERSION_V1)
+                && !await enforceCurrentAccountStoredContentCompatibilityForHttpRequest(
+                    request,
+                    reply,
+                )
+            ) {
+                return;
             }
-            throw error;
-        }
+
+            try {
+                const requiresOwnerAccountMode = sessions.some(
+                    (session) => session.metadataLayoutVersion
+                        === SESSION_METADATA_LAYOUT_VERSION_V1,
+                );
+                const ownerAccountMode = requiresOwnerAccountMode
+                    ? await readSessionMetadataOwnerAccountMode(
+                        tx,
+                        userId,
+                    )
+                    : undefined;
+                const discussionFacts = await readSessionListViewerDiscussionFacts(sessions, userId, tx);
+                return reply.send({
+                    sessions: sessions.map((session) =>
+                        mapV2SessionOwnerRow(
+                            session,
+                            ownerAccountMode,
+                            discussionFacts,
+                        )),
+                });
+            } catch (error) {
+                if (isSessionMetadataPrivacyUpgradeRequiredError(error)) {
+                    return reply.code(409).send(createSessionMetadataPrivacyUpgradeRequiredResponse());
+                }
+                throw error;
+            }
+        }, { readOnly: true });
     });
 }

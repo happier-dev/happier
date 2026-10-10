@@ -3,7 +3,7 @@ import {
     type SessionOrganizationSnapshotRequest,
 } from "@happier-dev/protocol";
 
-import { inTx } from "@/storage/inTx";
+import { inTx, type Tx } from "@/storage/inTx";
 import { deriveAccountEncryptionCurrentnessFromRow } from "@/app/encryption/accountContentKeyAdmission";
 import { buildSessionAccessWhere } from "@/app/session/access/sessionAccessWhere";
 import {
@@ -25,18 +25,29 @@ export type SessionFolderAssignmentRecord = Readonly<{
     folderId: string;
 }>;
 
-export async function fetchSessionOrganizationPinnedSessionIds(accountId: string, authentication: SessionAccessAuthentication): Promise<string[]> {
-    return await inTx(async (tx) => {
-        const pins = await tx.sessionPin.findMany({
+/** List membership and personal order stay here; listing supplies its admitted corpus. */
+export async function fetchSessionOrganizationPinnedSessionIds(
+    accountId: string,
+    authentication: SessionAccessAuthentication,
+    admittedRead?: Readonly<{ reader: Pick<Tx, "sessionPin">; sessionWhere: Prisma.SessionWhereInput }>,
+): Promise<string[]> {
+    const readPins = async (reader: Pick<Tx, "sessionPin">, sessionWhere: Prisma.SessionWhereInput) => {
+        const pins = await reader.sessionPin.findMany({
             where: {
                 accountId,
-                session: await createVisibleUnarchivedOrganizationSessionWhere(tx, accountId, authentication),
+                listPinned: true,
+                session: sessionWhere,
             },
             orderBy: [{ sortKey: "asc" }, { pinnedAt: "asc" }],
             select: { sessionId: true, sortKey: true, pinnedAt: true },
         });
         return pins.map((pin) => pin.sessionId);
-    });
+    };
+    if (admittedRead) return await readPins(admittedRead.reader, admittedRead.sessionWhere);
+    return await inTx(async (tx) => await readPins(
+        tx,
+        await createVisibleUnarchivedOrganizationSessionWhere(tx, accountId, authentication),
+    ), { readOnly: true });
 }
 
 export async function fetchSessionFolderAssignmentsForSessions(params: Readonly<{
@@ -60,7 +71,7 @@ export async function fetchSessionFolderAssignmentsForSessions(params: Readonly<
                 folderId: true,
             },
         });
-    });
+    }, { readOnly: true });
 }
 
 export function createSessionFolderAssignmentSessionWhere(params: Readonly<{
@@ -169,7 +180,7 @@ export async function fetchSessionOrganizationSnapshot(params: Readonly<{
                     session: visibleSessionWhere,
                 },
                 orderBy: [{ sortKey: "asc" }, { pinnedAt: "asc" }],
-                select: { sessionId: true, sortKey: true, pinnedAt: true },
+                select: { sessionId: true, sortKey: true, pinnedAt: true, listPinned: true, railPinned: true },
             }),
             params.request.includeFolders
                 ? tx.sessionOrganizationFolder.findMany({
@@ -289,5 +300,5 @@ export async function fetchSessionOrganizationSnapshot(params: Readonly<{
                 return { sessionId: mapped.sessionId, standing: row.remindAt && row.remindAt.getTime() > Date.now() ? false : mapped.standing, updatedAt: mapped.updatedAt };
             }) } : {}),
         });
-    });
+    }, { readOnly: true });
 }

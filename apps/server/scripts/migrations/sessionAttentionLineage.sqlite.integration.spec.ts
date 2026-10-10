@@ -192,6 +192,38 @@ describe("SQLite 0.2 migration lineage before Account Directory", () => {
         return { databasePath, migrationsDir };
     }
 
+    it("upgrades retained three-field Session pins to list-only without changing their saved identity or order", async () => {
+        const pinMigration = "20261008130000_add_session_pin_surfaces";
+        const migrationsDir = await mkdtemp(join(tmpdir(), "happier-pin-surfaces-migrations-"));
+        const dataDir = await mkdtemp(join(tmpdir(), "happier-pin-surfaces-db-"));
+        temporaryPaths.push(migrationsDir, dataDir);
+        const databasePath = join(dataDir, "pins.sqlite");
+        for (const id of await listCurrentMigrationIds()) {
+            if (id < pinMigration) await copyMigration(id, migrationsDir);
+        }
+        await applySqliteMigrations({ databasePath, migrationsDir });
+        const database = new DatabaseSync(databasePath);
+        try {
+            database.exec(`INSERT INTO "Account" ("id", "publicKey", "updatedAt")
+                VALUES ('pin-account', 'pin-public-key', CURRENT_TIMESTAMP);
+                INSERT INTO "Session" ("id", "tag", "accountId", "metadata", "updatedAt")
+                VALUES ('pin-session', 'pin-session-tag', 'pin-account', '{}', CURRENT_TIMESTAMP);
+                INSERT INTO "SessionPin" ("id", "accountId", "sessionId", "sortKey", "pinnedAt", "updatedAt")
+                VALUES ('retained-pin', 'pin-account', 'pin-session', 'saved-rank', 1234, CURRENT_TIMESTAMP);`);
+            expect(database.prepare('PRAGMA table_info("SessionPin")').all().map((column) => column.name))
+                .not.toContain("railPinned");
+            await copyMigration(pinMigration, migrationsDir);
+            await expect(applySqliteMigrations({ databasePath, migrationsDir })).resolves.toEqual({ applied: [pinMigration] });
+            await expect(applySqliteMigrations({ databasePath, migrationsDir })).resolves.toEqual({ applied: [] });
+            expect(database.prepare('SELECT "id", "sessionId", "sortKey", "pinnedAt", "listPinned", "railPinned" FROM "SessionPin"').all())
+                .toEqual([{ id: "retained-pin", sessionId: "pin-session", sortKey: "saved-rank", pinnedAt: 1234, listPinned: 1, railPinned: 0 }]);
+            expect(database.prepare("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
+            expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+        } finally {
+            database.close();
+        }
+    });
+
     it("backfills owner Session and current Discussion tracking baselines without enrolling recipients", async () => {
         const migrationsDir = await mkdtemp(join(tmpdir(), "happier-private-read-migrations-"));
         const dataDir = await mkdtemp(join(tmpdir(), "happier-private-read-db-"));

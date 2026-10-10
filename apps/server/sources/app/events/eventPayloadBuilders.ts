@@ -1,7 +1,7 @@
 import { ExternalSessionStorageStateV1Schema, type SessionViewerProjectionV1 } from "@happier-dev/protocol";
 import { AccountProfile } from "@/types";
 import { getPublicUrl } from "@/storage/blob/files";
-import { type UpdatePayload, type EphemeralPayload } from "./eventPayloadTypes";
+import { type UpdatePayload, type EphemeralPayload, type EphemeralEvent } from "./eventPayloadTypes";
 import {
     MachineKindFromLegacyProjectionSchema,
     type MachineKind,
@@ -9,6 +9,7 @@ import {
     parseSessionRuntimeActivityProjectionFields,
     type AutomationRunStateV3,
     type PendingActivationAuthorizationV1,
+    type ManagedWakeTargetV1,
     type ParticipantExecutionRunRecipientRoutingIdentityV1,
     SessionMetadataRecipientProjectionV1Schema,
     type PrimaryTurnStatusV1,
@@ -23,6 +24,9 @@ import {
 } from "@happier-dev/protocol";
 import { applySessionTranscriptPublicationCeiling } from "@/app/session/sessionTranscriptPublicationPolicy";
 import { projectSessionInputAdmissionReceipt } from "@/app/session/messages/sessionInputAdmission";
+import { serializeMachineKeyBasis } from "@/app/machines/machineSerialization";
+import type { MachineKeyBasisV1 } from "@happier-dev/protocol/machines/machineContentKeyTransitionV1";
+import type { DevcontainerChildProjectionV1 } from "@happier-dev/protocol/machines/managed/devcontainerV1";
 
 type UpdateMessagePayloadInput = Readonly<{
     id: string;
@@ -381,6 +385,7 @@ export function buildPendingChangedUpdate(
         meaningfulActivityAt?: Date | number;
         pendingActivationRequestId?: string;
         pendingActivationAuthorization?: PendingActivationAuthorizationV1 | null;
+        managedWakeTargetV1?: ManagedWakeTargetV1;
     },
     updateSeq: number,
     updateId: string,
@@ -407,6 +412,7 @@ export function buildPendingChangedUpdate(
             ...(data.pendingActivationAuthorization !== undefined
                 ? { pendingActivationAuthorization: data.pendingActivationAuthorization }
                 : {}),
+            ...(data.managedWakeTargetV1 ? { managedWakeTargetV1: data.managedWakeTargetV1 } : {}),
             ...(typeof meaningfulActivityAt === "number" && Number.isFinite(meaningfulActivityAt)
                 ? { meaningfulActivityAt }
                 : {}),
@@ -560,6 +566,7 @@ export function buildAccountSettingsChangedUpdate(settingsVersion: number, updat
 
 export function buildNewMachineUpdate(machine: {
     id: string;
+    devcontainerChild?: DevcontainerChildProjectionV1 | null;
     kind?: MachineKind;
     seq: number;
     metadata: string;
@@ -586,6 +593,7 @@ export function buildNewMachineUpdate(machine: {
         seq: updateSeq,
         body: {
             t: 'new-machine',
+            devcontainerChild: machine.devcontainerChild ?? null,
             kind: MachineKindFromLegacyProjectionSchema.parse(machine.kind),
             machineId: machine.id,
             seq: machine.seq,
@@ -594,6 +602,7 @@ export function buildNewMachineUpdate(machine: {
             daemonState: machine.daemonState,
             daemonStateVersion: machine.daemonStateVersion,
             dataEncryptionKey: machine.dataEncryptionKey ? Buffer.from(machine.dataEncryptionKey).toString('base64') : null,
+            keyBasis: serializeMachineKeyBasis(machine),
             installationId: machine.installationId ?? null,
             installationPublicKey: machine.installationPublicKey ? Buffer.from(machine.installationPublicKey).toString('base64') : null,
             contentPublicKeyFingerprint: machine.contentPublicKeyFingerprint ?? null,
@@ -617,8 +626,11 @@ export function buildUpdateMachineUpdate(
     updateSeq: number,
     updateId: string,
     metadata?: { value: string; version: number },
-    daemonState?: { value: string; version: number },
+    daemonState?: { value: string | null; version: number },
     extra?: {
+        devcontainerChild?: DevcontainerChildProjectionV1 | null;
+        dataEncryptionKey?: string | null;
+        keyBasis?: MachineKeyBasisV1;
         active?: boolean;
         activeAt?: number;
         revokedAt?: number | null;
@@ -662,7 +674,12 @@ export function buildMachineActivityEphemeral(machineId: string, active: boolean
     };
 }
 
-export function buildUsageEphemeral(sessionId: string, key: string, tokens: Record<string, number>, cost: Record<string, number>): EphemeralPayload {
+export function buildUsageEphemeral(
+    sessionId: Extract<EphemeralEvent, { type: 'usage' }>['id'],
+    key: string,
+    tokens: Record<string, number>,
+    cost: Record<string, number>,
+): Extract<EphemeralEvent, { type: 'usage' }> {
     return {
         type: 'usage',
         id: sessionId,

@@ -25,7 +25,8 @@ function createExternalActionDaemonDispatcher(
     return createProductionExternalActionDaemonDispatcher({
         ...params,
         getServerIdentityId: async () => "server-1",
-        mintExecutionAuthorization: async (binding) => ({ v: 1, token: "test-authorization", binding }),
+        mintExecutionAuthorization: async (binding) => ({ v: 1, token: "test-authorization",
+            binding: { ...binding, custodianAccountId: binding.accountId, installationId: 'installation-1' } }),
     });
 }
 
@@ -102,6 +103,7 @@ describe("createExternalActionDaemonDispatcher", () => {
             code: "encrypted_action_unsupported",
         });
         expect(resolveMachine).toHaveBeenCalledWith({
+            actionId: 'action.spec.get',
             accountId: "account-1",
             machineId: "machine-1",
             requiredExternalActionExecutionAuthorization: true,
@@ -171,6 +173,7 @@ describe("createExternalActionDaemonDispatcher", () => {
             }),
         }));
         expect(resolveMachine).toHaveBeenCalledWith({
+            actionId: 'session.spawn_new',
             accountId: "account-1",
             machineId: "machine-1",
             requiredExternalActionExecutionAuthorization: true,
@@ -211,6 +214,7 @@ describe("createExternalActionDaemonDispatcher", () => {
             code: "session_input_target_update_required",
         });
         expect(resolveMachine).toHaveBeenCalledWith({
+            actionId: 'session.message.send',
             accountId: "account-1",
             machineId: "machine-1",
             requiredExternalActionExecutionAuthorization: true,
@@ -249,6 +253,7 @@ describe("createExternalActionDaemonDispatcher", () => {
             code: "session_input_target_update_required",
         });
         expect(resolveMachine).toHaveBeenCalledWith({
+            actionId: 'session.message.send',
             accountId: "account-1",
             machineId: "machine-1",
             requiredExternalActionExecutionAuthorization: true,
@@ -289,6 +294,7 @@ describe("createExternalActionDaemonDispatcher", () => {
             requestId: envelope.requestId,
         });
         expect(resolveMachine).toHaveBeenCalledWith({
+            actionId: 'session.message.send',
             accountId: "account-1",
             machineId: "machine-1",
             requiredExternalActionExecutionAuthorization: true,
@@ -321,6 +327,7 @@ describe("createExternalActionDaemonDispatcher", () => {
             principal,
         })).resolves.toEqual(dispatchedResponse(response("session.message.send", envelope)));
         expect(resolveMachine).toHaveBeenCalledWith({
+            actionId: 'session.message.send',
             accountId: "account-1",
             machineId: "machine-1",
             requiredExternalActionExecutionAuthorization: true,
@@ -360,6 +367,7 @@ describe("createExternalActionDaemonDispatcher", () => {
             requestId: envelope.requestId,
         });
         expect(resolveMachine).toHaveBeenCalledWith({
+            actionId: 'action.spec.get',
             accountId: "account-1",
             machineId: "machine-1",
             requiredExternalActionExecutionAuthorization: true,
@@ -399,6 +407,7 @@ describe("createExternalActionDaemonDispatcher", () => {
             requestId: envelope.requestId,
         });
         expect(resolveMachine).toHaveBeenCalledWith({
+            actionId: 'session.message.send',
             accountId: "account-1",
             machineId: "machine-1",
             requiredExternalActionExecutionAuthorization: true,

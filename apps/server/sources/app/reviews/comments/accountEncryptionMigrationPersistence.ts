@@ -24,6 +24,7 @@ import {
     openReviewCommentSensitiveEnvelopeV1,
     reviewCommentEventSensitiveBindingMatchesV1,
 } from "@happier-dev/protocol";
+import { createStoredReadSchema } from "@happier-dev/protocol/json/storedReadSchema";
 
 import type { Tx } from "@/storage/inTx";
 import { prismaRuntime as Prisma } from "@/storage/prisma";
@@ -140,7 +141,7 @@ export function isReviewCommentCanonicalSensitiveLayout(
 }
 
 function anchorIndexFromLegacy(value: unknown): ReviewCommentAnchorIndexV1 {
-    const anchor = ReviewCommentAnchorV1Schema.parse(value);
+    const anchor = createStoredReadSchema(ReviewCommentAnchorV1Schema).parse(value);
     return ReviewCommentAnchorIndexV1Schema.parse({
         kind: anchor.kind,
     });
@@ -197,7 +198,7 @@ export function buildReviewCommentStructuralFromStorageRow(
     row: ReviewCommentMigrationStorageCommentRow,
 ): ReviewCommentStructuralV1 {
     const current = isReviewCommentCanonicalSensitiveLayout(row);
-    return ReviewCommentStructuralV1Schema.parse({
+    return createStoredReadSchema(ReviewCommentStructuralV1Schema).parse({
         v: 1,
         id: row.id,
         accountId: row.account_id,
@@ -213,7 +214,7 @@ export function buildReviewCommentStructuralFromStorageRow(
         engineId: row.engine_id ?? undefined,
         findingId: row.finding_id ?? undefined,
         anchorIndex: current
-            ? ReviewCommentAnchorIndexV1Schema.parse(parseJson(row.anchor_json))
+            ? createStoredReadSchema(ReviewCommentAnchorIndexV1Schema).parse(parseJson(row.anchor_json))
             : anchorIndexFromLegacy(parseJson(row.anchor_json)),
         bodyVersion: toNumber(row.body_version),
         editHistory: structuralEditHistory(parseJson(row.edits_json)),
@@ -249,7 +250,7 @@ export function readReviewCommentMigrationSourceFromStorageRow(
     if (snapshotEnvelope.t !== bodyEnvelope.t) {
         throw new Error("review_comment_migration_envelope_mismatch");
     }
-    return ReviewCommentSensitiveMigrationSourceV1Schema.parse({
+    return createStoredReadSchema(ReviewCommentSensitiveMigrationSourceV1Schema).parse({
         v: 1,
         layout: "legacy_split_v1",
         sourceMode: bodyEnvelope.t === "encrypted" ? "e2ee" : "plain",
@@ -285,7 +286,7 @@ function eventFromStorageRow(
     row: ReviewCommentMigrationStorageEventRow,
     details: Record<string, unknown>,
 ): ReviewCommentEventV1 {
-    return ReviewCommentEventV1Schema.parse({
+    return createStoredReadSchema(ReviewCommentEventV1Schema).parse({
         eventId: row.event_id,
         commentId: row.comment_id,
         accountId: row.account_id,
@@ -462,7 +463,7 @@ export function buildReviewCommentCanonicalStorageValues(params: Readonly<{
     };
 }
 
-const COMMENT_MIGRATION_SELECT_COLUMNS = Prisma.raw([
+const COMMENT_MIGRATION_SELECT_COLUMNS = [
     "id",
     "account_id",
     "project_id",
@@ -497,9 +498,9 @@ const COMMENT_MIGRATION_SELECT_COLUMNS = Prisma.raw([
     "server_revision",
     "created_at",
     "updated_at",
-].join(", "));
+].join(", ");
 
-const EVENT_MIGRATION_SELECT_COLUMNS = Prisma.raw([
+const EVENT_MIGRATION_SELECT_COLUMNS = [
     "event_id",
     "comment_id",
     "account_id",
@@ -514,7 +515,7 @@ const EVENT_MIGRATION_SELECT_COLUMNS = Prisma.raw([
     "client_lamport",
     "server_revision",
     "created_at",
-].join(", "));
+].join(", ");
 
 async function readCommentRow(
     tx: Tx,
@@ -522,7 +523,7 @@ async function readCommentRow(
     commentId: string,
 ): Promise<ReviewCommentMigrationStorageCommentRow | null> {
     const rows = await tx.$queryRaw<ReviewCommentMigrationStorageCommentRow[]>(Prisma.sql`
-        SELECT ${COMMENT_MIGRATION_SELECT_COLUMNS}
+        SELECT ${Prisma.raw(COMMENT_MIGRATION_SELECT_COLUMNS)}
         FROM review_comments
         WHERE account_id = ${accountId} AND id = ${commentId}
         LIMIT 1
@@ -537,7 +538,7 @@ async function readEventRow(
     eventId: string,
 ): Promise<ReviewCommentMigrationStorageEventRow | null> {
     const rows = await tx.$queryRaw<ReviewCommentMigrationStorageEventRow[]>(Prisma.sql`
-        SELECT ${EVENT_MIGRATION_SELECT_COLUMNS}
+        SELECT ${Prisma.raw(EVENT_MIGRATION_SELECT_COLUMNS)}
         FROM review_comment_events
         WHERE account_id = ${accountId} AND comment_id = ${commentId} AND event_id = ${eventId}
         LIMIT 1
@@ -568,13 +569,13 @@ export function createReviewCommentAccountEncryptionMigrationPersistenceInTx(
     return {
         async readInventory(accountId) {
             const commentRows = await tx.$queryRaw<ReviewCommentMigrationStorageCommentRow[]>(Prisma.sql`
-                SELECT ${COMMENT_MIGRATION_SELECT_COLUMNS}
+                SELECT ${Prisma.raw(COMMENT_MIGRATION_SELECT_COLUMNS)}
                 FROM review_comments
                 WHERE account_id = ${accountId}
                 ORDER BY id ASC
             `);
             const eventRows = await tx.$queryRaw<ReviewCommentMigrationStorageEventRow[]>(Prisma.sql`
-                SELECT ${EVENT_MIGRATION_SELECT_COLUMNS}
+                SELECT ${Prisma.raw(EVENT_MIGRATION_SELECT_COLUMNS)}
                 FROM review_comment_events
                 WHERE account_id = ${accountId}
                 ORDER BY comment_id ASC, server_revision ASC, event_id ASC

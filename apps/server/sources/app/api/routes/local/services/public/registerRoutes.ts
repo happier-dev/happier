@@ -7,6 +7,7 @@ import type {
     LocalServicePublicExposureV1,
     LocalServicePublicPreviewSnapshotV1,
 } from "@happier-dev/protocol";
+import { isDeepStrictEqual } from 'node:util';
 import {
     DaemonLocalServicePublicPreviewCreateRequestV1Schema,
     DaemonLocalServicePublicPreviewRevokeRequestV1Schema,
@@ -36,6 +37,7 @@ import {
     resolveLocalServicePublicAccessIdentity,
     type LocalServicePublicAccessPurpose,
     type LocalServicePublicAuthenticatedUser,
+    type LocalServicePublicAccessServiceAuthorizer,
 } from "@/app/local/services/public/accessAuthorization";
 import {
     createPublicExposureObservabilityEmitter,
@@ -57,6 +59,7 @@ import {
 export type RegisterLocalServicePublicRoutesOptions = Readonly<{
     resolvePreview: (previewId: string) => LocalServicePreviewResourceV1 | null | undefined;
     resolveExposure?: (exposureId: string) => LocalServicePublicExposureV1 | null | undefined;
+    authorizeServiceAccess?: LocalServicePublicAccessServiceAuthorizer;
     authorizeSessionAccess?: (input: Readonly<{
         userId: string;
         sessionId: string;
@@ -181,7 +184,8 @@ function previewMatchesCreateRequest(
 ): boolean {
     return preview.previewId === request.previewId
         && preview.machineId === request.machineId
-        && preview.sessionId === request.sessionId;
+        && preview.sessionId === request.sessionId
+        && isDeepStrictEqual(preview.serviceTarget, request.serviceTarget);
 }
 
 function exposureMatchesRevokeRequest(
@@ -191,7 +195,8 @@ function exposureMatchesRevokeRequest(
     return exposure.exposureId === request.exposureId
         && exposure.previewId === request.previewId
         && exposure.machineId === request.machineId
-        && exposure.sessionId === request.sessionId;
+        && exposure.sessionId === request.sessionId
+        && isDeepStrictEqual(exposure.serviceTarget, request.serviceTarget);
 }
 
 function readWildcardPath(request: RouteRequest): string {
@@ -402,6 +407,24 @@ async function isSessionAuthorized(
     });
 }
 
+async function isPreviewAuthorized(
+    request: RouteRequest,
+    options: RegisterLocalServicePublicRoutesOptions,
+    preview: LocalServicePreviewResourceV1,
+    purpose: 'public_exposure' | 'public_revoke' | 'public_status',
+): Promise<boolean> {
+    if (preview.serviceTarget) {
+        const userId = readString(request.userId);
+        if (!userId || !options.authorizeServiceAccess) return false;
+        try {
+            return await options.authorizeServiceAccess({ userId, preview, authentication: readSessionAccessAuthenticationFromRequest(request) }) === true;
+        } catch { return false; }
+    }
+    return Boolean(preview.sessionId && await isSessionAuthorized(request, options, {
+        sessionId: preview.sessionId, machineId: preview.machineId, purpose,
+    }));
+}
+
 async function handleGetStatus(
     request: RouteRequest,
     reply: RouteReply,
@@ -417,32 +440,31 @@ async function handleGetStatus(
     }
 
     const parsed = DaemonLocalServicePublicPreviewStatusRequestV1Schema.safeParse(readBodyObject(request.body));
-    if (!parsed.success || !parsed.data.sessionId) {
+    if (!parsed.success || !parsed.data.sessionId && !parsed.data.previewId) {
         sendError(reply, 400, "invalid_public_preview_status_request", "invalid_request");
         return;
     }
 
-    const statusRequest = {
-        ...parsed.data,
-        sessionId: parsed.data.sessionId,
-    };
+    const statusRequest = parsed.data;
+    let scopedPreview: LocalServicePreviewResourceV1 | null = null;
     if (statusRequest.previewId) {
         const preview = options.resolvePreview(statusRequest.previewId);
         if (!preview) {
             sendError(reply, 404, "preview_not_found", "preview_not_found");
             return;
         }
-        if (preview.machineId !== statusRequest.machineId || preview.sessionId !== statusRequest.sessionId) {
+        if (preview.machineId !== statusRequest.machineId || preview.sessionId !== statusRequest.sessionId
+            || statusRequest.serviceTarget && !isDeepStrictEqual(preview.serviceTarget, statusRequest.serviceTarget)) {
             sendError(reply, 403, "public_preview_denied", "preview_binding_mismatch");
             return;
         }
+        scopedPreview = preview;
     }
 
-    if (!await isSessionAuthorized(request, options, {
-        sessionId: statusRequest.sessionId,
-        machineId: statusRequest.machineId,
-        purpose: "public_status",
-    })) {
+    if (!(scopedPreview ? await isPreviewAuthorized(request, options, scopedPreview, 'public_status')
+        : statusRequest.sessionId && await isSessionAuthorized(request, options, {
+            sessionId: statusRequest.sessionId, machineId: statusRequest.machineId, purpose: 'public_status',
+        }))) {
         sendError(reply, 403, "public_preview_denied", "session_not_authorized");
         return;
     }
@@ -484,17 +506,19 @@ async function handleCreateExposure(
         sendError(reply, 403, "public_preview_denied", "preview_binding_mismatch");
         return;
     }
-    if (!await isSessionAuthorized(request, options, {
-        sessionId: createRequest.sessionId,
-        machineId: createRequest.machineId,
-        purpose: "public_exposure",
-    })) {
+    if (!await isPreviewAuthorized(request, options, preview, 'public_exposure')) {
         sendError(reply, 403, "public_preview_denied", "session_not_authorized");
         return;
     }
 
+    const currentPreview = options.resolvePreview(createRequest.previewId);
+    if (!currentPreview || !previewMatchesCreateRequest(currentPreview, createRequest)) {
+        sendError(reply, 403, 'public_preview_denied', 'preview_binding_mismatch');
+        return;
+    }
+
     const result = options.createExposure({
-        preview,
+        preview: currentPreview,
         requestedMode: createRequest.mode,
         requestedTtlMs: createRequest.ttlMs,
         actorId: readString(request.userId) ?? "unknown",
@@ -541,11 +565,13 @@ async function handleRevokeExposure(
         sendError(reply, 403, "public_preview_denied", "exposure_binding_mismatch");
         return;
     }
-    if (!await isSessionAuthorized(request, options, {
-        sessionId: revokeRequest.sessionId,
-        machineId: revokeRequest.machineId,
-        purpose: "public_revoke",
-    })) {
+    const preview = options.resolvePreview(exposure.previewId);
+    if (!(exposure.serviceTarget
+        ? preview && preview.machineId === exposure.machineId && isDeepStrictEqual(preview.serviceTarget, exposure.serviceTarget)
+            && await isPreviewAuthorized(request, options, preview, 'public_revoke')
+        : exposure.sessionId && await isSessionAuthorized(request, options, {
+            sessionId: exposure.sessionId, machineId: exposure.machineId, purpose: 'public_revoke',
+        }))) {
         sendError(reply, 403, "public_preview_denied", "session_not_authorized");
         return;
     }
@@ -617,6 +643,8 @@ async function handlePublicPreviewRequest(
         principal,
         resolveExposure: options.resolveExposure,
         authorizeSessionAccess: options.authorizeSessionAccess,
+        resolvePreview: options.resolvePreview,
+        authorizeServiceAccess: options.authorizeServiceAccess,
     });
     const access = options.validateAccess({
         exposureId,
@@ -636,13 +664,25 @@ async function handlePublicPreviewRequest(
         return undefined;
     }
 
-    return await proxyHttp({
-        preview: access.preview,
-        request: createPublicHttpRequest(request, createDownstreamAbortSignal(reply)),
-        response: createResponseSink(reply),
-        openTunnel: options.openTunnel as OpenLocalServicePreviewTunnel,
-        observability: createPublicExposureObservabilityEmitter(options.observability, exposureId),
-    });
+    const registration = new AbortController();
+    const releaseConnection = options.retainConnection?.(exposureId, () => {
+        registration.abort();
+        reply.raw?.destroy?.();
+    }, options.resolveExposure?.(exposureId)?.mode === 'authenticated' ? principal?.userId : undefined);
+    if (registration.signal.aborted) { releaseConnection?.(); return undefined; }
+    const downstream = createDownstreamAbortSignal(reply);
+    const signal = downstream ? AbortSignal.any([registration.signal, downstream]) : registration.signal;
+    try {
+        return await proxyHttp({
+            preview: access.preview,
+            request: createPublicHttpRequest(request, signal),
+            response: createResponseSink(reply),
+            openTunnel: options.openTunnel as OpenLocalServicePreviewTunnel,
+            observability: createPublicExposureObservabilityEmitter(options.observability, exposureId),
+        });
+    } finally {
+        releaseConnection?.();
+    }
 }
 
 export function registerLocalServicePublicRoutes(

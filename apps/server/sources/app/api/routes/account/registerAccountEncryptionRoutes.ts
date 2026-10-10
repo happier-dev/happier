@@ -1,6 +1,6 @@
 import { InactiveAccountError } from "@/app/auth/accountStatus";
 import { z } from "zod";
-import { db } from "@/storage/db";
+import { inTx } from "@/storage/inTx";
 import { createServerFeatureGatePreHandler } from "@/app/features/catalog/serverFeatureGate";
 import {
     AccountEncryptionModeResponseSchema,
@@ -43,7 +43,7 @@ export function registerAccountEncryptionRoutes(app: Fastify): void {
         },
         async (request, reply) => {
             try {
-                const user = await db.account.findUnique({
+                const user = await inTx(tx => tx.account.findUnique({
                     where: { id: request.userId },
                     select: {
                         encryptionMode: true,
@@ -52,7 +52,7 @@ export function registerAccountEncryptionRoutes(app: Fastify): void {
                         contentPublicKey: true,
                         contentPublicKeySig: true,
                     },
-                });
+                }), { readOnly: true });
                 if (!user) {
                     return reply.code(500).send({ error: "internal" });
                 }
@@ -94,7 +94,7 @@ export function registerAccountEncryptionRoutes(app: Fastify): void {
         },
         async (request, reply) => {
             try {
-                const user = await db.account.findUnique({
+                const user = await inTx(tx => tx.account.findUnique({
                     where: { id: request.userId },
                     select: {
                         encryptionMode: true,
@@ -105,7 +105,7 @@ export function registerAccountEncryptionRoutes(app: Fastify): void {
                         seq: true,
                         settingsVersion: true,
                     },
-                });
+                }), { readOnly: true });
                 if (!user) {
                     return reply.code(500).send({ error: "internal" });
                 }

@@ -18,10 +18,14 @@ import {
 } from "@/app/api/testkit/socketHarness";
 import { createPresentUserSessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication.testkit";
 import { applySessionTurnMutation } from "@/app/session/sessionWriteService";
+import { deriveSessionSystemRecordAddressKeys } from "@/app/session/systemRecords/sessionSystemRecordAddressKeys";
+import { encodeSessionSystemRecordRevision } from "@/app/session/systemRecords/sessionSystemRecordRevision";
 import { createSessionDiscussion } from "@/app/session/discussions/mutations";
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { setHomeSettings } from '@/app/home/settings/homeSettings';
+import { logger } from '@/utils/logging/log';
 
 const authentication = createPresentUserSessionAccessAuthentication();
 
@@ -39,6 +43,27 @@ describe("session update handler on SQLite", () => {
     }, 120_000);
     beforeEach(() => harness.resetEnv());
     afterAll(async () => await harness.close());
+
+    it('reads saved live message diagnostics on the next socket event without reconnecting', async () => {
+        const owner = await db.account.create({ data: { publicKey: `pk-${randomUUID()}`, encryptionMode: 'plain', homeRole: 'owner' }, select: { id: true } });
+        const session = await db.session.create({ data: { accountId: owner.id, tag: `session-${randomUUID()}`, encryptionMode: 'plain', metadata: JSON.stringify({ t: 'plain', v: {} }) }, select: { id: true } });
+        const socket = createAuthenticatedFakeSocket();
+        sessionUpdateHandler(owner.id, socket as never, { connectionType: 'user-scoped', socket, userId: owner.id } as never);
+        const diagnostic = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+        try {
+            const saved = await setHomeSettings({ actorAccountId: owner.id, write: { expectedRevision: 0, values: { HAPPIER_SOCKET_MESSAGE_DIAGNOSTIC_LOGS: true } } });
+            expect(saved.status).toBe('applied');
+            await getSocketHandler(socket, 'message')({ sid: session.id, localId: randomUUID(), messageRole: 'user', message: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Hello' } } } });
+            expect(diagnostic.mock.calls.some(([, message]) => typeof message === 'string' && message.startsWith('Received message from socket'))).toBe(true);
+            diagnostic.mockClear();
+            expect((await setHomeSettings({ actorAccountId: owner.id, write: { expectedRevision: 1, values: { HAPPIER_SOCKET_MESSAGE_DIAGNOSTIC_LOGS: false } } })).status).toBe('applied');
+            await getSocketHandler(socket, 'message')({ sid: session.id, localId: randomUUID(), messageRole: 'user', message: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Again' } } } });
+            expect(diagnostic.mock.calls.some(([, message]) => typeof message === 'string' && message.startsWith('Received message from socket'))).toBe(false);
+        } finally {
+            diagnostic.mockRestore();
+            await db.homeSettings.deleteMany({});
+        }
+    });
 
     it("ACKs the canonical Runtime Activity publisher claim only after active reachability commits", async () => {
         const owner = await db.account.create({
@@ -312,6 +337,14 @@ describe("session update handler on SQLite", () => {
             { v: 1, sessionId: session.id },
             (value: unknown) => capabilityAcks.push(value),
         );
+        await getSocketHandler(socket, "transcript-observation-capability-v1")(
+            { v: 2, sessionId: session.id },
+            (value: unknown) => capabilityAcks.push(value),
+        );
+        await getSocketHandler(socket, "transcript-observation-capability-v1")(
+            { v: 2, sessionId: session.id, invented: true },
+            (value: unknown) => capabilityAcks.push(value),
+        );
 
         const preclaimObservationAcks: unknown[] = [];
         await getSocketHandler(socket, "transcript-observation-v1")(
@@ -341,7 +374,10 @@ describe("session update handler on SQLite", () => {
         expect(capabilityAcks).toEqual([{
             ok: true,
             capability: "session-transcript-observation-v1",
-        }]);
+        }, {
+            ok: true,
+            capability: "session-transcript-observation-v2",
+        }, { ok: false, error: "invalid_session" }]);
         expect(preclaimObservationAcks).toEqual([{
             ok: false,
             error: "forbidden",
@@ -378,6 +414,28 @@ describe("session update handler on SQLite", () => {
                 source: "external",
             },
         }]);
+
+        const surfaceRecord = await db.sessionSystemRecord.create({ data: {
+            sessionId: session.id, accountId: owner.id, ownerKind: "host", pluginId: null,
+            namespace: "surface", kind: "item.v1", localId: "visual", version: 1,
+            content: { t: "encrypted", c: "item-ciphertext" },
+            ...deriveSessionSystemRecordAddressKeys({ ownerKind: "host", pluginId: null,
+                namespace: "surface", localId: "visual" }),
+        } });
+        const surfaceItemReference = { v: 1 as const, itemId: "visual",
+            itemRevision: encodeSessionSystemRecordRevision(surfaceRecord),
+            sourceAddress: { serverId: "home-1", sessionId: session.id } };
+        const visualLocalId = `visual-${randomUUID()}`;
+        const visualAcks: unknown[] = [];
+        await getSocketHandler(socket, "transcript-observation-v1")(
+            { ...observation, v: 2, localId: visualLocalId, surfaceItemReference },
+            (value: unknown) => visualAcks.push(value),
+        );
+        expect(visualAcks).toEqual([expect.objectContaining({ ok: true, status: "observed", localId: visualLocalId })]);
+        await expect(db.sessionMessage.findFirst({ where: { sessionId: session.id, localId: visualLocalId },
+            select: { content: true, surfaceItemReference: true } })).resolves.toEqual({
+            content: { t: "encrypted", c: "antigravity-ciphertext" }, surfaceItemReference,
+        });
     });
 
     it("refuses a reserved Agent-transition divider localId from the current transcript-observation publisher", async () => {

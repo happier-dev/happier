@@ -49,7 +49,7 @@ export function registerSessionAccessGrantRoutes(app: Fastify) {
             subjects: request.body.subjects,
             ...(request.body.creationTeamId === undefined ? {} : { creationTeamId: request.body.creationTeamId }),
             authentication: readSessionAccessAuthenticationFromRequest(request),
-        }));
+        }), { readOnly: true });
         return reply.send(value);
     });
     collaborationApp.post("/v2/sessions/access-grants/list", {

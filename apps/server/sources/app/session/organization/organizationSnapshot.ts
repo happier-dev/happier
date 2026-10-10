@@ -68,6 +68,8 @@ export function mapSessionOrganizationPin(row: SessionOrganizationPinRecord): Se
         sessionId: row.sessionId,
         sortKey: row.sortKey,
         pinnedAt: row.pinnedAt.getTime(),
+        listPinned: row.listPinned,
+        railPinned: row.railPinned,
     };
 }
 

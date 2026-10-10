@@ -762,14 +762,27 @@ export function startSocket(app: Fastify) {
         const token = socket.handshake.auth.token as string;
         let connectConvergenceFinished = false;
         let connectReady = false;
-        let finishUiFocusAdmission: ((admitted: boolean) => void) | undefined;
+        let finishPacketAdmission!: (admitted: boolean) => void;
+        const packetAdmission = new Promise<boolean>((resolve) => { finishPacketAdmission = resolve; });
+        // Socket.IO exposes `connect` before this async callback finishes. Hold
+        // packets in its native dispatch middleware until currentness, rooms,
+        // and all handlers are ready; otherwise the first RPC can be lost.
+        socket.use((_packet, next) => {
+            if (connectReady && socket.connected) {
+                next();
+                return;
+            }
+            void packetAdmission.then((admitted) => {
+                if (admitted && socket.connected) next();
+            });
+        });
 
         const finalizeConnectConvergence = (result: "ready" | "disconnect_before_ready") => {
             if (connectConvergenceFinished) {
                 return;
             }
             connectConvergenceFinished = true;
-            finishUiFocusAdmission?.(result === 'ready');
+            finishPacketAdmission(result === 'ready');
             recordSocketConnectConvergencePhase({
                 clientType,
                 transport,
@@ -796,9 +809,7 @@ export function startSocket(app: Fastify) {
         }
 
         if (clientType === 'user-scoped') {
-            // Retain connect-time events until the canonical admission finishes.
-            const admission = new Promise<boolean>((resolve) => { finishUiFocusAdmission = resolve; });
-            registerUiFocusSocketEvent(socket, admission);
+            registerUiFocusSocketEvent(socket, packetAdmission);
         }
 
         // Socket.IO adds this socket to the namespace before this callback. Join
@@ -1076,11 +1087,8 @@ export function startSocket(app: Fastify) {
             );
         }
 
-        // Room membership and the final currentness check completed before any
-        // authority-bearing listener is installed. Register RPC immediately
-        // afterward: machine clients replay their rpc-register burst from
-        // their connect callback and Socket.IO does not replay delivered events.
-        // Socket.IO does not buffer application events for listeners attached after delivery, and
+        // The packet admission hold releases connect-time calls/registrations
+        // only after currentness, room membership, and handler setup complete.
         rpcHandler(userId, socket, {
             io,
             sessionPublisherPresence,

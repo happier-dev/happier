@@ -11,11 +11,12 @@ import type {
 } from "@happier-dev/protocol";
 import { isApiTokenGrantRestrictedV1, type ApiTokenGrantV1 } from "@happier-dev/protocol/auth/apiTokenGrant";
 import { canCredentialDecideV1 } from "@happier-dev/protocol/actions/decisionAuthority";
-import type { ActionId } from "@happier-dev/protocol/actions";
+import { getActionSpec, type ActionId } from "@happier-dev/protocol/actions";
 import type { VerifiedApiTokenPrincipal } from "@/app/auth/auth";
 import type { SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
 import { resolveSessionAccessForOperation, type EffectiveSessionAccess, type SessionCapability } from "@/app/session/access/sessionAccess";
 import { inTx } from "@/storage/inTx";
+import { readExternalActionPendingResetStartPurpose } from '@/app/auth/externalActionPendingResetStartPurpose';
 
 export const PRESENT_USER_REQUIRED_ERROR = "present_user_required" as const;
 export const SESSION_RUNTIME_PUBLIC_AUTH_FORBIDDEN_ERROR = "session_runtime_public_auth_forbidden" as const;
@@ -103,6 +104,8 @@ export function resolveOptionalPublicAuthDisposition(
 }
 
 type AuthenticatedRouteRequest = Readonly<{
+    method?: string;
+    url?: string;
     authTokenKind?: unknown;
     userId?: unknown;
     sessionRuntimePrincipal?: VerifiedEphemeralSessionRunnerPrincipal;
@@ -113,10 +116,12 @@ type AuthenticatedRouteRequest = Readonly<{
     externalActionExecutionAuthorized?: unknown;
     externalActionEffectActionId?: unknown;
     routeOptions?: Readonly<{
+        url?: string;
         config?: Readonly<{
             allowApiToken?: unknown;
             allowScopedApiToken?: unknown;
             apiTokenSessionAction?: unknown;
+            apiTokenSessionActionWhen?: Readonly<{ field: 'withdraw'; equals: 'true'; actionId: ActionId }>;
             allowAccountDirectoryToken?: unknown;
             restrictedCredentialBinding?: RestrictedCredentialRouteBinding;
         }>;
@@ -127,6 +132,39 @@ function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
     return typeof value === "object" && value !== null && !Array.isArray(value)
         ? value as Readonly<Record<string, unknown>>
         : null;
+}
+
+/** The incumbent static Session operation; query-selected semantics are admitted at this same boundary. */
+export function resolveApiTokenSessionActionForRoute(request: AuthenticatedRouteRequest): ActionId | undefined {
+    const action = request.routeOptions?.config?.apiTokenSessionAction;
+    const mode = request.routeOptions?.config?.apiTokenSessionActionWhen;
+    if (mode) {
+        const value = readRecord(request.query)?.[mode.field];
+        if (value === mode.equals) return mode.actionId;
+        if (value !== undefined && value !== 'false') return undefined;
+    }
+    return typeof action === 'string' ? action as ActionId : undefined;
+}
+
+/**
+ * Signed composite Actions may use the incumbent Session readers under their
+ * normal access/projection owner. A mutation must name the route's actual
+ * effect, including query-selected custody semantics, not merely its root.
+ */
+export function isExternalActionSessionRoutePurposeAllowed(
+    request: AuthenticatedRouteRequest,
+    effectActionId: string,
+): boolean {
+    const config = request.routeOptions?.config;
+    if (config?.apiTokenSessionAction === undefined && config?.apiTokenSessionActionWhen === undefined) return true;
+    const actionId = resolveApiTokenSessionActionForRoute(request);
+    if ((effectActionId === 'session.pending.resetStart.set' && actionId === 'session.message.send')
+        || (effectActionId === 'session.pending.resetStart.cancel' && actionId === 'session.pending.withdraw')) {
+        return readExternalActionPendingResetStartPurpose({ actionId: effectActionId,
+            method: request.method ?? '', path: request.url ?? request.routeOptions?.url ?? '', body: request.body }) !== null;
+    }
+    return actionId !== undefined
+        && (getActionSpec(actionId).sideEffectClass === 'read' || actionId === effectActionId);
 }
 
 export function readRestrictedCredentialRouteField(
@@ -215,8 +253,8 @@ export function isRestrictedAuthTokenDeniedForRoute(
             return request.routeOptions?.config?.allowAccountDirectoryToken === true;
         case "api_token":
             if (request.externalActionExecutionAuthorized === true) return false;
-            if (typeof request.routeOptions?.config?.apiTokenSessionAction === "string"
-                && request.routeOptions.config.restrictedCredentialBinding?.scope === "session") return false;
+            if (resolveApiTokenSessionActionForRoute(request) !== undefined
+                && request.routeOptions?.config?.restrictedCredentialBinding?.scope === "session") return false;
             if (request.routeOptions?.config?.allowApiToken !== true) return true;
             return request.apiTokenPrincipal !== undefined
                 && isApiTokenGrantRestrictedV1(request.apiTokenPrincipal.grant)

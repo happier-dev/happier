@@ -10,6 +10,7 @@ import tweetnacl from "tweetnacl";
 import { createEnvPatcher } from "@/testkit/env";
 import { createPresentUserSessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication.testkit";
 import { createDbMocks, installDbModuleMock } from "../api/testkit/dbMocks";
+import { prismaRuntime } from '@/storage/prisma';
 
 const authentication = createPresentUserSessionAccessAuthentication();
 
@@ -1924,6 +1925,7 @@ describe("sessionWriteService", () => {
                 where: { id: "m-voice-history", rowRevision: BigInt(0) },
                 data: {
                     content: { t: "encrypted", c: "corrected" },
+                    surfaceItemReference: prismaRuntime.DbNull,
                     sidechainId: null,
                     messageRole: "agent",
                     rowRevision: { increment: BigInt(1) },
@@ -2018,6 +2020,7 @@ describe("sessionWriteService", () => {
                     where: { id: "m1", rowRevision: BigInt(0) },
                     data: {
                         content: { t: "encrypted", c: "next" },
+                        surfaceItemReference: prismaRuntime.DbNull,
                         sidechainId: null,
                         messageRole: null,
                         rowRevision: { increment: BigInt(1) },
@@ -2232,6 +2235,7 @@ describe("sessionWriteService", () => {
             }));
             expect(currentTx.sessionMessage.update).toHaveBeenNthCalledWith(2, expect.objectContaining({
                 where: { id: stale.id, rowRevision: BigInt(1) },
+                data: expect.objectContaining({ surfaceItemReference: prismaRuntime.DbNull }),
             }));
         });
 

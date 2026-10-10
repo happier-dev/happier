@@ -13,6 +13,7 @@ import {
     withSessionInputAuthority,
     type SessionInputAdmissionReceiptV1,
     type SessionMessageDeliveryResolutionV1,
+    type SessionMessageAcceptedDeliveryContentV1,
     type SessionMessageProvenanceV1,
     ManagedWakeTargetV1Schema,
     ManagedResourceV1Schema, createManagedPolicyProofV1, encodeManagedPolicyProofV1, MANAGED_POLICY_PROOF_HEADER,
@@ -54,6 +55,7 @@ import { changesRoutes } from "@/app/api/routes/changes/changesRoutes";
 import { readManagedWakeTargets, assertManagedWakeOriginCurrentInTx } from '@/app/machines/managed/managedWake';
 import { registerSessionListingRoutes } from "@/app/api/routes/session/registerSessionListingRoutes";
 import { registerManagedMachineRoutes } from '@/app/machines/managed/managedRoutes';
+import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 
 type EnqueuePendingMessageParams = Parameters<typeof enqueuePendingMessageWithAction>[0];
 const authentication = createPresentUserSessionAccessAuthentication();
@@ -527,10 +529,12 @@ describe("pendingMessageService (shared sessions)", () => {
     });
 
     it("keeps exact target mutations and materialization isolated while settling into the target sidechain", async () => {
+        await getOrCreateServerIdentityId();
         const owner = await createAccount("target-drain-owner");
         const session = await createSession(owner.id);
         const publisherAuthority = await createCurrentPendingPublisher({ accountId: owner.id, sessionId: session.id });
         await db.machine.update({ where: { id: publisherAuthority.machineId }, data: {
+            installationId: `install-${publisherAuthority.machineId}`,
             operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1, 2] } }, operationProtocolCapabilitiesRevision: 1,
         } });
         for (const [localId, target] of [["main", null], ["run-a-first", "run-a"], ["run-b", "run-b"], ["run-a-next", "run-a"]] as const) {
@@ -3487,15 +3491,31 @@ describe("pendingMessageService (shared sessions)", () => {
             message: { localId, content },
         });
 
+        const plainAcceptance = { t: "plain", v: {
+            v: 1, acceptedAtMs: 987, delivery: { kind: "followUp", turnId: "turn-envelope" },
+        } } as const satisfies SessionMessageAcceptedDeliveryContentV1;
+        const encryptedAcceptance = { t: "encrypted", c: "sealed-envelope-acceptance" } as const;
+        const acceptedDelivery = mode === "plain" ? plainAcceptance : encryptedAcceptance;
+        await expect(resolveAcceptedPendingDelivery({
+            actorUserId: owner.id, sessionId: session.id, localId,
+            acceptedDelivery: mode === "plain" ? encryptedAcceptance : plainAcceptance,
+        })).resolves.toMatchObject({ ok: false, error: "invalid-params" });
+        await expect(db.sessionPendingMessage.count({ where: { sessionId: session.id, localId } })).resolves.toBe(1);
+        await expect(db.sessionMessage.count({ where: { sessionId: session.id, localId } })).resolves.toBe(0);
         await expect(resolveAcceptedPendingDelivery({
             actorUserId: owner.id,
             sessionId: session.id,
             localId,
-        })).resolves.toMatchObject({ ok: true, didResolve: true, message: { localId, content } });
+            acceptedDelivery,
+        })).resolves.toMatchObject({ ok: true, didResolve: true, message: { localId, content,
+            deliveryResolution: { v: 1, kind: "provider_accepted", content: acceptedDelivery },
+        } });
         await expect(db.sessionMessage.findUniqueOrThrow({
             where: { sessionId_localId: { sessionId: session.id, localId } },
-            select: { content: true },
-        })).resolves.toEqual({ content });
+            select: { content: true, deliveryResolution: true },
+        })).resolves.toEqual({ content,
+            deliveryResolution: { v: 1, kind: "provider_accepted", content: acceptedDelivery },
+        });
     });
 
     it("defers queued materialization for after-runtime-idle timing while runtime activity projection is live", async () => {
@@ -3681,10 +3701,17 @@ describe("pendingMessageService (shared sessions)", () => {
             },
         });
 
+        await expect(resolveAcceptedPendingDelivery({ actorUserId: owner.id, sessionId: session.id, localId,
+            acceptedDelivery: { t: "plain", v: { v: 1, acceptedAtMs: 1234, delivery: { kind: "steer", turnId: "turn-1" } } },
+        })).resolves.toMatchObject({ ok: false, error: "invalid-params" });
+        await expect(db.sessionPendingMessage.count({ where: { sessionId: session.id, localId } })).resolves.toBe(1);
+        await expect(db.sessionMessage.count({ where: { sessionId: session.id, localId } })).resolves.toBe(0);
+
         const accepted = await resolveAcceptedPendingDelivery({
             actorUserId: owner.id,
             sessionId: session.id,
             localId,
+            acceptedDelivery: { t: "encrypted", c: "sealed-accepted-steer-facts" },
         });
 
         expect(accepted).toMatchObject({
@@ -3699,7 +3726,7 @@ describe("pendingMessageService (shared sessions)", () => {
                 localId,
                 messageRole: "user",
                 content: { t: "encrypted", c: "cipher-provider-delivery-queued-accepted" },
-                deliveryResolution: null,
+                deliveryResolution: { v: 1, kind: "provider_accepted", content: { t: "encrypted", c: "sealed-accepted-steer-facts" } },
             },
         });
         await expect(db.sessionPendingMessage.count({ where: { sessionId: session.id, localId } })).resolves.toBe(0);
@@ -3709,7 +3736,12 @@ describe("pendingMessageService (shared sessions)", () => {
         await expect(db.sessionMessage.findUniqueOrThrow({
             where: { sessionId_localId: { sessionId: session.id, localId } },
             select: { deliveryResolution: true },
-        })).resolves.toEqual({ deliveryResolution: null });
+        })).resolves.toEqual({ deliveryResolution: { v: 1, kind: "provider_accepted", content: { t: "encrypted", c: "sealed-accepted-steer-facts" } } });
+        await expect(resolveAcceptedPendingDelivery({ actorUserId: owner.id, sessionId: session.id, localId,
+            acceptedDelivery: { t: "encrypted", c: "different-retry-facts" },
+        })).resolves.toMatchObject({ didResolve: false, message: {
+            deliveryResolution: { content: { t: "encrypted", c: "sealed-accepted-steer-facts" } },
+        } });
     });
 
     it("blocks accepted provider delivery that collides with divergent transcript content", async () => {
@@ -5692,6 +5724,7 @@ describe("pendingMessageService (shared sessions)", () => {
     });
 
     it("serves exact target HTTP custody and strict publisher socket claim without main fallback", async () => {
+        await getOrCreateServerIdentityId();
         const { createRouteTestBuilder } = await import("@/app/api/testkit/routeTestBuilder");
         const { sessionPendingRoutes } = await import("@/app/api/routes/session/pendingRoutes");
         const protocol = await import("@happier-dev/protocol");
@@ -5705,6 +5738,7 @@ describe("pendingMessageService (shared sessions)", () => {
         await shareSession({ sessionId: session.id, ownerId: owner.id, participantId: collaborator.id, accessLevel: "edit" });
         const publisher = await createCurrentPendingPublisher({ accountId: owner.id, sessionId: session.id });
         await db.machine.update({ where: { id: publisher.machineId }, data: {
+            installationId: `install-${publisher.machineId}`,
             operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1, 2] } }, operationProtocolCapabilitiesRevision: 1,
         } });
         const route = (method: "POST" | "GET" | "PATCH" | "DELETE", suffix = "") => createRouteTestBuilder({
@@ -5755,14 +5789,17 @@ describe("pendingMessageService (shared sessions)", () => {
         });
         const subscriber = { connectionType: "user-scoped", socket: subscriberSocket, userId: collaborator.id } as unknown as Parameters<typeof eventRouter.addConnection>[1];
         eventRouter.addConnection(collaborator.id, subscriber);
+        const acceptedDelivery = { t: "encrypted", c: "sealed-target-acceptance" } as const;
         try {
-            await getSocketHandler(socket, protocol.SESSION_PENDING_EXECUTION_RUN_ACCEPTED_EVENT_V2)({ v: 2, sessionId: session.id, localId: "target-http", recipient: claim.recipient, sidechainId: "sidechain-a" }, (value: unknown) => { response = value; });
+            await getSocketHandler(socket, protocol.SESSION_PENDING_EXECUTION_RUN_ACCEPTED_EVENT_V2)({ v: 2, sessionId: session.id, localId: "target-http", recipient: claim.recipient, sidechainId: "sidechain-a", acceptedDelivery }, (value: unknown) => { response = value; });
             expect.soft(subscriberSocket.emit).toHaveBeenCalledWith("update", expect.objectContaining({ body: expect.objectContaining({ t: "new-message", message: expect.objectContaining({ sidechainId: "sidechain-a", localId: "target-http" }) }) }));
         } finally {
             eventRouter.removeConnection(collaborator.id, subscriber);
         }
         expect(response).toMatchObject({ v: 2, recipient: claim.recipient, sidechainId: "sidechain-a", result: { ok: true, didResolve: true } });
-        expect(await db.sessionMessage.findUnique({ where: { sessionId_localId: { sessionId: session.id, localId: "target-http" } } })).toMatchObject({ sidechainId: "sidechain-a", authorAccountId: collaborator.id });
+        expect(await db.sessionMessage.findUnique({ where: { sessionId_localId: { sessionId: session.id, localId: "target-http" } } })).toMatchObject({ sidechainId: "sidechain-a", authorAccountId: collaborator.id,
+            deliveryResolution: { v: 1, kind: "provider_accepted", content: acceptedDelivery },
+        });
         await route("POST").invoke({ userId: collaborator.id, params, body: { ...body, localId: "target-unavailable" } });
         await getSocketHandler(socket, protocol.SESSION_PENDING_EXECUTION_RUN_BLOCK_EVENT_V2)({ v: 2, sessionId: session.id, recipient: claim.recipient, localId: "target-unavailable", reason: "session_input_target_unavailable" }, (value: unknown) => { response = value; });
         expect(response).toMatchObject({ v: 2, recipient: claim.recipient, localId: "target-unavailable", result: { ok: true, didUpdate: true, pendingCount: 1, pendingBlockedCount: 1 } });

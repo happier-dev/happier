@@ -1,4 +1,4 @@
-import { redactPublicShareCapabilityUrl } from '@happier-dev/protocol';
+import { redactPublicShareCapabilityUrl } from '@happier-dev/protocol/crypto/publicShareCapabilityUrl';
 
 /**
  * Returns the log-safe projection of an HTTP request URL.

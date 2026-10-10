@@ -1,5 +1,6 @@
 import Fastify from "fastify";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { createDbTransactionMock } from '../testkit/dbMocks';
 
 const verifyToken = vi.fn();
 const verifyTokenDisposition = vi.fn(async (token: string) => {
@@ -10,6 +11,15 @@ const verifyTokenDisposition = vi.fn(async (token: string) => {
 });
 const enforceLoginEligibility = vi.fn();
 const log = vi.fn();
+
+// Request-scoped configuration reads the real Home overlay over an unconfigured database.
+vi.mock('@/storage/db', () => {
+    const tables = {
+        homeSettings: { findUnique: async () => null },
+        homeGovernancePolicy: { findUnique: async () => null },
+    };
+    return { db: createDbTransactionMock(() => tables).wrapDb(tables) };
+});
 
 vi.mock("@/app/auth/auth", () => ({
     auth: { verifyToken, verifyTokenDisposition },

@@ -16,6 +16,7 @@ declare global {
         type SessionPendingMessageContent = SessionMessageContent;
 
         type SessionMessageDeliveryResolutionV1 = import("@happier-dev/protocol").SessionMessageDeliveryResolutionV1;
+        type SessionTranscriptSurfaceItemReferenceV1 = import("@happier-dev/protocol/sessions/messages/transcriptObservationV1").SessionTranscriptSurfaceItemReferenceV1;
 
         // Usage report data structure
         type UsageReportData = {

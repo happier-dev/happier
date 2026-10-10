@@ -1,11 +1,20 @@
 import { Buffer } from "node:buffer";
 
-import { SessionSystemRecordRevisionSchema } from "@happier-dev/protocol";
+import { SessionSystemRecordRevisionSchema } from "@happier-dev/protocol/sessions/system/records/sessionSystemRecordRevision";
 
 const MAX_RECORD_ID_UTF8_BYTES = 512;
 const SESSION_SYSTEM_RECORD_VERSION_MAX = 2_147_483_647;
 
 export type ParsedSessionSystemRecordRevision = Readonly<{ id: string; version: number }>;
+
+/** A later version is reachable only within the same durable record identity. */
+export function isSessionSystemRecordRevisionAtLeastAcknowledged(current: unknown, acknowledged: unknown): boolean {
+    const currentRecord = parseSessionSystemRecordRevision(current);
+    const acknowledgedRecord = parseSessionSystemRecordRevision(acknowledged);
+    return currentRecord !== null && acknowledgedRecord !== null
+        && currentRecord.id === acknowledgedRecord.id
+        && currentRecord.version >= acknowledgedRecord.version;
+}
 
 export function encodeSessionSystemRecordRevision(input: ParsedSessionSystemRecordRevision): string {
     const idBytes = Buffer.from(input.id, "utf8");

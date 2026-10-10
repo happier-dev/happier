@@ -90,7 +90,7 @@ export function registerSessionFollowSourceRoutes(app: Fastify) {
             principal,
             destinationSessionId: params.data.destinationSessionId,
             request: body.data,
-        }));
+        }), { readOnly: true });
         if (!projection) return reply.code(404).send({ error: "session_follow_source_unavailable" });
         return reply.send(projection);
     });

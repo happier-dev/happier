@@ -6,6 +6,8 @@ export interface SessionOrganizationPinRecord {
     readonly sessionId: string;
     readonly sortKey: string | null;
     readonly pinnedAt: Date;
+    readonly listPinned: boolean;
+    readonly railPinned: boolean;
 }
 
 export interface SessionAttentionStandingRecord {

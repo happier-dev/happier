@@ -1,5 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createFakeSocket, getSocketHandler } from "../testkit/socketHarness";
+import { createDbTransactionMock } from '../testkit/dbMocks';
 
 const createSessionMessage = vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => ({ ok: false, error: "invalid-params" }));
 const enqueuePendingMessage = vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => ({ ok: false, error: "invalid-params" }));
@@ -101,14 +102,17 @@ vi.mock("@/app/session/pending/pendingMessageService", () => ({
     settlePendingInputAdmission,
     readSessionPendingState,
 }));
-vi.mock("@/storage/db", () => ({
-    db: {
+vi.mock("@/storage/db", () => {
+    const tables = {
+        homeSettings: { findUnique: vi.fn(async () => null) },
+        homeGovernancePolicy: { findUnique: vi.fn(async () => null) },
         session: {
             findUnique: sessionFindUnique,
             update: sessionUpdate,
         },
-    },
-}));
+    };
+    return { db: createDbTransactionMock(() => tables).wrapDb(tables) };
+});
 vi.mock("@/app/events/eventRouter", () => ({
     eventRouter: {
         emitEphemeral,
@@ -129,11 +133,6 @@ vi.mock("@/app/session/changeTracking/markSessionProjectionRecipientsChanged", (
 }));
 vi.mock("@/app/changes/markAccountChanged", () => ({
     markAccountChanged,
-}));
-vi.mock("@/storage/inTx", () => ({
-    inTx: vi.fn(async (fn: (tx: unknown) => unknown) => await fn({})),
-    isTransactionAcquisitionUnavailableError: () => false,
-    isTransactionDeadlineExceededError: () => false,
 }));
 const refreshTrackedSessionAccountBadgePushes = vi.fn(async () => {});
 vi.mock("@/app/activity/refreshAccountActivityBadgePushes", () => ({

@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
-import { redactBugReportSensitiveText } from "@happier-dev/protocol";
+import { redactBugReportSensitiveText, type ServerConfigEnv } from "@happier-dev/protocol";
 
 import { parseBooleanEnv, parseIntEnv } from "@/config/env";
 import { resolveLegacyServerDiagnosticsEntitlement } from "@/app/home/governance/serverDiagnosticsEntitlement";
@@ -10,10 +10,10 @@ import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCata
 import { type Fastify } from "../../types";
 import { readRequestHomeEnv } from "@/app/home/settings/requestHomeEnv";
 
-function resolveServerLogPath(): string | null {
-    const explicit = (process.env.HAPPIER_BUG_REPORTS_SERVER_LOG_PATH ?? "").trim();
+function resolveServerLogPath(env: ServerConfigEnv): string | null {
+    const explicit = (env.HAPPIER_BUG_REPORTS_SERVER_LOG_PATH ?? "").trim();
     if (explicit) return explicit;
-    const logDir = (process.env.HAPPIER_SELF_HOST_LOG_DIR ?? "").trim();
+    const logDir = (env.HAPPIER_SELF_HOST_LOG_DIR ?? "").trim();
     if (logDir) return join(logDir, "server.log");
     return null;
 }
@@ -107,7 +107,7 @@ export function bugReportDiagnosticsRoutes(app: Fastify) {
         const linesRaw = typeof query?.lines === "number" ? String(query.lines) : query?.lines;
         const lines = parseIntEnv(linesRaw, 120, { min: 10, max: 500 });
         const maxBytes = resolveServerLogMaxBytes(requestHomeEnv.HAPPIER_BUG_REPORTS_SERVER_LOG_MAX_BYTES);
-        const logPath = resolveServerLogPath();
+        const logPath = resolveServerLogPath(requestHomeEnv);
         let tail = "";
         if (logPath && existsSync(logPath)) {
             try {

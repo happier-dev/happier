@@ -96,7 +96,7 @@ export async function readSessionReportsToOptions(input: Readonly<{
             }
         }
         return { sessionId: input.sessionId, currentLeadSessionId, candidates };
-    });
+    }, { readOnly: true });
 }
 
 async function mutateSessionReportsToInTx(tx: Tx, input: SessionReportsToSetInput, createdChild: boolean): Promise<SessionReportsToSetResult> {

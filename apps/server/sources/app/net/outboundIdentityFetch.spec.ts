@@ -8,7 +8,7 @@ import { gzipSync } from "node:zlib";
 
 import { describe, expect, it } from "vitest";
 
-import { createOutboundIdentityFetch, type OutboundIdentityFetch } from "@/app/net/outboundIdentityFetch";
+import { createOutboundFetch, createOutboundIdentityFetch, type OutboundIdentityFetch } from "@/app/net/outboundIdentityFetch";
 import {
     OutboundIdentityEndpointError,
     type OutboundAddressPolicy,
@@ -120,6 +120,21 @@ async function denial(
 }
 
 describe("outbound identity endpoint policy: shared/cloud denials", () => {
+    it("lets public-data consumers reuse peer-pinned transport without identity-specific body or deadline bounds", async () => {
+        await withIssuer(async (issuer) => {
+            const body = "x".repeat(1024 * 1024 + 1);
+            issuer.setHandler((_request, response) => response.end(body));
+            await withFetch(createOutboundFetch({
+                policy: { address: LOOPBACK_ALLOWLIST, allowedPorts: [issuer.port], allowLoopbackHttp: false },
+                resolveAddresses: resolverReturning("127.0.0.1"),
+                tlsOptions: { ca: issuer.ca },
+            }), async (outbound) => {
+                expect(await (await outbound.fetch(`https://issuer.invalid:${issuer.port}/catalog`)).text()).toBe(body);
+                expect((await denial(outbound, `https://issuer.invalid:${issuer.port}/catalog#fragment`)).code).toBe("outbound_url_fragment_forbidden");
+            });
+        });
+    });
+
     it("rejects every non-public resolved address class", async () => {
         const cases: ReadonlyArray<readonly [string, string]> = [
             ["loopback", "127.0.0.1"],
@@ -352,12 +367,14 @@ describe("outbound identity endpoint policy: connected peer binding", () => {
                     const first = outbound.fetch(`https://issuer.invalid:${port}/first`, {
                         signal: firstController.signal,
                     });
-                    const second = outbound.fetch(`https://issuer.invalid:${port}/second`);
+                    // The refused peer can settle before the first TLS connection. Handle
+                    // that genuine boundary rejection immediately, then inspect it below.
+                    const second = outbound.fetch(`https://issuer.invalid:${port}/second`).catch((error: unknown) => error);
                     await secondResolved.promise;
                     firstResolved.resolve();
 
                     await expect(first).resolves.toMatchObject({ status: 200 });
-                    await expect(second).rejects.toMatchObject({ code: "outbound_transport_failed" });
+                    expect(await second).toMatchObject({ code: "outbound_transport_failed" });
                     expect(observed.map((entry) => entry.path)).toEqual(["/first"]);
                 },
             );

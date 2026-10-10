@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { EffectiveSessionAccess } from "@/app/session/access/sessionAccess";
 import { projectSessionAccessCapabilitiesV1, SessionMessagesPageV1Schema, SessionExternalShareableMessagesPageV1Schema } from "@happier-dev/protocol";
 import { UpdateBodySchema } from "@happier-dev/protocol/updates";
-import { buildSessionInputAdmissionReceipt } from "./sessionInputAdmission";
+import { buildSessionInputAdmissionReceipt, readStoredSessionInputAdmissionReceipt, isSameSessionInputAdmissionIssuer } from "./sessionInputAdmission";
 import { buildNewMessageUpdate, buildMessageUpdatedUpdate } from "@/app/events/eventPayloadBuilders";
 
 const access: EffectiveSessionAccess = {
@@ -11,6 +11,16 @@ const access: EffectiveSessionAccess = {
 };
 
 describe("Session input admission constraints", () => {
+    it("drops future stored receipt fields but never accepts invalid or retargeted known placement", () => {
+        const target = { homeId: 'home', accountId: 'owner', sessionId: 'session', machineId: 'machine', installationId: 'installation' };
+        const receipt = { v: 1 as const, issuer: 'authenticatedAccount' as const, actorAccountId: 'owner',
+            sessionRelationship: 'owner' as const, admittedTarget: target };
+        expect(readStoredSessionInputAdmissionReceipt({ ...receipt, futureIssuerField: true,
+            admittedTarget: { ...target, futureTargetField: true } })).toEqual(receipt);
+        expect(readStoredSessionInputAdmissionReceipt({ ...receipt, admittedTarget: { ...target, installationId: 42 } })).toBeUndefined();
+        expect(isSameSessionInputAdmissionIssuer(receipt, { ...receipt, admittedTarget: { ...target, machineId: 'other' } })).toBe(false);
+        expect(isSameSessionInputAdmissionIssuer(receipt, { ...receipt, admittedTarget: undefined })).toBe(false);
+    });
     it("validates the receipt on authenticated message wire shapes and omits it from public pages", () => {
         const inputAdmissionReceipt = { v: 1 as const, issuer: "authenticatedAccount" as const,
             actorAccountId: "owner", sessionRelationship: "owner" as const };

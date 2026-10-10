@@ -51,7 +51,9 @@ describe("enableAuthentication API-token admission (integration)", () => {
 
     it("denies PATs from legacy routes while retaining terminal access and allowing explicit API-token entrypoints", async () => {
         const account = await db.account.create({
-            data: { publicKey: "api-token-admission" },
+            // Current Account policy, rather than the token's minted floor,
+            // decides terminal invocation authority.
+            data: { publicKey: "api-token-admission", terminalPresentUserPolicy: "disallowed" },
             select: { id: true },
         });
         const [signedToken, terminalToken, pat] = await Promise.all([

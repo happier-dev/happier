@@ -4,7 +4,7 @@ import type {
 } from "@happier-dev/protocol";
 
 import { deriveAccountEncryptionCurrentnessFromRow } from "@/app/encryption/accountContentKeyAdmission";
-import { db } from "@/storage/db";
+import { inTx } from "@/storage/inTx";
 
 import type {
     AccountPetAssetReadResult,
@@ -24,7 +24,7 @@ function customPetSyncUnavailableResponse(): AccountPetSyncUnavailableResponseV1
 async function resolvePlainAccountEncryptionMode(
     accountId: string,
 ): Promise<"plain" | null> {
-    const account = await db.account.findUnique({
+    const account = await inTx(tx => tx.account.findUnique({
         where: { id: accountId },
         select: {
             encryptionMode: true,
@@ -32,7 +32,7 @@ async function resolvePlainAccountEncryptionMode(
             contentPublicKey: true,
             contentPublicKeySig: true,
         },
-    });
+    }), { readOnly: true });
     const accountCurrentness = account
         ? deriveAccountEncryptionCurrentnessFromRow(account)
         : null;

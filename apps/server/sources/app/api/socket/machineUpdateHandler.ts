@@ -41,7 +41,10 @@ import {
 } from "@happier-dev/protocol";
 import { projectActionOperationSnapshotPush } from './actionOperationSnapshotPush';
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
-import { enqueuePendingMessageByAuthenticatedMachine } from "@/app/session/pending/pendingMessageService";
+import { enqueuePendingMessageByAuthenticatedMachine, updatePendingRequestedAction } from "@/app/session/pending/pendingMessageService";
+import { SESSION_PENDING_RESET_START_RELEASE_EVENT_V1, PendingResetStartReleaseRequestV1Schema, type PendingResetStartReleaseResponseV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
+import { readSessionAccessAuthenticationFromSocket } from '@/app/session/access/sessionAccessAuthentication';
+import { emitPendingChanged } from '@/app/session/pending/publishPendingMutation';
 import { executeExternalSessionHistoricalImportCommand } from "@/app/session/externalSessionHistoricalImportCommand";
 import type { createSessionPublisherPresence } from "@/app/presence/sessionPublisherPresence";
 import { publishSessionPublisherClose } from "@/app/presence/publishSessionPublisherClose";
@@ -69,6 +72,7 @@ import * as privacyKit from "privacy-kit";
 import { serializeMachineKeyBasis } from "@/app/machines/machineSerialization";
 import { readMachineDevcontainerChildInTx } from '@/app/machines/managed/managedRows';
 import { MachineUpdateStateRequestSchema, type MachineUpdateStateResponse } from "@happier-dev/protocol/machines/metadataUpdate";
+import { USAGE_SOURCES_INVALIDATION_EVENT_V1, UsageSourcesInvalidationV1Schema } from '@happier-dev/protocol/usage/usageSources';
 import {
     resolveMachineAdmissionInTx,
     resolveMachineAccessInTx,
@@ -409,6 +413,36 @@ export function machineUpdateHandler(
         }
     });
 
+    socket.on(SESSION_PENDING_RESET_START_RELEASE_EVENT_V1, async (
+        request: unknown, callback?: (response: PendingResetStartReleaseResponseV1) => void,
+    ) => {
+        const parsed = PendingResetStartReleaseRequestV1Schema.safeParse(request);
+        if (!parsed.success) { callback?.({ v: 1, ok: false, reason: 'invalid_request' }); return; }
+        const machineId = readAuthenticatedMachineId(socket);
+        const installationId = readVerifiedMachineSocketInstallationIdFromSocketData(socket.data);
+        if (!machineId || !installationId || !await hasCurrentSocketCredential(userId, socket)) {
+            callback?.({ v: 1, ok: false, reason: 'authority_unavailable' }); return;
+        }
+        try {
+            const result = await updatePendingRequestedAction({ actorUserId: userId,
+                authentication: readSessionAccessAuthenticationFromSocket(socket), sessionId: parsed.data.sessionId,
+                localId: parsed.data.localId, requestedAction: { v: 1, kind: 'enqueue' },
+                expectedRequestedAction: { v: 1, kind: 'reset_start', reset: parsed.data.reset },
+                resumeWhenAvailable: true, automaticResetReleaseTarget: { machineId, installationId } });
+            if (!result.ok) {
+                callback?.({ v: 1, ok: false, reason: result.error === 'action-conflict' ? 'action_conflict'
+                    : result.error === 'not-found' ? 'pending_not_found'
+                    : result.error === 'internal' ? 'internal_error' : 'authority_unavailable' });
+                return;
+            }
+            if (result.didUpdate) await emitPendingChanged({ sessionId: parsed.data.sessionId,
+                changedByAccountId: userId, pendingCount: result.pendingCount,
+                pendingBlockedCount: result.pendingBlockedCount, pendingVersion: result.pendingVersion,
+                recipientCursors: result.recipientCursors, activationTarget: result.activationTarget });
+            callback?.({ v: 1, ok: true, didUpdate: result.didUpdate });
+        } catch { callback?.({ v: 1, ok: false, reason: 'internal_error' }); }
+    });
+
     socket.on(MACHINE_SESSION_TERMINAL_FINALIZE_EVENT_V1, async (
         request: unknown,
         callback?: (response: MachineSessionTerminalFinalizeResponseV1) => void,
@@ -650,6 +684,28 @@ export function machineUpdateHandler(
                 },
                 'Machine alive handling failed.',
             );
+        }
+    });
+
+    socket.on(USAGE_SOURCES_INVALIDATION_EVENT_V1, async (data: unknown) => {
+        try {
+            websocketEventsCounter.inc({ event_type: USAGE_SOURCES_INVALIDATION_EVENT_V1 });
+            const parsed = UsageSourcesInvalidationV1Schema.safeParse(data);
+            const machineId = parsed.success ? resolveMachineScopedPayloadMachineId(socket, parsed.data.machineId) : null;
+            if (!parsed.success || !machineId || !await hasCurrentSocketCredential(userId, socket)) return;
+            const admitted = await inTx(async tx => {
+                const admission = await resolveMachineAdmissionInTx(tx, { actorAccountId: userId, machineId });
+                return admission.kind === 'admitted' && admission.custodianAccountId === userId
+                    && admission.installationId === parsed.data.installationId
+                    && hasCurrentMachineSocketInstallation(socket, admission.installationId);
+            });
+            if (!admitted) return;
+            // Only the capture Account is woken. Shared Machine access grants no
+            // right to its custodian's private source inventory or accounting.
+            eventRouter.emitEphemeral({ userId, payload: parsed.data, recipientFilter: { type: 'user-scoped-only' } });
+        } catch {
+            log({ module: 'websocket', level: 'error', event: USAGE_SOURCES_INVALIDATION_EVENT_V1, errorCode: 'internal_error' },
+                'Usage source invalidation handling failed.');
         }
     });
 

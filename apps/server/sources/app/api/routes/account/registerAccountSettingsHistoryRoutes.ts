@@ -5,6 +5,16 @@ import {
     AccountSettingsV2HistoryListResponseSchema,
     AccountSettingsV2HistoryRestoreClientUpdateRequiredResponseSchema,
 } from "@happier-dev/protocol";
+import {
+    ACCOUNT_SETTINGS_V2_UPDATE_REQUEST_MAX_UTF8_BYTES,
+    AccountSettingsV2HistoryMutationRequestSchema,
+    AccountSettingsV2HistoryMutationResponseSchema,
+    type AccountSettingsV2HistoryMutationRequest,
+} from "@happier-dev/protocol/account/settings/accountSettingsApiV2";
+import { mutateAccountSettingsHistorySnapshotInTx } from "@/app/accountSettings/accountSettingsHistoryRepository";
+import { ACCOUNT_SETTINGS_HISTORY_MAX_AGGREGATE_BYTES } from "@/app/accountSettings/accountSettingsHistoryConfig";
+import { inTx } from "@/storage/inTx";
+import { PresentUserRequiredResponseSchema, requirePresentUser } from "@/app/api/utils/requirePresentUser";
 
 import {
     accountSettingsSnapshotToContent,
@@ -14,7 +24,6 @@ import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCata
 import {
     deriveAccountEncryptionCurrentnessFromRow,
 } from "@/app/encryption/accountContentKeyAdmission";
-import { db } from "@/storage/db";
 import { log } from "@/utils/logging/log";
 import { type Fastify } from "../../types";
 import {
@@ -35,6 +44,36 @@ const AccountSettingsHistoryErrorResponseSchema = z.object({
 });
 
 export function registerAccountSettingsHistoryRoutes(app: Fastify): void {
+    app.post("/v2/account/settings/history/:version/mutate", {
+        preHandler: [app.authenticate, requirePresentUser],
+        // One retained envelope plus one admitted replacement; reuse their owning budgets.
+        bodyLimit: ACCOUNT_SETTINGS_HISTORY_MAX_AGGREGATE_BYTES + ACCOUNT_SETTINGS_V2_UPDATE_REQUEST_MAX_UTF8_BYTES,
+        config: { rateLimit: resolveApiHotEndpointRateLimit(process.env, "account.settings") },
+        schema: {
+            params: AccountSettingsHistoryVersionParamsSchema,
+            body: AccountSettingsV2HistoryMutationRequestSchema,
+            response: {
+                200: AccountSettingsV2HistoryMutationResponseSchema,
+                403: PresentUserRequiredResponseSchema,
+                503: AccountSettingsStorageUnavailableResponseSchema,
+                500: AccountSettingsHistoryErrorResponseSchema,
+            },
+        },
+    }, async (request, reply) => {
+        try {
+            const { version } = request.params as { version: number };
+            const result = await inTx(tx => mutateAccountSettingsHistorySnapshotInTx({
+                tx, accountId: request.userId, version,
+                mutation: request.body as AccountSettingsV2HistoryMutationRequest,
+            }));
+            return reply.send(result);
+        } catch (error) {
+            const unavailable = resolveAccountSettingsStorageUnavailableRouteError(error);
+            if (unavailable) return reply.code(unavailable.statusCode).send(unavailable.body);
+            log({ module: "api", level: "error" }, "Failed to mutate exact account settings history snapshot");
+            return reply.code(500).send({ error: "internal" });
+        }
+    });
     app.get("/v2/account/settings/history", {
         preHandler: app.authenticate,
         config: {
@@ -49,47 +88,49 @@ export function registerAccountSettingsHistoryRoutes(app: Fastify): void {
         },
     }, async (request, reply) => {
         try {
-            const account = await db.account.findUnique({
-                where: { id: request.userId },
-                select: {
-                    publicKey: true,
-                    encryptionMode: true,
-                    contentPublicKey: true,
-                    contentPublicKeySig: true,
-                },
-            });
-            if (
-                !account
-                || deriveAccountEncryptionCurrentnessFromRow(
-                    account,
-                ).status === "inconsistent"
-            ) {
-                return reply.code(503).send({
-                    error: "account_settings_storage_unavailable",
+            return await inTx(async tx => {
+                const account = await tx.account.findUnique({
+                    where: { id: request.userId },
+                    select: {
+                        publicKey: true,
+                        encryptionMode: true,
+                        contentPublicKey: true,
+                        contentPublicKeySig: true,
+                    },
                 });
-            }
-            const snapshots = await db.accountSettingsSnapshot.findMany({
-                where: { accountId: request.userId },
-                orderBy: [
-                    { version: "desc" },
-                    { createdAt: "desc" },
-                ],
-                select: {
-                    version: true,
-                    createdAt: true,
-                    encryptionMode: true,
-                    settingsDbValue: true,
-                },
-            });
+                if (
+                    !account
+                    || deriveAccountEncryptionCurrentnessFromRow(
+                        account,
+                    ).status === "inconsistent"
+                ) {
+                    return reply.code(503).send({
+                        error: "account_settings_storage_unavailable",
+                    });
+                }
+                const snapshots = await tx.accountSettingsSnapshot.findMany({
+                    where: { accountId: request.userId },
+                    orderBy: [
+                        { version: "desc" },
+                        { createdAt: "desc" },
+                    ],
+                    select: {
+                        version: true,
+                        createdAt: true,
+                        encryptionMode: true,
+                        settingsDbValue: true,
+                    },
+                });
 
-            return reply.send({
-                snapshots: snapshots.map((snapshot) => ({
-                    version: snapshot.version,
-                    createdAt: snapshot.createdAt.toISOString(),
-                    contentKind: resolveAccountSettingsSnapshotContentKind(snapshot),
-                    byteLength: Buffer.byteLength(snapshot.settingsDbValue ?? "", "utf8"),
-                })),
-            });
+                return reply.send({
+                    snapshots: snapshots.map((snapshot) => ({
+                        version: snapshot.version,
+                        createdAt: snapshot.createdAt.toISOString(),
+                        contentKind: resolveAccountSettingsSnapshotContentKind(snapshot),
+                        byteLength: Buffer.byteLength(snapshot.settingsDbValue ?? "", "utf8"),
+                    })),
+                });
+            }, { readOnly: true });
         } catch (error) {
             const storageUnavailable = resolveAccountSettingsStorageUnavailableRouteError(error);
             if (storageUnavailable) {
@@ -118,52 +159,54 @@ export function registerAccountSettingsHistoryRoutes(app: Fastify): void {
         const { version } = request.params as { version: number };
 
         try {
-            const account = await db.account.findUnique({
-                where: { id: request.userId },
-                select: {
-                    publicKey: true,
-                    encryptionMode: true,
-                    contentPublicKey: true,
-                    contentPublicKeySig: true,
-                },
-            });
-            if (
-                !account
-                || deriveAccountEncryptionCurrentnessFromRow(
-                    account,
-                ).status === "inconsistent"
-            ) {
-                return reply.code(503).send({
-                    error: "account_settings_storage_unavailable",
-                });
-            }
-            const snapshot = await db.accountSettingsSnapshot.findUnique({
-                where: {
-                    accountId_version: {
-                        accountId: request.userId,
-                        version,
+            return await inTx(async tx => {
+                const account = await tx.account.findUnique({
+                    where: { id: request.userId },
+                    select: {
+                        publicKey: true,
+                        encryptionMode: true,
+                        contentPublicKey: true,
+                        contentPublicKeySig: true,
                     },
-                },
-                select: {
-                    accountId: true,
-                    version: true,
-                    settingsDbValue: true,
-                    encryptionMode: true,
-                    createdAt: true,
-                },
-            });
-            if (!snapshot) return reply.code(404).send({ error: "not_found" });
+                });
+                if (
+                    !account
+                    || deriveAccountEncryptionCurrentnessFromRow(
+                        account,
+                    ).status === "inconsistent"
+                ) {
+                    return reply.code(503).send({
+                        error: "account_settings_storage_unavailable",
+                    });
+                }
+                const snapshot = await tx.accountSettingsSnapshot.findUnique({
+                    where: {
+                        accountId_version: {
+                            accountId: request.userId,
+                            version,
+                        },
+                    },
+                    select: {
+                        accountId: true,
+                        version: true,
+                        settingsDbValue: true,
+                        encryptionMode: true,
+                        createdAt: true,
+                    },
+                });
+                if (!snapshot) return reply.code(404).send({ error: "not_found" });
 
-            const content = accountSettingsSnapshotToContent(snapshot);
-            if (snapshot.settingsDbValue && !content) {
-                return reply.code(500).send({ error: "internal" });
-            }
+                const content = accountSettingsSnapshotToContent(snapshot);
+                if (snapshot.settingsDbValue && !content) {
+                    return reply.code(500).send({ error: "internal" });
+                }
 
-            return reply.send({
-                content,
-                version: snapshot.version,
-                createdAt: snapshot.createdAt.toISOString(),
-            });
+                return reply.send({
+                    content,
+                    version: snapshot.version,
+                    createdAt: snapshot.createdAt.toISOString(),
+                });
+            }, { readOnly: true });
         } catch (error) {
             const storageUnavailable = resolveAccountSettingsStorageUnavailableRouteError(error);
             if (storageUnavailable) {

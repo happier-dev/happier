@@ -77,8 +77,9 @@ export async function hasCurrentPublisherTargetAdmissionCapabilityInTx(
     tx: Tx,
     authority: CurrentSessionPublisherAuthority,
 ): Promise<boolean> {
+    if (!await hasCurrentSessionScopedMachineAccessInTx({ tx, ...authority })) return false;
     const machine = await tx.machine.findUnique({
-        where: { accountId_id: { accountId: authority.accountId, id: authority.machineId } },
+        where: { id: authority.machineId },
         select: { operationProtocolCapabilities: true, operationProtocolCapabilitiesRevision: true },
     });
     return machine !== null && machine.operationProtocolCapabilitiesRevision !== null

@@ -210,7 +210,7 @@ async function computeAccountActivityBadgeCountsForAuthentication(
     accountIds: ReadonlyArray<string>,
     authentication: SessionAccessAuthentication,
 ): Promise<Map<string, number>> {
-    return await inTx(async (tx) => await computeAccountActivityBadgeCountsInTx(tx, accountIds, authentication));
+    return await inTx(async (tx) => await computeAccountActivityBadgeCountsInTx(tx, accountIds, authentication), { readOnly: true });
 }
 
 /**

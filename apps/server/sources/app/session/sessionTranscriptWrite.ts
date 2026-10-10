@@ -22,6 +22,30 @@ import { resolveEncryptionWriteRejectionCode, type EncryptionPolicyRejectionCode
 import { inTx, type Tx } from "@/storage/inTx";
 import { notifySessionTranscriptMutationAfterCommit } from './sessionTranscriptMutationObserver';
 import { isPrismaErrorCode } from "@/storage/prisma";
+import { SessionTranscriptSurfaceItemReferenceV1Schema, type SessionTranscriptSurfaceItemReferenceV1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
+import { readPublishedSessionSurfaceItemInTx } from './systemRecords/sessionSystemRecordService';
+import { isSessionSystemRecordRevisionAtLeastAcknowledged } from './systemRecords/sessionSystemRecordRevision';
+
+/** A candidate is a publication hint, never authority over another Session or a record incarnation. */
+export async function admitSessionTranscriptSurfaceItemReferenceInTx(tx: Tx, params: Readonly<{
+    accountId?: string;
+    sessionId: string;
+    sessionEncryptionMode: SessionEncryptionMode;
+    surfaceItemReference?: SessionTranscriptSurfaceItemReferenceV1;
+}>): Promise<SessionTranscriptSurfaceItemReferenceV1 | undefined> {
+    const candidate = SessionTranscriptSurfaceItemReferenceV1Schema.safeParse(params.surfaceItemReference);
+    if (!candidate.success) return undefined;
+    const accountId = params.accountId ?? (await tx.session.findUnique({
+        where: { id: params.sessionId }, select: { accountId: true },
+    }))?.accountId;
+    if (!accountId) return undefined;
+    const record = await readPublishedSessionSurfaceItemInTx(tx, {
+        accountId, sessionId: params.sessionId,
+        itemId: candidate.data.itemId, encryptionMode: params.sessionEncryptionMode,
+    });
+    return record && isSessionSystemRecordRevisionAtLeastAcknowledged(record.revision, candidate.data.itemRevision)
+        ? candidate.data : undefined;
+}
 
 export const SESSION_TRANSCRIPT_WRITE_SELECT = {
     id: true,
@@ -219,6 +243,7 @@ export type SessionTranscriptMessageWriteParams = Readonly<{
     /** Only the Pending admission/settlement owner may supply immutable input evidence. */
     inputAdmissionReceipt?: SessionInputAdmissionReceiptV1;
     requestEqualityEvidenceV1?: SessionInputRequestEqualityEvidenceV1;
+    surfaceItemReference?: SessionTranscriptSurfaceItemReferenceV1;
 }>;
 
 export type HistoricalSessionMessageItem = Readonly<{
@@ -229,6 +254,7 @@ export type HistoricalSessionMessageItem = Readonly<{
     sourceCreatedAt?: Date;
     sourceUpdatedAt?: Date;
     transcriptObservationProvenance?: SessionTranscriptObservationProvenanceV1;
+    surfaceItemReference?: SessionTranscriptSurfaceItemReferenceV1;
 }>;
 
 export async function resolveSurvivingSessionMessageAuthorAccountIdInTx(
@@ -280,6 +306,10 @@ export async function writeSessionTranscriptMessageInTx(
             code: "session_storage_authority_mismatch" as const,
         };
     }
+    const surfaceItemReference = await admitSessionTranscriptSurfaceItemReferenceInTx(tx, {
+        sessionId: params.sessionId,
+        sessionEncryptionMode: params.sessionEncryptionMode, surfaceItemReference: params.surfaceItemReference,
+    });
     const message = await tx.sessionMessage.create({
         data: {
             sessionId: params.sessionId,
@@ -288,6 +318,7 @@ export async function writeSessionTranscriptMessageInTx(
             localId: params.localId,
             sidechainId: params.sidechainId,
             messageRole: params.messageRole,
+            ...(surfaceItemReference ? { surfaceItemReference } : {}),
             createdAt,
             ...(params.sourceCreatedAt ? { sourceCreatedAt: params.sourceCreatedAt } : {}),
             ...(params.sourceUpdatedAt ? { sourceUpdatedAt: params.sourceUpdatedAt } : {}),
@@ -463,6 +494,7 @@ async function writeHistoricalSessionMessageBatchWithModeInTx(
             storagePolicy: params.storagePolicy,
             content: item.content,
             localId: item.localId,
+            ...(item.surfaceItemReference ? { surfaceItemReference: item.surfaceItemReference } : {}),
             sidechainId: item.sidechainId,
             messageRole: item.messageRole,
             ...(item.sourceCreatedAt ? { sourceCreatedAt: item.sourceCreatedAt } : {}),

@@ -2,11 +2,14 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 
 import type { Fastify } from "../types";
 import { log } from "@/utils/logging/log";
+import { readRequestHomeEnv } from '@/app/home/settings/requestHomeEnv';
 import { captureAccountStoredContentCompatibilityForHttpRequest } from "@/app/clientCompatibility/accountStoredContentCompatibility";
 import {
     AUTHORITY_CEILING_HEADER_V1,
     ACCOUNT_DIRECTORY_ERROR_CODES_V1,
     parseAccountApiTokenBearerV1,
+    readServerConfig,
+    SERVER_CONFIG,
     type AuthTokenAuthenticationEvidenceV1,
 } from "@happier-dev/protocol";
 import { redactHttpRequestUrlForLog } from "@/utils/logging/redactHttpRequestUrlForLog";
@@ -68,11 +71,6 @@ function stampSessionRuntimePrincipal(
     request.authTokenAuthenticationEvidence = authenticationEvidence;
     request.sessionRuntimePrincipal = principal;
 }
-function shouldLogAuthDecoratorDiagnostics(): boolean {
-    return process.env.HAPPIER_AUTH_DECORATOR_DIAGNOSTIC_LOGS === "1"
-        || process.env.HAPPY_AUTH_DECORATOR_DIAGNOSTIC_LOGS === "1";
-}
-
 function sendInvalidConnectionCredentialFailure(request: FastifyRequest, reply: FastifyReply) {
     const configuredError = request.routeOptions?.config?.connectionAuthFailureError;
     const error = configuredError === "authentication_failed" || configuredError === "invalid_token"
@@ -120,7 +118,7 @@ export function enableAuthentication(app: Fastify) {
                 || effectActionId !== null
                 || encodedTarget !== null;
             // Never log bearer tokens or header contents.
-            const logDiagnostics = shouldLogAuthDecoratorDiagnostics();
+            const logDiagnostics = readServerConfig(await readRequestHomeEnv(request), SERVER_CONFIG.HAPPIER_AUTH_DECORATOR_DIAGNOSTIC_LOGS);
             if (logDiagnostics) {
                 log(
                     { module: 'auth-decorator' },

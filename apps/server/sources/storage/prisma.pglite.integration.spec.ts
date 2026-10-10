@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { applyEnvValues } from "@/testkit/env";
-import { initDbPglite, shutdownDbPglite } from "./prisma";
+import { db, initDbPglite, prismaRuntime, shutdownDbPglite } from "./prisma";
 import { acquirePgliteDirLock } from "./locks/pgliteLock";
 
 const createdDirs: string[] = [];
@@ -56,6 +56,7 @@ describe("storage/prisma initDbPglite", () => {
         applyEnvValues({ HAPPY_SERVER_LIGHT_DATA_DIR: root });
 
         await initDbPglite();
+        expect(await db.$queryRaw(prismaRuntime.sql`SELECT ${17}::int AS value`)).toEqual([{ value: 17 }]);
         await shutdownDbPglite();
 
         const release = await acquirePgliteDirLock(dbDir, { purpose: "test-after-shutdown" });

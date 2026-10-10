@@ -11,9 +11,21 @@ import {
 } from "@/app/events/eventRouter";
 import { resolveSessionMessageAccountActor } from "@/app/session/messages/projectSessionMessageAccountActors";
 import { db } from "@/storage/db";
+import {
+    SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1,
+    SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_V1,
+    SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_V2,
+    SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1,
+    SessionTranscriptObservationAckV1Schema,
+    SessionTranscriptObservationCapabilityAckSchema,
+    SessionTranscriptObservationCapabilityRequestSchema,
+    SessionTranscriptObservationInputSchema,
+} from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 import { isServerFeatureEnabledForHome } from "@/app/features/catalog/serverFeatureGate";
 import { AsyncLock, isLockAdmissionDeadlineExceededError } from "@/utils/runtime/lock";
 import { debug, error as logError, log } from "@/utils/logging/log";
+import { readHomeConfigEnv } from '@/app/home/settings/homeSettings';
+import { readServerConfig, SERVER_CONFIG } from '@happier-dev/protocol';
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { Socket } from "socket.io";
 import type { VerifiedEphemeralSessionRunnerPrincipal } from "@happier-dev/protocol/ephemeralRunner/principal";
@@ -78,12 +90,6 @@ import {
     SESSION_PENDING_ADMISSION_SETTLEMENT_EVENT_V1,
     SESSION_RUNTIME_ACTIVITY_CLOSE_EVENT,
     SESSION_RUNTIME_ACTIVITY_SNAPSHOT_EVENT,
-    SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1,
-    SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_V1,
-    SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1,
-    SessionTranscriptObservationAckV1Schema,
-    SessionTranscriptObservationCapabilityAckV1Schema,
-    SessionTranscriptObservationV1Schema,
     SessionRuntimeActivityCloseAckSchema,
     SessionRuntimeActivityCloseRequestSchema,
     SessionRuntimeActivitySnapshotAckSchema,
@@ -160,11 +166,6 @@ const PENDING_MATERIALIZATION_RETRY_AFTER_MS = 1_000;
 const ExecutionRunPublicStateSocketSchema = ExecutionRunPublicStateSchema.strip();
 const TranscriptStreamSegmentEphemeralSocketMessageSchema = TranscriptStreamSegmentEphemeralMessageSchema.strip();
 const TranscriptStreamSegmentDeltaEphemeralSocketMessageSchema = TranscriptStreamSegmentDeltaEphemeralMessageSchema.strip();
-
-function shouldLogSocketMessageDiagnostics(): boolean {
-    return process.env.HAPPIER_SOCKET_MESSAGE_DIAGNOSTIC_LOGS === "1"
-        || process.env.HAPPY_SOCKET_MESSAGE_DIAGNOSTIC_LOGS === "1";
-}
 
 function isReleasedUiV020DirectUserMessagePayload(data: unknown): boolean {
     if (!data || typeof data !== "object" || Array.isArray(data)) return false;
@@ -293,7 +294,7 @@ async function publishAcceptedPendingSettlement(params: Readonly<{
     const recipientCursorsPending = result.recipientCursorsPending ?? result.recipientCursors;
     const resolvedMessage = {
         ...result.message,
-        accountActor: await resolveSessionMessageAccountActor(db, result.message),
+        accountActor: await resolveSessionMessageAccountActor(result.message),
     };
     await Promise.all(recipientCursorsMessage.map(async ({ accountId, cursor }) => {
         await eventRouter.emitUpdate({
@@ -340,7 +341,7 @@ async function publishPendingInputAdmissionSettlement(params: Readonly<{
     const settledMessage = result.message
         ? {
             ...result.message,
-            accountActor: await resolveSessionMessageAccountActor(db, result.message),
+            accountActor: await resolveSessionMessageAccountActor(result.message),
         }
         : null;
     await Promise.all(result.recipientCursorsMessage.map(async ({ accountId, cursor }) => {
@@ -919,12 +920,10 @@ export function sessionUpdateHandler(
     };
 
     registerSessionEvent(SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1, async (data: unknown, callback?: (response: unknown) => void) => {
-        const respond = (response: unknown) => callback?.(SessionTranscriptObservationCapabilityAckV1Schema.parse(response));
+        const respond = (response: unknown) => callback?.(SessionTranscriptObservationCapabilityAckSchema.parse(response));
         try {
-            const record = data && typeof data === "object" && !Array.isArray(data)
-                ? data as Record<string, unknown>
-                : null;
-            const sessionId = record?.v === 1 && typeof record.sessionId === "string" ? record.sessionId : null;
+            const request = SessionTranscriptObservationCapabilityRequestSchema.safeParse(data);
+            const sessionId = request.success ? request.data.sessionId : null;
             if (!sessionId || !canTargetSessionFromSocket({ socket, connection, sessionId })) {
                 respond({ ok: false, error: "invalid_session" });
                 return;
@@ -935,7 +934,8 @@ export function sessionUpdateHandler(
             }
             respond({
                 ok: true,
-                capability: SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_V1,
+                capability: request.success && request.data.v === 2
+                    ? SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_V2 : SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_V1,
             });
         } catch (error) {
             log({ module: "websocket", level: "warn" }, `Transcript observation capability negotiation failed: ${error}`);
@@ -946,7 +946,7 @@ export function sessionUpdateHandler(
     registerSessionEvent(SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1, async (data: unknown, callback?: (response: unknown) => void) => {
         const respond = (response: unknown) => callback?.(SessionTranscriptObservationAckV1Schema.parse(response));
         try {
-            const parsed = SessionTranscriptObservationV1Schema.safeParse(data);
+            const parsed = SessionTranscriptObservationInputSchema.safeParse(data);
             if (!parsed.success) {
                 respond({ ok: false, error: "invalid_observation" });
                 return;
@@ -985,6 +985,8 @@ export function sessionUpdateHandler(
                     publisherAuthority,
                     trustedSourceTimestamps: { createdAt: observation.createdAt, updatedAt: observation.updatedAt },
                     trustedTranscriptObservationProvenance: observation.provenance,
+                    ...(observation.v === 2 && observation.surfaceItemReference !== undefined
+                        ? { trustedSurfaceItemReference: observation.surfaceItemReference } : {}),
                     ...(isRecoveredHistory
                         ? { trustedAttentionImpact: SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT }
                         : {}),
@@ -1018,7 +1020,7 @@ export function sessionUpdateHandler(
             // answers explicit null for machine-observed rows.
             const observedMessage = {
                 ...result.message,
-                accountActor: await resolveSessionMessageAccountActor(db, result.message),
+                accountActor: await resolveSessionMessageAccountActor(result.message),
             };
             await Promise.all(result.recipientCursors.map(async ({ accountId, cursor }) => {
                 const options = result.attentionImpact ? { attentionImpact: result.attentionImpact } : undefined;
@@ -1984,7 +1986,7 @@ export function sessionUpdateHandler(
                     return;
                 }
 
-                if (shouldLogSocketMessageDiagnostics()) {
+                if (readServerConfig(await readHomeConfigEnv(), SERVER_CONFIG.HAPPIER_SOCKET_MESSAGE_DIAGNOSTIC_LOGS)) {
                     const loggedLength = (() => {
                         if (content.t === "encrypted") return content.c.length;
                         try {
@@ -2057,7 +2059,7 @@ export function sessionUpdateHandler(
                 // actor of its own.
                 const legacySocketMessage = {
                     ...result.message,
-                    accountActor: await resolveSessionMessageAccountActor(db, result.message),
+                    accountActor: await resolveSessionMessageAccountActor(result.message),
                 };
 
                 await Promise.all(result.recipientCursors.map(async ({ accountId: participantUserId, cursor }) => {
@@ -2284,6 +2286,7 @@ export function sessionUpdateHandler(
                             localId,
                             publisherAuthority,
                             diagnosticCorrelationId,
+                            ...(parsed.data.acceptedDelivery === undefined ? {} : { acceptedDelivery: parsed.data.acceptedDelivery }),
                             ...("recipient" in parsed.data ? { targetExecutionRunId: parsed.data.recipient.runId, expectedSidechainId: parsed.data.sidechainId } : {}),
                         }),
                     });
@@ -2463,7 +2466,7 @@ export function sessionUpdateHandler(
                             ...result.message,
                             id: result.message.id,
                             seq: result.message.seq,
-                            accountActor: await resolveSessionMessageAccountActor(db, result.message),
+                            accountActor: await resolveSessionMessageAccountActor(result.message),
                         }
                         : null;
                     if (result.didWriteMessage && committedMessage) {

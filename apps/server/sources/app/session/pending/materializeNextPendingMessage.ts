@@ -19,7 +19,6 @@ import {
     isStoredContentKindAllowedForSessionByStoragePolicy,
     normalizePendingRequestedActionV1,
     pendingDeliveryStatusV1ToPersistedFields,
-    SessionInputAdmissionReceiptV1Schema,
     type SessionMessageRole,
     type SessionInputAdmissionReceiptV1,
     type SessionStoredContentKind,
@@ -36,6 +35,7 @@ import {
     type PendingProviderAction,
 } from "@/app/session/pending/selectPendingProviderInvocation";
 import { reconcilePendingActivationAuthorizationForRemovedRequestInTx } from "@/app/session/pending/pendingActivationAuthorization";
+import { readStoredSessionInputAdmissionReceipt, isSessionInputTargetCurrentForPublisherInTx } from '@/app/session/messages/sessionInputAdmission';
 
 type RecipientCursor = SessionRecipientCursor;
 class PublisherAuthorityLostError extends Error {}
@@ -58,7 +58,7 @@ type MaterializeNextPendingMessageOutcome =
         pendingCount: number;
         pendingBlockedCount: number;
         pendingVersion: number;
-        deferredReason?: "waiting_for_foreground_turn" | "waiting_for_runtime_activity" | "runtime_activity_unknown" | "waiting_for_predecessor";
+        deferredReason?: "waiting_for_foreground_turn" | "waiting_for_runtime_activity" | "runtime_activity_unknown" | "waiting_for_predecessor" | "waiting_for_quota_reset";
         localId?: string;
         pendingStateChanged?: boolean;
         recipientCursorsPending?: RecipientCursor[];
@@ -93,8 +93,7 @@ function toSessionMessageContentFromPending(content: PrismaJson.SessionPendingMe
 }
 
 function readPendingInputAdmissionReceipt(value: unknown): SessionInputAdmissionReceiptV1 | null {
-    const parsed = SessionInputAdmissionReceiptV1Schema.safeParse(value);
-    return parsed.success ? parsed.data : null;
+    return readStoredSessionInputAdmissionReceipt(value) ?? null;
 }
 
 async function blockPendingExecutionRunTargetMismatchInTx(params: {
@@ -223,6 +222,9 @@ async function resolvePendingProviderRejoinInTx(params: {
         },
     });
     if (!row) return null;
+    if (!await isSessionInputTargetCurrentForPublisherInTx(params.tx, row.inputAdmissionReceipt, params.authority)) {
+        return { ok: false, error: "forbidden" };
+    }
     if (row.providerAction === null) {
         const blocked = pendingDeliveryStatusV1ToPersistedFields({
             status: "blocked",
@@ -598,6 +600,9 @@ async function materializePendingTargetInTx(
             }
 
             const localId = nextPending.localId;
+            if (!await isSessionInputTargetCurrentForPublisherInTx(tx, nextPending.inputAdmissionReceipt, params.publisherAuthority)) {
+                return { ok: false, error: "forbidden" } as const;
+            }
             const providerAction = "localId" in invocationSelection
                 ? invocationSelection.providerAction
                 : "send";

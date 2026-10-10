@@ -126,6 +126,60 @@ never a claim that the recipient can open them, and a retained tuple after revoc
 it is simply never projected again. The full preparation, repair and page-boundary contract is in
 [encryption.md](encryption.md#recipient-key-delivery-development).
 
+## Context documents and private Session preferences (0.3 development)
+
+Session access and Artifact access are separate grants. Sharing a Session or
+belonging to its Source does not grant its owner's Prompt Library documents.
+Context, instruction and memory reads use the qualified Artifact access and
+encryption owners for the addressed Home and current Account. A recipient with an
+actual document grant can read its permitted content; a recipient without that
+grant remains owner-private. A reference selects content; it cannot mint a grant
+or borrow the Session owner's credentials.
+
+The Session's prompt-stack selection and Voice preference remain owner work facts.
+`SessionOwnerWorkV1Schema` retains them under `work`, while
+`projectSessionSharedMetadataV1` excludes that private work from recipient metadata.
+A grant to a document does not expose or transfer the owner's Session preferences.
+Conversely, unavailable owner preferences do not invalidate a separate document
+grant. The qualified UI Prompt Library reader delegates to the captured Account's
+`workflowArtifacts` transport rather than using a cached owner's display copy.
+
+Editing a readable document still requires its current write access and normal
+Actions admission; required approval uses authenticated human authority. Neither
+Session membership nor an Instructions attachment creates a Bot-specific waiver.
+The Session Work display and editing controls are still being integrated; these
+source contracts do not establish released UI availability.
+
+The development Ask Happier entry uses `happierGuideDraft.openAskHappierDraft`
+to create an editable `built_in` PromptDoc through the captured Account's
+existing Prompt Library writer. The Protocol Instructions-intent owner selects
+that qualified reference in the ordinary durable Bot draft before navigation;
+only the composer can Send. A failed navigation retains the canonical draft
+and acknowledged document, without speculative deletion or automatic replay.
+Pre-auth Start stores only authoring context in the existing Home-scoped pending
+setup-intent owner, using its unchanged keys, TTL and Account adoption. The
+authenticated index consumes that branch through the same opener rather than
+machine setup. Release context is a captured four-field entry; current-screen
+context must come from the canonical safe CurrentUiContext snapshot. These
+private documents do not create any additional Artifact grant.
+
+## Personal Session pins (0.3 development)
+
+Pinning is the viewing Account's organization choice, not a Session identity or
+access mutation. A readable shared Session can have that reader's own list pin;
+changing it neither promotes the Session to a Bot nor changes the owner's work.
+The existing `SessionPin` row carries independent list and rail memberships with
+one personal order. Adding rail membership requires the exact Home's readable
+Bot identity; demotion hides the rail item but retains the personal choice, which
+can still be cleared. The Bot marker remains a recipient-safe identity fact,
+not an authorization grant or an inference from pin presence.
+
+The current pin Action uses Account HTTP transport without waking the execution
+host. Retained predecessor pins become list-only at the stored reader; current
+HTTP requests and responses stay strict. See [Actions](actions.md) for the
+canonical mutation and answering-client reorder owners. These are development
+contracts; source presence does not establish released rail or roster UI.
+
 ## Read state, Follow, and awareness
 
 These three answer different questions and must not be collapsed:

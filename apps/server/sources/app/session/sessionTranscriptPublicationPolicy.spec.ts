@@ -14,9 +14,28 @@ import {
     resolveSessionTranscriptPublicationConstraints,
     resolveSessionTranscriptPublicationCeiling,
     resolveExternalShareableTranscriptBlockedFromSeq,
+    resolveExternalShareableTranscriptTurnSettlementBlockedFromSeq,
 } from "./sessionTranscriptPublicationPolicy";
 
 describe("session transcript publication policy", () => {
+    it("does not mistake provider acceptance detail for a terminal no-turn settlement", () => {
+        const snapshot = {
+            turns: [], hasLegacyTurnProjection: false, turnSnapshotExhausted: false,
+            hasInconsistentTurnProjection: false,
+        };
+        const message = { seq: 4, inputAdmissionReceipt: { v: 1, issuer: "authenticatedMachine" } };
+        expect(resolveExternalShareableTranscriptTurnSettlementBlockedFromSeq({
+            ...snapshot, messages: [{ ...message, deliveryResolution: {
+                v: 1, kind: "provider_accepted", content: { t: "plain", v: {
+                    v: 1, acceptedAtMs: 1234, delivery: { kind: "steer", turnId: "turn-1" },
+                } },
+            } }],
+        })).toBe(4);
+        expect(resolveExternalShareableTranscriptTurnSettlementBlockedFromSeq({
+            ...snapshot, messages: [{ ...message, deliveryResolution: { v: 1, kind: "manual_handled" } }],
+        })).toBeNull();
+    });
+
     it.each([
         [{ currentStorageState: "hosted" }, null],
         [{ currentStorageState: "machine_only" }, 0],

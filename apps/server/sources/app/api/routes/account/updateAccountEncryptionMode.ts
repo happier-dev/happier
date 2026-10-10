@@ -47,6 +47,14 @@ import {
     inspectAccountSettingsForEncryptionTransitionInTx,
 } from "@/app/accountSettings/accountEncryptionTransitionCensus";
 import { migrateAuthoringMemoryForAccountModeInTx } from "@/app/kv/authoringMemoryEncryptionMigration";
+import { migratePromptLibraryForAccountModeInTx } from '@/app/account/prompts/promptLibraryEncryptionMigration';
+import { migrateConfiguredAgentCatalogForAccountModeInTx } from '@/app/account/agents/configuredAgentRowsEncryptionMigration';
+import { migrateMcpServerCatalogForAccountModeInTx } from '@/app/account/mcp/serverCatalogEncryptionMigration';
+import { migrateProviderConnectionsForAccountModeInTx } from '@/app/account/providers/providerConnectionsEncryptionMigration';
+import { migrateConnectedAccountCatalogForAccountModeInTx } from '@/app/account/connectedAccounts/configurationRowsEncryptionMigration';
+import { migrateProjectAccountRowsForAccountModeInTx } from '@/app/projects/projectAccountRowsEncryptionMigration';
+import { assertProfileRowsAccountModeMigrationEmptyInTx } from '@/app/account/profiles/profileRowsEncryptionMigration';
+import { migrateProjectTrustForAccountModeInTx } from '@/app/projects/trust/projectTrustEncryptionMigration';
 
 export type UpdateAccountEncryptionModeResult =
     | Readonly<{
@@ -107,10 +115,30 @@ export async function updateAccountEncryptionMode(params: Readonly<{
         if (hasSettings) {
             return { status: "migration_required" };
         }
+        const profiles = await assertProfileRowsAccountModeMigrationEmptyInTx(tx, params.accountId);
+        if (profiles.status !== 'empty') return { status: 'migration_required' };
         const authoringMemory = await migrateAuthoringMemoryForAccountModeInTx(tx, {
             accountId: params.accountId, toMode: params.mode,
         });
         if (authoringMemory.status !== "applied") return { status: "migration_required" };
+        const promptLibrary = await migratePromptLibraryForAccountModeInTx(tx, { accountId: params.accountId, toMode: params.mode });
+        if (promptLibrary.status !== 'applied') return { status: 'migration_required' };
+        const acpCatalog = await migrateConfiguredAgentCatalogForAccountModeInTx(tx, { accountId: params.accountId, toMode: params.mode });
+        if (acpCatalog.status !== 'applied') return { status: 'migration_required' };
+        const mcpServerCatalog = await migrateMcpServerCatalogForAccountModeInTx(tx, { accountId: params.accountId, toMode: params.mode });
+        if (mcpServerCatalog.status !== 'applied') return { status: 'migration_required' };
+        const providerConnections = await migrateProviderConnectionsForAccountModeInTx(tx, { accountId: params.accountId, toMode: params.mode });
+        if (providerConnections.status !== 'applied') return { status: 'migration_required' };
+        for (const key of ['configurations', 'purposes'] as const) {
+            const connectedCatalog = await migrateConnectedAccountCatalogForAccountModeInTx(tx, { accountId: params.accountId, key, toMode: params.mode });
+            if (connectedCatalog.status !== 'applied') return { status: 'migration_required' };
+        }
+        const projectRows = await migrateProjectAccountRowsForAccountModeInTx(tx, {
+            accountId: params.accountId, toMode: params.mode,
+        });
+        if (projectRows.status !== 'applied') return { status: 'migration_required' };
+        const projectTrust = await migrateProjectTrustForAccountModeInTx(tx, { accountId: params.accountId, toMode: params.mode });
+        if (projectTrust.status !== 'applied') return { status: 'migration_required' };
         const pluginDataCensus =
             await inspectPluginAccountDataForEncryptionTransitionInTx(
                 tx,

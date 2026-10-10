@@ -130,7 +130,7 @@ export function registerSessionTurnMutationRoute(app: Fastify) {
                 publication,
                 currentlyAccessible: session !== null,
             };
-        });
+        }, { readOnly: true });
         if (!session || !currentlyAccessible) {
             return reply.code(404).send({ error: "Session not found" });
         }

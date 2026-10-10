@@ -4,6 +4,7 @@ import {
     ManagedWakeTargetV1Schema, createStoredReadSchema,
     type PendingActivationAuthorizationV1,
     type PendingActivationFailureCodeV1,
+    type SessionInputAdmissionReceiptV1,
 } from '@happier-dev/protocol';
 import type { SessionInputMachineTargetV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import type { Tx } from '@/storage/inTx';
@@ -16,12 +17,25 @@ export type PendingActivationTarget = Readonly<{ accountId: string; requestId: s
     machinePublication?: Readonly<{ target: SessionInputMachineTargetV1; custodianAccountId: string; requestedAt: number }>;
     managedControllerPublication?: Readonly<{ accountId: string; cursor: number }> }>;
 
+/** One owner recovery admission predicate for activation and reset-bound Pending starts. */
+export function readPendingOwnerInputAdmission(input: Readonly<{
+    sessionId: string; accountId: string;
+    pending: Readonly<{ messageRole: string | null; authorAccountId: string | null; inputAdmissionReceipt: unknown }>;
+}>): SessionInputAdmissionReceiptV1 | undefined {
+    const receipt = readStoredSessionInputAdmissionReceipt(input.pending.inputAdmissionReceipt);
+    if (!receipt || input.pending.messageRole !== 'user'
+        || input.pending.authorAccountId !== null && input.pending.authorAccountId !== input.accountId
+        || receipt.issuer === 'authenticatedAccount' && (receipt.actorAccountId !== input.accountId || receipt.sessionRelationship !== 'owner')
+        || receipt.admittedTarget && (receipt.admittedTarget.accountId !== input.accountId || receipt.admittedTarget.sessionId !== input.sessionId)) return undefined;
+    return receipt;
+}
+
 export function shouldArmPendingActivationAuthorization(params: Readonly<{
     requestedAction: { kind: string };
     resumeWhenAvailable?: boolean;
 }>): boolean {
-    return params.resumeWhenAvailable === true
-        || (params.resumeWhenAvailable !== false && params.requestedAction.kind === 'send_now');
+    return params.requestedAction.kind !== 'reset_start' && (params.resumeWhenAvailable === true
+        || (params.resumeWhenAvailable !== false && params.requestedAction.kind === 'send_now'));
 }
 
 const AUTHORIZATION_SELECT = {
@@ -129,20 +143,11 @@ export async function armPendingActivationAuthorizationInTx(params: Readonly<{
         where: { id: params.sessionId },
         select: AUTHORIZATION_SELECT,
     });
-    const admittedTarget = inputAdmissionReceipt.data.admittedTarget;
-    if (admittedTarget && (admittedTarget.accountId !== session.accountId || admittedTarget.sessionId !== params.sessionId
-        || !await isCurrentSessionInputMachineTargetInTx(params.tx, admittedTarget))) return undefined;
-    const actorAccountId = inputAdmissionReceipt.data.issuer === 'authenticatedMachine'
-        ? session.accountId : inputAdmissionReceipt.data.actorAccountId;
-    if (
-        (inputAdmissionReceipt.data.issuer === 'authenticatedAccount'
-            && (inputAdmissionReceipt.data.sessionRelationship !== 'owner'
-                || session.accountId !== actorAccountId))
-        || (
-            eligible.authorAccountId !== null
-            && eligible.authorAccountId !== actorAccountId
-        )
-    ) return undefined;
+    const ownerAdmission = readPendingOwnerInputAdmission({ sessionId: params.sessionId, accountId: session.accountId, pending: eligible });
+    if (!ownerAdmission) return undefined;
+    const admittedTarget = ownerAdmission.admittedTarget;
+    if (admittedTarget && !await isCurrentSessionInputMachineTargetInTx(params.tx, admittedTarget)) return undefined;
+    const actorAccountId = session.accountId;
     const requestedAt = nextRequestedAt({
         now: params.now ?? new Date(),
         lastActiveAt: session.lastActiveAt,
@@ -193,11 +198,9 @@ export async function readPendingActivationTargetInTx(tx: Tx, sessionId: string)
         sessionId, localId: session.pendingActivationRequestId }, targetExecutionRunId: null },
         select: { status: true, messageRole: true, deliveryState: true, providerAction: true,
             authorAccountId: true, inputAdmissionReceipt: true } });
-    const receipt = readStoredSessionInputAdmissionReceipt(row?.inputAdmissionReceipt);
+    const receipt = row && readPendingOwnerInputAdmission({ sessionId, accountId: session.accountId, pending: row });
     if (!row || row.status !== 'queued' || row.messageRole !== 'user' || row.deliveryState !== null || row.providerAction !== null
-        || !receipt || !receipt.admittedTarget || receipt.admittedTarget.accountId !== session.accountId
-        || receipt.admittedTarget.sessionId !== sessionId || row.authorAccountId !== null && row.authorAccountId !== session.accountId
-        || receipt.issuer === 'authenticatedAccount' && (receipt.actorAccountId !== session.accountId || receipt.sessionRelationship !== 'owner')
+        || !receipt || !receipt.admittedTarget
         || !await isCurrentSessionInputMachineTargetInTx(tx, receipt.admittedTarget)) return undefined;
     const machine = await tx.machine.findUniqueOrThrow({ where: { id: receipt.admittedTarget.machineId }, select: { accountId: true } });
     return { accountId: session.accountId, requestId: session.pendingActivationRequestId,

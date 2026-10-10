@@ -1,4 +1,4 @@
-import { db } from "@/storage/db";
+import { inTx } from "@/storage/inTx";
 import { z } from 'zod';
 
 import {
@@ -41,11 +41,11 @@ export function registerSessionSubagentCustodyRoutes(app: Fastify) {
             response: { 200: SessionSubagentCustodyCapabilityV1Schema, 404: ErrorSchema },
         },
     }, async (request, reply) => {
-        const admission = await resolveSessionAccessForOperation(db, {
+        const admission = await inTx(tx => resolveSessionAccessForOperation(tx, {
             accountId: request.userId,
             sessionId: request.params.sessionId,
             authentication: readSessionAccessAuthenticationFromRequest(request),
-        });
+        }), { readOnly: true });
         if (admission.status !== "allowed" || !admission.access.capabilities.readTranscript) {
             return reply.code(404).send({ error: 'Session not found' });
         }

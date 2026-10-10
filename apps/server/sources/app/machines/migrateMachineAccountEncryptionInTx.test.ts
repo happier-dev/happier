@@ -40,6 +40,7 @@ describe("migrateMachineAccountEncryptionInTx", () => {
                         kind: "persistent",
                         metadataVersion: 2,
                         daemonStateVersion: 3,
+                        dataEncryptionKey: null,
                     }]),
                     updateMany,
                 },
@@ -68,6 +69,7 @@ describe("migrateMachineAccountEncryptionInTx", () => {
                 id: "machine-1",
                 metadataVersion: 2,
                 daemonStateVersion: 3,
+                dataEncryptionKey: null,
             },
             data: {
                 metadata: "eyJ0IjoicGxhaW4iLCJ2Ijp7Imhvc3QiOiJxYSJ9fQ==",

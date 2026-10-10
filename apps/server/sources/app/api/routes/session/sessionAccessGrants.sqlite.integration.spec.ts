@@ -4,6 +4,8 @@ import {
     openEncryptedDataKeyEnvelopeV1,
     sealEncryptedDataKeyEnvelopeV1,
     SessionAccessGrantsListResponseV1Schema,
+    SessionCurrentProjectionRecordV1Schema,
+    V2SessionByIdResponseSchema,
 } from "@happier-dev/protocol";
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
@@ -51,6 +53,30 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
         sharedMetadata: { ciphertext: JSON.stringify({ v: 1 }) },
         ownerMetadata: { t: "plain", v: { v: 1 } },
         encryptionMode: "plain", dataEncryptionKey: null,
+    });
+
+    it("serves serialized owner detail accepted by the current CLI reader schemas", async () => {
+        const { owner } = await fixture();
+        await withAuthenticatedTestApp(sessionRoutes, async (app) => {
+            const created = await app.inject({
+                method: "POST", url: "/v1/sessions", headers: headers(owner.id),
+                payload: body("cli-current-detail"),
+            });
+            expect(created.statusCode, created.body).toBe(200);
+            const sessionId = created.json().session.id;
+            const detail = await app.inject({
+                method: "GET", url: `/v2/sessions/${sessionId}?accessProjectionVersion=1`,
+                headers: headers(owner.id),
+            });
+            expect(detail.statusCode, detail.body).toBe(200);
+            // These are the exact two schemas used by both CLI detail readers.
+            // Real creation, access admission, mapping and serialization stay live.
+            const envelope = V2SessionByIdResponseSchema.parse(detail.json());
+            expect(SessionCurrentProjectionRecordV1Schema.parse(envelope.session)).toMatchObject({
+                id: sessionId, responsibleAccountId: null, responsibleAccount: null,
+                effectiveAccess: { level: "owner" },
+            });
+        });
     });
 
     it("sets complete desired grants, redacts inspection and removes idempotently through the real routes", async () => {

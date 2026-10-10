@@ -1,4 +1,5 @@
-import type { LocalServicePublicExposureV1 } from "@happier-dev/protocol";
+import type { LocalServicePublicExposureV1, LocalServicePreviewResourceV1 } from "@happier-dev/protocol";
+import { isDeepStrictEqual } from 'node:util';
 import type { SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
 
 /**
@@ -24,6 +25,12 @@ export type LocalServicePublicAuthenticatedUser = Readonly<{
     authentication: SessionAccessAuthentication;
 }>;
 
+export type LocalServicePublicAccessServiceAuthorizer = (input: Readonly<{
+    userId: string;
+    preview: LocalServicePreviewResourceV1;
+    authentication: SessionAccessAuthentication;
+}>) => boolean | Promise<boolean>;
+
 export type LocalServicePublicAccessIdentity = Readonly<{
     authenticated: boolean;
     sessionAuthorized: boolean;
@@ -34,15 +41,25 @@ export async function resolveLocalServicePublicAccessIdentity(input: Readonly<{
     principal: LocalServicePublicAuthenticatedUser | null;
     resolveExposure?: (exposureId: string) => LocalServicePublicExposureV1 | null | undefined;
     authorizeSessionAccess?: LocalServicePublicAccessSessionAuthorizer;
+    resolvePreview?: (previewId: string) => LocalServicePreviewResourceV1 | null | undefined;
+    authorizeServiceAccess?: LocalServicePublicAccessServiceAuthorizer;
 }>): Promise<LocalServicePublicAccessIdentity> {
     if (!input.principal) {
         return { authenticated: false, sessionAuthorized: false };
     }
     const exposure = input.resolveExposure?.(input.exposureId) ?? null;
-    if (!exposure || !input.authorizeSessionAccess) {
+    if (!exposure) {
         return { authenticated: true, sessionAuthorized: false };
     }
     try {
+        if (exposure.serviceTarget) {
+            const preview = input.resolvePreview?.(exposure.previewId);
+            const authorized = preview && preview.machineId === exposure.machineId
+                && isDeepStrictEqual(preview.serviceTarget, exposure.serviceTarget) && input.authorizeServiceAccess
+                ? await input.authorizeServiceAccess({ userId: input.principal.userId, preview, authentication: input.principal.authentication }) : false;
+            return { authenticated: true, sessionAuthorized: authorized === true };
+        }
+        if (!exposure.sessionId || !input.authorizeSessionAccess) return { authenticated: true, sessionAuthorized: false };
         const authorized = await input.authorizeSessionAccess({
             userId: input.principal.userId,
             sessionId: exposure.sessionId,

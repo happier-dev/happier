@@ -15,13 +15,14 @@ describe("AsyncLock bounded admission", () => {
             const expiredOperation = vi.fn();
             const nextOperation = vi.fn(() => "next");
             const expired = lock.inLock(expiredOperation, { deadlineAtMs: 1_025 });
+            const expiredRejection = expect(expired).rejects.toMatchObject({ name: "LockAdmissionDeadlineExceededError" });
             const next = lock.inLock(nextOperation);
 
             await vi.advanceTimersByTimeAsync(25);
             releaseFirst();
             await Promise.allSettled([first, expired, next]);
 
-            await expect(expired).rejects.toMatchObject({ name: "LockAdmissionDeadlineExceededError" });
+            await expiredRejection;
             expect(expiredOperation).not.toHaveBeenCalled();
             expect(nextOperation).toHaveBeenCalledOnce();
         } finally {

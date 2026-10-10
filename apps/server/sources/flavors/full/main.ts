@@ -1,5 +1,5 @@
 import { readHomeOwnerClaimRequest, readPrintHomeClaimCodeRequest } from '@/app/home/governance/claimHomeOwnerCommand';
-import { initializeServerSentry } from '@/app/monitoring/sentry';
+import { prepareServerSentryInstrumentation } from '@/app/monitoring/sentry';
 import { registerProcessHandlers } from '@/utils/process/processHandlers';
 
 /**
@@ -19,8 +19,8 @@ export async function runFullServerMain(argv: readonly string[] = process.argv.s
     const claimHomeOwner = readHomeOwnerClaimRequest(argv);
     const printHomeClaimCode = !claimHomeOwner && readPrintHomeClaimCodeRequest(argv);
 
-    // Initialize Sentry before importing the server runtime so auto-instrumentation can patch dependencies (Fastify, etc).
-    initializeServerSentry(process.env);
+    // Instrument dependencies before runtime import; the post-overlay startup owner configures the client.
+    prepareServerSentryInstrumentation();
     registerProcessHandlers();
 
     const { startServer } = await import('@/startServer');

@@ -248,7 +248,7 @@ export async function readSessionDataKeyEnvelopePage(input: Readonly<{
         }
 
         return { ok: true, page: { status: "required", summary, items, nextCursor } };
-    });
+    }, { readOnly: true });
 }
 
 type ValidatedEntry = Readonly<{ recipientAccountId: string; envelope: Uint8Array }>;

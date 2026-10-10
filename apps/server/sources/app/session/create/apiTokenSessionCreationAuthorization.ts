@@ -5,7 +5,7 @@ import { verifyCurrentExternalActionPrincipalInTx } from "@/app/auth/externalAct
 import { acquireAccountSessionOwnerMetadataFenceInTx } from "@/app/encryption/accountSessionOwnerMetadataFence";
 import type { Tx } from "@/storage/inTx";
 
-/** Host-only proof carried from the verified create header, never a body field. */
+/** Host-only proof carried from verified request admission, never a body field. */
 export async function readSessionCreationApiTokenIdInTx(
     tx: Tx,
     accountId: string,
@@ -17,5 +17,5 @@ export async function readSessionCreationApiTokenIdInTx(
     if (authorization.accountId !== accountId || authorization.actionId !== "session.spawn_new" || !principal) {
         throw new ApiTokenOperationError("invalid_token");
     }
-    return principal.credentialId;
+    return 'credentialId' in principal ? principal.credentialId : null;
 }

@@ -60,6 +60,17 @@ describe("machinePoolService (SQLite integration)", () => {
         ] });
     }
 
+    it("does not select worker purposes through the server-only Session resolver", async () => {
+        await seed();
+        await createMachinePool({ accountId: ownerId,
+            input: { poolId, name: "Worker", members: [{ machineId: "m-fast", priorityTier: 0, enabled: true }] },
+            io: io(["m-fast"]),
+        });
+        await expect(resolveMachinePool({ accountId: ownerId, io: io(["m-fast"]), input: {
+            poolId, requestKey: "worker", purpose: "finite", workspace: { serverId: "home", refId: "checkout" },
+        } })).resolves.toMatchObject({ ok: false, error: { code: "invalid_request" } });
+    });
+
     it("rejects ephemeral members and never selects an ephemeral Machine from a stored Pool", async () => {
         await seed();
         await db.machine.update({ where: { id: "m-fast" }, data: { kind: "ephemeral_session_runner" } });

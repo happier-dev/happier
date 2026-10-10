@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { db } from "@/storage/db";
 import { log } from "@/utils/logging/log";
 import { inTx } from "@/storage/inTx";
 import { type Fastify } from "../../types";
@@ -53,7 +52,7 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
         }
     }, async (request, reply) => {
         try {
-            const user = await db.account.findUnique({
+            const user = await inTx(tx => tx.account.findUnique({
                 where: { id: request.userId },
                 select: {
                     settings: true,
@@ -63,7 +62,7 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
                     contentPublicKey: true,
                     contentPublicKeySig: true,
                 }
-            });
+            }), { readOnly: true });
 
             if (!user) {
                 return reply.code(500).send({ error: 'Failed to get account settings' });
@@ -202,7 +201,7 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
         },
     }, async (request, reply) => {
         try {
-            const user = await db.account.findUnique({
+            const user = await inTx(tx => tx.account.findUnique({
                 where: { id: request.userId },
                 select: {
                     settings: true,
@@ -212,7 +211,7 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
                     contentPublicKey: true,
                     contentPublicKeySig: true,
                 },
-            });
+            }), { readOnly: true });
             if (!user) return reply.code(500).send({ error: "internal" });
 
             const currentness =
@@ -270,7 +269,7 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
         if (!parsedRequest.success) {
             return reply.send({ success: false, error: "invalid", reason: "tooLarge" });
         }
-        const { content, expectedVersion, remoteAlertPolicy } = parsedRequest.data;
+        const { content, expectedVersion, remoteAlertPolicy, expectedProfileTransferRevision } = parsedRequest.data;
         // Keep the Account document write available while Follow is off, but do
         // not refresh its server-readable remote-alert projection. Existing
         // rows remain compatibility-readable and become stale as the document
@@ -284,6 +283,7 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
                 tx,
                 accountId: userId,
                 expectedVersion,
+                ...(expectedProfileTransferRevision === undefined ? {} : { expectedProfileTransferRevision }),
                 next: {
                     kind: "v2",
                     content,
@@ -298,6 +298,8 @@ export function registerAccountSettingsRoutes(app: Fastify): void {
                 });
             }
             if (result.status === "invalid_content") return reply.code(400).send({ error: "invalid-params" });
+            if (result.status === 'profile_transfer_mismatch') return reply.send({ success: false,
+                error: 'profile-transfer-mismatch', currentProfileTransferRevision: result.currentRevision });
             if (result.status === "version_mismatch") {
                 return reply.send({
                     success: false,

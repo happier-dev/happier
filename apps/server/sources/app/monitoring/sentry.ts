@@ -140,8 +140,13 @@ export function resolveServerSentryConfig(env: NodeJS.ProcessEnv): ServerSentryC
     };
 }
 
+/** Instrument runtime dependencies before import without fixing the client to deployment-only config. */
+export function prepareServerSentryInstrumentation(): void {
+    Sentry.preloadOpenTelemetry();
+}
+
 export function initializeServerSentry(env: NodeJS.ProcessEnv): void {
-    // Avoid re-initializing Sentry (important when entrypoints initialize Sentry before importing the server runtime).
+    // Startup composition configures the client once, after resolving saved restart settings.
     if (Sentry.getClient()) return;
 
     const resolved = resolveServerSentryConfig(env);

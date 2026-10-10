@@ -4,6 +4,8 @@ import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { withAuthenticatedTestApp } from "../../testkit/sqliteFastify";
 import { sessionRoutes } from "./sessionRoutes";
+import { deriveSessionSystemRecordAddressKeys } from '@/app/session/systemRecords/sessionSystemRecordAddressKeys';
+import { encodeSessionSystemRecordRevision } from '@/app/session/systemRecords/sessionSystemRecordRevision';
 
 describe("session historical transcript import route (SQLite integration)", () => {
     let harness: LightSqliteHarness;
@@ -34,6 +36,7 @@ describe("session historical transcript import route (SQLite integration)", () =
             () => db.sessionTurn.deleteMany(),
             () => db.sessionPendingMessage.deleteMany(),
             () => db.sessionMessage.deleteMany(),
+            () => db.sessionSystemRecord.deleteMany(),
             () => db.sessionShare.deleteMany(),
             () => db.accountChange.deleteMany(),
             () => db.session.deleteMany(),
@@ -43,11 +46,12 @@ describe("session historical transcript import route (SQLite integration)", () =
 
     async function createFixture(params?: Readonly<{
         currentStorageState?: string;
+        encryptionMode?: 'plain' | 'e2ee';
     }>) {
         const account = await db.account.create({
             data: {
                 publicKey: `historical-import-route-${crypto.randomUUID()}`,
-                encryptionMode: "plain",
+                encryptionMode: params?.encryptionMode ?? "plain",
             },
             select: { id: true },
         });
@@ -55,7 +59,7 @@ describe("session historical transcript import route (SQLite integration)", () =
             data: {
                 accountId: account.id,
                 tag: `historical-import-route-${crypto.randomUUID()}`,
-                encryptionMode: "plain",
+                encryptionMode: params?.encryptionMode ?? "plain",
                 metadata: JSON.stringify({}),
                 currentStorageState: params?.currentStorageState ?? "hosted",
             },
@@ -63,6 +67,30 @@ describe("session historical transcript import route (SQLite integration)", () =
         });
         return { account, session };
     }
+
+    it('binds a fork import to the current child record while retaining only original acknowledgement correlation', async () => {
+        const { account, session } = await createFixture({ encryptionMode: 'e2ee' });
+        const record = await db.sessionSystemRecord.create({ data: {
+            accountId: account.id, sessionId: session.id, ownerKind: 'host', pluginId: null,
+            namespace: 'surface', kind: 'item.v1', localId: 'child-visual',
+            ...deriveSessionSystemRecordAddressKeys({ ownerKind: 'host', pluginId: null, namespace: 'surface', localId: 'child-visual' }),
+            content: { t: 'encrypted', c: 'child-item-sealed' }, version: 1,
+        } });
+        const surfaceItemReference = { v: 1, itemId: 'child-visual',
+            itemRevision: encodeSessionSystemRecordRevision({ id: record.id, version: record.version }),
+            sourceAddress: { serverId: 'origin-home', sessionId: 'parent-session' } };
+        await withAuthenticatedTestApp((app) => sessionRoutes(app), async (app) => {
+            const response = await app.inject({ method: 'POST', url: `/v3/sessions/${session.id}/transcript/import`,
+                headers: { 'content-type': 'application/json', 'x-test-user-id': account.id },
+                payload: { items: [{ localId: 'fork-row', content: { t: 'encrypted', c: 'child-message-sealed' }, surfaceItemReference }] },
+            });
+            expect(response.statusCode).toBe(200);
+        });
+        await expect(db.sessionMessage.findUnique({ where: { sessionId_localId: { sessionId: session.id, localId: 'fork-row' } },
+            select: { sessionId: true, content: true, surfaceItemReference: true } })).resolves.toEqual({
+            sessionId: session.id, content: { t: 'encrypted', c: 'child-message-sealed' }, surfaceItemReference,
+        });
+    });
 
     it("writes an action import through the historical batch with closed history provenance and no input, Pending, turn, attention, badge, or participant effects", async () => {
         const { account, session } = await createFixture();

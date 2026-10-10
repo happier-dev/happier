@@ -56,7 +56,8 @@ import { readRequestHomeEnv } from "@/app/home/settings/requestHomeEnv";
 import { auth, ApiTokenOperationError } from "@/app/auth/auth";
 import { verifyCurrentExternalActionPrincipal } from "@/app/auth/externalActionExecutionAuthorization";
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
-import type { ExternalActionExecutionAuthorizationBindingV1 } from "@happier-dev/protocol/actions";
+import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, type ExternalActionExecutionAuthorizationBindingV1 } from "@happier-dev/protocol/actions";
+import { readSessionCreationApiTokenIdInTx } from "@/app/session/create/apiTokenSessionCreationAuthorization";
 
 export function registerSessionCreateOrLoadRoute(app: Fastify) {
     app.post('/v1/sessions', {
@@ -90,7 +91,15 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
     }, async (request, reply) => {
         let sessionCreationAuthorization: ExternalActionExecutionAuthorizationBindingV1 | undefined;
         const creationHeader = request.headers[SESSION_CREATION_AUTHORIZATION_HEADER_V1];
-        if (creationHeader !== undefined) {
+        if (request.externalActionExecutionAuthorized === true) {
+            const binding = request.externalActionExecutionAuthorizationBinding;
+            if (!binding || binding.accountId !== request.userId || binding.actionId !== 'session.spawn_new'
+                || request.externalActionEffectActionId !== 'session.spawn_new'
+                || creationHeader !== undefined && creationHeader !== request.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]) {
+                return reply.code(401).send({ error: 'invalid_token' });
+            }
+            sessionCreationAuthorization = binding;
+        } else if (creationHeader !== undefined) {
             if (typeof creationHeader !== "string") return reply.code(401).send({ error: "invalid_token" });
             const binding = await auth.verifyExternalActionExecutionAuthorization(creationHeader);
             if (!binding || binding.accountId !== request.userId || binding.actionId !== "session.spawn_new"
@@ -366,23 +375,22 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
                         createSessionMetadataPrivacyUpgradeRequiredResponse(),
                     );
                 }
-                resolvedSession = existing;
-                if (
-                    requestedStorageState === "machine_only"
-                    && existing.currentStorageState !== "machine_only"
-                ) {
-                    const initialized = await initializeExternalLinkedSessionStorage(db, existing);
-                    if (!initialized.ok) {
-                        return reply.code(409).send({
-                            error: "storage-state-conflict",
-                            code: "session_storage_state_conflict",
-                        });
-                    }
-                    resolvedSession = { ...existing, currentStorageState: initialized.session.currentStorageState };
-                }
                 const restored = await inTx(async (tx) => {
-                    const current = await tx.session.findUniqueOrThrow({ where: { id: existing.id } });
+                    await readSessionCreationApiTokenIdInTx(tx, userId, sessionCreationAuthorization);
+                    let current = await tx.session.findUniqueOrThrow({ where: { id: existing.id } });
+                    if (requestedStorageState === 'machine_only' && current.currentStorageState !== 'machine_only') {
+                        const initialized = await initializeExternalLinkedSessionStorage(tx, current, userId);
+                        if (!initialized.ok) return { kind: 'storage-conflict' as const };
+                        current = { ...current, currentStorageState: initialized.session.currentStorageState };
+                    }
                     return await restoreSessionTagRejoinInTx(tx, current);
+                }).catch((restoreError: unknown) => {
+                    if (restoreError instanceof ApiTokenOperationError && restoreError.code === 'invalid_token') return null;
+                    throw restoreError;
+                });
+                if (restored === null) return reply.code(401).send({ error: 'invalid_token' });
+                if ('kind' in restored) return reply.code(409).send({
+                    error: 'storage-state-conflict', code: 'session_storage_state_conflict',
                 });
                 resolvedSession = restored.session;
                 if (restored.publication) {

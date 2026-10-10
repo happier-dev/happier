@@ -57,6 +57,7 @@ export type LocalServicePreviewRuntimeRegistrationInput = Readonly<{
     resource: LocalServicePreviewResourceV1;
     accountId: string;
     nativeDirectSupported?: boolean;
+    viewerAccountId?: string;
 }>;
 
 export type LocalServicePreviewRuntimeContext = Readonly<{
@@ -80,8 +81,10 @@ export type LocalServicePreviewRuntimeExchangeResult =
 
 export type LocalServicePreviewRuntime = Readonly<{
     closeNativeRegistrations(): void;
+    retainConnection(previewId: string, close: () => void, rawToken?: string | null): () => void;
+    retireMachineAccess(input: Readonly<{ machineId: string; accountId: string }>): void;
     openNativeRegistration(binding: LocalServicePreviewDirectBindingV1, grantId: string): Readonly<{ ok: true; signal: AbortSignal; close: () => void } | { ok: false; reasonCode: string }>;
-    mintNativeDirectAccess(input: Readonly<{ previewId: string; request: LocalServicePreviewNativeDirectAccessRequestV1; target: MachineIrohEndpointAuthorityV1 }>): Readonly<{ ok: true; access: LocalServicePreviewNativeDirectAccessV1 } | { ok: false; reasonCode: string }>;
+    mintNativeDirectAccess(input: Readonly<{ previewId: string; actorAccountId?: string; request: LocalServicePreviewNativeDirectAccessRequestV1; target: MachineIrohEndpointAuthorityV1 }>): Readonly<{ ok: true; access: LocalServicePreviewNativeDirectAccessV1 } | { ok: false; reasonCode: string }>;
     registerPreview(input: LocalServicePreviewRuntimeRegistrationInput): LocalServicePreviewRuntimeRegistrationResult;
     resolvePreview(previewId: string): LocalServicePreviewResourceV1 | null;
     resolvePreviewByHost(hostname: string): LocalServicePreviewResourceV1 | null;
@@ -116,7 +119,8 @@ type PreviewRuntimeEntry = Readonly<{
     resource: LocalServicePreviewResourceV1;
     accountId: string;
     tokenRecords: Map<string, LocalServicePreviewTokenRecord>;
-    nativeRegistrations: Map<string, { controller: AbortController; claimed: boolean }>;
+    nativeRegistrations: Map<string, { controller: AbortController; claimed: boolean; actorAccountId?: string }>;
+    connections: Set<Readonly<{ close: () => void; actorAccountId?: string }>>;
 }>;
 
 function nonEmptyString(value: string | null | undefined): string | null {
@@ -162,6 +166,12 @@ export function createLocalServicePreviewRuntime(
     const generateTokenId = runtimeInput.generateTokenId ?? randomUUID;
     const generateRawToken = runtimeInput.generateRawToken ?? defaultRawToken;
 
+    function retireConnections(entry: PreviewRuntimeEntry): void {
+        for (const { controller } of entry.nativeRegistrations.values()) controller.abort();
+        for (const connection of entry.connections) connection.close();
+        entry.connections.clear();
+    }
+
     function registerPreview(input: LocalServicePreviewRuntimeRegistrationInput): LocalServicePreviewRuntimeRegistrationResult {
         const accountId = normalizeAccountId(input.accountId);
         const parsed = LocalServicePreviewResourceV1Schema.safeParse(input.resource);
@@ -179,6 +189,7 @@ export function createLocalServicePreviewRuntime(
             || previous.resource.machineId !== parsed.data.machineId
             || previous.resource.sessionId !== parsed.data.sessionId
             || !isDeepStrictEqual(previous.resource.owner, parsed.data.owner)
+            || !isDeepStrictEqual(previous.resource.serviceTarget, parsed.data.serviceTarget)
             || !isDeepStrictEqual(previous.resource.target, parsed.data.target))) {
             return { ok: false, reasonCode: "invalid_preview_resource" };
         }
@@ -205,6 +216,7 @@ export function createLocalServicePreviewRuntime(
             issuedAt,
             expiresAt,
             exchangeMode: "url",
+            ...(resource.serviceTarget ? { actorAccountId: input.viewerAccountId ?? accountId } : {}),
         });
 
         const resolvedUrl = resolveLocalServicePreviewUrl({
@@ -220,9 +232,9 @@ export function createLocalServicePreviewRuntime(
                 // Registration is still the scoped authority used by public-link actions.
                 // No access token or API-origin fallback is admitted without isolation.
                 if (previous && !isDeepStrictEqual(previous.resource.policy, resource.policy)) {
-                    for (const { controller } of previous.nativeRegistrations.values()) controller.abort();
+                    retireConnections(previous);
                 }
-                resources.set(resource.previewId, { resource, accountId, tokenRecords: new Map(), nativeRegistrations: previous?.nativeRegistrations ?? new Map() });
+                resources.set(resource.previewId, { resource, accountId, tokenRecords: new Map(), nativeRegistrations: previous?.nativeRegistrations ?? new Map(), connections: previous?.connections ?? new Set() });
                 return { ok: true, resource, accessUrl: null, expiresAt: null, ...(nativeDirect ? { nativeDirect } : {}), accessUnavailableReasonCode: 'preview_private_route_unavailable' };
             }
             return resolvedUrl;
@@ -251,13 +263,14 @@ export function createLocalServicePreviewRuntime(
         }
         tokenRecords.set(record.tokenHash, record);
         if (previous && !isDeepStrictEqual(previous.resource.policy, resource.policy)) {
-            for (const { controller } of previous.nativeRegistrations.values()) controller.abort();
+            retireConnections(previous);
         }
         resources.set(parsed.data.previewId, {
             resource,
             accountId,
             tokenRecords,
             nativeRegistrations: previous?.nativeRegistrations ?? new Map(),
+            connections: previous?.connections ?? new Set(),
         });
 
         return {
@@ -370,6 +383,7 @@ export function createLocalServicePreviewRuntime(
             // by this registration until it is explicitly unregistered.
             expiresAt: null,
             exchangeMode: "cookie",
+            ...(urlRecord.actorAccountId ? { actorAccountId: urlRecord.actorAccountId } : {}),
         });
         entry.tokenRecords.delete(urlRecord.tokenHash);
         entry.tokenRecords.set(record.tokenHash, record);
@@ -384,8 +398,9 @@ export function createLocalServicePreviewRuntime(
         if (!resources.has(previewId)) {
             return { ok: false, reasonCode: "preview_not_found" };
         }
-        for (const { controller } of resources.get(previewId)!.nativeRegistrations.values()) controller.abort();
+        const entry = resources.get(previewId)!;
         resources.delete(previewId);
+        retireConnections(entry);
         const hostname = hostnameByPreviewId.get(previewId);
         if (hostname) {
             previewIdByHostname.delete(hostname);
@@ -395,9 +410,30 @@ export function createLocalServicePreviewRuntime(
     }
 
     return {
+        retainConnection(previewId, close, rawToken) {
+            const entry = resources.get(previewId);
+            if (!entry) { close(); return () => {}; }
+            const secret = nonEmptyString(runtimeInput.tokenSecret);
+            const actorAccountId = secret && rawToken ? entry.tokenRecords.get(hashLocalServicePreviewToken(secret, rawToken))?.actorAccountId : undefined;
+            const connection = { close, ...(actorAccountId ? { actorAccountId } : {}) };
+            entry.connections.add(connection);
+            return () => { entry.connections.delete(connection); };
+        },
+        retireMachineAccess({ machineId, accountId }) {
+            for (const entry of resources.values()) {
+                if (!entry.resource.serviceTarget || entry.resource.machineId !== machineId) continue;
+                if (entry.accountId === accountId) { unregisterPreview(entry.resource.previewId); continue; }
+                for (const [hash, record] of entry.tokenRecords) if (record.actorAccountId === accountId) entry.tokenRecords.delete(hash);
+                for (const registration of entry.nativeRegistrations.values()) if (registration.actorAccountId === accountId) registration.controller.abort();
+                for (const connection of entry.connections) if (connection.actorAccountId === accountId) {
+                    entry.connections.delete(connection);
+                    connection.close();
+                }
+            }
+        },
         closeNativeRegistrations() {
             for (const entry of resources.values()) {
-                for (const { controller } of entry.nativeRegistrations.values()) controller.abort();
+                retireConnections(entry);
             }
         },
         openNativeRegistration(binding, grantId) {
@@ -418,7 +454,7 @@ export function createLocalServicePreviewRuntime(
             const resource = entry.resource;
             const { previewId, machineId, target } = resource;
             const minted = mintDirectRouteGrantV2({
-                accountId: entry.accountId, machineId, flowKind: 'tcp_tunnel', routeKind: 'iroh_peer',
+                accountId: input.actorAccountId ?? entry.accountId, machineId, flowKind: 'tcp_tunnel', routeKind: 'iroh_peer',
                 endpointFingerprint: input.target.endpointId, nowMs: nowMs(), ttlMs: null, serverGateEnabled: true,
                 signingKey: { keyId: signing.keyId, secretKey: signing.secretKey, expiresAt: signing.capability.expiresAt },
                 ephemeralPublicKeyBase64Url: input.request.ephemeralPublicKeyBase64Url,
@@ -435,7 +471,8 @@ export function createLocalServicePreviewRuntime(
             // including while its viewer has not yet claimed the control stream.
             const controller = new AbortController();
             const grantId = minted.grant.payload.grantId;
-            entry.nativeRegistrations.set(grantId, { controller, claimed: false });
+            entry.nativeRegistrations.set(grantId, { controller, claimed: false,
+                ...(resource.serviceTarget ? { actorAccountId: input.actorAccountId ?? entry.accountId } : {}) });
             controller.signal.addEventListener('abort', () => entry.nativeRegistrations.delete(grantId), { once: true });
             return { ok: true, access };
         },

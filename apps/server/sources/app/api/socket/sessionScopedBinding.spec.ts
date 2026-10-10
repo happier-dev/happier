@@ -8,9 +8,18 @@ vi.mock("@/storage/db", () => ({
     db: {
         session: {
             findUnique: (...args: unknown[]) => sessionFindUniqueMock(...args),
+            findFirst: async () => ({ id: "s1", accountId: "u1" }),
+        },
+        machine: {
+            findUnique: async () => ({ accountId: "u1", installationId: null }),
+            findFirst: async () => ({ revokedAt: null, replacedByMachineId: null }),
         },
         accessKey: {
-            findUnique: (...args: unknown[]) => accessKeyFindUniqueMock(...args),
+            // Persistent DB boundary rows include the selected Session ownership relation.
+            findUnique: async (...args: unknown[]) => {
+                const row = await accessKeyFindUniqueMock(...args);
+                return row ? { ...row, session: { accountId: "u1", ...row.session } } : row;
+            },
         },
     },
 }));

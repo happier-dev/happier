@@ -20,6 +20,11 @@ export function getMachineSocketRoom(userId: string, machineId: string): string 
     return `machine:${machineId}:${userId}`;
 }
 
+export function getMachineInstallationSocketRoom(userId: string, machineId: string, installationId: string): string {
+    if (!installationId) throw new Error('getMachineInstallationSocketRoom: installationId is required');
+    return `${getMachineSocketRoom(userId, machineId)}:installation:${installationId}`;
+}
+
 export function getAccountSessionSocketRoom(userId: string, sessionId: string): string {
     if (!userId || !sessionId) throw new Error("getAccountSessionSocketRoom: userId and sessionId are required");
     return `session:${sessionId}:${userId}`;

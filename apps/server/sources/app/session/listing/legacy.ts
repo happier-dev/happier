@@ -69,6 +69,7 @@ const V1_SESSION_ROW_SELECT = {
     pendingActivationRequestedAt: true,
     pendingActivationStatus: true,
     pendingActivationFailureCode: true,
+    pendingActivationManagedTarget: true,
     active: true,
     lastActiveAt: true,
 } as const satisfies Prisma.SessionSelect;

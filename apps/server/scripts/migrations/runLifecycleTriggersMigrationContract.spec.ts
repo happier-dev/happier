@@ -9,6 +9,19 @@ import type { SqliteMigrationExecutor } from '../../sources/flavors/light/sqlite
 const directory = join(import.meta.dirname, '../../prisma/sqlite/migrations');
 const target = '20261002090000_add_run_lifecycle_triggers';
 
+// The moving 0.2 queue writer has no execution-input column. Start at its
+// actual schema frontier, then keep those rows through every later CHECK copy.
+const predecessorQueuedRowsSql = `
+    INSERT INTO "Account"("id", "publicKey", "encryptionMode", "updatedAt") VALUES ('predecessor-account', 'predecessor-key', 'plain', CURRENT_TIMESTAMP);
+    INSERT INTO "Machine"("id", "accountId", "metadata", "updatedAt") VALUES ('predecessor-machine', 'predecessor-account', '{}', CURRENT_TIMESTAMP);
+    INSERT INTO "Automation"("id", "accountId", "name", "enabled", "scheduleKind", "timezone", "targetType", "templateCiphertext", "updatedAt")
+        VALUES ('predecessor-automation', 'predecessor-account', '0.2 queued work', true, 'manual', 'UTC', 'new_session', '{}', CURRENT_TIMESTAMP);
+    INSERT INTO "AutomationAssignment"("id", "automationId", "machineId", "enabled", "updatedAt")
+        VALUES ('predecessor-assignment', 'predecessor-automation', 'predecessor-machine', true, CURRENT_TIMESTAMP);
+    INSERT INTO "AutomationRun"("id", "automationId", "accountId", "state", "scheduledAt", "dueAt", "updatedAt")
+        VALUES ('predecessor-queued', 'predecessor-automation', 'predecessor-account', 'queued', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+`;
+
 function scopedPullRequestRowsSql(): string {
     return ['prComment', 'ciFailed'].flatMap(kind => {
         const triggerId = `scoped-${kind}`;
@@ -44,6 +57,7 @@ it('preserves populated Automation rows, opaque content, assignments and incumbe
         expect(migrations).toContain(target);
         for (const migration of migrations) {
             if (migration === target) break;
+            if (migration === '20260816231000_add_event_automations_v1') database.exec(predecessorQueuedRowsSql);
             const sql = readFileSync(join(directory, migration, 'migration.sql'), 'utf8');
             database.exec(await prepareSqliteMigration(migration, sql, executor));
         }
@@ -75,6 +89,8 @@ it('preserves populated Automation rows, opaque content, assignments and incumbe
             policy: indexPolicy(String(index.tbl_name), String(index.name)),
         }));
         database.exec(readFileSync(join(directory, target, 'migration.sql'), 'utf8'));
+        expect(database.prepare(`SELECT "state", "executionInputEnvelope" FROM "AutomationRun" WHERE "id" = 'predecessor-queued'`).get()).toEqual({ state: 'queued', executionInputEnvelope: null });
+        expect(() => database.exec(`UPDATE "AutomationRun" SET "startedAt"=CURRENT_TIMESTAMP WHERE "id"='predecessor-queued'`)).toThrow(/CHECK constraint failed/);
         for (const snapshot of snapshots) expect(database.prepare(snapshot.select).all(), snapshot.table).toEqual(snapshot.rows);
         for (const index of indexes) {
             expect(indexColumns(index.name), index.name).toEqual(index.columns);
@@ -103,6 +119,7 @@ it('preserves actual PostgreSQL direct and Automation cause arms when expanding 
         for (const migration of readdirSync(postgresDirectory).filter(name => /^\d/.test(name)).sort()) {
             if (migration === target) break;
             try {
+                if (migration === '20260816231000_add_event_automations_v1') await database.exec(predecessorQueuedRowsSql);
                 await database.exec(readFileSync(join(postgresDirectory, migration, 'migration.sql'), 'utf8'));
             } catch (cause) {
                 throw new Error(`PostgreSQL migration prerequisite failed: ${migration}`, { cause });
@@ -136,6 +153,8 @@ it('preserves actual PostgreSQL direct and Automation cause arms when expanding 
         await database.transaction(async transaction => {
             await transaction.exec(readFileSync(join(postgresDirectory, target, 'migration.sql'), 'utf8'));
         });
+        expect((await database.query(`SELECT "state"::text, "executionInputEnvelope" FROM "AutomationRun" WHERE "id"='predecessor-queued'`)).rows).toEqual([{ state: 'queued', executionInputEnvelope: null }]);
+        await expect(database.exec(`UPDATE "AutomationRun" SET "startedAt"=CURRENT_TIMESTAMP WHERE "id"='predecessor-queued'`)).rejects.toMatchObject({ code: '23514' });
         for (const snapshot of snapshots) expect((await database.query(snapshot.select)).rows, snapshot.table).toEqual(snapshot.rows);
         await expect(database.exec(`UPDATE "AutomationRun" SET "finishedAt"=CURRENT_TIMESTAMP WHERE "id"='direct'`)).resolves.toBeDefined();
         await expect(database.exec(`UPDATE "AutomationRun" SET "causeScheduledFor"=CURRENT_TIMESTAMP WHERE "id"='run'`)).rejects.toMatchObject({ code: '23514' });

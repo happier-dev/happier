@@ -13,6 +13,12 @@ import tweetnacl from 'tweetnacl';
 
 import { createFakeSocket as createSocketFixture, getSocketHandler } from '../testkit/socketHarness';
 import type { machineLiveStreamRelayHandler } from './machineLiveStreamRelayHandler';
+import { TEST_MACHINE_INSTALLATION_ID } from '../testkit/machineAdmissionPersistenceBoundary';
+
+vi.mock('@/storage/db', async () => {
+  const { createMachineAdmissionPersistenceBoundary } = await import('../testkit/machineAdmissionPersistenceBoundary');
+  return { db: createMachineAdmissionPersistenceBoundary('user-1').db };
+});
 
 type LiveStreamRelaySocket = Parameters<typeof machineLiveStreamRelayHandler>[1];
 
@@ -266,7 +272,8 @@ describe('machineLiveStreamRelayHandler', () => {
     const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
     const delivered: Array<{ room: string; payload: unknown }> = [];
     const socket = createFakeSocket({ emit: vi.fn(), id: 'source-socket' });
-    socket.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+    socket.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
     let releaseOwnership!: (owned: boolean) => void;
     const ownership = new Promise<boolean>((resolve) => { releaseOwnership = resolve; });
     machineLiveStreamRelayHandler('user-1', socket as unknown as LiveStreamRelaySocket, {
@@ -291,7 +298,8 @@ describe('machineLiveStreamRelayHandler', () => {
     const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
     const sourceEmit = vi.fn();
     const socket = createFakeSocket({ emit: sourceEmit, id: 'source-socket' });
-    socket.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+    socket.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
     let releaseMode!: (mode: 'plain') => void;
     const mode = new Promise<'plain'>((resolve) => { releaseMode = resolve; });
     machineLiveStreamRelayHandler('user-1', socket as unknown as LiveStreamRelaySocket, {
@@ -313,9 +321,11 @@ describe('machineLiveStreamRelayHandler', () => {
     const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
     const delivered: Array<{ room: string; payload: unknown }> = [];
     const source = createFakeSocket({ emit: vi.fn(), id: 'source-socket' });
-    source.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+    source.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
     const reconnected = createFakeSocket({ emit: vi.fn(), id: 'reconnected-source-socket' });
-    reconnected.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+    reconnected.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
     let releaseMode!: (mode: 'plain') => void;
     const mode = new Promise<'plain'>((resolve) => { releaseMode = resolve; });
     const ctx = {
@@ -343,7 +353,8 @@ describe('machineLiveStreamRelayHandler', () => {
     const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
     const delivered: Array<{ room: string; payload: unknown }> = [];
     const socket = createFakeSocket({ emit: vi.fn(), id: 'source-socket' });
-    socket.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+    socket.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
     let releaseMode!: (mode: 'plain') => void;
     const mode = new Promise<'plain'>((resolve) => { releaseMode = resolve; });
     machineLiveStreamRelayHandler('user-1', socket as unknown as LiveStreamRelaySocket, {
@@ -370,7 +381,8 @@ describe('machineLiveStreamRelayHandler', () => {
     const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
     const delivered: Array<{ room: string; payload: unknown }> = [];
     const source = createFakeSocket({ emit: vi.fn(), id: 'source-socket' });
-    source.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+    source.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
     const viewer = createFakeSocket({ emit: vi.fn(), id: 'viewer-socket-1' });
     viewer.data = { clientType: 'user-scoped' };
     let releaseMode!: (mode: 'plain') => void;
@@ -393,7 +405,7 @@ describe('machineLiveStreamRelayHandler', () => {
     await produce({ v: 1, sourceMachineId: 'machine-source', targetMachineId: 'machine-target',
       message: { kind: 'frame', frame: frame() },
     });
-    expect(delivered).toContainEqual({ room: 'machine:machine-source:user-1', payload: expect.objectContaining({ message: {
+    expect(delivered).toContainEqual({ room: 'machine:machine-source:user-1:installation:test-machine-installation', payload: expect.objectContaining({ message: {
       kind: 'control', control: expect.objectContaining({ kind: 'stop', reasonCode: 'viewer_stopped' }),
     } }) });
     expect(delivered.some(({ payload }) => (payload as { message: { kind: string } }).message.kind === 'frame')).toBe(false);
@@ -403,7 +415,8 @@ describe('machineLiveStreamRelayHandler', () => {
     const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
     const delivered: Array<{ room: string; payload: unknown }> = [];
     const socket = createFakeSocket({ emit: vi.fn(), id: 'source-socket' });
-    socket.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+    socket.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
     let nowMs = 1_000;
     machineLiveStreamRelayHandler('user-1', socket as unknown as LiveStreamRelaySocket, {
       io: { to: (room: string) => ({ emit: (_event: string, payload: unknown) => delivered.push({ room, payload }) }) },
@@ -421,7 +434,7 @@ describe('machineLiveStreamRelayHandler', () => {
       { room: 'viewer-socket-1', payload: expect.objectContaining({
         message: { kind: 'control', control: { v: 1, streamId: 'stream_1', kind: 'stop', reasonCode: 'live_stream_authorization_expired' } },
       }) },
-      { room: 'machine:machine-source:user-1', payload: expect.objectContaining({
+      { room: 'machine:machine-source:user-1:installation:test-machine-installation', payload: expect.objectContaining({
         message: { kind: 'control', control: { v: 1, streamId: 'stream_1', kind: 'stop', reasonCode: 'live_stream_authorization_expired' } },
       }) },
     ]));
@@ -432,7 +445,8 @@ describe('machineLiveStreamRelayHandler', () => {
     const emit = vi.fn();
     const delivered: Array<{ room: string; payload: unknown }> = [];
     const socket = createFakeSocket({ emit, id: 'source-socket' });
-    socket.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+    socket.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
     let nowMs = 1_000;
     let releaseMode!: (mode: 'plain') => void;
     const mode = new Promise<'plain'>((resolve) => { releaseMode = resolve; });
@@ -467,7 +481,8 @@ describe('machineLiveStreamRelayHandler', () => {
       const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
       const delivered: Array<{ room: string; payload: unknown }> = [];
       const socket = createFakeSocket({ emit: vi.fn(), id: 'source-socket' });
-      socket.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+      socket.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
       machineLiveStreamRelayHandler('user-1', socket as unknown as LiveStreamRelaySocket, {
         io: { to: (room: string) => ({ emit: (_event: string, payload: unknown) => delivered.push({ room, payload }) }) },
         resolveAccountEncryptionMode: async (): Promise<'plain'> => 'plain',
@@ -502,7 +517,8 @@ describe('machineLiveStreamRelayHandler', () => {
     const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
     const delivered: Array<{ room: string; payload: unknown }> = [];
     const source = createFakeSocket({ emit: vi.fn(), id: 'source-socket' });
-    source.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+    source.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
     const viewer = createFakeSocket({ emit: vi.fn(), id: 'viewer-socket-1' });
     viewer.data = { clientType: 'user-scoped' };
     const ctx = {
@@ -536,7 +552,8 @@ describe('machineLiveStreamRelayHandler', () => {
     const delivered: Array<{ room: string; payload: unknown }> = [];
     const sourceEmit = vi.fn();
     const socket = createFakeSocket({ emit: sourceEmit, id: 'source-socket' });
-    socket.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+    socket.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
     let nowMs = 1_000;
     machineLiveStreamRelayHandler('user-1', socket as unknown as LiveStreamRelaySocket, {
       io: { to: (room: string) => ({ emit: (_event: string, payload: unknown) => delivered.push({ room, payload }) }) },
@@ -571,7 +588,8 @@ describe('machineLiveStreamRelayHandler', () => {
     const toViewer = vi.fn();
     const sourceEmit = vi.fn();
     const socket = createFakeSocket({ emit: sourceEmit, id: 'source-socket' });
-    socket.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+    socket.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
     machineLiveStreamRelayHandler('user-1', socket as unknown as LiveStreamRelaySocket, {
       io: { to: () => ({ emit: toViewer }) }, serverRoutedLiveStreamEnabled: true,
       resolveAccountEncryptionMode: async () => 'plain',
@@ -592,7 +610,8 @@ describe('machineLiveStreamRelayHandler', () => {
     const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
     const delivered: Array<{ room: string; payload: unknown }> = [];
     const source = createFakeSocket({ emit: vi.fn(), id: 'source-socket' });
-    source.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+    source.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
     const viewer = createFakeSocket({ emit: vi.fn(), id: 'viewer-socket-1' });
     viewer.data = { clientType: 'user-scoped' };
     const ctx = {
@@ -623,7 +642,7 @@ describe('machineLiveStreamRelayHandler', () => {
     expect(delivered).not.toContainEqual({ room: 'viewer-socket-1', payload: expect.objectContaining({ message: {
       kind: 'frame', frame: expect.objectContaining({ sequence: 2 }),
     } }) });
-    for (const room of ['viewer-socket-1', 'machine:machine-source:user-1']) expect(delivered).toContainEqual({ room, payload: expect.objectContaining({ message: {
+    for (const room of ['viewer-socket-1', 'machine:machine-source:user-1:installation:test-machine-installation']) expect(delivered).toContainEqual({ room, payload: expect.objectContaining({ message: {
       kind: 'control', control: { v: 1, streamId: 'stream_1', kind: 'stop', reasonCode: 'max_total_bytes_exceeded' },
     } }) });
   });
@@ -635,6 +654,7 @@ describe('machineLiveStreamRelayHandler', () => {
     const socket = createFakeSocket({ emit: socketEmit, id: 'source-socket' });
     socket.data = {
       clientType: 'machine-scoped',
+      verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
       machineId: 'machine-source',
     };
 
@@ -677,6 +697,7 @@ describe('machineLiveStreamRelayHandler', () => {
     const socket = createFakeSocket({ emit: socketEmit, id: 'source-socket' });
     socket.data = {
       clientType: 'machine-scoped',
+      verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
       machineId: 'machine-source',
     };
 
@@ -704,7 +725,7 @@ describe('machineLiveStreamRelayHandler', () => {
       message: { kind: 'frame', frame: frame({ sequence: 2, payloadSizeBytes: 5 }) },
     });
 
-    expect(to).toHaveBeenCalledWith('machine:machine-target:user-1');
+    expect(to).toHaveBeenCalledWith('machine:machine-target:user-1:installation:test-machine-installation');
     expect(emit).toHaveBeenCalledWith(MACHINE_LIVE_STREAM_SOCKET_EVENT, expect.objectContaining({
       sourceMachineId: 'machine-source',
       targetMachineId: 'machine-target',
@@ -733,6 +754,7 @@ describe('machineLiveStreamRelayHandler', () => {
     const socket = createFakeSocket({ emit: socketEmit, id: 'source-socket' });
     socket.data = {
       clientType: 'machine-scoped',
+      verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
       machineId: 'machine-source',
     };
 
@@ -752,7 +774,7 @@ describe('machineLiveStreamRelayHandler', () => {
       type: 'machine-live-stream',
       error: 'invalid_live_stream_payload',
     });
-    expect(to).not.toHaveBeenCalledWith('machine:machine-target:user-1');
+    expect(to).not.toHaveBeenCalledWith('machine:machine-target:user-1:installation:test-machine-installation');
   });
 
   it('rejects server relay authorization bound to another account', async () => {
@@ -763,6 +785,7 @@ describe('machineLiveStreamRelayHandler', () => {
     const socket = createFakeSocket({ emit: socketEmit, id: 'source-socket' });
     socket.data = {
       clientType: 'machine-scoped',
+      verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
       machineId: 'machine-source',
     };
 
@@ -789,7 +812,7 @@ describe('machineLiveStreamRelayHandler', () => {
       type: 'machine-live-stream',
       error: 'live_stream_authorization_mismatch',
     });
-    expect(to).not.toHaveBeenCalledWith('machine:machine-target:user-1');
+    expect(to).not.toHaveBeenCalledWith('machine:machine-target:user-1:installation:test-machine-installation');
   });
 
   it('rejects self-asserted relay authorization objects', async () => {
@@ -800,6 +823,7 @@ describe('machineLiveStreamRelayHandler', () => {
     const socket = createFakeSocket({ emit: socketEmit, id: 'source-socket' });
     socket.data = {
       clientType: 'machine-scoped',
+      verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
       machineId: 'machine-source',
     };
 
@@ -819,7 +843,7 @@ describe('machineLiveStreamRelayHandler', () => {
       type: 'machine-live-stream',
       error: 'invalid_live_stream_payload',
     });
-    expect(to).not.toHaveBeenCalledWith('machine:machine-target:user-1');
+    expect(to).not.toHaveBeenCalledWith('machine:machine-target:user-1:installation:test-machine-installation');
   });
 
   it('rejects forged signed relay authorization before opening relay state', async () => {
@@ -830,6 +854,7 @@ describe('machineLiveStreamRelayHandler', () => {
     const socket = createFakeSocket({ emit: socketEmit, id: 'source-socket' });
     socket.data = {
       clientType: 'machine-scoped',
+      verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
       machineId: 'machine-source',
     };
 
@@ -857,7 +882,7 @@ describe('machineLiveStreamRelayHandler', () => {
       type: 'machine-live-stream',
       error: 'live_stream_authorization_bad_signature',
     });
-    expect(to).not.toHaveBeenCalledWith('machine:machine-target:user-1');
+    expect(to).not.toHaveBeenCalledWith('machine:machine-target:user-1:installation:test-machine-installation');
   });
 
   it('rejects a viewer grant whose signed viewerSocketId payload is tampered', async () => {
@@ -868,6 +893,7 @@ describe('machineLiveStreamRelayHandler', () => {
     const socket = createFakeSocket({ emit: socketEmit, id: 'source-socket' });
     socket.data = {
       clientType: 'machine-scoped',
+      verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
       machineId: 'machine-source',
     };
     const caps = liveStreamCaps({ maxTotalBytes: 1_000 });
@@ -926,6 +952,7 @@ describe('machineLiveStreamRelayHandler', () => {
     const socket = createFakeSocket({ emit: socketEmit, id: 'source-socket' });
     socket.data = {
       clientType: 'machine-scoped',
+      verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
       machineId: 'machine-source',
     };
 
@@ -970,6 +997,7 @@ describe('machineLiveStreamRelayHandler', () => {
     const socket = createFakeSocket({ emit: socketEmit, id: 'source-socket' });
     socket.data = {
       clientType: 'machine-scoped',
+      verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
       machineId: 'machine-source',
     };
     const ctx = {
@@ -1034,6 +1062,7 @@ describe('machineLiveStreamRelayHandler', () => {
     const socket = createFakeSocket({ emit: socketEmit, id: 'source-socket' });
     socket.data = {
       clientType: 'machine-scoped',
+      verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
       machineId: 'machine-source',
     };
     const ctx = {
@@ -1094,11 +1123,13 @@ describe('machineLiveStreamRelayHandler', () => {
     const sourceSocket = createFakeSocket({ emit: sourceEmit, id: 'source-socket' });
     sourceSocket.data = {
       clientType: 'machine-scoped',
+      verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
       machineId: 'machine-source',
     };
     const targetSocket = createFakeSocket({ emit: targetEmit, id: 'target-socket' });
     targetSocket.data = {
       clientType: 'machine-scoped',
+      verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
       machineId: 'machine-target',
     };
     const ctx = {
@@ -1163,11 +1194,13 @@ describe('machineLiveStreamRelayHandler', () => {
     const sourceSocket = createFakeSocket({ emit: vi.fn(), id: 'source-socket' });
     sourceSocket.data = {
       clientType: 'machine-scoped',
+      verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
       machineId: 'machine-source',
     };
     const targetSocket = createFakeSocket({ emit: vi.fn(), id: 'target-socket' });
     targetSocket.data = {
       clientType: 'machine-scoped',
+      verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
       machineId: 'machine-target',
     };
     const ctx = {
@@ -1209,7 +1242,7 @@ describe('machineLiveStreamRelayHandler', () => {
       },
     });
 
-    expect(to).toHaveBeenCalledWith('machine:machine-source:user-1');
+    expect(to).toHaveBeenCalledWith('machine:machine-source:user-1:installation:test-machine-installation');
     expect(emit).toHaveBeenCalledWith(MACHINE_LIVE_STREAM_SOCKET_EVENT, expect.objectContaining({
       message: expect.objectContaining({
         kind: 'sideband_control',
@@ -1226,6 +1259,7 @@ describe('machineLiveStreamRelayHandler', () => {
     const targetSocket = createFakeSocket({ emit: targetEmit, id: 'target-socket' });
     targetSocket.data = {
       clientType: 'machine-scoped',
+      verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
       machineId: 'machine-target',
     };
 
@@ -1270,6 +1304,7 @@ describe('machineLiveStreamRelayHandler', () => {
     const targetSocket = createFakeSocket({ emit: targetEmit, id: 'target-socket' });
     targetSocket.data = {
       clientType: 'machine-scoped',
+      verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
       machineId: 'machine-target',
     };
 
@@ -1300,7 +1335,7 @@ describe('machineLiveStreamRelayHandler', () => {
     expect(targetEmit).not.toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectContaining({
       error: 'target_machine_control_required',
     }));
-    expect(to).toHaveBeenCalledWith('machine:machine-source:user-1');
+    expect(to).toHaveBeenCalledWith('machine:machine-source:user-1:installation:test-machine-installation');
     expect(emit).toHaveBeenCalledWith(MACHINE_LIVE_STREAM_SOCKET_EVENT, expect.objectContaining({
       message: expect.objectContaining({
         kind: 'control',
@@ -1318,11 +1353,13 @@ describe('machineLiveStreamRelayHandler', () => {
     const sourceSocket = createFakeSocket({ emit: sourceEmit, id: 'source-socket' });
     sourceSocket.data = {
       clientType: 'machine-scoped',
+      verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
       machineId: 'machine-source',
     };
     const targetSocket = createFakeSocket({ emit: targetEmit, id: 'target-socket' });
     targetSocket.data = {
       clientType: 'machine-scoped',
+      verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
       machineId: 'machine-target',
     };
     const ctx = {
@@ -1391,11 +1428,13 @@ describe('machineLiveStreamRelayHandler', () => {
     const sourceSocket = createFakeSocket({ emit: sourceEmit, id: 'source-socket' });
     sourceSocket.data = {
       clientType: 'machine-scoped',
+      verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
       machineId: 'machine-source',
     };
     const targetSocket = createFakeSocket({ emit: targetEmit, id: 'target-socket' });
     targetSocket.data = {
       clientType: 'machine-scoped',
+      verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
       machineId: 'machine-target',
     };
     let nowMs = 1_000;
@@ -1476,6 +1515,7 @@ describe('machineLiveStreamRelayHandler', () => {
     const sourceSocket = createFakeSocket({ emit: sourceEmit, id: 'source-socket' });
     sourceSocket.data = {
       clientType: 'machine-scoped',
+      verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
       machineId: 'machine-source',
     };
     const viewerSocket = createFakeSocket({ emit: vi.fn(), id: 'viewer-socket-1' });
@@ -1542,6 +1582,7 @@ describe('machineLiveStreamRelayHandler', () => {
     const socket = createFakeSocket({ emit: socketEmit, id: 'source-socket' });
     socket.data = {
       clientType: 'machine-scoped',
+      verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
       machineId: 'machine-source',
     };
     const ctx = {
@@ -1601,6 +1642,7 @@ describe('machineLiveStreamRelayHandler', () => {
     const socket = createFakeSocket({ emit: socketEmit, id: 'source-socket' });
     socket.data = {
       clientType: 'machine-scoped',
+      verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
       machineId: 'machine-source',
     };
 
@@ -1625,7 +1667,7 @@ describe('machineLiveStreamRelayHandler', () => {
       type: 'machine-live-stream',
       error: 'live_stream_start_required',
     });
-    expect(to).not.toHaveBeenCalledWith('machine:machine-target:user-1');
+    expect(to).not.toHaveBeenCalledWith('machine:machine-target:user-1:installation:test-machine-installation');
   });
 
   it('enforces concurrent stream caps per source socket', async () => {
@@ -1637,6 +1679,7 @@ describe('machineLiveStreamRelayHandler', () => {
     const socket = createFakeSocket({ emit: socketEmit, id: 'source-socket' });
     socket.data = {
       clientType: 'machine-scoped',
+      verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
       machineId: 'machine-source',
     };
 
@@ -1670,11 +1713,13 @@ describe('machineLiveStreamRelayHandler', () => {
     const firstSocket = createFakeSocket({ emit: firstEmit, id: 'source-socket-1' });
     firstSocket.data = {
       clientType: 'machine-scoped',
+      verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
       machineId: 'machine-source',
     };
     const secondSocket = createFakeSocket({ emit: secondEmit, id: 'source-socket-2' });
     secondSocket.data = {
       clientType: 'machine-scoped',
+      verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
       machineId: 'machine-source',
     };
     const ctx = {
@@ -1711,11 +1756,13 @@ describe('machineLiveStreamRelayHandler', () => {
     const firstSocket = createFakeSocket({ emit: firstEmit, id: 'source-socket-1' });
     firstSocket.data = {
       clientType: 'machine-scoped',
+      verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
       machineId: 'machine-source',
     };
     const secondSocket = createFakeSocket({ emit: secondEmit, id: 'source-socket-2' });
     secondSocket.data = {
       clientType: 'machine-scoped',
+      verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
       machineId: 'machine-source',
     };
     let nowMs = 1_000;
@@ -1761,11 +1808,13 @@ describe('machineLiveStreamRelayHandler', () => {
     const firstSocket = createFakeSocket({ emit: firstEmit, id: 'source-socket-1' });
     firstSocket.data = {
       clientType: 'machine-scoped',
+      verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
       machineId: 'machine-source',
     };
     const secondSocket = createFakeSocket({ emit: secondEmit, id: 'source-socket-2' });
     secondSocket.data = {
       clientType: 'machine-scoped',
+      verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
       machineId: 'machine-source',
     };
     let nowMs = 1_000;
@@ -1804,7 +1853,8 @@ describe('machineLiveStreamRelayHandler', () => {
     const emit = vi.fn();
     const to = vi.fn(() => ({ emit }));
     const socket = createFakeSocket({ emit: vi.fn(), id: 'source-socket' });
-    socket.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+    socket.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
 
     machineLiveStreamRelayHandler('user-1', socket as unknown as LiveStreamRelaySocket, {
       io: { to },
@@ -1827,7 +1877,7 @@ describe('machineLiveStreamRelayHandler', () => {
     });
 
     expect(to).toHaveBeenCalledWith('viewer-socket-1');
-    expect(to).not.toHaveBeenCalledWith('machine:machine-target:user-1');
+    expect(to).not.toHaveBeenCalledWith('machine:machine-target:user-1:installation:test-machine-installation');
     expect(emit).toHaveBeenCalledWith(MACHINE_LIVE_STREAM_SOCKET_EVENT, expect.objectContaining({
       message: expect.objectContaining({ kind: 'frame' }),
     }));
@@ -1846,7 +1896,8 @@ describe('machineLiveStreamRelayHandler', () => {
     });
     const sourceEmit = vi.fn();
     const sourceSocket = createFakeSocket({ emit: sourceEmit, id: 'source-socket' });
-    sourceSocket.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+    sourceSocket.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
 
     machineLiveStreamRelayHandler('user-1', sourceSocket as unknown as LiveStreamRelaySocket, {
       io: { to },
@@ -1872,7 +1923,7 @@ describe('machineLiveStreamRelayHandler', () => {
       },
     });
 
-    expect(to).not.toHaveBeenCalledWith('machine:machine-source:user-1');
+    expect(to).not.toHaveBeenCalledWith('machine:machine-source:user-1:installation:test-machine-installation');
     expect(sourceEmit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, {
       type: 'machine-live-stream',
       error: 'viewer_socket_required',
@@ -1902,7 +1953,8 @@ describe('machineLiveStreamRelayHandler', () => {
     });
     const sourceEmit = vi.fn();
     const sourceSocket = createFakeSocket({ emit: sourceEmit, id: 'source-socket' });
-    sourceSocket.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+    sourceSocket.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
 
     machineLiveStreamRelayHandler('user-1', sourceSocket as unknown as LiveStreamRelaySocket, {
       io: { to },
@@ -1930,7 +1982,7 @@ describe('machineLiveStreamRelayHandler', () => {
     });
 
     expect(to).not.toHaveBeenCalledWith('viewer-socket-evil');
-    expect(to).not.toHaveBeenCalledWith('machine:machine-source:user-1');
+    expect(to).not.toHaveBeenCalledWith('machine:machine-source:user-1:installation:test-machine-installation');
     expect(sourceEmit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, {
       type: 'machine-live-stream',
       error: 'viewer_socket_required',
@@ -1950,7 +2002,8 @@ describe('machineLiveStreamRelayHandler', () => {
     });
     const sourceEmit = vi.fn();
     const sourceSocket = createFakeSocket({ emit: sourceEmit, id: 'source-socket' });
-    sourceSocket.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+    sourceSocket.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
     const viewerSocket = createFakeSocket({ emit: vi.fn(), id: 'viewer-socket-1' });
     viewerSocket.data = { clientType: 'user-scoped' };
 
@@ -1989,7 +2042,7 @@ describe('machineLiveStreamRelayHandler', () => {
       },
     });
 
-    expect(to).not.toHaveBeenCalledWith('machine:machine-target:user-1');
+    expect(to).not.toHaveBeenCalledWith('machine:machine-target:user-1:installation:test-machine-installation');
     expect(sourceEmit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, {
       type: 'machine-live-stream',
       error: 'live_stream_start_required',
@@ -2009,7 +2062,8 @@ describe('machineLiveStreamRelayHandler', () => {
     });
     const sourceEmit = vi.fn();
     const sourceSocket = createFakeSocket({ emit: sourceEmit, id: 'source-socket' });
-    sourceSocket.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+    sourceSocket.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
 
     machineLiveStreamRelayHandler('user-1', sourceSocket as unknown as LiveStreamRelaySocket, {
       io: { to },
@@ -2031,8 +2085,8 @@ describe('machineLiveStreamRelayHandler', () => {
       message: { kind: 'frame', frame: frame({ sequence: 1, payloadKind: 'image_keyframe', payloadSizeBytes: 3 }) },
     });
 
-    expect(to).not.toHaveBeenCalledWith('machine:machine-source:user-1');
-    expect(emitByRoom.get('machine:machine-source:user-1')).toBeUndefined();
+    expect(to).not.toHaveBeenCalledWith('machine:machine-source:user-1:installation:test-machine-installation');
+    expect(emitByRoom.get('machine:machine-source:user-1:installation:test-machine-installation')).toBeUndefined();
     expect(sourceEmit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, {
       type: 'machine-live-stream',
       error: 'viewer_socket_required',
@@ -2063,7 +2117,8 @@ describe('machineLiveStreamRelayHandler', () => {
     });
     const sourceEmit = vi.fn();
     const sourceSocket = createFakeSocket({ emit: sourceEmit, id: 'source-socket' });
-    sourceSocket.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+    sourceSocket.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
 
     machineLiveStreamRelayHandler('user-1', sourceSocket as unknown as LiveStreamRelaySocket, {
       io: { to },
@@ -2134,7 +2189,8 @@ describe('machineLiveStreamRelayHandler', () => {
     });
     const sourceEmit = vi.fn();
     const socket = createFakeSocket({ emit: sourceEmit, id: 'source-socket' });
-    socket.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+    socket.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
 
     machineLiveStreamRelayHandler('user-1', socket as unknown as LiveStreamRelaySocket, {
       io: { to },
@@ -2178,7 +2234,8 @@ describe('machineLiveStreamRelayHandler', () => {
     const emit = vi.fn();
     const to = vi.fn(() => ({ emit }));
     const sourceSocket = createFakeSocket({ emit: vi.fn(), id: 'source-socket' });
-    sourceSocket.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+    sourceSocket.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
     const viewerEmit = vi.fn();
     const viewerSocket = createFakeSocket({ emit: viewerEmit, id: 'viewer-socket-1' });
     viewerSocket.data = { clientType: 'user-scoped' };
@@ -2241,7 +2298,8 @@ describe('machineLiveStreamRelayHandler', () => {
     const emit = vi.fn();
     const to = vi.fn(() => ({ emit }));
     const sourceSocket = createFakeSocket({ emit: vi.fn(), id: 'source-socket' });
-    sourceSocket.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+    sourceSocket.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
     const wrongViewerEmit = vi.fn();
     const wrongViewerSocket = createFakeSocket({ emit: wrongViewerEmit, id: 'viewer-socket-2' });
     wrongViewerSocket.data = { clientType: 'user-scoped' };
@@ -2300,7 +2358,8 @@ describe('machineLiveStreamRelayHandler', () => {
     const emit = vi.fn();
     const to = vi.fn(() => ({ emit }));
     const sourceSocket = createFakeSocket({ emit: vi.fn(), id: 'source-socket' });
-    sourceSocket.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+    sourceSocket.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
     const viewerEmit = vi.fn();
     const viewerSocket = createFakeSocket({ emit: viewerEmit, id: 'viewer-socket-1' });
     viewerSocket.data = { clientType: 'user-scoped' };
@@ -2379,10 +2438,12 @@ describe('machineLiveStreamRelayHandler', () => {
     const emit = vi.fn();
     const to = vi.fn(() => ({ emit }));
     const sourceSocket = createFakeSocket({ emit: vi.fn(), id: 'source-socket' });
-    sourceSocket.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+    sourceSocket.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
     const targetEmit = vi.fn();
     const targetSocket = createFakeSocket({ emit: targetEmit, id: 'target-socket' });
-    targetSocket.data = { clientType: 'machine-scoped', machineId: 'machine-target' };
+    targetSocket.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-target' };
     const viewerSocket = createFakeSocket({ emit: vi.fn(), id: 'viewer-socket-1' });
     viewerSocket.data = { clientType: 'user-scoped' };
     const ctx = {
@@ -2533,7 +2594,8 @@ describe('machineLiveStreamRelayHandler', () => {
     });
     const sourceEmit = vi.fn();
     const sourceSocket = createFakeSocket({ emit: sourceEmit, id: 'source-socket' });
-    sourceSocket.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+    sourceSocket.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
     const viewerSocket = createFakeSocket({ emit: vi.fn(), id: 'viewer-socket-1' });
     viewerSocket.data = { clientType: 'user-scoped' };
     const ctx = {
@@ -2554,8 +2616,8 @@ describe('machineLiveStreamRelayHandler', () => {
 
     getSocketHandler(viewerSocket, 'disconnect')();
 
-    expect(to).toHaveBeenCalledWith('machine:machine-source:user-1');
-    expect(emitByRoom.get('machine:machine-source:user-1')).toHaveBeenCalledWith(
+    expect(to).toHaveBeenCalledWith('machine:machine-source:user-1:installation:test-machine-installation');
+    expect(emitByRoom.get('machine:machine-source:user-1:installation:test-machine-installation')).toHaveBeenCalledWith(
       MACHINE_LIVE_STREAM_SOCKET_EVENT,
       expect.objectContaining({
         sourceMachineId: 'machine-source',
@@ -2597,7 +2659,8 @@ describe('machineLiveStreamRelayHandler', () => {
       return { emit };
     });
     const sourceSocket = createFakeSocket({ emit: vi.fn(), id: 'source-socket' });
-    sourceSocket.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+    sourceSocket.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
     const viewerSocket = createFakeSocket({ emit: vi.fn(), id: 'viewer-socket-1' });
     viewerSocket.data = { clientType: 'user-scoped' };
     const ctx = {
@@ -2650,7 +2713,8 @@ describe('machineLiveStreamRelayHandler', () => {
       return { emit };
     });
     const socket = createFakeSocket({ emit: vi.fn(), id: 'source-socket' });
-    socket.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+    socket.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
 
     machineLiveStreamRelayHandler('user-1', socket as unknown as LiveStreamRelaySocket, {
       io: { to },

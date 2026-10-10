@@ -103,17 +103,6 @@ later provider refresh. New observations start new history. This describes
 unreleased development behavior, not continuity across mode conversion or
 completed loaded-runtime validation.
 
-User-entered monthly subscription amounts are a separate, qualified-account
-facet on the existing Provider Account Usage record. Its metadata retains an
-explicit plain or encrypted content envelope; encrypted amounts use the
-existing provider-usage cipher domain and an addressed, strict price payload.
-The price-only mutation checks persisted Account mode before writing, and the
-authorized quota opener verifies mode and qualified identity before disclosure.
-Provider refreshes retain this user facet independently of their own sealed
-subscription observations. Mode conversion and record deletion have B's
-existing destructive lifecycle described above. These are 0.3 development
-source contracts, not released availability or completed live validation.
-
 ### Private Profile rows (0.3 development)
 
 The development Profile row contract uses the reserved Account-row owner, not
@@ -362,6 +351,15 @@ Account or Machine warning scopes and sparse boolean values, including false.
 Stored readers project additive fields away and expose valid neighboring entries
 with diagnostics when a known entry is malformed. That partial display does not
 authorize rewriting the incomplete catalog.
+
+User-entered monthly subscription amounts are an exact-account facet of the
+existing Connected personal metadata catalog. They use that Account-row owner's
+mode-aware envelope, cipher domain, revision CAS, conversion and cleanup, not
+the provider-observation record or a second store. Entry is available before a
+quota observation exists. Captured quota reads compose only the owned exact
+account's admitted catalog price; provider payloads cannot supply a user price.
+Provider refreshes do not write this catalog. These are 0.3 development source
+contracts, not released availability or completed live validation.
 
 The current Settings preference facade omits Remote-host and notification endpoint
 inventories, Connected personal labels, disclosure state and acknowledgements.
@@ -2872,9 +2870,20 @@ Current development role snapshots remain owner-private throughout this path.
 The metadata writer accepts the canonical `work.sessionRolesV1` produced by the
 role owner, seals it inside the Account-owned work category, and restores that
 same nested field in the local domain view. Clearing the selected role preserves
-the snapshot, notes, and admitted memory reference. Existing work-state and
+the snapshot and notes. Context documents belong to the independent Session
+Context stack, not to a new role-memory pointer; the retained-shape migration
+is described in [Actions](actions.md#memory-documents-03-development).
+Existing work-state and
 headline fields keep their flat domain shape; role snapshots gain no flat alias
 and never enter the recipient-safe shared projection.
+
+Role source documents and published launch profiles use the existing Artifact
+encryption and grant owners. Sharing a role does not disclose its referenced
+profile or Saved Secrets. The launch-profile publisher rejects inline non-empty
+environment values (including values not marked secret), publishes the value-free
+definition, then updates the private profile record with the Artifact reference.
+Private secret bindings remain on that record. Send a copy is an explicit client
+file-export effect, not an access grant or a separately synchronized document.
 
 Development authoring drafts retain their admitted original Scripts or Changes
 destination in the existing device-local draft supplement. Explicit Send carries
@@ -2923,6 +2932,32 @@ Both public Session message adapters parse retained envelopes through the
 canonical Protocol codec and reject a content-kind/mode mismatch before disclosure,
 publication-use admission, or visit logging. A viewer's later decryption failure
 is not a server-side confidentiality guard.
+
+In 0.3 development source, public Session visuals are read through the admitted
+transcript message, not through a general Session-record capability. The existing
+authenticated transcript writer can publish a small, server-validated reference
+alongside its message. The association retains the acknowledgement's original
+source address for presentation correlation; it does not grant a parent Session
+read. Older messages without an association do not acquire one from viewer prose
+or caller-supplied item ids. The lazy public endpoint rechecks the same share,
+Session, message cutoff and consent, then reads the exact current host surface
+item through the canonical record owner. Its record identity must still match
+the acknowledged revision; deletion and recreation are not a continuation.
+
+Visual records keep their explicit `{t:'plain',v}` or `{t:'encrypted',c}` envelope.
+The browser opens an encrypted item using the same fragment-unwrapped Session
+DEK as its admitted messages and validates the addressed item before rendering.
+The fragment secret remains local during lazy reads as well as paging. Forked
+messages use their child's published association and independently readable copy;
+an original-address hint never authorizes a public parent read. A copied child
+item can appear in the transcript even when its immutable original acknowledgement
+has Board intent; the opened child's own destination must be `transcript` or
+`both`. Ordinary same-Session acknowledgements must match the stored association's
+exact item and acknowledged revision. A share-level
+`networkOff` choice is publication policy, not a content/key rewrite. HTML stays
+inside the existing opaque, network-closed bundle sandbox until its shared owner
+admits a saved network policy. This describes development implementation, not a
+completed managed-stack or browser security certification.
 
 Artifact kinds use the single Protocol policy in `artifactSharingV1.ts` for browser
 listing, public-link admission and people/Team/group sharing. Approval kinds and
@@ -3003,9 +3038,8 @@ enforces the existing realpath-based restricted-root policy, including symlink
 confinement. UI and CLI reuse one Protocol-owned file classification/provenance
 preparation before committing through their existing keyholding Artifact store.
 The UI refuses a retired scope or a changed source target rather than publishing
-under another Home. HTML preview preparation uses the acknowledged opened row;
-a preview-read failure returns a preview error without replaying the committed
-create or update.
+under another Home. Content validation precedes mutation; acknowledged create or
+update results do not depend on a subsequent preview read.
 
 #### HTML Artifacts (0.3 development)
 
@@ -3023,10 +3057,14 @@ distinct from this pre-write validation and does not replay a committed write.
 
 Private viewers open the current authorized content through the existing
 Account-mode and blob-integrity readers. The Home returns only a per-Artifact
-isolated shell URL. Opened bytes travel in its fragment, not an HTTP request,
-and previewing does not create a public share. An approved Artifact Action can
-return this preview URL; diagnostic observations redact its data fragment. A
-preview failure does not undo or replay an acknowledged create/update.
+isolated shell location for admission; opened bytes remain a private bundle
+passed directly to the shared isolated frame transport. Web frames use an opaque
+sandbox, while native frames register the document in a process-local registry
+and pass only its token to the native view. No bytes travel in a navigation URL,
+and previewing does not create a public share. Artifact Actions acknowledge the
+saved id and revision without serializing the bundle or returning an empty shell
+as a functioning preview URL. A preview failure does not undo or replay an
+acknowledged create/update.
 
 Public viewers retain the stored-content publication authority, consent and
 fragment-key custody. They open the current document and optional blob in the

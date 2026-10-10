@@ -31,6 +31,21 @@ afterEach(() => {
 });
 
 describe("registerApiRoutes", () => {
+    it("mounts Home company-sign-in intents independently of the Team feature", () => {
+        vi.stubEnv("HAPPIER_FEATURE_TEAMS__ENABLED", "0");
+        const app = createFakeRouteApp();
+        (apiModule.registerApiRoutes as unknown as (app: FakeRouteApp) => void)(app);
+        for (const path of [
+            "connections/list", "connections/create", "connections/settings/update", "connections/enable", "connections/disable",
+            "connections/remove/preflight", "connections/remove",
+            "connections/test/start", "connections/test/consume",
+            "workos/connection/create", "workos/admin-portal-link/create",
+            "workos/reconcile", "workos/connection/set",
+        ]) {
+            expect(app.routes.has(`POST /v1/home/identity/${path}`), path).toBe(true);
+        }
+    });
+
     it("mounts review comment routes on the API app", () => {
         const registerApiRoutes = (apiModule as unknown as Readonly<{
             registerApiRoutes?: (app: FakeRouteApp) => void;

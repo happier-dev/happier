@@ -24,6 +24,10 @@ import { isEffectiveTeamGroupMembership } from "@/app/teams/groups/effectiveGrou
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { ACCOUNT_DISPLAY_PROFILE_SELECT, resolveAccountDisplayLabelV1 } from "@/app/account/profile/accountDisplayProfile";
 import { isPublicSessionShareActive } from "@/app/share/publicSessionSharePublication";
+import { ArtifactHeaderMetadataV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { ArtifactBodyEnvelopeV1StoredSchema } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
+import type { ArtifactSharingResourceV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
+import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 
 export interface ArtifactAccess {
     ownerAccountId: string;
@@ -138,6 +142,17 @@ export type ArtifactReadResult = Readonly<{ ok: true; artifact: ArtifactForCalle
 export type ArtifactHeaderForCaller = Omit<ArtifactForCaller, "body" | "bodyVersion" | "provenance">;
 export type ArtifactListItemForCaller = ArtifactHeaderForCaller & Pick<ArtifactForCaller, "bodyVersion" | "provenance"> & Partial<Pick<ArtifactForCaller, "body">>;
 export type ArtifactHeaderReadResult = Readonly<{ ok: true; artifact: ArtifactHeaderForCaller }> | ArtifactReadFailure;
+
+/** Project already-authorized Plain bytes once; E2EE remains client-opened. */
+export function projectPlainArtifactSharingResourceV1(artifact: ArtifactForCaller): ArtifactSharingResourceV1 | null {
+    if (artifact.encryptionMode !== 'plain') return null;
+    const header = ArtifactHeaderMetadataV1Schema.safeParse(decodePlainArtifactStoredContent(privacyKit.encodeBase64(artifact.header)));
+    const body = ArtifactBodyEnvelopeV1StoredSchema.safeParse(decodePlainArtifactStoredContent(privacyKit.encodeBase64(artifact.body)));
+    if (!header.success || !body.success) return null;
+    return { artifactId: artifact.id, header: header.data, body: body.data.body,
+        ownerAccountId: artifact.ownerAccountId, access: artifact.access,
+        revision: { headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion } };
+}
 
 type StoredRecipientEnvelope = Readonly<{ encryptedDataKey: Uint8Array; recipientContentPublicKeyFingerprint: string }>;
 function projectRecipientEnvelope(account: Parameters<typeof deriveAccountRecipientEnvelopeReadinessFromRow>[0], envelope: StoredRecipientEnvelope): Uint8Array<ArrayBuffer> | null {

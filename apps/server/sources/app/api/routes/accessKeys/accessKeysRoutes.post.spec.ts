@@ -1,20 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createDbMocks, installDbModuleMock } from "../../testkit/dbMocks";
+import { createDbMocks, createDbTransactionMock, installDbModuleMock } from "../../testkit/dbMocks";
 import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
 
 const dbMocks = createDbMocks({
     accessKey: ["findUnique", "create"],
     session: ["findFirst"],
-    machine: ["findFirst"],
+    machine: ["findFirst", "findUnique"],
 } as const);
 
 const isPrismaErrorCode = vi.fn((error: unknown, code: string) => {
     return typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === code;
 });
 
+const transactions = createDbTransactionMock(() => dbMocks.db);
 installDbModuleMock({
-    db: dbMocks.db,
+    db: transactions.wrapDb(dbMocks.db),
     isPrismaErrorCode,
 });
 
@@ -24,6 +25,7 @@ describe("accessKeysRoutes POST /v1/access-keys/:sessionId/:machineId", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         dbMocks.reset();
+        dbMocks.db.machine.findUnique.mockResolvedValue({ accountId: "u1", installationId: null });
         isPrismaErrorCode.mockClear();
         dbMocks.db.machine.findFirst.mockResolvedValue({
             revokedAt: null,

@@ -99,4 +99,26 @@ describe("app/monitoring/sentry (init)", () => {
         const merged = initArg.integrations([]);
         expect(merged).toEqual([expect.objectContaining({ name: expect.stringMatching(/profil/i) })]);
     });
+
+    it("prepares instrumentation before runtime imports, then applies the saved startup configuration", async () => {
+        const initSpy = vi.fn();
+        let client: object | null = null;
+        const preload = vi.fn();
+        vi.doMock('@sentry/node', () => ({
+            getClient: () => client,
+            preloadOpenTelemetry: preload,
+            init: (options: InitArg) => { client = {}; initSpy(options); },
+            fastifyIntegration: () => ({ name: 'fastify' }),
+            pinoIntegration: () => ({ name: 'pino' }),
+        }));
+        const { prepareServerSentryInstrumentation, initializeServerSentry } = await import('./sentry');
+        prepareServerSentryInstrumentation();
+        expect(preload).toHaveBeenCalledOnce();
+        expect(initSpy).not.toHaveBeenCalled();
+        const startup = { SENTRY_DSN: 'https://public@example.test/1', SENTRY_ENVIRONMENT: 'home', SENTRY_TRACES_SAMPLE_RATE: '0.25' };
+        initializeServerSentry(startup);
+        initializeServerSentry(startup);
+        expect(initSpy).toHaveBeenCalledTimes(1);
+        expect(initSpy.mock.calls[0]?.[0]).toMatchObject({ dsn: startup.SENTRY_DSN, environment: 'home', tracesSampleRate: 0.25 });
+    });
 });

@@ -20,7 +20,6 @@ import { buildSessionAccessProjectionSelect, resolveSessionAccessForOperation } 
 import type { Socket } from "socket.io";
 import { readSessionAccessAuthenticationFromSocket } from "@/app/session/access/sessionAccessAuthentication";
 import { inTx } from "@/storage/inTx";
-import { db } from "@/storage/db";
 import type { SessionBroadcastContainer } from "@happier-dev/protocol";
 import type { VerifiedApiTokenPrincipal } from "@/app/auth/auth";
 import type { forwardRpcCall, RpcForwardResult } from '@/app/api/socket/rpc/forwardRpcCall';
@@ -449,18 +448,13 @@ class EventRouter {
             : undefined;
         const skipSocketId = params.skipSenderConnection?.socket.id;
         try {
-            // Protected Session delivery requires a live Session authority. The real
-            // deletion owner pre-resolves its recipients before deletion and publishes
-            // the typed content-free `delete-session` hint through `user-scoped-only`;
-            // an arbitrary all-interested payload must never inherit that exception.
-            if (!await db.session.findUnique({ where: { id: params.sessionId }, select: { id: true } })) {
-                recordEventFanoutDrop({
-                    eventName: params.eventName,
-                    reason: "no_matching_connections",
-                });
-                return;
-            }
             if (this.io?.sessionDeliveryMode === "forward_only") {
+                // Receiving nodes qualify against their own current snapshot. A headless
+                // publisher still requires a live Session before forwarding routing intent.
+                const exists = await inTx(tx => tx.session.findUnique({
+                    where: { id: params.sessionId }, select: { id: true },
+                }), { readOnly: true });
+                if (!exists) return;
                 if (!this.io.forwardCredentialQualifiedSessionDelivery) {
                     throw new Error("Protected Session forwarding is unavailable");
                 }
@@ -626,7 +620,7 @@ class EventRouter {
                 qualified.push(socket);
             }
             return qualified;
-        });
+        }, { readOnly: true });
         let deliveredCount = 0;
         for (const socket of qualifiedSockets) {
             if (params.emit(socket)) deliveredCount += 1;

@@ -56,10 +56,7 @@ import {
 import { createReviewCommentOperations } from "./operations";
 import { registerReviewCommentRoutes } from "./routes";
 import { createReviewCommentAccountEncryptionMigrationPersistenceInTx } from "./accountEncryptionMigrationPersistence";
-import {
-    createSqlReviewCommentStore,
-    type ReviewCommentStore,
-} from "./store";
+import { createSqlReviewCommentStore } from "./store";
 
 const CODERABBIT_PLUGIN_ID = "happier.review.coderabbit";
 const EXTERNAL_PLUGIN_ID = "acme.reviewbot";
@@ -112,6 +109,23 @@ function deferred(): Readonly<{
         resolve = done;
     });
     return { promise, resolve };
+}
+
+function pauseNextDatabaseTransaction() {
+    const entered = deferred();
+    const resume = deferred();
+    const transaction = db.$transaction;
+    // Prisma is the persistent-system boundary. Forward its overloaded API
+    // unchanged after the latch, preserving the real store and currentness fence.
+    const spy = vi.fn(transaction).mockImplementationOnce(async (...args) => {
+        entered.resolve();
+        await resume.promise;
+        return Reflect.apply(transaction, db, args);
+    });
+    // db forwards property assignment to its initialized Prisma client; it
+    // intentionally does not expose descriptors for vi.spyOn.
+    db.$transaction = spy;
+    return { entered: entered.promise, release() { resume.resolve(); db.$transaction = transaction; } };
 }
 
 function registerDefaultRoutes() {
@@ -511,7 +525,7 @@ describe("review comment durable storage", () => {
             const wrongScope = await app.inject({ method: "POST", url: "/v1/reviews/comments/mutations/prepare", headers: { "x-test-user-id": account.id },
                 payload: { v: 1, contentCommitment: "a".repeat(43), mutation: projectReviewCommentStructuralMutationV1("reviews.comments.setDisposition", {
                     workspace: { ...workspace, path: "/other" }, commentId: second.id, expectedServerRevision: 2, disposition: "working", clientMutationId: "wrong-scope" }) } });
-            expect(wrongScope.statusCode).toBe(400);
+            expect(wrongScope.statusCode).toBe(409);
             expect(wrongScope.json()).toMatchObject({ error: "review_comment_conflict" });
             const rows = await db.$queryRaw<Array<Record<string, unknown>>>`SELECT anchor_json, anchor_file_path, body_envelope_json, snapshot_envelope_json, edits_json, evidence_json, transitions_json, metadata_json, tombstone_json FROM review_comments WHERE account_id = ${account.id}`;
             expect(JSON.stringify(rows)).not.toContain("PRIVATE-");
@@ -1458,25 +1472,8 @@ describe("review comment durable storage", () => {
             },
             select: { id: true },
         });
-        const writerReachedPersistence = deferred();
-        const releaseWriter = deferred();
-        const sqlStore = createSqlReviewCommentStore();
-        const latchedStore: ReviewCommentStore = {
-            ...sqlStore,
-            async create(params) {
-                writerReachedPersistence.resolve();
-                await releaseWriter.promise;
-                return await sqlStore.create(params);
-            },
-        };
-        let id = 0;
-        const operations = createReviewCommentOperations(latchedStore, {
-            now: () => 1_000,
-            createId: (prefix) => `${prefix}-${++id}`,
-        });
-        const app = createFakeRouteApp();
-        registerReviewCommentRoutes(app as any, { operations });
-        const create = getRouteHandler(app, "POST", "/v1/reviews/comments");
+        const latch = pauseNextDatabaseTransaction();
+        const create = getRouteHandler(registerDefaultRoutes(), "POST", "/v1/reviews/comments");
         const reply = createReplyStub();
         const pendingCreate = create({
             userId: account.id,
@@ -1488,24 +1485,20 @@ describe("review comment durable storage", () => {
                 clientMutationId: "mutation-transition-race",
             },
         }, reply);
-        await writerReachedPersistence.promise;
-
-        await inTx(async (tx) => {
-            const fence = await acquireAccountEncryptionTransitionFenceInTx(
-                tx,
-                account.id,
-            );
-            expect(fence.status).toBe("ready");
-            if (fence.status !== "ready") return;
-            await applyAccountEncryptionTransitionInTx(tx, {
-                accountId: account.id,
-                expectedVersion: fence.account.version,
-                toMode: "e2ee",
-                contentKey: { kind: "preserve" },
+        try {
+            await Promise.race([latch.entered, pendingCreate.then(() => { throw new Error("Writer never reached persistence"); })]);
+            await inTx(async (tx) => {
+                const fence = await acquireAccountEncryptionTransitionFenceInTx(tx, account.id);
+                expect(fence.status).toBe("ready");
+                if (fence.status !== "ready") throw new Error("Missing Account fence");
+                await applyAccountEncryptionTransitionInTx(tx, {
+                    accountId: account.id,
+                    expectedVersion: fence.account.version,
+                    toMode: "e2ee",
+                    contentKey: { kind: "preserve" },
+                });
             });
-        });
-
-        releaseWriter.resolve();
+        } finally { latch.release(); }
         await expect(pendingCreate).resolves.toMatchObject({
             error: "review_comment_encryption_mode_mismatch",
         });
@@ -1528,66 +1521,53 @@ describe("review comment durable storage", () => {
             },
             select: { id: true },
         });
-        const writerReachedPersistence = deferred();
-        const releaseWriter = deferred();
-        const sqlStore = createSqlReviewCommentStore();
-        const latchedStore: ReviewCommentStore = {
-            ...sqlStore,
-            async create(params) {
-                writerReachedPersistence.resolve();
-                await releaseWriter.promise;
-                return await sqlStore.create(params);
-            },
-        };
-        let id = 0;
-        const operations = createReviewCommentOperations(latchedStore, {
-            now: () => 2_000,
-            createId: (prefix) => `${prefix}-${++id}`,
-        });
-        const app = createFakeRouteApp();
-        registerReviewCommentRoutes(app as any, { operations });
-        const create = getRouteHandler(app, "POST", "/v1/reviews/comments");
-        const reply = createReplyStub();
-        const pendingCreate = create({
-            userId: account.id,
-            body: {
+        await initEncrypt();
+        await withAuthenticatedTestApp(registerReviewCommentRoutes, async (app) => {
+            const input = {
                 projectId: "project-1",
                 anchor: { kind: "file", filePath: "src/example.ts" },
-                snapshot: { t: "encrypted", c: "snapshot-ciphertext" },
-                body: { t: "encrypted", c: "body-ciphertext" },
-                eventEnvelope: { t: "encrypted", c: "event-ciphertext" },
+                snapshot: textSnapshot(),
+                body: "This stale encrypted write must not survive key replacement.",
                 clientMutationId: "mutation-binding-race",
-            },
-        }, reply);
-        await writerReachedPersistence.promise;
-
-        await inTx(async (tx) => {
-            const fence = await acquireAccountEncryptionTransitionFenceInTx(
-                tx,
-                account.id,
-            );
-            expect(fence.status).toBe("ready");
-            await tx.account.update({
-                where: { id: account.id },
-                data: {
-                    publicKey: replacementBinding.publicKey,
-                    contentPublicKey: replacementBinding.contentPublicKey,
-                    contentPublicKeySig: replacementBinding.contentPublicKeySig,
-                },
-            });
+            };
+            const mutation = projectReviewCommentStructuralMutationV1("reviews.comments.create", input);
+            const headers = { "x-test-user-id": account.id };
+            const response = await app.inject({ method: "POST", url: "/v1/reviews/comments/mutations/prepare", headers,
+                payload: { v: 1, mutation, contentCommitment: "a".repeat(43), createRequestFingerprint: "b".repeat(43) } });
+            expect(response.statusCode, response.body).toBe(200);
+            const preparation = ReviewCommentPrepareMutationResponseV1Schema.parse(response.json());
+            const prepared = preparation.records[0]!;
+            const material = { type: "dataKey", machineKey: new Uint8Array(32).fill(42) } as const;
+            const sensitive = applyReviewCommentPreparedSensitiveMutationV1({ mutation, input, prepared });
+            const commitInput = { v: 1, receipt: preparation.receipt, records: [{ commentId: prepared.structural.id,
+                sensitiveEnvelope: sealReviewCommentSensitiveEnvelopeV1({ structural: prepared.structural, sensitive, mode: "e2ee", material, randomBytes }),
+                eventEnvelope: buildReviewCommentMutationEventEnvelopeV1({ accountId: account.id, actor: { kind: "user", userId: account.id },
+                    actionId: mutation.actionId, input, mode: "e2ee", material, randomBytes }),
+            }] };
+            const latch = pauseNextDatabaseTransaction();
+            const pendingCreate = app.inject({ method: "POST", url: "/v1/reviews/comments/mutations/commit", headers, payload: commitInput }).then(response => response);
+            try {
+                await Promise.race([latch.entered, pendingCreate.then(response => { throw new Error(`Writer never reached persistence: ${response.statusCode}`); })]);
+                await inTx(async (tx) => {
+                    const fence = await acquireAccountEncryptionTransitionFenceInTx(tx, account.id);
+                    expect(fence.status).toBe("ready");
+                    if (fence.status !== "ready") throw new Error("Missing Account fence");
+                    await tx.account.update({
+                        where: { id: account.id },
+                        data: {
+                            publicKey: replacementBinding.publicKey,
+                            contentPublicKey: replacementBinding.contentPublicKey,
+                            contentPublicKeySig: replacementBinding.contentPublicKeySig,
+                        },
+                    });
+                });
+            } finally { latch.release(); }
+            const refused = await pendingCreate;
+            expect(refused.statusCode, refused.body).toBe(400);
+            expect(refused.json()).toMatchObject({ error: "review_comment_encryption_mode_mismatch" });
+            await expect(db.reviewComment.count({ where: { accountId: account.id } })).resolves.toBe(0);
+            await expect(db.reviewCommentEvent.count({ where: { accountId: account.id } })).resolves.toBe(0);
         });
-
-        releaseWriter.resolve();
-        await expect(pendingCreate).resolves.toMatchObject({
-            error: "review_comment_encryption_mode_mismatch",
-        });
-        expect(reply.statusCode).toBe(400);
-        await expect(db.reviewComment.count({
-            where: { accountId: account.id },
-        })).resolves.toBe(0);
-        await expect(db.reviewCommentEvent.count({
-            where: { accountId: account.id },
-        })).resolves.toBe(0);
     });
 
     it("allows the same create client mutation in distinct accounts", async () => {
@@ -1732,7 +1712,10 @@ describe("review comment durable storage", () => {
             id: created.comment.id,
             server_revision: 2,
         });
-        expect(JSON.parse(rows[0]!.body_envelope_json)).toMatchObject({ t: "plain", v: { sensitive: { body: transitioned.comment.body, snapshot: transitioned.comment.snapshot } } });
+        expect(JSON.parse(rows[0]!.body_envelope_json)).toMatchObject({ t: "plain", v: {
+            binding: { commentId: created.comment.id, serverRevision: 2 },
+            content: { body: transitioned.comment.body, snapshot: transitioned.comment.snapshot },
+        } });
         expect(JSON.parse(rows[0]!.snapshot_envelope_json)).toEqual({ v: 1, layout: "review_comment_sensitive_in_body_v1" });
 
         const events = await db.$queryRaw<Array<{
@@ -1767,7 +1750,7 @@ describe("review comment durable storage", () => {
                 t: "plain",
                 v: {
                     v: 1,
-                    details: { comment: { id: created.comment.id } },
+                    details: { body: created.comment.body, anchor: created.comment.anchor, snapshot: created.comment.snapshot },
                 },
             },
         });

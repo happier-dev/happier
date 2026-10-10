@@ -11,7 +11,6 @@ import {
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { deriveAccountEncryptionCurrentnessFromRow } from "@/app/encryption/accountContentKeyAdmission";
 import { acquireAccountSessionOwnerMetadataFenceInTx } from "@/app/encryption/accountSessionOwnerMetadataFence";
-import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 
 export type PersistedAccountPet = Readonly<{
@@ -250,7 +249,7 @@ export function createPrismaAccountPetLibraryPersistence(
             }
         },
         async listAccountPets(accountId) {
-            const rows = await db.accountPetPackage.findMany({
+            const rows = await inTx(tx => tx.accountPetPackage.findMany({
                 where: {
                     accountId,
                     deletedAt: null,
@@ -265,11 +264,11 @@ export function createPrismaAccountPetLibraryPersistence(
                         take: 1,
                     },
                 },
-            });
+            }), { readOnly: true });
             return mapRows(rows);
         },
         async readAccountPet(accountId, petId) {
-            const row = await db.accountPetPackage.findFirst({
+            const row = await inTx(tx => tx.accountPetPackage.findFirst({
                 where: {
                     id: petId,
                     accountId,
@@ -281,7 +280,7 @@ export function createPrismaAccountPetLibraryPersistence(
                         take: 1,
                     },
                 },
-            });
+            }), { readOnly: true });
             return row ? mapAccountPetRow(row) : null;
         },
         async deleteAccountPet(accountId, petId) {

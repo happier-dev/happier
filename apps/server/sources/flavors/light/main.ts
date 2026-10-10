@@ -45,7 +45,7 @@ export async function runLightServerMain(argv: readonly string[] = process.argv.
             resolveLightDataDir,
         },
         { applySqliteMigrationsFromEnvironment },
-        { initializeServerSentry },
+        { prepareServerSentryInstrumentation },
         { registerProcessHandlers },
     ] = await Promise.all([
         import('@/flavors/light/env'),
@@ -189,8 +189,8 @@ export async function runLightServerMain(argv: readonly string[] = process.argv.
         return;
     }
 
-    // Initialize Sentry before importing the server runtime so auto-instrumentation can patch dependencies (Fastify, etc).
-    initializeServerSentry(process.env);
+    // Instrument dependencies before runtime import; the post-overlay startup owner configures the client.
+    prepareServerSentryInstrumentation();
     registerProcessHandlers();
 
     const { startServer } = await import('@/startServer');

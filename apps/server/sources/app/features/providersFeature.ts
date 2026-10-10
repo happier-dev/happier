@@ -5,6 +5,7 @@ export function resolveProvidersFeature(env: NodeJS.ProcessEnv): FeaturesPayload
     const featureConfig = readProvidersFeatureEnv(env);
 
     return {
+        capabilities: { providerBroker: { protocolVersions: [1, 2] } },
         features: {
             providers: {
                 enabled: featureConfig.enabled,

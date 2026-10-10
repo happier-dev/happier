@@ -3,9 +3,11 @@ import { PRESENT_USER_REQUIRED_ERROR } from "./apiTokenRouteAdmission";
 
 export { PRESENT_USER_REQUIRED_ERROR } from "./apiTokenRouteAdmission";
 
-export const PresentUserRequiredResponseSchema = z.object({
+// Route imports can reach this guard while the admission module is still initializing.
+// Resolve its shared error code at parse time rather than capture an undefined literal.
+export const PresentUserRequiredResponseSchema = z.lazy(() => z.object({
     error: z.literal(PRESENT_USER_REQUIRED_ERROR),
-}).strict();
+}).strict());
 
 type AuthenticatedRouteRequest = Readonly<{
     /** Set only by `enableAuthentication`; absent authority fails closed. */
@@ -15,7 +17,7 @@ type AuthenticatedRouteRequest = Readonly<{
 }>;
 
 type AuthenticatedRouteReply = Readonly<{
-    code: (statusCode: number) => {
+    code: (statusCode: 403) => {
         send: (payload: Readonly<{ error: typeof PRESENT_USER_REQUIRED_ERROR }>) => unknown;
     };
 }>;

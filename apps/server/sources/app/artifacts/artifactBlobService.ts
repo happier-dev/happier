@@ -141,7 +141,7 @@ export async function readArtifactBlob(input: Readonly<{ actorAccountId: string;
         }
         if (row.encryptionMode !== read.artifact.encryptionMode) return { ok: false as const, error: 'artifact_content_unavailable' as const };
         return { ok: true as const, row, ownerAccountId: read.artifact.ownerAccountId };
-    });
+    }, { readOnly: true });
     if (!admitted.ok) return admitted;
     // Private IO can be large/remote; authorization captures immutable custody without holding the database lock.
     const bytes = privacyKit.encodeBase64(new Uint8Array(await openArtifactBlobBytes(admitted.ownerAccountId, admitted.row)));

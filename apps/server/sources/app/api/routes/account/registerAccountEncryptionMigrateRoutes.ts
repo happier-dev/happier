@@ -153,10 +153,26 @@ import {
     type SessionDraftAccountMigrationResult,
 } from "@/app/account/sessionDrafts/sessionDraftService";
 import { readRequestHomeEnv } from "@/app/home/settings/requestHomeEnv";
+import { matchConnectedAccountCatalogAccountMigrationPostStateInTx, migrateConnectedAccountCatalogForAccountModeInTx } from '@/app/account/connectedAccounts/configurationRowsEncryptionMigration';
 import {
     matchAuthoringMemoryAccountMigrationPostStateInTx,
     migrateAuthoringMemoryForAccountModeInTx,
 } from "@/app/kv/authoringMemoryEncryptionMigration";
+import { matchWorkspaceExecutionConfigAccountMigrationPostStateInTx, migrateWorkspaceExecutionConfigForAccountModeInTx } from '@/app/projects/execution/workspaceExecutionConfigEncryptionMigration';
+import {
+    matchProjectAccountRowsAccountMigrationPostStateInTx,
+    migrateProjectAccountRowsForAccountModeInTx,
+} from '@/app/projects/projectAccountRowsEncryptionMigration';
+import { matchProjectTrustAccountMigrationPostStateInTx, migrateProjectTrustForAccountModeInTx } from '@/app/projects/trust/projectTrustEncryptionMigration';
+import { matchProfileRowsAccountMigrationPostStateInTx, migrateProfileRowsForAccountModeInTx } from '@/app/account/profiles/profileRowsEncryptionMigration';
+import { matchPromptLibraryAccountMigrationPostStateInTx, migratePromptLibraryForAccountModeInTx } from '@/app/account/prompts/promptLibraryEncryptionMigration';
+import { matchConfiguredAgentCatalogAccountMigrationPostStateInTx, migrateConfiguredAgentCatalogForAccountModeInTx } from '@/app/account/agents/configuredAgentRowsEncryptionMigration';
+import { matchMcpServerCatalogAccountMigrationPostStateInTx, migrateMcpServerCatalogForAccountModeInTx } from '@/app/account/mcp/serverCatalogEncryptionMigration';
+import { matchProviderConnectionsAccountMigrationPostStateInTx, migrateProviderConnectionsForAccountModeInTx } from '@/app/account/providers/providerConnectionsEncryptionMigration';
+import { matchRemoteHostCatalogAccountMigrationPostStateInTx, migrateRemoteHostCatalogForAccountModeInTx } from '@/app/account/remoteHosts/remoteHostRowsEncryptionMigration';
+import { matchNotificationChannelCatalogAccountMigrationPostStateInTx, migrateNotificationChannelCatalogForAccountModeInTx } from '@/app/account/notifications/channelRowsEncryptionMigration';
+import { matchConnectedPresentationAccountMigrationPostStateInTx, migrateConnectedPresentationForAccountModeInTx,
+    matchConnectedAcknowledgementsAccountMigrationPostStateInTx, migrateConnectedAcknowledgementsForAccountModeInTx } from '@/app/account/connectedAccounts/presentationRowsEncryptionMigration';
 
 const AccountEncryptionMigrationReplayHintSchema = z
     .object({
@@ -305,7 +321,21 @@ class AccountEncryptionMigrationDomainRejectedError extends Error {
             | "plugin_webhooks"
             | "plugin_data"
             | "plugin_settings"
-            | "authoring_memory",
+            | "authoring_memory"
+            | "prompt_library"
+            | "acp_catalog"
+            | "mcp_server_catalog"
+            | "provider_connections"
+            | "connected_configurations"
+            | "connected_purposes"
+            | "remote_hosts"
+            | "notification_channels"
+            | "connected_presentation"
+            | "connected_acknowledgements"
+            | "profile_rows"
+            | "workspace_execution_config"
+            | "project_rows"
+            | "project_trust",
         readonly status:
             | "not_empty"
             | "migration_incomplete"
@@ -547,11 +577,11 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
         },
         async (request, reply) => {
             try {
-                const inventory = await inTx(async (tx) =>
-                    await createReviewCommentAccountEncryptionMigrationPersistenceInTx(
+                const inventory = await inTx(async (tx) => {
+                    return await createReviewCommentAccountEncryptionMigrationPersistenceInTx(
                         tx,
-                    ).readInventory(request.userId)
-                );
+                    ).readInventory(request.userId);
+                }, { readOnly: true });
                 return reply.send(
                     buildReviewCommentAccountEncryptionMigrationInventoryResponse(
                         inventory,
@@ -579,12 +609,12 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
         },
         async (request, reply) => {
             try {
-                return reply.send(await inTx(async (tx) =>
-                    await readSessionOrganizationAccountEncryptionMigrationInventoryInTx({
+                return reply.send(await inTx(async (tx) => {
+                    return await readSessionOrganizationAccountEncryptionMigrationInventoryInTx({
                         tx,
                         accountId: request.userId,
-                    })
-                ));
+                    });
+                }, { readOnly: true }));
             } catch (error) {
                 if (error instanceof InactiveAccountError) throw error;
                 return reply.code(500).send({
@@ -889,6 +919,20 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
             sessionOrganization,
             sessionDrafts,
             authoringMemory,
+            profileRows,
+            promptLibrary,
+            acpCatalog,
+            mcpServerCatalog,
+            providerConnections,
+            connectedConfigurations,
+            connectedPurposes,
+            remoteHosts,
+            notificationChannels,
+            connectedPresentation,
+            connectedAcknowledgements,
+            workspaceExecutionConfig,
+            projectRows,
+            projectTrust,
         } = migrationRequest;
         const workspace = migrationRequest.workspace ?? { action: "assert_empty" as const };
 
@@ -1146,6 +1190,48 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
                     const authoringMemoryPostState = await matchAuthoringMemoryAccountMigrationPostStateInTx(tx, {
                         accountId: userId, toMode, directive: replayRequest.authoringMemory,
                     });
+                    const profileRowsPostState = await matchProfileRowsAccountMigrationPostStateInTx(tx, {
+                        accountId: userId, toMode, directive: replayRequest.profileRows,
+                    });
+                    const promptLibraryPostState = await matchPromptLibraryAccountMigrationPostStateInTx(tx, {
+                        accountId: userId, toMode, directive: replayRequest.promptLibrary,
+                    });
+                    const mcpServerCatalogPostState = await matchMcpServerCatalogAccountMigrationPostStateInTx(tx, {
+                        accountId: userId, toMode, directive: replayRequest.mcpServerCatalog,
+                    });
+                    const acpCatalogPostState = await matchConfiguredAgentCatalogAccountMigrationPostStateInTx(tx, {
+                        accountId: userId, toMode, directive: replayRequest.acpCatalog,
+                    });
+                    const providerConnectionsPostState = await matchProviderConnectionsAccountMigrationPostStateInTx(tx, {
+                        accountId: userId, toMode, directive: replayRequest.providerConnections,
+                    });
+                    const connectedConfigurationsPostState = await matchConnectedAccountCatalogAccountMigrationPostStateInTx(tx, {
+                        accountId: userId, key: 'configurations', toMode, directive: replayRequest.connectedConfigurations,
+                    });
+                    const connectedPurposesPostState = await matchConnectedAccountCatalogAccountMigrationPostStateInTx(tx, {
+                        accountId: userId, key: 'purposes', toMode, directive: replayRequest.connectedPurposes,
+                    });
+                    const remoteHostsPostState = await matchRemoteHostCatalogAccountMigrationPostStateInTx(tx, {
+                        accountId: userId, toMode, directive: replayRequest.remoteHosts,
+                    });
+                    const notificationChannelsPostState = await matchNotificationChannelCatalogAccountMigrationPostStateInTx(tx, {
+                        accountId: userId, toMode, directive: replayRequest.notificationChannels,
+                    });
+                    const connectedPresentationPostState = await matchConnectedPresentationAccountMigrationPostStateInTx(tx, {
+                        accountId: userId, toMode, directive: replayRequest.connectedPresentation,
+                    });
+                    const connectedAcknowledgementsPostState = await matchConnectedAcknowledgementsAccountMigrationPostStateInTx(tx, {
+                        accountId: userId, toMode, directive: replayRequest.connectedAcknowledgements,
+                    });
+                    const workspaceExecutionConfigPostState = await matchWorkspaceExecutionConfigAccountMigrationPostStateInTx(tx, {
+                        accountId: userId, toMode, directive: replayRequest.workspaceExecutionConfig,
+                    });
+                    const projectRowsPostState = await matchProjectAccountRowsAccountMigrationPostStateInTx(tx, {
+                        accountId: userId, toMode, directive: replayRequest.projectRows,
+                    });
+                    const projectTrustPostState = await matchProjectTrustAccountMigrationPostStateInTx(tx, {
+                        accountId: userId, toMode, directive: replayRequest.projectTrust,
+                    });
                     let reviewCommentsPostStateMatches = false;
                     try {
                         reviewCommentsPostStateMatches =
@@ -1187,6 +1273,20 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
                         || sessionsPostState.status !== "matched"
                         || sessionDraftsPostState.status !== "matched"
                         || authoringMemoryPostState.status !== "matched"
+                        || profileRowsPostState.status !== 'matched'
+                        || promptLibraryPostState.status !== 'matched'
+                        || acpCatalogPostState.status !== 'matched'
+                        || mcpServerCatalogPostState.status !== 'matched'
+                        || providerConnectionsPostState.status !== 'matched'
+                        || connectedConfigurationsPostState.status !== 'matched'
+                        || connectedPurposesPostState.status !== 'matched'
+                        || remoteHostsPostState.status !== 'matched'
+                        || notificationChannelsPostState.status !== 'matched'
+                        || connectedPresentationPostState.status !== 'matched'
+                        || connectedAcknowledgementsPostState.status !== 'matched'
+                        || workspaceExecutionConfigPostState.status !== 'matched'
+                        || projectRowsPostState.status !== 'matched'
+                        || projectTrustPostState.status !== 'matched'
                         || !reviewCommentsPostStateMatches
                         || sessionOrganizationPostState.status
                             !== "matched"
@@ -1206,6 +1306,21 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
                             ? sessionDraftsPostState.records
                             : undefined,
                         authoringMemoryRows: replayRequest.authoringMemory ? authoringMemoryPostState.rows : undefined,
+                        profileRowsResult: replayRequest.profileRows ? { rows: profileRowsPostState.rows,
+                            referenceGuardRevision: profileRowsPostState.referenceGuardRevision, transferControl: profileRowsPostState.transferControl } : undefined,
+                        promptLibraryRows: replayRequest.promptLibrary ? promptLibraryPostState.rows : undefined,
+                        acpCatalogResult: replayRequest.acpCatalog ? { row: acpCatalogPostState.row } : undefined,
+                        mcpServerCatalogResult: replayRequest.mcpServerCatalog ? mcpServerCatalogPostState.row : undefined,
+                        providerConnectionsResult: replayRequest.providerConnections ? { row: providerConnectionsPostState.row } : undefined,
+                        connectedConfigurationsResult: replayRequest.connectedConfigurations ? { row: connectedConfigurationsPostState.row } : undefined,
+                        connectedPurposesResult: replayRequest.connectedPurposes ? { row: connectedPurposesPostState.row } : undefined,
+                        remoteHostsResult: replayRequest.remoteHosts ? remoteHostsPostState.row : undefined,
+                        notificationChannelsResult: replayRequest.notificationChannels ? notificationChannelsPostState.row : undefined,
+                        connectedPresentationResult: replayRequest.connectedPresentation ? connectedPresentationPostState.row : undefined,
+                        connectedAcknowledgementsResult: replayRequest.connectedAcknowledgements ? connectedAcknowledgementsPostState.row : undefined,
+                        workspaceExecutionConfigRows: replayRequest.workspaceExecutionConfig ? workspaceExecutionConfigPostState.rows : undefined,
+                        projectRows: replayRequest.projectRows ? projectRowsPostState.rows : undefined,
+                        projectTrustRows: replayRequest.projectTrust ? projectTrustPostState.rows : undefined,
                     };
                 }
 
@@ -1464,6 +1579,88 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
                 });
                 if (authoringMemoryMigration.status !== "applied") {
                     throw new AccountEncryptionMigrationDomainRejectedError("authoring_memory", authoringMemoryMigration.status);
+                }
+                const profileRowsMigration = await migrateProfileRowsForAccountModeInTx(tx, {
+                    accountId: userId, toMode, directive: profileRows,
+                });
+                if (profileRowsMigration.status !== 'applied') {
+                    throw new AccountEncryptionMigrationDomainRejectedError('profile_rows', profileRowsMigration.status);
+                }
+                const promptLibraryMigration = await migratePromptLibraryForAccountModeInTx(tx, {
+                    accountId: userId, toMode, directive: promptLibrary,
+                });
+                if (promptLibraryMigration.status !== 'applied') {
+                    throw new AccountEncryptionMigrationDomainRejectedError('prompt_library', promptLibraryMigration.status);
+                }
+                const acpCatalogMigration = await migrateConfiguredAgentCatalogForAccountModeInTx(tx, {
+                    accountId: userId, toMode, directive: acpCatalog,
+                });
+                if (acpCatalogMigration.status !== 'applied') {
+                    throw new AccountEncryptionMigrationDomainRejectedError('acp_catalog', acpCatalogMigration.status);
+                }
+                const mcpServerCatalogMigration = await migrateMcpServerCatalogForAccountModeInTx(tx, {
+                    accountId: userId, toMode, directive: mcpServerCatalog,
+                });
+                if (mcpServerCatalogMigration.status !== 'applied') {
+                    throw new AccountEncryptionMigrationDomainRejectedError('mcp_server_catalog', mcpServerCatalogMigration.status);
+                }
+                const providerConnectionsMigration = await migrateProviderConnectionsForAccountModeInTx(tx, {
+                    accountId: userId, toMode, directive: providerConnections,
+                });
+                if (providerConnectionsMigration.status !== 'applied') {
+                    throw new AccountEncryptionMigrationDomainRejectedError('provider_connections', providerConnectionsMigration.status);
+                }
+                const connectedConfigurationsMigration = await migrateConnectedAccountCatalogForAccountModeInTx(tx, {
+                    accountId: userId, key: 'configurations', toMode, directive: connectedConfigurations,
+                });
+                if (connectedConfigurationsMigration.status !== 'applied') {
+                    throw new AccountEncryptionMigrationDomainRejectedError('connected_configurations', connectedConfigurationsMigration.status);
+                }
+                const connectedPurposesMigration = await migrateConnectedAccountCatalogForAccountModeInTx(tx, {
+                    accountId: userId, key: 'purposes', toMode, directive: connectedPurposes,
+                });
+                if (connectedPurposesMigration.status !== 'applied') {
+                    throw new AccountEncryptionMigrationDomainRejectedError('connected_purposes', connectedPurposesMigration.status);
+                }
+                const remoteHostsMigration = await migrateRemoteHostCatalogForAccountModeInTx(tx, {
+                    accountId: userId, toMode, directive: remoteHosts,
+                });
+                if (remoteHostsMigration.status !== 'applied') {
+                    throw new AccountEncryptionMigrationDomainRejectedError('remote_hosts', remoteHostsMigration.status);
+                }
+                const notificationChannelsMigration = await migrateNotificationChannelCatalogForAccountModeInTx(tx, {
+                    accountId: userId, toMode, directive: notificationChannels,
+                });
+                if (notificationChannelsMigration.status !== 'applied') {
+                    throw new AccountEncryptionMigrationDomainRejectedError('notification_channels', notificationChannelsMigration.status);
+                }
+                const connectedPresentationMigration = await migrateConnectedPresentationForAccountModeInTx(tx, {
+                    accountId: userId, toMode, directive: connectedPresentation,
+                });
+                if (connectedPresentationMigration.status !== 'applied') {
+                    throw new AccountEncryptionMigrationDomainRejectedError('connected_presentation', connectedPresentationMigration.status);
+                }
+                const connectedAcknowledgementsMigration = await migrateConnectedAcknowledgementsForAccountModeInTx(tx, {
+                    accountId: userId, toMode, directive: connectedAcknowledgements,
+                });
+                if (connectedAcknowledgementsMigration.status !== 'applied') {
+                    throw new AccountEncryptionMigrationDomainRejectedError('connected_acknowledgements', connectedAcknowledgementsMigration.status);
+                }
+                const workspaceExecutionConfigMigration = await migrateWorkspaceExecutionConfigForAccountModeInTx(tx, {
+                    accountId: userId, toMode, directive: workspaceExecutionConfig,
+                });
+                if (workspaceExecutionConfigMigration.status !== 'applied') {
+                    throw new AccountEncryptionMigrationDomainRejectedError('workspace_execution_config', workspaceExecutionConfigMigration.status);
+                }
+                const projectRowsMigration = await migrateProjectAccountRowsForAccountModeInTx(tx, {
+                    accountId: userId, toMode, directive: projectRows,
+                });
+                if (projectRowsMigration.status !== 'applied') {
+                    throw new AccountEncryptionMigrationDomainRejectedError('project_rows', projectRowsMigration.status);
+                }
+                const projectTrustMigration = await migrateProjectTrustForAccountModeInTx(tx, { accountId: userId, toMode, directive: projectTrust });
+                if (projectTrustMigration.status !== 'applied') {
+                    throw new AccountEncryptionMigrationDomainRejectedError('project_trust', projectTrustMigration.status);
                 }
 
                 const sessionDraftMigration =
@@ -1782,6 +1979,21 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
                         ? sessionDraftMigration.records
                         : undefined,
                     authoringMemoryRows: authoringMemory ? authoringMemoryMigration.rows : undefined,
+                    profileRowsResult: profileRows ? { rows: profileRowsMigration.rows,
+                        referenceGuardRevision: profileRowsMigration.referenceGuardRevision, transferControl: profileRowsMigration.transferControl } : undefined,
+                    promptLibraryRows: promptLibrary ? promptLibraryMigration.rows : undefined,
+                    acpCatalogResult: acpCatalog ? { row: acpCatalogMigration.row } : undefined,
+                    mcpServerCatalogResult: mcpServerCatalog ? mcpServerCatalogMigration.row : undefined,
+                    providerConnectionsResult: providerConnections ? { row: providerConnectionsMigration.row } : undefined,
+                    connectedConfigurationsResult: connectedConfigurations ? { row: connectedConfigurationsMigration.row } : undefined,
+                    connectedPurposesResult: connectedPurposes ? { row: connectedPurposesMigration.row } : undefined,
+                    remoteHostsResult: remoteHosts ? remoteHostsMigration.row : undefined,
+                    notificationChannelsResult: notificationChannels ? notificationChannelsMigration.row : undefined,
+                    connectedPresentationResult: connectedPresentation ? connectedPresentationMigration.row : undefined,
+                    connectedAcknowledgementsResult: connectedAcknowledgements ? connectedAcknowledgementsMigration.row : undefined,
+                    workspaceExecutionConfigRows: workspaceExecutionConfig ? workspaceExecutionConfigMigration.rows : undefined,
+                    projectRows: projectRows ? projectRowsMigration.rows : undefined,
+                    projectTrustRows: projectTrust ? projectTrustMigration.rows : undefined,
                 };
             });
 
@@ -1814,6 +2026,20 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
                 accountVersion: result.accountVersion,
                 settingsVersion: result.settingsVersion,
                 ...(result.authoringMemoryRows ? { authoringMemory: { rows: result.authoringMemoryRows } } : {}),
+                ...(result.profileRowsResult ? { profileRows: result.profileRowsResult } : {}),
+                ...(result.promptLibraryRows ? { promptLibrary: { rows: result.promptLibraryRows } } : {}),
+                ...(result.acpCatalogResult ? { acpCatalog: result.acpCatalogResult } : {}),
+                ...(result.mcpServerCatalogResult ? { mcpServerCatalog: result.mcpServerCatalogResult } : {}),
+                ...(result.providerConnectionsResult ? { providerConnections: result.providerConnectionsResult } : {}),
+                ...(result.connectedConfigurationsResult ? { connectedConfigurations: result.connectedConfigurationsResult } : {}),
+                ...(result.connectedPurposesResult ? { connectedPurposes: result.connectedPurposesResult } : {}),
+                ...(result.remoteHostsResult ? { remoteHosts: result.remoteHostsResult } : {}),
+                ...(result.notificationChannelsResult ? { notificationChannels: result.notificationChannelsResult } : {}),
+                ...(result.connectedPresentationResult ? { connectedPresentation: result.connectedPresentationResult } : {}),
+                ...(result.connectedAcknowledgementsResult ? { connectedAcknowledgements: result.connectedAcknowledgementsResult } : {}),
+                ...(result.workspaceExecutionConfigRows ? { workspaceExecutionConfig: { rows: result.workspaceExecutionConfigRows } } : {}),
+                ...(result.projectRows ? { projectRows: { rows: result.projectRows } } : {}),
+                ...(result.projectTrustRows ? { projectTrust: { rows: result.projectTrustRows } } : {}),
                 ...(result.sessionDraftRecords
                     ? { sessionDrafts: {
                         ...(sessionDrafts && "v" in sessionDrafts ? { v: sessionDrafts.v } : {}),

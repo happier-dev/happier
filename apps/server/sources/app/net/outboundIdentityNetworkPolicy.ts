@@ -30,13 +30,20 @@ export type OutboundAddressPolicy =
     /** Self-hosted Home: exact issuer hostnames inside exact CIDRs. */
     | Readonly<{ kind: "privateAllowlist"; hostnames: readonly string[]; cidrs: readonly string[] }>;
 
-export type OutboundIdentityNetworkPolicy = Readonly<{
+export type OutboundNetworkPolicy = Readonly<{
     address: OutboundAddressPolicy;
     /** `any` preserves released deployment behavior; managed policies name exact ports. */
     allowedPorts: "any" | readonly number[];
     /** Explicit local-development authority. Plaintext HTTP is never allowed off loopback. */
     allowLoopbackHttp: boolean;
     /** Decoded response bound, applied while reading, before any JSON parse. */
+    maxResponseBytes?: number;
+    maxHeaderBytes?: number;
+    timeoutMs?: number;
+}>;
+
+/** Identity endpoints retain their owning consumer's mandatory resource bounds. */
+export type OutboundIdentityNetworkPolicy = OutboundNetworkPolicy & Readonly<{
     maxResponseBytes: number;
     maxHeaderBytes: number;
     timeoutMs: number;
@@ -89,7 +96,7 @@ export type OutboundUrlDecision =
  * Parse-time URL admission. This is necessary but never sufficient: every resolved
  * address is still classified, and the connected peer is still pinned.
  */
-export function evaluateOutboundUrl(policy: OutboundIdentityNetworkPolicy, url: URL): OutboundUrlDecision {
+export function evaluateOutboundUrl(policy: OutboundNetworkPolicy, url: URL): OutboundUrlDecision {
     if (url.username || url.password) {
         return { allowed: false, code: "outbound_url_credentials_forbidden", reason: "url userinfo is not allowed" };
     }
@@ -142,7 +149,7 @@ export type OutboundAddressDecision =
  * validate and one bad answer to connect to.
  */
 export function evaluateOutboundAddresses(
-    policy: OutboundIdentityNetworkPolicy,
+    policy: OutboundNetworkPolicy,
     rawAddresses: readonly string[],
     input: Readonly<{ requiresLoopbackAddresses: boolean }>,
 ): OutboundAddressDecision {

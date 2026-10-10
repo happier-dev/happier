@@ -265,6 +265,20 @@ The current development server has separate session and machine presence owners:
 
 These are development-source semantics, not a claim that every published server already contains them.
 
+The development UI reconciles public lifecycle facts through
+`sessionLifecycleProjection.ts` at full Session apply, list replacement, and list
+patch publication. Full hydration uses the retained detail and the current
+Home-qualified row before the existing detailed thinking-grace and resume owner
+runs. The ready-event tuple and protocol runtime-activity revision merge therefore
+survive older HTTP responses, including the first hydration of a cached row.
+Device-local presence remains separate from durable `active` state. Pending flags
+retain a newer cached observation tuple without fabricating detailed request
+counts; detailed zero-count presentation keeps its existing null request-age
+semantics. Metadata layout, access, safe locked titles, viewer unread state, and
+content hydration keep their existing owners. The socket urgency classifier
+publishes turn-status and runtime-status changes through its existing urgent path;
+timestamp-only activity keeps its existing window.
+
 ## Storage and persistence
 ### Database (Prisma)
 Prisma models live in `prisma/schema.prisma`. Key tables:

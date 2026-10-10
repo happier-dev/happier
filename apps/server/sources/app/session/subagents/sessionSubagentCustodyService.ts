@@ -390,7 +390,7 @@ export async function listSessionSubagentCustody(params: Readonly<{
                 orderBy: [{ subagentKey: 'asc' }],
                 take: MAX_SESSION_SUBAGENT_CUSTODY_RECORDS,
             }) as Promise<CustodyRow[]>;
-        });
+        }, { readOnly: true });
         if (!rows) return { ok: false, error: 'session-not-found' };
         if (rows === 'retired') return { ok: false, error: 'source-retired' };
         const records = rows.map(toPublicRecord);

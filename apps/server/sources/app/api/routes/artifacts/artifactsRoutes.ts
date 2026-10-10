@@ -11,7 +11,10 @@ import {
     readArtifactRecipientCensusInTx,
     removeArtifactAccessGrantInTx,
     setArtifactAccessGrantInTx,
+    type ArtifactForCaller,
 } from "@/app/artifacts/artifactAccessService";
+import { ArtifactHttpReadV1Schema, ArtifactReadBatchInputV1Schema, ArtifactReadBatchResponseV1Schema,
+    type ArtifactReadBatchResponseV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { Fastify } from "../../types";
 import { z } from "zod";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
@@ -44,6 +47,34 @@ import {
 
 const DEFAULT_ARTIFACT_LIST_LIMIT = 500;
 
+/** Both read transports project the same caller-authorized bytes and exposure facts. */
+function projectArtifactHttpRead(artifact: ArtifactForCaller & { publicAudience: 'retained' | 'none' }) {
+    return {
+        id: artifact.id, ownerAccountId: artifact.ownerAccountId, access: artifact.access, encryptionMode: artifact.encryptionMode,
+        header: privacyKit.encodeBase64(artifact.header), headerVersion: artifact.headerVersion,
+        body: privacyKit.encodeBase64(artifact.body), bodyVersion: artifact.bodyVersion, publicAudience: artifact.publicAudience,
+        provenance: artifact.provenance ? privacyKit.encodeBase64(artifact.provenance) : null,
+        provenanceDataEncryptionKey: artifact.provenanceDataEncryptionKey ? privacyKit.encodeBase64(artifact.provenanceDataEncryptionKey) : null,
+        dataEncryptionKey: privacyKit.encodeBase64(artifact.dataEncryptionKey), seq: artifact.seq,
+        createdAt: artifact.createdAt.getTime(), updatedAt: artifact.updatedAt.getTime(),
+    };
+}
+
+/** Retain the exact read's owner recovery versus granted-caller refusal semantics. */
+function projectArtifactHttpReadFailure(read: Readonly<{
+    error: 'artifact_not_found' | 'artifact_content_unavailable'; ownerAccountId?: string;
+}>, actorAccountId: string) {
+    if (read.error === 'artifact_not_found') return { status: 404 as const, error: 'Artifact not found' as const, retryable: false };
+    if (read.ownerAccountId === actorAccountId) return { status: 500 as const, error: 'Failed to get artifact' as const, retryable: true };
+    return { status: 409 as const, error: 'artifact_content_unavailable' as const, retryable: false };
+}
+
+function artifactAccessHttpFailureStatus(error: string) {
+    return error === 'artifact_not_found' ? 404 as const
+        : error === 'artifact_access_forbidden' ? 403 as const
+            : error === 'artifact_content_unavailable' || error === 'artifact_data_key_changed' ? 409 as const : 400 as const;
+}
+
 function parseArtifactListCursor(value: string | undefined): { updatedAt: Date; id: string } | null {
     if (!value) return null;
     try {
@@ -71,7 +102,7 @@ export function artifactsRoutes(app: Fastify) {
                 503: z.object({ error: z.literal('artifact_content_unavailable') }).strict() } },
     }, async (request, reply) => {
         const inventory = await inTx(tx => readArtifactAccountEncryptionMigrationInventoryInTx({ tx, accountId: request.userId,
-            afterId: request.query.afterId, limit: request.query.limit ?? DEFAULT_ARTIFACT_LIST_LIMIT }));
+            afterId: request.query.afterId, limit: request.query.limit ?? DEFAULT_ARTIFACT_LIST_LIMIT }), { readOnly: true });
         return inventory ? reply.send(inventory) : reply.code(503).send({ error: 'artifact_content_unavailable' });
     });
     app.get('/v1/artifacts/:id/html-preview', {
@@ -83,7 +114,7 @@ export function artifactsRoutes(app: Fastify) {
             503: z.object({ error: z.enum(['artifact_content_unavailable', 'artifact_html_isolation_unavailable']) }),
         } },
     }, async (request, reply) => {
-        const read = await inTx(tx => readArtifactForCallerInTx(tx, { actorAccountId: request.userId, artifactId: request.params.id }));
+        const read = await inTx(tx => readArtifactForCallerInTx(tx, { actorAccountId: request.userId, artifactId: request.params.id }), { readOnly: true });
         if (!read.ok) return read.error === 'artifact_not_found'
             ? reply.code(404).send({ error: 'Artifact not found' }) : reply.code(503).send({ error: 'artifact_content_unavailable' });
         const origin = resolveStoredContentPublicShareOrigin(request.params.id);
@@ -112,7 +143,7 @@ export function artifactsRoutes(app: Fastify) {
         schema: { response: { 200: ArtifactStorageUsageV1Schema,
             503: z.object({ error: z.literal('storage_size_out_of_range') }) } },
     }, async (request, reply) => {
-        try { return reply.send(await inTx(tx => readArtifactStorageUsageInTx(tx, request.userId))); }
+        try { return reply.send(await inTx(tx => readArtifactStorageUsageInTx(tx, request.userId), { readOnly: true })); }
         catch (error) {
             if (error instanceof ArtifactStorageSizeUnavailableError) return reply.code(503).send({ error: error.code });
             throw error;
@@ -128,7 +159,7 @@ export function artifactsRoutes(app: Fastify) {
             503: z.object({ error: z.literal('artifact_content_unavailable') }),
         } },
     }, async (request, reply) => {
-        const result = await inTx(tx => listArtifactBodyRevisionsInTx(tx, { actorAccountId: request.userId, artifactId: request.params.id }));
+        const result = await inTx(tx => listArtifactBodyRevisionsInTx(tx, { actorAccountId: request.userId, artifactId: request.params.id }), { readOnly: true });
         if (!result.ok) return result.error === 'artifact_not_found'
             ? reply.code(404).send({ error: 'Artifact not found' })
             : reply.code(503).send({ error: 'artifact_content_unavailable' });
@@ -229,7 +260,7 @@ export function artifactsRoutes(app: Fastify) {
 
         try {
             const artifacts = await inTx(tx => listArtifactHeadersForCallerInTx(tx, { actorAccountId: userId, limit: listLimit, cursor,
-                includeBody: query.includeBody === 'true' }));
+                includeBody: query.includeBody === 'true' }), { readOnly: true });
 
             const projected = artifacts.map((artifact) => {
                 return {
@@ -256,6 +287,44 @@ export function artifactsRoutes(app: Fastify) {
         }
     });
 
+    // Selected details and current recipient facts share a read-only capture.
+    app.post('/v1/artifacts/read', {
+        preHandler: app.authenticate,
+        config: { rateLimit: resolveApiHotEndpointRateLimit(process.env, 'artifacts') },
+        schema: { body: ArtifactReadBatchInputV1Schema, response: { 200: ArtifactReadBatchResponseV1Schema,
+            500: z.object({ error: z.literal('artifact_content_unavailable') }).strict() } },
+    }, async (request, reply) => {
+        try {
+            const items = await inTx(async tx => {
+                const result: ArtifactReadBatchResponseV1['items'] = [];
+                for (const artifactId of request.body.artifactIds) {
+                    const input = { actorAccountId: request.userId, artifactId };
+                    const read = await readArtifactForCallerInTx(tx, input);
+                    if (!read.ok) {
+                        const refusal = projectArtifactHttpReadFailure(read, request.userId);
+                        result.push({ artifactId, ok: false, error: read.error, status: refusal.status, retryable: refusal.retryable });
+                        continue;
+                    }
+                    const census = read.artifact.encryptionMode === 'e2ee' ? await readArtifactRecipientCensusInTx(tx, input) : null;
+                    if (census && !census.ok) {
+                        // The incumbent recipient API rejects with a generic typed Error,
+                        // which the existing retry owner retries; preserve that classification.
+                        result.push({ artifactId, ok: false, error: census.error,
+                            status: artifactAccessHttpFailureStatus(census.error), retryable: true });
+                        continue;
+                    }
+                    result.push({ artifactId, ok: true, artifact: projectArtifactHttpRead(read.artifact),
+                        recipientCensus: census?.value ?? null });
+                }
+                return result;
+            }, { readOnly: true });
+            return reply.send({ items });
+        } catch (error) {
+            log({ module: 'api', level: 'error' }, `Failed to read Artifact details: ${error}`);
+            return reply.code(500).send({ error: 'artifact_content_unavailable' });
+        }
+    });
+
     // GET /v1/artifacts/:id - Get single artifact with full body
     app.get('/v1/artifacts/:id', {
         preHandler: app.authenticate,
@@ -267,23 +336,7 @@ export function artifactsRoutes(app: Fastify) {
                 id: z.string()
             }),
             response: {
-                200: z.object({
-                    id: z.string(),
-                    header: z.string(),
-                    headerVersion: z.number(),
-                    body: z.string(),
-                    bodyVersion: z.number(),
-                    publicAudience: z.enum(["retained", "none"]),
-                    provenance: z.string().nullable().optional(),
-                    provenanceDataEncryptionKey: z.string().nullable().optional(),
-                    dataEncryptionKey: z.string(),
-                    seq: z.number(),
-                    createdAt: z.number(),
-                    updatedAt: z.number(),
-                    ownerAccountId: z.string(),
-                    access: ArtifactCallerAccessV1Schema,
-                    encryptionMode: ArtifactAccessRecipientCensusResponseV1Schema.shape.encryptionMode,
-                }),
+                200: ArtifactHttpReadV1Schema,
                 404: z.object({
                     error: z.literal('Artifact not found')
                 }),
@@ -298,32 +351,12 @@ export function artifactsRoutes(app: Fastify) {
         const { id } = request.params;
 
         try {
-            const read = await inTx(tx => readArtifactForCallerInTx(tx, { actorAccountId: userId, artifactId: id }));
+            const read = await inTx(tx => readArtifactForCallerInTx(tx, { actorAccountId: userId, artifactId: id }), { readOnly: true });
             if (!read.ok) {
-                return read.error === "artifact_not_found"
-                    ? reply.code(404).send({ error: 'Artifact not found' })
-                    : read.ownerAccountId === userId ? reply.code(500).send({ error: 'Failed to get artifact' })
-                    : reply.code(409).send({ error: "artifact_content_unavailable" });
+                const refusal = projectArtifactHttpReadFailure(read, userId);
+                return reply.code(refusal.status).send({ error: refusal.error });
             }
-            const artifact = read.artifact;
-
-            return reply.send({
-                id: artifact.id,
-                ownerAccountId: artifact.ownerAccountId,
-                access: artifact.access,
-                encryptionMode: artifact.encryptionMode,
-                header: privacyKit.encodeBase64(artifact.header),
-                headerVersion: artifact.headerVersion,
-                body: privacyKit.encodeBase64(artifact.body),
-                bodyVersion: artifact.bodyVersion,
-                publicAudience: artifact.publicAudience,
-                provenance: artifact.provenance ? privacyKit.encodeBase64(artifact.provenance) : null,
-                provenanceDataEncryptionKey: artifact.provenanceDataEncryptionKey ? privacyKit.encodeBase64(artifact.provenanceDataEncryptionKey) : null,
-                dataEncryptionKey: privacyKit.encodeBase64(artifact.dataEncryptionKey),
-                seq: artifact.seq,
-                createdAt: artifact.createdAt.getTime(),
-                updatedAt: artifact.updatedAt.getTime()
-            });
+            return reply.send(projectArtifactHttpRead(read.artifact));
         } catch (error) {
             log({ module: 'api', level: 'error' }, `Failed to get artifact: ${error}`);
             return reply.code(500).send({ error: 'Failed to get artifact' });
@@ -333,14 +366,12 @@ export function artifactsRoutes(app: Fastify) {
     const accessParams = z.object({ id: z.string().min(1) }).strict();
     const accessError = z.object({ error: ArtifactAccessErrorCodeV1Schema }).strict();
     const accessErrors = { 400: accessError, 403: accessError, 404: accessError, 409: accessError };
-    const accessErrorStatus = (error: string) => error === "artifact_not_found" ? 404
-        : error === "artifact_access_forbidden" ? 403
-            : error === "artifact_content_unavailable" || error === "artifact_data_key_changed" ? 409 : 400;
+    const accessErrorStatus = artifactAccessHttpFailureStatus;
     app.get('/v1/artifacts/:id/access/grants', {
         preHandler: app.authenticate,
         schema: { params: accessParams, response: { 200: ArtifactAccessGrantsListResponseV1Schema, ...accessErrors } },
     }, async (request, reply) => {
-        const result = await inTx(tx => listArtifactAccessGrantsInTx(tx, { actorAccountId: request.userId, artifactId: request.params.id }));
+        const result = await inTx(tx => listArtifactAccessGrantsInTx(tx, { actorAccountId: request.userId, artifactId: request.params.id }), { readOnly: true });
         return result.ok ? reply.send(result.value) : reply.code(accessErrorStatus(result.error)).send({ error: result.error });
     });
     app.put('/v1/artifacts/:id/access/grants', {
@@ -365,7 +396,7 @@ export function artifactsRoutes(app: Fastify) {
         preHandler: app.authenticate,
         schema: { params: accessParams, response: { 200: ArtifactAccessRecipientCensusResponseV1Schema, ...accessErrors } },
     }, async (request, reply) => {
-        const result = await inTx(tx => readArtifactRecipientCensusInTx(tx, { actorAccountId: request.userId, artifactId: request.params.id }));
+        const result = await inTx(tx => readArtifactRecipientCensusInTx(tx, { actorAccountId: request.userId, artifactId: request.params.id }), { readOnly: true });
         return result.ok ? reply.send(result.value) : reply.code(accessErrorStatus(result.error)).send({ error: result.error });
     });
     app.post('/v1/artifacts/:id/access/key-envelopes', {

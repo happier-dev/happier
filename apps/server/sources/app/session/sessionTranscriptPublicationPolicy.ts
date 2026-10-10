@@ -633,7 +633,7 @@ export function resolveExternalShareableTranscriptTurnSettlementBlockedFromSeq(p
         const seq = readServerSequence(message.seq);
         if (seq === null) continue;
         if (!SessionInputAdmissionReceiptV1Schema.safeParse(message.inputAdmissionReceipt).success) continue;
-        if (parseSessionMessageDeliveryResolutionV1(message.deliveryResolution) !== null) continue;
+        if (parseSessionMessageDeliveryResolutionV1(message.deliveryResolution)?.kind === "manual_handled") continue;
         if (params.turns.some((row) => isTerminalOwner(row, seq))) continue;
 
         // Even no current turn row is not proof of finality: this admission

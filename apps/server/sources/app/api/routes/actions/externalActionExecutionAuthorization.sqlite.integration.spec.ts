@@ -487,7 +487,7 @@ describe("external Action execution authorization", () => {
         const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
         const { app, dispatchedPrincipals } = await createApp(fixture.team.id);
         const envelope = { ...fixture.envelope, input: actionId === 'settings.list' ? {}
-            : actionId === 'settings.set' ? { anchor: 'workDepthLimit', value: 3 } : { anchor: 'workDepthLimit' } };
+            : actionId === 'settings.set' ? { anchor: 'delegation.workDepthLimit', value: 3 } : { anchor: 'delegation.workDepthLimit' } };
         try {
             const response = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
                 headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: fixture.machine.id, envelope } });
@@ -511,10 +511,22 @@ describe("external Action execution authorization", () => {
             expect(substituted.statusCode).toBe(401);
             expect(dispatchedPrincipals).toHaveLength(1);
             const terminal = await auth.createToken(fixture.account.id, undefined, { kind: 'terminal', authority: 'account_automation' });
-            expect((await app.inject({ method: 'POST', url: `/v1/actions/${actionId}`,
-                headers: { authorization: `Bearer ${terminal}` }, payload: envelope })).statusCode).toBe(401);
+            const terminalIssued = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+                headers: { authorization: `Bearer ${terminal}` }, payload: { v: 1, machineId: fixture.machine.id, envelope } });
+            expect(terminalIssued.statusCode, terminalIssued.body).toBe(200);
+            const terminalAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse(terminalIssued.json());
+            expect(await verifyCurrentExternalActionPrincipal(terminalAuthorization.binding)).toMatchObject({
+                accountId: fixture.account.id, authority: 'account_automation',
+                authentication: { kind: 'terminal', tokenEpoch: fixture.account.tokenEpoch },
+            });
+            const terminalRelay = await app.inject({ method: 'POST', url: `/v1/actions/${actionId}`,
+                headers: { authorization: `Bearer ${terminal}` }, payload: envelope });
+            expect(terminalRelay.statusCode, terminalRelay.body).toBe(200);
+            expect(dispatchedPrincipals[1]).toMatchObject({ accountId: fixture.account.id, authority: 'account_automation',
+                authentication: { kind: 'terminal', tokenEpoch: fixture.account.tokenEpoch } });
             await db.account.update({ where: { id: fixture.account.id }, data: { tokenEpoch: { increment: 1 } } });
             expect(await verifyCurrentExternalActionPrincipal(authorization.binding)).toBeNull();
+            expect(await verifyCurrentExternalActionPrincipal(terminalAuthorization.binding)).toBeNull();
         } finally { await app.close(); }
     });
 
@@ -669,8 +681,12 @@ describe("external Action execution authorization", () => {
     });
 
     it.each([[1, 'Home'], [2, 'Home'], [1, 'Socket'], [2, 'Socket'],
-        [1, 'B Home'], [2, 'B Home'], [1, 'B Socket'], [2, 'B Socket']] as const)(
+        [1, 'B Home'], [2, 'B Home'], [1, 'B Socket'], [2, 'B Socket'],
+        [1, 'Seed Home'], [2, 'Seed Home'], [1, 'Seed Socket'], [2, 'Seed Socket'],
+        [1, 'Seed child Home'], [2, 'Seed child Home'], [1, 'Seed child Socket'], [2, 'Seed child Socket'],
+        [1, 'Seed ordinary Home'], [2, 'Seed ordinary Home'], [1, 'Seed ordinary Socket'], [2, 'Seed ordinary Socket']] as const)(
         'verifies genuine Project Open v%s SOURCE custody without a Session or changing its D-bound Root through %s', async (version, boundary) => {
+        const seedOwnTarget = boundary.startsWith('Seed child') || boundary.startsWith('Seed ordinary');
         const fixture = await createFixture({ qualifiedPat: false });
         const material = version === 2 ? { type: 'dataKey' as const, machineKey: tweetnacl.randomBytes(32) } : undefined;
         if (material) {
@@ -703,17 +719,23 @@ describe("external Action execution authorization", () => {
         expect(await resolveMachineAdmission({ actorAccountId: fixture.account.id, machineId: writer.id })).toMatchObject({ kind: 'denied' });
         expect(await resolveMachineAdmission({ actorAccountId: fixture.account.id, machineId: parent.id })).toMatchObject({ kind: 'denied' });
         const homeId = await getOrCreateServerIdentityId();
-        const createRow = (machine: typeof child, controller: typeof writer, custodianAccountId: string, childPath: string, hostPath: string) => db.managedMachine.create({ data: {
+        const createRow = (machine: typeof child, controller: typeof writer, custodianAccountId: string, childPath: string, hostPath: string,
+            storage: 'bind' | 'child' = 'bind') => db.managedMachine.create({ data: {
             homeId, custodianAccountId, controllerMachineId: controller.id, controllerInstallationId: controller.installationId!, enrolledMachineId: machine.id,
             admittedActionRequestId: crypto.randomUUID(), admittedInput: {}, allocation: 'bound', creationState: 'active',
             launch: { provider: { pluginId: 'happier.devcontainer', localId: 'devcontainer' }, schemaVersion: 1, name: 'Project Sync child', choices: {} },
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
             resource: { contributionRef: { pluginId: 'happier.devcontainer', localId: 'devcontainer' }, schemaVersion: 1, value: {},
                 devcontainerObservation: { nativeResourceId: machine.id, user: 'coder', workspaceFolder: childPath,
-                    storage: { kind: 'bind', hostPath, childPath } } },
+                    storage: storage === 'child' ? { kind: 'child', childPath } : { kind: 'bind', hostPath, childPath } } },
         } });
         const sourceRow = await createRow(child, writer, sourceCustodian.id, '/child/source', '/parent/source');
-        await createRow(target, parent, targetCustodian.id, '/child/target', '/parent/target');
+        if (!boundary.startsWith('Seed ordinary')) {
+            await createRow(target, parent, targetCustodian.id, '/child/target', '/parent/target',
+                boundary.startsWith('Seed child') ? 'child' : 'bind');
+        } else {
+            expect(await db.managedMachine.findUnique({ where: { enrolledMachineId: target.id } })).toBeNull();
+        }
         const method = `${writer.id}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_MATERIALIZE_FOR_OPEN}`;
         const projectMethod = `${target.id}:${RPC_METHODS.PROJECTS_OPEN}`;
         // Only the remote daemon network is simulated; no internal verifier or
@@ -787,7 +809,8 @@ describe("external Action execution authorization", () => {
             const workspaceSyncSourceExecution = { method, requestId: originalTransportRequestId, params: input,
                 externalActionExecution: execution };
             expect(originalTransportRequestId).not.toBe(root.binding.requestId);
-            if (boundary === 'B Home' || boundary === 'B Socket') {
+            if (boundary === 'B Home' || boundary === 'B Socket' || boundary.startsWith('Seed')) {
+                const seed = boundary.startsWith('Seed');
                 const source = WorkspaceSyncSourceRoutingV1Schema.parse({ ...workspaceSyncSourceRouting,
                     sourceContext: { ...workspaceSyncSourceRouting.sourceContext, callerPermissionMode: 'default', workspaceWrites: 'allow' } });
                 // The live SOURCE packet is sealed to installed P1. Home must
@@ -812,7 +835,7 @@ describe("external Action execution authorization", () => {
                         privateKey: targetKey.secretKey }) } };
                 const routing = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse({ v: 1, source,
                     sourceWriter: { machineId: writer.id, installationId: writer.installationId! },
-                    target: { v: 1, phase: 'preflight', operationId: crypto.randomUUID(), accountServerId: homeId,
+                    target: { v: 1, phase: seed ? 'prepare' : 'preflight', operationId: crypto.randomUUID(), accountServerId: homeId,
                         targetMachineId: target.id, targetRootPath: targetRef.rootPath } });
                 const sourceContext = routing.source.sourceContext;
                 const targetAdmission = await resolveMachineAdmission({ actorAccountId: fixture.account.id, machineId: target.id, requiredRole: 'use' });
@@ -826,6 +849,107 @@ describe("external Action execution authorization", () => {
                     targetPath: targetRef.rootPath, operationId: routing.target.operationId });
                 const writerToken = await auth.createToken(sourceCustodian.id, undefined, { kind: 'account', authority: 'present_user' });
                 const targetToken = await auth.createToken(targetCustodian.id, undefined, { kind: 'account', authority: 'present_user' });
+                if (seed) {
+                    // Native child storage and an ordinary D export from D itself,
+                    // not its controller. The same Root/actor/seed fence still applies.
+                    const seedSigner = seedOwnTarget ? target : parent;
+                    const seedSignerKey = seedOwnTarget ? targetKey : parentKey;
+                    const wrongSeedSignerKey = seedOwnTarget ? parentKey : targetKey;
+                    const workspaceSyncSeedRouting = { v: 1 as const, sourceWriterTarget: routing, target: targetRouting };
+                    const seedMethod = `${writer.id}:${RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE}`;
+                    const seedInput = { t: 'workspace_sync_seed_v1' as const, operationId: routing.target.operationId,
+                        sourceWorkspaceRefId: sourceRef.id, targetMachineId: seedSigner.id,
+                        contentPolicy: createFixtureCopyOnceWorkspaceAction().contentPolicy };
+                    if (boundary.endsWith('Home')) {
+                        const verifySeed = (receiver = false, selectedRouting = workspaceSyncSeedRouting,
+                            packet = sourceExecution, authorization = root, privateKey = receiver ? writerKey.secretKey : seedSignerKey.secretKey) => {
+                            const signer = receiver ? writer : seedSigner;
+                            const rpcAdmission = { context, method: seedMethod, workspaceSyncSeedRouting: selectedRouting,
+                                workspaceSyncSourceExecution: packet, callerInputAuthorization: authorization };
+                            const payload = MachineInstallationProofPayloadV1Schema.parse({ version: 1, machineId: signer.id,
+                                installationId: signer.installationId!, accountId: receiver ? sourceCustodian.id : targetCustodian.id, rpcAdmission });
+                            return app.inject({ method: 'POST', url: `/v1/machines/${signer.id}/admission/verify`,
+                                headers: { authorization: `Bearer ${receiver ? writerToken : targetToken}`, ...currentAccountStoredContentCompatibilityHeaders },
+                                payload: { v: 1, ...rpcAdmission, proof: signMachineInstallationProof({ payload, privateKey }) } });
+                        };
+                        for (const receiver of [false, true]) {
+                            const admitted = await verifySeed(receiver);
+                            expect(admitted.statusCode, admitted.body).toBe(200);
+                            expect(admitted.json()).toEqual({ v: 1, ok: true, destinationInstallation: { machineId: writer.id,
+                                installationId: writer.installationId, installationPublicKey: Buffer.from(writerKey.publicKey).toString('base64url') } });
+                        }
+                        if (boundary.startsWith('Seed child')) {
+                            const enrollment = await db.managedMachine.findUniqueOrThrow({ where: { enrolledMachineId: target.id } });
+                            await db.managedMachine.update({ where: { id: enrollment.id }, data: { archivedAt: new Date() } });
+                            expect((await verifySeed()).statusCode).toBe(403);
+                            await db.managedMachine.update({ where: { id: enrollment.id }, data: { archivedAt: null } });
+                        }
+                        expect((await verifySeed(false, workspaceSyncSeedRouting, sourceExecution, root, wrongSeedSignerKey.secretKey)).statusCode).toBe(403);
+                        expect((await verifySeed(false, workspaceSyncSeedRouting, sourceExecution, { ...root, token: 'forged-root' })).statusCode).toBe(403);
+                        expect((await verifySeed(false, { ...workspaceSyncSeedRouting, sourceWriterTarget: { ...routing,
+                            sourceWriter: { machineId: parent.id, installationId: parent.installationId! } } })).statusCode).toBe(403);
+                        expect((await verifySeed(false, { ...workspaceSyncSeedRouting, target: { ...targetRouting,
+                            targetContext: { ...targetRouting.targetContext, machineAdmission: { ...targetContext, role: 'manage' } } } })).statusCode).toBe(403);
+                        await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: sourceCustodian.id, machineId: child.id,
+                            principal: { kind: 'account', accountId: fixture.account.id } }));
+                        expect((await verifySeed()).statusCode).toBe(403);
+                        return;
+                    }
+                    // Only Socket delivery is simulated. The CLI owner separately
+                    // proves the existing active seed fence and publication lifecycle.
+                    const exportEffect = vi.fn(async (_event: string, _request: unknown) => ({ transferId: 'seed-export' }));
+                    const exportReceiver = { id: 'project-seed-source-writer', data: { clientType: 'machine-scoped', machineId: writer.id,
+                        verifiedMachineInstallationId: writer.installationId }, timeout: () => ({ emitWithAck: exportEffect }) };
+                    qualifyCurrentAccountStoredContentSocket(exportReceiver);
+                    const seedIo = createSocketRoomDiscoveryHarness(async room => room === `rpc:${sourceCustodian.id}:${seedMethod}`
+                        || room === exportReceiver.id ? [exportReceiver] : []);
+                    const seedSocket = Object.assign(createFakeSocket({ id: 'project-physical-target-seed-sender', data: {
+                        clientType: 'machine-scoped', machineId: seedSigner.id, verifiedMachineInstallationId: seedSigner.installationId,
+                        authTokenKind: 'account', authAuthority: 'present_user' } }), { handshake: { auth: { token: targetToken } } });
+                    qualifyCurrentAccountStoredContentSocket(seedSocket);
+                    registerSocketRpcHandlers({ userId: targetCustodian.id, socket: seedSocket as unknown as Socket, io: seedIo });
+                    const callback = vi.fn();
+                    const seedRequestId = crypto.randomUUID();
+                    const callSeed = (selectedRouting = workspaceSyncSeedRouting, packet = sourceExecution, privateKey = seedSignerKey.secretKey) => {
+                        const request = { authorizationToken: root.token, effectActionId: 'projects.open', target: root.binding.target,
+                            installationId: seedSigner.installationId!, method: seedMethod, requestId: seedRequestId, params: seedInput,
+                            workspaceSyncSeedRouting: selectedRouting };
+                        const externalActionExecution = { v: 1 as const, authorization: root, effectActionId: 'projects.open', target: root.binding.target,
+                            installationId: seedSigner.installationId!, machineSignature: signExternalActionMachineRpcRequestV1({ ...request, privateKey }) };
+                        return getSocketHandler(seedSocket, SOCKET_RPC_EVENTS.CALL)({ method: seedMethod, requestId: seedRequestId,
+                            params: seedInput, workspaceSyncSeedRouting: selectedRouting, workspaceSyncSourceExecution: packet, externalActionExecution }, callback);
+                    };
+                    await callSeed();
+                    expect(callback).toHaveBeenCalledWith({ ok: true, result: { transferId: 'seed-export' } });
+                    expect(exportEffect.mock.calls[0]?.[1]).toMatchObject({ machineAdmission: context, callerInputAuthorization: root,
+                        workspaceSyncSeedRouting, workspaceSyncSourceExecution: sourceExecution });
+                    if (boundary.startsWith('Seed child')) {
+                        const enrollment = await db.managedMachine.findUniqueOrThrow({ where: { enrolledMachineId: target.id } });
+                        await db.managedMachine.update({ where: { id: enrollment.id }, data: { archivedAt: new Date() } });
+                        callback.mockClear();
+                        await callSeed();
+                        expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
+                        await db.managedMachine.update({ where: { id: enrollment.id }, data: { archivedAt: null } });
+                    }
+                    for (const selectedRouting of [
+                        { ...workspaceSyncSeedRouting, sourceWriterTarget: { ...routing, source: { ...source, sourceRootPath: '/unscoped' } } },
+                        { ...workspaceSyncSeedRouting, target: { ...targetRouting, targetContext: { ...targetRouting.targetContext,
+                            machineAdmission: { ...targetContext, installationId: 'retired-target' } } } },
+                    ]) {
+                        callback.mockClear();
+                        await callSeed(selectedRouting);
+                        expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
+                    }
+                    callback.mockClear();
+                    await callSeed(workspaceSyncSeedRouting, sourceExecution, wrongSeedSignerKey.secretKey);
+                    expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
+                    await db.machine.update({ where: { id: seedSigner.id }, data: { installationId: crypto.randomUUID() } });
+                    callback.mockClear();
+                    await callSeed();
+                    expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
+                    expect(exportEffect).toHaveBeenCalledTimes(1);
+                    return;
+                }
                 const reviewedPurpose = version === 1 ? await (async () => {
                     const reviewedInput = OpenProjectInputV1Schema.parse({ ...input,
                         materialization: { ...input.materialization, targetPath: '/child/reviewed-target' } });
@@ -2576,6 +2700,55 @@ describe("external Action execution authorization", () => {
             const root = ExternalActionExecutionAuthorizationV1Schema.parse(rootResponse.json());
             expect(root.binding).toMatchObject({ handoffAdmission: { ...admission,
                 sourceInstallationId: source.installationId, targetInstallationId: destination.installationId }, sessionActionOrigin: origin });
+            const preflightPath = bindExternalActionExecutionAuthorizationHttpPathV1('session.handoff');
+            const preflightInput = { ...admission, targetPath: '/workspace/project', sourceSessionStorageMode: 'persisted' };
+            const preflightBody = { v: 1, machineId: destination.id, envelope: { v: 1, requestId: root.binding.requestId,
+                target: { kind: 'machine', machineId: destination.id }, input: preflightInput, handoffAdmission: admission },
+                handoffPreflight: { authorization: root } };
+            const issuePreflight = (payload: unknown = preflightBody) => app.inject({ method: 'POST', url: preflightPath, payload,
+                headers: { [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token,
+                    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: 'session.handoff',
+                    [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(root.binding.target),
+                    [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: root.token,
+                        effectActionId: 'session.handoff', target: root.binding.target, installationId: root.binding.installationId,
+                        requestId: root.binding.requestId, method: 'POST', path: preflightPath, body: payload, privateKey: fixture.keyPair.secretKey }) } });
+            const preflightResponse = await issuePreflight();
+            expect(preflightResponse.statusCode, preflightResponse.body).toBe(200);
+            const preflight = ExternalActionExecutionAuthorizationV1Schema.parse(preflightResponse.json());
+            expect(preflight.binding).toMatchObject({ handoffPreflight: { rootRequestId: root.binding.requestId,
+                rootRequestEnvelopeDigest: root.binding.requestEnvelopeDigest }, handoffAdmission: root.binding.handoffAdmission,
+                sessionActionOrigin: origin, sessionActionSource: source });
+            const preflightRpc = async (methodId: string, privateKey = fixture.keyPair.secretKey) => {
+                const method = `${destination.id}:${methodId}`;
+                const execution = { v: 1 as const, authorization: preflight, effectActionId: 'session.handoff',
+                    target: preflight.binding.target, installationId: preflight.binding.installationId,
+                    machineSignature: signExternalActionMachineRpcRequestV1({ authorizationToken: preflight.token,
+                        effectActionId: 'session.handoff', target: preflight.binding.target, installationId: preflight.binding.installationId,
+                        event: SOCKET_RPC_EVENTS.CALL, method, requestId: root.binding.requestId, params: preflightInput, privateKey }) };
+                return verifyExternalActionMachineRpcExecution(execution, { method, requestId: root.binding.requestId,
+                    params: preflightInput, resolveCurrentSessionMachine: resolvePublisher });
+            };
+            expect(await preflightRpc(RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3)).not.toBeNull();
+            expect(await preflightRpc(RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3, destinationKeys.secretKey)).toBeNull();
+            expect(await preflightRpc(RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3)).toBeNull();
+            const preflightHttp = (method: string, path: string, body?: unknown, privateKey = fixture.keyPair.secretKey) =>
+                verifyExternalActionDomainExecutionRequest({ authorizationToken: preflight.token, effectActionId: 'session.handoff',
+                    encodedTarget: encodeExternalActionResolvedTargetV1(preflight.binding.target), method, path, body,
+                    machineSignature: signExternalActionMachineRequestV1({ authorizationToken: preflight.token,
+                        effectActionId: 'session.handoff', target: preflight.binding.target, installationId: preflight.binding.installationId,
+                        requestId: preflight.binding.requestId, method, path, ...(body === undefined ? {} : { body }), privateKey }),
+                    resolveCurrentSessionMachine: resolvePublisher });
+            // The installed-key sealing transport reads only its exact bound peer's public Machine projection.
+            expect(await preflightHttp('GET', `/v1/machines/${destination.id}`)).not.toBeNull();
+            expect(await preflightHttp('GET', `/v1/machines/${fixture.machine.id}`)).toBeNull();
+            expect(await preflightHttp('GET', `/v1/machines/${destination.id}`, undefined, destinationKeys.secretKey)).toBeNull();
+            expect(await preflightHttp('POST', '/v1/actions/session.handoff', {
+                ...preflightBody, executionAuthorization: preflight })).toBeNull();
+            expect((await issuePreflight({ ...preflightBody, envelope: { ...preflightBody.envelope,
+                input: { ...preflightInput, sessionId: 'another-session' } } })).statusCode).toBe(401);
+            const { sessionId: _sessionId, ...missingSessionInput } = preflightInput;
+            expect((await issuePreflight({ ...preflightBody, envelope: { ...preflightBody.envelope,
+                input: missingSessionInput } })).statusCode).toBe(401);
             // A non-writing handoff can legitimately be issued under a deny ceiling.
             // Its private SOURCE carrier must retain that signed ceiling for later write phases.
             const sourceAdmission = await resolveMachineAdmission({ actorAccountId: fixture.account.id,
@@ -2597,6 +2770,8 @@ describe("external Action execution authorization", () => {
             }
             publisherVisible = false;
             expect(await resolvePublisher({ accountId: fixture.account.id, sessionId: session.id })).toBeNull();
+            expect((await issuePreflight()).statusCode).toBe(401);
+            expect(await preflightRpc(RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3)).toBeNull();
             const actionId = 'session.handoff.status.get';
             const handoffId = 'accepted-handoff';
             const envelope = { v: 1, requestId: root.binding.requestId, target: { kind: 'machine', machineId: destination.id },

@@ -81,7 +81,7 @@ export async function readPluginDeclarativeSettings(
     input: Readonly<{ accountId: string; pluginId: string }>,
 ): Promise<PluginDeclarativeSettingsReadResult> {
     return await inTx(async (tx) =>
-        await readPluginDeclarativeSettingsInTx(tx, input));
+        await readPluginDeclarativeSettingsInTx(tx, input), { readOnly: true });
 }
 
 export async function mutatePluginDeclarativeSettingsInTx(

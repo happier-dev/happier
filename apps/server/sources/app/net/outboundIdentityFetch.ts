@@ -10,6 +10,7 @@ import {
     OutboundIdentityEndpointError,
     redactEndpoint,
     type OutboundIdentityNetworkPolicy,
+    type OutboundNetworkPolicy,
 } from "@/app/net/outboundIdentityNetworkPolicy";
 
 /**
@@ -41,9 +42,16 @@ export type CreateOutboundIdentityFetchInput = Readonly<{
     tlsOptions?: Parameters<typeof buildConnector>[0];
 }>;
 
+export type CreateOutboundFetchInput = Omit<CreateOutboundIdentityFetchInput, "policy"> & Readonly<{ policy: OutboundNetworkPolicy }>;
+
 const NULL_BODY_STATUSES: ReadonlySet<number> = new Set([101, 204, 205, 304]);
 
 export function createOutboundIdentityFetch(input: CreateOutboundIdentityFetchInput): OutboundIdentityFetch {
+    return createOutboundFetch(input);
+}
+
+/** Shared peer-pinned transport; consumer-owned bounds are applied only when supplied. */
+export function createOutboundFetch(input: CreateOutboundFetchInput): OutboundIdentityFetch {
     const { policy } = input;
     const resolveAddresses = input.resolveAddresses ?? defaultResolveAddresses;
     const connect = buildConnector({ ...input.tlsOptions });
@@ -107,7 +115,7 @@ export function createOutboundIdentityFetch(input: CreateOutboundIdentityFetchIn
         }
 
         const controller = new AbortController();
-        const timer = setTimeout(() => {
+        const timer = policy.timeoutMs === undefined ? undefined : setTimeout(() => {
             controller.abort(new OutboundIdentityEndpointError("outbound_timeout", endpoint, `exceeded ${policy.timeoutMs}ms`));
         }, policy.timeoutMs);
         const signal = init?.signal ? AbortSignal.any([init.signal, controller.signal]) : controller.signal;
@@ -210,7 +218,7 @@ function safeParseUrl(raw: string): URL {
 
 async function readBoundedBody(
     response: Awaited<ReturnType<typeof undiciFetch>>,
-    maxBytes: number,
+    maxBytes: number | undefined,
     endpoint: string,
 ): Promise<Buffer<ArrayBuffer> | null> {
     if (!response.body) return null;
@@ -222,7 +230,7 @@ async function readBoundedBody(
         if (done) break;
         if (!value) continue;
         total += value.byteLength;
-        if (total > maxBytes) {
+        if (maxBytes !== undefined && total > maxBytes) {
             await reader.cancel();
             throw new OutboundIdentityEndpointError("outbound_response_too_large", endpoint, `response exceeded ${maxBytes} bytes`);
         }

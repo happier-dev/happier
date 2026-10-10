@@ -70,6 +70,22 @@ vi.mock("@/storage/db", async () => {
             // No stored Home rows: feature bits come from the (stubbed) deployment env.
             homeSettings: { findUnique: async () => null },
             homeGovernancePolicy: { findUnique: async () => null },
+            // Keep canonical transaction orchestration real; only the Prisma
+            // transaction boundary answers the same synthetic database rows.
+            $transaction: async <T>(fn: (tx: TxMock) => Promise<T>) => {
+                const tx = testState.currentTx as TxMock;
+                return await fn({
+                    ...tx,
+                    session: {
+                        ...tx.session,
+                        findUnique: vi.fn((query: Prisma.SessionFindUniqueArgs) => query.select?.shares
+                            ? testState.readAccessSession(query)
+                            : tx.session.findUnique(query)),
+                    },
+                    homeSettings: { findUnique: async () => null },
+                    homeGovernancePolicy: { findUnique: async () => null },
+                });
+            },
         },
     };
 });
@@ -91,10 +107,6 @@ function accessSessionRow(level: "view" | "edit" | "admin" | "owner", sharedWith
         groupGrants: [],
     };
 }
-
-vi.mock("@/storage/inTx", () => ({
-    inTx: async <T>(fn: (tx: TxMock) => Promise<T>) => await fn(testState.currentTx as TxMock),
-}));
 
 // The database boundary fixture recognizes editor constraints regardless of Boolean grouping.
 function hasCurrentEditPredicate(where: Prisma.SessionSystemRecordWhereInput): boolean {
@@ -276,6 +288,22 @@ describe("sessionSystemRecordService account scoping", () => {
             sessionId: "s1",
             query: { owner: "host", namespace: "surface", limit: 20 },
         })).resolves.toEqual({ ok: false, code: "plugin_session_record_feature_disabled" });
+
+        // Item existence is Session content, independent of Board layout admission.
+        currentTx.sessionSystemRecord.findFirst.mockResolvedValue(null);
+        await expect(readSessionSystemRecordV1({ authentication,
+            actorUserId: "shared-editor",
+            sessionId: "s1",
+            address: { owner: "host", namespace: "surface", kind: "item.v1", localId: "visual" },
+        })).resolves.toMatchObject({ ok: true, record: null });
+        currentTx.sessionSystemRecord.findMany.mockResolvedValue([]);
+        await expect(listSessionSystemRecordsV1({ authentication,
+            actorUserId: "shared-editor",
+            sessionId: "s1",
+            query: { owner: "host", namespace: "surface", kind: "item.v1", limit: 20 },
+        })).resolves.toMatchObject({ ok: true, page: { records: [] } });
+
+        currentTx.sessionSystemRecord.findMany.mockResolvedValue([activityRecord()]);
 
         await expect(listSessionSystemRecordsV1({ authentication,
             actorUserId: "shared-editor",

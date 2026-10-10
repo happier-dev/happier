@@ -10,6 +10,7 @@ const sessionMessageCreate = vi.fn();
 const accountFindUnique = vi.fn();
 const accountSessionReadStateUpdateMany = vi.fn();
 const accountSessionFollowFindMany = vi.fn();
+const sessionSystemRecordFindFirst = vi.fn();
 
 function createTx(): Tx {
     return {
@@ -18,6 +19,7 @@ function createTx(): Tx {
         account: { findUnique: accountFindUnique },
         accountSessionReadState: { updateMany: accountSessionReadStateUpdateMany },
         accountSessionFollow: { findMany: accountSessionFollowFindMany },
+        sessionSystemRecord: { findFirst: sessionSystemRecordFindFirst },
     } as unknown as Tx;
 }
 
@@ -32,7 +34,7 @@ async function runInTransaction<T>(operation: (tx: Tx) => Promise<T>): Promise<T
 describe("canonical session transcript writer", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        sessionUpdate.mockResolvedValue({ seq: 8 });
+        sessionUpdate.mockResolvedValue({ seq: 8, accountId: 'account-1' });
         sessionFindUnique.mockResolvedValue({
             accountId: "account-1",
             encryptionMode: "plain",
@@ -42,6 +44,9 @@ describe("canonical session transcript writer", () => {
         accountSessionReadStateUpdateMany.mockResolvedValue({ count: 0 });
         accountSessionFollowFindMany.mockResolvedValue([]);
         sessionMessageFindMany.mockResolvedValue([]);
+        sessionSystemRecordFindFirst.mockResolvedValue({ id: 'sysrec_1', accountId: 'account-1', sessionId: 'session-1',
+            ownerKind: 'host', pluginId: null, namespace: 'surface', kind: 'item.v1', localId: 'visual', version: 1,
+            content: { t: 'encrypted', c: 'item-ciphertext' }, createdAt: new Date(1000), updatedAt: new Date(1000) });
         sessionMessageCreate.mockResolvedValue({
             id: "message-1",
             sessionId: "session-1",
@@ -57,6 +62,27 @@ describe("canonical session transcript writer", () => {
             createdAt: new Date(1_000),
             updatedAt: new Date(1_000),
         });
+    });
+
+    it('stamps only an admitted same-Session surface identity beside an encrypted Message', async () => {
+        const { writeSessionTranscriptMessageInTx } = await import('./sessionTranscriptWrite');
+        const surfaceItemReference = { v: 1, itemId: 'visual', itemRevision: 'ssr1.AAAACHN5c3JlY18xAAAAAQ',
+            sourceAddress: { serverId: 'home-a', sessionId: 'session-1' } };
+        const params = { sessionId: 'session-1', writeAuthority: 'hosted', sessionEncryptionMode: 'e2ee',
+            storagePolicy: 'optional', localId: 'tool-result', sidechainId: null, messageRole: 'agent',
+            content: { t: 'encrypted', c: 'message-ciphertext' }, surfaceItemReference };
+        const write = writeSessionTranscriptMessageInTx as (tx: Tx, params: unknown) => Promise<unknown>;
+        expect(await runInTransaction((tx) => write(tx, params))).toMatchObject({ ok: true });
+        expect(sessionMessageCreate.mock.calls.at(-1)?.[0].data.surfaceItemReference).toEqual(surfaceItemReference);
+        sessionSystemRecordFindFirst.mockResolvedValue(null);
+        sessionMessageCreate.mockClear();
+        expect(await runInTransaction((tx) => write(tx, { ...params, localId: 'removed' }))).toMatchObject({ ok: true });
+        expect(sessionMessageCreate.mock.calls.at(-1)?.[0].data).not.toHaveProperty('surfaceItemReference');
+        sessionSystemRecordFindFirst.mockResolvedValue({ id: 'recreated', accountId: 'account-1', sessionId: 'session-1',
+            ownerKind: 'host', pluginId: null, namespace: 'surface', kind: 'item.v1', localId: 'visual', version: 3,
+            content: { t: 'encrypted', c: 'replacement' }, createdAt: new Date(1000), updatedAt: new Date(1000) });
+        expect(await runInTransaction((tx) => write(tx, { ...params, localId: 'recreated' }))).toMatchObject({ ok: true });
+        expect(sessionMessageCreate.mock.calls.at(-1)?.[0].data).not.toHaveProperty('surfaceItemReference');
     });
 
     it("rejects a mode-mismatched historical item before allocating a sequence", async () => {

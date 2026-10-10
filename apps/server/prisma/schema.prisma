@@ -342,11 +342,12 @@ model IdentityProviderInstance {
     @@index([githubAppInstallationId])
 }
 
-/// One Team's binding to one provider instance. Provider-kind leaves validate
+/// One Home or Team binding to one provider instance. Null teamId denotes Home.
+/// Provider-kind leaves validate
 /// the strict externalReference/settings documents; this row owns lifecycle.
 model TeamIdentityConnection {
     id                       String   @id @default(cuid())
-    teamId                   String
+    teamId                   String?
     providerInstanceId       String
     externalReference        Json
     settings                 Json
@@ -359,7 +360,7 @@ model TeamIdentityConnection {
     createdAt                DateTime @default(now())
     updatedAt                DateTime @updatedAt
 
-    team             Team                     @relation(fields: [teamId], references: [id], onDelete: Restrict)
+    team             Team?                    @relation(fields: [teamId], references: [id], onDelete: Restrict)
     providerInstance IdentityProviderInstance @relation(fields: [providerInstanceId], references: [id], onDelete: Restrict)
     createdBy        Account?                 @relation("TeamIdentityConnectionCreator", fields: [createdByAccountId], references: [id], onDelete: SetNull)
     externalBindings TeamExternalGroupBinding[]
@@ -2062,6 +2063,9 @@ model SessionMessage {
     sourceUpdatedAt DateTime?
     /// [SessionTranscriptObservationProvenanceV1]
     transcriptObservationProvenance Json?
+    /// Server-private, admitted identity; owning Session is this Message's Session.
+    /// [SessionTranscriptSurfaceItemReferenceV1]
+    surfaceItemReference Json?
     /// [SessionMessageDeliveryResolutionV1]
     deliveryResolution Json?
     /// Private currentness fact for host-issued Message Action references.
@@ -4218,6 +4222,7 @@ model PublicSessionShare {
     useCount          Int                       @default(0)
     /// Whether user consent is required to view (enables detailed access logging)
     isConsentRequired Boolean                   @default(false)
+    networkOff        Boolean                   @default(false)
     createdAt         DateTime                  @default(now())
     updatedAt         DateTime                  @updatedAt
     accessLogs        PublicShareAccessLog[]

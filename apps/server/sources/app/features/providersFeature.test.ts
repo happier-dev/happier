@@ -8,6 +8,7 @@ import { resolveProvidersFeature } from "./providersFeature";
 describe("providers server feature resolver", () => {
     it("defaults first-class providers and their local capabilities to enabled", () => {
         expect(resolveProvidersFeature({} as NodeJS.ProcessEnv)).toEqual({
+            capabilities: { providerBroker: { protocolVersions: [1, 2] } },
             features: {
                 providers: {
                     enabled: true,

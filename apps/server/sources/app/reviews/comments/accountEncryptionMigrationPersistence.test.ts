@@ -183,6 +183,9 @@ describe("Review Comment Account-encryption storage adapter", () => {
             finding_identity: comment.findingIdentity, finding_severity: comment.findingSeverity,
             reviewed_fingerprint: comment.reviewedFingerprint, review_triage_status: comment.reviewTriageStatus,
             ...Object.fromEntries(Object.entries(buildReviewCommentCanonicalStorageValues({ structural: split.structural, targetSensitiveEnvelope: envelope })).map(([key, value]) => [key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`), value])) };
+        row.author_json = JSON.stringify({ ...comment.author, future: true });
+        row.anchor_json = JSON.stringify({ ...split.structural.anchorIndex, future: true });
+        row.workspace_json = JSON.stringify({ ...comment.workspace, future: true });
         expect(buildStoredReviewCommentFromStorageRow(row).structural).toEqual(split.structural);
     });
     it("reconstructs the exact legacy split source and binds legacy event content to authoritative columns", () => {

@@ -170,7 +170,7 @@ export async function listSessionsForAccount(params: Readonly<{
                 nowMs: now,
             }),
         };
-    });
+    }, { readOnly: true });
 }
 
 async function listSessionRowsForAccount(params: Readonly<{
@@ -268,14 +268,14 @@ async function listSessionRowsForAccount(params: Readonly<{
     }
 
     const pinnedSessionIds = params.storage === "active" && !params.cursor
-        ? await timing.measureAsync("cursor", () => params.readSource
-            ? fetchFilteredSessionPinnedIds({
-                tx: params.readSource.reader,
-                accountId: userId,
-                baseWhere: params.readSource.baseWhere,
-                where,
-            })
-            : fetchSessionOrganizationPinnedSessionIds(userId, params.authentication))
+        ? await timing.measureAsync("cursor", () => fetchSessionOrganizationPinnedSessionIds(
+            userId,
+            params.authentication,
+            params.readSource ? {
+                reader: params.readSource.reader,
+                sessionWhere: conjoinSessionListWhereInputs(params.readSource.baseWhere, where),
+            } : undefined,
+        ))
         : [];
     let cursor: V2SessionListCursorV2 | undefined;
     if (params.cursor) {
@@ -338,23 +338,6 @@ async function listSessionRowsForAccount(params: Readonly<{
         nextCursor: page.nextCursor,
         hasNext: page.hasNext,
     }));
-}
-
-async function fetchFilteredSessionPinnedIds(params: Readonly<{
-    tx: Pick<Tx, "sessionPin">;
-    accountId: string;
-    baseWhere: Prisma.SessionWhereInput;
-    where: Prisma.SessionWhereInput;
-}>): Promise<string[]> {
-    const pins = await params.tx.sessionPin.findMany({
-        where: {
-            accountId: params.accountId,
-            session: conjoinSessionListWhereInputs(params.baseWhere, params.where),
-        },
-        orderBy: [{ sortKey: "asc" }, { pinnedAt: "asc" }],
-        select: { sessionId: true },
-    });
-    return pins.map((pin) => pin.sessionId);
 }
 
 async function listFilteredSessionsForAccount(params: Readonly<{
@@ -489,5 +472,5 @@ async function listFilteredSessionsForAccount(params: Readonly<{
                 ? { metadataUpgradeRequiredCount: page.metadataUpgradeRequiredCount }
                 : {}),
         });
-    });
+    }, { readOnly: true });
 }

@@ -47,9 +47,11 @@ import {
     txSessionOrganizationTagUpdateMany,
     txSessionOrganizationTagUpsert,
     txSessionPinCount,
+    txSessionPinDeleteMany,
     txSessionPinFindMany,
     txSessionPinFindUnique,
     txSessionPinUpsert,
+    txSessionPinUpdateMany,
     txSessionFindFirst,
     txSessionFindMany,
     txSessionTagAssignmentCreateMany,
@@ -205,7 +207,7 @@ describe("session organization routes", () => {
     it("returns an account-scoped organization snapshot", async () => {
         txSessionOrganizationCheckpointFindUnique.mockResolvedValue({ version: 12 });
         txSessionPinFindMany.mockResolvedValue([
-            { sessionId: "s1", sortKey: "a", pinnedAt: organizationDate(1_000) },
+            { sessionId: "s1", sortKey: "a", pinnedAt: organizationDate(1_000), listPinned: true, railPinned: false },
         ]);
         txSessionOrganizationFolderFindMany.mockResolvedValue([
             {
@@ -249,7 +251,7 @@ describe("session organization routes", () => {
             snapshot: {
                 schemaVersion: SESSION_ORGANIZATION_SNAPSHOT_VERSION,
                 version: 12,
-                pins: [{ sessionId: "s1", sortKey: "a", pinnedAt: 1_000 }],
+                pins: [{ sessionId: "s1", sortKey: "a", pinnedAt: 1_000, listPinned: true, railPinned: false }],
                 folders: [{
                     folderId: "parent-folder",
                     folderKey: "parent:key",
@@ -440,7 +442,7 @@ describe("session organization routes", () => {
 
     it("filters snapshot membership rows through current session visibility", async () => {
         txSessionPinFindMany.mockResolvedValue([
-            { sessionId: "visible-pin", sortKey: "pin-a", pinnedAt: organizationDate(1_000) },
+            { sessionId: "visible-pin", sortKey: "pin-a", pinnedAt: organizationDate(1_000), listPinned: true, railPinned: false },
         ]);
         txSessionFolderAssignmentFindMany.mockResolvedValue([
             { sessionId: "visible-folder-session", folderId: "folder-1" },
@@ -459,7 +461,7 @@ describe("session organization routes", () => {
 
         expect(response).toEqual(expect.objectContaining({
             snapshot: expect.objectContaining({
-                pins: [{ sessionId: "visible-pin", sortKey: "pin-a", pinnedAt: 1_000 }],
+                pins: [{ sessionId: "visible-pin", sortKey: "pin-a", pinnedAt: 1_000, listPinned: true, railPinned: false }],
                 folderAssignments: [{ sessionId: "visible-folder-session", folderId: "folder-1" }],
                 tagAssignments: [{ sessionId: "visible-tag-session", tagIds: ["tag-1"] }],
             }),
@@ -581,6 +583,43 @@ describe("session organization routes", () => {
         }));
     });
 
+    it("changes only the selected pin surface, preserving shared order and timestamp", async () => {
+        sessionFindFirst.mockResolvedValue({ id: "s1" });
+        txSessionFindFirst.mockResolvedValue({ id: "s1" });
+        const existing = { id: "pin-1", sessionId: "s1", sortKey: "saved-rank", pinnedAt: organizationDate(4_000), listPinned: true, railPinned: true };
+        txSessionPinUpdateMany.mockResolvedValue({ count: 1 });
+        txSessionPinFindUnique.mockResolvedValue({ ...existing, listPinned: false });
+        const route = await createSessionRouteTestBuilder("PUT", "/v2/session-organization/pins/:sessionId");
+        const cleared = await route.invoke({ params: { sessionId: "s1" }, body: { pinned: false, surface: "list" } });
+        expect(cleared.response).toEqual({ pin: { sessionId: "s1", sortKey: "saved-rank", pinnedAt: 4_000, listPinned: false, railPinned: true } });
+        expect(txSessionPinDeleteMany).not.toHaveBeenCalled();
+        expect(txSessionPinUpdateMany).toHaveBeenCalledWith(expect.objectContaining({ data: { listPinned: false } }));
+
+        txSessionPinFindUnique.mockResolvedValue({ ...existing, listPinned: false });
+        txSessionPinUpsert.mockResolvedValue(existing);
+        const added = await route.invoke({ params: { sessionId: "s1" }, body: { pinned: true, sortKey: "replacement", surface: "list" } });
+        expect(added.response).toMatchObject({ pin: { sortKey: "saved-rank", pinnedAt: 4_000, listPinned: true, railPinned: true } });
+        expect(txSessionPinUpsert).toHaveBeenLastCalledWith(expect.objectContaining({ update: { listPinned: true } }));
+        expect(txSessionPinCount).not.toHaveBeenCalled();
+
+        txSessionPinFindUnique.mockResolvedValue({ ...existing, listPinned: false, railPinned: false });
+        const deleted = await route.invoke({ params: { sessionId: "s1" }, body: { pinned: false, surface: "rail" } });
+        expect(deleted.response).toEqual({ pin: null });
+        expect(txSessionPinDeleteMany).toHaveBeenCalledWith({ where: { accountId: "u1", sessionId: "s1", listPinned: false, railPinned: false } });
+    });
+
+    it("creates rail-only membership without list intent and reuses the Account record budget", async () => {
+        sessionFindFirst.mockResolvedValue({ id: "s1" });
+        txSessionFindFirst.mockResolvedValue({ id: "s1" });
+        txSessionPinFindUnique.mockResolvedValue(null);
+        txSessionPinCount.mockResolvedValue(0);
+        txSessionPinUpsert.mockResolvedValue({ sessionId: "s1", sortKey: null, pinnedAt: organizationDate(4_000), listPinned: false, railPinned: true });
+        const route = await createSessionRouteTestBuilder("PUT", "/v2/session-organization/pins/:sessionId");
+        const { response } = await route.invoke({ params: { sessionId: "s1" }, body: { pinned: true, surface: "rail" } });
+        expect(response).toMatchObject({ pin: { listPinned: false, railPinned: true } });
+        expect(txSessionPinUpsert).toHaveBeenCalledWith(expect.objectContaining({ create: expect.objectContaining({ listPinned: false, railPinned: true }) }));
+    });
+
     it("pins a visible session idempotently and marks organization changed", async () => {
         sessionFindFirst.mockResolvedValue({ id: "s1" });
         txSessionFindFirst.mockResolvedValue({ id: "s1" });
@@ -589,6 +628,8 @@ describe("session organization routes", () => {
             sessionId: "s1",
             sortKey: "rank-a",
             pinnedAt: organizationDate(4_000),
+            listPinned: true,
+            railPinned: false,
         });
 
         const route = await createSessionRouteTestBuilder("PUT", "/v2/session-organization/pins/:sessionId");
@@ -598,11 +639,11 @@ describe("session organization routes", () => {
         });
 
         expect(reply.code).not.toHaveBeenCalledWith(404);
-        expect(response).toEqual({ pin: { sessionId: "s1", sortKey: "rank-a", pinnedAt: 4_000 } });
+        expect(response).toEqual({ pin: { sessionId: "s1", sortKey: "rank-a", pinnedAt: 4_000, listPinned: true, railPinned: false } });
         expect(txSessionPinUpsert).toHaveBeenCalledWith(expect.objectContaining({
             where: { accountId_sessionId: { accountId: "u1", sessionId: "s1" } },
             create: expect.objectContaining({ accountId: "u1", sessionId: "s1", sortKey: "rank-a" }),
-            update: { sortKey: "rank-a" },
+            update: { listPinned: true },
         }));
         expect(txSessionOrganizationCheckpointUpsert).toHaveBeenCalledWith(expect.objectContaining({
             where: { accountId: "u1" },
@@ -642,6 +683,8 @@ describe("session organization routes", () => {
             sessionId: "archived",
             sortKey: null,
             pinnedAt: organizationDate(4_000),
+            listPinned: true,
+            railPinned: false,
         });
 
         const route = await createSessionRouteTestBuilder("PUT", "/v2/session-organization/pins/:sessionId");
@@ -695,6 +738,8 @@ describe("session organization routes", () => {
             sessionId: "s501",
             sortKey: null,
             pinnedAt: organizationDate(4_000),
+            listPinned: true,
+            railPinned: false,
         });
 
         const route = await createSessionRouteTestBuilder("PUT", "/v2/session-organization/pins/:sessionId");
@@ -704,7 +749,7 @@ describe("session organization routes", () => {
         });
 
         expect(reply.code).not.toHaveBeenCalledWith(409);
-        expect(response).toEqual({ pin: { sessionId: "s501", sortKey: null, pinnedAt: 4_000 } });
+        expect(response).toEqual({ pin: { sessionId: "s501", sortKey: null, pinnedAt: 4_000, listPinned: true, railPinned: false } });
         expect(txSessionPinUpsert).toHaveBeenCalledTimes(1);
     });
 
@@ -1063,9 +1108,7 @@ describe("session organization routes", () => {
 
     it("routes generic pinned order through canonical pin sort keys", async () => {
         txSessionFindMany.mockResolvedValue([pagedSessionRow("s1"), pagedSessionRow("s2")]);
-        txSessionPinUpsert
-            .mockResolvedValueOnce({ sessionId: "s1", sortKey: "a", pinnedAt: organizationDate(1_000) })
-            .mockResolvedValueOnce({ sessionId: "s2", sortKey: "b", pinnedAt: organizationDate(2_000) });
+        txSessionPinUpdateMany.mockResolvedValue({ count: 1 });
 
         const route = await createSessionRouteTestBuilder("PUT", "/v2/session-organization/order");
         const { response } = await route.invoke({
@@ -1085,7 +1128,7 @@ describe("session organization routes", () => {
                 { scopeKind: "pinned", scopeKey: "root", itemKind: "session", itemKey: "s2", sortKey: "b" },
             ],
         });
-        expect(txSessionPinUpsert).toHaveBeenCalledTimes(2);
+        expect(txSessionPinUpsert).not.toHaveBeenCalled();
         expect(txSessionOrganizationOrderEntryDeleteMany).not.toHaveBeenCalled();
         expect(txSessionOrganizationOrderEntryUpsert).not.toHaveBeenCalled();
         expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), {
@@ -1236,9 +1279,7 @@ describe("session organization routes", () => {
 
     it("reorders pins by updating the canonical pin sort keys consumed by v2 session bootstrap", async () => {
         txSessionFindMany.mockResolvedValue([{ id: "s1" }, { id: "s2" }]);
-        txSessionPinUpsert
-            .mockResolvedValueOnce({ sessionId: "s2", sortKey: "a", pinnedAt: organizationDate(2_000) })
-            .mockResolvedValueOnce({ sessionId: "s1", sortKey: "b", pinnedAt: organizationDate(1_000) });
+        txSessionPinUpdateMany.mockResolvedValue({ count: 1 });
 
         const reorderRoute = await createSessionRouteTestBuilder("POST", "/v2/session-organization/pins/reorder");
         await reorderRoute.invoke({
@@ -1252,35 +1293,69 @@ describe("session organization routes", () => {
             },
         });
 
-        expect(txSessionPinUpsert).toHaveBeenNthCalledWith(1, expect.objectContaining({
-            where: { accountId_sessionId: { accountId: "u1", sessionId: "s2" } },
-            create: expect.objectContaining({ accountId: "u1", sessionId: "s2", sortKey: "a" }),
-            update: { sortKey: "a" },
-        }));
-        expect(txSessionPinUpsert).toHaveBeenNthCalledWith(2, expect.objectContaining({
-            where: { accountId_sessionId: { accountId: "u1", sessionId: "s1" } },
-            create: expect.objectContaining({ accountId: "u1", sessionId: "s1", sortKey: "b" }),
-            update: { sortKey: "b" },
-        }));
+        expect(txSessionPinUpdateMany).toHaveBeenNthCalledWith(1, {
+            where: { accountId: "u1", sessionId: "s2", OR: [{ listPinned: true }, { railPinned: true }] },
+            data: { sortKey: "a" },
+        });
+        expect(txSessionPinUpdateMany).toHaveBeenNthCalledWith(2, {
+            where: { accountId: "u1", sessionId: "s1", OR: [{ listPinned: true }, { railPinned: true }] },
+            data: { sortKey: "b" },
+        });
+        expect(txSessionPinUpsert).not.toHaveBeenCalled();
         expect(txSessionOrganizationOrderEntryUpsert).not.toHaveBeenCalled();
 
-        txSessionPinFindMany.mockResolvedValue([
-            { sessionId: "s2", sortKey: "a", pinnedAt: organizationDate(2_000) },
-            { sessionId: "s1", sortKey: "b", pinnedAt: organizationDate(1_000) },
-        ]);
-        sessionFindMany.mockResolvedValue([pagedSessionRow("s1"), pagedSessionRow("s2")]);
+        const listPins = [
+            { sessionId: "s2", sortKey: "a", pinnedAt: organizationDate(2_000), listPinned: true, railPinned: false },
+            { sessionId: "s1", sortKey: "b", pinnedAt: organizationDate(1_000), listPinned: true, railPinned: false },
+        ];
+        // Model the persistent DB filter: a rail-only row must not gain list priority.
+        txSessionPinFindMany.mockImplementation(async (args: unknown) => {
+            const where = args && typeof args === "object" && "where" in args ? args.where : null;
+            return where && typeof where === "object" && "listPinned" in where && where.listPinned === true
+                ? listPins
+                : [{ sessionId: "rail-only", sortKey: "0", pinnedAt: organizationDate(500), listPinned: false, railPinned: true }, ...listPins];
+        });
+        const listingRows = [pagedSessionRow("s1"), pagedSessionRow("s2"), pagedSessionRow("rail-only")];
+        txSessionFindMany.mockResolvedValue(listingRows);
+        sessionFindMany.mockResolvedValue(listingRows);
 
         const listRoute = await createSessionRouteTestBuilder("GET", "/v2/sessions");
         const { response } = await listRoute.invoke({ query: { limit: 10 } });
 
-        expect((response as { sessions: Array<{ id: string }> }).sessions.map((session) => session.id)).toEqual(["s2", "s1"]);
+        expect((response as { sessions: Array<{ id: string }> }).sessions.map((session) => session.id)).toEqual(["s2", "s1", "rail-only"]);
         expect(txSessionPinFindMany).toHaveBeenCalledWith(expect.objectContaining({
             where: expect.objectContaining({
                 accountId: "u1",
-                session: expectedVisibleUnarchivedSessionWhere(),
+                listPinned: true,
             }),
             orderBy: [{ sortKey: "asc" }, { pinnedAt: "asc" }],
         }));
+    });
+
+    it.each([
+        ["POST", "/v2/session-organization/pins/reorder"],
+        ["PUT", "/v2/session-organization/order"],
+    ] as const)("excludes a stale unpinned entry from %s %s without recreating membership", async (method, path) => {
+        txSessionFindMany.mockResolvedValue([{ id: "s1" }]);
+        txSessionPinUpdateMany.mockResolvedValue({ count: 0 });
+        // The DB boundary still permits the defective create path; the assertion
+        // must catch resurrection rather than an unconfigured mock failure.
+        txSessionPinUpsert.mockResolvedValue({
+            sessionId: "s1", sortKey: "stale", pinnedAt: organizationDate(1_000), listPinned: true, railPinned: false,
+        });
+
+        const route = await createSessionRouteTestBuilder(method, path);
+        const { response } = await route.invoke({
+            body: {
+                scopeKind: "pinned", scopeKey: "root",
+                entries: [{ itemKind: "session", itemKey: "s1", sortKey: "stale" }],
+            },
+        });
+
+        expect(response).toEqual({ orderEntries: [] });
+        expect(txSessionPinUpsert).not.toHaveBeenCalled();
+        expect(txSessionOrganizationOrderEntryUpsert).not.toHaveBeenCalled();
+        expect(markAccountChanged).not.toHaveBeenCalled();
     });
 
     it("rejects reordering pins for an invisible session before writing pin state", async () => {
@@ -1311,10 +1386,10 @@ describe("session organization routes", () => {
         expect(markAccountChanged).not.toHaveBeenCalled();
     });
 
-    it("rejects pin reorder requests that would exceed the product maximum", async () => {
-        txSessionFindMany.mockResolvedValue([{ id: "new-pin" }]);
+    it("allows ordering retained pins at the product membership maximum", async () => {
+        txSessionFindMany.mockResolvedValue([{ id: "retained-pin" }]);
         txSessionPinCount.mockResolvedValue(SESSION_ORGANIZATION_MAX_PINNED_SESSIONS);
-        txSessionPinFindMany.mockResolvedValue([]);
+        txSessionPinUpdateMany.mockResolvedValue({ count: 1 });
 
         const route = await createSessionRouteTestBuilder("POST", "/v2/session-organization/pins/reorder");
         const { response, reply } = await route.invoke({
@@ -1322,21 +1397,16 @@ describe("session organization routes", () => {
                 scopeKind: "pinned",
                 scopeKey: "root",
                 entries: [
-                    { itemKind: "session", itemKey: "new-pin", sortKey: "a" },
+                    { itemKind: "session", itemKey: "retained-pin", sortKey: "a" },
                 ],
             },
         });
 
-        expect(reply.code).toHaveBeenCalledWith(409);
-        expect(response).toEqual({ error: "session-pin-limit-exceeded" });
-        expect(txSessionPinCount).toHaveBeenCalledWith({
-            where: {
-                accountId: "u1",
-                session: expectedVisibleUnarchivedSessionWhere(),
-            },
+        expect(reply.code).not.toHaveBeenCalledWith(409);
+        expect(response).toEqual({
+            orderEntries: [{ scopeKind: "pinned", scopeKey: "root", itemKind: "session", itemKey: "retained-pin", sortKey: "a" }],
         });
         expect(txSessionPinUpsert).not.toHaveBeenCalled();
-        expect(markAccountChanged).not.toHaveBeenCalled();
     });
 
     it("upserts tag definitions without parsing private display content", async () => {
@@ -1696,11 +1766,15 @@ describe("session organization routes", () => {
 
     it("imports legacy organization batches idempotently including workspace labels", async () => {
         txSessionFindFirst.mockResolvedValue({ id: "s1" });
+        txSessionFindMany.mockResolvedValue([{ id: "s1" }]);
         txSessionPinFindUnique.mockResolvedValue({ id: "pin-1" });
+        txSessionPinUpdateMany.mockResolvedValue({ count: 1 });
         txSessionPinUpsert.mockResolvedValue({
             sessionId: "s1",
             sortKey: "pin-a",
             pinnedAt: organizationDate(1_000),
+            listPinned: true,
+            railPinned: false,
         });
         txSessionOrganizationFolderUpsert.mockResolvedValue({
             id: "folder-1",
@@ -1776,6 +1850,8 @@ describe("session organization routes", () => {
                     itemKind: "workspace",
                     itemKey: "server_1:/private/project",
                     sortKey: "workspace-a",
+                }, {
+                    scopeKind: "pinned", scopeKey: "pins", itemKind: "session", itemKey: "s1", sortKey: "pin-a",
                 }],
                 labels: [{
                     labelKind: "workspace",
@@ -1790,7 +1866,7 @@ describe("session organization routes", () => {
                 pins: 1,
                 folders: 1,
                 tags: 1,
-                orderEntries: 1,
+                orderEntries: 2,
                 labels: 1,
             },
         });
@@ -1817,6 +1893,26 @@ describe("session organization routes", () => {
             entityId: "session-organization",
             hint: { sessionOrganization: true, scope: "labels", scopeKeys: ["server_1:/private/project"] },
         });
+    });
+
+    it("excludes stale unpinned legacy order entries without importing membership", async () => {
+        txSessionFindMany.mockResolvedValue([{ id: "s1" }]);
+        txSessionPinUpdateMany.mockResolvedValue({ count: 0 });
+        txSessionPinUpsert.mockResolvedValue({
+            sessionId: "s1", sortKey: "stale", pinnedAt: organizationDate(1_000), listPinned: true, railPinned: false,
+        });
+
+        const route = await createSessionRouteTestBuilder("POST", "/v2/session-organization/import");
+        const { response } = await route.invoke({
+            body: {
+                pins: [], folders: [], tags: [], labels: [],
+                orderEntries: [{ scopeKind: "pinned", scopeKey: "root", itemKind: "session", itemKey: "s1", sortKey: "stale" }],
+            },
+        });
+
+        expect(response).toEqual({ imported: { pins: 0, folders: 0, tags: 0, orderEntries: 0, labels: 0 } });
+        expect(txSessionPinUpsert).not.toHaveBeenCalled();
+        expect(markAccountChanged).not.toHaveBeenCalled();
     });
 
     it("skips archived legacy pins without writing hidden pin state", async () => {
@@ -1860,6 +1956,8 @@ describe("session organization routes", () => {
             sessionId: "s1",
             sortKey: "pin-a",
             pinnedAt: organizationDate(1_000),
+            listPinned: true,
+            railPinned: false,
         });
         txSessionOrganizationFolderUpsert.mockResolvedValue({
             id: "folder-1",
@@ -1905,6 +2003,8 @@ describe("session organization routes", () => {
             sessionId: "s1",
             sortKey: "pin-a",
             pinnedAt: organizationDate(1_000),
+            listPinned: true,
+            railPinned: false,
         });
 
         const route = await createSessionRouteTestBuilder("POST", "/v2/session-organization/import");

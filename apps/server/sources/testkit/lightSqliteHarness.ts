@@ -1,7 +1,8 @@
 import { spawnSync } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { renderPrismaCompatibleSqliteDatabaseUrl } from "@happier-dev/cli-common/firstPartyRuntime/server";
 
 import { applyLightDefaultEnv, ensureHandyMasterSecret } from "@/flavors/light/env";
@@ -74,7 +75,7 @@ export async function createLightSqliteHarness(options: LightSqliteHarnessOption
         await ensureHandyMasterSecret(process.env);
         const envBase = snapshotEnv();
 
-        runSqliteMigrations({ cwd: process.cwd(), env: process.env });
+        runSqliteMigrations({ cwd: resolve(dirname(fileURLToPath(import.meta.url)), '../..'), env: process.env });
         await initDbSqlite();
         await db.$connect();
 

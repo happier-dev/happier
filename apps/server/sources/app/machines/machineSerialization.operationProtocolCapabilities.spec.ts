@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { serializeMachineRow, type MachineSerializationRow } from './machineSerialization';
+import { serializeAccessibleMachineRow, serializeMachineRow, type MachineSerializationRow } from './machineSerialization';
 
 const baseMachineRow: MachineSerializationRow = {
     id: 'machine-1',
@@ -19,6 +19,17 @@ const baseMachineRow: MachineSerializationRow = {
 };
 
 describe('serializeMachineRow operation protocol capabilities', () => {
+    it('keeps the canonical owner key basis separate from the foreign recipient envelope', () => {
+        const ownerEnvelope = new Uint8Array([0, 1, 2]);
+        const recipientEnvelope = new Uint8Array([0, 3, 4]);
+        const projection = serializeAccessibleMachineRow({ ...baseMachineRow, dataEncryptionKey: ownerEnvelope }, {
+            access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'e2ee', accessState: 'ready' },
+            owned: false, callerDataEncryptionKey: recipientEnvelope,
+        });
+        expect(projection.dataEncryptionKey).toBe('AAME');
+        expect(projection.keyBasis).toEqual({ dataEncryptionKey: 'AAEC', metadataVersion: 3, daemonStateVersion: 0 });
+    });
+
     it('projects the exact persisted Runner key proof and Account verification key only for a Runner', () => {
         const binding = {
             v: 1,
@@ -76,26 +87,27 @@ describe('serializeMachineRow operation protocol capabilities', () => {
             });
     });
 
-    it('projects the strict complete capability snapshot and its revision', () => {
+    it('projects known stored capabilities and revision while dropping extras', () => {
         expect(serializeMachineRow({
             ...baseMachineRow,
             operationProtocolCapabilities: {
-                sessionSpawn: { protocolVersions: [1] },
+                sessionSpawn: { protocolVersions: [1], future: true },
+                futureCapability: { protocolVersions: [1] },
             },
             operationProtocolCapabilitiesRevision: 4,
-        })).toMatchObject({
+        })).toEqual(expect.objectContaining({
             operationProtocolCapabilities: {
                 sessionSpawn: { protocolVersions: [1] },
             },
             operationProtocolCapabilitiesRevision: 4,
-        });
+        }));
     });
 
     it('fails closed for malformed persisted JSON instead of projecting a usable leaf', () => {
         expect(serializeMachineRow({
             ...baseMachineRow,
             operationProtocolCapabilities: {
-                sessionSpawn: { protocolVersions: [1], untrusted: true },
+                sessionSpawn: { protocolVersions: [2] },
             },
             operationProtocolCapabilitiesRevision: 4,
         })).toMatchObject({

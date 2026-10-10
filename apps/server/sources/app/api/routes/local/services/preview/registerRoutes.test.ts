@@ -9,21 +9,34 @@ import { createFakeRouteApp, createReplyStub, getRouteEntry, getRouteHandler } f
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { registerLocalServicePreviewRoutes } from './registerRoutes';
 import { createLocalServicePreviewRuntime } from '@/app/local/services/preview/runtime';
+import { createLocalServicePublicRuntime } from '@/app/local/services/public/runtime';
+import { createLocalServicePublicRateLimitChecker } from '@/app/local/services/public/rateLimits';
 import type { OpenLocalServicePreviewTunnel } from '@/app/local/services/preview/httpAdapter';
 import { createLocalServiceRouteRuntimes, registerLocalServiceRoutes } from '../registerRoutes';
 import type { SessionAccessProjectionRow } from '@/app/session/access/sessionAccess';
 import { LocalServicePreviewNativeDirectAccessV1Schema, LocalServicePreviewServerAccessV1Schema } from '@happier-dev/protocol/local/services/preview/nativeDirect';
 import type { Fastify } from '@/app/api/types';
 import { enableServeUi } from '@/app/api/utils/enableServeUi';
+import { FEATURE_ENV_KEYS } from '@/app/features/catalog/featureEnvSchema';
+import { peerMediationGrantSigningEnv } from '@/testkit/env';
+import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
+import { eventRouter } from '@/app/events/connectionEventRouter';
+import { forwardRpcCall } from '@/app/api/socket/rpc/forwardRpcCall';
+import type { Server } from 'socket.io';
 
 // Only database, HTTP router/socket and network tunnel boundaries are replaced.
 const machineFindFirst = vi.hoisted(() => vi.fn(async (_query: unknown): Promise<{
     id: string; revokedAt?: Date | null; replacedByMachineId?: string | null;
     operationProtocolCapabilities?: MachineOperationProtocolCapabilitiesV1;
     operationProtocolCapabilitiesRevision?: number;
-} | null> => ({ id: 'machine_1' })));
+} | null> => ({ id: 'machine_1', revokedAt: null, replacedByMachineId: null })));
 const sessionFindUnique = vi.hoisted(() => vi.fn(async (): Promise<SessionAccessProjectionRow | null> => null));
-vi.mock('@/storage/db', () => ({ db: { machine: { findFirst: machineFindFirst }, session: { findUnique: sessionFindUnique } } }));
+const machineFindUnique = vi.hoisted(() => vi.fn(async (_query: unknown): Promise<unknown> => null));
+vi.mock('@/storage/db', () => {
+    const boundary = { machine: { findFirst: machineFindFirst, findUnique: machineFindUnique }, session: { findUnique: sessionFindUnique } };
+    return { db: { ...boundary, $transaction: async (callback: (tx: typeof boundary) => Promise<unknown>) => callback(boundary) } };
+});
 
 const preview: LocalServicePreviewResourceV1 = {
     previewId: 'preview_1', sessionId: 'session_1', machineId: 'machine_1',
@@ -100,8 +113,160 @@ function downstreamBoundary() {
 
 describe('local service preview routes', () => {
     beforeEach(() => {
-        machineFindFirst.mockReset().mockResolvedValue({ id: 'machine_1' });
+        machineFindFirst.mockReset().mockResolvedValue({ id: 'machine_1', revokedAt: null, replacedByMachineId: null });
         sessionFindUnique.mockReset().mockResolvedValue(null);
+        machineFindUnique.mockReset().mockResolvedValue(null);
+    });
+
+    it('admits a shared current Machine viewer only against the actual current service and retires its registration', async () => {
+        const target = { kind: 'managed_service', machineId: 'machine_1', managedServiceId: 'instance_1', cwd: '/workspace/app',
+            declaration: { workspaceRefId: 'workspace_1', selection: { kind: 'manifest', name: 'web' } } };
+        const resource = { ...preview, sessionId: undefined, owner: { kind: 'user', id: 'starter_1' }, serviceTarget: target };
+        const account = (id: string) => ({ id, status: 'active', encryptionMode: 'plain', firstName: null, lastName: null, username: id, avatar: null });
+        const facts = { id: 'machine_1', kind: 'persistent', accountId: 'user_1', installationId: 'installation_1', active: true,
+            revokedAt: null, replacedByMachineId: null, metadataVersion: 1, daemonStateVersion: 0, daemonState: null,
+            metadata: encodePlainMachineStoredContent(MachinePublishedMetadataV1Schema.parse({ host: 'machine', platform: 'linux',
+                happyCliVersion: '0.3', homeDir: '/home/user', happyHomeDir: '/home/user/.happier' })),
+            dataEncryptionKey: Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'), account: account('user_1'),
+            accountGrants: ['starter_1', 'viewer_1'].map(accountId => ({ accountId, accessLevel: 'view', account: account(accountId) })),
+            teamGrants: [], groupGrants: [] };
+        machineFindUnique.mockResolvedValue(facts);
+        machineFindFirst.mockResolvedValue({ id: 'machine_1', revokedAt: null, replacedByMachineId: null });
+        let retire!: () => void;
+        const retirement = new Promise<void>((resolve) => { retire = resolve; });
+        const calls: Array<Record<string, unknown>> = [];
+        const socket = { id: 'custodian_socket', data: { clientType: 'machine-scoped', userId: 'user_1', machineId: 'machine_1',
+            verifiedMachineInstallationId: 'installation_1', accountStoredContentCompatibility: {
+                supportsCurrentProtocol: true, supportsPluginDataProtocol: false, supportsSessionAccessWitnessProtocol: false,
+                supportsMachinePoolChangeProtocol: false, supportsSavedSecretResourceChangeProtocol: false,
+                outcome: 'accepted', declaration: { v: 1, protocolVersion: 2 }, upgradeRequired: null } },
+            timeout: () => ({ emitWithAck: async (_event: string, raw: unknown) => {
+                const request = raw as Record<string, unknown>;
+                calls.push(request);
+                const params = request.params as { kind: string };
+                if (params.kind === 'wait_retirement') { await retirement; return { v: 1, kind: 'retired', instanceId: 'instance_1' }; }
+                return { v: 1, kind: 'admitted', instanceId: 'instance_1', serviceTarget: target, starterAccountId: 'starter_1', endpoint: preview.target };
+            } }) };
+        const room = { timeout: () => room, fetchSockets: async () => [socket] };
+        // Socket.IO and its returned acknowledgement are the network boundary; forwarding and admission remain real.
+        const io = { in: () => room } as unknown as Server;
+        eventRouter.setIo(io, { forwardRpc: request => forwardRpcCall({ ...request, io }) });
+        const env = { ...peerMediationGrantSigningEnv(), HANDY_MASTER_SECRET: 'secret', HAPPIER_PUBLIC_SERVER_URL: 'https://app.happier.test',
+            HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED: 'true', HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN: 'preview.happier.test',
+            HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ENABLED: 'true',
+            HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOWED_MODES: 'secret_link',
+            HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__MAX_TTL_MS: '60000', HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__DNS_TLS_REQUIRED: '0',
+            [FEATURE_ENV_KEYS.localServicesPublicPreviewAllowTestAuditSink]: '1', [FEATURE_ENV_KEYS.localServicesPublicPreviewRateLimitProfileIds]: 'default',
+            [FEATURE_ENV_KEYS.localServicesPublicPreviewAllowTestRateLimitChecker]: '1',
+            [FEATURE_ENV_KEYS.machinesTunnelServerRoutedEnabled]: '1', [FEATURE_ENV_KEYS.machinesTunnelAllowedPorts]: '5173' };
+        const runtimes = createLocalServiceRouteRuntimes(env);
+        const closeHooks: Array<() => Promise<void>> = [];
+        const app = Object.assign(createFakeRouteApp(), { addHook(_name: string, hook: () => Promise<void>) { closeHooks.push(hook); } });
+        registerLocalServiceRoutes(app as never, { env, runtimes });
+        try {
+            const reply = createReplyStub();
+            await getRouteHandler(app, 'POST', '/v1/local-services/preview')({ userId: 'viewer_1', body: resource }, reply);
+            expect(reply.statusCode).toBe(201);
+            expect(reply.send.mock.calls[0]?.[0]).toMatchObject({ resource: { serviceTarget: target, owner: { kind: 'user', id: 'starter_1' } } });
+            expect(calls[0]).toMatchObject({ authorization: { kind: 'localServices.preview.admission.serverOrigin' },
+                machineAdmission: { actorAccountId: 'viewer_1', custodianAccountId: 'user_1', installationId: 'installation_1' } });
+            const publicReply = createReplyStub();
+            await getRouteHandler(app, 'POST', '/v1/local-services/public')({ userId: 'viewer_1', body: { machineId: resource.machineId,
+                previewId: resource.previewId, serviceTarget: target, mode: 'secret_link', ttlMs: 60_000,
+                confirmation: { acknowledged: true } } }, publicReply);
+            expect(publicReply.statusCode).toBe(201);
+            expect(publicReply.send.mock.calls[0]?.[0]).toMatchObject({ exposure: { serviceTarget: target, mode: 'secret_link' } });
+            const exposed = publicReply.send.mock.calls[0]?.[0] as { exposure: { exposureId: string } };
+            const wrongPublic = createReplyStub();
+            await getRouteHandler(app, 'POST', '/v1/local-services/public')({ userId: 'viewer_1', body: { machineId: resource.machineId,
+                previewId: resource.previewId, serviceTarget: { ...target, managedServiceId: 'another-instance' }, mode: 'secret_link', ttlMs: 60_000,
+                confirmation: { acknowledged: true } } }, wrongPublic);
+            expect(wrongPublic.statusCode).toBe(403);
+            const status = createReplyStub();
+            await getRouteHandler(app, 'POST', '/v1/local-services/public/status')({ userId: 'viewer_1', body: { machineId: resource.machineId,
+                previewId: resource.previewId } }, status);
+            expect(status.send.mock.calls[0]?.[0]).toMatchObject({ snapshot: { exposures: [{ exposureId: exposed.exposure.exposureId, serviceTarget: target }] } });
+            const qualifiedStatus = createReplyStub();
+            await getRouteHandler(app, 'POST', '/v1/local-services/public/status')({ userId: 'viewer_1', body: { machineId: resource.machineId,
+                previewId: resource.previewId, serviceTarget: target } }, qualifiedStatus);
+            expect(qualifiedStatus.send.mock.calls[0]?.[0]).toMatchObject({ snapshot: { exposures: [{ exposureId: exposed.exposure.exposureId, serviceTarget: target }] } });
+            const wrongStatus = createReplyStub();
+            await getRouteHandler(app, 'POST', '/v1/local-services/public/status')({ userId: 'viewer_1', body: { machineId: resource.machineId,
+                previewId: resource.previewId, serviceTarget: { ...target, managedServiceId: 'another-instance' } } }, wrongStatus);
+            expect(wrongStatus.statusCode).toBe(403);
+            const wrongRevoke = createReplyStub();
+            const revokeBody = { machineId: resource.machineId, previewId: resource.previewId, exposureId: exposed.exposure.exposureId, serviceTarget: target };
+            await getRouteHandler(app, 'DELETE', '/v1/local-services/public/:exposureId')({ userId: 'viewer_1',
+                params: { exposureId: exposed.exposure.exposureId }, body: { ...revokeBody, serviceTarget: { ...target, cwd: '/wrong/root' } } }, wrongRevoke);
+            expect(wrongRevoke.statusCode).toBe(403);
+            const revoke = createReplyStub();
+            await getRouteHandler(app, 'DELETE', '/v1/local-services/public/:exposureId')({ userId: 'viewer_1',
+                params: { exposureId: exposed.exposure.exposureId }, body: revokeBody }, revoke);
+            expect(revoke.send.mock.calls[0]?.[0]).toEqual({ ok: true });
+            expect(runtimes.public.resolveExposure(exposed.exposure.exposureId)?.state).toBe('revoked');
+            const changed = createReplyStub();
+            await getRouteHandler(app, 'POST', '/v1/local-services/preview')({ userId: 'viewer_1', body: { ...resource,
+                target: { ...preview.target, port: 5174 } } }, changed);
+            expect(changed.statusCode).toBe(403);
+            machineFindFirst.mockImplementationOnce(async () => {
+                // A real DB/network await can finish after C41 finalized the viewer's last grant.
+                machineFindUnique.mockResolvedValue({ ...facts, accountGrants: facts.accountGrants.filter(grant => grant.accountId !== 'viewer_1') });
+                eventRouter.disconnectMachineAndSessionSockets({ accountId: 'viewer_1', machineId: resource.machineId, sessionBindings: [] });
+                return { id: resource.machineId, revokedAt: null, replacedByMachineId: null };
+            });
+            const lostDuringEndpointRead = createReplyStub();
+            await getRouteHandler(app, 'POST', '/v1/local-services/preview')({ userId: 'viewer_1', body: resource }, lostDuringEndpointRead);
+            expect(lostDuringEndpointRead.statusCode).toBe(403);
+            retire();
+            await new Promise<void>((resolve) => setImmediate(resolve));
+            expect(runtimes.preview.resolvePreview(resource.previewId)).toBeNull();
+        } finally {
+            retire();
+            for (const hook of closeHooks) await hook();
+            eventRouter.clearIo();
+        }
+    });
+
+    it('retires only a revoked Machine viewer token and stream while another viewer remains admitted', async () => {
+        const env = { ...peerMediationGrantSigningEnv(), HANDY_MASTER_SECRET: 'secret', HAPPIER_PUBLIC_SERVER_URL: 'https://app.happier.test',
+            HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED: 'true', HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN: 'preview.happier.test',
+            [FEATURE_ENV_KEYS.machinesTunnelServerRoutedEnabled]: '1', [FEATURE_ENV_KEYS.machinesTunnelAllowedPorts]: '5173' };
+        const runtimes = createLocalServiceRouteRuntimes(env);
+        const native = { ...preview, sessionId: undefined, owner: { kind: 'user' as const, id: 'starter_1' },
+            serviceTarget: { kind: 'managed_service' as const, machineId: preview.machineId, managedServiceId: 'instance_1', cwd: '/workspace/app',
+                declaration: { workspaceRefId: 'workspace_1', selection: { kind: 'manifest' as const, name: 'web' } } } };
+        const binding = { previewId: native.previewId, machineId: native.machineId, sessionId: undefined };
+        const admit = (viewerAccountId: string) => {
+            const result = runtimes.preview.registerPreview({ resource: native, accountId: 'starter_1', viewerAccountId });
+            if (!result.ok || !result.accessUrl) throw new Error('Viewer admission unavailable');
+            const exchanged = runtimes.preview.exchangeAccessToken({ ...binding, rawToken: new URL(result.accessUrl).searchParams.get('previewToken') });
+            if (!exchanged.ok) throw new Error(exchanged.reasonCode);
+            return exchanged.rawToken;
+        };
+        const revoked = admit('viewer_1');
+        const retained = admit('viewer_2');
+        let finish!: () => void;
+        const closed = new Promise<void>((resolve) => { finish = resolve; });
+        const openTunnel: OpenLocalServicePreviewTunnel = async () => ({ tunnelId: 'tunnel', substreamId: 'stream',
+            write() {}, endWrite() {}, close: finish, abort: finish,
+            async *read() { yield new TextEncoder().encode('HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nhello'); await closed; } });
+        const closeHooks: Array<() => Promise<void>> = [];
+        const app = Object.assign(createFakeRouteApp(), { addHook(_name: string, hook: () => Promise<void>) { closeHooks.push(hook); } });
+        registerLocalServiceRoutes(app as never, { env, runtimes, openTunnel });
+        const raw = downstreamBoundary();
+        const pending = getRouteHandler(app, 'GET', '/*')({ params: { '*': '' }, headers: { host: HOST,
+            cookie: `happier_preview_token=${revoked}` } }, { ...createReplyStub(), raw });
+        try {
+            expect(await Promise.race([raw.writing.then(() => 'opened'), pending.then(() => 'refused')])).toBe('opened');
+            raw.emit('drain');
+            expect(raw.output.join('')).toContain('hello');
+            eventRouter.disconnectMachineAndSessionSockets({ accountId: 'viewer_1', machineId: native.machineId, sessionBindings: [] });
+            expect(raw.destroyed).toBe(true);
+            expect(runtimes.preview.validateAccess({ ...binding, rawToken: revoked }).ok).toBe(false);
+            expect(runtimes.preview.validateAccess({ ...binding, rawToken: retained })).toEqual({ ok: true });
+            expect(runtimes.preview.resolvePreview(native.previewId)).not.toBeNull();
+            await pending;
+        } finally { raw.destroy(); finish(); await pending; for (const hook of closeHooks) await hook(); }
     });
 
     it.each(['GET', 'HEAD'] as const)('keeps preview-host %s root requests in preview policy instead of the root UI', async (method) => {
@@ -283,13 +448,38 @@ describe('local service preview routes', () => {
         expect(reply.statusCode).toBe(201);
         expect(runtime.resolvePreview('machine-preview')?.sessionId).toBeUndefined();
         expect(machineFindFirst).toHaveBeenCalledWith({
-            where: { id: 'machine_1', accountId: 'user_1' }, select: { id: true },
+            where: { id: 'machine_1', accountId: 'user_1' }, select: { revokedAt: true, replacedByMachineId: true },
         });
         machineFindFirst.mockResolvedValueOnce(null);
         const denied = createReplyStub();
         await handler({ userId: 'user_2', body: { ...resource, previewId: 'other', owner: { kind: 'user', id: 'user_2' } } }, denied);
         expect(denied.statusCode).toBe(403);
         expect(runtime.resolvePreview('other')).toBeNull();
+    });
+
+    it.each([
+        { revokedAt: new Date(1_000), replacedByMachineId: null },
+        { revokedAt: null, replacedByMachineId: 'replacement-machine' },
+    ])('refuses sessionless registration and fresh access on an unavailable Machine ($replacedByMachineId)', async (state) => {
+        const { app, runtime } = fixture();
+        const { sessionId: _sessionId, ...machinePreview } = preview;
+        const resource: LocalServicePreviewResourceV1 = {
+            ...machinePreview, previewId: 'machine-preview', owner: { kind: 'user', id: 'user_1' },
+        };
+        machineFindFirst.mockResolvedValue({ id: 'machine_1', ...state });
+        const registration = createReplyStub();
+        await getRouteHandler(app, 'POST', '/v1/local-services/preview')({ userId: 'user_1', body: resource }, registration);
+        expect(registration.statusCode).toBe(403);
+        expect(runtime.resolvePreview(resource.previewId)).toBeNull();
+
+        // A retained registration does not authorize a fresh token after its Machine retires.
+        expect(runtime.registerPreview({ resource, accountId: 'user_1' }).ok).toBe(true);
+        const access = createReplyStub();
+        await getRouteHandler(app, 'POST', '/v1/local-services/preview/:previewId/access')({
+            userId: 'user_1', params: { previewId: resource.previewId }, body: { v: 1, kind: 'server_preview' },
+        }, access);
+        expect(access.statusCode).toBe(403);
+        expect(access.send).toHaveBeenCalledWith({ error: 'preview_access_denied', reasonCode: 'session_not_authorized' });
     });
 
     it('refuses private preview data on the API origin even for a registered host resource', async () => {
@@ -412,6 +602,105 @@ describe('local service preview routes', () => {
         await pending;
         expect(raw.output.join('')).toBe('x');
         expect(raw.ended).toBe(true);
+    });
+
+    it.each([
+        ['private', 'http'], ['private', 'websocket'], ['public', 'http'], ['public', 'websocket'],
+        ['private', 'websocket_handshake'], ['public', 'websocket_handshake'],
+        ['public_source', 'http'], ['public_source', 'websocket'],
+    ] as const)('retires an active %s %s stream when its registration is revoked', async (scope, kind) => {
+        let tunnelRetired = false;
+        let finishTunnel!: () => void;
+        const tunnelClosed = new Promise<void>((resolve) => { finishTunnel = resolve; });
+        let requestSent!: () => void;
+        const sent = new Promise<void>((resolve) => { requestSent = resolve; });
+        const retireTunnel = () => { tunnelRetired = true; finishTunnel(); };
+        const openTunnel: OpenLocalServicePreviewTunnel = async () => ({
+            tunnelId: 'tunnel', substreamId: 'active-stream',
+            write() { requestSent(); }, endWrite() {}, close: retireTunnel, abort: retireTunnel,
+            async *read() {
+                if (kind === 'websocket_handshake') { await tunnelClosed; return; }
+                yield new TextEncoder().encode(kind === 'http'
+                    ? 'HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nhello'
+                    : 'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n');
+                await tunnelClosed;
+            },
+        });
+        const { runtime, cookie: privateCookie } = fixture();
+        const publicRuntime = createLocalServicePublicRuntime({
+            tokenSecret: 'secret', publicBaseUrl: 'https://app.happier.test', hostOriginBaseDomain: 'preview.happier.test',
+            policy: { enabled: true, allowedModes: ['secret_link'], maxTtlMs: 60_000, dnsTlsRequired: false, auditRequired: true },
+            nowMs: () => 1_000, resolvePreview: runtime.resolvePreview,
+            allowTestDevAuditSink: true,
+            // Audit persistence is the only replaced boundary; admission and rate limiting stay real.
+            recordAuditEvent() {},
+            checkRateLimit: createLocalServicePublicRateLimitChecker({ kind: 'fixed_window', windowMs: 60_000, maxRequests: 100 }),
+        });
+        const created = publicRuntime.createExposure({ preview, requestedMode: 'secret_link', requestedTtlMs: 60_000,
+            actorId: 'user_1', sessionAuthorized: true, dnsTlsValid: true, rateLimitProfileId: 'default' });
+        if (!created.ok) throw new Error(created.reasonCode);
+        const exposureId = created.exposure.exposureId;
+        const exchanged = publicRuntime.exchangeAccessToken({ exposureId,
+            rawToken: new URL(created.exposure.publicUrl).searchParams.get('publicToken') });
+        if (!exchanged.ok) throw new Error(exchanged.reasonCode);
+        const cookie = scope === 'private' ? privateCookie : `happier_public_token=${exchanged.rawToken}`;
+        const upgradeHandlers: Array<(request: unknown, socket: unknown, head: Uint8Array) => unknown> = [];
+        const app = Object.assign(createFakeRouteApp(), {
+            server: { on(event: string, handler: (request: unknown, socket: unknown, head: Uint8Array) => unknown) {
+                if (event === 'upgrade') upgradeHandlers.push(handler);
+            } },
+        });
+        const env = { ...peerMediationGrantSigningEnv(), HANDY_MASTER_SECRET: 'secret', HAPPIER_PUBLIC_SERVER_URL: 'https://app.happier.test',
+            HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED: 'true',
+            HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ENABLED: 'true',
+            HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOWED_MODES: 'secret_link',
+            HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__MAX_TTL_MS: '60000',
+            HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__DNS_TLS_REQUIRED: '0',
+            [FEATURE_ENV_KEYS.localServicesPublicPreviewAllowTestAuditSink]: '1',
+            [FEATURE_ENV_KEYS.localServicesPublicPreviewRateLimitProfileIds]: 'default',
+            [FEATURE_ENV_KEYS.localServicesPublicPreviewAllowTestRateLimitChecker]: '1',
+            [FEATURE_ENV_KEYS.machinesTunnelServerRoutedEnabled]: '1',
+            [FEATURE_ENV_KEYS.machinesTunnelAllowedPorts]: '5173',
+            HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN: 'preview.happier.test' };
+        registerLocalServiceRoutes(app as never, { env, runtimes: { preview: runtime, public: publicRuntime }, openTunnel });
+        const raw = downstreamBoundary();
+        let closeClient!: () => void;
+        const clientClosed = new Promise<void>((resolve) => { closeClient = resolve; });
+        const socket = Object.assign(raw, {
+            async *[Symbol.asyncIterator](): AsyncIterableIterator<Uint8Array> {
+                await clientClosed;
+                throw new Error('client_closed');
+            },
+        });
+        socket.on('close', closeClient);
+        const headers = { host: HOST, cookie };
+        const pending = kind === 'http'
+            ? getRouteHandler(app, 'GET', scope === 'private' ? '/*' : '/v1/local-services/public/:exposureId/*')({
+                params: { '*': '', exposureId }, headers,
+            }, { ...createReplyStub(), raw })
+            : Promise.resolve(upgradeHandlers[scope === 'private' ? 0 : 1]?.({
+                url: scope === 'private' ? '/socket' : `/v1/local-services/public/${exposureId}/socket`, headers: {
+                host: HOST, cookie, upgrade: 'websocket', connection: 'Upgrade',
+                'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==', 'sec-websocket-version': '13',
+            } }, socket, new Uint8Array()));
+        try {
+            const opening = kind === 'websocket_handshake' ? sent : raw.writing;
+            expect(await Promise.race([opening.then(() => 'opened'), pending.then(() => 'refused')])).toBe('opened');
+            if (kind !== 'websocket_handshake') {
+                raw.emit('drain');
+                expect(raw.output.join('')).toContain(kind === 'http' ? 'hello' : '101 Switching Protocols');
+            }
+            expect(scope !== 'public' ? runtime.unregisterPreview(preview.previewId)
+                : publicRuntime.revokeExposure(exposureId, { actorId: 'user_1' })).toEqual({ ok: true });
+            expect(raw.destroyed).toBe(true);
+            await new Promise<void>((resolve) => setImmediate(resolve));
+            expect(tunnelRetired).toBe(true);
+            await pending;
+        } finally {
+            raw.destroy();
+            finishTunnel();
+            await pending;
+        }
     });
 
     it('waits for downstream socket drain before resolving private preview WebSocket writes', async () => {

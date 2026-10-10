@@ -9,6 +9,142 @@ This document covers the HTTP API surface and authentication flows. For WebSocke
 
 We intentionally avoid the full REST verb palette because many operations span multiple entities or have non-CRUD semantics.
 
+## Workspace execution config (0.3 development source)
+
+Authenticated Account transport exposes the private checkout config at
+`/v1/projects/execution/config`. `POST /read` accepts
+`{address:{serverId,refId}}` and returns `present` with `revision` and `content`,
+`absent`, or `deleted` with the tombstone revision. `POST /mutate` accepts that
+address, `expectedRevision` (a nonnegative safe integer or `"absent"`), and
+`content` (the explicit plain/encrypted envelope, or `null` for a tombstone).
+It returns `updated` with `revision` and Account change `cursor`, or `conflict`
+with the current revision. `GET` at the base route returns the complete
+`{rows:[{rowId,revision,content}]}` inventory, including tombstones.
+
+Inputs reject unknown fields. An inconsistent Account, invalid stored content
+or mode mismatch returns HTTP 503
+`{error:"workspace_execution_config_storage_unavailable"}` without exposing the
+row. Generic KV cannot address this reserved namespace. The
+[encryption contract](encryption.md#workspace-execution-config-03-development-source)
+owns envelope admission and conversion behavior. These endpoints describe current
+development source, not released availability.
+
+## Private Profile catalog (0.3 development source)
+
+Authenticated Account routes expose private Profile rows at
+`/v1/account/entity-rows/profiles`. `GET` accepts optional `cursor` and `limit`
+and returns rows (including tombstones), `nextCursor`, `complete`, diagnostics,
+the Profile reference-guard revision and transfer-control state. Consumers must
+finish paging and recheck the guard/control before treating the inventory as a
+complete reference census; a partial or unreadable response is not an empty catalog.
+
+`POST /records/read` accepts the strict `{ id }` body and returns `present`,
+`absent` or `deleted`, retaining a deleted row's revision. `POST /records` uses
+the strict Profile mutation DTO with the exact body ID and expected revision.
+Identity travels in JSON so retained Profile IDs do not depend on URL parameter
+length or normalization. Ordinary writes cannot use
+the predecessor-transfer `import` operation. `GET /reference-guard` reads the
+content-free guard. The separate `/transfer` read/mutation routes own genuine
+predecessor preparation and activation; neither control path is a Profile ID.
+Provider conversion uses `POST /provider-conversion` under the same base route,
+with its captured Settings/control and row/reference census admission.
+
+MySQL preserves the encoded KV key with `utf8mb4_bin` collation. The complete
+Account/key unique index admits 577 characters under InnoDB DYNAMIC format with
+the default 16-KiB pages: `(191 + 577) × 4 = 3072` indexed bytes. Retained Profile
+IDs are unbounded; the physical key is a 29-character namespace followed by
+`encodeURIComponent(id)`, so 577 is an encoded-key limit, not a raw-ID limit.
+Longer keys raise typed `kv-key-too-long` at the KV owner before any batch write;
+they are never truncated or hashed. SQLite/PostgreSQL key storage is unchanged.
+The physical index basis is documented in the
+[MySQL InnoDB limits](https://dev.mysql.com/doc/refman/8.0/en/innodb-limits.html).
+
+These rows use explicit Account-mode envelopes, not Artifact resource keys or
+sharing grants. Published/shared Profile definitions remain Artifacts, while
+private bindings and prompt stacks remain Account data. See the
+[Profile encryption contract](encryption.md#private-profile-rows-03-development).
+
+Enablement belongs to the private row once a Profile has membership, including
+a builtin definition. Only a builtin with no entity keeps enablement in Settings.
+The first builtin attachment captures that preference and retires its addressed
+key in the same Settings CAS; deleting or transferring an entity does not retain
+an old builtin enablement key.
+
+A retained readonly blueprint allows private attachment changes, not logical
+definition edits. Moving that same admitted body and identity into an addressed
+Artifact is publication, not a new definition; it requires the actual opened body
+to match and introduces no Artifact binding defaults. Duplicate and builtin Save As
+reuse the existing guided Provider migration for legacy routing, including Azure
+and Gemini, then copy the acknowledged current definition and Provider selection.
+An unrepresentable MachineLogin definition alone may use `clone-legacy`: its
+captured private source revision and any source Artifact grant/revision are admitted
+before copying the exact body, enablement, prompt stack and effective bindings with
+private null masks. The copy receives a fresh identity, name and timestamps, loses
+its builtin marker and is detached from the source Artifact. Arbitrary new legacy definitions and edited
+clone bodies remain refused, and a failed save retains the editor draft.
+
+This describes current development source, not released availability or a
+completed loaded-runtime validation.
+
+## Connected personal metadata (0.3 development source)
+
+Authenticated Account transport exposes two singleton rows at
+`/v1/account/entity-rows/connected-metadata/presentation` and
+`/v1/account/entity-rows/connected-metadata/acknowledgements`. Each supports `GET`
+for `present`, `absent` or revision-retaining `deleted` authority, and strict
+`POST` with `expectedRevision` and an explicit Account-mode `content` envelope
+(or `null` for deletion). First initialization also requires the captured
+`sourceSettingsVersion`, compared under the existing Account transition fence.
+Generic user KV cannot address these reserved keys.
+
+Presentation contains personal labels for qualified accounts and groups.
+Acknowledgements contain exact qualified adoption subjects and Account- or
+Machine-scoped warning identifiers; false remains a saved value. Plain writes
+admit newly changed owned subjects, while unchanged orphan entries and exact
+removals remain usable for cleanup. E2EE content remains opaque to the server;
+the key-holding client admits subjects before writing.
+
+Malformed known entries remain diagnosable without hiding valid neighbors.
+Only a complete readable catalog or its retained tombstone can authorize source
+and history cleanup or Account-mode conversion. Device-local row disclosure is
+not a third Account row. See the [private catalog encryption contract](encryption.md#private-agent-provider-and-connected-account-catalogs-03-development).
+These routes describe development source, not released availability or completed
+loaded-runtime validation.
+
+## SavedSecret import and retained Settings history (0.3 development source)
+
+`POST /v1/account/saved-secrets/resources/promote` commits an owned credential
+resource with its captured Settings CAS and any private Profile rebindings.
+The strict input includes the complete Profile/reference-guard census and
+captured transfer-control revision; selected Artifacts carry current addressed
+header/body proofs. Access, effective bindings and resource revisions are checked
+at the same transaction owner. A refusal does not commit partial source cleanup.
+`GET /v1/account/saved-secrets/resources/materials` supplies the admitted catalog
+and mode-specific resource material through the existing resource access owner.
+
+The legacy importer also recognizes the predecessor's bare `inferenceOpenAIKey`
+string. It preserves the exact opened key in an `apiKey` resource under the
+canonical `legacy-inference-openai-key` source identity and removes only that raw
+Settings root. It does not create a personal SavedSecret wrapper or a replacement
+inference consumer.
+
+`POST /v2/account/settings/history/:version/mutate` normalizes one retained
+version under exact recorded content, current Settings version, Account encryption
+currentness and transfer-control CAS. Its strict `savedSecretTransfers` entries
+retain the personal shape `{savedSecretId,resourceId,expectedRevision}` and also
+admit `{source:{kind:'legacy-inference-openai-key'},resourceId,expectedRevision}`.
+Both require the source's deterministic owned, usable destination at the captured
+resource revision. A whole-root removal claim does not authorize credential loss.
+Plain normalization checks the actual recorded document; an authorized client
+opens and reseals E2EE history without server decryption. Unknown credential shapes
+remain cleanup-pending. Fresh invocations can resume cleanup after source removal
+through the same admitted-resource proof, without replaying promotion or retaining
+an import ledger. Explicit purge addresses only the requested retained version.
+
+See the [Account encryption contract](encryption.md#private-profile-rows-03-development)
+for source/history authority and cancellation. This describes development source,
+not released availability or completed loaded-runtime validation.
+
 ## Authentication
 Most endpoints require `Authorization: Bearer <token>`.
 
@@ -613,17 +749,70 @@ preserves the canonical Action result:
 }
 ```
 
-Only PAT bearer authentication is accepted on public Action routes; signed
-session bearers and `x-happier-daemon-token` are distinct credentials for other
-surfaces. Each public ingress verifies the PAT in Fastify `onRequest`, before
-the JSON body parser runs. The API does not use SSE, has a 32 MiB
+General public Action origination uses PAT bearer authentication. Development
+source also supports narrow signed-credential roots, including the terminal
+and managed-machine flows described here.
+
+In 0.3 development source, a current paired terminal bearer can originate
+`session.spawn_new` through the execution-authorization and public relay endpoints
+for an admitted requester-owned Machine. The exact root binds the terminal
+credential epoch, Account encryption mode and request envelope, and retains
+`account_automation` authority. This fresh CLI root has no installed Session or
+Workflow origin; it neither grants present-user authority nor permits general
+ordinary-Account bearer Session spawning. Plain V1 and protected V2 requests use
+the existing relay formats and current-row checks.
+
+Development source also accepts a genuine ordinary Account bearer for the managed-machine
+Action family, including `POST /v1/actions/machines.managed.acquire` and
+`machines.managed.bootstrap.retry`; this does not authorize arbitrary Actions
+with an ordinary bearer. The existing envelope names the exact controller in
+`target`. Account credential epoch, authentication evidence, encryption mode and
+current Machine authority are verified and bound into the existing signed relay.
+The managed acquisition row is admitted before daemon forwarding, even when
+that known installed controller is offline. In that case a Plain V1 request
+returns `{managedId}` without an invented operation; protected V2 returns the
+existing HTTP 409 `target_unavailable` with an id-only
+`managedAdmission:{managedId}` receipt. A daemon operation is exposed only when
+it actually exists. Protected requests carry a strict compute-only
+`managedAdmission` projection, which the receiver compares with the opened
+input before effects; Agent continuation text stays sealed.
+
+The acquiring Account's creation preference is checked by the shared Action
+origination owner before approval or forwarding. An opened
+`managedMachineCreationEnabled:false` returns `creation_disabled` for acquire;
+retained reads, cleanup and same-resource bootstrap retry remain available.
+This preference is not a security grant or a server-readable E2EE settings
+replica. Receiving controllers do not substitute their custodian's preference.
+
+Development source exposes the safe `machines.managed.references.get` Action
+through the shared requester Action executor. Its `{homeId, managedId}` input
+reads the requesting Account's existing board, profile, Machine Pool and
+assignment authorities for the enrolled Machine; it neither asks the native
+controller for private Account data nor mutates those references. The result
+declares `complete` or `partial` coverage and names unavailable authorities, so
+an unavailable read is not represented as an empty complete census. This is
+requester-side disclosure before reviewed Delete, not an additional public
+server Action transport or a deletion authorization check.
+
+An admitted creation's controller may forward its exact enrolled guest's
+continuation through the same `session.spawn_new` dispatcher with the signed
+creation proof. Current creation correlation and guest authority are checked
+again; this is not general ordinary-bearer session spawning or permission to
+reuse that proof on unrelated HTTP routes. These managed paths are source-landed,
+not yet a verified composed controller/guest journey.
+
+Signed session bearers and `x-happier-daemon-token` remain distinct credentials
+for other surfaces. Bearer ingress authenticates in Fastify `onRequest`, before
+the JSON body parser; signed Machine proofs are also checked against the parsed
+request at their existing boundary. The API does not use SSE, has a 32 MiB
 (33,554,432-byte) request-body ceiling, sends `Cache-Control: no-store`, and
 admits Home browser requests under the token origin policy above; daemon-local
 delivery does not enable CORS. The server-to-daemon relay accepts a 33 MiB
 (34,603,008-byte) request carrier, leaving one MiB of framing headroom above
-the public body limit. The server-mediated design is intentionally plaintext to
-the configured server and avoids requiring an inbound public daemon address;
-use daemon-local transport for direct local delivery. The transport does not
+the public body limit. V1 Action content is plaintext to the configured server;
+whole-Action V2 protects content and results without a plaintext fallback. Both
+relay forms avoid requiring an inbound public daemon address; use daemon-local
+transport for direct local delivery. The transport does not
 retry or fail a mutation over to another origin.
 
 The API and Trusted plugins settings default to Allowed for Actions available on
@@ -1109,7 +1298,7 @@ development integration is complete.
 
 Widgets add no dashboard REST service. The generated
 [host Action reference](../apps/docs/content/docs/plugins/api/host-actions.mdx)
-owns current catalog, definition, instance, input, area-layout, Refresh and
+owns current catalog, definition, layout-item, group, fragment, input, area-layout, Refresh and
 snapshot operation schemas; [Actions](actions.md#widget-operations-03-development-source)
 owns their invocation and approval boundary.
 
@@ -1122,8 +1311,9 @@ for declared native page embedding, or declarative `widgetArea` nodes. Hosted
 HTML pages do not embed host widget areas and use ordinary widget Actions;
 this adds no parallel presentation endpoint or hosted widget-area API.
 
-Account definitions (`widget-definition.v1`), Home layouts and personal
-Project/plugin-area layouts (`widget-area-layout.v1`) reuse the existing
+Account definitions (`widget-definition.v1`), saved-group fragments
+(`widget-layout-fragment.v1`), Home layouts and personal
+Project/plugin/core-page area layouts (`widget-area-layout.v1`) reuse the existing
 mode-aware Account Artifact transport and CAS admission. WorkBoard widget
 placements reuse `work-board.v1` rather than a parallel Artifact. Shared Session
 instances and inert snapshots use the Session Board writer below; direct
@@ -1132,14 +1322,43 @@ identity is separate from a definition reference and the instance's input
 bindings. Persisted Account mode, not key presence, governs every Account
 Artifact read/write.
 
+Home and area bodies persist one `items` array of widgets or non-nesting groups.
+The shared placement reducer owns group membership and ordinary item changes;
+`widgets.item.*` replaces the unreleased `widgets.instance.*` names in place.
+Adding a fragment submits one `group_add` intent with fresh placement ids, so
+saved groups are independent copies. WorkBoards and Session Board retain their
+existing individual-widget shapes. Project, plugin and core-page areas use one
+`layoutId` and the `widgets.area.layout.list/create/select/rename/delete/reorder/reset/undo`
+Actions. Host presets and personal views share the same Artifact owner. Create
+with `fromSurface` copies the current layout. Missing defaults cause no write;
+an explicitly empty saved layout remains empty. Reset requires the current
+`expectedRevision`, and Reset/Undo refuse intervening edits.
+Saved-group fragments are private Account library content; their canonical
+Artifact kind policy excludes generic browser listing, people sharing and public
+links. Copying placements retains any child definition references and their
+existing edit semantics.
+
+Key-holding WorkBoard updates and retained-body restores also enforce the
+canonical widget-content sharing policy for an admitted shared document,
+including ordinary Artifact editors. Candidate retagging cannot bypass the
+current kind's private-input policy; the existing codec and expected-revision
+writer remain authoritative.
+
 Viewer credentialed reads consume the viewing Account's existing qualified
 Resource-consumer/purpose selection. Private selections and credentials are not
 shared Board payloads. There is no per-instance viewer override or widget-local
 selection setting; missing purpose selection leads to Connect. Pinned Connected
 Account references are personal-only instance bindings. Changing the existing
 purpose selection retains its normal preference lifetime and can affect other
-viewer bindings using the same qualified purpose. Positive Project area operations
-await the external portable Project Source producer. These development-source
+viewer bindings using the same qualified purpose. A declared viewer binding can
+be configured without an author selection; reads still require the viewing
+Account's selection. Personal Project dashboards use the stable private Project
+key without a Source; only Source-dependent inputs await that producer. Named
+dashboards contain main and aside in one Artifact. An attached shared document
+uses its owner's exact Artifact identity and current actor access, not a copy
+under the recipient's private Project key. Generic Artifact Actions exclude
+internal dashboard kinds; dedicated widget and access-grant Actions do not
+bypass the dashboard owner's validation. These development-source
 contracts do not claim released or loaded-platform availability.
 
 #### Session Board (development)
@@ -1372,6 +1591,77 @@ administration, ordinary Sessions, Resource Test/catalog, and restricted Runner
 activation consume this placement. The feature remains development-only, and its
 integrated package and loaded-Provider validation is still open.
 
+### Project Sources (0.3 development)
+
+These metadata-only endpoints describe development source, not released
+availability. They share the strict request/result schemas in
+`packages/protocol/src/projects/sources/projectSourceV1.ts`. Authentication at
+the containing HTTP Home supplies the actor; `serverId` is a client address,
+not a claim of Account or Home authority.
+
+| Method | Path | Request |
+| --- | --- | --- |
+| GET | `/v1/projects/sources` | `serverId`, optional `query`, JSON-encoded `audience` PrincipalRef, `cursor`, and positive `limit` query parameters |
+| GET | `/v1/projects/sources/:id` | `serverId` query parameter |
+| POST | `/v1/projects/sources` | `{serverId,requestKey,name,repository,defaultRef?,subdir?,audience?}` |
+| PATCH | `/v1/projects/sources/:id` | `{serverId,sourceId,expectedRevision,patch}` |
+| DELETE | `/v1/projects/sources/:id` | `{serverId,sourceId,expectedRevision}` |
+
+PATCH and DELETE require body `sourceId` to equal the path id. Source metadata
+uses PATCH for its revision-checked update; unknown fields are rejected.
+Repository selection is credential-free SCM metadata, not executable clone
+input. `defaultRef:null` or `subdir:null` in a patch clears that field.
+
+The safe, Machine-placed `scm.hostingRepository.resolveAddress` Action accepts
+`{address}` with the existing Machine target selector in the Action context.
+It uses that Machine's SCM hosting registry and configured Connected Account
+deployment bases, without requiring a checkout or probing repository access.
+Its strict result is `{success:true,kind:'resolved',selector}` or a typed
+`unknown`, `unsupported` or `invalid` classification. The selector is credential-free;
+transport credentials, query strings and fragments are refused. The Sources
+editor resolves changed addresses on a reachable Machine of the containing Home;
+without one, saving that address is disabled. Unchanged retained selectors remain
+editable without resolving them again. This is a 0.3 development Action, not a
+claim of released availability.
+
+The Sources controller owns the editable creation draft (name, address,
+default ref, contained subdirectory and audience). It combines these fields with
+the resolved selector at strict Source Action admission; component-local address
+parsing or a second creation draft does not determine repository identity.
+
+Create uses one `requestKey` per intent through the incumbent actor-scoped
+RepeatKey owner and its retention. An exact replay returns current admitted
+metadata; a changed payload or unavailable recorded Source conflicts instead
+of creating a second row. This is not an unbounded replay guarantee.
+
+The `patch.attachment` intent attaches one purpose-tagged context entry or
+dashboard ref, detaches one context `attachmentId` or exact qualified dashboard
+`ref`, reorders one context entry before `beforeId` (or the end with `null`),
+or sets/clears one entry's `maxChars`. It never replaces the whole attachment
+list. New context attachments require `system_append`; retained placements and
+unrelated entries are preserved. Qualified foreign refs are not resolved
+against same-id local Artifacts. Canonical client Artifact admission owns their
+current read/kind check; local refs also use the server Artifact access owner.
+Neither attaching nor Source visibility grants Artifact rights.
+
+List success is `{ok:true,sources,coverage:{complete,nextCursor}}`, with search
+and paging over currently authorized metadata. Read/create/update success is
+`{ok:true,source,canManage}`; delete acknowledges
+`{ok:true,sourceId,revision}`. Reads use current Account, effective Team/Group
+membership and qualified Team authentication. Only the creator or current
+Team administration manages the Source; Home governance does not supply
+content access.
+
+Failures use `{ok:false,error,current?}`: HTTP 400 for `source_invalid` or
+`artifact_wrong_kind`, 403 for `source_access_denied`, 404 for
+`source_unavailable`, 409 for `source_conflict`, and 503 for
+`artifact_unavailable` or `source_backend_unavailable`. An admitted stale
+revision returns the current Source for comparison; inaccessible metadata is
+not included. Content-free AccountChange invalidation reuses the existing
+change stream. Delete removes metadata only, retaining checkout files,
+Artifact bytes and grants. See the
+[Source storage disclosure](encryption.md#project-source-metadata-03-development).
+
 ### Artifacts
 - `GET /v1/artifacts?limit=...&cursor=...` lists Artifact headers in
   stable `updatedAt`, `id` order. The optional opaque cursor resumes after the
@@ -1384,7 +1674,34 @@ integrated package and loaded-Provider validation is still open.
   opaque until the client opens them. Workflow library counts use these opened
   bodies, not persisted count metadata or per-row requests. Omitting the option
   retains the header-only response. This is not a released availability claim.
-- `GET /v1/artifacts/:id`
+- `POST /v1/artifacts/read` is the 0.3 development selected-detail read. Its
+  closed V1 input is `{artifactIds: string[]}` with unique identities. It returns
+  `items` in request order: `{artifactId,ok:true,artifact,recipientCensus}` or
+  `{artifactId,ok:false,error,status,retryable}`. Each successful `artifact` has the exact-read
+  shape, including its authenticated public-audience fact. E2EE results include
+  the current authorized recipient census; Plain results carry `null` and need
+  no client keys. The read uses the existing access, Account-mode and recipient
+  owners in a read-only transaction. Key holders still verify bindings and use
+  the existing fenced envelope commit when preparation is needed.
+  Startup publishes the complete header inventory first, then uses this read
+  only for Launch Profiles and actionable approvals. Other document bodies
+  remain lazy. Missing details are skipped; other refusals and incomplete
+  responses fail the refresh. Refusals retain the incumbent read classification:
+  an unreadable owner detail has status 500 and remains retryable; a granted
+  caller's status 409 detail refusal ends the current retry cycle. Recipient
+  preparation refusals retain their existing access-API retry behavior.
+  Current 0.3 client and server update together;
+  this is not a released or mixed-component availability claim.
+- `GET /v1/artifacts/:id` returns the authenticated `publicAudience` fact in
+  0.3 development source: `retained` when the Artifact has an unexpired,
+  undeleted public publication, otherwise `none`. This fact is independent of
+  `sharing.public` availability; disabling public-share routes does not make a
+  retained publication private. Exhausting its viewer-admission use limit does
+  not end that publication. Missing or unavailable audience evidence must not
+  be interpreted as `none`. Protocol, UI and CLI read projections normalize a
+  missing or unfamiliar value to `unknown`; shared-content and approval admission
+  consume this exact-read fact rather than the feature-gated public-link list.
+  This is not a released availability claim.
 - `POST /v1/artifacts`
 - `POST /v1/artifacts/:id` (versioned update)
 - `DELETE /v1/artifacts/:id`
@@ -1431,12 +1748,26 @@ implementation and lifecycle validation are tracked in ART-B1-BINARY and ART-B2-
 Session and ordinary Artifact publications share one owner and the existing
 `sharing.public` feature decision. Plugin-owned storage is not public content.
 
-- `POST /v1/public-shares` takes `{subject:{kind:'session'|'artifact',id},lookupId,keyDerivation:'fragment_v1',encryptedDataKey?,expiresAt?,maxUses?,isConsentRequired?}`.
+Fragment publication also requires an HTTPS `HAPPIER_PUBLIC_SERVER_URL`,
+`HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN` with wildcard DNS/TLS
+and ingress to this server, and a usable
+`HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__RATE_LIMIT_CHECKER=fixed_window`
+with positive `...__RATE_LIMIT_MAX_REQUESTS` and `...__RATE_LIMIT_WINDOW_MS`.
+`storedContentPublicShare.ts` enforces these through the shared isolated-origin
+and rate-limit owners before writing. An unavailable origin or limiter returns
+503 `public_share_isolation_unavailable`; enabling `sharing.public` alone does
+not provision them. The deployment operator owns that configuration, including
+QA-stack ingress. Neither the API origin nor another resource's origin is a
+fallback. These stored-content links do not require enabling public local-service
+exposure or its audit/lifetime policy.
+
+- `POST /v1/public-shares` takes `{subject:{kind:'session'|'artifact',id},lookupId,keyDerivation:'fragment_v1',encryptedDataKey?,expiresAt?,maxUses?,isConsentRequired?,networkOff?}`.
 - `GET /v1/public-shares?subjectKind=...&subjectId=...` lists the authorized subject's safe publication settings.
 - `DELETE /v1/public-shares/:shareId` revokes the publication.
 - `GET /v1/public-shares/:shareId/access-log` returns owner-authorized visit records.
 - `GET /v1/public-shares/:lookupId/content` reads admitted stored content without Account credentials on the publication's isolated origin. Consent and Session pagination use the existing publication-use/access-grant policy.
-- `GET /s/:lookupId` serves the isolated text viewer; its wrapping secret is carried in `#k=...`, not in an HTTP field.
+- `GET /v1/public-shares/:lookupId/visual/:messageId` lazily reads one Session visual through an admitted message's authenticated publication association. It requires the existing `x-public-share-messages-access-token`, rechecks consent and the current transcript cutoff, and accepts no caller-selected item id. It neither consumes another viewing use nor logs another visit. Expiry, revocation, mode mismatch, a missing association, and a deleted/recreated record refuse the read.
+- `GET /s/:lookupId` serves the isolated viewer, including paged Session text and visible acknowledged visuals; its wrapping secret is carried in `#k=...`, not in an HTTP field.
 - `GET /v2/sessions/metadata-upgrades` returns authenticated owner-only Session ids needing the existing privacy-layout upgrade, including archived shared Sessions; it returns no metadata or key material.
 
 Unavailable public landings retain HTTP 404 (or 429 for rate limiting) and serve
@@ -1445,6 +1776,15 @@ the same viewer shell so it can render its typed recovery state. The generic
 loadable after expiry, viewing-limit exhaustion or revocation. Content reads
 still enforce publication admission and isolated-origin checks; credential-bearing
 viewer requests remain refused.
+
+The Session share's `networkOff` setting defaults to false and does not rewrite
+its visual records. The confirmation explains that network-enabled visuals can
+send their contents elsewhere, reveal a viewer's IP address, and load changing
+remote code or assets. Public HTML currently consumes the shared network-closed
+bundle owner; enabling approved saved network policy belongs to that owner's
+separate admission contract. Anonymous live widgets without a usable viewer
+connection report their unavailability rather than using author credentials.
+These are development-source contracts, not completed loaded-runtime validation.
 
 The lookup and wrapping secret are independent. E2EE content and its wrapped DEK
 remain opaque to the server; plaintext Accounts send no wrapped key. Publication
@@ -1486,9 +1826,124 @@ inventories before any mode change.
 - `POST /v1/account/settings`
 - `POST /v1/usage/query`
 
+In 0.3 development source, `POST /v2/usage-events` publishes numeric accounting
+observations and `POST /v2/usage/query` reads the Account's canonical accounting
+projection. `usageQueryService` reconciles subject counters and witnessed
+inference identity before period, model, source or dimension filters. Pre-range
+counters provide baselines, not period activity. Final counters supply only
+unattributed residual usage; they do not move earlier inferences to the final
+model or date. An unexplained counter reset preserves earlier spend and marks
+coverage partial. Account authentication and owned Session checks apply at the
+route boundary. Native observations instead carry a strict `subject` with an owned
+registered Machine, qualified Agent, opaque source-root and native-session keys,
+without creating a Happier Session. The same ingest/write owner verifies any
+claimed Session link against admitted runtime evidence. Native publication never
+falls back to a legacy Session usage report on an unsupported server.
+Numeric accounting remains queryable for E2EE Sessions under
+the approved usage disclosure contract, without exposing transcript content.
+
+`POST /v2/usage-events/delete-native-history` deletes only the authenticated
+Account's native captures for the owned Machine and opaque source-root key,
+optionally within inclusive `startMs`/`endMs` bounds. Runtime captures and other
+source roots remain intact; it is not vendor-log cleanup.
+
+Native ingest and deletion reuse the Account-scoped `usage` ephemeral wake with
+`id: null` because no Happier Session exists. Session wakes retain string IDs.
+These notifications invalidate the captured Home/Account query; their numeric
+payload is not a second accounting projection. Older Session-only readers may
+ignore the native wake; unchanged Session notifications remain compatible.
+
+Optional `coverage`, `costFacts` and `contributions` extend the existing response
+in place. Missing coverage means unknown, not a complete zero. Producer evidence
+supplies path status and history completeness; ranked projections disclose
+truncation. Original `tokens` preserve vendor counters and `tokens.total` remains
+the conservation basis. Optional `tokenCategories` supplies nonoverlapping chart
+categories only when overlap semantics are known. Cached input and reasoning
+subsets must not be added again to inclusive input/output counters.
+
+Cost facts keep reported, estimated, API-equivalent and invoice amounts separate
+by currency and source. Unpriced tokens carry null money, not a fabricated zero.
+`costPresentation` is omitted when the selected population has no single honest
+monetary basis. API-equivalent pricing is not paid spend; allowance state and
+live context-window state are separate domains, not accounting totals.
+
+Development model-price reads use authenticated `GET /v1/account/usage/prices`;
+explicit refresh uses `POST /v1/account/usage/prices/refresh` with an empty
+object. Both return the standard public LiteLLM catalog with source revision,
+as-of time, bundled/fetched/cached origin and ready/disabled/error status.
+The server's `HAPPIER_USAGE_MODEL_PRICE_FETCH_ENABLED` configuration can disable
+outward fetching; bundled prices are used while the cached catalog is retained
+for re-enable. Queries use the
+current catalog without fetching. Account settings overrides are applied only
+by the authorized client/CLI composition, not opened by an E2EE server.
+
+The supported 0.2 reader direction retains `/v1/usage/query`'s seconds-based
+hour/day transport and `/v2/usage-reports`'s cumulative report transport. These
+are adapters to the same 0.3 query/ledger owner, not separate accounting
+policies. Retained pre-bridge reports remain readable with unknown historical
+coverage; the first changed report preserves its prior baseline in the existing
+ledger before appending the new delta. An owned Session with native accounting
+uses the canonical native population instead of adding its legacy bridge again.
+
+### Daemon memory search (0.3 development)
+
+The existing `daemon.memory.search` machine RPC consumes
+`MemorySearchQueryV1` and returns `MemorySearchResultV1`; the same schema backs
+the `memory.search` Action. Its optional `corpora` selects `sessions`,
+`documents`, or both. Omission retains the legacy transcript-only semantics and
+untagged Session hits with sequence ranges. Explicit document queries require a
+document-capable daemon path; Home transcript search remains a separate source.
+
+The implemented document-hit schema uses `type: 'artifact'`,
+`ref: {kind: 'doc', serverId, artifactId}`,
+`revision: {headerVersion, bodyVersion}`, `summary` and `score`. Their `location`
+is `facts`, `archive`, `document`, or `{type: 'topic', title}`; an optional `factId`
+identifies a fact. They carry no Session sequence range. Navigation must use the
+qualified library reader rather than the transcript-window RPC. Deep indexing
+stores the complete memory body, including topic-only and expired facts, without
+changing the prompt's index budget.
+
+The result schema permits `documents: {state}` with `ready`, `pending`
+or `unavailable`. Old responses remain valid without this field; omission means
+document coverage is unknown/unavailable to the requesting client, not complete
+with zero matches. The memory worker consumes the canonical prompt-stack admitted
+inventory and qualified Artifact reader. Deep document queries refresh attachment
+context and requalify read access and header/body revision before selecting cached
+text. Incomplete context returns pending/unavailable coverage without cached
+document hits; only a complete global inventory prunes detached projections.
+Light search reports document coverage unavailable. No unqualified document counts
+are exposed in memory status. UI and authenticated CLI consumers negotiate
+document support with the exact daemon through one shared corpus policy;
+unsupported mixed queries retain Session matches with unavailable document
+coverage, while unsupported document-only queries return no matches. Credentialless
+Session-bound MCP retains only its own Session transcript matches and filters
+document hits, with no document authority and unavailable document coverage.
+Document-only requests at that boundary return no matches before transport.
+Cancellation stays on the existing
+Action/RPC path.
+
+Native transcript search additionally uses the `external_transcripts` corpus.
+`daemon.memory.status.sources` optionally reports `ready`, `indexing`,
+`disabled` or `error` for each configured native Agent/source key and Happier
+Session. This read projection comes from the existing Memory worker; missing
+entries or an older response without it do not establish native index freshness.
+`daemon.memory.get_window` and `memory.get_window` share the native/Session
+request union. Native requests use `{source, sourceItemId, cursor?}` and return
+`externalSnippets`; Session requests retain `{sessionId, seqFrom, seqTo}`.
+The two locator shapes are mutually exclusive. Native access requires the
+authenticated exact machine/Home/Account path, not Session-bound MCP authority.
+
+New machine settings enable deep keyword indexing by default without model API
+credentials or embeddings. The independent `hints.enabled` schema field defaults
+false and is enforced by the worker. Selecting hints enables summarization without
+changing a deep indexing choice. Explicit disabled settings and
+retained indexing choices keep their intent. Plain Accounts remain keyless for
+Account content; E2EE requires its real material. These statements describe 0.3
+development, not released availability.
+
 ### Authoring memory (0.3 development)
 
-Remembered session-authoring state uses reserved Account KV rows, rather than
+Remembered session-authoring and Project navigation state uses reserved Account KV rows, rather than
 replacing the Account Settings document. The schema and response contracts live in
 `packages/protocol/src/account/authoringMemory.ts`:
 
@@ -1501,8 +1956,12 @@ replacing the Account Settings document. The schema and response contracts live 
   with its revision and durable change cursor, or `conflict` with the current
   revision (`-1` when the row has never existed).
 
-Keys are `recentMachinePaths`, `lastUsedProfile`, and
-`engineSelection:<canonicalScope>`. The authoring selection owner normalizes scope
+Keys are `recentMachinePaths`, `lastUsedProfile`,
+`engineSelection:<canonicalScope>`, and qualified Project recency
+`projectLastOpened:<encodeURIComponent(serverId)>:<encodeURIComponent(projectKey)>`.
+The latter uses a finite nonnegative timestamp and the same Account memory cipher,
+CAS and change hints; it never advances structural Project/ref revisions.
+The authoring selection owner normalizes scope
 identity before transport. Each mutation publishes a content-free AccountChange
 hint `{authoringMemory:true,key,revision}` for exactly that row. Account identity
 comes from authentication; `/v1/kv` cannot enumerate, read, or mutate the physical

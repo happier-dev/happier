@@ -46,6 +46,64 @@ describe("accountRoutes v2 usage", () => {
         ]);
     });
 
+    it("queries authenticated period truth after baseline, model switch and correlated replay", async () => {
+        const account = await db.account.create({ data: { publicKey: "pk-u0-authenticated-truth" }, select: { id: true } });
+        const session = await db.session.create({ data: {
+            accountId: account.id, tag: "u0-authenticated-truth", encryptionMode: "e2ee", metadata: "ciphertext",
+        }, select: { id: true } });
+        await withAuthenticatedTestApp(accountRoutes, async (app) => {
+            const headers = { "content-type": "application/json", "x-test-user-id": account.id };
+            const observations = [
+                { observedAt: Date.parse("2026-07-01T10:00:00Z"), scope: "session_cumulative", modelId: "A", total: 100, source: "runtime" },
+                { observedAt: Date.parse("2026-07-02T10:00:00Z"), scope: "turn_delta", modelId: "A", total: 10, source: "runtime", inferenceId: "a", turnId: "a" },
+                { observedAt: Date.parse("2026-07-02T10:00:00Z"), scope: "turn_delta", modelId: "A", total: 10, source: "native", inferenceId: "a", turnId: "a" },
+                { observedAt: Date.parse("2026-07-02T11:00:00Z"), scope: "turn_delta", modelId: "B", total: 10, source: "runtime", inferenceId: "b", turnId: "b" },
+                { observedAt: Date.parse("2026-07-02T12:00:00Z"), scope: "session_final", modelId: "B", total: 120, source: "native" },
+            ];
+            for (const [index, observation] of observations.entries()) {
+                const payload = {
+                    sessionId: session.id, observedAt: observation.observedAt,
+                    agentId: "codex", modelId: observation.modelId, source: observation.source,
+                    scope: observation.scope, isCumulative: observation.scope !== "turn_delta",
+                    externalKey: `u0-${index}`, turnId: observation.turnId,
+                    tokens: { input: observation.total, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: observation.total },
+                    cost: { reportedUsd: 0, estimatedUsd: observation.total / 1000, costSource: "pricing_estimate", currency: "USD" },
+                    metadata: { usageAccounting: { path: observation.source, status: "partial", inferenceId: observation.inferenceId } },
+                };
+                const result = await app.inject({ method: "POST", url: "/v2/usage-events", headers, payload });
+                expect(result.statusCode).toBe(200);
+                const replay = await app.inject({ method: "POST", url: "/v2/usage-events", headers, payload });
+                expect(replay.statusCode).toBe(200);
+                expect(replay.json()).toEqual(result.json());
+            }
+            const query = await app.inject({ method: "POST", url: "/v2/usage/query", headers, payload: {
+                dateRange: { startMs: Date.parse("2026-07-02T00:00:00Z"), endMs: Date.parse("2026-07-03T00:00:00Z") },
+                filters: { sessionIds: [session.id] }, breakdowns: ["model", "source"], includeSeries: true,
+            } });
+            expect(query.statusCode).toBe(200);
+            expect(query.json()).toMatchObject({ totals: { tokens: { total: 20 } },
+                breakdowns: { model: expect.arrayContaining([
+                    expect.objectContaining({ key: "A", tokens: expect.objectContaining({ total: 10 }) }),
+                    expect.objectContaining({ key: "B", tokens: expect.objectContaining({ total: 10 }) }),
+                ]) }, coverage: { status: "partial" },
+            });
+            const filtered = await app.inject({ method: "POST", url: "/v2/usage/query", headers, payload: {
+                dateRange: { startMs: Date.parse("2026-07-02T00:00:00Z") },
+                filters: { sessionIds: [session.id], modelIds: ["A"], sources: ["runtime"] },
+            } });
+            expect(filtered.statusCode).toBe(200);
+            expect(filtered.json().totals.tokens.total).toBe(10);
+            const legacy = await app.inject({ method: "POST", url: "/v1/usage/query", headers, payload: {
+                sessionId: session.id, startTime: Date.parse("2026-07-02T00:00:00Z") / 1000,
+                endTime: Date.parse("2026-07-03T00:00:00Z") / 1000, groupBy: "day",
+            } });
+            expect(legacy.statusCode).toBe(200);
+            expect(legacy.json().usage.map((row: { tokens: { total: number } }) => row.tokens.total)).toEqual([20]);
+            const unauthenticated = await app.inject({ method: "POST", url: "/v2/usage/query", payload: {} });
+            expect(unauthenticated.statusCode).toBe(401);
+        });
+    });
+
     it("upserts usage report and emits ephemeral when sessionId is provided", async () => {
         const account = await db.account.create({
             data: { publicKey: "pk-account-usage-upsert" },

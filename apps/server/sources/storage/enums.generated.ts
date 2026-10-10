@@ -179,6 +179,13 @@ export const MachineKind = {
 
 export type MachineKind = (typeof MachineKind)[keyof typeof MachineKind];
 
+export const MachineShareAccessLevel = {
+    view: "view",
+    admin: "admin",
+} as const;
+
+export type MachineShareAccessLevel = (typeof MachineShareAccessLevel)[keyof typeof MachineShareAccessLevel];
+
 export const AutomationScheduleKind = {
     cron: "cron",
     interval: "interval",

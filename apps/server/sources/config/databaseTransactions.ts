@@ -1,4 +1,5 @@
 import type { DbProvider } from "@/storage/prisma";
+import { resolveLightSqliteBusyTimeoutMsFromEnv } from "@/flavors/light/sqliteConnectionConfig";
 import { parseFloatEnv, parseIntEnv } from "./env";
 
 type EnvLike = Record<string, string | undefined>;
@@ -33,24 +34,6 @@ function getDefaultRetryJitterFactor(provider: DbProvider): number {
     return 0.25;
 }
 
-function getDefaultTimeoutMs(provider: DbProvider): number {
-    if (provider === "sqlite") return 10_000;
-    return 15_000;
-}
-
-function getDefaultMaxWaitMs(provider: DbProvider): number {
-    if (provider === "sqlite") return 5_000;
-    return 10_000;
-}
-
-function getDefaultTotalRetryBudgetMs(provider: DbProvider): number {
-    // A SQLite attempt can spend maxWaitMs acquiring a connection and then
-    // timeoutMs inside the transaction. Keep enough room for one complete
-    // retry plus its initial backoff so a timeout is actually recoverable.
-    if (provider === "sqlite") return 40_000;
-    return 600_000;
-}
-
 export function readDatabaseTransactionConfigFromEnv(
     env: EnvLike,
     provider: DbProvider,
@@ -70,6 +53,23 @@ export function readDatabaseTransactionConfigFromEnv(
         getDefaultRetryJitterFactor(provider),
         { min: 0, max: 1 },
     );
+    // A pooled SQLite connection can be occupied for the entire native lock
+    // wait. Acquisition and execution must not expire before that owner does.
+    // Retain the existing transaction configuration's minimum when lock waiting
+    // is explicitly disabled; explicit transaction overrides still take priority.
+    const sqliteLockBudgetMs = provider === "sqlite"
+        ? Math.max(1_000, resolveLightSqliteBusyTimeoutMsFromEnv(env))
+        : 0;
+    const timeoutMs = parseIntEnv(
+        env.HAPPIER_DB_TX_TIMEOUT_MS ?? env.HAPPY_DB_TX_TIMEOUT_MS,
+        provider === "sqlite" ? sqliteLockBudgetMs : 15_000,
+        { min: 1_000, max: 600_000 },
+    );
+    const maxWaitMs = parseIntEnv(
+        env.HAPPIER_DB_TX_MAX_WAIT_MS ?? env.HAPPY_DB_TX_MAX_WAIT_MS,
+        provider === "sqlite" ? sqliteLockBudgetMs : 10_000,
+        { min: 1_000, max: 600_000 },
+    );
 
     return {
         maxRetries: parseIntEnv(
@@ -80,19 +80,13 @@ export function readDatabaseTransactionConfigFromEnv(
         retryBaseDelayMs,
         retryMaxDelayMs,
         retryJitterFactor,
-        timeoutMs: parseIntEnv(
-            env.HAPPIER_DB_TX_TIMEOUT_MS ?? env.HAPPY_DB_TX_TIMEOUT_MS,
-            getDefaultTimeoutMs(provider),
-            { min: 1_000, max: 600_000 },
-        ),
-        maxWaitMs: parseIntEnv(
-            env.HAPPIER_DB_TX_MAX_WAIT_MS ?? env.HAPPY_DB_TX_MAX_WAIT_MS,
-            getDefaultMaxWaitMs(provider),
-            { min: 1_000, max: 600_000 },
-        ),
+        timeoutMs,
+        maxWaitMs,
         totalRetryBudgetMs: parseIntEnv(
             env.HAPPIER_DB_TX_TOTAL_RETRY_BUDGET_MS ?? env.HAPPY_DB_TX_TOTAL_RETRY_BUDGET_MS,
-            getDefaultTotalRetryBudgetMs(provider),
+            // Two complete attempts plus the first backoff, derived from the
+            // same budgets rather than a competing fixed retry cutoff.
+            provider === "sqlite" ? 2 * (maxWaitMs + timeoutMs) + retryBaseDelayMs : 600_000,
             { min: 1, max: 600_000 },
         ),
     };

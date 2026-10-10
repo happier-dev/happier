@@ -1033,6 +1033,35 @@ describe("applySqliteMigrations", () => {
 });
 
 describe("applyPostgresMigrations", () => {
+    it("adds independent Session pin memberships while preserving retained PostgreSQL rows", async () => {
+        const name = "20261008130000_add_session_pin_surfaces";
+        const root = join(import.meta.dirname, "..", "prisma/migrations");
+        const migrationsDir = await createMigrationDir("happier-pin-surfaces-postgres-", [{
+            name, sql: await readFile(join(root, name, "migration.sql"), "utf8"),
+        }]);
+        const database = new PGlite();
+        try {
+            await database.exec(`CREATE TABLE "Account" ("id" TEXT PRIMARY KEY);
+                CREATE TABLE "Session" ("id" TEXT PRIMARY KEY);
+                INSERT INTO "Account" VALUES ('pin-account');
+                INSERT INTO "Session" VALUES ('pin-session');`);
+            await database.exec(await readFile(join(root, "20260630170000_add_session_organization_models", "migration.sql"), "utf8"));
+            await database.exec(`INSERT INTO "SessionPin" ("id", "accountId", "sessionId", "sortKey", "pinnedAt", "updatedAt")
+                VALUES ('retained-pin', 'pin-account', 'pin-session', 'saved-rank', '2026-01-01T00:00:00Z', CURRENT_TIMESTAMP)`);
+            const retained = (await database.query('SELECT "id", "sessionId", "sortKey", "pinnedAt" FROM "SessionPin"')).rows[0];
+            expect(await applyPostgresMigrations({ db: database, migrationsDir })).toEqual({ applied: [name] });
+            expect(await applyPostgresMigrations({ db: database, migrationsDir })).toEqual({ applied: [] });
+            expect((await database.query('SELECT "id", "sessionId", "sortKey", "pinnedAt", "listPinned", "railPinned" FROM "SessionPin"')).rows)
+                .toEqual([{ ...retained, listPinned: true, railPinned: false }]);
+            await database.exec('UPDATE "SessionPin" SET "railPinned"=true, "listPinned"=false');
+            expect((await database.query('SELECT "id", "sessionId", "sortKey", "pinnedAt", "listPinned", "railPinned" FROM "SessionPin"')).rows)
+                .toEqual([{ ...retained, listPinned: false, railPinned: true }]);
+        } finally {
+            await database.close();
+            await rm(migrationsDir, { recursive: true, force: true });
+        }
+    });
+
     it("preserves review history in Postgres while admitting workspace-only semantic findings", async () => {
         const name = "20260930140000_add_review_finding_scope";
         const root = join(import.meta.dirname, "..", "prisma/migrations");

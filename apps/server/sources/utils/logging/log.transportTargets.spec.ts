@@ -16,6 +16,12 @@ afterEach(() => {
 });
 
 describe('createLoggingTransportTargets', () => {
+  it('initializes logging from the effective post-overlay startup environment', async () => {
+    setBunRuntime(true);
+    const mod = await import('./log');
+    mod.initializeServerLogging({ HAPPIER_SERVER_LOG_LEVEL: 'warn' });
+    expect(mod.logger.level).toBe('warn');
+  });
   it('includes pino-pretty transport when not running under Bun', async () => {
     setBunRuntime(false);
     const mod = await import('./log');

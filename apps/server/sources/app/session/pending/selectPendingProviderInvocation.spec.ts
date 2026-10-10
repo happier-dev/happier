@@ -9,6 +9,19 @@ const row = (localId: string, kind: 'enqueue' | 'steer_if_active' | 'steer_now' 
 });
 
 describe('selectPendingProviderInvocation', () => {
+    it('withholds a reset-bound FIFO item before claiming provider custody', () => {
+        expect(selectPendingProviderInvocation({
+            rows: [{ localId: 'held', position: 1, requestedAction: {
+                v: 1, kind: 'reset_start', reset: {
+                        source: { bindingKind: 'account', ref: { service: { pluginId: 'happier.agent.codex', localId: 'openai' }, accountId: 'account' } },
+                    recordId: 'paug_v1_abcdefgh', meterId: 'weekly',
+                    witness: { id: 'history-entry', observedAtMs: 1000 },
+                },
+            } }],
+            foregroundState: 'ready', deliveryTiming: 'after_foreground_ready', readRuntimeActivity: () => 'idle',
+        })).toEqual({ deferredReason: 'waiting_for_quota_reset' });
+    });
+
     it('reads Runtime Activity only after the FIFO action requires idle admission', () => {
         const readRuntimeActivity = vi.fn(() => 'idle' as const);
         const select = (kind: 'enqueue' | 'send_now') => selectPendingProviderInvocation({

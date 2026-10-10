@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 import { resolveVitestFeatureTestExcludeGlobs } from "../../scripts/testing/featureTestGating";
+import { serverWorkspacePackageSourcesPlugin } from './vitestWorkspacePackageResolution';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -22,7 +23,9 @@ export default defineConfig({
             HAPPIER_FEATURE_POLICY_ENV: "",
         },
     },
-    // Restrict tsconfig resolution to server only.
-    // Otherwise vite-tsconfig-paths may scan the repo and attempt to parse Expo tsconfigs.
-    plugins: [tsconfigPaths({ projects: [resolve(__dirname, "./tsconfig.json")] })],
+    // Cross-owner DB contracts exercise the real CLI consumer against server
+    // routes. Resolve each importer's own alias without scanning Expo projects.
+    plugins: [serverWorkspacePackageSourcesPlugin, tsconfigPaths({ projects: [
+        resolve(__dirname, "./tsconfig.json"), resolve(__dirname, "../cli/tsconfig.json"),
+    ] })],
 });

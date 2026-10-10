@@ -5,6 +5,8 @@ import type { LocalServicePreviewTokenV1 } from "@happier-dev/protocol";
 export type LocalServicePreviewTokenRecord = LocalServicePreviewTokenV1 & Readonly<{
     tokenHash: string;
     revokedAt?: number;
+    /** Host-admitted viewer; never part of the transported bearer-token schema. */
+    actorAccountId?: string;
 }>;
 
 export type CreateLocalServicePreviewTokenInput = Readonly<{
@@ -17,6 +19,7 @@ export type CreateLocalServicePreviewTokenInput = Readonly<{
     issuedAt: number;
     expiresAt: number | null;
     exchangeMode: "url" | "cookie";
+    actorAccountId?: string;
 }>;
 
 export type LocalServicePreviewTokenValidationResult =
@@ -83,6 +86,7 @@ export function createLocalServicePreviewToken(input: CreateLocalServicePreviewT
             expiresAt: input.expiresAt,
             exchangeMode: input.exchangeMode,
             tokenHash: hashLocalServicePreviewToken(input.secret, input.rawToken),
+            ...(input.actorAccountId ? { actorAccountId: input.actorAccountId } : {}),
         },
     };
 }

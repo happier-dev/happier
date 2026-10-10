@@ -20,7 +20,7 @@ import {
     type MachineDaemonPresenceInventory,
     type MachineDaemonPresenceSocketServer,
 } from "../machineDaemonPresence";
-import { selectMachinePoolCandidate } from "./machinePoolPlacementService";
+import { selectMachinePoolCandidate } from "@happier-dev/protocol/machines/pools";
 import { clearTeamCredentialBrokerPoolReferencesInTx } from "@/app/teams/credentials/resourceBrokerPoolLifecycle";
 import { acquireMachinePoolMutationFenceInTx } from "./machinePoolMutationFence";
 
@@ -446,6 +446,10 @@ export async function resolveMachinePool(params: Readonly<{
     input: MachinePoolResolveInputV1;
     io: MachineDaemonPresenceSocketServer;
 }>): Promise<PoolResult<MachinePoolResolveResultV1>> {
+    // Worker selection needs exact target status at the Action caller, not server presence alone.
+    if (params.input.purpose === "finite" || params.input.purpose === "service-start") {
+        return { ok: false, error: { code: "invalid_request", message: "Worker placement requires the Action resolver." } };
+    }
     const snapshot = await getMachinePoolCandidateSnapshot({
         accountId: params.accountId,
         poolId: params.input.poolId,
@@ -463,6 +467,7 @@ export async function resolveMachinePool(params: Readonly<{
         return { ok: true, value: { kind: "unavailable", poolId: stored.poolId, reason: "no_available_machine" } };
     }
     const selected = selectMachinePoolCandidate({
+        purpose: "session",
         members: stored.members,
         availableMachineIds: stored.availableMachineIds,
         requestKey: params.input.requestKey,

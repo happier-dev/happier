@@ -510,6 +510,25 @@ Current-format operations require a current caller declaration. Release readines
 still depends on the remaining mixed-version, database, composed, and platform checks;
 it does not depend on an operator activation mode or legacy socket drainage.
 
+Current 0.3 development source treats a Bot as an ordinary Session with a reversible
+`work.bot: { kind: 'bot' }` owner marker. Its shared projection contains only `bot`;
+the immutable creation fact `work.createdAsBot: true`, memory choice and
+`work.viewPreferences.showToolCalls` remain owner-private. The local compatibility
+view keeps `bot` and `createdAsBot` flat and retains other private fields under `work`.
+Stored owner/shared reads recursively discard unknown extensions and validate known
+fields through the canonical stored-read projection. Creation, Actions and writes
+still use strict admission schemas. No separate Bot entity or runtime is introduced.
+
+In that development source, transcript visibility resolves an explicit Session
+`showToolCalls` choice first, then the Bot-hidden default, then the Account
+`transcriptShowToolCalls` preference (default true). Setting the Session choice to
+null clears its override. These are human view preferences, not Agent runtime
+instructions. Hidden tool calls use the existing collapsed group without previews;
+permissions, pending questions and failures remain visible. Main and Chain app
+transcripts share the existing live work-state/freshness subscription and compact
+status/elapsed presentation. A show-to-hide transition clears local expansion
+through the existing viewport-preparation seam; revealing a group is local only.
+
 Session transcript mode stays per Session, but the layout-1 owner envelope is
 Account-scoped and must transition with Account mode. Approved amendment `.7` adds a
 required bounded `sessions: assert_empty | migrate` directive. Each item identifies

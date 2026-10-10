@@ -505,6 +505,11 @@ describe("Layout-1 Session constructor (SQLite integration)", () => {
     });
 
     it("rolls back the fresh Session when the credential-resource feature is disabled", async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: "1",
+            HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES__ENABLED: "0",
+        });
         const owner = await createPlainAccount("pk-constructor-binding");
         const team = await db.team.create({ data: { name: "Binding team" } });
         const resourceId = "session-binding-resource";

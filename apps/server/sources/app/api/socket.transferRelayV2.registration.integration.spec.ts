@@ -121,6 +121,7 @@ describe('startSocket transfer relay v2 registration', () => {
       emit: vi.fn(),
       on: vi.fn(),
       join: vi.fn(),
+      use: vi.fn(),
       timeout: vi.fn(() => ({ emitWithAck: vi.fn() })),
       connected: true,
       handshake: {
@@ -204,6 +205,7 @@ describe('startSocket transfer relay v2 registration', () => {
       emit: vi.fn(),
       on: vi.fn(),
       join: vi.fn(() => joinPromise),
+      use: vi.fn(),
       timeout: vi.fn(() => ({ emitWithAck: vi.fn() })),
       connected: true,
       handshake: {

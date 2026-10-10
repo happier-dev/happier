@@ -352,7 +352,7 @@ export async function listSessionFollowSources(input: Readonly<{
             visible.push(projectSource(edge, source, dormant));
         }
         return { ok: true, value: visible };
-    });
+    }, { readOnly: true });
 }
 
 /**

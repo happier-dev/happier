@@ -111,7 +111,7 @@ export async function createV2SessionAttentionPage(params: Readonly<{
                 rowAdmission: params.rowAdmission ?? attention.admitRows,
                 now,
             });
-        });
+        }, { readOnly: true });
     }
     const candidateLimit = params.candidateLimit ?? resolveV2SessionListInitialAttentionRowLimit();
     const examinationLimit = Math.max(candidateLimit, SESSION_PERSONAL_ATTENTION_SCAN_BATCH_SIZE);

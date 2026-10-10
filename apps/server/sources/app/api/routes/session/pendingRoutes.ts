@@ -10,6 +10,7 @@ import {
     discardPendingMessage,
     enqueuePendingMessage,
     listPendingMessages,
+    listPendingResetStartsForSource,
     blockPendingDelivery,
     markPendingActivationFailed,
     markPendingDeliveryHandled,
@@ -42,6 +43,7 @@ import {
 } from "@happier-dev/protocol";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import { readSessionAccessAuthenticationFromRequest } from "@/app/session/access/sessionAccessAuthentication";
+import { PendingResetStartsReadInputV1Schema, PendingResetStartsReadResultV1Schema } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 import {
     emitPendingChanged,
 } from "@/app/session/pending/publishPendingMutation";
@@ -119,7 +121,7 @@ async function emitCommittedPendingDeliveryMessage(params: {
     // card becomes a transcript message.
     const message = {
         ...params.message,
-        accountActor: await resolveSessionMessageAccountActor(db, params.message),
+        accountActor: await resolveSessionMessageAccountActor(params.message),
     };
     const results = await Promise.allSettled(
         params.recipientCursors.map(async ({ accountId, cursor }) => {
@@ -149,6 +151,13 @@ async function emitCommittedPendingDeliveryMessage(params: {
 }
 
 export function sessionPendingRoutes(app: Fastify) {
+    app.post('/v2/pending/reset-starts/read', {
+        preHandler: app.authenticate,
+        schema: { body: PendingResetStartsReadInputV1Schema, response: { 200: PendingResetStartsReadResultV1Schema } },
+        config: { restrictedCredentialBinding: { scope: 'account' },
+            rateLimit: resolveApiHotEndpointRateLimit(process.env, 'session.pending') },
+    }, async request => listPendingResetStartsForSource({ actorUserId: request.userId,
+        authentication: readSessionAccessAuthenticationFromRequest(request), source: request.body.source }));
     registerSessionPendingResource(app, false);
     registerSessionPendingResource(app, true);
 }
@@ -442,6 +451,7 @@ function registerSessionPendingResource(app: Fastify, executionRunTarget: boolea
                 if (res.error === "forbidden") return reply.code(403).send({ error: res.error });
                 if (res.error === "session-not-found" || res.error === "not-found") return reply.code(404).send({ error: res.error });
                 if (res.error === "action-conflict") return reply.code(409).send({ error: res.error });
+                if (res.error === "reset-start-unsupported") return reply.code(409).send({ error: res.error });
                 return reply.code(500).send({ error: res.error });
             }
 

@@ -13,6 +13,7 @@ import {
 } from "@/app/session/personal/queries";
 import { loadSessionViewerProjection } from "@/app/session/personal/projection";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { observeSqliteRequests } from "@/testkit/observeSqliteRequests";
 import { createPresentUserSessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication.testkit";
 import {
     createV2SessionListRowPage,
@@ -299,7 +300,6 @@ describe("Session listing predicate composition (SQLite)", () => {
             data: { responsibleAccountId: viewer.id, seq: 5 },
         });
 
-        const originalTransaction = db.$transaction;
         const readMethods = new Set([
             "aggregate",
             "count",
@@ -327,61 +327,23 @@ describe("Session listing predicate composition (SQLite)", () => {
             "teamGroupMembership",
             "teamMembership",
         ] as const;
-        const directModelRestores: Array<() => void> = [];
         const transactionReads = new Set<string>();
-
-        for (const modelName of modelNames) {
-            const delegate = Reflect.get(db, modelName) as object;
-            const descriptor = Object.getOwnPropertyDescriptor(db, modelName);
-            Object.defineProperty(db, modelName, {
-                configurable: true,
-                writable: true,
-                value: new Proxy(delegate, {
-                    get(target, property, receiver) {
-                        const member = Reflect.get(target, property, receiver);
-                        if (typeof property !== "string" || !readMethods.has(property) || typeof member !== "function") {
-                            return typeof member === "function" ? member.bind(target) : member;
-                        }
-                        return () => {
-                            throw new Error(`Strict Session listing escaped its transaction through db.${modelName}.${property}`);
-                        };
-                    },
-                }),
-            });
-            directModelRestores.push(() => {
-                if (descriptor) Object.defineProperty(db, modelName, descriptor);
-                else Reflect.deleteProperty(db, modelName);
-            });
-        }
-
-        db.$transaction = (async (...args: unknown[]) => {
-            const operation = args[0];
-            if (typeof operation !== "function") {
-                return await Reflect.apply(originalTransaction, db, args);
-            }
-            const transactionOperation = operation as (tx: Tx) => Promise<unknown>;
-            return await Reflect.apply(originalTransaction, db, [
-                async (tx: Tx) => await transactionOperation(new Proxy(tx, {
-                    get(target, property, receiver) {
-                        const delegate = Reflect.get(target, property, receiver);
-                        if (typeof property !== "string" || typeof delegate !== "object" || delegate === null) {
-                            return typeof delegate === "function" ? delegate.bind(target) : delegate;
-                        }
-                        return new Proxy(delegate, {
-                            get(model, method, modelReceiver) {
-                                const member = Reflect.get(model, method, modelReceiver);
-                                if (typeof method !== "string" || typeof member !== "function") return member;
-                                return (...methodArgs: readonly unknown[]) => {
-                                    if (readMethods.has(method)) transactionReads.add(`${property}.${method}`);
-                                    return Reflect.apply(member, model, methodArgs);
-                                };
-                            },
-                        });
-                    },
-                })),
-                ...args.slice(1),
-            ]);
-        }) as typeof db.$transaction;
+        let snapshotClient: unknown;
+        const restoreObserver = observeSqliteRequests({
+            before: (request) => {
+                if (request.action === "executeRaw" && request.args && typeof request.args === "object"
+                    && "query" in request.args && request.args.query === "BEGIN DEFERRED;") {
+                    snapshotClient = request.client;
+                }
+                const model = request.model && request.model[0]!.toLowerCase() + request.model.slice(1);
+                if (model && modelNames.some(name => name === model) && readMethods.has(request.action)) {
+                    if (request.client !== snapshotClient) {
+                        throw new Error(`Strict Session listing escaped its read snapshot through ${model}.${request.action}`);
+                    }
+                    transactionReads.add(`${model}.${request.action}`);
+                }
+            },
+        });
 
         try {
             const page = SessionListQueryResponseV1Schema.parse(await listSessionsForAccount({
@@ -413,8 +375,7 @@ describe("Session listing predicate composition (SQLite)", () => {
                 "teamMembership.findMany",
             ]));
         } finally {
-            db.$transaction = originalTransaction;
-            for (const restore of directModelRestores.reverse()) restore();
+            restoreObserver();
         }
     });
 

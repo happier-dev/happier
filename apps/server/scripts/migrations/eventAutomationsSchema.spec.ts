@@ -97,6 +97,27 @@ function createdTable(sql: string, name: string): string {
     throw new Error(`table ${name} is unclosed`);
 }
 
+function executionInputInvariant(sql: string): string {
+    if (!sql.includes("CREATE TRIGGER `AutomationRun_execution_input_insert`")) {
+        return namedCheck(sql, "AutomationRun_execution_input_arm_check");
+    }
+    // MySQL cannot CHECK producedSessionId because of its cascading FK.
+    // Both real write-boundary triggers must enforce the same complete arm.
+    const expressions = ["insert", "update"].map(operation => {
+        const marker = `CREATE TRIGGER \`AutomationRun_execution_input_${operation}\``;
+        expect(sql.match(new RegExp(marker, "g"))).toHaveLength(1);
+        const trigger = sql.slice(sql.indexOf(marker)).split("END;")[0]!;
+        expect(trigger).toContain(`BEFORE ${operation.toUpperCase()} ON \`AutomationRun\``);
+        expect(trigger).toContain("SIGNAL SQLSTATE '45000'");
+        const expression = trigger.match(/IF NOT (\([\s\S]*?\)) THEN/)?.[1];
+        if (!expression) throw new Error(`${marker} has no input invariant`);
+        return normalizeSql(expression.replaceAll("NEW.", ""));
+    });
+    expect(expressions[1]).toBe(expressions[0]);
+    expect(sql).not.toMatch(/ADD CONSTRAINT `AutomationRun_execution_input_arm_check`/);
+    return expressions[0]!;
+}
+
 function discriminantArm(check: string, field: string, value: string): string {
     const marker = `${field} = '${value}'`;
     const start = check.indexOf(marker);
@@ -194,6 +215,77 @@ const historyIndexMigrationPaths = [
 ] as const;
 
 describe("Automation trigger-set persistence contract", () => {
+    it.each([
+        migrationPaths[2],
+        "prisma/mysql/migrations/20260908120000_add_workflow_run_invocations/migration.sql",
+    ])("preserves MySQL queued/reclaimed pre-effect input while refusing effectful neighbours in %s", async (migrationPath) => {
+        const check = executionInputInvariant(await read(migrationPath));
+        // Static MySQL migration contract: evaluate the actual portable input
+        // predicate with native SQL SELECTs only. This does not deploy MySQL.
+        const database = new DatabaseSync(":memory:");
+        const row = {
+            state: "queued", attempt: 0, executionInputEnvelope: null,
+            workflowAcceptedSnapshotEnvelope: null, startedAt: null, finishedAt: null,
+            producedSessionId: null, summaryCiphertext: null, resultEnvelope: null,
+            executionAttempt: 0, executionDispatchCommittedAt: null, executionDispatchState: null,
+            executionNativeRunId: null, executionNativeCallId: null, executionNativeSidechainId: null,
+        } satisfies Record<string, string | number | null>;
+        const allowed = (overrides: Partial<Record<keyof typeof row, string | number | null>>) => {
+            const values = { ...row, ...overrides };
+            return database.prepare(`SELECT ${check} AS allowed FROM (SELECT ${
+                Object.keys(values).map(column => `? AS ${column}`).join(",")
+            })`).get(...Object.values(values))?.allowed;
+        };
+        try {
+            expect(allowed({})).toBe(1);
+            expect(allowed({ state: "claimed", attempt: 3, executionDispatchState: "notStarted" })).toBe(1);
+            for (const effects of [
+                { state: "running" }, { startedAt: "effect" }, { finishedAt: "effect" },
+                { producedSessionId: "session" }, { summaryCiphertext: "result" }, { resultEnvelope: "result" },
+                { executionAttempt: 1 }, { executionDispatchCommittedAt: "effect" },
+                { executionDispatchState: "dispatchPermitted" }, { executionNativeRunId: "native" },
+                { executionNativeCallId: "native" }, { executionNativeSidechainId: "native" },
+            ]) {
+                expect(allowed(effects), JSON.stringify(effects)).toBe(0);
+                expect(allowed({ state: "claimed", attempt: 3, ...effects }), JSON.stringify(effects)).toBe(0);
+            }
+            expect(allowed({ state: "running", executionInputEnvelope: "frozen" })).toBe(1);
+            expect(allowed({ state: "succeeded", startedAt: "effect" })).toBe(1);
+            expect(allowed({ state: "running", workflowAcceptedSnapshotEnvelope: "accepted" })).toBe(
+                migrationPath.includes("workflow_run_invocations") ? 1 : 0,
+            );
+        } finally { database.close(); }
+    });
+
+    it("allows MySQL pre-effect predecessor rows through preflight but refuses row/event evidence before mutation", async () => {
+        const sql = await read(migrationPaths[2]);
+        const preflight = sql.match(/SELECT 1 FROM `AutomationRun` WHERE ([\s\S]*?)\n\);/)?.[1];
+        expect(preflight).toBeDefined();
+        const database = new DatabaseSync(":memory:");
+        const row = { id: "predecessor", state: "queued", attempt: 0,
+            startedAt: null, finishedAt: null, producedSessionId: null, summaryCiphertext: null,
+        } satisfies Record<string, string | number | null>;
+        const refused = (overrides: Partial<Record<keyof typeof row, string | number | null>>, eventType = "queued", eventRunId = "predecessor") => {
+            const values = { ...row, ...overrides };
+            return database.prepare(`WITH AutomationRun AS (SELECT ${
+                Object.keys(values).map(column => `? AS ${column}`).join(",")
+            }), AutomationRunEvent AS (SELECT ? AS runId, ? AS type)
+                SELECT EXISTS(SELECT 1 FROM AutomationRun WHERE ${preflight}) AS refused`)
+                .get(...Object.values(values), eventRunId, eventType)?.refused;
+        };
+        try {
+            expect(refused({})).toBe(0);
+            expect(refused({ state: "claimed", attempt: 3 })).toBe(0);
+            for (const effects of [{ state: "running" }, { startedAt: "effect" }, { finishedAt: "effect" },
+                { producedSessionId: "session" }, { summaryCiphertext: "result" }]) {
+                expect(refused(effects), JSON.stringify(effects)).toBe(1);
+            }
+            expect(refused({ state: "claimed", attempt: 3 }, "run_started")).toBe(1);
+            expect(refused({}, "run_started", "unrelated-run")).toBe(0);
+            expect(refused({ state: "succeeded", startedAt: "effect" }, "run_started")).toBe(0);
+        } finally { database.close(); }
+    });
+
     it.each(schemaPaths)("uses one trigger child and immutable Run-cause owner in %s", async (schemaPath) => {
         const schema = await read(schemaPath);
         const automation = model(schema, "Automation");
@@ -300,7 +392,7 @@ describe("Automation trigger-set persistence contract", () => {
         const sql = await read(migrationPath);
         const normalized = normalizeSql(sql);
         const triggerCheck = namedCheck(sql, "AutomationTrigger_arm_check");
-        const executionInputCheck = namedCheck(sql, "AutomationRun_execution_input_arm_check");
+        const executionInputCheck = executionInputInvariant(sql);
         const causeCheck = namedCheck(sql, "AutomationRun_cause_arm_check");
         const sourceStatusTable = createdTable(sql, "AutomationEventSourceStatus");
         const catalogStatusTable = createdTable(sql, "AutomationEventSourceCatalogStatus");
@@ -683,9 +775,47 @@ function createSqlitePredecessor(): DatabaseSync {
 }
 
 describe("Automation trigger-set executable migration", () => {
-    it.each(["queued", "claimed", "running"] as const)(
-        "refuses SQLite activation before canonical mutation while a released predecessor Run is %s",
-        async (state) => {
+    it.each(["sqlite", "postgres"] as const)("preserves real 0.2 queued and reclaimed pre-effect Runs through the %s transition", async (provider) => {
+        const db = provider === "sqlite" ? createSqlitePredecessor() : await createPostgresPredecessor();
+        const sql = `
+            INSERT INTO "AutomationRun" ("id", "automationId", "accountId", "state", "scheduledAt", "dueAt", "attempt", "updatedAt") VALUES
+                ('predecessor-queued', 'automation', 'account', 'queued', '2026-08-27T11:00:00.000Z', '2026-08-27T11:00:00.000Z', 0, CURRENT_TIMESTAMP),
+                ('predecessor-reclaimed', 'automation', 'account', 'claimed', '2026-08-27T11:00:00.000Z', '2026-08-27T11:01:00.000Z', 3, CURRENT_TIMESTAMP);
+        `;
+        try {
+            if (db instanceof DatabaseSync) {
+                db.exec(sql);
+                await applySqliteMigrationThroughCanonicalExecutor(db, await read(migrationPaths[1]));
+                expect(db.prepare(`SELECT "id", "state", "attempt", "executionInputEnvelope", "causeKind" FROM "AutomationRun" WHERE "id" LIKE 'predecessor-%' ORDER BY "id"`).all()).toEqual([
+                    { id: "predecessor-queued", state: "queued", attempt: 0, executionInputEnvelope: null, causeKind: "manual" },
+                    { id: "predecessor-reclaimed", state: "claimed", attempt: 3, executionInputEnvelope: null, causeKind: "trigger" },
+                ]);
+                expect(db.prepare(`SELECT "runId", "machineId" FROM "AutomationRunAssignment" WHERE "runId" LIKE 'predecessor-%' ORDER BY "runId"`).all()).toEqual([
+                    { runId: "predecessor-queued", machineId: "machine-enabled" }, { runId: "predecessor-reclaimed", machineId: "machine-enabled" },
+                ]);
+                expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+            } else {
+                await db.exec(sql);
+                await db.exec(await read(migrationPaths[0]));
+                expect((await db.query(`SELECT "id", "state"::text, "attempt", "executionInputEnvelope", "causeKind"::text FROM "AutomationRun" WHERE "id" LIKE 'predecessor-%' ORDER BY "id"`)).rows).toEqual([
+                    { id: "predecessor-queued", state: "queued", attempt: 0, executionInputEnvelope: null, causeKind: "manual" },
+                    { id: "predecessor-reclaimed", state: "claimed", attempt: 3, executionInputEnvelope: null, causeKind: "trigger" },
+                ]);
+                expect((await db.query(`SELECT "runId", "machineId" FROM "AutomationRunAssignment" WHERE "runId" LIKE 'predecessor-%' ORDER BY "runId"`)).rows).toEqual([
+                    { runId: "predecessor-queued", machineId: "machine-enabled" }, { runId: "predecessor-reclaimed", machineId: "machine-enabled" },
+                ]);
+            }
+        } finally { await db.close(); }
+    });
+
+    it.each([
+        { state: "running", effect: "" },
+        { state: "queued", effect: `UPDATE "AutomationRun" SET "startedAt" = CURRENT_TIMESTAMP WHERE "id" = 'released-open-manual'` },
+        { state: "claimed", effect: `UPDATE "AutomationRun" SET "summaryCiphertext" = 'retained-effect' WHERE "id" = 'released-open-manual'` },
+        { state: "claimed", effect: `INSERT INTO "AutomationRunEvent" ("id", "runId", "type") VALUES ('started-event', 'released-open-manual', 'run_started')` },
+    ])(
+        "refuses SQLite activation before canonical mutation for effectful predecessor $state/$effect",
+        async ({ state, effect }) => {
             const db = createSqlitePredecessor();
             try {
                 db.prepare(`
@@ -696,6 +826,7 @@ describe("Automation trigger-set executable migration", () => {
                         '2026-08-27T11:00:00.000Z', '2026-08-27T11:00:00.000Z', CURRENT_TIMESTAMP
                     )
                 `).run(state);
+                if (effect) db.exec(effect);
                 await expect(applySqliteMigrationThroughCanonicalExecutor(
                     db,
                     await read(migrationPaths[1]),
@@ -716,11 +847,16 @@ describe("Automation trigger-set executable migration", () => {
     );
 
     it(
-        "refuses PostgreSQL activation before canonical mutation for every open released predecessor Run state",
+        "refuses PostgreSQL activation before canonical mutation for effectful predecessor Runs",
         async () => {
             const db = await createPostgresPredecessor();
             try {
-                for (const state of ["queued", "claimed", "running"] as const) {
+                for (const { state, effect } of [
+                    { state: "running", effect: "" },
+                    { state: "queued", effect: `UPDATE "AutomationRun" SET "startedAt" = CURRENT_TIMESTAMP WHERE "id" = 'released-open-manual'` },
+                    { state: "claimed", effect: `UPDATE "AutomationRun" SET "summaryCiphertext" = 'retained-effect' WHERE "id" = 'released-open-manual'` },
+                    { state: "claimed", effect: `INSERT INTO "AutomationRunEvent" ("id", "runId", "type") VALUES ('started-event', 'released-open-manual', 'run_started')` },
+                ]) {
                     await db.query(`
                         INSERT INTO "AutomationRun" (
                             "id", "automationId", "accountId", "state", "scheduledAt", "dueAt", "updatedAt"
@@ -729,8 +865,9 @@ describe("Automation trigger-set executable migration", () => {
                             '2026-08-27T11:00:00.000Z', '2026-08-27T11:00:00.000Z', CURRENT_TIMESTAMP
                         )
                     `, [state]);
+                    if (effect) await db.exec(effect);
                     await expect(db.exec(await read(migrationPaths[0]))).rejects.toThrow(
-                        /Automation activation requires zero open predecessor AutomationRun rows/i,
+                        /Automation activation requires.*predecessor AutomationRun/i,
                     );
                     const tables = await db.query<{ tableName: string }>(`
                         SELECT table_name AS "tableName"
@@ -1044,7 +1181,7 @@ describe("Automation trigger-set executable migration", () => {
                         CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 `, [`terminal-null-input-${terminalState}`, terminalState]);
             }
-            for (const state of ["queued", "claimed", "running"] as const) {
+            for (const state of ["running"] as const) {
                 await expect(db.query(`
                     INSERT INTO "AutomationRun" (
                         "id", "automationId", "accountId", "state", "causeKind", "causeOccurredAt",
@@ -1454,7 +1591,7 @@ describe("Automation trigger-set executable migration", () => {
                 ) VALUES ('terminal-historical-null-input', 'automation', 'account', 'succeeded', 'manual',
                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             `);
-            for (const state of ["queued", "claimed", "running"] as const) {
+            for (const state of ["running"] as const) {
                 expect(() => db.prepare(`
                     INSERT INTO "AutomationRun" (
                         "id", "automationId", "accountId", "state", "causeKind", "causeOccurredAt",

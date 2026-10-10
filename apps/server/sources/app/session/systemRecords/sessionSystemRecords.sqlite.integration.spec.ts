@@ -82,6 +82,40 @@ describe("SessionSystemRecord CONTRACT on SQLite", () => {
         }
     });
 
+    it("creates, updates and removes transcript content without changing an unrelated Board layout", async () => {
+        const { account, session } = await createAccountAndSession(`transcript-${randomUUID()}`);
+        const app = Fastify().withTypeProvider<ZodTypeProvider>();
+        app.setValidatorCompiler(validatorCompiler);
+        app.setSerializerCompiler(serializerCompiler);
+        app.decorate("authenticate", async (request: FastifyRequest) => { request.userId = account.id; request.authAuthority = "present_user"; });
+        sessionRoutes(app);
+        const url = `/v2/sessions/${session.id}/board`;
+        const layoutContent = { t: "plain", v: { v: 1, tabs: [{ id: "overview", title: "Overview", items: [] }] } };
+        const itemContent = { t: "plain", v: { v: 1, destination: "transcript", title: "Result", frame: "frameless",
+            height: { mode: "auto", fallback: "regular" }, source: { kind: "declarative", document: { version: 1, root: { kind: "markdown", text: "Hello" } } } } };
+        const previousBoardEnabled = process.env.HAPPIER_FEATURE_SESSIONS_BOARD__ENABLED;
+        try {
+            const layout = await app.inject({ method: "PUT", url, payload: { operation: "update_layout", layoutContent, expectedLayoutRevision: null } });
+            expect(layout.statusCode).toBe(200);
+            process.env.HAPPIER_FEATURE_SESSIONS_BOARD__ENABLED = "0";
+            const created = await app.inject({ method: "PUT", url, payload: { operation: "upsert_item", destination: "transcript", itemId: "visual", itemContent, expectedItemRevision: null } });
+            expect(created.statusCode, created.body).toBe(200);
+            const updated = await app.inject({ method: "PUT", url, payload: { operation: "upsert_item", itemId: "visual", itemContent: { ...itemContent, v: { ...itemContent.v, title: "Changed" } }, expectedItemRevision: created.json().itemRevision } });
+            expect(updated.statusCode, updated.body).toBe(200);
+            const stale = await app.inject({ method: "PUT", url, payload: { operation: "upsert_item", itemId: "visual", itemContent, expectedItemRevision: created.json().itemRevision } });
+            expect(stale.statusCode).toBe(409);
+            const removed = await app.inject({ method: "PUT", url, payload: { operation: "remove_item", itemId: "visual", expectedItemRevision: updated.json().itemRevision } });
+            expect(removed.statusCode, removed.body).toBe(200);
+            const rows = await db.sessionSystemRecord.findMany({ where: { sessionId: session.id } });
+            expect(rows).toHaveLength(1);
+            expect(rows[0]?.content).toEqual(layoutContent);
+        } finally {
+            if (previousBoardEnabled === undefined) delete process.env.HAPPIER_FEATURE_SESSIONS_BOARD__ENABLED;
+            else process.env.HAPPIER_FEATURE_SESSIONS_BOARD__ENABLED = previousBoardEnabled;
+            await app.close();
+        }
+    });
+
     it("atomically creates Board item and placement, replays exact bytes and rolls back layout conflicts", async () => {
         const { account, session } = await createAccountAndSession(`board-${randomUUID()}`);
         const app = Fastify().withTypeProvider<ZodTypeProvider>();
@@ -89,9 +123,9 @@ describe("SessionSystemRecord CONTRACT on SQLite", () => {
         app.setSerializerCompiler(serializerCompiler);
         app.decorate("authenticate", async (request: FastifyRequest) => { request.userId = account.id; request.authAuthority = "present_user"; });
         sessionRoutes(app);
-        const itemContent = { t: "plain", v: { v: 1, title: "Note", frame: "card", height: { mode: "auto", fallback: "regular" }, source: { kind: "declarative", document: { version: 1, root: { kind: "markdown", text: "Hello" } } } } };
+        const itemContent = { t: "plain", v: { v: 1, destination: "both", title: "Note", frame: "card", height: { mode: "auto", fallback: "regular" }, source: { kind: "declarative", document: { version: 1, root: { kind: "markdown", text: "Hello" } } } } };
         const layoutContent = { t: "plain", v: { v: 1, tabs: [{ id: "overview", title: "Overview", items: [{ itemId: "note", width: "medium" }] }] } };
-        const payload = { operation: "upsert_item", itemId: "note", itemContent, expectedItemRevision: null, placement: { layoutContent, expectedLayoutRevision: null } };
+        const payload = { operation: "upsert_item", destination: "both", itemId: "note", itemContent, expectedItemRevision: null, placement: { layoutContent, expectedLayoutRevision: null } };
         try {
             const created = await app.inject({ method: "PUT", url: `/v2/sessions/${session.id}/board`, payload });
             expect(created.statusCode, created.body).toBe(200);

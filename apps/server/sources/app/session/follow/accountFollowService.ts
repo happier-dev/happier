@@ -148,7 +148,7 @@ export async function getAccountSessionFollow(input: Readonly<{ accountId: strin
             capabilities: { manageFollow: true },
             voiceInitialSnapshotPending: isVoiceInitialSnapshotPending(row),
         } };
-    });
+    }, { readOnly: true });
 }
 
 /** Replaces a personal Follow choice and seeds newly entered tracking through its canonical owner. */
@@ -272,7 +272,7 @@ export async function getSessionAutoFollowPreferences(input: Readonly<{ accountI
     return await inTx(async tx => {
         const account = await activeAccount(tx, input.accountId);
         return account ? { ok: true, value: projectPreferences(account) } : { ok: false, error: "account_inactive" };
-    });
+    }, { readOnly: true });
 }
 
 /** Replaces future relationship defaults without scanning or mutating historical relationships. */

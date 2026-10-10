@@ -43,6 +43,7 @@ import {
 import { resolveSessionAccessForOperation } from "@/app/session/access/sessionAccess";
 import { readSessionAccessAuthenticationFromRequest, type SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
 import { listQueuedExecutionRunPendingTargetsForSessions } from "@/app/session/pending/pendingMessageService";
+import { loadPendingActivationPublicationInTx } from '@/app/session/pending/publishPendingMutation';
 import { PRESENT_USER_REQUIRED_ERROR } from "@/app/api/utils/apiTokenRouteAdmission";
 import { projectSessionReportsForRowsInTx } from "@/app/session/awareness/sessionReportsProjection";
 
@@ -136,7 +137,7 @@ export function registerSessionListingRoutes(app: Fastify) {
         config: { rateLimit: resolveApiHotEndpointRateLimit(process.env, "sessions.list") },
         schema: { response: { 200: z.object({ sessionIds: z.array(z.string()) }).strict() } },
     }, async (request, reply) => {
-        const sessionIds = await inTx(tx => listSessionMetadataPrivacyUpgradeIdsInTx(tx, request.userId));
+        const sessionIds = await inTx(tx => listSessionMetadataPrivacyUpgradeIdsInTx(tx, request.userId), { readOnly: true });
         return reply.header("Cache-Control", "no-store").send({ sessionIds });
     });
 
@@ -387,6 +388,7 @@ export function registerSessionListingRoutes(app: Fastify) {
                     payload: V2SessionByIdResponseSchema.parse({
                         session: {
                             ...mappedSession,
+                            pendingActivationAuthorization: await loadPendingActivationPublicationInTx(tx, session.id) ?? undefined,
                             pendingExecutionRunIds: targets.map((target) => target.runId),
                         },
                     }),
@@ -397,7 +399,7 @@ export function registerSessionListingRoutes(app: Fastify) {
                 }
                 throw error;
             }
-        });
+        }, { readOnly: true });
         if (result.kind === "authentication_required") {
             return reply.code(403).send({ error: "team_authentication_required" });
         }

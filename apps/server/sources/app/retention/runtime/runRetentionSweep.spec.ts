@@ -8,10 +8,25 @@ const deleteMany = vi.fn();
 
 const dbMocks = createDbMocks({
     globalLock: ['findMany', 'deleteMany'],
+    authPairingSession: ['findMany', 'deleteMany'],
+    repeatKey: ['findMany', 'deleteMany'],
+    automationWorkerClaimReceipt: ['findMany', 'deleteMany'],
+    automationRun: ['findMany'],
+    automation: ['findMany'],
 } as const);
 
 dbMocks.db.globalLock.findMany.mockImplementation((...args: unknown[]) => findMany(...args));
 dbMocks.db.globalLock.deleteMany.mockImplementation((...args: unknown[]) => deleteMany(...args));
+// Intrinsically expired pairing requests are swept even when their retention mode is keep_forever.
+dbMocks.db.authPairingSession.findMany.mockResolvedValue([]);
+dbMocks.db.authPairingSession.deleteMany.mockResolvedValue({ count: 0 });
+dbMocks.db.repeatKey.findMany.mockResolvedValue([]);
+dbMocks.db.repeatKey.deleteMany.mockResolvedValue({ count: 0 });
+// Expiry and Account-owned automation retention run independently of operator keep_forever.
+dbMocks.db.automationWorkerClaimReceipt.findMany.mockResolvedValue([]);
+dbMocks.db.automationWorkerClaimReceipt.deleteMany.mockResolvedValue({ count: 0 });
+dbMocks.db.automationRun.findMany.mockResolvedValue([]);
+dbMocks.db.automation.findMany.mockResolvedValue([]);
 installDbModuleMock({ db: dbMocks.db });
 
 function createPolicy(): RetentionPolicy {

@@ -78,7 +78,7 @@ describe("machinesRoutes API-token admission (integration)", () => {
         }
     });
 
-    it("returns PAT callers only the strict machine-selection bootstrap projection", async () => {
+    it("returns scoped PAT callers only the strict machine-selection bootstrap projection", async () => {
         const account = await db.account.create({
             data: { publicKey: null, encryptionMode: "plain" },
             select: { id: true },
@@ -104,6 +104,16 @@ describe("machinesRoutes API-token admission (integration)", () => {
             accountId: account.id,
             tokenId: crypto.randomUUID(),
             label: "Machine discovery",
+            grant: {
+                v: 1,
+                actions: { families: [], ids: ["session.spawn_new"] },
+                targets: { sessions: [], machines: ["machine-1"] },
+                approve: false,
+                origins: [],
+                models: null,
+                permissionModes: null,
+                create: null,
+            },
         });
         const app = createTestApp();
         await app.ready();
@@ -122,13 +132,21 @@ describe("machinesRoutes API-token admission (integration)", () => {
                 revokedAt: 1234,
                 replacedByMachineId: "machine-2",
                 kind: "persistent",
-                // Persistent Machine content, install state and Session
-                // correspondence still do not cross this seam.
+                storageMode: "plain",
+                // Only the canonical key marker accompanies routing facts;
+                // Machine metadata, state and install details stay private.
                 runnerClaim: null,
                 installationId: null,
-                dataEncryptionKey: null,
+                dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
                 runnerContentKeyBinding: null,
             }]);
+            const detail = await app.inject({
+                method: "GET",
+                url: "/v1/machines/machine-1",
+                headers: { authorization: `Bearer ${pat.token}` },
+            });
+            expect(detail.statusCode).toBe(403);
+            expect(detail.json()).toEqual({ error: "present_user_required" });
         } finally {
             await app.close();
         }
@@ -256,6 +274,7 @@ describe("machinesRoutes API-token admission (integration)", () => {
                 revokedAt: null,
                 replacedByMachineId: null,
                 kind: "ephemeral_session_runner",
+                storageMode: "e2ee",
                 runnerClaim: claim,
                 installationId: "installation-1",
                 dataEncryptionKey: Buffer.from(sealedEnvelope).toString("base64"),
@@ -265,7 +284,8 @@ describe("machinesRoutes API-token admission (integration)", () => {
                 kind: "persistent",
                 runnerClaim: null,
                 installationId: null,
-                dataEncryptionKey: null,
+                storageMode: "e2ee",
+                dataEncryptionKey: Buffer.from(new Uint8Array(96).fill(3)).toString("base64"),
                 runnerContentKeyBinding: null,
             });
         } finally {

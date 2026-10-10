@@ -15,7 +15,7 @@ describe("databaseTransactions", () => {
         });
     });
 
-    it("keeps bounded sqlite defaults with enough budget for one full retry", () => {
+    it("derives SQLite acquisition and execution budgets from the canonical busy timeout", () => {
         const config = readDatabaseTransactionConfigFromEnv({}, "sqlite");
 
         expect(config).toEqual({
@@ -23,13 +23,22 @@ describe("databaseTransactions", () => {
             retryBaseDelayMs: 100,
             retryMaxDelayMs: 1_600,
             retryJitterFactor: 0,
-            timeoutMs: 10_000,
-            maxWaitMs: 5_000,
-            totalRetryBudgetMs: 40_000,
+            timeoutMs: 30_000,
+            maxWaitMs: 30_000,
+            totalRetryBudgetMs: 120_100,
         });
         expect(config.totalRetryBudgetMs).toBeGreaterThanOrEqual(
             2 * (config.maxWaitMs + config.timeoutMs) + config.retryBaseDelayMs,
         );
+    });
+
+    it("follows a configured SQLite lock budget while preserving explicit transaction overrides", () => {
+        const env = { HAPPIER_SQLITE_BUSY_TIMEOUT_MS: "45000" };
+        expect(readDatabaseTransactionConfigFromEnv(env, "sqlite")).toMatchObject({
+            timeoutMs: 45_000, maxWaitMs: 45_000, totalRetryBudgetMs: 180_100,
+        });
+        expect(readDatabaseTransactionConfigFromEnv({ ...env, HAPPIER_DB_TX_MAX_WAIT_MS: "12000" }, "sqlite"))
+            .toMatchObject({ timeoutMs: 45_000, maxWaitMs: 12_000, totalRetryBudgetMs: 114_100 });
     });
 
     it("allows environment overrides within safe bounds", () => {

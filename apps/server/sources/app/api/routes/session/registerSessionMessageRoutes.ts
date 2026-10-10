@@ -2,6 +2,7 @@ import { buildSessionAccessWhere } from "@/app/session/access/sessionAccessWhere
 import type { Prisma } from "@prisma/client";
 import type { FastifyRequest } from "fastify";
 import { z } from "zod";
+import { SessionHistoricalTranscriptImportV3Schema } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 
 import { buildMessageUpdatedUpdate, buildNewMessageUpdate, eventRouter } from "@/app/events/eventRouter";
 import { catchupFollowupFetchesCounter, catchupFollowupReturnedCounter } from "@/app/monitoring/metrics/index";
@@ -329,7 +330,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
                     select: SESSION_TRANSCRIPT_PUBLICATION_SELECT,
                 });
             },
-        }));
+        }), { readOnly: true });
         return reply.send(resolution);
     });
 
@@ -378,7 +379,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
         const { sessionId, localId } = request.params;
         const authentication = readSessionAccessAuthenticationFromRequest(request);
 
-        const { row, accessDecision } = await inTx(async (tx) => {
+        const { row, accessDecision, accountActor } = await inTx(async (tx) => {
             const publication = await loadSessionTranscriptPublication(tx, sessionId);
             const row = await tx.sessionMessage.findFirst({
                 where: buildSessionMessagePublicationWhere({
@@ -409,8 +410,9 @@ export function registerSessionMessageRoutes(app: Fastify) {
             return {
                 row,
                 accessDecision: await resolveSessionAccessForOperation(tx, { accountId: userId, sessionId, authentication }),
+                accountActor: row ? (await projectSessionMessageAccountActors(tx, [row]))[0] ?? null : null,
             };
-        });
+        }, { readOnly: true });
         if (accessDecision.status === "authentication_required") {
             return reply.code(403).send({ error: "team_authentication_required" });
         }
@@ -433,7 +435,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
                 ...(typeof row.sidechainId === "string" && row.sidechainId ? { sidechainId: row.sidechainId } : {}),
                 ...(messageRole ? { messageRole } : {}),
                 content: row.content,
-                accountActor: await resolveSessionMessageAccountActor(db, row),
+                accountActor,
                 ...projectSessionInputAdmissionReceipt(row.inputAdmissionReceipt),
                 ...(() => {
                     const deliveryResolution = parseSessionMessageDeliveryResolutionV1(row.deliveryResolution);
@@ -592,6 +594,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
             externalShareableSnapshot,
             accessDecision,
             turnProjectionNextBeforeSeq,
+            pageAccountActors,
         } = await inTx(async (tx) => {
             const publication = await loadSessionTranscriptPublication(tx, sessionId);
             const currentParticipantWhere = { AND: [{ id: sessionId }, await buildSessionAccessWhere({ tx, accountId: userId, capability: 'readTranscript', mode: 'effective_access_v1', authentication })] };
@@ -837,8 +840,16 @@ export function registerSessionMessageRoutes(app: Fastify) {
                 externalShareableSnapshot,
                 accessDecision: await resolveSessionAccessForOperation(tx, { accountId: userId, sessionId, authentication }),
                 turnProjectionNextBeforeSeq: turnProjectionPaging?.nextBeforeSeq ?? null,
+                // Keep the whole read off SQLite's write pool, including actor profiles.
+                pageAccountActors: externalShareableProjection || sessionListPreviewProjection
+                    ? messages.map(() => null)
+                    : await projectSessionMessageAccountActors(tx, messages.map((v) => ({
+                        messageRole: v.messageRole,
+                        inputAdmissionReceipt: v.inputAdmissionReceipt,
+                        authorAccountId: v.authorAccountId,
+                    }))),
             };
-        });
+        }, { readOnly: true });
         if (accessDecision.status === "authentication_required") {
             return reply.code(403).send({ error: "team_authentication_required" });
         }
@@ -879,17 +890,6 @@ export function registerSessionMessageRoutes(app: Fastify) {
                     ? resultMessages[resultMessages.length - 1].seq
                     : null
                 : null;
-
-        // Authenticated readers get one bounded unique-id profile lookup for the
-        // whole page. The external/public projection deliberately keeps only its
-        // coarse actor contract, so it never resolves Account identity at all.
-        const pageAccountActors = externalShareableProjection || sessionListPreviewProjection
-            ? resultMessages.map(() => null)
-            : await projectSessionMessageAccountActors(db, resultMessages.map((v) => ({
-                messageRole: v.messageRole,
-                inputAdmissionReceipt: v.inputAdmissionReceipt,
-                authorAccountId: v.authorAccountId,
-            })));
 
         return reply.send({
             messages: resultMessages.map((v, index) => ({
@@ -957,13 +957,13 @@ export function registerSessionMessageRoutes(app: Fastify) {
         });
     });
 
-    app.post('/v2/sessions/:sessionId/transcript/import', {
+    for (const epoch of [2, 3] as const) app.post(`/v${epoch}/sessions/:sessionId/transcript/import`, {
         preHandler: app.authenticate,
         schema: {
             params: z.object({
                 sessionId: z.string(),
             }),
-            body: z.object({
+            body: epoch === 3 ? SessionHistoricalTranscriptImportV3Schema : z.object({
                 items: z.array(z.object({
                     localId: z.string().trim().min(1),
                     content: SessionStoredMessageContentSchema,
@@ -1152,7 +1152,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
         // same actor semantics the authenticated page would return.
         const publishedMessage = {
             ...result.message,
-            accountActor: await resolveSessionMessageAccountActor(db, result.message),
+            accountActor: await resolveSessionMessageAccountActor(result.message),
         };
 
         if (result.didWrite) {

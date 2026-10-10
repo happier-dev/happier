@@ -86,6 +86,93 @@ describe("Account profile (integration)", () => {
         );
     });
 
+    it("projects a stored 0.2 Antigravity profile and revision through qualified V4 without scalar peer leakage", async () => {
+        const account = await db.account.create({
+            data: { publicKey: "pk-profile-antigravity-predecessor" },
+            select: { id: true },
+        });
+        // The predecessor row retains its scalar identity and sealed v2 metadata.
+        // Only the existing storage-ingress owner supplies the required qualified columns.
+        const predecessor = {
+            vendor: "antigravity",
+            profileId: "work",
+            token: Buffer.from("sealed-antigravity-credential", "utf8"),
+            metadata: {
+                v: 2, format: "account_scoped_v1", kind: "oauth",
+                credentialRevision: "csr_1123456789ABCDEFGHJKMNPQRS",
+                providerEmail: "selected@example.com",
+            },
+        };
+        const identity = resolveLegacyServiceAccountTokenIdentityFields({
+            serviceId: predecessor.vendor,
+            profileId: predecessor.profileId,
+            credentialKind: "oauth",
+        });
+        expect(identity).toMatchObject({
+            servicePluginId: "happier.agent.antigravity",
+            serviceLocalId: "antigravity-account",
+            connectedAccountId: "work",
+            authenticationModeId: "oauth-personal",
+        });
+        const stored = await db.serviceAccountToken.create({
+            data: { accountId: account.id, ...predecessor, ...identity },
+        });
+        await withAuthenticatedTestApp((app) => accountRoutes(app), async (app) => {
+            const response = await app.inject({
+                method: "GET", url: "/v1/account/profile",
+                headers: { "x-test-user-id": account.id },
+            });
+            expect(response.statusCode).toBe(200);
+            const body = response.json();
+            expect(body.connectedAccountsV4).toEqual([
+                expect.objectContaining({
+                    ref: { service: { pluginId: "happier.agent.antigravity", localId: "antigravity-account" }, accountId: "work" },
+                    status: "connected", authenticationModeId: "oauth-personal",
+                    revisionSemantics: "revisioned",
+                    credentialRevision: predecessor.metadata.credentialRevision,
+                    providerIdentity: expect.objectContaining({ email: "selected@example.com" }),
+                }),
+            ]);
+            expect(body.connectedServicesV2).toEqual([]);
+            expect(body.connectedServiceCredentialRevisionsV1).toEqual([]);
+            const after = await db.serviceAccountToken.findUniqueOrThrow({ where: { id: stored.id } });
+            expect(after.vendor).toBe(predecessor.vendor);
+            expect(after.profileId).toBe(predecessor.profileId);
+            expect(after.metadata).toEqual(predecessor.metadata);
+            expect(Buffer.from(after.token)).toEqual(predecessor.token);
+
+            const currentRef = {
+                service: { pluginId: "happier.agent.antigravity", localId: "antigravity-account" },
+                accountId: "fresh",
+            };
+            const created = await mutateQualifiedConnectedServiceCredential({
+                accountId: account.id, ref: currentRef,
+                expectedCredentialRevision: null,
+                authenticationModeId: "oauth-personal",
+                content: { t: "encrypted", c: "c2VhbGVkLW5ldy1hbnRpZ3Jhdml0eQ==" },
+                metadata: { scopes: [], providerIdentity: { email: "fresh@example.com" } },
+            });
+            expect(created.status).toBe("written");
+            if (created.status !== "written") throw new Error("Qualified Antigravity credential was not written");
+            const currentResponse = await app.inject({
+                method: "GET", url: "/v1/account/profile",
+                headers: { "x-test-user-id": account.id },
+            });
+            expect(currentResponse.statusCode).toBe(200);
+            const currentBody = currentResponse.json();
+            expect(currentBody.connectedAccountsV4).toHaveLength(2);
+            expect(currentBody.connectedAccountsV4).toEqual(expect.arrayContaining([
+                expect.objectContaining({
+                    ref: currentRef, authenticationModeId: "oauth-personal", status: "connected",
+                    credentialRevision: created.credentialRevision,
+                    providerIdentity: expect.objectContaining({ email: "fresh@example.com" }),
+                }),
+            ]));
+            expect(currentBody.connectedServicesV2).toEqual([]);
+            expect(currentBody.connectedServiceCredentialRevisionsV1).toEqual([]);
+        });
+    });
+
     it("projects historical Gemini OAuth as needs_reauth without changing its legacy kind", async () => {
         harness.resetEnv({
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",

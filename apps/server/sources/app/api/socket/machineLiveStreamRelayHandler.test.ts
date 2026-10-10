@@ -13,6 +13,12 @@ import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 
 import { createFakeSocket, getSocketHandler } from '../testkit/socketHarness';
 import type { machineLiveStreamRelayHandler } from './machineLiveStreamRelayHandler';
+import { TEST_MACHINE_INSTALLATION_ID } from '../testkit/machineAdmissionPersistenceBoundary';
+
+vi.mock('@/storage/db', async () => {
+  const { createMachineAdmissionPersistenceBoundary } = await import('../testkit/machineAdmissionPersistenceBoundary');
+  return { db: createMachineAdmissionPersistenceBoundary('user-1').db };
+});
 
 type LiveStreamRelaySocket = Parameters<typeof machineLiveStreamRelayHandler>[1];
 
@@ -147,7 +153,8 @@ describe('machineLiveStreamRelayHandler observability', () => {
   it('refuses an invalid receipt before reading its routing data', async () => {
     const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
     const socket = createFakeSocket({ emit: vi.fn(), id: 'invalid-receipt-source' });
-    socket.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+    socket.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
     const emit = vi.fn();
     machineLiveStreamRelayHandler('user-1', socket as unknown as LiveStreamRelaySocket, {
       io: { to: () => ({ emit }) },
@@ -166,7 +173,8 @@ describe('machineLiveStreamRelayHandler observability', () => {
   it('does not route start responses through consumer control admission', async () => {
     const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
     const socket = createFakeSocket({ emit: vi.fn(), id: 'start-response-source' });
-    socket.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+    socket.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
     const emit = vi.fn();
     machineLiveStreamRelayHandler('user-1', socket as unknown as LiveStreamRelaySocket, {
       io: { to: () => ({ emit }) },
@@ -184,7 +192,8 @@ describe('machineLiveStreamRelayHandler observability', () => {
   it('rejects raw pixels on an E2EE Account relay before forwarding', async () => {
     const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
     const socket = createFakeSocket({ emit: vi.fn(), id: 'e2ee-source' });
-    socket.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+    socket.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
     const emit = vi.fn();
     machineLiveStreamRelayHandler('user-1', socket as unknown as LiveStreamRelaySocket, {
       io: { to: () => ({ emit }) },
@@ -206,7 +215,8 @@ describe('machineLiveStreamRelayHandler observability', () => {
     const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
     const emitted: PeerMediationObservabilityEventV1[] = [];
     const socket = createFakeSocket({ emit: vi.fn(), id: 'source-socket' });
-    socket.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+    socket.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
 
     machineLiveStreamRelayHandler('user-1', socket as unknown as LiveStreamRelaySocket, {
       io: { to: vi.fn(() => ({ emit: vi.fn() })) },
@@ -233,9 +243,11 @@ describe('machineLiveStreamRelayHandler observability', () => {
     const emitted: PeerMediationObservabilityEventV1[] = [];
     const emit = vi.fn();
     const source = createFakeSocket({ emit: vi.fn(), id: 'source-e2ee' });
-    source.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+    source.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
     const target = createFakeSocket({ emit: vi.fn(), id: 'target-e2ee' });
-    target.data = { clientType: 'machine-scoped', machineId: 'machine-target' };
+    target.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-target' };
     const ctx = { io: { to: () => ({ emit }) },
       resolveAccountEncryptionMode: async (): Promise<'e2ee'> => 'e2ee',
       serverRoutedLiveStreamEnabled: true, relayCaps: { ...relayCaps, maxTotalBytes: 4096 },
@@ -270,7 +282,8 @@ describe('machineLiveStreamRelayHandler observability', () => {
     const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
     const emitted: PeerMediationObservabilityEventV1[] = [];
     const socket = createFakeSocket({ emit: vi.fn(), id: 'source-socket' });
-    socket.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+    socket.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
 
     machineLiveStreamRelayHandler('user-1', socket as unknown as LiveStreamRelaySocket, {
       io: { to: vi.fn(() => ({ emit: vi.fn() })) },
@@ -305,7 +318,8 @@ describe('machineLiveStreamRelayHandler observability', () => {
     const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
     const emitted: PeerMediationObservabilityEventV1[] = [];
     const socket = createFakeSocket({ emit: vi.fn(), id: 'source-socket' });
-    socket.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+    socket.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
 
     machineLiveStreamRelayHandler('user-1', socket as unknown as LiveStreamRelaySocket, {
       io: { to: vi.fn(() => ({ emit: vi.fn() })) },
@@ -351,7 +365,8 @@ describe('machineLiveStreamRelayHandler observability', () => {
     const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
     const emitted: PeerMediationObservabilityEventV1[] = [];
     const socket = createFakeSocket({ emit: vi.fn(), id: 'source-socket' });
-    socket.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+    socket.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
 
     machineLiveStreamRelayHandler('user-1', socket as unknown as LiveStreamRelaySocket, {
       io: { to: vi.fn(() => ({ emit: vi.fn() })) },
@@ -394,7 +409,8 @@ describe('machineLiveStreamRelayHandler observability', () => {
     const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
     const emitted: PeerMediationObservabilityEventV1[] = [];
     const socket = createFakeSocket({ emit: vi.fn(), id: 'source-socket' });
-    socket.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+    socket.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
 
     machineLiveStreamRelayHandler('user-1', socket as unknown as LiveStreamRelaySocket, {
       io: { to: vi.fn(() => ({ emit: vi.fn() })) },
@@ -418,7 +434,8 @@ describe('machineLiveStreamRelayHandler observability', () => {
   it('does not emit observability events when no emitter is injected', async () => {
     const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
     const socket = createFakeSocket({ emit: vi.fn(), id: 'source-socket' });
-    socket.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+    socket.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
 
     machineLiveStreamRelayHandler('user-1', socket as unknown as LiveStreamRelaySocket, {
       io: { to: vi.fn(() => ({ emit: vi.fn() })) },
@@ -439,7 +456,8 @@ describe('machineLiveStreamRelayHandler observability', () => {
     const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
     const emitted: PeerMediationObservabilityEventV1[] = [];
     const socket = createFakeSocket({ emit: vi.fn(), id: 'source-socket' });
-    socket.data = { clientType: 'machine-scoped', machineId: 'machine-source' };
+    socket.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+ machineId: 'machine-source' };
 
     machineLiveStreamRelayHandler('user-1', socket as unknown as LiveStreamRelaySocket, {
       io: { to: vi.fn(() => ({ emit: vi.fn() })) },

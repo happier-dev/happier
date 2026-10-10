@@ -155,7 +155,7 @@ const txDbMocks = createDbMocks({
     sessionMessage: ["findMany", "findFirst"],
     sessionShare: ["findMany"],
     sessionTurn: ["findFirst", "findMany"],
-    sessionPin: ["count", "deleteMany", "findMany", "findUnique", "upsert"],
+    sessionPin: ["count", "deleteMany", "findMany", "findUnique", "updateMany", "upsert"],
     sessionFolderAssignment: ["deleteMany", "findMany", "updateMany", "upsert"],
     sessionOrganizationFolder: ["count", "findMany", "updateMany", "upsert"],
     sessionOrganizationTag: ["count", "deleteMany", "findMany", "updateMany", "upsert"],
@@ -301,6 +301,7 @@ export const txSessionPinDeleteMany = txDbMocks.db.sessionPin.deleteMany;
 export const txSessionPinFindMany = txDbMocks.db.sessionPin.findMany;
 export const txSessionPinFindUnique = txDbMocks.db.sessionPin.findUnique;
 export const txSessionPinUpsert = txDbMocks.db.sessionPin.upsert;
+export const txSessionPinUpdateMany = txDbMocks.db.sessionPin.updateMany;
 export const txSessionFolderAssignmentDeleteMany = txDbMocks.db.sessionFolderAssignment.deleteMany;
 export const txSessionFolderAssignmentFindMany = txDbMocks.db.sessionFolderAssignment.findMany;
 export const txSessionFolderAssignmentUpdateMany = txDbMocks.db.sessionFolderAssignment.updateMany;
@@ -670,6 +671,7 @@ export function resetSessionRouteMocks(): void {
     });
     txSessionPinCount.mockResolvedValue(0);
     txSessionPinDeleteMany.mockResolvedValue({ count: 0 });
+    txSessionPinUpdateMany.mockResolvedValue({ count: 0 });
     txSessionPinFindMany.mockResolvedValue([]);
     txSessionPinFindUnique.mockResolvedValue(null);
     txSessionPinUpsert.mockImplementation(async () => {

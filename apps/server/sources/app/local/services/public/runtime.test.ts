@@ -24,6 +24,66 @@ const preview: LocalServicePreviewResourceV1 = {
 };
 
 describe("local service public exposure runtime", () => {
+    it('scopes registered-preview status to the exact source-qualified service occurrence', () => {
+        const serviceTarget = { kind: 'managed_service' as const, machineId: preview.machineId, managedServiceId: 'actual-instance', cwd: '/workspace/app',
+            declaration: { workspaceRefId: 'workspace_1', selection: { kind: 'manifest' as const, name: 'web' } } };
+        const native = { ...preview, sessionId: undefined, owner: { kind: 'user' as const, id: 'starter' }, serviceTarget };
+        const runtime = createLocalServicePublicRuntime({ publicBaseUrl: 'https://home.example.test', hostOriginBaseDomain: 'preview.example.test',
+            tokenSecret: 'public-secret', policy: { enabled: true, allowedModes: ['secret_link'], maxTtlMs: 60_000,
+                dnsTlsRequired: false, auditRequired: true, rateLimitProfileIds: ['default'] }, nowMs: () => 1_000,
+            generateExposureId: () => 'actual-public', allowTestDevAuditSink: true,
+            recordAuditEvent: () => {}, checkRateLimit: () => true, resolvePreview: () => native });
+        const created = runtime.createExposure({ preview: native, requestedMode: 'secret_link', requestedTtlMs: 60_000,
+            actorId: 'creator', sessionAuthorized: true, dnsTlsValid: true, rateLimitProfileId: 'default' });
+        if (!created.ok) throw new Error(created.reasonCode);
+        const request = { machineId: native.machineId, previewId: native.previewId, serviceTarget };
+        expect(runtime.getSnapshot(request).exposures).toEqual([created.exposure]);
+        // The by-id compatibility read remains, while an explicit source cannot
+        // read a different occurrence's retained exposure or shareable URL.
+        expect(runtime.getSnapshot({ machineId: native.machineId, previewId: native.previewId }).exposures).toEqual([created.exposure]);
+        expect(runtime.getSnapshot({ ...request, serviceTarget: { ...serviceTarget, managedServiceId: 'another-instance' } }).exposures).toEqual([]);
+    });
+    it('retires only the revoked sessionless exposure creator and viewer while retaining another current creator', () => {
+        const serviceTarget = { kind: 'managed_service' as const, machineId: preview.machineId, managedServiceId: 'actual-instance', cwd: '/workspace/app',
+            declaration: { workspaceRefId: 'workspace_1', selection: { kind: 'manifest' as const, name: 'web' } } };
+        const native = { ...preview, sessionId: undefined, owner: { kind: 'user' as const, id: 'starter' }, serviceTarget };
+        let exposureIndex = 0;
+        const runtime = createLocalServicePublicRuntime({ publicBaseUrl: 'https://home.example.test', hostOriginBaseDomain: 'preview.example.test',
+            tokenSecret: 'public-secret', policy: { enabled: true, allowedModes: ['secret_link', 'authenticated'], maxTtlMs: 60_000, maxConcurrentExposures: 2,
+                dnsTlsRequired: false, auditRequired: true, rateLimitProfileIds: ['default'] }, nowMs: () => 1_000,
+            generateExposureId: () => `public_${++exposureIndex}`, allowTestDevAuditSink: true,
+            recordAuditEvent: () => {}, checkRateLimit: () => true, resolvePreview: () => native });
+        const create = (actorId: string, requestedMode: 'secret_link' | 'authenticated') => {
+            const result = runtime.createExposure({ preview: native, requestedMode, requestedTtlMs: 60_000, actorId,
+                sessionAuthorized: true, dnsTlsValid: true, rateLimitProfileId: 'default' });
+            expect(result).toMatchObject({ ok: true, exposure: { serviceTarget } });
+            if (!result.ok) throw new Error(result.reasonCode);
+            return result.exposure;
+        };
+        const first = create('creator_1', 'secret_link');
+        const second = create('creator_2', 'authenticated');
+        const exchanged = runtime.exchangeAccessToken({ exposureId: first.exposureId,
+            rawToken: new URL(first.publicUrl).searchParams.get('publicToken') });
+        if (!exchanged.ok) throw new Error(exchanged.reasonCode);
+        let firstClosed = false;
+        let viewerClosed = false;
+        let retainedClosed = false;
+        runtime.retainConnection(first.exposureId, () => { firstClosed = true; });
+        runtime.retainConnection(second.exposureId, () => { viewerClosed = true; }, 'creator_1');
+        runtime.retainConnection(second.exposureId, () => { retainedClosed = true; }, 'creator_2');
+        runtime.retireMachineAccess({ machineId: 'another-machine', accountId: 'creator_1' });
+        expect(firstClosed).toBe(false);
+        runtime.retireMachineAccess({ machineId: native.machineId, accountId: 'creator_1' });
+        expect(firstClosed).toBe(true);
+        expect(viewerClosed).toBe(true);
+        expect(retainedClosed).toBe(false);
+        expect(runtime.resolveExposure(first.exposureId)?.state).toBe('revoked');
+        expect(runtime.resolveExposure(second.exposureId)?.state).toBe('active');
+        expect(runtime.validateAccess({ exposureId: first.exposureId, rawToken: exchanged.rawToken, authenticated: false,
+            sessionAuthorized: false, clientKey: 'anonymous' })).toMatchObject({ ok: false, reasonCode: 'revoked' });
+        expect(runtime.validateAccess({ exposureId: second.exposureId, rawToken: null, authenticated: true,
+            sessionAuthorized: true, clientKey: 'creator_2' })).toEqual({ ok: true, preview: native });
+    });
     it("creates a TTL-bound secret-link exposure with an audit event and access token", async () => {
         const mod = await loadPublicRuntimeModule();
         expect(mod?.createLocalServicePublicRuntime).toBeTypeOf("function");

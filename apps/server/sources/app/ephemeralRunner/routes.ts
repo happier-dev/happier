@@ -51,6 +51,7 @@ import { resolveRunnerCredentialSelection } from './credentialSelection';
 import { getMachineDaemonPresenceInventory } from '@/app/machines/machineDaemonPresence';
 import { createTeamCredentialPoolSourceEligibilityReader } from '@/app/teams/credentials/poolSourceEligibility';
 import { normalizePublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
+import { log } from '@/utils/logging/log';
 
 // One Runner error vocabulary: the Protocol owner types every failure reply on
 // this family, so a new literal here is a compile error until it is added there.
@@ -85,6 +86,8 @@ export function registerEphemeralRunnerRoutes(rawApp: Fastify, env: NodeJS.Proce
                 }),
             });
         } catch {
+            log({ module: 'ephemeral-runner', level: 'error', errorCode: 'runner_artifact_publication_unavailable' },
+                'Runner artifact publication is unavailable');
             return reply.code(503).send({ error: 'runner_artifact_publication_unavailable' });
         }
     });
@@ -123,6 +126,8 @@ export function registerEphemeralRunnerRoutes(rawApp: Fastify, env: NodeJS.Proce
         if (result.status === 'created') return reply.send(result);
         if (result.status === 'artifact_unavailable') {
             if (result.reason === 'publication_unavailable') {
+                log({ module: 'ephemeral-runner', level: 'error', errorCode: 'runner_artifact_publication_unavailable' },
+                    'Runner artifact publication is unavailable');
                 return reply.code(503).send({ error: 'runner_artifact_publication_unavailable' });
             }
             if (result.reason === 'artifact_identity_mismatch') {

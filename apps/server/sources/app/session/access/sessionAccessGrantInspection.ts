@@ -122,5 +122,5 @@ export async function inspectSessionAccessGrants(params: Readonly<{
             ])],
         });
         return { ok: true, value: { ...base, visibility: "complete", grants, credentialBindingConsequences: [...credentialBindingConsequences] } };
-    });
+    }, { readOnly: true });
 }

@@ -144,6 +144,17 @@ claims. An ordinary link or committed receipt does not supply copy provenance.
 
 ### Widget and organization stored readers (0.3 development)
 
+WorkBoard widget placement refs retain their original server label, which can
+be client-local, as part of the persisted placement key. The admitted Board Artifact fixes the
+Home for Actions: the widget port projects its placements into the caller's
+captured routing scope and translates edits back to their stored refs, preserving
+item order and canvas positions. Account and Artifact access checks still apply;
+another local server label cannot bypass strict host-target admission. Ambiguous
+retained instance ids refuse edits instead of selecting a placement arbitrarily.
+The Board UI supplies its current binding to executable widget bodies; a stored
+placement alone cannot activate reads. This development correction changes no
+wire schema or stored key and does not establish loaded-runtime certification.
+
 Account Settings' retained legacy JSON carriers use the same stored-read owner.
 Valid predecessor profiles and SavedSecrets remain readable above current
 collection or byte budgets; new-write admission applies those budgets and
@@ -153,6 +164,57 @@ machine selection and recovery now remember their target in the device's
 Account/Home-scoped runtime memory, not in Account Settings. The never-shipped
 `executionMachine.autoMachineId` field is dropped by the stored Voice reader;
 an explicit fixed machine choice remains an Account preference.
+
+### Settings alias contraction (0.3 development)
+
+The canonical Account Settings catalog no longer admits the historical preference
+aliases `viewInline`, `expandTodos`, `usePickerSearch`, `compactSessionView`,
+`compactSessionViewMinimal`, `reviewPromptAnswered`, `reviewPromptLikedApp`,
+`lastUsedPermissionMode` or `lastUsedModelMode`. Its retired-root classifier also
+excludes them from effective reads and history restore. Raw captured documents
+remain separate from that projection: ordinary preference mutations do not erase
+untransferred sources.
+
+The prospective producer inspected for these aliases is `../0.2` at
+`e087d15a2f0cce1de6de8ef0895d9c8bcc035056`, with a clean relevant
+`accountLegacySettingDefinitions.ts` UI registry (the separate dirty Protocol
+change adds a Connected default). This is predecessor-worktree evidence, not
+a claim that this exact tree was released. The UI compatibility seam
+reads its compact booleans into `sessionListDensity`, `usePickerSearch` into the
+two current picker preferences, and the permission alias into target-keyed
+permission intent. Explicit current preferences take precedence. These readers
+do not write old aliases back; they remain required while supported predecessor
+documents can enter the Settings opener. Dead presentation, feedback and model
+state has no replacement policy. The sensitive inference source has a separate
+[SavedSecret transfer contract](encryption.md) and is not globally retired.
+
+Viewer selections remain an Account preference, not an entity transfer. The
+catalog uses the viewer owner's existing 64-KiB encoded-value budget and 128-entry
+schema; the enclosing Settings document retains its 512-KiB budget. Selectors use
+the SDK's canonical spelling. An unavailable plugin identity remains stored;
+temporary resolution fallback does not authorize rewriting that intent.
+
+Profile definitions/bindings, prompt stacks, folders, invocations, external links,
+registry sources, context selections, role overrides and historical guidance
+entries are read-only raw sources, not writable Settings definitions. The
+Protocol Settings owner retains their existing domain schemas only for
+provenance admission; current readers use Profile rows, prompt-library rows or
+Role Artifacts. Captured raw sources and history remain until their respective
+destination/control admission proves cleanup safe. The Profile and prompt
+source owners perform that conditional removal, not the effective Settings
+parser. Builtin Profile enablement, run-instruction enablement and the genuine
+Agent spawn/allow-list/delegation/approval policies are still current Settings.
+Remote-host, notification and Connected metadata sources follow their existing
+private-row importers under the same destination-first rule. Their Settings
+exports do not remain live fallbacks. These source readers are removable only
+when the supported predecessor/raw-history census no longer needs them.
+
+Launch Profile publication likewise uses only the admitted Profile-row port.
+It replaces the captured row's definition under its existing revision check;
+enablement, prompt attachments and private binding masks stay on that row. The
+published Artifact contains no private bindings. The unused raw-Settings
+publication writer and its dependency union have been removed rather than kept
+as a second mutation authority.
 
 Stored widget definitions, instances and placements, Session/WorkBoard and Home
 layouts, Companion preferences, workspace tabs/canvas state, and legacy folder
@@ -690,6 +752,27 @@ ceiling. Optional subscription monetary facts distinguish provider-observed
 paid amounts from versioned, dated list prices; absence is not a zero cost or an
 inferred payment.
 
+The development `connectedServices.subscription.price.set` Action sets or clears
+an amount and currency for an exact qualified connected account. It uses normal
+dangerous-write approval and captured Account-mode authority. The entered amount
+is retained in the existing Connected personal metadata Account-row catalog and
+composed as `enteredMonthlyPrice` into the exact-account quota read. It is labelled “you entered”
+and remains separate from observed paid amounts and dated list prices. Provider
+refreshes cannot erase it; unknown subscription periods still cannot produce a
+period-qualified price or fit result. Entry requires an owned connected account,
+not an accepted B record, and never creates a quota identity. Existing label and
+price edits retain each other's facets; account cleanup removes both together.
+
+Current-period monetary selection uses the witnessed subscription start and end,
+effective/as-of dates, current subscription freshness, and matching tier/region
+where the fact requires them. An unknown period or unmatched fact remains
+unavailable. Subscription refreshes that omit a monetary observation retain
+previous dated facts; those historical facts do not become the new period's price.
+The canonical pace projection supplies its qualified observed curve and linear
+depletion instant, so chart readers cannot requalify history independently.
+Usage page money totals likewise preserve each kind and denomination separately,
+with every contributing accounting source in the aggregate provenance.
+
 U3 refreshed the moving predecessor's actual usage/subscription files at clean
 `c03f1e9625ec924bfadde207eacd1b28530a8af0`: its strict separate facet has no
 monetary facts, and remains a supported forward input. The immutable
@@ -1030,6 +1113,10 @@ enable behavior still enables only the selected trigger, whereas conversion
 confirmation retains each sibling's enabled state. This is development-source
 behavior, not released or loaded-runtime QA evidence.
 
+When a new-Session predecessor omits both Agent fields, the converter resolves
+the canonical default Agent before constructing execution selection and any
+Agent-qualified model reference. Explicit unsupported launch settings still
+refuse conversion; existing Sessions retain their authenticated Agent identity.
 The current converter preserves a new-Session predecessor's native Agent
 `resume` token as `providerSessionResume`: it still creates a fresh Happier
 Session, rather than treating that native token as a Happier Session id.
@@ -1061,7 +1148,10 @@ predecessor Runs. The inspected 0.2 producer at
 `639a32ec0e832dedb35d5a5809c36717c568225f` creates queued Runs without an
 `executionInputEnvelope` column or frozen input. Development migration checks
 now preserve null-input queued/claimed rows only before execution evidence
-exists; the migration does not invent frozen recipe bytes. Effectful open
+exists across PostgreSQL, SQLite and MySQL; the migration does not invent frozen
+recipe bytes. MySQL enforces the complete input arm in insert/update triggers,
+because its cascading produced-Session foreign key cannot participate in a CHECK.
+Its preflight also refuses retained `run_started` event evidence. Effectful open
 predecessor history still refuses activation. The development claim owner now
 first-freezes a safe null-input Run from its definition through the same input
 owner as new admission. The existing claim CAS commits those bytes and the lease
@@ -1343,6 +1433,15 @@ affect only future admissions, never admitted Runs. All 0.3 components update
 together; older-component interoperability and rollback are unsupported. There is
 no reverse migration, dual write, Workflow compatibility mode or rollback-only writer.
 
+Current-development root progress optionally retains accepted destination leaf
+labels and exact last-observed invocation facts in `stepProgress.destinations`.
+The same root envelope/currentness projection carries them through lean Run
+lists; no public database columns or extra history reader are added. Counts-only
+root progress remains readable, and a missing leaf observation stays unknown.
+Observation ordering uses the existing unique per-Run physical sequence
+and the exact record's content revision, including after reload. This is an
+in-place 0.3 addition, not an older-component interoperability promise.
+
 The current-development review cut adds invocation and parked-parent
 `waiting_for_review`, canonical decimal `contentRevision` on every invocation,
 and the outbound `review_required` update kind. Current producers and consumers
@@ -1388,6 +1487,40 @@ launch then completes confirmation, commit, and cleanup through its existing non
 observation owner. This is development behavior, not a released rollback guarantee.
 Predecessor request adapters and cross-machine transfer contracts remain seam-owned;
 unsupported operation versions fail before execution rather than pretending to move.
+
+### Existing native session-state handoff (development)
+
+The development handoff contract adds optional `stateTransfer: 'transfer' | 'existing'`.
+Omission preserves transfer. Existing-state mode verifies the exact Agent-native Session
+already on the target rather than exporting/importing its conversation data; it rejects
+copy payloads and requires `workspaceAction: { kind: 'none' }` (or its omitted equivalent).
+A managed directory that requires allocation/materialization is not an existing-state target;
+that carrier is rejected at the shared Action/start/prepare policy boundary.
+Same-machine explicit existing-state uses the same resolver and lifecycle; topology does
+not silently change a default transfer into existing-state.
+
+The current V3 capability and read-only existing-state check are negotiated before source
+mutation. Missing, malformed or predecessor V2 capability cannot authorize this mode:
+the operation reports an update requirement, and the caller may explicitly choose transfer.
+The in-progress UI contract keeps transfer on by default and disables the option when either peer cannot prove
+support. The current 0.2 predecessor's V2 `existingState` bit does not prove V3 support.
+Its V2 carrier and the current V3 request must never be silently reinterpreted across versions.
+
+Agent plugins provide the optional public-SDK `handoff.resolveExistingState` hook through
+current generation-bound execution surfaces. It returns the same native identity, source
+and launch hints as import, but must not copy or repair native state. Claude resolves the
+exact transcript in the target's effective config root, including a re-homed project; Codex requires
+the exact native index row and its existing rollout in the target's effective native homes.
+An unsupported Agent or missing state fails closed, with transfer offered as the remedy.
+Target preparation and final launch recheck the native state under their effective environment;
+when the host supplies the complete effective child environment, plugins do not restore
+native-home variables removed from it by falling back to the daemon environment.
+the final check is not a second state-action owner. The ordinary confirmation/commit/abort
+owners remain authoritative. Governed callers retain exact accepted Session and Machine
+authority for the read-only preflight rather than borrowing ambient custodian authority.
+
+This is development source behavior, not a released compatibility or loaded-runtime claim.
+The feature's integrated and live evidence is tracked in its existing execution lane.
 
 ### Workspace-sync handoff rollout
 
@@ -2119,6 +2252,40 @@ The current authenticated transcript adds an optional nullable `accountActor` pr
 The nullable `SessionMessage.authorAccountId` relation is derived from the immutable admission receipt and uses `ON DELETE SET NULL`. Historical rows without a valid human receipt remain unattributed. Deploy current receipt-derived writers, run the [provider-neutral backfill and disagreement audit](pending-delivery.md#human-authorship-in-development), and verify its result before author-based personal Session scopes activate. Additive DDL alone does not establish old-server restart or overlapping-writer support. No JSON-query fallback, repair worker, or second author store participates in this transition.
 
 The Session record also carries an optional `hasOtherNamedCollaborator` audience-existence signal: true when the current authorized human audience contains another Account besides the requesting viewer. It is presentation-only (the transcript self-byline "You" suppression), independent of live presence, and never a roster, authorization input, or grant source. Omitted means the producer did not project it; consumers preserve the last known value instead of asserting a solo Session, and an explicit boolean always replaces it.
+
+### Session visual references (0.3 development)
+
+These are development source contracts, not released availability or deployment
+certification. Session visuals retain the existing `surface/item.v1` record owner.
+Stored items without a creation destination read as `board`; current creation
+records `transcript`, `board` or `both`. Pin and Unpin remain layout operations and
+do not change that creation intent or create another item.
+
+The centralized transcript producer captures a small visual reference before
+sealing an acknowledged tool completion. The negotiated transcript observation V2
+epoch carries it to the existing message writer; V1 retains ordinary text delivery
+without the unsupported association. Historical import V3 carries the same optional
+reference through the existing batch writer. Its older V2 fallback preserves the
+messages but omits the association, so a public visual is honestly unavailable
+rather than read through a parent or generic-record fallback.
+
+The server-private message association names an item and its acknowledged record
+incarnation in the current Session. The committing writer validates that record;
+an unavailable or removed visual omits the association without rejecting an
+otherwise valid message. Content correction clears an old association unless the
+writer admits a replacement. Public reads address a published message under the
+existing share grant and cutoff, not an independently supplied item id. Fork imports
+associate independently owned child records; their original address remains a
+recognition hint, never parent-read authority.
+
+Public Session-share requests add optional `networkOff`, with absence reading as
+`false`. Older strict servers can refuse a request containing the new option;
+that refusal does not issue a link or relax network policy. The stored option can
+restrict the shared sandbox but does not itself admit network access. See the
+[Session share API](api.md) and [public encryption boundary](encryption.md) for
+the canonical envelopes and viewer contract. The additive message/share columns
+require the canonical provider migrations; source generation alone does not prove
+deployment against retained data.
 
 ### Enterprise identity and directory provisioning (0.3 development)
 

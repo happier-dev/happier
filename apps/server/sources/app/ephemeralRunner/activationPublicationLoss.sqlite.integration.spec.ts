@@ -17,6 +17,7 @@ import { auth } from "@/app/auth/auth";
 import { registerEphemeralRunnerRoutes } from "@/app/ephemeralRunner/routes";
 import { runnerArtifactPublicationSnapshots } from "@/app/ephemeralRunner/runnerArtifactAvailability";
 import { db } from "@/storage/db";
+import { logger } from "@/utils/logging/log";
 import {
     createLightSqliteHarness,
     type LightSqliteHarness,
@@ -38,6 +39,7 @@ describe("ephemeral Runner activation recovery after publication loss", () => {
 
     afterEach(async () => {
         vi.unstubAllGlobals();
+        vi.restoreAllMocks();
         await harness.resetDbTables([
             () => db.ephemeralRunnerActivation.deleteMany(),
             () => db.account.deleteMany(),
@@ -147,6 +149,8 @@ describe("ephemeral Runner activation recovery after publication loss", () => {
 
         const headers = { authorization: `Bearer ${token}` };
         const activationUrl = `/v1/ephemeral-runners/activations/${activationId}`;
+        // Pino is the output boundary; the route and log level dispatch stay real.
+        const errorLog = vi.spyOn(logger, "error").mockImplementation(() => {});
         try {
             const publication = await app.inject({
                 method: "GET",
@@ -155,6 +159,11 @@ describe("ephemeral Runner activation recovery after publication loss", () => {
             });
             expect(publication.statusCode).toBe(503);
             expect(publication.json()).toEqual({ error: "runner_artifact_publication_unavailable" });
+            expect(errorLog).toHaveBeenCalledWith(expect.objectContaining({
+                module: "ephemeral-runner",
+                level: "error",
+                errorCode: "runner_artifact_publication_unavailable",
+            }), expect.any(String));
 
             const repository = (process.env.HAPPIER_GITHUB_REPO ?? "happier-dev/happier").trim();
             runnerArtifactPublicationSnapshots.write(`${repository}\u0000stable\u00000.3.0`, [{

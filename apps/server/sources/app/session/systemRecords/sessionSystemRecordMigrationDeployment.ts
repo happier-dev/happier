@@ -1,4 +1,4 @@
-import { cp, copyFile, mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
+import { chmod, cp, copyFile, mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 
@@ -90,13 +90,27 @@ async function stageMigrationSubset(params: Readonly<{
         );
     }
 
+    // Source-runtime assets are immutable. Their copied directory modes must
+    // not make this invocation's private scratch tree impossible to retire.
+    await makeMigrationStageWritable(params.stageDir);
+
     if (!params.schemaPath) {
         return { migrationsDir };
     }
 
     const schemaPath = join(params.stageDir, basename(params.schemaPath));
     await copyFile(params.schemaPath, schemaPath);
+    await chmod(schemaPath, 0o600);
     return { migrationsDir, schemaPath };
+}
+
+async function makeMigrationStageWritable(directory: string): Promise<void> {
+    await chmod(directory, 0o700);
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+        const path = join(directory, entry.name);
+        if (entry.isDirectory()) await makeMigrationStageWritable(path);
+        else if (entry.isFile()) await chmod(path, 0o600);
+    }
 }
 
 /**

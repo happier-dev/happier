@@ -34,7 +34,7 @@ import {
     startSqliteIncrementalVacuumWorker,
     startSqliteWalCheckpointWorker,
 } from '@/storage/sqliteWalCheckpoint';
-import { log } from '@/utils/logging/log';
+import { initializeServerLogging, log } from '@/utils/logging/log';
 import { awaitShutdown, onShutdown } from '@/utils/process/shutdown';
 import { isPersonalHomeRuntimePurpose } from '@/app/runtime/personalHomeRuntimePurpose';
 import {
@@ -176,7 +176,6 @@ export async function startServer(flavor: ServerFlavor, options?: StartServerOpt
     const deploymentEnv: Readonly<NodeJS.ProcessEnv> = Object.freeze({ ...process.env });
     process.env.HAPPY_SERVER_FLAVOR = flavor;
     process.env.HAPPIER_SERVER_FLAVOR = flavor;
-    initializeServerSentry(process.env);
     const role = getServerRoleFromEnv(process.env);
     const dbProvider = getDbProviderFromEnv(process.env, flavor === 'light' ? 'sqlite' : 'postgres');
     process.env.HAPPY_DB_PROVIDER = dbProvider;
@@ -340,6 +339,8 @@ export async function startServer(flavor: ServerFlavor, options?: StartServerOpt
             readStored: () => readStoredHomeSettingsForStartup(),
             log: (line) => log({ module: 'home-settings' }, line),
         }), process.env);
+        initializeServerLogging(process.env);
+        initializeServerSentry(process.env);
 
         const filesBackend = getFilesBackendFromEnv(process.env, resolveDefaultFilesBackend(flavor));
         process.env.HAPPY_FILES_BACKEND = filesBackend;

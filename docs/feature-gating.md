@@ -37,6 +37,20 @@ closed (an unmet catalog dependency, an inactive persistence contract, an absent
 - `capabilities` may contain configuration, details, diagnostics, or explanations, but clients must not use it as a gate.
 - Treat missing or malformed server enabled bits as disabled. Call-site checks must be `readServerEnabledBit(payload, featureId) === true`, never `!== false`.
 
+### UI discovery across reloads
+
+In current 0.3 UI source, `apps/ui/sources/sync/api/capabilities/serverFeaturesClient.ts` owns
+public feature discovery and its cache. The normal UI runtime retains successful public
+observations in device-local storage, scoped to the Home and its URL. A reload restores the
+last-known observation synchronously, with its
+original freshness, so known gated destinations do not disappear while discovery refreshes.
+Expired observations still use the incumbent refresh/deduplication path; a fresh answer replaces
+them, including disabled bits. Canonical invalidation removes the retained observation. A cold
+device or unreadable/mismatched stored entry has no inferred support.
+
+Authenticated descriptors, diagnostic endpoint probes, and demo/test priming are not persisted
+by this path. This is cache custody, not another feature-decision owner or an availability gate.
+
 ## Dependencies
 
 - Dependencies are declared only in the protocol feature catalog.
@@ -142,6 +156,11 @@ Team domain routes must use `createServerFeatureGatedRouteApp`. The bit controls
 current Home and Team capabilities still authorize each operation. Home Account lifecycle,
 Home roles, owner protection, and Home Administration remain core behavior and do not use
 a separate `home.governance` gate.
+
+Private Account-owned Saved Secret resources are also core Account behavior in current
+0.3 development source: their resource routes and Actions do not require `teams`.
+An operation's actual Team or Group audience still requires the existing Team feature
+decision and current Team authentication qualification at the resource service.
 
 Credential sharing uses the child gate `teams.credentialResources`, which depends on
 `teams` in the canonical catalog. Its server resolver enables it by default, with

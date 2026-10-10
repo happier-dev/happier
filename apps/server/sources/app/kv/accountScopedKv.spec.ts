@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { buildProjectAccountRowPhysicalKeyV1, type ProjectAccountRowKeyV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 
 import {
     AccountScopedKvReservedKeyError,
@@ -10,6 +11,42 @@ import {
 } from "./accountScopedKv";
 
 describe("AccountScopedKv namespace classifier", () => {
+    it('admits only the canonical singleton Remote host, Notification and connected metadata catalog addresses', () => {
+        for (const [namespace, kind] of [
+            ['remote-hosts', 'accountRemoteHosts'],
+            ['notification-channels', 'accountNotificationChannels'],
+            ['connected-presentation', 'accountConnectedPresentation'],
+            ['connected-acknowledgements', 'accountConnectedAcknowledgements'],
+        ]) {
+            const prefix = `@happier/account/${namespace}/v1/`;
+            expect(classifyAccountScopedKvKey(`${prefix}catalog`)).toEqual({ kind });
+            expect(() => assertPublicGenericKvKey(`${prefix}catalog`)).toThrow(AccountScopedKvReservedKeyError);
+            expect(classifyAccountScopedKvKey(`${prefix}catalog/other`)).toEqual({ kind: 'reservedUnknown' });
+            expect(classifyAccountScopedKvKey(`${prefix}host-id`)).toEqual({ kind: 'reservedUnknown' });
+        }
+    });
+    it('reserves the qualified private Project rows and singleton graph from public KV', () => {
+        const keys: ProjectAccountRowKeyV1[] = [
+            { kind: 'workspace-ref', serverId: 'home/a', id: 'workspace-a' },
+            { kind: 'relationship-graph' },
+            { kind: 'project-organization', serverId: 'home/a', projectKey: 'project-a' },
+        ];
+        for (const key of keys) {
+            const physicalKey = buildProjectAccountRowPhysicalKeyV1(key);
+            expect(classifyAccountScopedKvKey(physicalKey)).toEqual({ kind: 'accountProjectRow', key });
+            expect(() => assertPublicGenericKvKey(physicalKey)).toThrow(AccountScopedKvReservedKeyError);
+        }
+        expect(classifyAccountScopedKvKey('@happier/account/project-rows/v1/ref/home/a/workspace-a')).toEqual({ kind: 'reservedUnknown' });
+    });
+    it("addresses canonical Profile identities and the separate reference tombstone privately", () => {
+        expect(classifyAccountScopedKvKey("@happier/account/profiles/v1/profile-a")).toEqual({ kind: "accountProfile", profileId: "profile-a" });
+        expect(classifyAccountScopedKvKey("@happier/account/profile-reference-guard/v1")).toEqual({ kind: "accountProfileReferenceGuard" });
+        expect(classifyAccountScopedKvKey("@happier/account/profile-transfer/v1")).toEqual({ kind: "accountProfileTransfer" });
+        expect(() => assertPublicGenericKvKey("@happier/account/profile-transfer/v1")).toThrow(AccountScopedKvReservedKeyError);
+        expect(classifyAccountScopedKvKey("@happier/account/profiles/v1/a%2Fb")).toEqual({ kind: "accountProfile", profileId: "a/b" });
+        expect(classifyAccountScopedKvKey("@happier/account/profiles/v1/a/b")).toEqual({ kind: "reservedUnknown" });
+        expect(() => assertPublicGenericKvKey("@happier/account/profiles/v1/profile-a")).toThrow(AccountScopedKvReservedKeyError);
+    });
     it("excludes authoring-memory rows and overlapping prefixes from generic KV", async () => {
         const { assertPublicGenericKvPrefix } = await import("./accountScopedKv");
         const key = "@happier/account/authoring-memory/v1/lastUsedProfile";

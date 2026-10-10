@@ -3,6 +3,7 @@ import {
     projectAccountDisplayProfileV1,
 } from "@/app/account/profile/accountDisplayProfile";
 import { warn } from "@/utils/logging/log";
+import { inTx } from "@/storage/inTx";
 import {
     SessionMessageAccountActorV1Schema,
     deriveSessionMessageAuthorAccountIdV1,
@@ -114,9 +115,13 @@ export async function projectSessionMessageAccountActors(
  * the same owner instead of diverging per event builder.
  */
 export async function resolveSessionMessageAccountActor(
-    reader: AccountDisplayProfileReader,
     row: SessionMessageAccountActorSourceRow,
 ): Promise<SessionMessageAccountActorV1 | null> {
-    const [actor] = await projectSessionMessageAccountActors(reader, [row]);
+    // Publication follows commit: a later SQLite writer must not hold the
+    // profile read ahead of the notification. Keep the existing batch projector
+    // and open the storage-owned read snapshot only when an actor needs a profile.
+    const [actor] = await projectSessionMessageAccountActors({
+        account: { findMany: (args) => inTx((tx) => tx.account.findMany(args), { readOnly: true }) },
+    }, [row]);
     return actor ?? null;
 }

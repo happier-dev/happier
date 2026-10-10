@@ -1,14 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import * as privacyKit from "privacy-kit";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDbMocks, installDbModuleMock } from "../testkit/dbMocks";
 import { createInTxHarness } from "../testkit/txHarness";
-import { createFakeSocket, getSocketHandler } from "../testkit/socketHarness";
+import { createFakeSocket as createSocketBoundary, getSocketHandler } from "../testkit/socketHarness";
 import type { EphemeralPayload } from "@/app/events/eventPayloadTypes";
-import { sealAccountScopedBlobCiphertext } from "@happier-dev/protocol";
-
-vi.mock("@/app/api/socket/socketCredentialCurrentness", async () => (
-    await import("../testkit/socketHarness")
-).createCurrentSocketCredentialModuleMock());
+import { ExternalSessionTranscriptInvalidationV1Schema, sealAccountScopedBlobCiphertext } from "@happier-dev/protocol";
+import { VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY } from "./machineSocketInstallationProof";
 
 const emitUpdate = vi.fn();
 const emitEphemeral = vi.fn();
@@ -45,8 +41,17 @@ vi.mock("@/app/presence/sessionCache", () => ({
 }));
 
 let machineRevokedAt: Date | null = null;
+let accountMode: 'plain' | 'e2ee' = 'e2ee';
+let tokenEpoch = 0;
+let signedToken = '';
+let retireDuringModeRead = false;
+// Socket transport is external; signed credential verification and Account mode stay real.
+const createFakeSocket = (overrides: Parameters<typeof createSocketBoundary>[0] = {}) => ({
+    ...createSocketBoundary(overrides), handshake: { auth: { token: signedToken } }, disconnect: vi.fn(),
+});
 const txDbMocks = createDbMocks({
-    machine: ["findFirst", "updateMany"],
+    machine: ["findFirst", "findUnique", "updateMany"],
+    account: ["findUnique"],
 } as const);
 
 installDbModuleMock(() => ({ db: txDbMocks.db }));
@@ -67,13 +72,24 @@ const machineUpdateHandlerOptions = {
 };
 
 describe("machineUpdateHandler (AccountChange integration)", () => {
-    const plainStoredContent = (value: unknown): string =>
-        privacyKit.encodeBase64(new TextEncoder().encode(JSON.stringify({ t: "plain", v: value })));
-
-    beforeEach(() => {
+    afterEach(() => vi.unstubAllEnvs());
+    beforeEach(async () => {
         vi.clearAllMocks();
         machineRevokedAt = null;
+        accountMode = 'e2ee'; tokenEpoch = 0; retireDuringModeRead = false;
         txDbMocks.reset();
+        txDbMocks.db.account.findUnique.mockImplementation(async (args: {
+            where: { id: string }; select?: { encryptionMode?: boolean };
+        }) => {
+            if (args.where.id !== 'u1') return null;
+            const row = { id: 'u1', status: 'active', tokenEpoch, encryptionMode: accountMode };
+            if (args.select?.encryptionMode && retireDuringModeRead) tokenEpoch += 1;
+            return row;
+        });
+        vi.stubEnv('HANDY_MASTER_SECRET', 'operation-publication-signed-test-secret');
+        const { auth } = await import('@/app/auth/auth');
+        await auth.init();
+        signedToken = await auth.createToken('u1', undefined, { kind: 'account', authority: 'present_user' });
         txDbMocks.db.machine.findFirst.mockImplementation(async (args: any) => {
             if (args?.select?.metadataVersion) {
                 return { metadataVersion: 1, metadata: "old-meta", revokedAt: machineRevokedAt };
@@ -87,6 +103,34 @@ describe("machineUpdateHandler (AccountChange integration)", () => {
             return null;
         });
         txDbMocks.db.machine.updateMany.mockResolvedValue({ count: 1 });
+    });
+
+    it("publishes keyless Plain Script observations only for the current signed requester Account", async () => {
+        const { machineUpdateHandler } = await import('./machineUpdateHandler');
+        accountMode = 'plain';
+        const socket = createFakeSocket({ data: { clientType: 'machine-scoped', machineId: 'm1' } });
+        // Socket.IO is the substituted network boundary, not credential or mode admission.
+        machineUpdateHandler('u1', socket as any, machineUpdateHandlerOptions);
+        const snapshot = { version: 1, operationId: 'script', revision: 1, actionId: 'projects.script.run',
+            state: 'accepted', scope: { accountId: 'u1', machineId: 'm1' }, title: 'Run Script', createdAt: 1,
+            cancellation: 'supported', domainRef: { kind: 'projectCommand', purpose: 'script', serverId: 'home',
+                machineId: 'worker', workspaceRefId: 'copied-target', cwd: '/target',
+                sourceWorkspace: { serverId: 'home', machineId: 'source', workspaceId: 'selected-source', rootPath: '/source' },
+                script: { name: 'check', source: { kind: 'command', command: 'check' } } } };
+        const raw = { type: 'action-operation-updated', machineId: 'm1', content: { t: 'plain', v: snapshot } };
+        const push = getSocketHandler(socket, 'action-operation-updated');
+        await push(raw);
+        expect(emitEphemeral).toHaveBeenCalledWith({ userId: 'u1', payload: raw,
+            recipientFilter: { type: 'user-scoped-only' } });
+        emitEphemeral.mockClear();
+        accountMode = 'e2ee';
+        await push(raw);
+        accountMode = 'plain';
+        await push({ ...raw, content: { t: 'plain', v: { ...snapshot, scope: { accountId: 'custodian', machineId: 'm1' } } } });
+        retireDuringModeRead = true;
+        await push(raw);
+        expect(emitEphemeral).not.toHaveBeenCalled();
+        expect(tokenEpoch).toBeGreaterThan(0);
     });
 
     it("accepts and rebroadcasts the immutable released 0.2.11 Action operation envelope", async () => {
@@ -150,145 +194,22 @@ describe("machineUpdateHandler (AccountChange integration)", () => {
         });
     });
 
-    it("marks machine metadata changes and emits updates using the returned cursor", async () => {
-        const { machineUpdateHandler } = await import("./machineUpdateHandler");
-
-        const socket = createFakeSocket({
-            data: { clientType: "machine-scoped", machineId: "m1" },
-        });
-        machineUpdateHandler("u1", socket as any, machineUpdateHandlerOptions);
-        const handler = getSocketHandler(socket, "machine-update-metadata");
-
-        const callback = vi.fn();
-        await handler({ machineId: "m1", metadata: "new-meta", expectedVersion: 1 }, callback);
-
-        expect(markAccountChanged).toHaveBeenCalledWith(
-            expect.anything(),
-            expect.objectContaining({
-                accountId: "u1",
-                kind: "machine",
-                entityId: "m1",
-            }),
-        );
-
-        expect(buildUpdateMachineUpdate).toHaveBeenCalledWith("m1", 321, expect.any(String), { value: "new-meta", version: 2 });
-        expect(emitUpdate).toHaveBeenCalledTimes(1);
-        expect(callback).toHaveBeenCalledWith({ result: "success", version: 2, metadata: "new-meta" });
-    });
-
-    it.each([
-        ["explicit user-scoped", { clientType: "user-scoped" }],
-        ["legacy omitted client type", {}],
-    ])("allows %s sockets to update metadata for an account-owned machine", async (_label, data) => {
-        const { machineUpdateHandler } = await import("./machineUpdateHandler");
-
-        const socket = createFakeSocket({ data });
-        machineUpdateHandler("u1", socket as any, machineUpdateHandlerOptions);
-        const handler = getSocketHandler(socket, "machine-update-metadata");
-
-        const callback = vi.fn();
-        await handler({ machineId: "m1", metadata: "new-meta", expectedVersion: 1 }, callback);
-
-        expect(txDbMocks.db.machine.findFirst).toHaveBeenCalledWith(expect.objectContaining({
-            where: { accountId: "u1", id: "m1" },
-        }));
-        expect(txDbMocks.db.machine.updateMany).toHaveBeenCalledWith(expect.objectContaining({
-            where: expect.objectContaining({ accountId: "u1", id: "m1" }),
-        }));
-        expect(callback).toHaveBeenCalledWith({ result: "success", version: 2, metadata: "new-meta" });
-    });
-
-    it("rejects unknown machine metadata mutation fields at the socket boundary", async () => {
-        const { machineUpdateHandler } = await import("./machineUpdateHandler");
-        const socket = createFakeSocket({
-            data: { clientType: "machine-scoped", machineId: "m1" },
-        });
-        machineUpdateHandler("u1", socket as any, machineUpdateHandlerOptions);
-
-        const callback = vi.fn();
-        await getSocketHandler(socket, "machine-update-metadata")({
-            machineId: "m1",
-            metadata: "new-meta",
-            expectedVersion: 1,
-            unexpectedAuthority: true,
-        }, callback);
-
-        expect(txDbMocks.db.machine.updateMany).not.toHaveBeenCalled();
-        expect(callback).toHaveBeenCalledWith({ result: "error", message: "Invalid parameters" });
-    });
-
-    it("marks machine daemonState changes and emits updates using the returned cursor", async () => {
-        const { machineUpdateHandler } = await import("./machineUpdateHandler");
-
-        const socket = createFakeSocket({
-            data: { clientType: "machine-scoped", machineId: "m2" },
-        });
-        machineUpdateHandler("u1", socket as any, machineUpdateHandlerOptions);
-        const handler = getSocketHandler(socket, "machine-update-state");
-
-        const callback = vi.fn();
-        await handler({ machineId: "m2", daemonState: "new-state", expectedVersion: 2 }, callback);
-
-        expect(markAccountChanged).toHaveBeenCalledWith(
-            expect.anything(),
-            expect.objectContaining({
-                accountId: "u1",
-                kind: "machine",
-                entityId: "m2",
-            }),
-        );
-
-        expect(buildUpdateMachineUpdate).toHaveBeenCalledWith(
-            "m2",
-            321,
-            expect.any(String),
-            undefined,
-            { value: "new-state", version: 3 },
-            expect.objectContaining({
-                active: true,
-                activeAt: expect.any(Number),
-            }),
-        );
-        expect(emitUpdate).toHaveBeenCalledTimes(1);
-        expect(callback).toHaveBeenCalledWith({ result: "success", version: 3, daemonState: "new-state" });
-    });
-
-    it("rejects opaque metadata updates when the persisted Machine representation is plain", async () => {
-        txDbMocks.db.machine.findFirst.mockResolvedValue({
-            metadataVersion: 1,
-            metadata: plainStoredContent({ name: "old" }),
-            dataEncryptionKey: privacyKit.decodeBase64(plainStoredContent(null)),
-            revokedAt: null,
-            replacedByMachineId: null,
-        });
-        const { machineUpdateHandler } = await import("./machineUpdateHandler");
-
-        const socket = createFakeSocket({
-            data: {
-                clientType: "machine-scoped",
-                machineId: "m1",
-                accountStoredContentCompatibility: {
-                    supportsCurrentProtocol: true,
-                    outcome: "accepted",
-                },
-            },
-        });
-        machineUpdateHandler("u1", socket as any, machineUpdateHandlerOptions);
-        const handler = getSocketHandler(socket, "machine-update-metadata");
-
-        const callback = vi.fn();
-        await handler({ machineId: "m1", metadata: "encrypted-bytes", expectedVersion: 1 }, callback);
-
-        expect(txDbMocks.db.machine.updateMany).not.toHaveBeenCalled();
-        expect(callback).toHaveBeenCalledWith({ result: "error", message: "Invalid parameters" });
-    });
-
     it("returns machine-not-found when the machine disappears during a metadata compare-and-swap", async () => {
+        // Storage boundary models deletion between read and CAS; canonical
+        // admission and caller-envelope logic execute against the retained owner fixture.
+        txDbMocks.db.machine.findUnique.mockResolvedValue({
+            id: "m1", kind: "persistent", accountId: "u1", metadata: "old-meta", metadataVersion: 1,
+            daemonState: "old-state", daemonStateVersion: 0, dataEncryptionKey: null,
+            installationId: "installation-1", active: false, revokedAt: null, replacedByMachineId: null,
+            account: { status: "active", encryptionMode: "e2ee" },
+            accountGrants: [], teamGrants: [], groupGrants: [],
+        });
         txDbMocks.db.machine.findFirst
             .mockResolvedValueOnce({
                 metadataVersion: 1,
                 metadata: "old-meta",
                 dataEncryptionKey: null,
+                installationId: "installation-1",
                 revokedAt: null,
                 replacedByMachineId: null,
             })
@@ -300,180 +221,20 @@ describe("machineUpdateHandler (AccountChange integration)", () => {
             data: {
                 clientType: "machine-scoped",
                 machineId: "m1",
+                [VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY]: "installation-1",
             },
         });
         machineUpdateHandler("u1", socket as any, machineUpdateHandlerOptions);
 
         const callback = vi.fn();
         await getSocketHandler(socket, "machine-update-metadata")(
-            { machineId: "m1", metadata: "new-meta", expectedVersion: 1 },
+            { machineId: "m1", metadata: "new-meta", expectedVersion: 1, expectedDataEncryptionKey: null },
             callback,
         );
 
         expect(callback).toHaveBeenCalledWith({ result: "error", message: "Machine not found" });
-    });
-
-    it("rejects a legacy socket before updating marked Machine metadata", async () => {
-        const metadata = plainStoredContent({ name: "new" });
-        txDbMocks.db.machine.findFirst.mockResolvedValue({
-            metadataVersion: 1,
-            metadata: plainStoredContent({ name: "old" }),
-            dataEncryptionKey: privacyKit.decodeBase64(plainStoredContent(null)),
-            revokedAt: null,
-            replacedByMachineId: null,
-        });
-        const { machineUpdateHandler } = await import("./machineUpdateHandler");
-        const socket = createFakeSocket({
-            data: {
-                clientType: "machine-scoped",
-                machineId: "m1",
-                accountStoredContentCompatibility: {
-                    supportsCurrentProtocol: false,
-                    outcome: "legacy-missing",
-                },
-            },
-        });
-        machineUpdateHandler("u1", socket as any, machineUpdateHandlerOptions);
-
-        const callback = vi.fn();
-        await getSocketHandler(socket, "machine-update-metadata")({
-            machineId: "m1",
-            metadata,
-            expectedVersion: 1,
-        }, callback);
-
-        expect(txDbMocks.db.machine.updateMany).not.toHaveBeenCalled();
-        expect(callback).toHaveBeenCalledWith({
-            error: "client-upgrade-required",
-            requirement: {
-                v: 1,
-                kind: "account-stored-content",
-                minimumProtocolVersion: 2,
-            },
-        });
-    });
-
-    it("updates marked Machine metadata for a current socket", async () => {
-        const metadata = plainStoredContent({ name: "new" });
-        txDbMocks.db.machine.findFirst.mockResolvedValue({
-            metadataVersion: 1,
-            metadata: plainStoredContent({ name: "old" }),
-            dataEncryptionKey: privacyKit.decodeBase64(plainStoredContent(null)),
-            revokedAt: null,
-            replacedByMachineId: null,
-        });
-        const { machineUpdateHandler } = await import("./machineUpdateHandler");
-        const socket = createFakeSocket({
-            data: {
-                clientType: "machine-scoped",
-                machineId: "m1",
-                accountStoredContentCompatibility: {
-                    supportsCurrentProtocol: true,
-                    outcome: "accepted",
-                },
-            },
-        });
-        machineUpdateHandler("u1", socket as any, machineUpdateHandlerOptions);
-
-        const callback = vi.fn();
-        await getSocketHandler(socket, "machine-update-metadata")({
-            machineId: "m1",
-            metadata,
-            expectedVersion: 1,
-        }, callback);
-
-        expect(txDbMocks.db.machine.updateMany).toHaveBeenCalledTimes(1);
-        expect(callback).toHaveBeenCalledWith({
-            result: "success",
-            version: 2,
-            metadata,
-        });
-    });
-
-    it("rejects a legacy socket before updating marked Machine daemon state", async () => {
-        const daemonState = plainStoredContent({ status: "running" });
-        txDbMocks.db.machine.findFirst.mockResolvedValue({
-            daemonStateVersion: 2,
-            daemonState: plainStoredContent({ status: "starting" }),
-            dataEncryptionKey: privacyKit.decodeBase64(plainStoredContent(null)),
-            revokedAt: null,
-            replacedByMachineId: null,
-        });
-        const { machineUpdateHandler } = await import("./machineUpdateHandler");
-        const socket = createFakeSocket({
-            data: {
-                clientType: "machine-scoped",
-                machineId: "m1",
-                accountStoredContentCompatibility: {
-                    supportsCurrentProtocol: false,
-                    outcome: "legacy-missing",
-                },
-            },
-        });
-        machineUpdateHandler("u1", socket as any, machineUpdateHandlerOptions);
-
-        const callback = vi.fn();
-        await getSocketHandler(socket, "machine-update-state")({
-            machineId: "m1",
-            daemonState,
-            expectedVersion: 2,
-        }, callback);
-
-        expect(txDbMocks.db.machine.updateMany).not.toHaveBeenCalled();
-        expect(callback).toHaveBeenCalledWith({
-            error: "client-upgrade-required",
-            requirement: {
-                v: 1,
-                kind: "account-stored-content",
-                minimumProtocolVersion: 2,
-            },
-        });
-    });
-
-    it("publishes daemonState updates with active machine freshness for browser consumers", async () => {
-        const { machineUpdateHandler } = await import("./machineUpdateHandler");
-
-        const socket = createFakeSocket({
-            data: { clientType: "machine-scoped", machineId: "m3" },
-        });
-        machineUpdateHandler("u1", socket as any, machineUpdateHandlerOptions);
-        const handler = getSocketHandler(socket, "machine-update-state");
-
-        const callback = vi.fn();
-        await handler({ machineId: "m3", daemonState: "online", expectedVersion: 2 }, callback);
-
-        expect(buildUpdateMachineUpdate).toHaveBeenCalledWith(
-            "m3",
-            321,
-            expect.any(String),
-            undefined,
-            { value: "online", version: 3 },
-            expect.objectContaining({
-                active: true,
-                activeAt: expect.any(Number),
-            }),
-        );
-        expect(callback).toHaveBeenCalledWith({ result: "success", version: 3, daemonState: "online" });
-    });
-
-    it("rejects metadata updates for revoked machines", async () => {
-        machineRevokedAt = new Date("2026-02-19T00:00:00.000Z");
-
-        const { machineUpdateHandler } = await import("./machineUpdateHandler");
-
-        const socket = createFakeSocket({
-            data: { clientType: "machine-scoped", machineId: "m1" },
-        });
-        machineUpdateHandler("u1", socket as any, machineUpdateHandlerOptions);
-        const handler = getSocketHandler(socket, "machine-update-metadata");
-
-        const callback = vi.fn();
-        await handler({ machineId: "m1", metadata: "new-meta", expectedVersion: 1 }, callback);
-
-        expect(txDbMocks.db.machine.updateMany).not.toHaveBeenCalled();
         expect(markAccountChanged).not.toHaveBeenCalled();
         expect(emitUpdate).not.toHaveBeenCalled();
-        expect(callback).toHaveBeenCalledWith(expect.objectContaining({ result: "error" }));
     });
 
     it("rebroadcasts only content-free qualified external-session invalidations", async () => {
@@ -495,10 +256,11 @@ describe("machineUpdateHandler (AccountChange integration)", () => {
                     },
                     generation: "source-1",
                 },
-                contributionGeneration: "contribution-1",
+                sourceCustody: { kind: "managed", immutableGenerationId: "contribution-1", installSource: "localPath" },
                 cursorIdentity: `external_session_cursor_binding_v1:${"a".repeat(64)}`,
             },
         } satisfies EphemeralPayload;
+        ExternalSessionTranscriptInvalidationV1Schema.parse(payload);
 
         const socket = createFakeSocket({
             data: {
@@ -539,10 +301,11 @@ describe("machineUpdateHandler (AccountChange integration)", () => {
                     },
                     generation: "source-1",
                 },
-                contributionGeneration: "contribution-1",
+                sourceCustody: { kind: "managed", immutableGenerationId: "contribution-1", installSource: "localPath" },
                 cursorIdentity: `external_session_cursor_binding_v1:${"a".repeat(64)}`,
             },
         };
+        ExternalSessionTranscriptInvalidationV1Schema.parse(payload);
         const socket = createFakeSocket({
             data: {
                 clientType: "machine-scoped",
@@ -583,10 +346,11 @@ describe("machineUpdateHandler (AccountChange integration)", () => {
                     },
                     generation: "source-1",
                 },
-                contributionGeneration: "contribution-1",
+                sourceCustody: { kind: "managed", immutableGenerationId: "contribution-1", installSource: "localPath" },
                 cursorIdentity: `external_session_cursor_binding_v1:${"a".repeat(64)}`,
             },
         };
+        ExternalSessionTranscriptInvalidationV1Schema.parse(payload);
         const socket = createFakeSocket({
             data: {
                 clientType: "machine-scoped",

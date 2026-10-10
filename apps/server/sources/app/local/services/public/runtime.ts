@@ -1,4 +1,5 @@
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { isDeepStrictEqual } from 'node:util';
 
 import {
     DaemonLocalServicePublicPreviewStatusRequestV1Schema,
@@ -106,7 +107,8 @@ export type LocalServicePublicRuntime = Readonly<{
         rateLimitProfileId: string;
     }>): LocalServicePublicRuntimeCreateResult;
     resolveExposure(exposureId: string): LocalServicePublicExposureV1 | null;
-    retainConnection(exposureId: string, close: () => void): () => void;
+    retainConnection(exposureId: string, close: () => void, actorAccountId?: string): () => void;
+    retireMachineAccess(input: Readonly<{ machineId: string; accountId: string }>): void;
     validateAccess(input: LocalServicePublicRuntimeAccessInput): LocalServicePublicRuntimeAccessResult;
     exchangeAccessToken(input: Readonly<{
         exposureId: string;
@@ -147,7 +149,8 @@ type ExposureEntry = Readonly<{
     exposure: LocalServicePublicExposureV1;
     secretTokenHash: string | null;
     secretTokenPurpose: "url_exchange" | "access" | null;
-    connections: Set<() => void>;
+    actorId: string;
+    connections: Set<Readonly<{ close: () => void; actorAccountId?: string }>>;
 }>;
 
 type AppendAuditEventResult =
@@ -219,6 +222,7 @@ function previewStillMatchesExposureSnapshot(input: Readonly<{
     return input.current.previewId === input.snapshot.previewId
         && input.current.sessionId === input.snapshot.sessionId
         && input.current.machineId === input.snapshot.machineId
+        && isDeepStrictEqual(input.current.serviceTarget, input.snapshot.serviceTarget)
         && previewOwnerMatches(input.current.owner, input.snapshot.owner)
         && previewTargetMatches(input.current.target, input.snapshot.target);
 }
@@ -277,7 +281,7 @@ export function createLocalServicePublicRuntime(
         const updated = { ...entry, exposure };
         entries.set(exposure.exposureId, updated);
         if (exposure.state !== "active") {
-            for (const close of entry.connections) close();
+            for (const connection of entry.connections) connection.close();
             entry.connections.clear();
         }
         return updated;
@@ -359,6 +363,7 @@ export function createLocalServicePublicRuntime(
             exposureId,
             previewId: createInput.preview.previewId,
             sessionId: createInput.preview.sessionId,
+            ...(createInput.preview.serviceTarget ? { serviceTarget: createInput.preview.serviceTarget } : {}),
             machineId: createInput.preview.machineId,
             mode: decision.mode,
             state: "active",
@@ -391,6 +396,7 @@ export function createLocalServicePublicRuntime(
             exposure,
             secretTokenHash: secretToken && tokenSecret ? hashToken(tokenSecret, secretToken) : null,
             secretTokenPurpose: secretToken ? "url_exchange" : null,
+            actorId: createInput.actorId,
             connections: new Set(),
         });
         return { ok: true, exposure };
@@ -617,15 +623,35 @@ export function createLocalServicePublicRuntime(
         return { ok: true };
     }
 
-    function retainConnection(exposureId: string, close: () => void): () => void {
+    function retainConnection(exposureId: string, close: () => void, actorAccountId?: string): () => void {
         const entry = entries.get(exposureId);
         // Admission may have raced an asynchronous authentication/tunnel boundary.
         if (!entry || !isLocalServicePublicExposureAccessible({ exposure: entry.exposure, nowMs: nowMs() })) {
             close();
             return () => {};
         }
-        entry.connections.add(close);
-        return () => { entry.connections.delete(close); };
+        const connection = { close, ...(actorAccountId ? { actorAccountId } : {}) };
+        entry.connections.add(connection);
+        return () => { entry.connections.delete(connection); };
+    }
+
+    function retireMachineAccess({ machineId, accountId }: Readonly<{ machineId: string; accountId: string }>): void {
+        for (const entry of entries.values()) {
+            if (!entry.preview.serviceTarget || entry.exposure.machineId !== machineId) continue;
+            if (entry.actorId === accountId || entry.preview.owner.id === accountId) {
+                // Disclosure retirement cannot depend on the durable audit sink being available.
+                const retired = updateExposureEntry(entry, { ...entry.exposure, state: 'revoked', revokedAt: nowMs() });
+                const audit = appendAuditEvent(retired.exposure, {
+                    exposureId: retired.exposure.exposureId, action: 'revoke', actorId: accountId,
+                });
+                if (audit.ok) updateExposureEntry(retired, audit.exposure);
+                continue;
+            }
+            for (const connection of entry.connections) if (connection.actorAccountId === accountId) {
+                entry.connections.delete(connection);
+                connection.close();
+            }
+        }
     }
 
     function entryMatchesStatusRequest(
@@ -634,6 +660,7 @@ export function createLocalServicePublicRuntime(
     ): boolean {
         return entry.exposure.machineId === request.machineId
             && (!request.sessionId || entry.exposure.sessionId === request.sessionId)
+            && (!request.serviceTarget || isDeepStrictEqual(entry.exposure.serviceTarget, request.serviceTarget))
             && (!request.previewId || entry.exposure.previewId === request.previewId)
             && (!request.exposureId || entry.exposure.exposureId === request.exposureId);
     }
@@ -689,6 +716,7 @@ export function createLocalServicePublicRuntime(
         createExposure,
         resolveExposure,
         retainConnection,
+        retireMachineAccess,
         validateAccess,
         exchangeAccessToken,
         revokeExposure,

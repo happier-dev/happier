@@ -133,7 +133,7 @@ export async function findV2SessionListRows(params: FindV2SessionListRowsParams)
     return await inTx(async (tx) => await readFrom(
         tx,
         await buildSessionAccessWhere({ tx, accountId: userId, capability: "readTranscript", mode: "effective_access_v1", authentication: params.authentication }),
-    ));
+    ), { readOnly: true });
 }
 
 export async function runWithSessionListProjectionFallback<T>(
@@ -379,7 +379,7 @@ export async function resolveV2SessionListCursorForVisibleRows(params: ResolveV2
             ? await read(params.source.reader, params.source.baseWhere)
             : await inTx(async (tx) => await read(tx, await buildSessionAccessWhere({
                 tx, accountId: params.userId, capability: "readTranscript", mode: "effective_access_v1", authentication: params.authentication,
-            })));
+            })), { readOnly: true });
     if (!row) return null;
 
     return {

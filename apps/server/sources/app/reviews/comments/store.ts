@@ -193,7 +193,7 @@ type ReviewCommentEventRow = {
     created_at: number | bigint;
 };
 
-const COMMENT_SELECT_COLUMNS = Prisma.raw([
+const COMMENT_SELECT_COLUMNS = [
     "id",
     "account_id",
     "project_id",
@@ -231,7 +231,7 @@ const COMMENT_SELECT_COLUMNS = Prisma.raw([
     "server_revision",
     "created_at",
     "updated_at",
-].join(", "));
+].join(", ");
 
 function parseJson(value: string): unknown {
     return JSON.parse(value);
@@ -672,12 +672,12 @@ function findingScopeKey(comment: Pick<ReviewCommentStructuralV1, "findingIdenti
 }
 
 function findingLookupQuery(accountId: string, key: string): PrismaTypes.Sql {
-    return Prisma.sql`SELECT ${COMMENT_SELECT_COLUMNS} FROM review_comments WHERE account_id = ${accountId} AND finding_scope_key = ${key} LIMIT 1`;
+    return Prisma.sql`SELECT ${Prisma.raw(COMMENT_SELECT_COLUMNS)} FROM review_comments WHERE account_id = ${accountId} AND finding_scope_key = ${key} LIMIT 1`;
 }
 
 function createMutationLookupQuery(accountId: string, createClientMutationId: string): PrismaTypes.Sql {
     return Prisma.sql`
-        SELECT ${COMMENT_SELECT_COLUMNS}
+        SELECT ${Prisma.raw(COMMENT_SELECT_COLUMNS)}
         FROM review_comments
         WHERE account_id = ${accountId} AND create_client_mutation_id = ${createClientMutationId}
         LIMIT 1
@@ -870,7 +870,7 @@ function buildWhere(params: ReviewCommentStoreListParams): PrismaTypes.Sql[] {
 async function readCommentRows(params: ReviewCommentStoreListParams): Promise<ReviewCommentRow[]> {
     const where = buildWhere(params);
     return await db.$queryRaw<ReviewCommentRow[]>(Prisma.sql`
-        SELECT ${COMMENT_SELECT_COLUMNS}
+        SELECT ${Prisma.raw(COMMENT_SELECT_COLUMNS)}
         FROM review_comments
         WHERE ${Prisma.join(where, " AND ")}
         ORDER BY updated_at DESC, server_revision DESC, id DESC
@@ -1109,7 +1109,7 @@ export function createSqlReviewCommentStore(): ReviewCommentStore {
 
     return {
         async getSource(params) {
-            const rows = await db.$queryRaw<ReviewCommentRow[]>(Prisma.sql`SELECT ${COMMENT_SELECT_COLUMNS} FROM review_comments WHERE account_id = ${params.accountId} AND id = ${params.commentId} LIMIT 1`);
+            const rows = await db.$queryRaw<ReviewCommentRow[]>(Prisma.sql`SELECT ${Prisma.raw(COMMENT_SELECT_COLUMNS)} FROM review_comments WHERE account_id = ${params.accountId} AND id = ${params.commentId} LIMIT 1`);
             return rows[0] ? rowToSource(rows[0]) : null;
         },
         async listSources(params) {
@@ -1129,7 +1129,7 @@ export function createSqlReviewCommentStore(): ReviewCommentStore {
         },
         async get(params) {
             const rows = await db.$queryRaw<ReviewCommentRow[]>(Prisma.sql`
-                SELECT ${COMMENT_SELECT_COLUMNS}
+                SELECT ${Prisma.raw(COMMENT_SELECT_COLUMNS)}
                 FROM review_comments
                 WHERE account_id = ${params.accountId} AND id = ${params.commentId}
                 LIMIT 1

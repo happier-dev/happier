@@ -4,10 +4,15 @@ import { createEnvPatcher } from "@/testkit/env";
 import {
     buildSessionAgentTransitionDividerLocalId,
     serializeSessionInputRequestEqualityIntentV1,
+    encodePlainMachineStoredContent,
+    MACHINE_PLAIN_DATA_KEY_MARKER,
+    decodeBase64,
 } from "@happier-dev/protocol";
 import { createPresentUserSessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication.testkit";
+import { buildSessionInputAdmissionReceipt } from '@/app/session/messages/sessionInputAdmission';
 
 const authentication = createPresentUserSessionAccessAuthentication();
+const pendingHomeId = `srv_${'p'.repeat(32)}`;
 
 let currentTx: any;
 
@@ -146,10 +151,21 @@ describe("pendingMessageService", () => {
                 findMany: vi.fn(async () => []),
             },
             machine: {
+                findUnique: vi.fn(async ({ where }: { where: { id: string } }) => ({
+                    id: where.id, kind: 'persistent', accountId: 'u1', installationId: `installation-${where.id}`,
+                    active: true, revokedAt: null, replacedByMachineId: null,
+                    metadata: encodePlainMachineStoredContent({ name: 'Pending admission fixture' }), metadataVersion: 1,
+                    daemonState: null, daemonStateVersion: 0, dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
+                    account: { status: 'active', encryptionMode: 'plain' },
+                    accountGrants: [], teamGrants: [], groupGrants: [],
+                })),
                 findFirst: vi.fn(async () => ({
                     revokedAt: null,
                     replacedByMachineId: null,
                 })),
+            },
+            simpleCache: {
+                findUnique: vi.fn(async () => ({ value: pendingHomeId })),
             },
             accessKey: {
                 findUnique: vi.fn(async () => ({
@@ -592,6 +608,9 @@ describe("pendingMessageService", () => {
 
     it("rejoins authenticated-machine encrypted retries by opaque equality tag and self-heals missing role metadata", async () => {
         const createdAt = new Date("2020-01-01T00:00:00.000Z");
+        const inputAdmissionReceipt = buildSessionInputAdmissionReceipt({ issuer: 'authenticatedMachine',
+            admittedTarget: { homeId: pendingHomeId, accountId: 'u1', sessionId: 's1',
+                machineId: 'target-machine', installationId: 'installation-target-machine' } });
         const equalityEvidence = {
             kind: "e2eeTag",
             tag: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
@@ -616,10 +635,7 @@ describe("pendingMessageService", () => {
             discardedAt: null,
             discardedReason: null,
             authorAccountId: null,
-            inputAdmissionReceipt: {
-                v: 1,
-                issuer: "authenticatedMachine",
-            },
+            inputAdmissionReceipt,
             requestEqualityEvidenceV1: equalityEvidence,
         });
         currentTx.sessionPendingMessage.update.mockResolvedValue({
@@ -636,10 +652,7 @@ describe("pendingMessageService", () => {
             discardedAt: null,
             discardedReason: null,
             authorAccountId: null,
-            inputAdmissionReceipt: {
-                v: 1,
-                issuer: "authenticatedMachine",
-            },
+            inputAdmissionReceipt,
             requestEqualityEvidenceV1: equalityEvidence,
         });
 

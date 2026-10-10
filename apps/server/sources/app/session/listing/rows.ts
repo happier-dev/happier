@@ -108,6 +108,7 @@ const V2_SESSION_LIST_ROW_BASE_SELECT = {
     pendingActivationRequestedAt: true,
     pendingActivationStatus: true,
     pendingActivationFailureCode: true,
+    pendingActivationManagedTarget: true,
     responsibleAccountId: true,
     responsibleAccount: { select: ACCOUNT_DISPLAY_PROFILE_SELECT },
     active: true,
@@ -127,6 +128,7 @@ const {
     pendingActivationRequestedAt: _legacySelectPendingActivationRequestedAt,
     pendingActivationStatus: _legacySelectPendingActivationStatus,
     pendingActivationFailureCode: _legacySelectPendingActivationFailureCode,
+    pendingActivationManagedTarget: _legacySelectPendingActivationManagedTarget,
     ...V2_SESSION_LIST_ROW_LEGACY_SELECT
 } = V2_SESSION_LIST_ROW_BASE_SELECT;
 

@@ -187,6 +187,10 @@ describe("session create-or-load metadata envelope (SQLite integration)", () => 
     });
 
     it("rejects every Team credential binding intent before Session creation when the capability is disabled", async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES__ENABLED: "0",
+        });
         const owner = await createAccount("pk-disabled-team-credential-binding");
 
         await withApp(async (app) => {

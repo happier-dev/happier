@@ -1,4 +1,3 @@
-import { db } from "@/storage/db";
 import { getPublicUrl } from "@/storage/blob/files";
 import { fetchLinkedProvidersForAccount } from "@/app/auth/providers/linkedProviders";
 import { type Fastify } from "../../types";
@@ -18,33 +17,34 @@ export function registerAccountProfileRoute(app: Fastify): void {
     }, async (request, reply) => {
         const requestHomeEnv = await readRequestHomeEnv(request);
         const userId = request.userId;
-        const user = await db.account.findUniqueOrThrow({
-            where: { id: userId },
-            select: {
-                firstName: true,
-                lastName: true,
-                username: true,
-                avatar: true,
-            }
-        });
-
         const connectedServiceAccountGroupsEnabled = isServerFeatureEnabledForRequest("connectedServices.accountGroups", requestHomeEnv);
+        const { user, connectedServiceProjection, linkedProviders, linkedIdentityManagementV1 } = await inTx(async tx => {
+            const user = await tx.account.findUniqueOrThrow({
+                where: { id: userId },
+                select: {
+                    firstName: true,
+                    lastName: true,
+                    username: true,
+                    avatar: true,
+                }
+            });
 
-        const connectedServiceProjection = await buildAccountConnectedServicesProjection({
-            tx: db,
-            accountId: userId,
-            includeGroups: connectedServiceAccountGroupsEnabled,
-        });
-        const { linkedProviders, linkedIdentityManagementV1 } = await inTx(async (tx) => {
+            const connectedServiceProjection = await buildAccountConnectedServicesProjection({
+                tx,
+                accountId: userId,
+                includeGroups: connectedServiceAccountGroupsEnabled,
+            });
             const [currentLinkedProviders, currentManagement] = await Promise.all([
                 fetchLinkedProvidersForAccount({ tx, accountId: userId }),
                 buildLinkedIdentityManagementProjectionInTx(tx, { accountId: userId, env: requestHomeEnv }),
             ]);
             return {
+                user,
+                connectedServiceProjection,
                 linkedProviders: currentLinkedProviders,
                 linkedIdentityManagementV1: currentManagement,
             };
-        });
+        }, { readOnly: true });
         return reply.send({
             id: userId,
             timestamp: Date.now(),

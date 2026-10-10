@@ -48,6 +48,44 @@ function mintNativeGrant(runtime: ReturnType<typeof createLocalServicePreviewRun
 }
 
 describe("local service preview runtime", () => {
+    it('keeps native disclosure bound to each admitted viewer and retires all viewers on starter loss', () => {
+        const native = { ...resource, sessionId: undefined, owner: { kind: 'user' as const, id: 'starter_1' },
+            serviceTarget: { kind: 'managed_service' as const, managedServiceId: 'instance_1', machineId: resource.machineId, cwd: '/workspace/app',
+                declaration: { workspaceRefId: 'workspace_1', selection: { kind: 'manifest' as const, name: 'web' } } } };
+        const runtime = createLocalServicePreviewRuntime({ tokenSecret: 'secret', publicBaseUrl: 'https://app.happier.test',
+            hostOriginBaseDomain: null, env: nativeGrantEnv });
+        expect(runtime.registerPreview({ resource: native, accountId: 'starter_1' }).ok).toBe(true);
+        const mint = (actorAccountId: string) => {
+            const result = runtime.mintNativeDirectAccess({ previewId: native.previewId, actorAccountId,
+                target: { endpointId: 'b'.repeat(64), revision: 1 }, request: { v: 1,
+                    initiator: { kind: 'account_client', endpointId: 'a'.repeat(64) }, ephemeralPublicKeyBase64Url: 'c'.repeat(43) } });
+            if (!result.ok) throw new Error(result.reasonCode);
+            expect(result.access.grant.payload.accountId).toBe(actorAccountId);
+            const lease = runtime.openNativeRegistration(localServicePreviewDirectBindingV1(native), result.access.grant.payload.grantId);
+            if (!lease.ok) throw new Error(lease.reasonCode);
+            return lease;
+        };
+        const first = mint('viewer_1');
+        const second = mint('viewer_2');
+        runtime.retireMachineAccess({ machineId: 'other', accountId: 'viewer_1' });
+        expect(first.signal.aborted).toBe(false);
+        runtime.retireMachineAccess({ machineId: native.machineId, accountId: 'viewer_1' });
+        expect(first.signal.aborted).toBe(true);
+        expect(second.signal.aborted).toBe(false);
+        runtime.retireMachineAccess({ machineId: native.machineId, accountId: 'starter_1' });
+        expect(second.signal.aborted).toBe(true);
+        expect(runtime.resolvePreview(native.previewId)).toBeNull();
+    });
+    it('refuses rebinding an admitted preview identity to a different actual service occurrence', () => {
+        const native = { ...resource, sessionId: undefined, owner: { kind: 'user' as const, id: 'starter_1' },
+            serviceTarget: { kind: 'managed_service' as const, managedServiceId: 'instance_1', machineId: resource.machineId, cwd: '/workspace/app',
+                declaration: { workspaceRefId: 'workspace_1', selection: { kind: 'manifest' as const, name: 'web' } } } };
+        const runtime = createLocalServicePreviewRuntime({ tokenSecret: 'secret', publicBaseUrl: 'https://app.happier.test', hostOriginBaseDomain: null });
+        expect(runtime.registerPreview({ resource: native, accountId: 'starter_1' }).ok).toBe(true);
+        expect(runtime.registerPreview({ resource: { ...native, serviceTarget: { ...native.serviceTarget, managedServiceId: 'other_instance' } },
+            accountId: 'starter_1' })).toEqual({ ok: false, reasonCode: 'invalid_preview_resource' });
+        expect(runtime.resolvePreview(native.previewId)?.serviceTarget).toEqual(native.serviceTarget);
+    });
     it('does not revive unused native grants when an identical preview is registered again', () => {
         const runtime = createLocalServicePreviewRuntime({ tokenSecret: 'secret', publicBaseUrl: 'https://app.happier.test', hostOriginBaseDomain: null,
             env: nativeGrantEnv });

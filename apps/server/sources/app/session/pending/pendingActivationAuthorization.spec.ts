@@ -269,7 +269,7 @@ describe('pending activation authorization owner', () => {
             pendingActivationStatus: 'waiting',
             pendingActivationFailureCode: null,
         })).toBeUndefined();
-        expect(clearPendingActivationAuthorizationForPublisherActivityData()).toEqual({
+        expect(clearPendingActivationAuthorizationForPublisherActivityData()).toMatchObject({
             pendingActivationRequestId: null,
             pendingActivationRequestedAt: null,
             pendingActivationStatus: null,

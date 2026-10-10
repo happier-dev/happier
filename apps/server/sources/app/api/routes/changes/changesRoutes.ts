@@ -1,4 +1,4 @@
-import { db } from "@/storage/db";
+import { inTx } from "@/storage/inTx";
 import { z } from "zod";
 import { type Fastify } from "../../types";
 import { changesRequestsCounter, changesReturnedChangesCounter } from "@/app/monitoring/metrics/index";
@@ -53,10 +53,10 @@ export function changesRoutes(app: Fastify) {
         },
     }, async (request, reply) => {
         const userId = request.userId;
-        const account = await db.account.findUnique({
+        const account = await inTx(tx => tx.account.findUnique({
             where: { id: userId },
             select: { seq: true, changesFloor: true },
-        });
+        }), { readOnly: true });
         if (!account) {
             changesRequestsCounter.inc({ result: 'account-not-found' });
             return reply.code(404).send({ error: 'account-not-found' });
@@ -103,7 +103,7 @@ export function changesRoutes(app: Fastify) {
             sessionAccessSessionId !== undefined
             && compatibility.supportsSessionAccessWitnessProtocol
         ) {
-            const probe = await db.$transaction(async (tx) => {
+            const probe = await inTx(async (tx) => {
                 const account = await tx.account.findUnique({
                     where: { id: userId },
                     select: { seq: true },
@@ -121,7 +121,7 @@ export function changesRoutes(app: Fastify) {
                     throughCursor: account.seq,
                     status: access.status,
                 };
-            });
+            }, { readOnly: true });
             if (!probe) {
                 changesRequestsCounter.inc({ result: 'account-not-found' });
                 warn({ module: 'changes', userId: userIdRedacted }, 'Authenticated Session access probe missing account row');
@@ -154,10 +154,10 @@ export function changesRoutes(app: Fastify) {
             });
         }
 
-        const account = await db.account.findUnique({
+        const account = await inTx(tx => tx.account.findUnique({
             where: { id: userId },
             select: { seq: true, changesFloor: true },
-        });
+        }), { readOnly: true });
         if (!account) {
             // Should be impossible for authenticated requests, but keep the contract explicit.
             changesRequestsCounter.inc({ result: 'account-not-found' });
@@ -187,7 +187,7 @@ export function changesRoutes(app: Fastify) {
             return reply.code(410).send({ error: 'cursor-gone', currentCursor: account.seq });
         }
 
-        const rows = await db.accountChange.findMany({
+        const rows = await inTx(tx => tx.accountChange.findMany({
             where: {
                 accountId: userId,
                 cursor: { gt: after },
@@ -205,17 +205,17 @@ export function changesRoutes(app: Fastify) {
                 changedAt: true,
                 hint: true,
             },
-        });
+        }), { readOnly: true });
 
         // AccountChange retention deletes a row and advances changesFloor in
         // one Account-fenced transaction. This second read closes the reader
         // side of that boundary: a poll that read an older floor but fetched
         // rows after the retention commit must reset instead of checkpointing
         // a later exact change without its required full invalidation.
-        const currentAccount = await db.account.findUnique({
+        const currentAccount = await inTx(tx => tx.account.findUnique({
             where: { id: userId },
             select: { seq: true, changesFloor: true },
-        });
+        }), { readOnly: true });
         if (currentAccount && after < currentAccount.changesFloor) {
             changesRequestsCounter.inc({ result: 'cursor-gone' });
             warn(
@@ -243,10 +243,11 @@ export function changesRoutes(app: Fastify) {
                 ? [row.entityId]
                 : [],
         ))];
-        const pendingTargets = await listQueuedExecutionRunPendingTargetsForSessions({
+        const pendingTargets = await inTx(tx => listQueuedExecutionRunPendingTargetsForSessions({
             accountId: userId,
             sessionIds: pendingSessionIds,
-        });
+            reader: tx,
+        }), { readOnly: true });
         const pendingRunIdsBySessionId = new Map<string, string[]>();
         for (const target of pendingTargets) {
             const existing = pendingRunIdsBySessionId.get(target.sessionId);
@@ -270,12 +271,12 @@ export function changesRoutes(app: Fastify) {
                 [...sessionChangeCursors.entries()].map(async ([sessionId, cursor]) => ({
                     sessionId,
                     cursor,
-                    resolution: await resolveSessionHostReferenceForAuthenticationInTx({
-                        tx: db,
+                    resolution: await inTx(tx => resolveSessionHostReferenceForAuthenticationInTx({
+                        tx,
                         accountId: userId,
                         targetId: sessionId,
                         authentication: readSessionAccessAuthenticationFromRequest(request),
-                    }),
+                    }), { readOnly: true }),
                 })),
             )
             : undefined;

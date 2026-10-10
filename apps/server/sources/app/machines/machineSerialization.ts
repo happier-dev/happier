@@ -44,7 +44,7 @@ export function serializeMachineKeyBasis(
     row: Pick<MachineSerializationRow, 'dataEncryptionKey' | 'metadataVersion' | 'daemonStateVersion'>,
 ): MachineKeyBasisV1 {
     return {
-        dataEncryptionKey: row.dataEncryptionKey === null ? null : privacyKit.encodeBase64(row.dataEncryptionKey),
+        dataEncryptionKey: row.dataEncryptionKey === null ? null : privacyKit.encodeBase64(new Uint8Array(row.dataEncryptionKey)),
         metadataVersion: row.metadataVersion,
         daemonStateVersion: row.daemonStateVersion,
     };
@@ -157,7 +157,7 @@ export function serializeAccessibleMachineRow(
         && (options.access.resourceMode === 'plain' || options.callerDataEncryptionKey !== null);
     const dataEncryptionKey = canReadContent && options.access.resourceMode === 'e2ee'
         && options.callerDataEncryptionKey !== null
-        ? privacyKit.encodeBase64(options.callerDataEncryptionKey)
+        ? privacyKit.encodeBase64(new Uint8Array(options.callerDataEncryptionKey))
         : null;
     // The CAS basis names the owner wrapping as an opaque identity, while
     // dataEncryptionKey is the recipient's own decryptable wrapping.

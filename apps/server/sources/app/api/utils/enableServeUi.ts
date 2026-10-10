@@ -3,6 +3,8 @@ import type { UiConfig } from "@/app/api/uiConfig";
 import { extname, isAbsolute, relative, resolve } from "node:path";
 import { readFile, stat } from "node:fs/promises";
 import { warn } from "@/utils/logging/log";
+import { readRequestHomeEnv } from '@/app/home/settings/requestHomeEnv';
+import { readServerConfig, SERVER_CONFIG } from '@happier-dev/protocol';
 import { createReadStream, existsSync } from "node:fs";
 import { isServerApiPathname } from "./serverApiPath";
 
@@ -89,6 +91,9 @@ function setUiFileHeaders(reply: any, ext: string): void {
     } else if (ext === '.json') {
         reply.header('content-type', 'application/json; charset=utf-8');
         reply.header('cache-control', 'public, max-age=31536000, immutable');
+    } else if (ext === '.webmanifest') {
+        reply.header('content-type', 'application/manifest+json; charset=utf-8');
+        reply.header('cache-control', 'no-cache');
     } else if (ext === '.map') {
         reply.header('content-type', 'application/json; charset=utf-8');
         reply.header('cache-control', 'public, max-age=31536000, immutable');
@@ -178,7 +183,7 @@ export function enableServeUi(app: AnyFastifyInstance, ui: UiConfig) {
         } catch (err) {
             warn({ err, indexPath }, 'UI index.html not found (check UI build dir configuration)');
             const isProduction = process.env.NODE_ENV === "production";
-            const revealPathInFallback = !isProduction || process.env.HAPPIER_SERVER_UI_DEBUG_PATH === "1";
+            const revealPathInFallback = !isProduction || readServerConfig(await readRequestHomeEnv(request), SERVER_CONFIG.HAPPIER_SERVER_UI_DEBUG_PATH);
             const escapedIndexPath = String(indexPath)
                 .replace(/&/g, '&amp;')
                 .replace(/</g, '&lt;')
@@ -247,6 +252,7 @@ export function enableServeUi(app: AnyFastifyInstance, ui: UiConfig) {
                     '.js',
                     '.css',
                     '.json',
+                    '.webmanifest',
                     '.svg',
                     '.ico',
                     '.wasm',
@@ -342,6 +348,13 @@ export function enableServeUi(app: AnyFastifyInstance, ui: UiConfig) {
     app.get('/favicon.ico', async (request, reply) => {
         try {
             return await sendUiFile('favicon.ico', request, reply);
+        } catch {
+            return reply.code(404).send({ error: 'Not found' });
+        }
+    });
+    app.get('/manifest.webmanifest', async (request, reply) => {
+        try {
+            return await sendUiFile('manifest.webmanifest', request, reply);
         } catch {
             return reply.code(404).send({ error: 'Not found' });
         }

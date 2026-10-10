@@ -1,12 +1,12 @@
 import {
     normalizePendingRequestedActionV1,
-    type PendingProviderAction,
     type PendingRequestedActionV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
+import type { PendingProviderAction } from '@happier-dev/protocol/sessions/pending/pendingProviderAction';
 
 export type PendingClaimForegroundState = 'ready' | 'active_steerable' | 'active_unsteerable';
 export type PendingClaimDeliveryTiming = 'after_foreground_ready' | 'after_runtime_idle';
-export type { PendingProviderAction } from '@happier-dev/protocol';
+export type { PendingProviderAction } from '@happier-dev/protocol/sessions/pending/pendingProviderAction';
 
 type PendingInvocationCandidate = Readonly<{
     localId: string;
@@ -24,6 +24,7 @@ export type PendingProviderInvocationSelection =
             | 'waiting_for_foreground_turn'
             | 'waiting_for_runtime_activity'
             | 'runtime_activity_unknown'
+            | 'waiting_for_quota_reset'
             | 'waiting_for_predecessor';
       }>;
 
@@ -85,6 +86,7 @@ export function selectPendingProviderInvocation(params: Readonly<{
         return { deferredReason: 'waiting_for_predecessor' };
     }
     const action = normalizePendingRequestedActionV1(candidate.requestedAction);
+    if (action.kind === 'reset_start') return { deferredReason: 'waiting_for_quota_reset' };
 
     if (params.foregroundState !== 'ready') {
         return { deferredReason: 'waiting_for_foreground_turn' };

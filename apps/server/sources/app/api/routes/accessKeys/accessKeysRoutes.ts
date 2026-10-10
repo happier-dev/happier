@@ -1,7 +1,7 @@
 import { Fastify } from "../../types";
 import { z } from "zod";
-import { db } from "@/storage/db";
 import { log } from "@/utils/logging/log";
+import { inTx } from "@/storage/inTx";
 import {
     createSessionMachineAccessKeyInTx,
     readSessionMachineAccessKeyInTx,
@@ -41,11 +41,14 @@ export function accessKeysRoutes(app: Fastify) {
         const binding = { accountId: userId, machineId, sessionId };
 
         try {
-            if (await readSessionMachineBindingStateInTx(db, binding) !== "available") {
+            const resolved = await inTx(async tx => {
+                if (await readSessionMachineBindingStateInTx(tx, binding) !== "available") return { available: false as const, accessKey: null };
+                return { available: true as const, accessKey: await readSessionMachineAccessKeyInTx(tx, binding) };
+            });
+            if (!resolved.available) {
                 return reply.code(404).send({ error: 'Session or machine not found' });
             }
-
-            const accessKey = await readSessionMachineAccessKeyInTx(db, binding);
+            const { accessKey } = resolved;
 
             if (!accessKey) {
                 return reply.send({ accessKey: null });
@@ -104,12 +107,9 @@ export function accessKeysRoutes(app: Fastify) {
         const { data } = request.body;
 
         try {
-            const created = await createSessionMachineAccessKeyInTx(db, {
-                accountId: userId,
-                machineId,
-                sessionId,
-                data,
-            });
+            const created = await inTx(tx => createSessionMachineAccessKeyInTx(tx, {
+                accountId: userId, machineId, sessionId, data,
+            }));
 
             if (!created.ok) {
                 return created.reason === "binding-not-found"
@@ -176,13 +176,13 @@ export function accessKeysRoutes(app: Fastify) {
         const { data, expectedVersion } = request.body;
 
         try {
-            const updated = await updateSessionMachineAccessKeyDataInTx(db, {
+            const updated = await inTx(tx => updateSessionMachineAccessKeyDataInTx(tx, {
                 accountId: userId,
                 machineId,
                 sessionId,
                 data,
                 expectedVersion,
-            });
+            }));
 
             if (!updated.ok) {
                 if (updated.reason === "not-found") {

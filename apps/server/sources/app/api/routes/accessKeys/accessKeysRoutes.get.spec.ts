@@ -1,15 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createDbMocks, installDbModuleMock } from "../../testkit/dbMocks";
+import { createDbMocks, createDbTransactionMock, installDbModuleMock } from "../../testkit/dbMocks";
 import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
 
 const dbMocks = createDbMocks({
     accessKey: ["findUnique"],
     session: ["findFirst"],
-    machine: ["findFirst"],
+    machine: ["findFirst", "findUnique"],
 } as const);
 
-installDbModuleMock({ db: dbMocks.db });
+const transactions = createDbTransactionMock(() => dbMocks.db);
+installDbModuleMock({ db: transactions.wrapDb(dbMocks.db) });
 
 vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 
@@ -17,6 +18,7 @@ describe("accessKeysRoutes GET /v1/access-keys/:sessionId/:machineId", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         dbMocks.reset();
+        dbMocks.db.machine.findUnique.mockResolvedValue({ accountId: "u1", installationId: null });
         dbMocks.db.machine.findFirst.mockResolvedValue({
             revokedAt: null,
             replacedByMachineId: null,

@@ -1,5 +1,6 @@
 import { mkdir } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
+import { MEMORY_SEARCH_FTS_TOKENIZER, segmentMemorySearchCjkRuns } from '@happier-dev/protocol/memory/memorySearchText';
 import type { SessionTranscriptPublicationConstraint } from '@/app/session/sessionTranscriptPublicationPolicy';
 import {
     openHomeSearchSqliteBinding,
@@ -62,16 +63,7 @@ function normalizeFtsText(value: string): string {
 // Chinese, Japanese, or Korean run becomes one giant token that no sub-word query can match.
 // Overlapping unigrams and bigrams restore sub-run searchability;
 // they are applied only to the derived FTS text, never to the stored message text.
-const CJK_RUN_PATTERN = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]+/gu;
-
-function segmentCjkRuns(value: string): string {
-    return value.replace(CJK_RUN_PATTERN, (run) => {
-        const chars = Array.from(run);
-        const terms = [...chars];
-        for (let i = 0; i + 1 < chars.length; i += 1) terms.push(chars[i]! + chars[i + 1]!);
-        return ` ${terms.join(' ')} `;
-    });
-}
+const segmentCjkRuns = segmentMemorySearchCjkRuns;
 
 function buildFtsQuery(value: string): Readonly<{ match: string; snippetTerms: string[] }> {
     const matchParts: string[] = [];
@@ -243,7 +235,7 @@ export async function openHomeSearchDb(params: Readonly<{ dbPath?: string; dataD
                 created_at_ms UNINDEXED,
                 role UNINDEXED,
                 text,
-                tokenize = 'unicode61 remove_diacritics 0 tokenchars ''_-$'''
+                tokenize = '${MEMORY_SEARCH_FTS_TOKENIZER}'
             );
         `);
         const existingVersion = db.prepare('SELECT value FROM home_search_meta WHERE key = ?').get('schema_version') as { value?: string } | undefined;

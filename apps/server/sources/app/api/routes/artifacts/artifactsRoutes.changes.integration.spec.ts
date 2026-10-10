@@ -5,7 +5,9 @@ import {
     ARTIFACT_PLAIN_DATA_KEY_MARKER,
     CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
     encodePlainArtifactStoredContent,
+    sealEncryptedDataKeyEnvelopeV1,
 } from "@happier-dev/protocol";
+import tweetnacl from 'tweetnacl';
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { withAuthenticatedTestApp } from "../../testkit/sqliteFastify";
@@ -74,6 +76,67 @@ describe("artifactsRoutes (AccountChange integration)", () => {
             select: { id: true },
         });
     }
+
+    it.each(['plain', 'e2ee'] as const)('batch reads selected %s details with the canonical recipient census and refuses foreign rows', async mode => {
+        const owner = await db.account.create({ data: { encryptionMode: mode,
+            ...(mode === 'e2ee' ? createSignedAccountContentBinding() : {}) } });
+        const outsider = await seedAccount();
+        const ids = ['77777777-7777-4777-8777-777777777771', '77777777-7777-4777-8777-777777777772'];
+        for (const id of ids) await db.artifact.create({ data: { id, accountId: owner.id,
+            header: Buffer.from(mode === 'plain' ? encodePlainArtifactStoredContent({ title: id }) : 'opaque-header', mode === 'plain' ? 'base64' : 'utf8'),
+            body: Buffer.from(mode === 'plain' ? encodePlainArtifactStoredContent({ body: id }) : 'opaque-body', mode === 'plain' ? 'base64' : 'utf8'),
+            dataEncryptionKey: mode === 'plain' ? Buffer.from(ARTIFACT_PLAIN_DATA_KEY_MARKER, 'base64')
+                : new Uint8Array(sealEncryptedDataKeyEnvelopeV1({ dataKey: tweetnacl.randomBytes(32),
+                    recipientPublicKey: owner.contentPublicKey!, randomBytes: tweetnacl.randomBytes })),
+            headerVersion: 1, bodyVersion: 1, seq: 1 } });
+        await withAuthenticatedTestApp(app => artifactsRoutes(app), async app => {
+            const headers = { 'x-test-user-id': owner.id };
+            const exact = await app.inject({ method: 'GET', url: `/v1/artifacts/${ids[0]}`, headers });
+            expect(exact.statusCode).toBe(200);
+            const selected = await app.inject({ method: 'POST', url: '/v1/artifacts/read', headers,
+                payload: { artifactIds: [ids[0], 'missing'] } });
+            expect(selected.statusCode).toBe(200);
+            expect(selected.json().items).toEqual([
+                { artifactId: ids[0], ok: true, artifact: exact.json(), recipientCensus: mode === 'plain' ? null : expect.any(Object) },
+                { artifactId: 'missing', ok: false, error: 'artifact_not_found', status: 404, retryable: false },
+            ]);
+            if (mode === 'e2ee') {
+                const census = await app.inject({ method: 'GET', url: `/v1/artifacts/${ids[0]}/access/recipients`, headers });
+                expect(selected.json().items[0].recipientCensus).toEqual(census.json());
+            }
+            const denied = await app.inject({ method: 'POST', url: '/v1/artifacts/read', headers: { 'x-test-user-id': outsider.id },
+                payload: { artifactIds: ids } });
+            expect(denied.statusCode).toBe(200);
+            expect(denied.json().items).toEqual(ids.map(artifactId => ({ artifactId, ok: false, error: 'artifact_not_found', status: 404, retryable: false })));
+            const invalid = await app.inject({ method: 'POST', url: '/v1/artifacts/read', headers,
+                payload: { artifactIds: [ids[0]], includeBody: true } });
+            expect(invalid.statusCode).toBe(400);
+        });
+    });
+
+    it('preserves exact-read refusal status and retry classification for owners and granted callers', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const recipient = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const id = '77777777-7777-4777-8777-777777777773';
+        await db.artifact.create({ data: { id, accountId: owner.id,
+            header: Buffer.from(encodePlainArtifactStoredContent({ title: 'Profile', kind: 'launch-profile.v1' }), 'base64'),
+            body: Buffer.from('unreadable stored body'), dataEncryptionKey: Buffer.from(ARTIFACT_PLAIN_DATA_KEY_MARKER, 'base64'),
+            headerVersion: 1, bodyVersion: 1, seq: 1 } });
+        await db.artifactAccountGrant.create({ data: { artifactId: id, accountId: recipient.id,
+            accessLevel: 'view', createdByAccountId: owner.id } });
+        await withAuthenticatedTestApp(app => artifactsRoutes(app), async app => {
+            for (const caller of [owner, recipient]) {
+                const headers = { 'x-test-user-id': caller.id };
+                const exact = await app.inject({ method: 'GET', url: `/v1/artifacts/${id}`, headers });
+                expect(exact.statusCode).toBe(caller.id === owner.id ? 500 : 409);
+                const batch = await app.inject({ method: 'POST', url: '/v1/artifacts/read', headers,
+                    payload: { artifactIds: [id] } });
+                expect(batch.statusCode).toBe(200);
+                expect(batch.json().items).toEqual([{ artifactId: id, ok: false, error: 'artifact_content_unavailable',
+                    status: exact.statusCode, retryable: caller.id === owner.id }]);
+            }
+        });
+    });
 
     async function assertArtifactChange(accountId: string, artifactId: string, deleted = false) {
         const [account, change] = await Promise.all([

@@ -23,8 +23,9 @@ import {
     resolveLocalServicePublicAccessIdentity,
     type LocalServicePublicAccessPurpose,
     type LocalServicePublicAuthenticatedUser,
+    type LocalServicePublicAccessServiceAuthorizer,
 } from "@/app/local/services/public/accessAuthorization";
-import type { LocalServicePublicExposureV1 } from "@happier-dev/protocol";
+import type { LocalServicePublicExposureV1, LocalServicePreviewResourceV1 } from "@happier-dev/protocol";
 
 type UpgradeRequest = Readonly<{
     url?: string;
@@ -54,7 +55,9 @@ export type LocalServicePublicWebSocketUpgradeOptions = Readonly<{
     resolveExposure?: (exposureId: string) => LocalServicePublicExposureV1 | null | undefined;
     trustProxy?: boolean | number;
     externalProtocol?: "http" | "https";
-    retainConnection?: (exposureId: string, close: () => void) => () => void;
+    retainConnection?: (exposureId: string, close: () => void, actorAccountId?: string) => () => void;
+    resolvePreview?: (previewId: string) => LocalServicePreviewResourceV1 | null | undefined;
+    authorizeServiceAccess?: LocalServicePublicAccessServiceAuthorizer;
     authorizeSessionAccess?: (input: Readonly<{
         userId: string;
         sessionId: string;
@@ -209,6 +212,8 @@ export async function handleLocalServicePublicWebSocketUpgrade(
         principal,
         resolveExposure: options.resolveExposure,
         authorizeSessionAccess: options.authorizeSessionAccess,
+        resolvePreview: options.resolvePreview,
+        authorizeServiceAccess: options.authorizeServiceAccess,
     });
     const trustProxy = options.trustProxy;
     const access = options.validateAccess({
@@ -234,8 +239,12 @@ export async function handleLocalServicePublicWebSocketUpgrade(
         return;
     }
 
-    const releaseConnection = options.retainConnection?.(route.exposureId, () => { socket.destroy?.(); });
-    if (socket.destroyed) {
+    const registration = new AbortController();
+    const releaseConnection = options.retainConnection?.(route.exposureId, () => {
+        registration.abort();
+        socket.destroy?.();
+    }, options.resolveExposure?.(route.exposureId)?.mode === 'authenticated' ? principal?.userId : undefined);
+    if (registration.signal.aborted || socket.destroyed) {
         releaseConnection?.();
         return;
     }
@@ -257,6 +266,7 @@ export async function handleLocalServicePublicWebSocketUpgrade(
                 rawHeaders: request.rawHeaders ?? [],
                 externalProtocol: request.socket?.encrypted ? "https" : options.externalProtocol ?? "http",
                 head,
+                signal: registration.signal,
                 client: createLocalServicePreviewUpgradeClient(socket),
             },
             openTunnel: options.openTunnel as OpenLocalServicePreviewTunnel,
