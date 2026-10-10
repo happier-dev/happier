@@ -85,6 +85,7 @@ export type PluginReactNativeArtifactLeaseInput = Readonly<{
     /** The active Account lifetime is the sole authority for qualified hosted reads. */
     accountLifetime: ActiveServerAccountScopeLifetime;
     persistent?: PluginReactNativeArtifactLeasePersistentScope;
+    signal?: AbortSignal;
     /** Daemon route for an Account-release selection (the mount's machine). */
     daemon?: PluginArtifactDaemonTransport;
     /** Daemon RPC boundary; production uses the canonical machine-RPC transport. */
@@ -251,6 +252,7 @@ export async function acquirePluginReactNativeArtifactLease(
     const acquired = await acquirePluginSelectedArtifactLease({
         reader: input.reader,
         accountLifetime: input.accountLifetime,
+        ...(input.signal ? { signal: input.signal } : {}),
         slot: Object.freeze({
             pluginId: input.cacheIdentity.pluginId,
             // The cache identity identifies the renderer runtime. The signed

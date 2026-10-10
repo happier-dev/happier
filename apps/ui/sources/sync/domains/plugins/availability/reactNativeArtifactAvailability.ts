@@ -65,7 +65,7 @@ export type PluginReactNativeArtifactAvailabilityProducerDependencies = Readonly
 
 function isCurrent(input: PluginReactNativeArtifactAvailabilityInput): boolean {
     try {
-        return input.accountLifetime.isCurrent() && input.isCurrent();
+        return !input.signal?.aborted && input.accountLifetime.isCurrent() && input.isCurrent();
     } catch {
         return false;
     }
@@ -103,6 +103,7 @@ export function createPluginReactNativeArtifactAvailabilityProducer(
                     artifactGraph: input.artifactGraph,
                     cacheIdentity: input.cacheIdentity,
                     accountLifetime: input.accountLifetime,
+                    ...(input.signal ? { signal: input.signal } : {}),
                     appExact: dependencies.appExact,
                     persistent,
                     fetchDaemonArtifactBytes: dependencies.fetchDaemonArtifactBytes,

@@ -73,6 +73,7 @@ export type PluginHostedWebArtifactLeaseInput = Readonly<{
     cacheIdentity: PluginHostedWebArtifactIdentity;
     accountLifetime: ActiveServerAccountScopeLifetime;
     persistent?: PluginHostedWebArtifactLeasePersistentScope;
+    signal?: AbortSignal;
     /** Daemon route for an Account-release selection (the mount's machine). */
     daemon?: PluginArtifactDaemonTransport;
     /** Daemon RPC boundary; production uses the canonical machine-RPC transport. */
@@ -148,6 +149,7 @@ export async function acquirePluginHostedWebArtifactLease(
     const acquired = await acquirePluginSelectedArtifactLease({
         reader: input.reader,
         accountLifetime: input.accountLifetime,
+        ...(input.signal ? { signal: input.signal } : {}),
         slot: Object.freeze({
             pluginId: input.cacheIdentity.pluginId,
             // The renderer identity is not necessarily the generated Account
@@ -408,6 +410,7 @@ export function createPluginHostedWebArtifactAvailabilityProducer(
                     artifactGraph: input.artifactGraph,
                     cacheIdentity: input.cacheIdentity,
                     accountLifetime: input.accountLifetime,
+                    ...(input.signal ? { signal: input.signal } : {}),
                     appExact: createBundledPluginUiAppExactArtifactSource(),
                     persistent: Object.freeze({
                         scope: input.accountLifetime.scope,
