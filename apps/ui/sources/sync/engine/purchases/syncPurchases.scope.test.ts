@@ -41,6 +41,23 @@ describe('syncPurchases scope guards', () => {
         vi.clearAllMocks();
     });
 
+    it('rejects a transient customer-info read so the retry owner can recover entitlements', async () => {
+        const { syncPurchases } = await import('./syncPurchases');
+        const failure = new TypeError('Failed to fetch');
+        const customerInfo = { entitlements: { active: { pro: true } } };
+        revenueCatMock.getCustomerInfo.mockRejectedValueOnce(failure).mockResolvedValueOnce(customerInfo);
+        const applyPurchases = vi.fn();
+        const params = {
+            serverID: 'account-a', revenueCatInitialized: true,
+            setRevenueCatInitialized: vi.fn(), applyPurchases,
+        };
+
+        await expect(syncPurchases(params)).rejects.toBe(failure);
+        expect(applyPurchases).not.toHaveBeenCalled();
+        await expect(syncPurchases(params)).resolves.toBeUndefined();
+        expect(applyPurchases).toHaveBeenCalledWith(customerInfo);
+    });
+
     it('drops fetched customer info when the captured sync scope is stale before apply', async () => {
         const { syncPurchases } = await import('./syncPurchases');
         revenueCatMock.getCustomerInfo.mockResolvedValue({ entitlements: { active: {} } });

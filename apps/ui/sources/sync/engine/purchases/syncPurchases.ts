@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 import { config } from '@/config';
 import { RevenueCat, LogLevel, PaywallResult } from '@/sync/domains/purchases';
+import { log } from '@/log';
 
 export async function syncPurchases(params: {
     serverID: string;
@@ -60,8 +61,8 @@ export async function syncPurchases(params: {
         // Apply to storage (storage handles the transformation)
         applyPurchases(customerInfo);
     } catch (error) {
-        console.error('Failed to sync purchases:', error);
-        // Don't throw - purchases are optional
+        log.log(`Failed to sync purchases: ${error}`);
+        throw error;
     }
 }
 
