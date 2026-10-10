@@ -14,7 +14,6 @@ import { McpServerConfigureForm } from '@/components/settings/mcpServers/McpServ
 import { McpServerImportJsonTab } from '@/components/settings/mcpServers/McpServerImportJsonTab';
 import { McpServerQuickInstallTab } from '@/components/settings/mcpServers/McpServerQuickInstallTab';
 import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
@@ -22,34 +21,43 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { Modal } from '@/modal';
-import { useSavedSecretsMutable } from '@/components/secrets/useSavedSecretsMutable';
+import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalog';
 import { randomUUID } from '@/platform/randomUUID';
-import { useAllMachines, useSettingMutable, useSettingsVersion } from '@/sync/domains/state/storage';
+import { useAllMachines } from '@/sync/domains/state/storage';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
 import { useMachineAdministrationExecutionTargetBinding } from '@/sync/domains/machines/administration/useExecutionTargetBinding';
 import { useMachineAdministrationTargetSelection } from '@/sync/domains/machines/administration/useTargetSelection';
-import { deleteMcpServerCatalogEntryV1, upsertMcpServerWithBindingsV1 } from '@/sync/domains/settings/mcpServers/mcpServerCrud';
 import {
     materializeImportedMcpServerDrafts,
     type ImportedMcpInputResolutionV1,
+    type MaterializeImportedMcpServerDraftsResult,
 } from '@/sync/domains/settings/mcpServers/materializeImportedMcpServerDrafts';
 import { getImportedMcpInputResolutionIssues } from '@/sync/domains/settings/mcpServers/importedMcpInputResolutionValidation';
 import { buildQuickInstallMcpDraft, type McpQuickInstallPresetId } from '@/sync/domains/settings/mcpServers/mcpQuickInstallCatalog';
-import {
-    normalizeMcpServersSettingsV1,
-    readWritableMcpServersSettingsV1,
-} from '@/sync/domains/settings/mcpServers/normalizeMcpServersSettingsV1';
 import { parseImportedMcpServerJson } from '@/sync/domains/settings/mcpServers/parseImportedMcpServerJson';
 import { t } from '@/text';
 import { promptUnsavedChangesAlert } from '@/utils/ui/promptUnsavedChangesAlert';
-import { useActiveUnsavedChangesGuard } from '@/utils/navigation/useActiveUnsavedChangesGuard';
 import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
 import { Icon } from '@/components/ui/icons/Icon';
 
 import { MCP_COLLECTION_ROUTE, mcpServerDraftTitle, mcpServerRoute, recordMcpServerVisit } from './collection/mcpServerCollectionModel';
 import { resolveTransportIconName, resolveTransportLabel, summarizeBindings } from './mcpServerUi';
+import { useMcpServersSettings } from './useMcpServersSettings';
+import { McpServerCatalogOperationError, requireUpdatedMcpServerCatalogMutation } from '@/sync/api/account/apiMcpServerCatalog';
+import { areAccountSettingsScopesEqual, type AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
+import { createSavedSecretResourcesWithCatalogMutation, type SavedSecretCatalogResourceCreationResult } from '@/sync/ops/settings/savedSecretResourceOperations';
+import { remapMcpServerCatalogSavedSecretReferencesV1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
+import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
+import { isTeamActionApprovalPendingError } from '@/sync/ops/teams/teamActionClient';
+import { awaitActionApprovalResult } from '@/components/approvals/actionApprovalContinuation';
+import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
 
 type AddFlowTab = 'configure' | 'importJson' | 'quickInstall';
+type PendingImportedCatalogCreation = Readonly<{
+    scope: AccountSettingsScope;
+    verifyOutcome: Extract<SavedSecretCatalogResourceCreationResult, { reason: 'outcome_unknown' }>['verifyOutcome'];
+    complete: () => Promise<void>;
+}>;
 
 type NavigationLike = Readonly<{
     setOptions?: (options: Readonly<Record<string, unknown>>) => void;
@@ -129,7 +137,6 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
     const ignoreBeforeRemoveRef = React.useRef(false);
     const isDirtyRef = React.useRef(false);
     const machines = useAllMachines();
-    const [secrets, setSecrets] = useSavedSecretsMutable();
     const administrationTargetSelection = useMachineAdministrationTargetSelection(
         MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.mcpServers,
     );
@@ -147,14 +154,16 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
     const addMode = typeof addModeParam === 'string' && addModeParam.trim() ? addModeParam.trim() : null;
     const presetId = typeof presetIdParam === 'string' && presetIdParam.trim() ? presetIdParam.trim() as McpQuickInstallPresetId : null;
 
-    const [mcpSettingsRaw, setMcpSettings] = useSettingMutable('mcpServersSettingsV1');
-    // Null until the Account settings have loaded: until then a missing server may still arrive.
-    const settingsLoaded = useSettingsVersion() !== null;
-    const normalizedSettings = React.useMemo(() => normalizeMcpServersSettingsV1(mcpSettingsRaw), [mcpSettingsRaw]);
-    const writableMcpSettings = React.useMemo(
-        () => readWritableMcpServersSettingsV1(mcpSettingsRaw),
-        [mcpSettingsRaw],
-    );
+    const { settings: normalizedSettings, writable: writableMcpSettings, mutate: mutateMcpCatalog, reload: reloadMcpCatalog, snapshot, scope, approval } = useMcpServersSettings();
+    const liveScopeRef = React.useRef(scope);
+    liveScopeRef.current = scope;
+    const draftBaseRef = React.useRef<Readonly<{ scope: AccountSettingsScope; revision: number }> | null>(null);
+    const savedSecretCatalog = useSavedSecretCatalog({ scope: draftBaseRef.current?.scope ?? scope });
+    const secrets = React.useMemo(() => [...savedSecretCatalog.materializedSecrets], [savedSecretCatalog.materializedSecrets]);
+    const pendingImportedCreationRef = React.useRef<PendingImportedCatalogCreation | null>(null);
+    const approvalScope = draftBaseRef.current?.scope ?? scope;
+    const [importOperationPending, setImportOperationPending] = React.useState(false);
+    const settingsLoaded = snapshot.status === 'ready';
     const existingNames = React.useMemo(() => new Set(normalizedSettings.servers.map((server) => server.name)), [normalizedSettings.servers]);
 
     const existingServer: McpServerCatalogEntryV1 | null = React.useMemo(() => {
@@ -172,6 +181,8 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
     const generatedNameRef = React.useRef(existingServer ? null : draftServer.name);
     const [draftBindings, setDraftBindings] = React.useState<McpServerBindingV1[]>(() => existingBindings);
     const [isDirty, setIsDirty] = React.useState(false);
+    const liveDraftRef = React.useRef({ server: draftServer, bindings: draftBindings });
+    liveDraftRef.current = { server: draftServer, bindings: draftBindings };
     const [activeTab, setActiveTab] = React.useState<AddFlowTab>(() => {
         if (serverId) return 'configure';
         if (addMode === 'import-json') return 'importJson';
@@ -184,14 +195,21 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
     const [quickInstallInputMappingsByPreset, setQuickInstallInputMappingsByPreset] = React.useState<
         Partial<Record<McpQuickInstallPresetId, Record<string, ImportedMcpInputResolutionV1>>>
     >({});
+    const liveImportDraftRef = React.useRef({ importJsonText, importInputMappings, quickInstallPresetIds, quickInstallInputMappingsByPreset });
+    liveImportDraftRef.current = { importJsonText, importInputMappings, quickInstallPresetIds, quickInstallInputMappingsByPreset };
 
     React.useEffect(() => {
+        if (!scope || snapshot.status !== 'ready' || snapshot.authority !== 'active' || snapshot.revision === 'absent') return;
+        if (draftBaseRef.current && !areAccountSettingsScopesEqual(draftBaseRef.current.scope, scope)) return;
+        if (!draftBaseRef.current) draftBaseRef.current = { scope, revision: snapshot.revision };
+        if (isDirty) return;
+        draftBaseRef.current = { scope, revision: snapshot.revision };
         if (existingServer) {
             setDraftServer(existingServer);
             setDraftBindings(existingBindings);
             setIsDirty(false);
         }
-    }, [existingBindings, existingServer]);
+    }, [existingBindings, existingServer, isDirty, scope, snapshot.status, snapshot.authority, snapshot.revision]);
 
     React.useEffect(() => {
         isDirtyRef.current = isDirty;
@@ -247,17 +265,18 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
 
     const saveDisabled = React.useMemo(() => {
         if (!writableMcpSettings) return true;
+        if (draftBaseRef.current && !areAccountSettingsScopesEqual(draftBaseRef.current.scope, scope)) return true;
         const parsedServer = McpServerCatalogEntryV1Schema.safeParse(draftServer);
         if (!parsedServer.success) return true;
         return draftBindings.some((binding) => !McpServerBindingV1Schema.safeParse(binding).success);
-    }, [draftBindings, draftServer, writableMcpSettings]);
+    }, [draftBindings, draftServer, scope, writableMcpSettings]);
 
     const closeToMcpServersSettings = React.useCallback(() => {
         // `router.replace` expects the public route (group segments like `/(app)` are not valid here on web).
         router.replace(MCP_COLLECTION_ROUTE);
     }, [router]);
 
-    const commitDraft = React.useCallback((): boolean => {
+    const commitDraft = React.useCallback(async (): Promise<boolean> => {
         if (!writableMcpSettings) {
             Modal.alert(t('common.error'), t('settings.mcpServersValidationFailed'));
             return false;
@@ -278,19 +297,25 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
         }
 
         try {
-            const next = upsertMcpServerWithBindingsV1(writableMcpSettings, parsedServer.data, parsedBindings);
-            setMcpSettings(next);
+            const base = draftBaseRef.current;
+            if (!base || !areAccountSettingsScopesEqual(base.scope, liveScopeRef.current)) throw new McpServerCatalogOperationError('scope-retired');
+            const receipt = await mutateMcpCatalog(serverId ? 'mcp.servers.update' : 'mcp.servers.create', {
+                entry: parsedServer.data, bindings: parsedBindings, expectedRevision: base.revision });
+            requireUpdatedMcpServerCatalogMutation(receipt);
+            if (!areAccountSettingsScopesEqual(base.scope, liveScopeRef.current)) return false;
+            draftBaseRef.current = { scope: base.scope, revision: receipt.revision };
+            if (liveDraftRef.current.server !== draftServer || liveDraftRef.current.bindings !== draftBindings) return false;
             setIsDirty(false);
             return true;
         } catch (error) {
             Modal.alert(t('common.error'), error instanceof Error ? error.message : t('errors.unknownError'));
             return false;
         }
-    }, [draftBindings, draftServer, navigation, router, setMcpSettings, writableMcpSettings]);
+    }, [draftBindings, draftServer, navigation, router, mutateMcpCatalog, serverId, writableMcpSettings]);
 
     // Saving keeps the server open: a new one becomes the saved item selected in the collection.
-    const save = React.useCallback(() => {
-        const didSave = commitDraft();
+    const save = React.useCallback(async () => {
+        const didSave = await commitDraft();
         if (!didSave || serverId) return;
         ignoreBeforeRemoveRef.current = true;
         router.replace(mcpServerRoute(draftServer.id) as never);
@@ -323,73 +348,160 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
         );
         if (!confirmed) return;
 
-        const next = deleteMcpServerCatalogEntryV1(writableMcpSettings, serverId);
-        setMcpSettings(next);
-        ignoreBeforeRemoveRef.current = true;
-        closeToMcpServersSettings();
-    }, [closeToMcpServersSettings, existingServer, serverId, setMcpSettings, writableMcpSettings]);
+        try {
+            const base = draftBaseRef.current;
+            if (!base || !areAccountSettingsScopesEqual(base.scope, liveScopeRef.current)) throw new McpServerCatalogOperationError('scope-retired');
+            const receipt = await mutateMcpCatalog('mcp.servers.delete', {
+                serverId, removeBindings: true, expectedRevision: base.revision });
+            requireUpdatedMcpServerCatalogMutation(receipt);
+            if (!areAccountSettingsScopesEqual(base.scope, liveScopeRef.current)) return;
+            ignoreBeforeRemoveRef.current = true;
+            closeToMcpServersSettings();
+        } catch (error) {
+            Modal.alert(t('common.error'), error instanceof Error ? error.message : t('errors.unknownError'));
+        }
+    }, [closeToMcpServersSettings, existingServer, serverId, mutateMcpCatalog, writableMcpSettings]);
 
-    const handleImportJson = React.useCallback(() => {
-        if (!writableMcpSettings) {
-            Modal.alert(t('common.error'), t('settings.mcpServersValidationFailed'));
+    const verifyPendingImportedCreation = React.useCallback(async (): Promise<boolean> => {
+        const pending = pendingImportedCreationRef.current;
+        if (!pending) return false;
+        if (!areAccountSettingsScopesEqual(pending.scope, liveScopeRef.current)) throw new McpServerCatalogOperationError('scope-retired');
+        if (!pending.verifyOutcome) throw new McpServerCatalogOperationError('outcome_unknown');
+        const result = await pending.verifyOutcome();
+        if (!result.ok) throw new McpServerCatalogOperationError(result.reason);
+        if (pendingImportedCreationRef.current === pending) pendingImportedCreationRef.current = null;
+        await pending.complete();
+        return true;
+    }, []);
+
+    const commitImportedCatalog = React.useCallback(async (nextSettings: typeof normalizedSettings,
+        nextSecrets: readonly SavedSecret[], createdEntries: MaterializeImportedMcpServerDraftsResult['createdEntries'],
+        isSubmittedDraftCurrent: () => boolean): Promise<void> => {
+        const base = draftBaseRef.current;
+        if (!base || !areAccountSettingsScopesEqual(base.scope, liveScopeRef.current)) throw new McpServerCatalogOperationError('scope-retired');
+        const existingIds = new Set(secrets.map(secret => secret.id));
+        const resources = nextSecrets.filter(secret => !existingIds.has(secret.id));
+        let completed = false;
+        const complete = async () => {
+            if (completed) return;
+            completed = true;
+            if (!areAccountSettingsScopesEqual(base.scope, liveScopeRef.current)) return;
+            // Refresh through the qualified catalog owners; a refresh failure
+            // cannot erase the transaction's acknowledged authoring result.
+            void savedSecretCatalog.reload().catch(() => undefined);
+            await reloadMcpCatalog().catch(() => undefined);
+            if (!areAccountSettingsScopesEqual(base.scope, liveScopeRef.current) || !isSubmittedDraftCurrent()) return;
+            ignoreBeforeRemoveRef.current = true;
+            closeToMcpServersSettings();
+        };
+        if (!resources.length) {
+            const receipt = await mutateMcpCatalog('mcp.servers.create', { entries: createdEntries, expectedRevision: base.revision });
+            requireUpdatedMcpServerCatalogMutation(receipt);
+            await complete();
             return;
         }
-        const executionTarget = resolveFreshAdministrationTarget();
-        if (!executionTarget) return;
-        const materialized = materializeImportedMcpServerDrafts({
-            settings: writableMcpSettings,
-            secrets,
-            drafts: importParseResult.servers,
-            inputMappings: importInputMappings,
-            defaultMachineId: executionTarget.machine.id,
-            nowMs: Date.now(),
-            generateId: randomUUID,
+        const result = await awaitActionApprovalResult<Extract<SavedSecretCatalogResourceCreationResult, { ok: true }>, SavedSecretCatalogResourceCreationResult>({
+            execute: async callbacks => {
+                try {
+                    return await createSavedSecretResourcesWithCatalogMutation({ scope: base.scope, resources, catalogKeys: ['mcp'],
+                        mutateCatalogs: capture => {
+                            if (capture.catalogRevisions.mcp !== base.revision) return { ok: false, reason: 'changed' };
+                            return { catalogs: { mcp: remapMcpServerCatalogSavedSecretReferencesV1({ v: 1,
+                                servers: nextSettings.servers, bindings: nextSettings.bindings }, Object.fromEntries(capture.resourceRefs)) } };
+                        }, onApprovalSucceeded: callbacks.onApprovalSucceeded, onApprovalFailed: callbacks.onApprovalFailed });
+                } catch (error) {
+                    if (!isTeamActionApprovalPendingError(error)) throw error;
+                    approval.requestApproval(error.registration);
+                    return { approvalPending: true };
+                }
+            }, succeeded: value => value, failed: () => ({ ok: false, reason: 'failed' }),
+            aborted: () => ({ ok: false, reason: 'changed' }),
         });
-        if (materialized.warnings.length > 0) {
-            Modal.alert(t('settings.mcpServersImportJsonWarningsTitle'), materialized.warnings.join('\n'));
+        if (!result.ok) {
+            if (result.reason === 'outcome_unknown') pendingImportedCreationRef.current = { scope: base.scope,
+                verifyOutcome: result.verifyOutcome, complete };
+            throw new McpServerCatalogOperationError(result.reason);
         }
-        setSecrets(materialized.nextSecrets);
-        setMcpSettings(materialized.nextSettings);
-        ignoreBeforeRemoveRef.current = true;
-        closeToMcpServersSettings();
-    }, [closeToMcpServersSettings, importInputMappings, importParseResult.servers, resolveFreshAdministrationTarget, secrets, setMcpSettings, setSecrets, writableMcpSettings]);
+        await complete();
+    }, [approval.requestApproval, closeToMcpServersSettings, reloadMcpCatalog, savedSecretCatalog.reload, secrets, mutateMcpCatalog]);
 
-    const handleQuickInstall = React.useCallback(() => {
-        if (!writableMcpSettings) {
-            Modal.alert(t('common.error'), t('settings.mcpServersValidationFailed'));
-            return;
-        }
-        const executionTarget = resolveFreshAdministrationTarget();
-        if (!executionTarget) return;
-        if (selectedQuickInstallDrafts.length === 0) {
-            Modal.alert(t('common.error'), t('settings.mcpServersQuickInstallEmptyTitle'));
-            return;
-        }
-        let nextSettings = writableMcpSettings;
-        let nextSecrets = secrets;
-        const warnings: string[] = [];
-        for (const draft of selectedQuickInstallDrafts) {
+    const handleImportJson = React.useCallback(async () => {
+        if (importOperationPending) return;
+        setImportOperationPending(true);
+        try {
+            if (await verifyPendingImportedCreation()) return;
+            if (!writableMcpSettings) {
+                Modal.alert(t('common.error'), t('settings.mcpServersValidationFailed'));
+                return;
+            }
+            const executionTarget = resolveFreshAdministrationTarget();
+            if (!executionTarget) return;
             const materialized = materializeImportedMcpServerDrafts({
-                settings: nextSettings,
-                secrets: nextSecrets,
-                drafts: [draft.server],
-                inputMappings: quickInstallInputMappingsByPreset[draft.preset.id] ?? {},
+                settings: writableMcpSettings,
+                secrets,
+                drafts: importParseResult.servers,
+                inputMappings: importInputMappings,
                 defaultMachineId: executionTarget.machine.id,
                 nowMs: Date.now(),
                 generateId: randomUUID,
             });
-            nextSettings = materialized.nextSettings;
-            nextSecrets = materialized.nextSecrets;
-            warnings.push(...materialized.warnings);
-        }
-        if (warnings.length > 0) {
-            Modal.alert(t('settings.mcpServersImportJsonWarningsTitle'), warnings.join('\n'));
-        }
-        setSecrets(nextSecrets);
-        setMcpSettings(nextSettings);
-        ignoreBeforeRemoveRef.current = true;
-        closeToMcpServersSettings();
-    }, [closeToMcpServersSettings, quickInstallInputMappingsByPreset, resolveFreshAdministrationTarget, secrets, selectedQuickInstallDrafts, setMcpSettings, setSecrets, writableMcpSettings]);
+            if (materialized.warnings.length > 0) {
+                Modal.alert(t('settings.mcpServersImportJsonWarningsTitle'), materialized.warnings.join('\n'));
+            }
+            await commitImportedCatalog(materialized.nextSettings, materialized.nextSecrets, materialized.createdEntries, () =>
+                liveImportDraftRef.current.importJsonText === importJsonText
+                && liveImportDraftRef.current.importInputMappings === importInputMappings);
+        } catch (error) {
+            if (!isTeamActionApprovalPendingError(error)) Modal.alert(t('common.error'), error instanceof Error ? error.message : t('errors.unknownError'));
+        } finally { setImportOperationPending(false); }
+    }, [commitImportedCatalog, importInputMappings, importJsonText, importParseResult.servers, resolveFreshAdministrationTarget, secrets,
+        importOperationPending, verifyPendingImportedCreation, writableMcpSettings]);
+
+    const handleQuickInstall = React.useCallback(async () => {
+        if (importOperationPending) return;
+        setImportOperationPending(true);
+        try {
+            if (await verifyPendingImportedCreation()) return;
+            if (!writableMcpSettings) {
+                Modal.alert(t('common.error'), t('settings.mcpServersValidationFailed'));
+                return;
+            }
+            const executionTarget = resolveFreshAdministrationTarget();
+            if (!executionTarget) return;
+            if (selectedQuickInstallDrafts.length === 0) {
+                Modal.alert(t('common.error'), t('settings.mcpServersQuickInstallEmptyTitle'));
+                return;
+            }
+            let nextSettings = writableMcpSettings;
+            const createdEntries: MaterializeImportedMcpServerDraftsResult['createdEntries'] = [];
+            let nextSecrets = secrets;
+            const warnings: string[] = [];
+            for (const draft of selectedQuickInstallDrafts) {
+                const materialized = materializeImportedMcpServerDrafts({
+                    settings: nextSettings,
+                    secrets: nextSecrets,
+                    drafts: [draft.server],
+                    inputMappings: quickInstallInputMappingsByPreset[draft.preset.id] ?? {},
+                    defaultMachineId: executionTarget.machine.id,
+                    nowMs: Date.now(),
+                    generateId: randomUUID,
+                });
+                nextSettings = materialized.nextSettings;
+                createdEntries.push(...materialized.createdEntries);
+                nextSecrets = materialized.nextSecrets;
+                warnings.push(...materialized.warnings);
+            }
+            if (warnings.length > 0) {
+                Modal.alert(t('settings.mcpServersImportJsonWarningsTitle'), warnings.join('\n'));
+            }
+            await commitImportedCatalog(nextSettings, nextSecrets, createdEntries, () =>
+                liveImportDraftRef.current.quickInstallPresetIds === quickInstallPresetIds
+                && liveImportDraftRef.current.quickInstallInputMappingsByPreset === quickInstallInputMappingsByPreset);
+        } catch (error) {
+            if (!isTeamActionApprovalPendingError(error)) Modal.alert(t('common.error'), error instanceof Error ? error.message : t('errors.unknownError'));
+        } finally { setImportOperationPending(false); }
+    }, [commitImportedCatalog, quickInstallInputMappingsByPreset, quickInstallPresetIds, resolveFreshAdministrationTarget, secrets,
+        importOperationPending, selectedQuickInstallDrafts, verifyPendingImportedCreation, writableMcpSettings]);
 
     const requestUnsavedChangesDecision = React.useCallback(async () => {
         return await promptUnsavedChangesAlert(
@@ -423,17 +535,6 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
         tag: 'McpServerEditorScreen.beforeRemove',
     });
 
-    useActiveUnsavedChangesGuard({
-        navigation,
-        guard: React.useMemo(() => ({
-            isDirtyRef,
-            ignoreRef: ignoreBeforeRemoveRef,
-            requestDecision: requestUnsavedChangesDecision,
-            onDiscard: discardDraft,
-            onSave: commitDraft,
-            tag: 'McpServerEditorScreen.shellGuard',
-        }), [commitDraft, discardDraft, requestUnsavedChangesDecision]),
-    });
 
     // The collection's draft row shows the new server's name as it is typed.
     const isNew = !serverId;
@@ -491,6 +592,12 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
                         <Icon name={resolveTransportIconName(draftServer.transport)} size={22} color={theme.colors.text.secondary} />
                     </PageHeaderMarkSlot>
                 )}
+                primaryAction={activeTab === 'configure' ? {
+                    testID: 'mcp.server.editor.save',
+                    title: t('common.save'),
+                    disabled: saveDisabled || (!isDirty && !isNew),
+                    onPress: save,
+                } : undefined}
                 actions={(
                     <View style={styles.headerActions}>
                         <MachineAdministrationTargetSelector
@@ -498,15 +605,6 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
                             presentation="chip"
                             testIDPrefix="settings.mcpServers.administration.target"
                         />
-                        {activeTab === 'configure' ? (
-                            <RoundButton
-                                testID="mcp.server.editor.save"
-                                size="small"
-                                title={t('common.save')}
-                                disabled={saveDisabled || (!isDirty && !isNew)}
-                                onPress={save}
-                            />
-                        ) : null}
                         <PageHeaderMenu testID="mcp.server.editor.menu" actions={menuActions} />
                     </View>
                 )}
@@ -529,6 +627,12 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
                 </ItemGroup>
             ) : null}
 
+            {approval.approvalId && approvalScope ? (
+                <ActionApprovalPendingNotice testID="mcp.server.editor.approval"
+                    message={t('secrets.catalog.approvalPending')}
+                    onOpenApproval={() => router.push(`/inbox/approvals/${encodeURIComponent(approval.approvalId!)}?serverId=${encodeURIComponent(approvalScope.serverId)}`)} />
+            ) : null}
+
             {activeTab === 'configure' ? (
                 <McpServerConfigureForm
                     draftServer={draftServer}
@@ -536,7 +640,7 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
                     machines={machines}
                     targetSelection={administrationTargetSelection}
                     secrets={secrets}
-                    onChangeSecrets={setSecrets}
+                    scope={draftBaseRef.current?.scope ?? scope}
                     onChangeServer={(updater) => {
                         setIsDirty(true);
                         setDraftServer((current) => updater(current));
@@ -553,7 +657,7 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
                     rawJson={importJsonText}
                     onChangeRawJson={setImportJsonText}
                     parseResult={importParseResult}
-                    canExecute={canExecuteAdministrationTarget}
+                    canExecute={canExecuteAdministrationTarget && !importOperationPending}
                     inputMappings={importInputMappings}
                     onChangeInputMapping={(inputId, next) => setImportInputMappings((current) => ({ ...current, [inputId]: next }))}
                     mappingIssues={importMappingIssues}
@@ -564,7 +668,7 @@ export const McpServerEditorScreen = React.memo(function McpServerEditorScreen()
 
             {showAddFlowTabs && activeTab === 'quickInstall' ? (
                 <McpServerQuickInstallTab
-                    canExecute={canExecuteAdministrationTarget}
+                    canExecute={canExecuteAdministrationTarget && !importOperationPending}
                     selectedPresetIds={quickInstallPresetIds}
                     onTogglePresetId={(presetId) => {
                         setQuickInstallPresetIds((current) => (

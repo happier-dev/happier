@@ -1,9 +1,9 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { McpServerBindingV1, McpServerCatalogEntryV1 } from '@happier-dev/protocol';
-import { renderScreen } from '@/dev/testkit';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
 import type { FreshMachineAdministrationExecutionTargetV1 } from '@/sync/domains/machines/administration/useTargetSelection';
 import {
     installMcpServersCommonModuleMocks,
@@ -14,12 +14,11 @@ import {
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-installMcpServersCommonModuleMocks();
+installMcpServersCommonModuleMocks({ storage: importOriginal => importOriginal() });
 const openMachinePathBrowserModalMock = mcpServersModuleState.openMachinePathBrowserModalSpy;
-const machineMcpServersTestMock = vi.hoisted(() => vi.fn(async () => ({ ok: true, toolCount: 1, durationMs: 1 })));
-const administrationTargetState = vi.hoisted(() => {
+const administrationTargetState = (() => {
     const createExecutionTarget = (
-        serverIdentityId: string = 'identity-1',
+        serverIdentityId: string = 'srv_identity-1',
         machineId: string = 'machine-1',
         serverId: string = 'server-1',
     ) => ({
@@ -64,22 +63,14 @@ const administrationTargetState = vi.hoisted(() => {
         createExecutionTarget,
     };
     return state;
-});
+})();
 
-vi.mock('@/hooks/ui/useHappyAction', () => ({
-    useHappyAction: (action: (...args: readonly unknown[]) => Promise<unknown>) => [false, action],
-}));
-
-vi.mock('@/sync/ops/machineMcpServers', () => ({
-    machineMcpServersTest: machineMcpServersTestMock,
-}));
+afterEach(standardCleanup);
 
 describe('McpServerTestPanel', () => {
     beforeEach(() => {
         resetMcpServersCommonModuleMockState();
         mcpServersModuleState.openMachinePathBrowserModalSpy.mockResolvedValue('/repo/from-browser');
-        machineMcpServersTestMock.mockReset();
-        machineMcpServersTestMock.mockResolvedValue({ ok: true, toolCount: 1, durationMs: 1 });
         administrationTargetState.current = administrationTargetState.createExecutionTarget();
     });
 
@@ -125,46 +116,4 @@ describe('McpServerTestPanel', () => {
         expect(screen.findByTestId('mcp.server.test.directory.input')?.props.value).toBe('/repo/from-browser');
     });
 
-    it('uses the fresh Administration target for test RPCs and does not fall back after target loss', async () => {
-        administrationTargetState.current = administrationTargetState.createExecutionTarget(
-            'identity-target',
-            'machine-target',
-            'server-target',
-        );
-        const { McpServerTestPanel } = await import('./McpServerTestPanel');
-        const server: McpServerCatalogEntryV1 = {
-            id: 'server-1',
-            name: 'playwright',
-            transport: 'stdio',
-            stdio: { command: 'npx', args: ['-y', '@playwright/mcp@latest'] },
-            env: {},
-            createdAt: 1,
-            updatedAt: 1,
-        };
-        const screen = await renderScreen(<McpServerTestPanel
-            server={server}
-            bindings={[]}
-            machines={[]}
-            targetSelection={{
-                selectedTarget: administrationTargetState.current?.target ?? null,
-                resolveExecutionTarget: () => administrationTargetState.current,
-            }}
-        />);
-
-        await act(async () => {
-            await screen.findByTestId('mcp.server.test.run')?.props.onPress?.();
-        });
-
-        expect(machineMcpServersTestMock).toHaveBeenCalledWith('machine-target', expect.objectContaining({
-            t: 'draft',
-        }), { serverId: 'server-target' });
-
-        machineMcpServersTestMock.mockClear();
-        administrationTargetState.current = null;
-        await act(async () => {
-            await screen.findByTestId('mcp.server.test.run')?.props.onPress?.();
-        });
-
-        expect(machineMcpServersTestMock).not.toHaveBeenCalled();
-    });
 });

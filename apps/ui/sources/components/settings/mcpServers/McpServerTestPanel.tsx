@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { McpServerBindingV1, McpServerCatalogEntryV1 } from '@happier-dev/protocol';
 import { McpServerBindingV1Schema, McpServerCatalogEntryV1Schema } from '@happier-dev/protocol/mcp/servers/settingsV1';
+import { MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/mcp/servers/serverActionsV1';
 
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -14,7 +15,9 @@ import { openMachinePathBrowserModal } from '@/components/ui/pathBrowser/openMac
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Modal } from '@/modal';
 import { useHappyAction } from '@/hooks/ui/useHappyAction';
-import { machineMcpServersTest } from '@/sync/ops/machineMcpServers';
+import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import type { MachineAdministrationTargetSelectionV1 } from '@/sync/domains/machines/administration/useTargetSelection';
 import { useMachineAdministrationExecutionTargetBinding } from '@/sync/domains/machines/administration/useExecutionTargetBinding';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
@@ -43,6 +46,7 @@ export const McpServerTestPanel = React.memo(function McpServerTestPanel(props: 
     targetSelection: Pick<MachineAdministrationTargetSelectionV1, 'selectedTarget' | 'resolveExecutionTarget'>;
 }>) {
     const { theme } = useUnistyles();
+    const router = useRouter();
     const administrationTargetSelection = props.targetSelection;
     const selectedTarget = administrationTargetSelection.selectedTarget;
     const {
@@ -50,6 +54,8 @@ export const McpServerTestPanel = React.memo(function McpServerTestPanel(props: 
         resolveExactExecutionTarget,
         isExecutionTargetCurrent,
     } = useMachineAdministrationExecutionTargetBinding(administrationTargetSelection);
+    const executionTarget = resolveExactExecutionTarget(selectedTarget);
+    const testExecution = useMountedActionExecution(executionTarget?.serverId);
 
     const [bindingId, setBindingId] = React.useState<string | null>(null);
     const [openMenu, setOpenMenu] = React.useState<'binding' | null>(null);
@@ -107,20 +113,26 @@ export const McpServerTestPanel = React.memo(function McpServerTestPanel(props: 
     const [isTesting, runTest] = useHappyAction(async () => {
         const requestedSelection = selectionKey;
         const executionTarget = resolveExactExecutionTarget(selectedTarget);
-        if (!executionTarget) return;
+        if (!executionTarget || !testExecution.ready) return;
         const parsed = McpServerCatalogEntryV1Schema.safeParse(props.server);
         if (!parsed.success) {
             Modal.alert(t('common.error'), t('settings.mcpServersValidationFailed'));
             return;
         }
         const binding = selectedBinding ? McpServerBindingV1Schema.parse(selectedBinding) : null;
-        const response = await machineMcpServersTest(executionTarget.machine.id, {
+        const receipt = await testExecution.execute('mcp.servers.test', {
+            machineId: executionTarget.machine.id,
             t: 'draft',
             directory: directory.trim() || '/',
             server: parsed.data,
             binding,
-        }, { serverId: executionTarget.serverId });
+        });
         if (!isExecutionTargetCurrent(requestedSelection, executionTarget)) return;
+        if (!receipt.ok) {
+            Modal.alert(t('common.error'), receipt.errorCode ?? receipt.error);
+            return;
+        }
+        const response = MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1['mcp.servers.test'].parse(receipt.result);
 
         if (response.ok) {
             setLastResult({ ok: true, toolCount: response.toolCount, durationMs: response.durationMs });
@@ -144,8 +156,6 @@ export const McpServerTestPanel = React.memo(function McpServerTestPanel(props: 
         }
     }, [directory, isExecutionTargetCurrent, resolveExactExecutionTarget, selectedTarget, selectionKey]);
 
-    const executionTarget = resolveExactExecutionTarget(selectedTarget);
-
     return (
         <ItemGroup
             title={t('settings.mcpServersTestTitle')}
@@ -156,11 +166,16 @@ export const McpServerTestPanel = React.memo(function McpServerTestPanel(props: 
                     icon="play"
                     title={t('settings.mcpServersTestRunTitle')}
                     loading={isTesting}
-                    disabled={executionTarget === null || !canTestServer || !canTestBinding || isTesting}
+                    disabled={executionTarget === null || !testExecution.ready || !canTestServer || !canTestBinding || isTesting}
                     onPress={runTest}
                 />
             )}
         >
+            {testExecution.approval.approvalId && executionTarget ? (
+                <ActionApprovalPendingNotice testID="mcp.server.test.approval"
+                    message={t('secrets.catalog.approvalPending')}
+                    onOpenApproval={() => router.push(`/inbox/approvals/${encodeURIComponent(testExecution.approval.approvalId!)}?serverId=${encodeURIComponent(executionTarget.serverId)}`)} />
+            ) : null}
             <DropdownMenu
                 open={openMenu === 'binding'}
                 onOpenChange={(open) => setOpenMenu(open ? 'binding' : null)}

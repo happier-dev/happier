@@ -34,6 +34,7 @@ export type MaterializeImportedMcpServerDraftsResult = Readonly<{
     nextSettings: McpServersSettingsV1;
     nextSecrets: SavedSecret[];
     warnings: string[];
+    createdEntries: Array<Readonly<{ entry: McpServerCatalogEntryV1; bindings: McpServerBindingV1[] }>>;
 }>;
 
 function resolveBindingTarget(draft: ImportedMcpServerDraftV1, defaultMachineId: string): McpServerBindingTargetV1 {
@@ -128,6 +129,7 @@ export function materializeImportedMcpServerDrafts(params: Readonly<{
     let nextSettings = params.settings;
     const nextSecrets = [...params.secrets];
     const warnings: string[] = [];
+    const createdEntries: MaterializeImportedMcpServerDraftsResult['createdEntries'] = [];
 
     for (const draft of params.drafts) {
         warnings.push(...draft.warnings);
@@ -197,11 +199,13 @@ export function materializeImportedMcpServerDrafts(params: Readonly<{
         };
 
         nextSettings = upsertMcpServerWithBindingsV1(nextSettings, entry, [binding]);
+        createdEntries.push({ entry, bindings: [binding] });
     }
 
     return {
         nextSettings,
         nextSecrets,
         warnings,
+        createdEntries,
     };
 }

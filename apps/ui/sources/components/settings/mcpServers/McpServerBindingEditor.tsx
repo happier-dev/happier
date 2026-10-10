@@ -11,6 +11,7 @@ import { useSettingMutable } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
+import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import type { McpServerBindingTargetV1, McpServerBindingV1, McpServerCatalogEntryTransportV1 } from '@happier-dev/protocol';
 
 import { McpWorkspaceRootPickerModal } from './McpWorkspaceRootPickerModal';
@@ -23,7 +24,7 @@ export const McpServerBindingEditor = React.memo(function McpServerBindingEditor
     binding: McpServerBindingV1;
     serverTransport: McpServerCatalogEntryTransportV1;
     secrets: SavedSecret[];
-    onChangeSecrets: (next: SavedSecret[]) => void;
+    scope?: AccountSettingsScope | null;
     machines: readonly Machine[];
     onChange: (next: McpServerBindingV1) => void;
     onDelete: () => void;
@@ -105,7 +106,7 @@ export const McpServerBindingEditor = React.memo(function McpServerBindingEditor
                 binding: props.binding,
                 serverTransport: props.serverTransport,
                 secrets: props.secrets,
-                onChangeSecrets: props.onChangeSecrets,
+                ...(props.scope === undefined ? {} : { scope: props.scope }),
                 onSubmit: props.onChange,
             },
             chrome: {
@@ -115,7 +116,7 @@ export const McpServerBindingEditor = React.memo(function McpServerBindingEditor
             },
             closeOnBackdrop: true,
         });
-    }, [props.binding, props.onChange, props.onChangeSecrets, props.secrets, props.serverTransport]);
+    }, [props.binding, props.onChange, props.secrets, props.serverTransport, props.scope]);
 
     const overridesSummary = React.useMemo(() => {
         const overrides = props.binding.overrides;

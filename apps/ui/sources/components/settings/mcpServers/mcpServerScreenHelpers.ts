@@ -1,7 +1,7 @@
-import { AGENT_IDS, DEFAULT_AGENT_ID, getAgentCore, type AgentId } from '@/agents/catalog/catalog';
+import { AGENT_CORE_CONFIGS, DEFAULT_AGENT_ID, type AgentId } from '@/agents/catalog/catalog';
 
 export function listMcpPreviewAgentIds(): readonly AgentId[] {
-    return AGENT_IDS.filter((agentId) => getAgentCore(agentId).tools.delivery !== 'unsupported') as readonly AgentId[];
+    return AGENT_CORE_CONFIGS.filter((core) => core.tools.delivery !== 'unsupported').map((core) => core.id);
 }
 
 export function getPreferredMcpPreviewAgentId(

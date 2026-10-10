@@ -1,44 +1,24 @@
-import type { McpServerBindingV1, McpServerCatalogEntryV1, McpServersSettingsV1 } from '@happier-dev/protocol';
+import { applyMcpServerCatalogMutationV1 } from '@happier-dev/protocol/mcp/servers/serverCatalogV1';
+import type { McpServerCatalogMutationV1, McpServerCatalogV1 } from '@happier-dev/protocol';
+import type { McpServerBindingV1, McpServerCatalogEntryV1, McpServersSettingsV1 } from '@happier-dev/protocol/mcp/servers/settingsV1';
 
-function hasDuplicateServerName(settings: McpServersSettingsV1, name: string): boolean {
-    return settings.servers.some((s) => s.name === name);
-}
-
-function hasDuplicateServerId(settings: McpServersSettingsV1, id: string): boolean {
-    return settings.servers.some((s) => s.id === id);
-}
-
-function hasDuplicateBindingId(settings: McpServersSettingsV1, id: string): boolean {
-    return settings.bindings.some((b) => b.id === id);
+/** Compatibility projection only; all entity decisions belong to the row owner. */
+function apply(settings: McpServersSettingsV1, change: McpServerCatalogMutationV1): McpServersSettingsV1 {
+    const catalog: McpServerCatalogV1 = { v: 1, servers: settings.servers, bindings: settings.bindings };
+    const next = applyMcpServerCatalogMutationV1(catalog, change);
+    return next === catalog ? settings : { ...settings, ...next };
 }
 
 export function addMcpServerCatalogEntryV1(settings: McpServersSettingsV1, entry: McpServerCatalogEntryV1): McpServersSettingsV1 {
-    if (hasDuplicateServerId(settings, entry.id)) {
-        throw new Error(`Duplicate server id: ${entry.id}`);
-    }
-    if (hasDuplicateServerName(settings, entry.name)) {
-        throw new Error(`Duplicate server name: ${entry.name}`);
-    }
-    return { ...settings, servers: [...settings.servers, entry] };
+    return apply(settings, { kind: 'server-create', entry, bindings: [] });
 }
 
-export function deleteMcpServerCatalogEntryV1(settings: McpServersSettingsV1, serverId: string): McpServersSettingsV1 {
-    const nextServers = settings.servers.filter((s) => s.id !== serverId);
-    const nextBindings = settings.bindings.filter((b) => b.serverId !== serverId);
-    if (nextServers.length === settings.servers.length && nextBindings.length === settings.bindings.length) {
-        return settings;
-    }
-    return { ...settings, servers: nextServers, bindings: nextBindings };
+export function deleteMcpServerCatalogEntryV1(settings: McpServersSettingsV1, serverId: string, removeBindings = false): McpServersSettingsV1 {
+    return apply(settings, { kind: 'server-remove', serverId, removeBindings });
 }
 
 export function addMcpServerBindingV1(settings: McpServersSettingsV1, binding: McpServerBindingV1): McpServersSettingsV1 {
-    if (!settings.servers.some((s) => s.id === binding.serverId)) {
-        throw new Error(`Server not found: ${binding.serverId}`);
-    }
-    if (hasDuplicateBindingId(settings, binding.id)) {
-        throw new Error(`Duplicate binding id: ${binding.id}`);
-    }
-    return { ...settings, bindings: [...settings.bindings, binding] };
+    return apply(settings, { kind: 'binding-create', binding });
 }
 
 export function upsertMcpServerWithBindingsV1(
@@ -46,36 +26,5 @@ export function upsertMcpServerWithBindingsV1(
     entry: McpServerCatalogEntryV1,
     bindings: ReadonlyArray<McpServerBindingV1>,
 ): McpServersSettingsV1 {
-    const collision = settings.servers.find((s) => s.id !== entry.id && s.name === entry.name);
-    if (collision) {
-        throw new Error(`Duplicate server name: ${entry.name}`);
-    }
-
-    const hasExisting = settings.servers.some((s) => s.id === entry.id);
-    const nextServers = hasExisting
-        ? settings.servers.map((s) => (s.id === entry.id ? entry : s))
-        : [...settings.servers, entry];
-
-    const remainingBindings = settings.bindings.filter((b) => b.serverId !== entry.id);
-    const remainingBindingIds = new Set(remainingBindings.map((b) => b.id));
-    const addedBindingIds = new Set<string>();
-
-    for (const binding of bindings) {
-        if (binding.serverId !== entry.id) {
-            throw new Error(`Binding serverId mismatch (expected ${entry.id}, got ${binding.serverId})`);
-        }
-        if (remainingBindingIds.has(binding.id)) {
-            throw new Error(`Duplicate binding id: ${binding.id}`);
-        }
-        if (addedBindingIds.has(binding.id)) {
-            throw new Error(`Duplicate binding id: ${binding.id}`);
-        }
-        addedBindingIds.add(binding.id);
-    }
-
-    return {
-        ...settings,
-        servers: nextServers,
-        bindings: [...remainingBindings, ...bindings],
-    };
+    return apply(settings, { kind: 'server-upsert', entry, bindings: [...bindings] });
 }

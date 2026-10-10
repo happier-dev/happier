@@ -14,6 +14,7 @@ import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { Modal } from '@/modal';
 import { machineMcpServersPreview } from '@/sync/ops/machineMcpServers';
+import { useSettingMutable } from '@/sync/domains/state/storage';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
 import { useMachineAdministrationExecutionTargetBinding } from '@/sync/domains/machines/administration/useExecutionTargetBinding';
 import { useMachineAdministrationTargetSelection } from '@/sync/domains/machines/administration/useTargetSelection';
@@ -22,7 +23,6 @@ import { t } from '@/text';
 import { McpPreviewServersTab } from './McpPreviewServersTab';
 import { MCP_PREVIEW_SETTINGS } from './mcpSettings';
 import { getPreferredMcpPreviewAgentId, listMcpPreviewAgentIds } from './mcpServerScreenHelpers';
-import { useMcpServersSettings } from './useMcpServersSettings';
 
 type FailurePolicy = 'skip' | 'stop';
 
@@ -33,7 +33,7 @@ type FailurePolicy = 'skip' | 'stop';
  */
 export const McpSessionPreviewScreen = React.memo(function McpSessionPreviewScreen() {
     const { theme } = useUnistyles();
-    const { settings, writable, setSettings } = useMcpServersSettings();
+    const [strictMode, setStrictMode] = useSettingMutable('mcpServersStrictMode');
     const targetSelection = useMachineAdministrationTargetSelection(MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.mcpServers);
     const selectedTarget = targetSelection.selectedTarget;
     const { selectionKey, resolveExactExecutionTarget, isExecutionTargetCurrent } = useMachineAdministrationExecutionTargetBinding(targetSelection);
@@ -87,14 +87,10 @@ export const McpSessionPreviewScreen = React.memo(function McpSessionPreviewScre
     const [loading, runPreview] = useHappyAction(previewAction);
 
     const setFailurePolicy = React.useCallback((policy: FailurePolicy) => {
-        if (!writable) {
-            Modal.alert(t('common.error'), t('settings.mcpServersValidationFailed'));
-            return;
-        }
-        const strictMode = policy === 'stop';
-        if (writable.strictMode === strictMode) return;
-        setSettings({ ...writable, strictMode });
-    }, [setSettings, writable]);
+        const next = policy === 'stop';
+        if (strictMode === next) return;
+        setStrictMode(next);
+    }, [setStrictMode, strictMode]);
 
     const executionTarget = resolveExactExecutionTarget(selectedTarget);
     return (
@@ -132,7 +128,7 @@ export const McpSessionPreviewScreen = React.memo(function McpSessionPreviewScre
                         testIDPrefix="settings.mcpServers.strictMode"
                         title={t(MCP_PREVIEW_SETTINGS.settings.mcpServersStrictMode.titleKey)}
                         subtitle={t('mcpSettings.failurePolicyDescription')}
-                        value={settings.strictMode ? 'stop' : 'skip'}
+                        value={strictMode ? 'stop' : 'skip'}
                         options={[
                             { id: 'skip', label: t('mcpSettings.failurePolicySkip') },
                             { id: 'stop', label: t('mcpSettings.failurePolicyStop') },

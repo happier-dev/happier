@@ -170,7 +170,7 @@ describe('buildImportedMcpServerFromDetectedV1', () => {
         expect(out.binding.target).toEqual({ t: 'workspace', machineId: 'machine-123', workspaceRoot: '/repo' });
     });
 
-    it('reuses an existing imported server instead of creating a suffixed duplicate', () => {
+    it('retains the detected definition while reusing, editing or adding its target binding', () => {
         const settings: McpServersSettingsV1 = {
             v: 1,
             strictMode: false,
@@ -219,5 +219,23 @@ describe('buildImportedMcpServerFromDetectedV1', () => {
         expect(out.action).toBe('reused');
         expect(out.entry.id).toBe('existing-server');
         expect(out.nextSettings).toBe(settings);
+
+        const disabled = resolveImportedMcpServerFromDetectedV1({
+            existingSettings: settings, detected: { ...detected, enabled: false },
+            machineId: 'machine-123', nowMs: 123, generateId: () => 'new-id',
+        });
+        expect(disabled).toMatchObject({ action: 'updated', bindingAction: 'edit',
+            entry: { id: 'existing-server' }, binding: { id: 'existing-binding', enabled: false } });
+        expect(disabled.nextSettings.servers).toHaveLength(1);
+        expect(disabled.nextSettings.bindings).toHaveLength(1);
+
+        const otherTarget = resolveImportedMcpServerFromDetectedV1({
+            existingSettings: settings, detected, machineId: 'machine-456',
+            nowMs: 123, generateId: () => 'new-id',
+        });
+        expect(otherTarget).toMatchObject({ action: 'updated', bindingAction: 'add',
+            entry: { id: 'existing-server' }, binding: { serverId: 'existing-server', target: { machineId: 'machine-456' } } });
+        expect(otherTarget.nextSettings.servers).toHaveLength(1);
+        expect(otherTarget.nextSettings.bindings).toHaveLength(2);
     });
 });

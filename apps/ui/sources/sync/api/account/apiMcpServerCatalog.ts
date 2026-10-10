@@ -17,7 +17,7 @@ import { loadMcpServerCatalogV1, commitMcpServerCatalogMutationV1, readRetainedM
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
-import { resolveAccountStorageContext } from '@/sync/encryption/accountStorageContext';
+import { classifyAccountStorageReadFailure, resolveAccountStorageContext } from '@/sync/encryption/accountStorageContext';
 import { readAccountSettingsBaseline } from '@/sync/engine/settings/accountSettingsBaseline';
 import { normalizeAccountSettingsHistoryAfterTransfer } from '@/sync/engine/settings/accountSettingsHistoryRestore';
 import { classifyHttpMutationRequestFailure } from '@/sync/http/mutationRequestOutcome';
@@ -77,15 +77,9 @@ async function withAccount<T>(scope: ServerAccountScope, signal: AbortSignal | u
 
 export function classifyMcpServerCatalogReadFailure(error: unknown, signal?: AbortSignal):
     Extract<McpServerCatalogSnapshotV1, { status: 'unavailable' }> {
-    if (signal?.aborted) return { status: 'unavailable', reason: 'cancelled' };
-    const code = error instanceof Error ? 'code' in error ? error.code : error.message : undefined;
-    if (code === 'scope-retired' || code === 'action_account_scope_changed' || code === 'action_home_not_found') return { status: 'unavailable', reason: 'scope-retired' };
-    if (code === 'unauthorized' || code === 'action_home_signed_out') return { status: 'unavailable', reason: 'unauthorized' };
-    if (code === 'forbidden' || code === 'unsupported' || code === 'account-mode-mismatch' || code === 'invalid-reference') return { status: 'unavailable', reason: code };
-    if (code === 'account_storage_currentness_unavailable' || code === 'account_encryption_currentness_unavailable'
-        || code === 'encryption-material-unavailable') return { status: 'unavailable', reason: 'encryption-material-unavailable' };
-    if (error instanceof Error && error.name === 'ZodError') return { status: 'unavailable', reason: 'invalid-stored-content' };
-    return { status: 'unavailable', reason: 'unreachable' };
+    const reason = classifyAccountStorageReadFailure(error, signal);
+    return { status: 'unavailable', reason: reason === 'unreachable' && error instanceof McpServerCatalogOperationError
+        && error.code === 'invalid-reference' ? error.code : reason };
 }
 
 async function checkMcpServerCatalogAccountMode(context: McpServerCatalogAccountContext, mode: 'plain' | 'e2ee',

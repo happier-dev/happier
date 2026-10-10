@@ -18,6 +18,7 @@ import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Switch } from '@/components/ui/forms/Switch';
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
+import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { t } from '@/text';
 
 import { ValueRefEditorModal, getValueRefEditorModalTitle } from '@/components/ui/forms/valueRefs/ValueRefEditorModal';
@@ -58,7 +59,7 @@ export type McpBindingOverridesEditorModalProps = CustomModalInjectedProps & Rea
     binding: McpServerBindingV1;
     serverTransport: McpServerCatalogEntryTransportV1;
     secrets: SavedSecret[];
-    onChangeSecrets: (next: SavedSecret[]) => void;
+    scope?: AccountSettingsScope | null;
     onSubmit: (next: McpServerBindingV1) => void;
 }>;
 
@@ -103,7 +104,7 @@ export function McpBindingOverridesEditorModal(props: McpBindingOverridesEditorM
                 initialKey: params.initialKey,
                 initialValueRef: params.initialValueRef,
                 secrets: props.secrets,
-                onChangeSecrets: props.onChangeSecrets,
+                ...(props.scope === undefined ? {} : { scope: props.scope }),
                 onDelete: params.onDelete,
                 onSubmit: ({ key, valueRef }) => {
                     if (params.initialKey !== key && params.existingKeys.has(key)) {
@@ -117,7 +118,7 @@ export function McpBindingOverridesEditorModal(props: McpBindingOverridesEditorM
             chrome: getBindingOverridesValueRefEditorChrome(params.kind),
             closeOnBackdrop: true,
         });
-    }, [props.onChangeSecrets, props.secrets]);
+    }, [props.secrets, props.scope]);
 
     const addDeletePatchKey = React.useCallback(async (kind: 'env' | 'header') => {
         const title = kind === 'env' ? t('settings.mcpServersOverridesDeleteEnvTitle') : t('settings.mcpServersOverridesDeleteHeaderTitle');

@@ -8,6 +8,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useListPresentation } from '@/components/ui/lists/listPresentation';
 import { Modal } from '@/modal';
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
+import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { t } from '@/text';
 
@@ -43,7 +44,7 @@ export const McpValueRefMapEditor = React.memo(function McpValueRefMapEditor(pro
     iconName: IconName;
     entries: Record<string, McpValueRefV1>;
     secrets: SavedSecret[];
-    onChangeSecrets: (next: SavedSecret[]) => void;
+    scope?: AccountSettingsScope | null;
     onChangeEntries: (next: Record<string, McpValueRefV1>) => void;
     addRowTitle: string;
     addRowSubtitle?: string;
@@ -52,7 +53,7 @@ export const McpValueRefMapEditor = React.memo(function McpValueRefMapEditor(pro
     testIdPrefix: string;
 }>) {
     const { theme } = useUnistyles();
-    const catalog = useSavedSecretCatalog();
+    const catalog = useSavedSecretCatalog(props.scope === undefined ? undefined : { scope: props.scope });
     // On a configuration page the rows carry no decorative icon and "add" is the section's action.
     const page = useListPresentation() === 'page';
 
@@ -76,7 +77,7 @@ export const McpValueRefMapEditor = React.memo(function McpValueRefMapEditor(pro
                 initialKey: params.initialKey,
                 initialValueRef: params.initialValueRef,
                 secrets: props.secrets,
-                onChangeSecrets: props.onChangeSecrets,
+                ...(props.scope === undefined ? {} : { scope: props.scope }),
                 onDelete: params.onDelete ?? null,
                 onSubmit: params.onSubmit,
             },
@@ -87,7 +88,7 @@ export const McpValueRefMapEditor = React.memo(function McpValueRefMapEditor(pro
             },
             closeOnBackdrop: true,
         });
-    }, [props.kind, props.onChangeSecrets, props.secrets]);
+    }, [props.kind, props.secrets, props.scope]);
 
     const handleAdd = React.useCallback(() => {
         openEditor({

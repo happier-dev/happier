@@ -229,9 +229,9 @@ describe('MCP servers collection and tools', () => {
         vi.mocked(Modal.confirm).mockResolvedValue(true);
     });
 
-    it('invites an empty collection with one primary way to add, whose menu holds every way', async () => {
+    it.each(['land', 'list'] as const)('invites an empty collection with one primary way to add and retains machine tools (%s)', async (view) => {
         settingsState.value = { v: 1, strictMode: false, servers: [], bindings: [] };
-        collectionIndexView.value = 'land';
+        collectionIndexView.value = view;
         try {
             const { McpSettingsIndex } = await import('./McpSettingsIndex');
             const screen = await renderSettingsView(React.createElement(McpSettingsIndex));
@@ -247,6 +247,8 @@ describe('MCP servers collection and tools', () => {
             expect(addMenu.props.items.map((item: { id: string }) => item.id)).toEqual(
                 expect.arrayContaining(['configure', 'import-json', 'from-machine']),
             );
+            expect(screen.findRow('settings.mcpServers.tool.onMachine')).not.toBeNull();
+            expect(screen.findRow('settings.mcpServers.tool.preview')).not.toBeNull();
         } finally {
             collectionIndexView.value = null;
         }

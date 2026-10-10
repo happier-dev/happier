@@ -17,6 +17,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
+import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { MachineAdministrationTargetSelectionV1 } from '@/sync/domains/machines/administration/useTargetSelection';
@@ -34,7 +35,7 @@ export const McpServerConfigureForm = React.memo(function McpServerConfigureForm
     machines: readonly Machine[];
     targetSelection: MachineAdministrationTargetSelectionV1;
     secrets: SavedSecret[];
-    onChangeSecrets: (next: SavedSecret[]) => void;
+    scope?: AccountSettingsScope | null;
     onChangeServer: (updater: (current: McpServerCatalogEntryV1) => McpServerCatalogEntryV1) => void;
     onChangeBindings: (updater: (current: McpServerBindingV1[]) => McpServerBindingV1[]) => void;
 }>) {
@@ -237,7 +238,7 @@ export const McpServerConfigureForm = React.memo(function McpServerConfigureForm
                 iconName="code"
                 entries={props.draftServer.env}
                 secrets={props.secrets}
-                onChangeSecrets={props.onChangeSecrets}
+                scope={props.scope}
                 onChangeEntries={(next) => onChangeServer((current) => ({ ...current, env: next, updatedAt: Date.now() }))}
                 addRowTitle={t('settings.mcpServersEnvAdd')}
                 addRowSubtitle={t('settings.mcpServersEnvAddSubtitle')}
@@ -254,7 +255,7 @@ export const McpServerConfigureForm = React.memo(function McpServerConfigureForm
                     iconName="key"
                     entries={props.draftServer.remote?.headers ?? {}}
                     secrets={props.secrets}
-                    onChangeSecrets={props.onChangeSecrets}
+                    scope={props.scope}
                     onChangeEntries={(next) =>
                         onChangeServer((current) => ({
                             ...current,
@@ -284,7 +285,7 @@ export const McpServerConfigureForm = React.memo(function McpServerConfigureForm
                         binding={binding}
                         serverTransport={props.draftServer.transport}
                         secrets={props.secrets}
-                        onChangeSecrets={props.onChangeSecrets}
+                        scope={props.scope}
                         machines={props.machines}
                         onChange={(next) => props.onChangeBindings((current) => current.map((item) => (item.id === binding.id ? next : item)))}
                         onDelete={() => props.onChangeBindings((current) => current.filter((item) => item.id !== binding.id))}

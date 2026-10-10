@@ -12,7 +12,7 @@ export const MCP_ON_MACHINE_SETTINGS = defineSettingsPage({
         mcpServersDetected: {
             titleKey: 'mcpSettings.onMachineSearchSection',
             settings: {
-                mcpServersDetectedDirectory: { titleKey: 'settings.mcpServersDetectedDirectoryTitle', descriptionKey: 'settings.mcpServersDetectedDirectorySubtitle' },
+                mcpServersDetectedDirectory: {},
             },
         },
     },
@@ -25,18 +25,14 @@ export const MCP_PREVIEW_SETTINGS = defineSettingsPage({
         mcpServersSegmentPreview: {
             titleKey: 'mcpSettings.previewContextSection',
             settings: {
-                mcpServersPreviewAgent: { titleKey: 'settings.mcpServersPreviewAgentTitle' },
-                mcpServersPreviewDirectory: { titleKey: 'settings.mcpServersPreviewDirectoryTitle', descriptionKey: 'settings.mcpServersPreviewDirectorySubtitle' },
+                mcpServersPreviewAgent: {},
+                mcpServersPreviewDirectory: {},
             },
         },
         mcpServersReliability: {
             titleKey: 'mcpSettings.failureSection',
             settings: {
-                mcpServersStrictMode: {
-                    titleKey: 'mcpSettings.failurePolicyTitle',
-                    descriptionKey: 'mcpSettings.failurePolicyDescription',
-                    keywordKeys: ['settings.mcpServersStrictMode'],
-                },
+                mcpServersStrictMode: {},
             },
         },
     },

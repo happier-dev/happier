@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { AGENT_IDS, DEFAULT_AGENT_ID, getAgentCore } from '@/agents/catalog/catalog';
+import { AGENT_IDS, AGENT_CORE_CONFIGS, DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 
 import { getPreferredMcpPreviewAgentId, listMcpPreviewAgentIds } from './mcpServerScreenHelpers';
 
@@ -14,7 +14,7 @@ describe('mcpServerScreenHelpers', () => {
         expect(previewAgentIds).toEqual(expect.arrayContaining(['claude', 'codex']));
         // ...and one that declares no tool delivery is not, so the list is a real
         // capability projection rather than the registry echoed back.
-        const undeliverableAgentIds = AGENT_IDS.filter((agentId) => getAgentCore(agentId).tools.delivery === 'unsupported');
+        const undeliverableAgentIds = AGENT_CORE_CONFIGS.filter((core) => core.tools.delivery === 'unsupported').map((core) => core.id);
         expect(undeliverableAgentIds.length).toBeGreaterThan(0);
         for (const agentId of undeliverableAgentIds) {
             expect(previewAgentIds).not.toContain(agentId);

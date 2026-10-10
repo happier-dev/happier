@@ -4,6 +4,7 @@ import { usePathname, useRouter } from '@/components/appShell/workspace/destinat
 import { useUnistyles } from 'react-native-unistyles';
 
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -146,7 +147,7 @@ export const McpServerCollection = React.memo(function McpServerCollection(props
 
     return (
         <ItemList testID="settings.mcpServers.page">
-            <SettingsPageHeader description={t('mcpSettings.purpose')} actions={addMenu} />
+            <SettingsPageHeader description={t('mcpSettings.purpose')} actions={total > 0 ? addMenu : undefined} />
             {searchable ? (
                 <CompactSearchField
                     testID={search.testID}
@@ -156,17 +157,18 @@ export const McpServerCollection = React.memo(function McpServerCollection(props
                     placement="page"
                 />
             ) : null}
-            <ItemGroup title={t('settings.mcpServers')}>
-                {total === 0 ? (
-                    <EmptyState
-                        testID="settings.mcpServers.empty"
-                        layout="line"
-                        title={t('settings.mcpServersEmptyTitle')}
-                        subtitle={t('mcpSettings.landingDescription')}
-                    />
-                ) : null}
+            {total === 0 ? <EmptyState
+                testID="settings.mcpServers.invitation"
+                layout="page"
+                variant="add"
+                iconName="plug"
+                title={t('mcpSettings.landingTitle')}
+                subtitle={t('mcpSettings.landingDescription')}
+                action={<AddMcpServerMenu onAdd={navigate} renderTrigger={(toggle) => <RoundButton
+                    testID="settings.mcpServers.invitation.add" size="normal" title={t('mcpSettings.add')} onPress={toggle} />} />}
+            /> : <ItemGroup title={t('settings.mcpServers')}>
                 {rows.map(renderServerRow)}
-            </ItemGroup>
+            </ItemGroup>}
             <ItemGroup title={t('mcpSettings.toolsGroup')}>
                 {renderToolRow('onMachine')}
                 {renderToolRow('preview')}

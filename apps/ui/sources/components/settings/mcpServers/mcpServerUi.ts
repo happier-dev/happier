@@ -10,7 +10,8 @@ import type {
 } from '@happier-dev/protocol';
 import type { AgentToolsDelivery } from '@happier-dev/agents';
 
-import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/registry/registryCore';
+import { resolveAgentIdFromFlavor } from '@/agents/registry/registryCore';
+import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
 import type { IconName } from '@/components/ui/icons/Icon';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
@@ -120,7 +121,7 @@ export function resolveDetectedAvailabilityLabel(entry: DetectedMcpPreviewEntryV
 export function resolveDetectedProviderName(provider: string): string {
     const agentId = resolveAgentIdFromFlavor(provider);
     if (!agentId) return provider;
-    return t(getAgentCore(agentId).displayNameKey);
+    return resolveAgentCatalogTitle(agentId);
 }
 
 export function resolveDetectedServerStatusLabel(provider: string, enabled: boolean | null): string {

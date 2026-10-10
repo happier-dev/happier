@@ -57,9 +57,18 @@ describe('mcpServerCrud', () => {
         const settings = addMcpServerBindingV1(addMcpServerCatalogEntryV1(baseSettings(), server), binding);
         expect(settings.bindings.map((b) => b.id)).toEqual(['b1']);
 
-        const deleted = deleteMcpServerCatalogEntryV1(settings, 's1');
+        const deleted = deleteMcpServerCatalogEntryV1(settings, 's1', true);
         expect(deleted.servers).toEqual([]);
         expect(deleted.bindings).toEqual([]);
+    });
+
+    it('refuses unconfirmed removal of a server with a live binding', () => {
+        const server = makeStdioServer({ id: 's1', name: 'foo' });
+        const settings = addMcpServerBindingV1(addMcpServerCatalogEntryV1(baseSettings(), server),
+            makeAllMachinesBinding({ id: 'b1', serverId: 's1' }));
+        expect(() => deleteMcpServerCatalogEntryV1(settings, 's1')).toThrow(/binding/i);
+        expect(settings.servers[0]?.id).toBe('s1');
+        expect(settings.bindings[0]?.id).toBe('b1');
     });
 
     it('returns the original settings when deleting a missing server', () => {

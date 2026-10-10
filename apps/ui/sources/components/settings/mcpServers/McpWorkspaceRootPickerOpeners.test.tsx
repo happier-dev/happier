@@ -50,7 +50,6 @@ describe('McpWorkspaceRootPickerModal openers', () => {
                 binding={binding}
                 serverTransport="stdio"
                 secrets={[]}
-                onChangeSecrets={() => {}}
                 machines={[machine]}
                 onChange={() => {}}
                 onDelete={() => {}}

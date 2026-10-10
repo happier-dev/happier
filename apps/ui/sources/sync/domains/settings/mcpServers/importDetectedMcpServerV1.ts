@@ -108,11 +108,12 @@ function doesBindingCoverImportTarget(binding: McpServerBindingV1, target: McpSe
 }
 
 export type ResolveImportedMcpServerFromDetectedV1Result = Readonly<{
-    action: 'created' | 'updated' | 'reused';
     entry: McpServerCatalogEntryV1;
-    binding: McpServerBindingV1 | null;
     nextSettings: McpServersSettingsV1;
-}>;
+}> & Readonly<
+    { action: 'created' | 'reused'; binding: McpServerBindingV1 }
+    | { action: 'updated'; bindingAction: 'add' | 'edit'; binding: McpServerBindingV1 }
+>;
 
 export function buildImportedMcpServerFromDetectedV1(params: Readonly<{
     existingSettings: McpServersSettingsV1;
@@ -209,8 +210,9 @@ export function resolveImportedMcpServerFromDetectedV1(params: Readonly<{
         });
         return {
             action: 'updated',
+            bindingAction: 'edit',
             entry: existingEntry,
-            binding: nextBindings.find((binding) => binding.id === coveredBinding.id) ?? null,
+            binding: { ...coveredBinding, enabled: desiredBinding.enabled, updatedAt: params.nowMs },
             nextSettings: upsertMcpServerWithBindingsV1(params.existingSettings, existingEntry, nextBindings),
         };
     }
@@ -219,6 +221,7 @@ export function resolveImportedMcpServerFromDetectedV1(params: Readonly<{
     const nextBindings = [...existingBindings, appendedBinding];
     return {
         action: 'updated',
+        bindingAction: 'add',
         entry: existingEntry,
         binding: appendedBinding,
         nextSettings: upsertMcpServerWithBindingsV1(params.existingSettings, existingEntry, nextBindings),
