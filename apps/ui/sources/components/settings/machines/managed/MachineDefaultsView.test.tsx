@@ -76,8 +76,15 @@ beforeEach(() => {
 afterEach(() => standardCleanup());
 
 async function render() {
-  const { MachineDefaultsView } = await import('./MachineDefaultsView');
-  return renderSettingsView(<MachineDefaultsView />);
+  const [{ MachineDefaultsView }, { NavigationTitleChromeProvider }] = await Promise.all([
+    import('./MachineDefaultsView'),
+    import('@/components/ui/layout/navigationTitleChrome'),
+  ]);
+  return renderSettingsView(
+    <NavigationTitleChromeProvider showsTitle={state.device === 'phone'}>
+      <MachineDefaultsView />
+    </NavigationTitleChromeProvider>,
+  );
 }
 
 function detailOf(screen: Awaited<ReturnType<typeof render>>, testID: string): unknown {
@@ -85,6 +92,29 @@ function detailOf(screen: Awaited<ReturnType<typeof render>>, testID: string): u
 }
 
 describe('MachineDefaultsView', () => {
+  it('keeps the Defaults page identity in its content beneath phone Back navigation', async () => {
+    state.device = 'phone';
+    const screen = await render();
+    const [{ t }, { getSettingsStackScreenDefinitions, resolveSettingsRouteParentPathname }] = await Promise.all([
+      import('@/text'),
+      import('@/components/settings/navigation/settingsRouteRegistry'),
+    ]);
+    const header = screen.findByTestId('settings.machineDefaults.header');
+    const headings = header?.findAll((node) =>
+      typeof node.type === 'string' && node.props.accessibilityRole === 'header',
+    ).map((node) => node.props.children);
+    expect(headings).toEqual([t('settingsMachines.defaultsTitle')]);
+
+    const navigation = getSettingsStackScreenDefinitions(t, { navigator: 'machines' })
+      .find((definition) => definition.name === 'defaults');
+    expect(navigation?.options.headerShown).toBe(true);
+    expect(navigation?.options.headerTitle).toBe('');
+    expect(typeof navigation?.options.headerLeft).toBe('function');
+    expect(resolveSettingsRouteParentPathname('/settings/machines/defaults')).toBe('/settings/machines');
+    expect(state.writes).toEqual([]);
+    expect(state.creationWrites).toEqual([]);
+  });
+
   it('changes creation without changing retention defaults or existing machine policy', async () => {
     state.creationEnabled = false;
     const screen = await render();
@@ -221,6 +251,11 @@ describe('MachineDefaultsView', () => {
 
     state.params = { category: 'running-only' };
     const page = await render();
+    const { t } = await import('@/text');
+    const categoryHeader = page.findByTestId('settings.machineDefaults.category.header');
+    expect(categoryHeader?.findAll((node) =>
+      typeof node.type === 'string' && node.props.accessibilityRole === 'header',
+    ).map((node) => node.props.children)).toEqual([t('settingsMachines.runningOnly')]);
     expect(
       page.findByTestId('settings.machineDefaults.running-only.keep:retention'),
     ).not.toBeNull();

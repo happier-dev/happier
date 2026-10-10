@@ -13,7 +13,7 @@ import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/act
 import { createActionOperationRunner } from '../actionOperations/actionOperationRunner';
 import { createActionOperationStore } from '../actionOperations/actionOperationStore';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
-import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
+import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -106,7 +106,7 @@ describe('admitted requester Action projection', () => {
   });
   it('refuses stale requester E2EE material against the published Home content fingerprint before first private writes', async () => {
     const secret = new Uint8Array(32).fill(12);
-    const fingerprint = computeContentPublicKeyFingerprint(nacl.box.keyPair.fromSecretKey(
+    const fingerprint = computeAccountEncryptionMigrateKeyFingerprintV1(nacl.box.keyPair.fromSecretKey(
       deriveAccountMachineKeyFromRecoverySecret(secret)).publicKey);
     vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
       if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'bob' } };

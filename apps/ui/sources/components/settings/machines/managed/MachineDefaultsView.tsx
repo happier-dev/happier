@@ -120,6 +120,7 @@ export const MachineDefaultsView = React.memo(function MachineDefaultsView() {
       <ItemList>
         <SettingsPageHeader
           testID="settings.machineDefaults.category.header"
+          alwaysShowTitle
           title={retentionCategoryTitle(focusedModel.category)}
           description={providerList(providerNames[focusedModel.category], namesLoading)}
         />
@@ -134,6 +135,7 @@ export const MachineDefaultsView = React.memo(function MachineDefaultsView() {
     <ItemList>
       <SettingsPageHeader
         testID="settings.machineDefaults.header"
+        alwaysShowTitle
         description={
           compact
             ? t('managedRetention.pageDescriptionShort')

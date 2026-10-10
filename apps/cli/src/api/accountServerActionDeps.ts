@@ -16,6 +16,7 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindMachineAccessActionHttpRequestV1, MachineAccessGrantsListResultV1Schema, MachineAccessMutationResultV1Schema, MachineAccessPrepareKeysInputV1Schema, MachineAccessRefusalV1Schema } from '@happier-dev/protocol';
 import { MachinePoolActionInputSchemasV1, MachinePoolActionOutputSchemasV1, machinePoolActionEndpointPathV1 } from '@happier-dev/protocol/machines/pools/actionsV1';
 import { MachinePresetActionInputSchemasV1, MachinePresetActionOutputSchemasV1, machinePresetActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
+import { ManagedErrorV1Schema, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import { MachinePoolErrorV1Schema } from '@happier-dev/protocol/machines/pools/v1';
 import { projectSessionPublicLinkActionResultV1, projectSessionPublicLinkCreateActionResultV1 } from '@happier-dev/protocol/sessions/access/sessionAccessActionsV1';
@@ -49,7 +50,16 @@ import { captureSessionOrganizationDisplayHost } from '@/api/sessionOrganization
 import { usageQueryToAnalyticsRequest } from '@happier-dev/protocol/inputs/usageQuery';
 import { UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
-import { resolveUsagePageAggregation, resolveUsagePageAccountingRequests, type UsageAccountingSourceSnapshot } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { resolveUsagePageAggregation, resolveUsagePageAccountingRequests, resolveUsageAccountingAsOfMs, type UsageAccountingSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryPoolSnapshot } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { ConnectedServicePoolSelectionGetResponseV1Schema } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
+import { ConnectedServiceQuotaGetResultV1Schema, projectProviderAccountUsageQuotaReadV1, type ConnectedServiceQuotaGetResultV1 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
+import { AccountProfileResponseSchema } from '@happier-dev/protocol/account/profile';
+import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { applyUsageCoachPreferences } from '@happier-dev/protocol/usage/coach/evaluateUsageCoach';
+import { resolveCliAccountStorageContext } from '@/api/client/accountKvJsonTransport';
+import { readAccountSettingsV2Raw } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 export type AccountServerActionDeps = Pick<
   ActionExecutorDeps,
@@ -67,6 +77,7 @@ export type AccountServerActionDeps = Pick<
   | 'accountEmailChangeRequestAction'
   | 'machinePoolAction'
   | 'machinePresetAction'
+  | 'managedMachineAction'
   | 'homeDomainAction'
   | 'sessionAccessAction'
   | 'machineAccessAction'
@@ -216,6 +227,26 @@ export function createAccountServerActionDeps(input: Readonly<{
     errorCode: 'not_authenticated',
     error: 'not_authenticated',
   });
+  const qualifiedHomeActionFailure = async (params: Readonly<{
+    actionId: string;
+    homeId: string;
+    context?: ActionExecutorContext;
+    signal?: AbortSignal;
+  }>): Promise<ActionExecuteFailure | null> => {
+    const mismatch = accountServerTargetMismatch(params.context);
+    if (mismatch) return mismatch;
+    if (params.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+    const snapshot = serverIdentityId ? undefined : await input.resolveServerFeaturesSnapshot?.();
+    const homeIdentity = serverIdentityId ?? (snapshot?.status === 'ready' && snapshot.provenance === 'authenticated'
+      ? normalizeServerIdentityIdCapability(snapshot.features.capabilities.serverIdentity?.serverIdentityId)
+      : undefined);
+    if (!homeIdentity) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${params.actionId}` };
+    if (params.homeId !== homeIdentity) return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
+    if (input.isCredentialCurrent && !await input.isCredentialCurrent()) {
+      return { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
+    }
+    return null;
+  };
   const resolveRequestHeaders = (params: Readonly<{
     context: ActionExecutorContext | undefined;
     effectActionId: string;
@@ -321,8 +352,49 @@ export function createAccountServerActionDeps(input: Readonly<{
     }
     return { ok: false, errorCode: 'api_token_operation_failed', error: 'api_token_operation_failed' };
   };
+  const readQuota: NonNullable<NonNullable<ActionExecutorDeps['usageActions']>['readQuota']> = async (request, context) => {
+        const mismatch = accountServerTargetMismatch(context);
+        if (mismatch) return mismatch;
+        const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
+        const check = async () => {
+          context.signal?.throwIfAborted();
+          if (input.isCredentialCurrent && !await input.isCredentialCurrent()) {
+            throw Object.assign(new Error('Captured Usage credential retired'), { code: 'scope-retired' });
+          }
+        };
+        try {
+          await check();
+          const { createCliConnectedServiceAction } = await import('@/session/actions/connectedServiceActionDeps');
+          await check();
+          const quotaAction = createCliConnectedServiceAction({
+            credentials: input.credentials?.token === input.token ? input.credentials : { token: input.token, encryption: null },
+            serverId, serverHttpBaseUrl,
+            ...(input.isCredentialCurrent ? { isCredentialCurrent: input.isCredentialCurrent } : {}),
+            resolveHeaders: (caller, actionId, read) => {
+              const authorization = resolveRequestHeaders({ context: caller, effectActionId: actionId, ...read });
+              return authorization.ok ? authorization.headers : null;
+            },
+            // This adapter invokes only quota.get, which has no Machine-control effect.
+            callMachineAction: async () => { throw new Error('usage_quota_read_has_no_machine_effect'); },
+          });
+          const result = await quotaAction({ actionId: 'connectedServices.quota.get', input: request,
+            context, ...(context.signal ? { signal: context.signal } : {}) });
+          await check();
+          const parsed = ConnectedServiceQuotaGetResultV1Schema.safeParse(result);
+          const refused = ActionExecuteFailureSchema.safeParse(result);
+          if (refused.success) return refused.data;
+          return parsed.success ? parsed.data : failure('usage_quota_result_invalid');
+        } catch (error) {
+          if (context.signal?.aborted || axios.isCancel(error)) return failure('cancelled');
+          const code = error instanceof Error && 'code' in error ? error.code : undefined;
+          if (code === 'scope-retired' || input.isCredentialCurrent && !await input.isCredentialCurrent()) return failure('credential_scope_retired');
+          if (isAuthenticationError(error) || code === 'action_authorization_unavailable') return externalAuthorizationUnavailable();
+          return failure('usage_quota_read_failed');
+        }
+      };
   return {
     usageActions: {
+      readQuota,
       query: async (request, context) => {
         const mismatch = accountServerTargetMismatch(context);
         if (mismatch) return mismatch;
@@ -343,15 +415,127 @@ export function createAccountServerActionDeps(input: Readonly<{
           if ([404, 405, 501].includes(dispatched.response.status)) return { query, status: 'unsupported', errorCode: 'unsupported' };
           if (dispatched.response.status >= 400) return { query, status: 'error', errorCode: 'usage_query_failed' };
           const parsed = UsageAnalyticsQueryResponseSchema.safeParse(dispatched.response.data);
-          return parsed.success ? { query, status: 'available', value: parsed.data }
+          return parsed.success ? { query, status: 'available', value: parsed.data, asOfMs: resolveUsageAccountingAsOfMs(parsed.data) }
             : { query, status: 'error', errorCode: 'usage_query_result_invalid' };
         }));
         if (context.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
         if (input.isCredentialCurrent && !await input.isCredentialCurrent()) return retired();
         const refusal = snapshots.find((snapshot): snapshot is ActionExecuteFailure => 'ok' in snapshot);
         if (refusal) return refusal;
-        return resolveUsagePageAggregation({ queries: request.queries,
-          accounting: snapshots.filter((snapshot): snapshot is UsageAccountingSourceSnapshot => !('ok' in snapshot)) });
+        const check = async () => {
+          context.signal?.throwIfAborted();
+          if (input.isCredentialCurrent && !await input.isCredentialCurrent()) throw Object.assign(new Error('Usage scope retired'), { code: 'scope-retired' });
+        };
+        const read = async (path: string) => {
+          await check();
+          const authorization = resolveRequestHeaders({ context, effectActionId: 'usage.query', method: 'GET', path });
+          if (!authorization.ok) throw Object.assign(new Error('Action authorization unavailable'), { code: 'action_authorization_unavailable' });
+          const result = await dispatchAccountServerActionHttpRequest({ headers: authorization.headers, method: 'GET', path,
+            signal: context.signal, sideEffectClass: 'read' });
+          await check();
+          if (!result.ok || result.response.status >= 400) throw Object.assign(new Error('Usage source unavailable'), {
+            code: result.ok ? result.response.status === 401 || result.response.status === 403 ? 'denied'
+              : [404, 405, 501].includes(result.response.status) ? 'unsupported' : 'read_failed' : result.errorCode,
+          });
+          return result.response.data;
+        };
+        const credentials = input.credentials?.token === input.token ? input.credentials : { token: input.token, encryption: null };
+        type Quota = NonNullable<Parameters<typeof resolveUsagePageAggregation>[0]['quota']>;
+        let quota: Quota = { status: 'unknown' };
+        let pools: UsagePoolSourceSnapshot[] | undefined;
+        let preferences: ReturnType<typeof accountSettingsParse>['usageCoachPreferencesV1'] | undefined;
+        try {
+          const authorization = resolveRequestHeaders({ context, effectActionId: 'usage.query', method: 'GET', path: '/v1/account/encryption/currentness' });
+          if (!authorization.ok) throw Object.assign(new Error('Action authorization unavailable'), { code: 'action_authorization_unavailable' });
+          const storage = await resolveCliAccountStorageContext({ credentials, serverBaseUrl: serverHttpBaseUrl,
+            authorizationHeaders: authorization.headers, signal: context.signal });
+          await check();
+          const settings = await readAccountSettingsV2Raw({ credentials, signal: context.signal, deps: {
+            resolveAccountEncryptionMode: async () => storage.mode,
+            fetchSettings: async () => AccountSettingsV2GetResponseSchema.parse(await read('/v2/account/settings')),
+          } });
+          await check();
+          preferences = accountSettingsParse(settings.raw).usageCoachPreferencesV1;
+          const profile = AccountProfileResponseSchema.parse(await read('/v1/profile'));
+          pools = await Promise.all(request.queries.map(async query => ({ query,
+            value: await Promise.all(profile.connectedAccountGroupsV4.map(async group => {
+              const machineId = query.machines.length === 1 ? query.machines[0] : undefined;
+              let selection: UsageQueryPoolSnapshot['selection'] = { status: 'unsupported', errorCode: 'machine_context_unavailable' };
+              if (machineId && !context.externalActionCredential && !context.externalActionExecutionAuthorization) {
+                try {
+                  await check();
+                  const { createCliConnectedServiceAction } = await import('@/session/actions/connectedServiceActionDeps');
+                  const action = createCliConnectedServiceAction({ credentials, serverId, serverHttpBaseUrl,
+                    ...(input.isCredentialCurrent ? { isCredentialCurrent: input.isCredentialCurrent } : {}),
+                    resolveHeaders: (caller, actionId, read) => {
+                      const authorization = resolveRequestHeaders({ context: caller, effectActionId: actionId, ...read });
+                      return authorization.ok ? authorization.headers : null;
+                    },
+                    callMachineAction: async request => {
+                      await check();
+                      const result = await callExactMachineRpc({ credentials, serverUrl: serverHttpBaseUrl,
+                        ...request, requireCurrentMachine: true });
+                      await check();
+                      return result;
+                    },
+                  });
+                  const value = ConnectedServicePoolSelectionGetResponseV1Schema.parse(await action({
+                    actionId: 'connectedServices.pools.selection.get', input: { machineId, group: group.ref }, context,
+                    ...(context.signal ? { signal: context.signal } : {}),
+                  }));
+                  await check();
+                  selection = 'group' in value ? { status: 'available', machineId, value, asOfMs: value.observedAtMs }
+                    : { status: value.code === 'unsupported' ? 'unsupported' : 'unknown', machineId, errorCode: value.code };
+                } catch { selection = { status: 'unknown', machineId, errorCode: 'pool_selection_unavailable' }; }
+              }
+              return { group: group.ref, memberAccountIds: group.members.map(member => member.connectedAccountId),
+                activeAccountId: group.activeConnectedAccountId, selection };
+            })),
+          })));
+          const accounts = profile.connectedAccountsV4.filter(account => account.status !== 'needs_reauth');
+          const starts = request.queries.flatMap(query => query.period.startMs === undefined ? [] : [query.period.startMs]);
+          const ends = request.queries.flatMap(query => query.period.endMs === undefined ? [] : [query.period.endMs]);
+          const range = starts.length === request.queries.length && ends.length === request.queries.length
+            ? { startAtMs: Math.min(...starts), endAtMs: Math.max(...ends) } : undefined;
+          const rows = await Promise.all(accounts.map(async account => {
+            const source = { bindingKind: 'account' as const, ref: account.ref };
+            // Paging exhausts the requested range; page size is not a history result ceiling.
+            const history = range && range.endAtMs > range.startAtMs ? { range, pageSize: 100 } : undefined;
+            let page = await readQuota({ source, ...(history ? { history } : {}) }, context);
+            if ('ok' in page) return page;
+            const entries = [...(page.history?.entries ?? [])];
+            while (page.history?.nextCursor && history) {
+              await check();
+              page = await readQuota({ source, history: { ...history, cursor: page.history.nextCursor } }, context);
+              if ('ok' in page) return page;
+              entries.push(...(page.history?.entries ?? []));
+            }
+            return projectProviderAccountUsageQuotaReadV1({ input: { source, ...(history ? { history } : {}) }, current: page.current,
+              ...(history ? { history: { entries, nextCursor: null } } : {}), nowMs: Date.now(), targets: page.targets, waitingWork: page.waitingWork });
+          }));
+          await check();
+          const values = rows.filter((row): row is ConnectedServiceQuotaGetResultV1 => !('ok' in row));
+          const failures = rows.filter((row): row is ActionExecuteFailure => 'ok' in row);
+          const times = values.flatMap(row => row.current ? [row.current.fetchedAtMs] : []);
+          quota = { status: failures.length ? values.length ? 'partial' : 'unknown' : 'available',
+            ...(failures.length ? { errorCode: failures[0]!.errorCode ?? 'usage_quota_read_failed' } : {}),
+            ...(values.length || failures.length === 0 ? { value: values } : {}), ...(times.length ? { asOfMs: Math.min(...times) } : {}) };
+        } catch (error) {
+          const code = error instanceof Error && 'code' in error ? error.code : undefined;
+          quota = { status: code === 'unsupported' ? 'unsupported' : 'unknown',
+            errorCode: typeof code === 'string' ? code : 'usage_quota_read_failed' };
+        }
+        if (context.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+        if (input.isCredentialCurrent && !await input.isCredentialCurrent()) return retired();
+        const result = resolveUsagePageAggregation({ queries: request.queries, quota, pools,
+          accounting: snapshots.filter((snapshot): snapshot is UsageAccountingSourceSnapshot => !('ok' in snapshot)),
+          work: request.queries.map(query => ({ query, status: 'unsupported', errorCode: 'local_detail_unavailable' })),
+          howYouWork: request.queries.map(query => ({ query, detail: { status: 'unknown' } })),
+          sources: [{ source: 'coach_preferences', status: preferences ? 'available' : 'unknown' }],
+        });
+        const nowMs = Date.now();
+        return preferences ? { ...result, results: result.results.map(slice => slice.coach
+          ? { ...slice, coach: applyUsageCoachPreferences(slice.coach, preferences, nowMs) } : slice) } : result;
       },
     },
     projectWorkerAction: async ({ actionId, input: actionInput, context, signal }) => {
@@ -483,22 +667,44 @@ export function createAccountServerActionDeps(input: Readonly<{
       const row = audience.data.grants.find(grant => JSON.stringify(grant.principal) === JSON.stringify(output.grant.principal));
       return row ? { ...output, readiness: row.readiness, canPrepareKeys: row.audience.some(member => member.canPrepareKeys) } : output;
     },
-    machinePresetAction: async ({ actionId, input: actionInput, context: actionContext, signal }) => {
-      const body = MachinePresetActionInputSchemasV1[actionId].parse(actionInput);
-      const mismatch = accountServerTargetMismatch(actionContext);
-      if (mismatch) return mismatch;
-      if (signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
-      const snapshot = serverIdentityId ? undefined : await input.resolveServerFeaturesSnapshot?.();
-      const homeIdentity = serverIdentityId ?? (snapshot?.status === 'ready' && snapshot.provenance === 'authenticated'
-        ? normalizeServerIdentityIdCapability(snapshot.features.capabilities.serverIdentity?.serverIdentityId)
-        : undefined);
-      if (!homeIdentity) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
-      if (body.homeId !== homeIdentity) {
-        return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
+    managedMachineAction: async ({ actionId, input: actionInput, context: actionContext, signal }) => {
+      // Retained inventory belongs to the Home; native effects still require
+      // the daemon's exact-controller managed Action adapter.
+      if (actionId !== 'machines.managed.list' && actionId !== 'machines.managed.get') {
+        return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
       }
+      const body = ManagedMachineActionInputSchemasV1[actionId].parse(actionInput);
+      const unavailable = await qualifiedHomeActionFailure({ actionId, homeId: body.homeId, context: actionContext, signal });
+      if (unavailable) return unavailable;
+      const path = managedMachineActionEndpointPathV1(actionId);
+      const requestHeaders = resolveRequestHeaders({ context: actionContext, effectActionId: actionId, method: 'POST', path, body });
+      if (!requestHeaders.ok) return externalAuthorizationUnavailable();
+      const dispatch = await dispatchAccountServerActionHttpRequest({
+        headers: requestHeaders.headers, method: 'POST', path, body, sideEffectClass: 'read',
+        ...(signal ? { signal } : {}),
+      });
+      if (!dispatch.ok) return dispatch;
       if (input.isCredentialCurrent && !await input.isCredentialCurrent()) {
         return { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
       }
+      const { response } = dispatch;
+      if (response.status < 200 || response.status >= 300) {
+        const refusal = ManagedErrorV1Schema.safeParse(response.data);
+        if (refusal.success) return { ok: false, errorCode: refusal.data.code, error: refusal.data.code };
+        if (isAuthenticationStatus(response.status)) {
+          throw createAuthenticationHttpStatusError(response.status, 'Managed Machine Action authentication failed');
+        }
+        if ([404, 405, 501].includes(response.status)) {
+          return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+        }
+        throw createHttpStatusError(response.status, 'Managed Machine Action request failed');
+      }
+      return settleAccountServerActionHttpOutput({ data: response.data, outputSchema: ManagedMachineActionOutputSchemasV1[actionId], sideEffectClass: 'read' });
+    },
+    machinePresetAction: async ({ actionId, input: actionInput, context: actionContext, signal }) => {
+      const body = MachinePresetActionInputSchemasV1[actionId].parse(actionInput);
+      const unavailable = await qualifiedHomeActionFailure({ actionId, homeId: body.homeId, context: actionContext, signal });
+      if (unavailable) return unavailable;
       const path = machinePresetActionEndpointPathV1(actionId);
       const requestHeaders = resolveRequestHeaders({ context: actionContext, effectActionId: actionId, method: 'POST', path, body });
       if (!requestHeaders.ok) return externalAuthorizationUnavailable();

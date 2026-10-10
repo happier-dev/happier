@@ -16,7 +16,7 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 import { openExternalActionRequesterAccountContextV1, sealExternalActionRequesterAccountContextV1,
   type ExternalActionRequesterAccountContextPurposeV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
-import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
+import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import type { PrepareExternalActionRequesterAccountContext, ResolveExternalActionEncryption } from '../externalActions/executeExternalAction';
 import { createInvocationSavedSecretOperationContextV1, type SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
@@ -244,7 +244,7 @@ export async function admitRequesterAccountActionContext(input: Readonly<{
     if (currentness.mode === 'e2ee' && currentness.contentKeyFingerprint && input.credentials.encryption) {
       const encryption = input.credentials.encryption;
       const key = encryption.type === 'legacy' ? deriveAccountMachineKeyFromRecoverySecret(encryption.secret) : encryption.machineKey;
-      if (computeContentPublicKeyFingerprint(tweetnacl.box.keyPair.fromSecretKey(key).publicKey) !== currentness.contentKeyFingerprint) return null;
+      if (computeAccountEncryptionMigrateKeyFingerprintV1(tweetnacl.box.keyPair.fromSecretKey(key).publicKey) !== currentness.contentKeyFingerprint) return null;
     }
     bindRequesterSessionCredentialScope(input.credentials, { serverId: input.serverId, serverHttpBaseUrl: input.serverHttpBaseUrl });
     const accountSettingsContext = await runWithServerHttpBaseUrl(input.serverHttpBaseUrl, () => bootstrapAccountSettingsContext({

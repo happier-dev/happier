@@ -46,7 +46,7 @@ import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { ProjectAccountRowV1Schema, ProjectAccountRowMutationRequestV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { encodeStoredCredentials } from '@/persistence';
 import { prepareAccountSettingsV2Content } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
-import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
+import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 
 const principal = {
   accountId: 'account-1',
@@ -107,7 +107,7 @@ describe('executeExternalAction', () => {
       if (path === '/v1/account/profile') return { status: 200, data: { id: accountId } };
       if (path === '/v2/account/settings') return { status: 200, data: { content: settings, version: 1 } };
       if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'e2ee', version: 1,
-        signingKeyFingerprint: null, contentKeyFingerprint: computeContentPublicKeyFingerprint(
+        signingKeyFingerprint: null, contentKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(
           tweetnacl.box.keyPair.fromSecretKey(material.machineKey).publicKey), updatedAt: 1 } };
       throw new Error(`Unexpected terminal requester GET ${path}`);
     });
