@@ -117,7 +117,7 @@ export async function createSessionController(params: LiveParams): Promise<Happi
       send: facts.active && capabilities?.submitAgentInput === true,
       respondToPermission: facts.active && capabilities?.approveRuntimePermissions === true,
       answerUserAction: facts.active && capabilities?.submitAgentInput === true,
-      abort: selected === 'socket' && facts.active && capabilities?.submitAgentInput === true,
+      abort: facts.active && capabilities?.submitAgentInput === true,
     } });
   };
   const reduce = (messages: NormalizedMessage[]) => {
@@ -511,7 +511,16 @@ export async function createSessionController(params: LiveParams): Promise<Happi
         await params.execute('session.user_action.answer', { sessionId: params.sessionId, requestId,
           answers: Object.entries(answers).map(([question, values]) => ({ question, values: [...values] })) }, { signal: captured }); assertCurrent(captured); }
     },
-    abort: async (options) => { assertCurrent(actionOptions(options?.signal).signal); if (selected === 'action') throw new HappierActionError('session_abort_unavailable', 'The Action transport does not provide an abort Action.'); await call('abort', {}, options?.signal); },
+    abort: async (options) => {
+      const captured = actionOptions(options?.signal).signal;
+      assertCurrent(captured);
+      if (selected === 'action') {
+        await params.execute('session.turn.cancel', { sessionId: params.sessionId }, { signal: captured });
+        assertCurrent(captured);
+      } else {
+        await call('abort', {}, options?.signal);
+      }
+    },
   };
   return Object.freeze(controller);
 }
