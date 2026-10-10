@@ -137,6 +137,105 @@ That means:
 - if you are on the main checkout, the terminal starts from the project root
 - if you were looking at the worktrees overview, opening the terminal exits overview and opens the details tab
 
+## Project command definitions
+
+<Callout type="info">
+Project-definition inspection and guarded manifest editing are in development on
+the 0.3 line. The Action contracts and CLI command projections below still await
+integrated package and live validation; the visual Scripts editor is a later
+integration step. This is not a stable or preview availability claim.
+</Callout>
+
+The development Action catalog projects inspection as `happier project inspect`
+and saving as `happier project manifest update`. Both take a qualified checkout:
+its Home/server, workspace, machine and root path. Inspection returns the project
+file and its basis, detected definitions and import candidates. Saving takes the
+reviewed basis and intended file text and uses the shared configurable **Ask first**
+default. Form, raw, import, remove and reorder use the same save operation.
+
+Keep a project's commands in their native tool files, or declare them in
+`.happier/project.json` in the selected checkout. Passive inspection finds static
+definitions without evaluating project code, running hooks, starting commands or
+creating a project file. A detected command retains its native tool, file and
+target; adding it to the project file stores that reference rather than copying
+the command body:
+
+```json
+{
+  "version": 1,
+  "scripts": {
+    "build": {
+      "source": {
+        "kind": "native",
+        "tool": "package_script",
+        "file": "package.json",
+        "target": "build"
+      }
+    }
+  }
+}
+```
+
+Scripts and services are separate declarations. Inspection also reports environment
+and Devcontainer selections separately. When a file cannot be read or a definition
+needs native evaluation, inspection retains the definitions it did find and reports
+partial coverage with a diagnostic for that file. Finding a definition does not
+mean its tool is installed or its setup has succeeded.
+
+Import candidates distinguish available, unavailable, unresolved and ambiguous
+offers. Only verified available, unambiguous commands are preselected; other
+offers stay in the inspection results without being preselected. A declared tool
+version is not proof that the version is installed: inspection does not run version
+commands. Unproved versions remain unresolved. Passive plugin offers also remain
+unresolved because inspection does not run their command or environment effects.
+
+Unknown JSON keys produce diagnostics while valid known declarations remain usable.
+Structured edits preserve untouched fields and their values, including unknown
+fields; raw saves preserve the submitted text exactly. Invalid raw text stays in
+the draft, with Form and save disabled until it is valid. Missing or invalid
+required fields still need fixing before a save can succeed. Native reference paths
+must stay within the selected checkout.
+
+Every save checks the file basis from the previous read. Creating a file requires
+it still to be absent; updating one requires its contents still to match that read.
+If another editor changed it, keep your draft, read the current file and review the
+changes before saving again. This check is best effort: it does not lock out an
+external editor. Inspection and saving do not run setup or grant setup approval.
+
+## Devcontainer child machines
+
+<Callout type="info">
+Managed Devcontainer children are in development on the 0.3 line. Integrated
+validation and the real Docker journey are still pending; this is not a stable
+or preview availability claim.
+</Callout>
+
+A Devcontainer child is an ordinary Happier machine running inside a container.
+Its files, source control, terminals and sessions use the child's observed user
+and workspace folder, which can differ from the Docker host's folder. Selecting
+a Devcontainer does not turn host commands into container commands automatically.
+
+Creation reviews the selected configuration's host initialization and child
+image, build, Compose, Features, mounts, networking and lifecycle effects before
+running them. Rebuild is a separate reviewed operation with an **Ask first**
+default. If the reviewed effects change, review them again before continuing.
+Configuration inspection does not run initialization or lifecycle hooks.
+
+The Docker host controls Start, Stop and Rebuild. When it is offline, these
+operations are unavailable; a running child that is still reachable can continue
+using its ordinary Happier connection. There is no offline restart or automatic
+controller replacement.
+
+Bind-mounted source has one synchronization writer on the host, while execution
+stays on the child. Independent child storage is a separate workspace. Changed
+native identity, missing roots or an unavailable bind controller stop preparation
+before copying or launching; Happier does not silently create another mirror.
+
+Stop retains source and volumes. Rebuild replaces the container without deleting
+bind sources or external volumes and requires fresh enrollment. Session history
+and drafts remain; running sessions are not moved to the replacement. An uncertain
+native result needs inspection of that same managed resource before retrying.
+
 ## Make a workspace available on another machine
 
 <Callout type="info">
