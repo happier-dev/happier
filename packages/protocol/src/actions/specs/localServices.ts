@@ -8,7 +8,8 @@ import {
   type LocalServiceActionKindV1,
   type LocalServiceActionRequestV1,
 } from '../../local/services/actions/v1.js';
-import { LocalServiceInventorySnapshotV1Schema } from '../../local/services/inventory/v1.js';
+import { DaemonLocalServiceInventorySnapshotRequestV1Schema, DaemonLocalServiceInventorySnapshotResponseV1Schema,
+  LocalServiceInventorySnapshotV1Schema } from '../../local/services/inventory/v1.js';
 import {
   DaemonLocalServiceLauncherHistoryClearResponseV1Schema,
   DaemonLocalServiceLauncherLeafRequestV1Schema,
@@ -16,23 +17,34 @@ import {
   DaemonLocalServiceLauncherRegisterPreviewResponseV1Schema,
   DaemonLocalServiceLauncherStartRequestV1Schema,
   DaemonLocalServiceLauncherStartResponseV1Schema,
+  DaemonLocalServiceLauncherSnapshotRequestV1Schema,
+  DaemonLocalServiceLauncherSnapshotResponseV1Schema,
   LocalServiceLauncherSnapshotV1Schema,
 } from '../../local/services/launcher/v1.js';
 import {
   DaemonLocalServicePreviewOpenOrCreateResponseV1Schema,
+  DaemonLocalServicePreviewOpenOrCreateRequestV1Schema,
+  DaemonLocalServicePreviewRevokeRequestV1Schema,
   DaemonLocalServicePreviewRevokeResponseV1Schema,
+  DaemonLocalServicePreviewSnapshotRequestV1Schema,
+  DaemonLocalServicePreviewSnapshotResponseV1Schema,
   LocalServicePreviewSnapshotV1Schema,
   LocalServicePreviewServiceTargetV1Schema,
 } from '../../local/services/preview/v1.js';
 import {
   DaemonLocalServicePublicPreviewCopyUrlResponseV1Schema,
   DaemonLocalServicePublicPreviewCreateResponseV1Schema,
+  DaemonLocalServicePublicPreviewCreateRequestV1Schema,
+  DaemonLocalServicePublicPreviewRevokeRequestV1Schema,
   DaemonLocalServicePublicPreviewRevokeResponseV1Schema,
+  DaemonLocalServicePublicPreviewStatusRequestV1Schema,
+  DaemonLocalServicePublicPreviewStatusResponseV1Schema,
   LocalServicePublicPreviewSnapshotV1Schema,
 } from '../../local/services/public/v1.js';
 import type { RuntimeActionSpecFamily } from './common.js';
 import { ProjectServiceRelocateInputV1Schema, ProjectServiceRelocateResultV1Schema } from '../../workspaces/projectServiceRelocationV1.js';
 import { RPC_METHODS } from '../../rpc/methods.js';
+import { actionCliDerivedDefault, type ActionCliProjection } from '../actionCliProjection.js';
 
 const RuntimeLocalServiceMachineInputSchema = lazyZodSchema(() => z
   .object({
@@ -81,6 +93,95 @@ export const LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS = Object.freeze({
   'localServices.actions.restartManaged': RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_RESTART_MANAGED,
   'localServices.actions.terminateDetected': RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_TERMINATE_DETECTED,
 } satisfies Readonly<Record<LocalServiceActionRuntimeActionId, string>>);
+
+/** Existing raw daemon leaves, distinct from the targeted Start/control Action RPCs. */
+export const LOCAL_SERVICE_DOMAIN_ACTION_RPC_BINDINGS = Object.freeze({
+  'localServices.inventory.list': { rpcMethod: RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_SNAPSHOT,
+    requestSchema: DaemonLocalServiceInventorySnapshotRequestV1Schema, snapshotResponseSchema: DaemonLocalServiceInventorySnapshotResponseV1Schema },
+  'localServices.inventory.refresh': { rpcMethod: RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH,
+    requestSchema: DaemonLocalServiceInventorySnapshotRequestV1Schema, snapshotResponseSchema: DaemonLocalServiceInventorySnapshotResponseV1Schema },
+  'localServices.launcher.snapshot': { rpcMethod: RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT,
+    requestSchema: DaemonLocalServiceLauncherSnapshotRequestV1Schema, snapshotResponseSchema: DaemonLocalServiceLauncherSnapshotResponseV1Schema },
+  'localServices.launcher.registerPreview': { rpcMethod: RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_REGISTER_PREVIEW,
+    requestSchema: DaemonLocalServiceLauncherLeafRequestV1Schema },
+  'localServices.launcher.history.clear': { rpcMethod: RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_HISTORY_CLEAR,
+    requestSchema: DaemonLocalServiceLauncherLeafRequestV1Schema },
+  'localServices.preview.openOrCreate': { rpcMethod: RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_OPEN_OR_CREATE,
+    requestSchema: DaemonLocalServicePreviewOpenOrCreateRequestV1Schema },
+  'localServices.preview.status': { rpcMethod: RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_SNAPSHOT,
+    requestSchema: DaemonLocalServicePreviewSnapshotRequestV1Schema, snapshotResponseSchema: DaemonLocalServicePreviewSnapshotResponseV1Schema },
+  'localServices.preview.revoke': { rpcMethod: RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_REVOKE,
+    requestSchema: DaemonLocalServicePreviewRevokeRequestV1Schema },
+  'localServices.publicPreview.create': { rpcMethod: RPC_METHODS.DAEMON_LOCAL_SERVICES_PUBLIC_PREVIEW_CREATE,
+    requestSchema: DaemonLocalServicePublicPreviewCreateRequestV1Schema },
+  'localServices.publicPreview.status': { rpcMethod: RPC_METHODS.DAEMON_LOCAL_SERVICES_PUBLIC_PREVIEW_STATUS,
+    requestSchema: DaemonLocalServicePublicPreviewStatusRequestV1Schema, snapshotResponseSchema: DaemonLocalServicePublicPreviewStatusResponseV1Schema },
+  'localServices.publicPreview.revoke': { rpcMethod: RPC_METHODS.DAEMON_LOCAL_SERVICES_PUBLIC_PREVIEW_REVOKE,
+    requestSchema: DaemonLocalServicePublicPreviewRevokeRequestV1Schema },
+});
+
+type LocalServiceDomainActionId = keyof typeof LOCAL_SERVICE_DOMAIN_ACTION_RPC_BINDINGS;
+
+export function resolveLocalServiceDomainActionRpcBinding(actionId: RuntimeActionIdV1) {
+  return Object.hasOwn(LOCAL_SERVICE_DOMAIN_ACTION_RPC_BINDINGS, actionId)
+    ? LOCAL_SERVICE_DOMAIN_ACTION_RPC_BINDINGS[actionId as LocalServiceDomainActionId] : null;
+}
+
+/** Action context is not raw daemon authority. Preserve complete canonical selectors and paths. */
+export function parseLocalServiceDomainActionRpcRequest(actionId: RuntimeActionIdV1, input: unknown) {
+  const binding = resolveLocalServiceDomainActionRpcBinding(actionId);
+  if (!binding || !input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const request: Record<string, unknown> = { ...input };
+  delete request.workspaceId;
+  if (!Object.hasOwn(binding.requestSchema.shape, 'sessionId')) delete request.sessionId;
+  if (actionId === 'localServices.preview.openOrCreate') {
+    // Retained runtime spelling: targetId meant detected inventory, never a URL.
+    if (!request.serviceTarget && !request.inventoryEntryId && request.targetId !== undefined) request.inventoryEntryId = request.targetId;
+    delete request.targetId;
+    delete request.previewId;
+  }
+  if (actionId === 'localServices.preview.status') {
+    delete request.previewId;
+    delete request.targetId;
+  }
+  return binding.requestSchema.safeParse(request);
+}
+
+const LOCAL_SERVICE_CLI_PATHS = {
+  'localServices.inventory.list': ['services', 'inventory', 'list'],
+  'localServices.inventory.refresh': ['services', 'inventory', 'refresh'],
+  'localServices.launcher.snapshot': ['services', 'launcher', 'snapshot'],
+  'localServices.launcher.start': ['services', 'start'],
+  'localServices.launcher.registerPreview': ['services', 'launcher', 'register-preview'],
+  'localServices.launcher.history.clear': ['services', 'launcher', 'history', 'clear'],
+  'localServices.preview.openOrCreate': ['services', 'preview', 'create'],
+  'localServices.preview.status': ['services', 'preview', 'status'],
+  'localServices.preview.revoke': ['services', 'preview', 'revoke'],
+  'localServices.publicPreview.create': ['services', 'public-preview', 'create'],
+  'localServices.publicPreview.status': ['services', 'public-preview', 'status'],
+  'localServices.publicPreview.revoke': ['services', 'public-preview', 'revoke'],
+  'localServices.actions.forget': ['services', 'forget'],
+  'localServices.actions.stopManaged': ['services', 'stop'],
+  'localServices.actions.restartManaged': ['services', 'restart'],
+  'localServices.actions.terminateDetected': ['services', 'terminate'],
+} as const satisfies Readonly<Partial<Record<RuntimeActionIdV1, readonly [string, ...string[]]>>>;
+
+export function createLocalServiceActionCliProjection(actionId: RuntimeActionIdV1): ActionCliProjection | null {
+  if (!Object.hasOwn(LOCAL_SERVICE_CLI_PATHS, actionId)) return null;
+  const path = LOCAL_SERVICE_CLI_PATHS[actionId as keyof typeof LOCAL_SERVICE_CLI_PATHS];
+  const base = { acceptsServerId: true as const, commands: [{ path: [...path], visibility: 'canonical' as const }] };
+  const kind = resolveLocalServiceActionKindForRuntimeActionId(actionId);
+  if (kind) return { ...base,
+    inputSchema: lazyZodSchema(() => z.object({ ...LocalServiceActionRequestV1Schema.shape,
+      action: z.literal(kind).optional(), requestId: LocalServiceActionRequestV1Schema.shape.requestId.optional() }).strict()),
+    bindInput: (value, context) => ({ ...(value as Readonly<Record<string, unknown>>),
+      action: actionCliDerivedDefault(kind),
+      ...((value as Readonly<Record<string, unknown>>).requestId === undefined ? { requestId: actionCliDerivedDefault(context.invocationId) } : {}) }),
+  };
+  const domain = resolveLocalServiceDomainActionRpcBinding(actionId);
+  const inputSchema = domain?.requestSchema ?? DaemonLocalServiceLauncherStartRequestV1Schema;
+  return { ...base, inputSchema, wholeInputSchema: inputSchema };
+}
 
 export function resolveLocalServiceActionKindForRuntimeActionId(
   actionId: RuntimeActionIdV1,

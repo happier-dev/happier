@@ -1,6 +1,6 @@
 import { createUnavailableRuntimeActionExecutor, resolveRuntimeActionExecutionFamily } from '@happier-dev/protocol/actions/executor/dispatch';
 import { requiresAgentEgressRedaction } from '@happier-dev/protocol/actions/actionApprovalPolicy';
-import { resolveLocalServiceActionKindForRuntimeActionId } from '@happier-dev/protocol/actions/specs/localServices';
+import { parseLocalServiceDomainActionRpcRequest, resolveLocalServiceActionKindForRuntimeActionId } from '@happier-dev/protocol/actions/specs/localServices';
 import { DaemonLocalServiceLauncherLeafRequestV1Schema, DaemonLocalServiceLauncherSnapshotRequestV1Schema, DaemonLocalServiceLauncherStartRequestV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import { DaemonLocalServicePreviewOpenOrCreateRequestV1Schema, DaemonLocalServicePreviewRevokeRequestV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
 import { DaemonLocalServicePublicPreviewCopyUrlRequestV1Schema, DaemonLocalServicePublicPreviewCreateRequestV1Schema, DaemonLocalServicePublicPreviewRevokeRequestV1Schema, DaemonLocalServicePublicPreviewStatusRequestV1Schema, isLocalServicePublicPreviewCreateConfirmed, redactLocalServicePublicPreviewCreateResponseForAgentEgress, redactLocalServicePublicPreviewRevokeResponseForAgentEgress, redactLocalServicePublicPreviewSnapshotForAgentEgress } from '@happier-dev/protocol/local/services/public/v1';
@@ -84,20 +84,6 @@ function readField(input: unknown, key: string): string | undefined {
     return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function buildPreviewOpenOrCreateRequest(input: unknown): Record<string, unknown> {
-    const machineId = readField(input, 'machineId');
-    const sessionId = readField(input, 'sessionId');
-    // The runtime preview input carries a single `targetId`; private preview resolves it as the
-    // canonical detected-inventory entry (the common dev-server case).
-    const inventoryEntryId = readField(input, 'inventoryEntryId') ?? readField(input, 'targetId');
-    const source = input && typeof input === 'object' ? (input as Record<string, unknown>)['serviceTarget'] : undefined;
-    return {
-        ...(machineId ? { machineId } : {}),
-        ...(sessionId ? { sessionId } : {}),
-        ...(source !== undefined ? { serviceTarget: source } : inventoryEntryId ? { inventoryEntryId } : {}),
-    };
-}
-
 function buildLauncherLeafRequest(input: unknown): Record<string, unknown> {
     const machineId = readField(input, 'machineId');
     const targetId = readField(input, 'targetId');
@@ -110,17 +96,6 @@ function buildLauncherLeafRequest(input: unknown): Record<string, unknown> {
         ...(sessionId ? { sessionId } : {}),
         ...(scope ? { scope } : {}),
         ...(workspaceRoot ? { workspaceRoot } : {}),
-    };
-}
-
-function buildPreviewRevokeRequest(input: unknown): Record<string, unknown> {
-    const machineId = readField(input, 'machineId');
-    const previewId = readField(input, 'previewId');
-    const source = input && typeof input === 'object' ? (input as Record<string, unknown>)['serviceTarget'] : undefined;
-    return {
-        ...(machineId ? { machineId } : {}),
-        ...(previewId ? { previewId } : {}),
-        ...(source !== undefined ? { serviceTarget: source } : {}),
     };
 }
 
@@ -247,11 +222,10 @@ export function createLocalServicesDaemonRuntimeActionExecutor(
         if (args.actionId === 'localServices.launcher.snapshot') {
             const routes = input.routes.launcherRoutes;
             if (!routes) return disabledResult('local_services_launcher_routes_unavailable');
-            const leaf = buildLauncherLeafRequest(parsed.input);
-            const request = DaemonLocalServiceLauncherSnapshotRequestV1Schema.omit({ machineId: true }).safeParse({
-                sessionId: leaf.sessionId, scope: leaf.scope, workspaceRoot: leaf.workspaceRoot,
-            });
-            return request.success ? await routes.getSnapshot(request.data) : invalidParametersResult;
+            const lowered = parseLocalServiceDomainActionRpcRequest(args.actionId, parsed.input);
+            if (!lowered?.success) return invalidParametersResult;
+            const { machineId: _machineId, ...scope } = DaemonLocalServiceLauncherSnapshotRequestV1Schema.parse(lowered.data);
+            return await routes.getSnapshot(scope);
         }
 
         if (args.actionId === 'localServices.launcher.start') {
@@ -275,8 +249,10 @@ export function createLocalServicesDaemonRuntimeActionExecutor(
             if (!leaves) {
                 return disabledResult('local_services_launcher_routes_unavailable');
             }
+            const lowered = parseLocalServiceDomainActionRpcRequest(args.actionId, parsed.input);
             const request = DaemonLocalServiceLauncherLeafRequestV1Schema.safeParse(
-                buildLauncherLeafRequest(parsed.input),
+                args.actionId === 'localServices.launcher.openPreview' ? buildLauncherLeafRequest(parsed.input)
+                    : lowered?.success ? lowered.data : null,
             );
             if (!request.success) return invalidParametersResult;
             if (args.actionId === 'localServices.launcher.openPreview') {
@@ -300,9 +276,8 @@ export function createLocalServicesDaemonRuntimeActionExecutor(
             if (!routes?.openOrCreate) {
                 return disabledResult('local_services_preview_routes_unavailable');
             }
-            const request = DaemonLocalServicePreviewOpenOrCreateRequestV1Schema.safeParse(
-                buildPreviewOpenOrCreateRequest(parsed.input),
-            );
+            const lowered = parseLocalServiceDomainActionRpcRequest(args.actionId, parsed.input);
+            const request = DaemonLocalServicePreviewOpenOrCreateRequestV1Schema.safeParse(lowered?.success ? lowered.data : null);
             if (!request.success) return invalidParametersResult;
             const result = await routes.openOrCreate(request.data, args.context.signal, input.ingress);
             return result.ok
@@ -315,9 +290,8 @@ export function createLocalServicesDaemonRuntimeActionExecutor(
             if (!routes?.revoke) {
                 return disabledResult('local_services_preview_routes_unavailable');
             }
-            const request = DaemonLocalServicePreviewRevokeRequestV1Schema.safeParse(
-                buildPreviewRevokeRequest(parsed.input),
-            );
+            const lowered = parseLocalServiceDomainActionRpcRequest(args.actionId, parsed.input);
+            const request = DaemonLocalServicePreviewRevokeRequestV1Schema.safeParse(lowered?.success ? lowered.data : null);
             if (!request.success) return invalidParametersResult;
             const result = await routes.revoke(request.data, input.ingress);
             return result.ok

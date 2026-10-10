@@ -75,6 +75,22 @@ export type ActionCliPresentation = Readonly<{
  * output module into a cold CLI start.
  */
 const PRESENTATION_LOADERS: Partial<Record<ActionId, () => Promise<ActionCliPresentation>>> = {
+  'localServices.inventory.list': async () => (await import('./localServicesPresentation')).LOCAL_SERVICES_PRESENTATION,
+  'localServices.inventory.refresh': async () => (await import('./localServicesPresentation')).LOCAL_SERVICES_PRESENTATION,
+  'localServices.launcher.snapshot': async () => (await import('./localServicesPresentation')).LOCAL_SERVICES_PRESENTATION,
+  'localServices.launcher.start': async () => (await import('./localServicesPresentation')).LOCAL_SERVICES_PRESENTATION,
+  'localServices.launcher.registerPreview': async () => (await import('./localServicesPresentation')).LOCAL_SERVICES_PRESENTATION,
+  'localServices.launcher.history.clear': async () => (await import('./localServicesPresentation')).LOCAL_SERVICES_PRESENTATION,
+  'localServices.preview.openOrCreate': async () => (await import('./localServicesPresentation')).LOCAL_SERVICES_PRESENTATION,
+  'localServices.preview.status': async () => (await import('./localServicesPresentation')).LOCAL_SERVICES_PRESENTATION,
+  'localServices.preview.revoke': async () => (await import('./localServicesPresentation')).LOCAL_SERVICES_PRESENTATION,
+  'localServices.publicPreview.create': async () => (await import('./localServicesPresentation')).LOCAL_SERVICES_PRESENTATION,
+  'localServices.publicPreview.status': async () => (await import('./localServicesPresentation')).LOCAL_SERVICES_PRESENTATION,
+  'localServices.publicPreview.revoke': async () => (await import('./localServicesPresentation')).LOCAL_SERVICES_PRESENTATION,
+  'localServices.actions.forget': async () => (await import('./localServicesPresentation')).LOCAL_SERVICES_PRESENTATION,
+  'localServices.actions.stopManaged': async () => (await import('./localServicesPresentation')).LOCAL_SERVICES_PRESENTATION,
+  'localServices.actions.restartManaged': async () => (await import('./localServicesPresentation')).LOCAL_SERVICES_PRESENTATION,
+  'localServices.actions.terminateDetected': async () => (await import('./localServicesPresentation')).LOCAL_SERVICES_PRESENTATION,
   'projects.execution.output.read': async () => (
     await import('./outputPresentation')
   ).PROJECT_EXECUTION_OUTPUT_READ_PRESENTATION,

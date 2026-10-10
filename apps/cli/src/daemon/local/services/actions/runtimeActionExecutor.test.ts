@@ -24,6 +24,8 @@ import { createLocalServicePreviewRegistry, registerLocalServicePreview } from '
 import { createLocalServicePreviewRoutes } from '../preview/routes';
 import { createLocalServicePublicPreviewServerRoutes } from '../public/routes';
 import { LocalServicePreviewResourceV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
+import { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
+import { createManagedServiceProcessSupervisorHost } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
 
 function runtimeArgs(
     args: Omit<RuntimeActionExecuteArgs, 'context'> & Partial<Pick<RuntimeActionExecuteArgs, 'context'>>,
@@ -129,37 +131,57 @@ const publicPreviewSnapshot: LocalServicePublicPreviewSnapshotV1 = {
 describe('daemon local-services runtime action executor', () => {
     it('opens and revokes the actual source-qualified preview through Actions without retargeting an inventory entry', async () => {
         const { createLocalServicesDaemonRuntimeActionExecutor } = await import('./runtimeActionExecutor');
-        const registry = createLocalServicePreviewRegistry();
-        const serviceTarget = { kind: 'managed_service' as const, machineId: 'machine_1', managedServiceId: 'actual-instance', cwd: '/workspace/app',
-            declaration: { workspaceRefId: 'workspace_1', selection: { kind: 'manifest' as const, name: 'web' } } };
-        const registered = registerLocalServicePreview(registry, {
-            previewId: 'actual-preview', machineId: 'machine_1', owner: { kind: 'user', id: 'starter' }, serviceTarget,
-            target: { scheme: 'http', host: '127.0.0.1', port: 5173 }, initialPath: { pathname: '/', search: '' },
-            display: { title: 'Web', addressLabel: 'localhost:5173' }, originMode: 'host',
+        const owner = createManagedServicesOwner({
+            processSupervisorHost: createManagedServiceProcessSupervisorHost({ custodyOwner: 'daemon' }),
+            // Native Project custody cannot reach plugin dependency installation.
+            dependencies: Object.freeze({}) as never, resolveScope: scope => scope,
         });
-        if (!registered.ok) throw new Error(registered.reasonCode);
-        const previewRoutes = createLocalServicePreviewRoutes({ machineId: 'machine_1', registry, server: {
-            token: 'custodian-token', serverBaseUrl: 'https://home.example.test',
-            // Only Home HTTP is replaced; Action normalization, registry and lifecycle run together.
-            http: { async post(_url, body) {
-                const resource = LocalServicePreviewResourceV1Schema.parse(body);
-                expect(resource.serviceTarget).toEqual(serviceTarget);
-                return { data: { resource, accessUrl: 'https://actual-preview.example.test/?previewToken=current', expiresAt: 61_000 } };
-            }, async delete() { return { data: { ok: true } }; } },
-        } });
-        const execute = createLocalServicesDaemonRuntimeActionExecutor({ routes: { previewRoutes }, featureGate: allowAllFeatureGate });
-        const opened = await execute(runtimeArgs({ actionId: 'localServices.preview.openOrCreate', input: {
-            machineId: 'machine_1', targetId: 'managed:web', serviceTarget } }));
-        expect(opened).toMatchObject({ status: 'existing', preview: { previewId: 'actual-preview',
-            accessUrl: 'https://actual-preview.example.test/?previewToken=current', resource: { serviceTarget } } });
-        const wrong = await execute(runtimeArgs({ actionId: 'localServices.preview.revoke', input: {
-            machineId: 'machine_1', previewId: 'actual-preview', serviceTarget: { ...serviceTarget, managedServiceId: 'another-instance' } } }));
-        expect(wrong).toMatchObject({ ok: false });
-        expect(registry.previewsById.has('actual-preview')).toBe(true);
-        const revoked = await execute(runtimeArgs({ actionId: 'localServices.preview.revoke', input: {
-            machineId: 'machine_1', previewId: 'actual-preview', serviceTarget } }));
-        expect(revoked).toMatchObject({ revoked: true, previewId: 'actual-preview' });
-        expect(registry.previewsById.has('actual-preview')).toBe(false);
+        const workspace = { id: 'workspace_1', serverId: 'home', machineId: 'machine_1', rootPath: process.cwd(), createdAtMs: 1 };
+        const declaration = { workspaceRefId: workspace.id, selection: { kind: 'manifest' as const, name: 'web' } };
+        let stopped = false;
+        const handle = await owner.superviseProject({ workspace, declaration, cwd: workspace.rootPath,
+            serviceId: 'web', specIdentity: 'web', isCurrent: () => true,
+            requester: { serverId: 'home', accountId: 'starter', machineId: 'machine_1', installationId: 'installation' },
+            processSpec: { mode: { kind: 'native',
+                instance: { adapter: { pluginId: 'fixture.plugin', localId: 'web' }, nativeResourceId: 'exact-web' },
+                // Only the native platform lifecycle is replaced; owner and supervisor remain real.
+                lifecycle: { inspect: async () => ({ phase: stopped ? 'stopped' : 'running', readiness: 'ready', endpoint: 'http://127.0.0.1:5173' }),
+                    stop: async () => { stopped = true; return { status: 'stopped' }; } } } },
+            authorizeLaunch: async () => ({ command: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'], env: {}, release: async () => undefined }),
+        });
+        try {
+            const registry = createLocalServicePreviewRegistry();
+            const serviceTarget = { kind: 'managed_service' as const, machineId: 'machine_1', managedServiceId: handle.instanceId,
+                workspaceId: workspace.id, cwd: workspace.rootPath, declaration };
+            const registered = registerLocalServicePreview(registry, {
+                previewId: 'actual-preview', machineId: 'machine_1', owner: { kind: 'user', id: 'starter' }, serviceTarget,
+                target: { scheme: 'http', host: '127.0.0.1', port: 5173 }, initialPath: { pathname: '/', search: '' },
+                display: { title: 'Web', addressLabel: 'localhost:5173' }, originMode: 'host',
+            });
+            if (!registered.ok) throw new Error(registered.reasonCode);
+            const previewRoutes = createLocalServicePreviewRoutes({ machineId: 'machine_1', registry, projectManagedServices: owner, server: {
+                token: 'custodian-token', serverBaseUrl: 'https://home.example.test',
+                // Only Home HTTP is replaced; Action normalization, registry and lifecycle run together.
+                http: { async post(_url, body) {
+                    const resource = LocalServicePreviewResourceV1Schema.parse(body);
+                    expect(resource.serviceTarget).toEqual(serviceTarget);
+                    return { data: { resource, accessUrl: 'https://actual-preview.example.test/?previewToken=current', expiresAt: 61_000 } };
+                }, async delete() { return { data: { ok: true } }; } },
+            } });
+            const execute = createLocalServicesDaemonRuntimeActionExecutor({ routes: { previewRoutes }, featureGate: allowAllFeatureGate });
+            const opened = await execute(runtimeArgs({ actionId: 'localServices.preview.openOrCreate', input: {
+                machineId: 'machine_1', targetId: 'managed:web', serviceTarget } }));
+            expect(opened).toMatchObject({ status: 'existing', preview: { previewId: 'actual-preview',
+                accessUrl: 'https://actual-preview.example.test/?previewToken=current', resource: { serviceTarget } } });
+            const wrong = await execute(runtimeArgs({ actionId: 'localServices.preview.revoke', input: {
+                machineId: 'machine_1', previewId: 'actual-preview', serviceTarget: { ...serviceTarget, managedServiceId: 'another-instance' } } }));
+            expect(wrong).toMatchObject({ ok: false });
+            expect(registry.previewsById.has('actual-preview')).toBe(true);
+            const revoked = await execute(runtimeArgs({ actionId: 'localServices.preview.revoke', input: {
+                machineId: 'machine_1', previewId: 'actual-preview', serviceTarget } }));
+            expect(revoked).toMatchObject({ revoked: true, previewId: 'actual-preview' });
+            expect(registry.previewsById.has('actual-preview')).toBe(false);
+        } finally { await handle.stop(); await owner.dispose(); }
     });
     it('maps localServices.inventory.list to the daemon inventory snapshot route', async () => {
         const mod = await import('./runtimeActionExecutor').catch(() => null);
