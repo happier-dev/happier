@@ -84,6 +84,53 @@ test('language lookup and tokenization defer the highlighter runtime and themes'
     }
 });
 
+test('web translation lookup keeps unselected locales outside required production chunks', async () => {
+    const fixture = mkdtempSync(path.join(tmpdir(), 'happier-locale-chunks-'));
+    let server;
+    try {
+        writeFileSync(path.join(fixture, 'index.js'), `import * as text from ${JSON.stringify(path.join(uiRoot, 'sources/text/i18n.ts'))};
+globalThis.text = text;`);
+        delete require.cache[require.resolve(path.join(uiRoot, 'metro.config.js'))];
+        const config = require(path.join(uiRoot, 'metro.config.js'));
+        config.watchFolders = [...config.watchFolders, fixture];
+        config.maxWorkers = 2;
+        config.cacheStores = [new (require('metro-cache').FileStore)({ root: path.join(fixture, 'transforms') })];
+        config.fileMapCacheDirectory = path.join(fixture, 'filemap');
+        mkdirSync(config.fileMapCacheDirectory, { recursive: true });
+        config.reporter = { update() {} };
+        const originalSerializer = config.serializer.customSerializer;
+        let artifacts;
+        config.serializer.customSerializer = async (entry, prepend, graph, options) => {
+            const result = await originalSerializer(entry, prepend, graph, {
+                ...options,
+                serializerOptions: { output: 'static', splitChunks: true, exporting: true, includeSourceMaps: false },
+            });
+            artifacts = (typeof result === 'string' ? JSON.parse(result) : result).artifacts;
+            return { code: '', map: '{}' };
+        };
+        const Server = require('metro/private/Server').default;
+        server = new Server(config, { watch: false });
+        await server.build({ ...Server.DEFAULT_BUNDLE_OPTIONS,
+            entryFile: path.join(fixture, 'index.js'), platform: 'web', dev: false, minify: true, lazy: false,
+        });
+        const javascript = artifacts.filter(artifact => artifact.type === 'js');
+        const required = javascript.filter(artifact => artifact.metadata.isAsync !== true);
+        const paths = required.flatMap(artifact => artifact.metadata.modulePaths.map(file => file.replaceAll('\\', '/')));
+        const unselected = paths.filter(file =>
+            /\/text\/(?:translations\/(?:features\/)?(?:[^/]*\.)?(?:ca|de|es|fr|it|ja|pl|pt|ru|zh-Hans|zh-Hant)(?:Overrides)?\.ts|bundledPluginTranslations\/(?:ca|de|es|fr|it|ja|pl|pt|ru|zh-Hans|zh-Hant)\.generated\.ts|bundledPluginTranslations\.generated\.ts)$/.test(file));
+        console.log(JSON.stringify({ entry: 'translation lookup', requiredChunks: required.map(artifact => ({
+            file: artifact.filename, bytes: Buffer.byteLength(artifact.source),
+        })), unselected }));
+        assert.deepEqual(unselected, [], 'startup must not download unselected host or aggregate plugin locales');
+        assert.ok(paths.some(file => file.endsWith('/text/translations/en.ts')), 'English fallback remains synchronous');
+        assert.ok(javascript.some(artifact => artifact.metadata.isAsync === true && artifact.metadata.modulePaths.some(
+            file => file.replaceAll('\\', '/').endsWith('/text/translations/ru.ts'))), 'selected-language demand retains the Russian chunk');
+    } finally {
+        if (server) await server.end();
+        rmSync(fixture, { recursive: true, force: true });
+    }
+});
+
 test('web markdown consumers keep their shared engine outside required production chunks', async () => {
     const fixture = mkdtempSync(path.join(tmpdir(), 'happier-markdown-chunks-'));
     let server;
@@ -227,6 +274,36 @@ test('web development includes dynamic imports in one graph while native keeps l
     } finally {
         if (server) await server.end();
         rmSync(fixture, { recursive: true, force: true });
+    }
+});
+
+test('local settings parsing does not load folder mutations or the plugin UI contribution catalog', async () => {
+    const cache = mkdtempSync(path.join(tmpdir(), 'happier-local-settings-graph-'));
+    let server;
+    try {
+        delete require.cache[require.resolve(path.join(uiRoot, 'metro.config.js'))];
+        const config = require(path.join(uiRoot, 'metro.config.js'));
+        config.maxWorkers = 2;
+        config.cacheStores = [new (require('metro-cache').FileStore)({ root: path.join(cache, 'transforms') })];
+        config.fileMapCacheDirectory = path.join(cache, 'filemap');
+        mkdirSync(config.fileMapCacheDirectory, { recursive: true });
+        config.reporter = { update() {} };
+        const Server = require('metro/private/Server').default;
+        server = new Server(config, { watch: false });
+        const entry = 'sources/sync/domains/settings/localSettings.ts';
+        await server.build({ ...Server.DEFAULT_BUNDLE_OPTIONS,
+            entryFile: path.join(uiRoot, entry), platform: 'web', dev: true, minify: false, lazy: true,
+        });
+        const graph = [...server.getBundler().getDeltaBundler()._deltaCalculators.keys()].at(-1);
+        const paths = [...graph.dependencies.keys()].map(file => file.replaceAll('\\', '/'));
+        const unrelated = paths.filter(file =>
+            /\/sync\/domains\/session\/folders\/(?:mutations|sessionListFolders|tree)\.ts$/.test(file)
+            || /\/plugins\/contributions\/ui\/v2\.(?:ts|js)$/.test(file));
+        console.log(JSON.stringify({ entry, modules: paths.length, unrelated }));
+        assert.deepEqual(unrelated, [], 'device settings must use their canonical schema owners without evaluating unrelated catalogs');
+    } finally {
+        if (server) await server.end();
+        rmSync(cache, { recursive: true, force: true });
     }
 });
 

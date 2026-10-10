@@ -336,6 +336,67 @@ describe('metro.config.js (web)', () => {
         });
     });
 
+    it('uses the authored export rather than deriving a filename from dist, and rejects missing source admission', () => {
+        const uiDir = getUiDir();
+        const repoRoot = resolve(uiDir, '..', '..');
+        const config = loadMetroConfig(uiDir);
+        const packageJsonPath = resolve(repoRoot, 'packages/plugin-sdk/package.json');
+        const manifest = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
+        const originalReadFileSync = fs.readFileSync;
+        // The filesystem is the package-metadata boundary; retain the real resolver and source files.
+        const readPackage = vi.spyOn(fs, 'readFileSync').mockImplementation((...args) => {
+            if (String(args[0]) === packageJsonPath) return JSON.stringify(manifest);
+            return Reflect.apply(originalReadFileSync, fs, args);
+        });
+        const context = {
+            originModulePath: join(uiDir, 'index.ts'),
+            resolveRequest: () => ({ type: 'empty' }),
+        };
+        try {
+            manifest.exports['./http']['happier-source'] = './src/async/index.ts';
+            expect(config.resolver.resolveRequest(context, '@happier-dev/plugin-sdk/http', 'web')).toEqual({
+                type: 'sourceFile',
+                filePath: resolve(repoRoot, 'packages/plugin-sdk/src/async/index.ts'),
+            });
+            delete manifest.exports['./http']['happier-source'];
+            expect(() => config.resolver.resolveRequest(context, '@happier-dev/plugin-sdk/http', 'web'))
+                .toThrow(/happier-source/u);
+            manifest.exports['.'].browser = './dist/index.browser.js';
+            expect(() => config.resolver.resolveRequest(context, '@happier-dev/plugin-sdk', 'web'))
+                .toThrow(/happier-source/u);
+            manifest.exports['./http']['happier-source'] = './src/missing-authored-entry.ts';
+            expect(() => config.resolver.resolveRequest(context, '@happier-dev/plugin-sdk/http', 'web'))
+                .toThrow(/source target/u);
+        } finally {
+            readPackage.mockRestore();
+        }
+    });
+
+    it.each([
+        ['web', '@happier-dev/plugin-sdk', 'packages/plugin-sdk/src/index.browser.ts'],
+        ['ios', '@happier-dev/plugin-sdk', 'packages/plugin-sdk/src/index.ts'],
+        ['web', '@happier-dev/plugins-elevenlabs/ui/voice', 'packages/plugins/elevenlabs/src/ui/voice/index.ts'],
+        ['ios', '@happier-dev/plugins-elevenlabs/ui/voice', 'packages/plugins/elevenlabs/src/ui/voice/index.native.ts'],
+    ])('selects the package-owned %s source for %s', (platform, moduleName, sourcePath) => {
+        const uiDir = getUiDir();
+        const repoRoot = resolve(uiDir, '..', '..');
+        const config = loadMetroConfig(uiDir);
+        expect(config.resolver.resolveRequest({
+            originModulePath: join(uiDir, 'index.ts'),
+            resolveRequest: () => ({ type: 'empty' }),
+        }, moduleName, platform)).toEqual({ type: 'sourceFile', filePath: resolve(repoRoot, sourcePath) });
+    });
+
+    it('does not turn absolute dist imports into guessed authored-source imports', () => {
+        const uiDir = getUiDir();
+        const repoRoot = resolve(uiDir, '..', '..');
+        const config = loadMetroConfig(uiDir);
+        expect(config.resolver.resolveRequest({
+            originModulePath: join(uiDir, 'index.ts'),
+            resolveRequest: () => ({ type: 'empty' }),
+        }, resolve(repoRoot, 'packages/plugin-sdk/dist/http/index.js'), 'web')).toEqual({ type: 'empty' });
+    });
+
     it('resolves generated bundled Plugin UI asset imports only as packaged Metro assets', () => {
         const uiDir = getUiDir();
         const repoRoot = resolve(uiDir, '..', '..');

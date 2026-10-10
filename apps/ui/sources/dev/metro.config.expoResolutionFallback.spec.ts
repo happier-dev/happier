@@ -31,6 +31,36 @@ describe('apps/ui/metro.config.js (Expo resolution fallbacks)', () => {
         process.env = { ...envSnapshot };
     });
 
+    it.each([false, true])('uses an explicitly prepared private UI inventory without changing ordinary resolution (narrow: %s)', async (narrow) => {
+        const privateRoot = await mkdtemp(path.join(tmpdir(), 'happier-source-ui-inventory-'));
+        const inventoryPath = path.join(privateRoot, 'inventory.js');
+        await writeFile(inventoryPath, 'export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = [];');
+        try {
+            process.env.HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY = inventoryPath;
+            process.env.HAPPIER_UI_METRO_NARROW_WATCH_FOLDERS = narrow ? '1' : '0';
+            const config = requireFreshMetroConfig();
+            const originModulePath = path.resolve(__dirname, '../sync/domains/plugins/availability/bundledPluginUiArtifactSources.ts');
+            const delegated = { type: 'empty' };
+            const context = { originModulePath, resolveRequest: () => delegated };
+            expect(config.resolver.resolveRequest(context, './generatedBundledPluginUiArtifacts', 'web'))
+                .toEqual({ type: 'sourceFile', filePath: inventoryPath });
+            const developerRoute = path.resolve(__dirname, '../app/(app)/dev/plugin-tabs.tsx');
+            for (const moduleName of [
+                '@/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts',
+                path.resolve(path.dirname(originModulePath), 'generatedBundledPluginUiArtifacts.js'),
+                '../../../sync/domains/plugins/availability/generatedBundledPluginUiArtifacts.js',
+            ]) {
+                expect(config.resolver.resolveRequest({ ...context, originModulePath: developerRoute }, moduleName, 'web'))
+                    .toEqual({ type: 'sourceFile', filePath: inventoryPath });
+            }
+            expect(config.watchFolders).toContain(privateRoot);
+            expect(config.resolver.resolveRequest({ ...context, originModulePath: path.join(privateRoot, 'unrelated.js') }, './generatedBundledPluginUiArtifacts', 'web'))
+                .toBe(delegated);
+        } finally {
+            await fs.promises.rm(privateRoot, { recursive: true, force: true });
+        }
+    });
+
     it('stubs `expo-system-ui` on web', () => {
         const config = requireFreshMetroConfig();
 

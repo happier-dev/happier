@@ -452,6 +452,14 @@ const existingWatchFolders = Array.isArray(config.watchFolders) ? config.watchFo
 config.watchFolders = existingWatchFolders.filter(
   (folder, index, all) => typeof folder === 'string' && folder.length > 0 && all.indexOf(folder) === index,
 );
+// One-shot source exports prepare the canonical inventory and its bytes outside
+// the live checkout. Ordinary Expo retains its existing generated input.
+const privatePluginUiInventory = String(process.env.HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY ?? '').trim();
+if (privatePluginUiInventory && !path.isAbsolute(privatePluginUiInventory)) {
+  throw new Error('HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY must be an absolute path');
+}
+if (privatePluginUiInventory) config.watchFolders.push(path.dirname(privatePluginUiInventory));
+const pluginUiAvailabilityRoot = path.resolve(__dirname, 'sources/sync/domains/plugins/availability');
 const rootNodeModules = path.resolve(__dirname, "../../node_modules");
 const appNodeModules = path.resolve(__dirname, "node_modules");
 const reactNativePrivateNodeModules = path.resolve(appNodeModules, "react-native/node_modules");
@@ -566,6 +574,7 @@ if (shouldRestoreMinimalNodeModulesPaths) {
 }
 if (shouldNarrowWatchFolders) {
   const allowedWatchFolders = new Set([
+    ...(privatePluginUiInventory ? [path.dirname(privatePluginUiInventory)] : []),
     ...(shouldRestoreMinimalNodeModulesPaths && fs.existsSync(rootNodeModules) ? [rootNodeModules] : []),
     ...internalWorkspaceWatchFolders,
     ...watchedHoistedNodeModuleRoots,
@@ -655,8 +664,11 @@ function resolveInternalWorkspaceRelativeSourceImportFromOrigin({ originModulePa
   return resolveInternalWorkspaceSourceImport(candidate, blockList);
 }
 
-function resolvePackageExportTarget(entry, platform) {
-  if (typeof entry === "string" && entry.length > 0) return entry;
+function resolvePackageSourceExportTarget(entry, platform) {
+  // Direct authored exports are valid, but publication filenames never imply a source target.
+  if (typeof entry === "string" && entry.length > 0) {
+    return entry.replace(/\\/g, "/").replace(/^\.\//u, "").startsWith("dist/") ? null : entry;
+  }
   if (!entry || typeof entry !== "object") return null;
 
   const platformCondition = platform === "web"
@@ -664,15 +676,26 @@ function resolvePackageExportTarget(entry, platform) {
     : platform
       ? entry["react-native"]
       : null;
-  const platformCandidate = resolvePackageExportTarget(platformCondition, platform);
+  const platformCandidate = resolvePackageSourceExportTarget(platformCondition, platform);
   if (platformCandidate) return platformCandidate;
+
+  const platformPublication = typeof platformCondition === "string"
+    ? platformCondition
+    : platformCondition?.default ?? platformCondition?.import ?? platformCondition?.require;
+  const defaultPublication = entry.default ?? entry.import ?? entry.require;
+  if (platformPublication && platformPublication !== defaultPublication) {
+    throw new Error(`Workspace ${platform === "web" ? "browser" : "react-native"} export must declare its own happier-source target`);
+  }
+
+  const sourceCandidate = resolvePackageSourceExportTarget(entry["happier-source"], platform);
+  if (sourceCandidate) return sourceCandidate;
 
   const candidate =
     entry.default ??
     entry.import ??
     entry.require ??
     null;
-  return resolvePackageExportTarget(candidate, platform);
+  return resolvePackageSourceExportTarget(candidate, platform);
 }
 
 function isInternalWorkspaceSourcePath(filePath) {
@@ -705,56 +728,6 @@ function resolveInternalWorkspaceSourceImport(candidate, blockList) {
   if (ext !== ".js" && ext !== ".mjs" && ext !== ".cjs") return null;
   const basePath = candidate.slice(0, -ext.length);
   return resolveExistingSourceCandidate(basePath, blockList);
-}
-
-function resolveInternalWorkspaceSourceExport(packageRoot, exportTarget, blockList) {
-  if (typeof exportTarget !== "string" || exportTarget.length === 0) return null;
-  const normalizedTarget = exportTarget.replace(/\\/g, "/").replace(/^\.\//u, "");
-  if (!normalizedTarget.startsWith("dist/")) return null;
-
-  const sourceRelativeTarget = normalizedTarget.slice("dist/".length);
-  const ext = path.extname(sourceRelativeTarget);
-  const sourceBasePath = path.resolve(
-    packageRoot,
-    "src",
-    ext ? sourceRelativeTarget.slice(0, -ext.length) : sourceRelativeTarget,
-  );
-  return resolveExistingSourceCandidate(sourceBasePath, blockList);
-}
-
-function resolveInternalWorkspaceAbsoluteDistImport(moduleName, blockList) {
-  if (typeof moduleName !== "string" || !path.isAbsolute(moduleName)) return null;
-
-  const absoluteModuleName = path.resolve(moduleName);
-  for (const [packageName, packageRoot] of internalWorkspacePackages) {
-    const visiblePackageRoots = new Set([
-      path.resolve(packageRoot),
-      path.resolve(rootNodeModules, ...packageName.split("/")),
-      path.resolve(appNodeModules, ...packageName.split("/")),
-    ]);
-
-    for (const visiblePackageRoot of visiblePackageRoots) {
-      const distRoot = path.resolve(visiblePackageRoot, "dist");
-      const relativeTarget = path.relative(distRoot, absoluteModuleName);
-      if (
-        relativeTarget.length === 0 ||
-        relativeTarget === ".." ||
-        relativeTarget.startsWith(`..${path.sep}`) ||
-        path.isAbsolute(relativeTarget)
-      ) {
-        continue;
-      }
-
-      const sourceCandidate = resolveInternalWorkspaceSourceExport(
-        packageRoot,
-        `dist/${relativeTarget.replace(/\\/g, "/")}`,
-        blockList,
-      );
-      if (sourceCandidate) return sourceCandidate;
-    }
-  }
-
-  return null;
 }
 
 /**
@@ -810,26 +783,25 @@ function resolveInternalWorkspacePackageExport(moduleName, blockList, platform) 
   if (parts.length < 2) return null;
   const packageName = parts.length >= 2 ? `${parts[0]}/${parts[1]}` : moduleName;
   const subpath = parts.length > 2 ? parts.slice(2).join("/") : "";
-  const packageRoot = internalWorkspacePackages.get(packageName) ?? path.resolve(rootNodeModules, packageName);
+  const packageRoot = internalWorkspacePackages.get(packageName);
+  if (!packageRoot) return null;
   const packageJsonPath = path.resolve(packageRoot, "package.json");
   if (!fs.existsSync(packageJsonPath)) return null;
 
   const packageJson = safeReadJson(packageJsonPath);
   if (!packageJson || typeof packageJson !== "object") return null;
   const exportKey = subpath.length > 0 ? `./${subpath}` : ".";
-  const exportTarget = resolvePackageExportTarget(
-    packageJson.exports?.[exportKey] ??
-    (subpath.length === 0 ? packageJson.main : null),
-    platform,
-  );
-  if (!exportTarget) return null;
-
-  const sourceCandidate = resolveInternalWorkspaceSourceExport(packageRoot, exportTarget, blockList);
-  if (sourceCandidate) return sourceCandidate;
+  const exportEntry = packageJson.exports?.[exportKey] ?? (subpath.length === 0 ? packageJson.main : null);
+  if (!exportEntry) return null;
+  const exportTarget = resolvePackageSourceExportTarget(exportEntry, platform);
+  if (!exportTarget) {
+    throw new Error(`Workspace export ${moduleName} must declare a happier-source target for ${platform ?? "default"}`);
+  }
 
   const candidate = path.resolve(packageRoot, exportTarget);
-  if (isFileBlockedByMetro(blockList, candidate)) return null;
-  if (!fs.existsSync(candidate)) return null;
+  if (isFileBlockedByMetro(blockList, candidate) || !fs.existsSync(candidate)) {
+    throw new Error(`Workspace source target is unavailable: ${moduleName} -> ${exportTarget}`);
+  }
   return candidate;
 }
 
@@ -869,11 +841,39 @@ function resolvePackageNameShadowedByArtifactAssetExt(context, moduleName) {
 
 const defaultResolveRequest = config.resolver.resolveRequest;
 config.resolver.resolveRequest = (context, moduleName, platform) => {
+  const inventoryImportPath = privatePluginUiInventory
+    ? moduleName.startsWith('@/')
+      ? path.resolve(__dirname, 'sources', moduleName.slice(2))
+      : path.isAbsolute(moduleName)
+        ? path.normalize(moduleName)
+        : moduleName.startsWith('.') && context?.originModulePath
+          ? path.resolve(path.dirname(context.originModulePath), moduleName)
+          : null
+    : null;
+  if (privatePluginUiInventory
+    && [path.join(pluginUiAvailabilityRoot, 'generatedBundledPluginUiArtifacts'),
+      path.join(pluginUiAvailabilityRoot, 'generatedBundledPluginUiArtifacts.js')].includes(inventoryImportPath)) {
+    if (!fs.existsSync(privatePluginUiInventory)) {
+      throw createModuleNotFoundError('Prepared Plugin UI inventory is missing', context?.originModulePath);
+    }
+    return { type: 'sourceFile', filePath: privatePluginUiInventory };
+  }
   // Mermaid imports KaTeX as ESM while enriched Markdown requires it. Both
   // consume its default renderer; selecting the public ESM build once avoids
   // retaining two copies of the same parser, fonts and symbol tables on web.
   if (platform === "web" && moduleName === "katex") {
     return { type: "sourceFile", filePath: require.resolve("katex/dist/katex.mjs") };
+  }
+  // Unistyles' Babel-generated component requires otherwise select its source
+  // exports, while theme setup imports the packaged ESM runtime. Both must use
+  // the same exported implementation or the rendered tree has no active theme.
+  // Its nested component packages also expose a native source main field.
+  if (platform === "web" && /^react-native-unistyles(?:\/|$)/u.test(moduleName)) {
+    context = {
+      ...context,
+      isESMImport: true,
+      mainFields: context.mainFields.filter((field) => field !== "react-native"),
+    };
   }
   // Resolve runtime peers from the app, preserving Metro platform/export rules.
   // Hoisted dependencies must not introduce their own React or native renderers.
@@ -914,14 +914,6 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
 
   const bundledPluginUiArtifactAsset = resolveBundledPluginUiArtifactAsset(resolvedModuleName);
   if (bundledPluginUiArtifactAsset) return bundledPluginUiArtifactAsset;
-
-  const internalWorkspaceAbsoluteDistImport = resolveInternalWorkspaceAbsoluteDistImport(
-    resolvedModuleName,
-    config.resolver.blockList,
-  );
-  if (internalWorkspaceAbsoluteDistImport) {
-    return { type: "sourceFile", filePath: internalWorkspaceAbsoluteDistImport };
-  }
 
   const internalWorkspaceRelativeSourceImport = resolveInternalWorkspaceRelativeSourceImportFromOrigin({
     originModulePath: context?.originModulePath,

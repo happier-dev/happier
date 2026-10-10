@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { computeSourceDevSharedDepsSignature } from '../../cli/scripts/buildSharedDeps.mjs';
@@ -73,14 +73,14 @@ test('ensureUiWorkspacePackagesBuilt publishes rebuilt plugin artifacts before E
   assert.match(String(calls[1][1]), /apps\/ui$/);
   assert.deepEqual(calls[1][2], {
     quiet: false,
-    env: { ...env, HAPPIER_WORKSPACE_BUILD_MODE: 'qa-runtime' },
+    env: { ...env, HAPPIER_WORKSPACE_BUILD_MODE: 'source-dev' },
     publicationMode: 'live',
     isolatePluginFailures: true,
   });
   assert.equal(calls[2][0], 'publish');
   assert.equal(calls[2][1], resolve(String(calls[1][1]), '../..'));
   assert.deepEqual(calls[2][2], {
-    env: { ...env, HAPPIER_WORKSPACE_BUILD_MODE: 'qa-runtime' },
+    env: { ...env, HAPPIER_WORKSPACE_BUILD_MODE: 'source-dev' },
     includeRuntimeDependencies: true,
     quiet: false,
     workspaceNames: ['plugins-inspector'],
@@ -135,7 +135,7 @@ test('ensureUiWorkspacePackagesBuilt leaves complete remote publication policy w
   });
 
   assert.deepEqual(calls, [{
-    env: { ...env, HAPPIER_WORKSPACE_BUILD_MODE: 'qa-runtime' },
+    env: { ...env, HAPPIER_WORKSPACE_BUILD_MODE: 'source-dev' },
     includeRuntimeDependencies: true,
     quiet: false,
     workspaceNames: ['plugins-inspector'],
@@ -220,4 +220,39 @@ test('ensureUiWorkspacePackagesBuilt throws when apps/ui is not inside a Happier
     }),
     /\bnot-monorepo\b/i
   );
+});
+
+test('live UI failure publication uses scoped target-owned artifacts on execution replicas', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-ui-failure-publication-'));
+  try {
+    const scriptDir = join(root, 'apps', 'cli', 'scripts');
+    await mkdir(join(scriptDir, 'build-owned'), { recursive: true });
+    await writeFile(join(scriptDir, 'build-owned', 'generateBundledPluginEntries.ts'), 'export {};');
+    // The child executable is the OS boundary; the UI owner and publisher stay real.
+    await writeFile(join(scriptDir, 'withNodeHeapLimit.mjs'),
+      "import { readFileSync, writeFileSync } from 'node:fs'; writeFileSync(process.env.PUBLISHER_CAPTURE, JSON.stringify({args:process.argv.slice(2), failures:JSON.parse(readFileSync(0,'utf8'))}));");
+    const failure = { packageName: '@happier-dev/plugins-broken', pluginId: 'happier.broken',
+      diagnostic: { code: 'plugin_ui_artifact_invalid', message: 'missing UI bundle' } };
+    const capture = join(root, 'captured.json');
+    const { publishBundledPluginProjectionWithFailures } = await import('./ensureWorkspacePackagesBuilt.mjs');
+    await publishBundledPluginProjectionWithFailures({ repoRoot: root,
+      env: { ...process.env, HAPPIER_DEV_TARGET_EXECUTION: '1', PUBLISHER_CAPTURE: capture },
+      pluginFailures: [failure] });
+    const published = JSON.parse(await readFile(capture, 'utf8'));
+    assert.deepEqual(published.failures, [failure]);
+    assert.equal(published.args.includes('--target-owned-only'), true);
+    assert.equal(published.args[published.args.indexOf('--workspace') + 1], 'plugins-broken');
+    await publishBundledPluginProjectionWithFailures({ repoRoot: root,
+      env: { ...process.env, HAPPIER_DEV_TARGET_EXECUTION: '0', PUBLISHER_CAPTURE: capture },
+      pluginFailures: [failure] });
+    const local = JSON.parse(await readFile(capture, 'utf8'));
+    assert.equal(local.args.includes('--target-owned-only'), false);
+    assert.equal(local.args[local.args.indexOf('--workspace') + 1], 'plugins-broken');
+    await publishBundledPluginProjectionWithFailures({ repoRoot: root,
+      env: { ...process.env, HAPPIER_DEV_TARGET_EXECUTION: '1', PUBLISHER_CAPTURE: capture },
+      publicationMode: 'artifact', pluginFailures: [failure] });
+    const artifact = JSON.parse(await readFile(capture, 'utf8'));
+    assert.equal(artifact.args.includes('--workspace'), false);
+    assert.equal(artifact.args.includes('--target-owned-only'), false);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

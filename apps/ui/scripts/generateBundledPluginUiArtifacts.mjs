@@ -3,11 +3,6 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  PluginUiArtifactsManifestV2Schema,
-  computePluginUiArtifactFileSetSha256DigestV1,
-  computePluginUiArtifactSha256DigestV1,
-} from '@happier-dev/protocol/plugins/ui';
-import {
   createBundledPluginPublicationFailure,
   readBundledPluginPublicationFailures,
   writeBundledPluginPublicationFailures,
@@ -53,14 +48,30 @@ function assertArtifactPath(artifactsRoot, relativePath, packageName) {
   return absolutePath;
 }
 
-async function collectBundledPluginUiArtifactSources(repoRoot, initialPluginFailures = []) {
+export function listBundledPluginUiArtifactExports(packageJson) {
+  return packageJson?.exports && typeof packageJson.exports === 'object'
+    ? Object.entries(packageJson.exports).filter(([key, target]) => (
+      key.startsWith('./happier-plugin-ui/')
+      // Portable authored entries are direct source declarations. Conditional
+      // platform modules (e.g. voice) retain their ordinary Metro source path;
+      // they are not the universal app-preseed artifact compiler's inputs.
+      && (key.endsWith('/entry.cjs.bundle') || typeof target === 'string')
+    )).map(([key]) => key) : [];
+}
+
+async function collectBundledPluginUiArtifactSources(repoRoot, initialPluginFailures = [], artifactRoots, pluginManifests = {}) {
+  const {
+    PluginUiArtifactsManifestV2Schema,
+    computePluginUiArtifactFileSetSha256DigestV1,
+    computePluginUiArtifactSha256DigestV1,
+  } = await import('@happier-dev/protocol/plugins/ui');
   const uiPackageJsonPath = resolve(repoRoot, 'apps', 'ui', 'package.json');
   const uiPackageJson = parseJson(await readFile(uiPackageJsonPath, 'utf8'), uiPackageJsonPath);
   const uiDependencies = uiPackageJson?.dependencies && typeof uiPackageJson.dependencies === 'object'
     ? uiPackageJson.dependencies
     : {};
   const pluginsRoot = resolve(repoRoot, 'packages', 'plugins');
-  const pluginDirectories = (await readdir(pluginsRoot, { withFileTypes: true }))
+  const pluginDirectories = artifactRoots ? Object.keys(artifactRoots).sort() : (await readdir(pluginsRoot, { withFileTypes: true }))
     .filter((entry) => entry.isDirectory() && !entry.name.startsWith('_'))
     .map((entry) => entry.name)
     .sort((left, right) => left.localeCompare(right));
@@ -73,7 +84,7 @@ async function collectBundledPluginUiArtifactSources(repoRoot, initialPluginFail
     const candidatePackageName = `${PLUGIN_PACKAGE_PREFIX}${pluginDirectory}`;
     if (excludedPackageNames.has(candidatePackageName)) continue;
     const packageRoot = resolve(pluginsRoot, pluginDirectory);
-    const artifactsRoot = resolve(packageRoot, 'dist', 'happier-plugin-ui');
+    const artifactsRoot = artifactRoots ? resolve(artifactRoots[pluginDirectory]) : resolve(packageRoot, 'dist', 'happier-plugin-ui');
     const artifactsManifestPath = resolve(artifactsRoot, 'ui-artifacts.json');
     let pluginId = `happier.${pluginDirectory}`;
     try {
@@ -84,17 +95,13 @@ async function collectBundledPluginUiArtifactSources(repoRoot, initialPluginFail
       if (error?.code === 'ENOENT') {
         const packageJsonPath = resolve(packageRoot, 'package.json');
         const packageJson = parseJson(await readFile(packageJsonPath, 'utf8'), packageJsonPath);
-        const bundleExports = packageJson?.exports && typeof packageJson.exports === 'object'
-          ? Object.keys(packageJson.exports).filter((key) => (
-            key.startsWith('./happier-plugin-ui/') && key.endsWith('/entry.cjs.bundle')
-          ))
-          : [];
+        const bundleExports = listBundledPluginUiArtifactExports(packageJson);
         if (bundleExports.length === 0) continue;
         const pluginManifestPath = resolve(packageRoot, '.happier-plugin', 'plugin.json');
         const pluginManifest = parseJson(await readFile(pluginManifestPath, 'utf8'), pluginManifestPath);
         pluginId = readRequiredString(pluginManifest, 'id', pluginManifestPath);
         throw new Error(
-          `Bundled Plugin UI artifact manifest is missing for '${pluginId}' with declared bundle exports: ${bundleExports.join(', ')}`,
+          `Bundled Plugin UI artifact manifest is missing for '${pluginId}' with declared UI artifact exports: ${bundleExports.join(', ')}`,
         );
       }
       throw error;
@@ -103,7 +110,7 @@ async function collectBundledPluginUiArtifactSources(repoRoot, initialPluginFail
     const packageJsonPath = resolve(packageRoot, 'package.json');
     const pluginManifestPath = resolve(packageRoot, '.happier-plugin', 'plugin.json');
     const packageJson = parseJson(await readFile(packageJsonPath, 'utf8'), packageJsonPath);
-    const pluginManifest = parseJson(await readFile(pluginManifestPath, 'utf8'), pluginManifestPath);
+    const pluginManifest = pluginManifests[pluginDirectory] ?? parseJson(await readFile(pluginManifestPath, 'utf8'), pluginManifestPath);
     const packageName = readRequiredString(packageJson, 'name', packageJsonPath);
     const packageVersion = readRequiredString(packageJson, 'version', packageJsonPath);
     pluginId = readRequiredString(pluginManifest, 'id', pluginManifestPath);
@@ -169,7 +176,9 @@ async function collectBundledPluginUiArtifactSources(repoRoot, initialPluginFail
         digest: entry.digest,
         files: [...entry.files]
           .sort((left, right) => left.relativePath.localeCompare(right.relativePath))
-          .map((file) => ({ relativePath: file.relativePath })),
+          .map((file) => ({ relativePath: file.relativePath, specifier: artifactRoots
+            ? assertArtifactPath(artifactsRoot, file.relativePath, packageName)
+            : `${packageName}/happier-plugin-ui/${file.relativePath}` })),
       });
     }
     for (const source of pluginSources) {
@@ -213,7 +222,7 @@ function renderBundledPluginUiArtifactInventory(sources) {
   const assetSymbolBySpecifier = new Map();
   for (const source of sources) {
     for (const file of source.files) {
-      const specifier = `${source.packageName}/happier-plugin-ui/${file.relativePath}`;
+      const specifier = file.specifier;
       if (assetSymbolBySpecifier.has(specifier)) continue;
       const symbol = `BUNDLED_PLUGIN_UI_APP_ASSET_${assetSymbolBySpecifier.size}`;
       assetSymbolBySpecifier.set(specifier, symbol);
@@ -236,7 +245,7 @@ function renderBundledPluginUiArtifactInventory(sources) {
       '    files: Object.freeze([',
     );
     for (const file of source.files) {
-      const specifier = `${source.packageName}/happier-plugin-ui/${file.relativePath}`;
+      const specifier = file.specifier;
       lines.push(
         '      Object.freeze({',
         `        relativePath: ${JSON.stringify(file.relativePath)},`,
@@ -259,6 +268,9 @@ export async function generateBundledPluginUiArtifacts({
   mode = 'write',
   publicationMode = 'live',
   pluginFailures = [],
+  outputPath = resolveBundledPluginUiArtifactsOutputPath(repoRoot),
+  artifactRoots,
+  pluginManifests,
 } = {}) {
   if (mode !== 'write' && mode !== 'check') {
     throw new Error(`Unsupported bundled Plugin UI artifact generation mode '${String(mode)}'`);
@@ -266,7 +278,6 @@ export async function generateBundledPluginUiArtifacts({
   if (publicationMode !== 'live' && publicationMode !== 'artifact') {
     throw new Error(`Unsupported bundled Plugin UI publication mode '${String(publicationMode)}'`);
   }
-  const outputPath = resolveBundledPluginUiArtifactsOutputPath(repoRoot);
   const inheritedCliFailures = publicationMode === 'live'
     ? readBundledPluginPublicationFailures(repoRoot).filter((failure) => (
       failure.diagnostic.code !== 'plugin_ui_artifact_invalid'
@@ -275,7 +286,7 @@ export async function generateBundledPluginUiArtifacts({
   const initialFailures = [...new Map(
     [...inheritedCliFailures, ...pluginFailures].map((failure) => [failure.packageName, failure]),
   ).values()];
-  const collected = await collectBundledPluginUiArtifactSources(repoRoot, initialFailures);
+  const collected = await collectBundledPluginUiArtifactSources(repoRoot, initialFailures, artifactRoots, pluginManifests);
   if ((mode === 'check' || publicationMode === 'artifact') && collected.pluginFailures.length > 0) {
     throw new Error(`Bundled Plugin UI artifact publication failed for ${collected.pluginFailures.map((failure) => (
       `${failure.packageName}: ${failure.diagnostic.message}`

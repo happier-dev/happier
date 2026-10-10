@@ -484,7 +484,10 @@ const baseExpoConfig = {
             [
                 "expo-router",
                 {
-                    root: "./sources/app"
+                    root: "./sources/app",
+                    // Expo owns production web chunks and route-module caching.
+                    // Development keeps the existing single Metro graph policy.
+                    asyncRoutes: { web: "production" }
                 }
             ],
             ...(devClientLaunchMode ? [[

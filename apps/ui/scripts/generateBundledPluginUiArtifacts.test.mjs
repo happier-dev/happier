@@ -126,6 +126,30 @@ test('the UI prebuild owns one universal exact app-preseed registry from canonic
   }
 });
 
+test('source preparation projects private artifacts without touching package dist or the live inventory', async () => {
+  const fixture = await createFixture();
+  try {
+    const privateRoot = join(fixture.repoRoot, 'private-inputs');
+    const privateArtifacts = join(privateRoot, 'fixture', 'happier-plugin-ui');
+    const { cp } = await import('node:fs/promises');
+    await cp(fixture.artifactRoot, privateArtifacts, { recursive: true });
+    await rm(fixture.artifactRoot, { recursive: true });
+    const outputPath = join(privateRoot, 'inventory.js');
+    await generateBundledPluginUiArtifacts({
+      repoRoot: fixture.repoRoot, publicationMode: 'artifact', outputPath,
+      artifactRoots: { fixture: privateArtifacts },
+      pluginManifests: { fixture: { id: 'happier.authored-fixture' } },
+    });
+    const output = await readFile(outputPath, 'utf8');
+    assert.match(output, /happier\.authored-fixture/);
+    assert.ok(output.includes(JSON.stringify(join(privateArtifacts, fixture.relativePath))));
+    await assert.rejects(stat(resolveBundledPluginUiArtifactsOutputPath(fixture.repoRoot)), { code: 'ENOENT' });
+    await assert.rejects(stat(fixture.artifactRoot), { code: 'ENOENT' });
+  } finally {
+    await rm(fixture.repoRoot, { recursive: true, force: true });
+  }
+});
+
 test('the emitted JavaScript and committed declaration satisfy the inventory contract', async () => {
   const fixture = await createFixture();
   try {

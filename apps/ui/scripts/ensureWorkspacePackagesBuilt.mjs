@@ -17,7 +17,7 @@ import {
 
 const uiDir = dirname(dirname(fileURLToPath(import.meta.url)));
 
-async function publishBundledPluginProjectionWithFailures({ repoRoot, env, pluginFailures, publicationMode = 'live' }) {
+export async function publishBundledPluginProjectionWithFailures({ repoRoot, env, pluginFailures, publicationMode = 'live' }) {
   const { runCanonicalBundledPluginArtifactPublisher } = await import('../../cli/scripts/buildSharedDeps.mjs');
   await runCanonicalBundledPluginArtifactPublisher({
     repoRoot,
@@ -25,6 +25,12 @@ async function publishBundledPluginProjectionWithFailures({ repoRoot, env, plugi
     mode: 'write',
     publicationMode,
     pluginFailures,
+    // Failure admission updates the existing scoped inventory; it cannot replace
+    // the complete shared Agent projection with an incomplete package set.
+    ...(publicationMode === 'live' && pluginFailures.length > 0 ? {
+      workspaceNames: pluginFailures.map((failure) => failure.packageName.replace(/^@happier-dev\//, '')),
+      targetOwnedOnly: String(env?.HAPPIER_DEV_TARGET_EXECUTION ?? '').trim() === '1',
+    } : {}),
   });
 }
 
