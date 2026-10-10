@@ -4,11 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { flushHookEffects, renderScreen as renderTestScreen, standardCleanup } from '@/dev/testkit';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { storage } from '@/sync/domains/state/storageStore';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 import { buildRealmQualifiedMobileSurfaceStorageKey } from '@/sync/domains/settings/mobileSurfacePersistence';
-import { setActiveServerId, setServerProfileIdentityForUrl, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { switchConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
 import type { PluginUiSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';
 import {
     resolveSessionCockpitMobileCatalog,
@@ -20,6 +22,7 @@ const navigatorState = vi.hoisted(() => ({
     screenOptions: null as null | Record<string, unknown>,
     backBehavior: null as string | null,
     navigationContainerLinking: null as null | Record<string, unknown>,
+    navigationContainerTheme: null as null | { dark?: boolean },
     navigationContainerOnStateChange: null as null | ((state: {
         index: number;
         routes: Array<{ key: string; name: string }>;
@@ -93,10 +96,10 @@ function renderScreen(element: React.ReactElement) {
 }
 
 async function activatePersistenceRealm(serverId: string, accountId: string) {
-    const serverUrl = `https://${serverId}.example.test`;
-    await upsertServerProfile({ serverUrl, name: serverId });
-    await setServerProfileIdentityForUrl(serverUrl, serverId);
-    await setActiveServerId(serverId);
+    const server = await upsertServerProfile({ serverUrl: `https://${serverId}`, name: serverId });
+    if (server.id !== serverId) throw new Error('Navigator fixture requires its exact Home profile');
+    await setActiveServerId(server.id);
+    await switchConnectionToActiveServer();
     storage.setState({ profileScope: { serverId, accountId } });
 }
 
@@ -119,13 +122,16 @@ vi.mock('@react-navigation/native', async () => {
             children,
             linking,
             onStateChange,
+            theme,
         }: {
             children?: React.ReactNode;
             linking?: Record<string, unknown>;
+            theme?: { dark?: boolean };
             onStateChange?: (state: { index: number; routes: Array<{ key: string; name: string }> }) => void;
         }) => {
             navigatorState.navigationContainerRenderCount += 1;
             navigatorState.navigationContainerLinking = linking ?? null;
+            navigatorState.navigationContainerTheme = theme ?? null;
             navigatorState.navigationContainerOnStateChange = onStateChange ?? null;
             return React.createElement('NavigationContainer', { linking, onStateChange }, children);
         },
@@ -377,6 +383,7 @@ describe('SessionCockpitTabNavigator keyboard behavior', () => {
     beforeEach(async () => {
         standardCleanup();
         stopObservingPersistence?.();
+        await loadSyncSingletonForTests();
         storage.setState({
             ...initialStorageState,
             localSettings: { ...localSettingsDefaults },
@@ -433,6 +440,24 @@ describe('SessionCockpitTabNavigator keyboard behavior', () => {
         expect(navigatorState.screenOptions?.tabBarHideOnKeyboard).toBe(false);
     });
 
+    it('paints its scenes with the app navigation theme instead of the nested container default', async () => {
+        const { SessionCockpitTabNavigator } = await import('./SessionCockpitTabNavigator');
+        const { DarkTheme, ThemeProvider } = await import('@react-navigation/native');
+
+        await renderScreen(
+            <ThemeProvider value={DarkTheme}>
+                <SessionCockpitTabNavigator
+                    initialSurface="chat"
+                    scopeId="session:s1"
+                    sessionId="s1"
+                    terminalTabAvailable
+                />
+            </ThemeProvider>,
+        );
+
+        expect(navigatorState.navigationContainerTheme).toBe(DarkTheme);
+    });
+
     it('passes the canonical exact-address plugin runtime to the shared Board owner', async () => {
         const { SessionCockpitTabNavigator } = await import('./SessionCockpitTabNavigator');
 
@@ -477,6 +502,7 @@ describe('SessionCockpitTabNavigator keyboard behavior', () => {
         await renderScreen(
             <SessionCockpitTabNavigator
                 initialSurface="chat"
+                routeServerId="server-session"
                 scopeId="session:s1"
                 sessionId="s1"
                 terminalTabAvailable
@@ -672,6 +698,7 @@ describe('SessionCockpitTabNavigator keyboard behavior', () => {
         await renderScreen(
             <SessionCockpitTabNavigator
                 initialSurface="chat"
+                routeServerId="server-session"
                 scopeId="session:s1"
                 sessionId="s1"
                 terminalTabAvailable
@@ -720,6 +747,7 @@ describe('SessionCockpitTabNavigator keyboard behavior', () => {
         const screen = await renderScreen(
             <SessionCockpitTabNavigator
                 initialSurface="services"
+                routeServerId="server-session"
                 scopeId="session:s1"
                 sessionId="s1"
                 terminalTabAvailable={false}
@@ -754,6 +782,7 @@ describe('SessionCockpitTabNavigator keyboard behavior', () => {
         const screen = await renderScreen(
             <SessionCockpitTabNavigator
                 initialSurface="chat"
+                routeServerId="server-session"
                 scopeId="session:s1"
                 sessionId="s1"
                 terminalTabAvailable={false}

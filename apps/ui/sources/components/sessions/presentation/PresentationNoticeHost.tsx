@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Animated, Platform, Pressable, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -18,6 +19,7 @@ import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactive
 import { resolveOverlayPointerEvents } from '@/components/ui/overlays/resolveOverlayPointerEvents';
 import { useOptionalSafeAreaInsets } from '@/hooks/ui/useOptionalSafeAreaInsets';
 import { FLOATING_OVERLAY_METRICS } from '@/components/ui/overlays/floatingOverlayMetrics';
+import { tryRenderWebPortal } from '@/components/ui/popover/portal';
 
 import {
     readPresentationNotice,
@@ -63,7 +65,6 @@ const stylesheet = StyleSheet.create((theme) => ({
             edge: resolveThemeRaisedEdge(theme, 'modal'),
             rim: surfaceUsesRim('floating', theme.dark),
         }),
-        backgroundColor: theme.colors.edge.floatingFill,
         paddingHorizontal: 14,
         paddingVertical: 10,
         flexDirection: 'row',
@@ -77,6 +78,13 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.default('regular'),
         color: theme.colors.text.primary,
         flexShrink: 1,
+    },
+    noticeEmphasis: {
+        ...Typography.default('semiBold'),
+    },
+    // The mark is decoration beside words that already name the subject.
+    noticeLeading: {
+        flexShrink: 0,
     },
     undoControl: {
         // The one interactive element in an otherwise passive notice, so it keeps
@@ -94,6 +102,19 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.text.link,
     },
 }));
+
+/** The message with its subject in the stronger weight, wherever the language puts the name. */
+function renderNoticeMessage(message: string, emphasis: string | undefined, emphasisStyle: object): React.ReactNode {
+    const at = emphasis ? message.indexOf(emphasis) : -1;
+    if (!emphasis || at < 0) return message;
+    return (
+        <>
+            {message.slice(0, at)}
+            <Text style={emphasisStyle}>{emphasis}</Text>
+            {message.slice(at + emphasis.length)}
+        </>
+    );
+}
 
 export const PresentationNoticeHost = React.memo(function PresentationNoticeHost() {
     const styles = stylesheet;
@@ -146,7 +167,7 @@ export const PresentationNoticeHost = React.memo(function PresentationNoticeHost
 
     if (!present || !shown) return null;
     const shownUndo = leaving ? shown.undo ?? null : undo;
-    return (
+    const content = (
         <View
             style={[
                 styles.noticeHost,
@@ -165,7 +186,9 @@ export const PresentationNoticeHost = React.memo(function PresentationNoticeHost
                 accessibilityRole={shown.severity === 'error' ? 'alert' : 'text'}
                 accessibilityLiveRegion={leaving ? 'none' : shown.severity === 'error' ? 'assertive' : 'polite'}
             >
-                <Text style={styles.noticeText}>{shown.message}</Text>
+                <GlassSurface surfaceGroup="floating" style={[StyleSheet.absoluteFillObject, { borderRadius: NOTICE_RADIUS_PX }]}>{null}</GlassSurface>
+                {shown.leading ? <View style={styles.noticeLeading}>{shown.leading}</View> : null}
+                <Text style={styles.noticeText}>{renderNoticeMessage(shown.message, shown.emphasis, styles.noticeEmphasis)}</Text>
                 {shownUndo ? (
                     <Pressable
                         testID={leaving ? undefined : 'current-session-presentation-notice-undo'}
@@ -186,4 +209,13 @@ export const PresentationNoticeHost = React.memo(function PresentationNoticeHost
             </Animated.View>
         </View>
     );
+    // The authenticated navigator stays mounted but can be hidden by the desktop workspace.
+    // Every publisher shares this host, so escape that branch at the host's one render boundary.
+    return tryRenderWebPortal({
+        shouldPortalWeb: Platform.OS === 'web',
+        portalTargetOnWeb: 'body',
+        modalPortalTarget: null,
+        getBoundaryDomElement: () => null,
+        content,
+    }) ?? content;
 });

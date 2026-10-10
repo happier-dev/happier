@@ -5,6 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { usePaneHeaderSlotContent } from '@/components/appShell/panes/paneHeaderSlot';
 import { SessionRoleValueRow, isSessionRoleSnapshotCopiedAcrossOwners } from '@/components/roles/session/sessionRole';
 import { readSessionRolesV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
+import { readSessionBotV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { SessionAgentsLaunchMenu } from '@/components/sessions/agents/launch/SessionAgentsLaunchMenu';
@@ -32,15 +33,15 @@ import { useSessionViewShellSession } from '@/components/sessions/shell/sessionV
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Icon } from '@/components/ui/icons/Icon';
-import { IconButton } from '@/components/ui/buttons/IconButton';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
+import { IconButton } from '@/components/ui/buttons/IconButton';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
-import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { useSessionTranscriptLoaded } from '@/sync/store/hooks';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 import type { Session } from '@/sync/domains/state/storageTypes';
-import { HappierPressable, HAPPIER_WORK_PANE_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { HappierWorkDisclosureLine, HAPPIER_WORK_PANE_METRICS, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
+import { useWorkTheme, WORK_HOST } from '@/components/work/map/WorkMapView';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { describeWorkStatusBucket } from '@/components/work/status/workStatusBuckets';
@@ -48,17 +49,27 @@ import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
 
 import { useSessionWorkSources } from './sessionWorkSources';
-import { useSessionWorkOpeners } from './useSessionWorkOpeners';
+import { useSessionWorkMap } from './useSessionWorkMap';
 import { SessionWorkMapView } from './SessionWorkMapView';
 import { SessionNotesSection } from './roles/SessionNotesSection';
+import { SessionInstructionsSection } from './instructions/SessionInstructionsSection';
+import { SessionVoiceSection } from './voice/SessionVoiceSection';
+import { SessionMemorySection } from './memory/SessionMemorySection';
+import { SessionContextSection } from './context/SessionContextSection';
 import { SessionRolesSection } from './roles/SessionRolesSection';
-import { SessionWorkMoreMenu } from './SessionWorkMoreMenu';
+import { useSessionWorkMenuActions } from './sessionWorkMenuActions';
+import { describeSessionLineage, useSessionLineage } from './sessionLineage';
+import { SessionLineageNavigation } from './SessionLineageBreadcrumb';
 import { createSessionWorkMapDetailsTab } from './SessionWorkMapDetailsView';
-import { projectSessionWorkMap } from './workMapProducer';
 import { WorkItemRow, WorkViewportContext, useWorkScrollViewport } from './WorkItemRow';
 import { SessionWorkNotifications } from './SessionWorkNotifications';
+import { readSessionWorkflowStepRunId, SessionStepWork } from './SessionStepWork';
+import { describeWorkPaneLine } from './workPaneLine';
 import { WorkFlatSheet, WorkSection } from './WorkSection';
-import { groupWorkByState, resolveWorkReadPresentation, type WorkItem, type WorkProjection, type WorkStateGroups } from './workProjection';
+import {
+    groupWorkByState, resolveWorkReadPresentation, resolveWorkTitleTailStarts,
+    type WorkItem, type WorkStateGroups,
+} from './workProjection';
 
 /**
  * The Session's Work tab (ORC §3.8; lab `session-A`, `session-G`, `session-S`).
@@ -107,10 +118,16 @@ const stylesheet = StyleSheet.create(() => ({
         flexDirection: 'row',
         gap: 8,
     },
+    // The pane header's own action rhythm (PaneHeader `actions`): List | Map · ⤢ · + sit as tightly as
+    // its icon buttons so the live line ("2 sessions") keeps its room at the sidebar's narrowest width;
+    // the line truncates before any control is dropped (lab `convo-W7`).
+    phoneTabs: {
+        alignSelf: 'stretch',
+    },
     headerActions: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 4,
+        gap: 2,
     },
 }));
 
@@ -130,14 +147,6 @@ function resolveUnavailableText(launcher: SessionAgentLauncher, machineName: str
             : t('sessionAgentActivity.roster.unavailable.machineOfflineUnnamed');
     }
     return t(UNAVAILABLE_REASON_KEYS[reason]);
-}
-
-function readSubtitle(projection: WorkProjection): string | null {
-    const { sessions, runs } = projection.summary;
-    const segments: string[] = [];
-    if (sessions > 0) segments.push(t('sessionWork.subtitle.sessions', { count: sessions }));
-    if (runs > 0) segments.push(t('sessionWork.subtitle.runs', { count: runs }));
-    return segments.length > 0 ? segments.join(' · ') : null;
 }
 
 export const SessionWorkView = React.memo((props: Readonly<{
@@ -222,18 +231,18 @@ export const SessionWorkView = React.memo((props: Readonly<{
     }, [openLauncherDetails, session]);
     const onLaunchTeammate = hasSessionTeammateLauncher(session) ? launchTeammate : null;
 
-    const leadTitle = session ? getSessionName(session, sessionServerId) : '';
-    const leadAgentId = sessionAgentId;
-    const { openItem, openSubagentPreview, openSubagentFull, openSubagentAdvanced } = useSessionWorkOpeners({
+    // List | Map is a view of the same work, remembered only while the pane lives.
+    const [view, setView] = React.useState<'list' | 'map'>('list');
+    const { map: workMap, openItem, showItemInTranscript, openSubagentPreview, openSubagentFull, openSubagentAdvanced } = useSessionWorkMap({
         sessionId: props.sessionId,
         serverId: sessionServerId,
         scopeId: props.scopeId,
         subagents,
-        leadTitle,
+        session,
+        projection,
+        active: view === 'map',
     });
 
-    // List | Map is a view of the same work, remembered only while the pane lives.
-    const [view, setView] = React.useState<'list' | 'map'>('list');
     const pane = useAppPaneScope(props.scopeId);
     const openMapInDetails = React.useCallback(() => {
         pane.openDetailsTab(createSessionWorkMapDetailsTab({ sessionId: props.sessionId }), { intent: 'pinned' });
@@ -257,20 +266,29 @@ export const SessionWorkView = React.memo((props: Readonly<{
     const startDrafts = React.useMemo(() => projectAgentStartDrafts(pane.scopeState?.details), [pane.scopeState?.details]);
     const setActiveDetailsTab = pane.setActiveDetailsTab;
     const hasReports = (projection?.summary.sessions ?? 0) > 0;
-    const headerAction = React.useMemo(() => (
+    // List | Map: in the pane header beside the lead; full width at the top of a phone's pushed page,
+    // whose nav bar holds only "+" and ⋯ (lab `convo-P1`).
+    const phone = deviceType === 'phone';
+    const viewTabs = (
+        <SegmentedTabBar
+            testIDPrefix="session-work-view"
+            accessibilityLabel={t('sessionWork.view.a11y')}
+            compact={!phone}
+            segmentSizing={phone ? 'equal' : 'content'}
+            tabs={[
+                { id: 'list' as const, label: t('sessionWork.view.list') },
+                { id: 'map' as const, label: t('sessionWork.view.map') },
+            ]}
+            activeTabId={view}
+            onSelectTab={setView}
+        />
+    );
+    // A workflow step's checks are the workflow's (lab `session-F`): no List | Map, ⤢ or "+".
+    const stepRunId = readSessionWorkflowStepRunId(session);
+    const headerAction = React.useMemo(() => stepRunId ? null : (
         <View style={styles.headerActions}>
-            <SegmentedTabBar
-                testIDPrefix="session-work-view"
-                accessibilityLabel={t('sessionWork.view.a11y')}
-                compact
-                segmentSizing="content"
-                tabs={[
-                    { id: 'list' as const, label: t('sessionWork.view.list') },
-                    { id: 'map' as const, label: t('sessionWork.view.map') },
-                ]}
-                activeTabId={view}
-                onSelectTab={setView}
-            />
+            {phone ? null : viewTabs}
+            {/* ⤢ (lab `convo-W7`): the map at full size beside the transcript, where there is room. */}
             {canExpandMap ? (
                 <IconButton
                     testID="session-work-expand-map"
@@ -285,29 +303,54 @@ export const SessionWorkView = React.memo((props: Readonly<{
                 launcher={launcher}
                 onAddTrigger={hasTriggersSection ? scrollToTriggers : null}
                 onKeepGoing={goalControlEntry.available ? goalControlEntry.open : null}
+                unavailableText={resolveUnavailableText(launcher, machineName)}
             />
-            <SessionWorkMoreMenu sessionId={props.sessionId} serverId={sessionServerId} hasReports={hasReports} />
         </View>
-    ), [canExpandMap, goalControlEntry, hasReports, hasTriggersSection, launcher, openMapInDetails, props.sessionId, sessionServerId, scrollToTriggers, styles.headerActions, view]);
-    const subtitle = projection ? readSubtitle(projection) : null;
-    const { nothingYet, managedLoading, managedUnavailable } = resolveWorkReadPresentation({
+    ), [canExpandMap, goalControlEntry, hasTriggersSection, launcher, machineName, openMapInDetails, phone, scrollToTriggers, stepRunId, styles.headerActions, view]);
+    const menuActions = useSessionWorkMenuActions({
+        sessionId: props.sessionId, serverId: sessionServerId, hasReports,
+    });
+    const summary = projection?.summary ?? null;
+    const liveLine = React.useMemo(() => (summary ? describeWorkPaneLine(summary) : EMPTY_LINE), [summary]);
+    const { nothingYet, holdWorkingPlace, managedUnavailable } = resolveWorkReadPresentation({
         projection, managedRuns: sources?.managedRuns ?? null, transcriptLoaded: useSessionTranscriptLoaded(props.sessionId),
     });
+    // A Session that reports to a lead says so first (lab `session-E`: "Reports to Payments v2 rollout").
+    const lineage = useSessionLineage(props.sessionId, sessionServerId);
+    const lineageDescription = describeSessionLineage(lineage);
     const headerLine = React.useMemo(
-        () => ({ segments: subtitle ? [subtitle] : nothingYet ? [t('sessionWork.subtitle.nothingStarted')] : [] }),
-        [nothingYet, subtitle],
+        () => lineage.length > 0 && deviceType === 'phone'
+            ? { leading: <SessionLineageNavigation lineage={lineage} serverId={sessionServerId} presentation="reportsTo" />, segments: [] }
+            : { segments: stepRunId ? [t('sessionWork.step.drivenBy')] : lineageDescription ? [lineageDescription] : liveLine.length > 0 ? liveLine : nothingYet ? [t('sessionWork.subtitle.nothingStarted')] : [] },
+        [deviceType, lineageDescription, lineage, liveLine, sessionServerId, nothingYet, stepRunId],
     );
-    usePaneHeaderSlotContent(React.useMemo(() => ({ line: headerLine, action: headerAction }), [headerAction, headerLine]));
+    usePaneHeaderSlotContent(React.useMemo(
+        () => ({ line: headerLine, action: headerAction, menuActions }),
+        [headerAction, headerLine, menuActions],
+    ));
 
     const unavailableText = resolveUnavailableText(launcher, machineName);
-    const workMap = React.useMemo(
-        () => (view === 'map' && projection
-            ? projectSessionWorkMap({ leadSessionId: props.sessionId, leadTitle, leadAgentId, projection })
-            : null),
-        [leadAgentId, leadTitle, projection, props.sessionId, view],
-    );
     // One list by state on every surface (INT r0.4 §6 I4, lab `convo-W1/W8full`, `phone-P5`).
-    const stateGroups = React.useMemo(() => (projection ? groupWorkByState(projection) : null), [projection]);
+    const previousStateGroups = React.useRef<Readonly<{ sessionId: string; serverId: string | null;
+        groups: ReturnType<typeof groupWorkByState> }> | null>(null);
+    const stateGroups = React.useMemo(() => {
+        if (!projection) { previousStateGroups.current = null; return null; }
+        const previous = previousStateGroups.current;
+        const groups = groupWorkByState(projection, previous?.sessionId === props.sessionId && previous.serverId === sessionServerId ? previous.groups : null);
+        previousStateGroups.current = { sessionId: props.sessionId, serverId: sessionServerId, groups };
+        return groups;
+    }, [projection, props.sessionId, sessionServerId]);
+    // Rows named from one stem keep the words that tell them apart when the pane truncates them.
+    const titleTailStartByKey = React.useMemo(() => {
+        const items = stateGroups ? WORK_STATE_SECTIONS.flatMap((section) => stateGroups[section.key]) : [];
+        const starts = resolveWorkTitleTailStarts(items.map((item) => item.title));
+        const byKey = new Map<string, number>();
+        items.forEach((item, index) => {
+            const start = starts[index];
+            if (start != null) byKey.set(item.key, start);
+        });
+        return byKey;
+    }, [stateGroups]);
     const roster = React.useMemo<WorkRoster>(() => ({
         sessionId: props.sessionId,
         serverId: sessionServerId,
@@ -317,15 +360,31 @@ export const SessionWorkView = React.memo((props: Readonly<{
         activityPreviewById,
         originLabelById,
         onOpenItem: openItem,
+        onShowItemInTranscript: showItemInTranscript,
         onOpenPreview: openSubagentPreview,
         onOpenFull: openSubagentFull,
         onOpenAdvanced: openSubagentAdvanced,
         onLaunchTeammate,
     }), [
         activityPreviewById, agentRowByEntryId, onLaunchTeammate, openItem, openSubagentAdvanced, openSubagentFull,
-        openSubagentPreview, originLabelById, props.sessionId, session, sessionAgentId, sessionServerId,
+        openSubagentPreview, originLabelById, props.sessionId, session, sessionAgentId, sessionServerId, showItemInTranscript,
     ]);
 
+    // The Session's guidance sections lead the configuration. A Bot reads Instructions · Memory · Voice ·
+    // Triggers (plan 65, D44), so the Context it inherits follows its Triggers; an ordinary Session keeps
+    // Context beside the Memory it reads (lab `c-mem O`).
+    const isBot = readSessionBotV1(session?.metadata?.bot)?.kind === 'bot';
+    const contextSection = session && sessionServerId
+        ? <SessionContextSection session={session} serverId={sessionServerId} />
+        : null;
+    const guidanceSections = session && sessionServerId ? (
+        <>
+            <SessionInstructionsSection session={session} serverId={sessionServerId} />
+            <SessionMemorySection session={session} serverId={sessionServerId} />
+            {isBot ? null : contextSection}
+            <SessionVoiceSection session={session} serverId={sessionServerId} />
+        </>
+    ) : null;
     const triggersSlot = props.triggersSection ? (
         <View testID="session-work-triggers-slot" nativeID={SESSION_WORK_TRIGGERS_ANCHOR_ID} style={styles.slot} onLayout={onTriggersLayout}>
             {props.triggersSection}
@@ -367,6 +426,30 @@ export const SessionWorkView = React.memo((props: Readonly<{
                     onLayout={workViewport.onLayout}
                     onContentSizeChange={workViewport.onContentSizeChange}
                 >
+                    {stepRunId ? (
+                        <>
+                            {/* A workflow step (lab `session-F`): the run it is part of and why nothing is set
+                                here; work the step itself started still lists inside its Work section. */}
+                            <SessionStepWork runId={stepRunId} serverId={sessionServerId} machineName={machineName}>
+                                {!nothingYet && stateGroups ? WORK_STATE_SECTIONS.map((section) => (
+                            <WorkStateSection
+                                key={section.key}
+                                section={section}
+                                items={stateGroups[section.key]}
+                                loading={false}
+                                titleTailStartByKey={titleTailStartByKey}
+                                roster={roster}
+                            />
+                        )) : undefined}
+                            </SessionStepWork>
+                            <WorkFlatSheet testID="session-work-top">
+                                <SessionWorkNotifications sessionId={props.sessionId} serverId={sessionServerId} />
+                            </WorkFlatSheet>
+                            {guidanceSections}
+                            {isBot ? contextSection : null}
+                        </>
+                    ) : (<>
+                    {phone && !nothingYet ? <View style={styles.phoneTabs}>{viewTabs}</View> : null}
                     {/* The top value rows (Role, Goal; lab `convo-W8full`) lie flat on the pane like the
                         sections below (INT r0.4 §6 I4): page `Item` rows on the flat sheet, on the list's inset. */}
                     <WorkFlatSheet testID="session-work-top">
@@ -381,7 +464,8 @@ export const SessionWorkView = React.memo((props: Readonly<{
                             title={t('common.unavailable')}
                             action={sources ? { label: t('common.retry'), onPress: sources.managedRuns.retry } : undefined} />
                     ) : null}
-                    {/* With no work yet, Triggers is what the Session can set up first (lab `convo-ST`). */}
+                    {/* With no work yet, Triggers is what the Session can set up first, then the invite
+                        (lab `convo-ST`). The Session's guidance follows the invite, as it follows the list. */}
                     {nothingYet ? triggersSlot : null}
                     {nothingYet ? (
                         <View style={styles.empty}>
@@ -403,15 +487,17 @@ export const SessionWorkView = React.memo((props: Readonly<{
                                         ? t('sessionAgentActivity.roster.empty.reason', { machine: machineName })
                                         : t('sessionAgentActivity.roster.empty.reasonUnnamed')}
                                     action={{ label: t('session.subagents.panel.newAgentConversation'), onPress: launcher.openConversation }}
-                                    secondaryAction={{ label: t('sessionAgentActivity.roster.empty.moreWays'), onPress: () => launcher.openRun('review') }}
                                 />
-                            ) : (
+                            ) : null}
+                            {launcher.unavailableReason === null ? <WorkInviteAsks launcher={launcher} /> : (
                                 <SurfaceStateCard
                                     testID="session-work-empty"
                                     kind="empty"
                                     icon={<Icon name="tree-structure" size={28} color={theme.colors.text.secondary} />}
                                     title={t('sessionWork.empty.title')}
-                                    reason={t('sessionWork.empty.reason')}
+                                    // One message per state: why nothing can start here, with its way out,
+                                    // replaces the general description instead of stacking under it.
+                                    reason={unavailableText ?? t('sessionWork.empty.reason')}
                                 />
                             )}
                         </View>
@@ -423,14 +509,15 @@ export const SessionWorkView = React.memo((props: Readonly<{
                                 key={section.key}
                                 section={section}
                                 items={stateGroups[section.key]}
-                                // Workflow runs are still arriving: Working keeps its place instead of
-                                // claiming nothing is going.
-                                loading={section.key === 'working' && managedLoading && stateGroups.working.length === 0}
+                                // Workflow runs are still arriving and nothing else is shown: Working keeps
+                                // its place instead of claiming nothing is going.
+                                loading={section.key === 'working' && holdWorkingPlace}
+                                titleTailStartByKey={titleTailStartByKey}
                                 roster={roster}
                             />
                         ))
                     ) : null}
-                    {unavailableText ? (
+                    {unavailableText && !nothingYet ? (
                         <SurfaceStateCard
                             testID="session-work-unavailable"
                             size="line"
@@ -440,17 +527,67 @@ export const SessionWorkView = React.memo((props: Readonly<{
                     ) : null}
                     {/* The configuration sections under the live list, each opened by its own full-width
                         hairline (`WorkSection anatomy="page"`): Triggers, then Roles (and Notes). */}
+                    {guidanceSections}
                     {nothingYet ? null : triggersSlot}
+                    {isBot ? contextSection : null}
                     <View testID="session-work-roles-slot" style={styles.slot}>
                         {/* Lane U2's section. */}
                         <SessionRolesSection sessionId={props.sessionId} serverId={sessionServerId} copiedAtSpawn={copiedAtSpawn} />
                     </View>
                     <SessionNotesSection sessionId={props.sessionId} serverId={sessionServerId} />
+                    </>)}
                 </ScrollView>
             </WorkViewportContext.Provider>
         </View>
     );
 });
+
+const INVITE_ASKS = ['review', 'plan', 'delegate'] as const;
+
+/**
+ * The invite's other ways to start (lab `convo-ST`, "Or ask for a Review · Plan · Delegate"): each ask
+ * this Session's backends can take, opening the same composer-first start as the "+" menu.
+ */
+const WorkInviteAsks = React.memo(function WorkInviteAsks(props: Readonly<{ launcher: SessionAgentLauncher }>) {
+    const { launcher } = props;
+    const asks = INVITE_ASKS.filter((intent) => launcher.intents.includes(intent));
+    if (asks.length === 0) return null;
+    return (
+        <Text testID="session-work-invite-asks" style={inviteStyles.line}>
+            {`${t('sessionWork.invite.orAskFor')} `}
+            {asks.map((intent, index) => (
+                <React.Fragment key={intent}>
+                    {index > 0 ? <Text style={inviteStyles.separator}>{' · '}</Text> : null}
+                    <Text
+                        testID={`session-work-invite-ask:${intent}`}
+                        accessibilityRole="link"
+                        style={inviteStyles.link}
+                        onPress={() => launcher.openRun(intent)}
+                    >
+                        {t(`executionRuns.newRun.intents.${intent}`)}
+                    </Text>
+                </React.Fragment>
+            ))}
+        </Text>
+    );
+});
+
+const inviteStyles = StyleSheet.create((theme) => ({
+    line: {
+        ...Typography.default(),
+        ...happierPageTextMetrics('sectionDescription'),
+        color: theme.colors.text.secondary,
+        textAlign: 'center',
+        marginTop: -8,
+    },
+    separator: {
+        color: theme.colors.text.tertiary,
+    },
+    link: {
+        ...Typography.default('semiBold'),
+        color: theme.colors.text.primary,
+    },
+}));
 
 type WorkStateSectionSpec = Readonly<{
     key: keyof WorkStateGroups;
@@ -477,6 +614,7 @@ type WorkRoster = Readonly<{
     activityPreviewById: ReadonlyMap<string, string>;
     originLabelById: ReadonlyMap<string, string>;
     onOpenItem: (item: WorkItem) => void;
+    onShowItemInTranscript: (item: WorkItem) => void;
     onOpenPreview: (subagent: SessionSubagent) => void;
     onOpenFull: (subagent: SessionSubagent) => void;
     onOpenAdvanced: (subagent: SessionSubagent) => void;
@@ -518,8 +656,10 @@ const WorkStateSection = React.memo(function WorkStateSection(props: Readonly<{
     section: WorkStateSectionSpec;
     items: readonly WorkItem[];
     loading: boolean;
+    titleTailStartByKey: ReadonlyMap<string, number>;
     roster: WorkRoster;
 }>) {
+    const workTheme = useWorkTheme();
     const { section, items, roster } = props;
     const [expanded, setExpanded] = React.useState(false);
     const limit = section.collapsedRows;
@@ -542,7 +682,13 @@ const WorkStateSection = React.memo(function WorkStateSection(props: Readonly<{
         >
             {segments.map((segment) => (
                 segment.kind === 'item' ? (
-                    <WorkItemRow key={segment.item.key} item={segment.item} onOpen={roster.onOpenItem} />
+                    <WorkItemRow
+                        key={segment.item.key}
+                        item={segment.item}
+                        titleTailStart={props.titleTailStartByKey.get(segment.item.key)}
+                        onOpen={roster.onOpenItem}
+                        onShowInTranscript={roster.onShowItemInTranscript}
+                    />
                 ) : groupSessionSubagents(segment.rows).map((group) => (
                     <SessionSubagentGroup
                         key={`${segment.key}:${group.key}`}
@@ -562,34 +708,18 @@ const WorkStateSection = React.memo(function WorkStateSection(props: Readonly<{
                 ))
             ))}
             {hiddenCount > 0 ? (
-                <HappierPressable
+                <HappierWorkDisclosureLine
                     testID={`session-work-state-${section.key}-more`}
-                    accessibilityRole="button"
-                    accessibilityLabel={t('sessionWork.showMore', { count: hiddenCount })}
+                    label={t('sessionWork.showMore', { count: hiddenCount })}
                     onPress={showAll}
-                    style={stateSectionStyles.more}
-                >
-                    <Text style={stateSectionStyles.moreText}>{t('sessionWork.showMore', { count: hiddenCount })}</Text>
-                </HappierPressable>
+                    theme={workTheme}
+                    host={WORK_HOST}
+                />
             ) : null}
         </WorkSection>
     );
 });
 
-const stateSectionStyles = StyleSheet.create((theme) => ({
-    // Quiet, under the rows' titles (past the 30px mark and its 10px gap).
-    more: {
-        minHeight: 32,
-        justifyContent: 'center',
-        paddingLeft: HAPPIER_WORK_PANE_METRICS.rowInsetPx + 40,
-    },
-    moreText: {
-        ...Typography.default('semiBold'),
-        color: theme.colors.text.secondary,
-        fontSize: 12.5,
-        lineHeight: 16,
-    },
-}));
-
 const EMPTY_SUBAGENTS: readonly SessionSubagent[] = Object.freeze([]);
+const EMPTY_LINE: ReturnType<typeof describeWorkPaneLine> = [];
 const EMPTY_ROWS: ReturnType<typeof readSessionAgentActivityRows> = Object.freeze([]);

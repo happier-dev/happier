@@ -23,6 +23,22 @@ vi.mock('@/modal', async () => {
 
 afterEach(() => standardCleanup());
 describe('retained SSH task', () => {
+    it('hands admitted credentials to the task without reusing them for a later UI password prompt', async () => {
+        const manual = createManualSystemTaskRunner('native');
+        const form = { sshUsername: '', sshHost: 'build-box', sshPort: '', sshAuth: 'password' as const,
+            sshPassword: 'private-reference-value', identityFilePath: '', identityPrivateKey: '', installRelayRuntime: false };
+        const hook = await renderHook(() => useRemoteSshBootstrapTask({ runner: manual.runner, relayUrl: 'https://home.example.test' }));
+        let taskId = '';
+        await act(async () => { taskId = await hook.getCurrent().start(form, spec => manual.runner.start(spec)); });
+        expect(manual.bridge.start).toHaveBeenCalledWith(expect.objectContaining({
+            params: expect.objectContaining({ ssh: expect.objectContaining({ password: 'private-reference-value' }) }),
+        }));
+        await act(async () => manual.emitEvent(taskId, { type: 'prompt', message: 'Password needed',
+            data: { kind: 'ssh.password', target: 'build-box' } }));
+        expect(hook.getCurrent().prompt?.kind).toBe('ssh.password');
+        expect(manual.bridge.respond).not.toHaveBeenCalled();
+    });
+
     it('resumes a native password prompt and observes completion after presenter remount', async () => {
         const manual = createManualSystemTaskRunner('native');
         const form = {

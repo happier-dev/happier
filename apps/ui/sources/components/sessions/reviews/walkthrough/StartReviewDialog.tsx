@@ -57,6 +57,7 @@ export type StartReviewDialogViewProps = Readonly<{
     onStart: () => void;
     phone?: boolean;
     launchOptions?: React.ReactNode;
+    walkthroughUnavailable?: boolean;
 }>;
 
 function EngineMark(props: Readonly<{ engineId: string; size: number }>) {
@@ -189,15 +190,16 @@ export function StartReviewDialogView(props: StartReviewDialogViewProps) {
                         testID="start-review-walkthrough"
                         accessibilityRole="checkbox"
                         checked={props.walkthrough}
+                        disabled={props.walkthroughUnavailable}
                         accessibilityLabel={t('reviewWalkthrough.dialog.alsoWalkthrough')}
-                        accessibilityHint={t('reviewWalkthrough.dialog.alsoWalkthroughBody')}
+                        accessibilityHint={props.walkthroughUnavailable ? t('common.unavailable') : t('reviewWalkthrough.dialog.alsoWalkthroughBody')}
                         onPress={props.onToggleWalkthrough}
                         style={(state) => [styles.alsoRow, state.pressed ? styles.pressed : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
                     >
                         <SelectionCheckGlyph state={props.walkthrough ? 'checked' : 'unchecked'} />
                         <View style={styles.alsoText}>
                             <Text style={styles.alsoTitle}>{t('reviewWalkthrough.dialog.alsoWalkthrough')}</Text>
-                            <Text style={styles.alsoBody}>{t('reviewWalkthrough.dialog.alsoWalkthroughBody')}</Text>
+                            <Text style={styles.alsoBody}>{props.walkthroughUnavailable ? t('common.unavailable') : t('reviewWalkthrough.dialog.alsoWalkthroughBody')}</Text>
                         </View>
                     </HappierPressable>
                     {props.walkthrough && plan.narrator ? (
@@ -232,8 +234,7 @@ export function StartReviewDialogView(props: StartReviewDialogViewProps) {
     );
 }
 
-export type StartReviewDialogProps = CustomModalInjectedProps & Readonly<{
-    sessionId: string;
+export type StartReviewDialogInput = Readonly<{
     serverId: string | null;
     cwd: string;
     comparison: ScmReviewComparisonSelector;
@@ -245,7 +246,9 @@ export type StartReviewDialogProps = CustomModalInjectedProps & Readonly<{
     /** Engines to start with selected (Retry one engine of a partial review). */
     preselectedEngineIds?: readonly string[];
     onStarted: (started: ReviewOfComparisonStarted, walkthrough: boolean) => void;
-}>;
+}> & (Readonly<{ sessionId: string; machineId?: never }> | Readonly<{ sessionId?: never; machineId: string }>);
+
+export type StartReviewDialogProps = CustomModalInjectedProps & StartReviewDialogInput;
 
 /** The bound dialog: engines from the host inventory, and a start through `review.start`. */
 export function StartReviewDialog(props: StartReviewDialogProps) {
@@ -255,20 +258,21 @@ export function StartReviewDialog(props: StartReviewDialogProps) {
     const [enginesError, setEnginesError] = React.useState<string | null>(null);
     const [selected, setSelected] = React.useState<readonly string[] | null>(props.preselectedEngineIds ?? null);
     const [instructions, setInstructions] = React.useState('');
-    const [walkthrough, setWalkthrough] = React.useState(props.defaultWalkthrough);
+    // The native review narration producer currently admits Session-owned reviews only.
+    const [walkthrough, setWalkthrough] = React.useState(Boolean(props.sessionId && props.defaultWalkthrough));
     const [narratorEngineId, setNarratorEngineId] = React.useState<string | null>(null);
     const [busy, setBusy] = React.useState(false);
     const [error, setError] = React.useState<string | null>(null);
 
     React.useEffect(() => {
         let current = true;
-        void listReviewWalkthroughEngines({ sessionId: props.sessionId, serverId: props.serverId }).then((listed) => {
+        void listReviewWalkthroughEngines({ sessionId: props.sessionId ?? null, machineId: props.machineId, serverId: props.serverId }).then((listed) => {
             if (!current) return;
             if (!listed.ok) { setEnginesError(listed.error); return; }
             setEngines(listed.engines);
         });
         return () => { current = false; };
-    }, [props.serverId, props.sessionId]);
+    }, [props.serverId, props.sessionId, props.machineId]);
 
     // Until the person chooses, the first engine that can review is selected (the launcher's own default).
     const selectedEngineIds = React.useMemo(() => selected
@@ -276,7 +280,7 @@ export function StartReviewDialog(props: StartReviewDialogProps) {
     const plan = React.useMemo(() => resolveReviewWalkthroughPlan({
         engines: engines ?? [], selectedEngineIds, walkthrough, narratorEngineId,
     }), [engines, narratorEngineId, selectedEngineIds, walkthrough]);
-    const launchOptions = useReviewExecutionRunLaunchOptions({ sessionId: props.sessionId, serverId: props.serverId,
+    const launchOptions = useReviewExecutionRunLaunchOptions({ sessionId: props.sessionId ?? null, machineId: props.machineId, cwd: props.cwd, serverId: props.serverId,
         engineIds: plan.selected.map((engine) => engine.engineId), busy });
     const { launcher, ready: launchReady } = launchOptions;
     const toggleEngine = React.useCallback((engineId: string) => {
@@ -292,7 +296,8 @@ export function StartReviewDialog(props: StartReviewDialogProps) {
         setBusy(true);
         setError(null);
         const started = await startReviewOfComparison({
-            sessionId: props.sessionId,
+            sessionId: props.sessionId ?? null,
+            machineId: props.machineId,
             serverId: props.serverId,
             cwd: props.cwd,
             comparison: props.comparison,
@@ -309,7 +314,7 @@ export function StartReviewDialog(props: StartReviewDialogProps) {
         if (!started.ok) { setError(started.error); return; }
         onClose();
         onStarted(started, plan.walkthrough);
-    }, [busy, launchReady, instructions, launchOptions.input, launcher.startAction, operationId, onClose, onStarted, plan, props.comparison, props.comparisonId, props.cwd, props.serverId, props.sessionId]);
+    }, [busy, launchReady, instructions, launchOptions.input, launcher.startAction, operationId, onClose, onStarted, plan, props.comparison, props.comparisonId, props.cwd, props.serverId, props.sessionId, props.machineId]);
 
     return (
         <StartReviewDialogView
@@ -322,6 +327,7 @@ export function StartReviewDialog(props: StartReviewDialogProps) {
             instructions={instructions}
             onChangeInstructions={setInstructions}
             walkthrough={walkthrough}
+            walkthroughUnavailable={!props.sessionId}
             onToggleWalkthrough={() => setWalkthrough((on) => !on)}
             narratorEngineId={narratorEngineId}
             onSelectNarrator={setNarratorEngineId}
@@ -336,7 +342,7 @@ export function StartReviewDialog(props: StartReviewDialogProps) {
     );
 }
 
-export function presentStartReviewDialog(props: Omit<StartReviewDialogProps, keyof CustomModalInjectedProps>): string {
+export function presentStartReviewDialog(props: StartReviewDialogInput): string {
     return Modal.show({
         component: StartReviewDialog,
         props,

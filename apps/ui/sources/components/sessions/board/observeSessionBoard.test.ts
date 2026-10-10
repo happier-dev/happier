@@ -1,3 +1,4 @@
+import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import { describe, expect, it } from 'vitest';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { createSessionSystemRecordRepository } from '@/sync/domains/sessionSystemRecords/repository';
@@ -12,7 +13,7 @@ const hostedItem = {
     title: 'Interactive view',
     frame: 'card',
     height: { mode: 'auto', fallback: 'regular' },
-    source: { kind: 'hostedHtml', source: { kind: 'html', html: '<main>Hello</main>' } },
+    source: { kind: 'hostedHtml', source: artifactHtmlBundleFromBodyV1('<main>Hello</main>') },
 } as const;
 function record(localId: string, kind: string, value: unknown) {
     return { id: localId, address: { owner: 'host', namespace: 'surface', kind, localId }, content: { t: 'plain', v: value }, revision, createdAt: '2026-09-05T00:00:00.000Z', updatedAt: '2026-09-05T00:00:00.000Z' };
@@ -21,6 +22,20 @@ const layout = record('layout', 'layout.v1', { v: 1, tabs: [{ id: 'overview', ti
 const authority: SessionBoardAuthority = { contentContext: { mode: 'plain' }, capabilities: { readTranscript: true, editSessionRecords: true } };
 
 describe('Board repository binding', () => {
+    it('does not inventory Session content before a Board consumer demands it', async () => {
+        const requests: string[] = [];
+        const repository = createSessionSystemRecordRepository({ scope, request: async path => {
+            requests.push(path);
+            return Response.json({ records: [layout, record('note', 'item.v1', item)], nextCursor: null, hasNext: false });
+        } });
+        const stop = observeSessionBoard({ session, repository, demanded: false, authority,
+            readCapabilities: () => authority.capabilities, readContentContext: () => authority.contentContext,
+            renewAuthority: async () => ({ status: 'ok', value: authority }), isCurrent: () => true, onChange: () => {},
+        });
+        await flushHookEffects({ cycles: 10 });
+        expect(requests).toEqual([]);
+        stop();
+    });
     it('normalizes additive stored fields while isolating invalid required fields and unknown sources', async () => {
         const widget = { ...item, source: { kind: 'widget', instance: {
             v: 1, id: 'widget', definition: { kind: 'installed', surface: { pluginId: 'acme.widgets', localId: 'status' } },

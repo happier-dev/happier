@@ -424,7 +424,7 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
         onSet: (size: WidgetSizeV1) => {
             if (sizeBusy || !boardSurface.scope || !widgetInstance) return;
             setSizeBusy(true);
-            void runWidgetDefinitionCommand('widgets.instance.size.set', {
+            void runWidgetDefinitionCommand('widgets.item.size.set', {
                 ref: { surface: boardSurface.scope, instanceId: widgetInstance.id }, size,
             }, boardSurface.scope).then(outcome => {
                 if (outcome.kind === 'refused') publishPresentationNotice({

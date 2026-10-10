@@ -17,7 +17,7 @@ import { StatusPill } from '@/components/ui/status/StatusPill';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
-import { formatRelativeTimeShort } from '@/components/ui/selectionList/formatRelativeTimeShort';
+import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import type { LocalServiceLaunchTarget } from '@/sync/domains/local/services/launch';
 import type { ServicesOpenInBrowserResult } from '@/components/browser/surfaces/openBrowserTargetInWorkspace';
 import type { ServiceRow, ServiceRowStatus } from '@/sync/domains/local/services/serviceRow';

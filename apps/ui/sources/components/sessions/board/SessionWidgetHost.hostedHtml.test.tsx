@@ -1,3 +1,4 @@
+import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -70,7 +71,7 @@ const item = {
             height: { mode: 'auto', fallback: 'regular' },
             source: {
                 kind: 'hostedHtml',
-                source: { kind: 'html', html: '<main>caller-owned</main>' },
+                source: artifactHtmlBundleFromBodyV1('<main>caller-owned</main>'),
                 requestedCapabilities: {
                     hostMethods: ['context', 'executeAction', 'notify'],
                     actions: ['session.board.get'],
@@ -704,7 +705,7 @@ describe('SessionWidgetHost caller-authored hosted HTML', () => {
                     ...item.state.item,
                     source: {
                         ...item.state.item.source,
-                        source: { kind: 'html' as const, html: '<main>changed source</main>' },
+                        source: artifactHtmlBundleFromBodyV1('<main>changed source</main>'),
                     },
                 },
             },

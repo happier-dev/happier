@@ -1,3 +1,5 @@
+import type * as React from 'react';
+
 export type PresentationNoticeSeverity = 'info' | 'warning' | 'error';
 
 /**
@@ -20,6 +22,13 @@ export type PresentationNotice = Readonly<{
     key: string;
     message: string;
     severity: PresentationNoticeSeverity;
+    /**
+     * The identity mark of what the notice is about (a Session's avatar, a document's glyph), drawn
+     * before the message. Presentation only: the host gives it no behaviour.
+     */
+    leading?: React.ReactNode;
+    /** The part of `message` that names its subject; the host sets it in the stronger weight. */
+    emphasis?: string;
     undo?: PresentationNoticeUndo;
 }>;
 

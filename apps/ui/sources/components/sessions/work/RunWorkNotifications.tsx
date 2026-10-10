@@ -28,7 +28,9 @@ export function RunWorkNotifyOperation(props: Readonly<{
     execute?: WorkflowActionExecute;
 }>) {
     const conditions = props.source.kind === 'workflow_run' ? ['terminal', 'needs_attention'] as const : ['terminal'] as const;
-    return <View style={{ minWidth: 0 }}>
+    // The two offers sit side by side and wrap when the pane is narrow, so they never stack as two
+    // full-width rows above what the run actually needs.
+    return <View style={{ minWidth: 0, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-start', gap: 8 }}>
         {conditions.map((condition) => {
             const message = condition === 'terminal' ? t('sessionWork.notify.runFinished') : t('sessionWork.notify.runNeedsYou');
             const match = (set: WorkflowTriggerSetV1) => {

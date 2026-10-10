@@ -77,6 +77,7 @@ export type SessionHandoffPickerModalProps = CustomModalInjectedProps & Readonly
     onResolve: (value: SessionHandoffPickerResult | null) => void;
     onRequestClose?: () => void;
     awaitingAdmission?: boolean;
+    inlineErrorCode?: string | null;
 }>;
 
 const stylesheet = StyleSheet.create(() => ({

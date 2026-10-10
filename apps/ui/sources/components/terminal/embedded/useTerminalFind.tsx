@@ -2,6 +2,8 @@ import * as React from 'react';
 import { Platform, TextInput, View } from 'react-native';
 import type { FindController } from '@happier-dev/plugin-ui/presentation';
 import { FindBar } from '@/components/ui/find/FindBar';
+import { FindBarPlacement } from '@/components/ui/find/FindBarPlacement';
+import { useFindSurfaceFocusReturn } from '@/components/ui/find/useFindSurfaceFocusReturn';
 import { usePluginSurfaceFocusEligibility } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useFindSurfaceRegistration } from '@/keyboard/KeyboardShortcutProvider';
 import { t } from '@/text';
@@ -9,17 +11,18 @@ import type { EmbeddedTerminalRendererHandle, FindEngine } from './embeddedTermi
 
 const NO_SUBSCRIPTION = () => () => {};
 /** Mount state subscribes only to open/close; query and counts stay local to the bar. */
-export function useTerminalFind(props: Readonly<{ title: string; focused?: boolean; findSurfaceId?: string; terminalRef: React.MutableRefObject<EmbeddedTerminalRendererHandle | null> }>, phone: boolean) {
+export function useTerminalFind(props: Readonly<{ title: string; focused?: boolean; findSurfaceId?: string; terminalRef: React.MutableRefObject<EmbeddedTerminalRendererHandle | null> }>, seatedInFlow: boolean) {
     const [engine, onFindEngine] = React.useState<FindEngine | null>(null);
     const rootRef = React.useRef<View | null>(null);
     const inputRef = React.useRef<TextInput | null>(null);
     const [inputFocused, setInputFocused] = React.useState(false);
+    const { capture, clear, restore } = useFindSurfaceFocusReturn();
     const eligible = usePluginSurfaceFocusEligibility() && props.focused !== false;
     const id = React.useId();
     const open = React.useSyncExternalStore(engine?.subscribe ?? NO_SUBSCRIPTION, () => engine?.getSnapshot().open ?? false, () => false);
     const close = React.useCallback(() => {
-        engine?.close(); setInputFocused(false); props.terminalRef.current?.focus?.();
-    }, [engine, props.terminalRef]);
+        engine?.close(); setInputFocused(false); restore(() => props.terminalRef.current?.focus?.());
+    }, [engine, props.terminalRef, restore]);
     const controller = React.useMemo<FindController | null>(() => engine ? {
         get query() { return engine.query; }, get options() { return engine.options; }, get status() { return engine.status; },
         capabilities: engine.capabilities, setQuery: engine.setQuery, setOptions: engine.setOptions,
@@ -34,29 +37,28 @@ export function useTerminalFind(props: Readonly<{ title: string; focused?: boole
     useFindSurfaceRegistration(eligible && engine && controller ? {
         surfaceId: props.findSurfaceId ?? `terminal:${id}`, controller,
         containsFocus, isOpen: () => open, isInputFocused: () => inputFocused,
-        open: () => { engine.open(); inputRef.current?.focus(); },
+        open: () => { capture(engine.getSnapshot().open); engine.open(); inputRef.current?.focus(); },
     } : null);
-    React.useEffect(() => { if (!eligible) { engine?.close(); setInputFocused(false); } }, [eligible, engine]);
+    React.useEffect(() => { if (!eligible) { engine?.close(); setInputFocused(false); clear(); } }, [clear, eligible, engine]);
     const bar = open && engine && controller ? <TerminalFindBar engine={engine} controller={controller}
-        title={props.title} phone={phone} inputRef={inputRef}
+        title={props.title} seatedInFlow={seatedInFlow} inputRef={inputRef}
         onInputFocus={() => setInputFocused(true)} onInputBlur={() => setInputFocused(false)} /> : null;
     return { open, bar, rootRef, onFindEngine };
 }
 
-function TerminalFindBar(props: Readonly<{ engine: FindEngine; controller: FindController; title: string; phone: boolean;
+function TerminalFindBar(props: Readonly<{ engine: FindEngine; controller: FindController; title: string; seatedInFlow: boolean;
     inputRef: React.RefObject<TextInput | null>; onInputFocus(): void; onInputBlur(): void }>) {
     const snapshot = React.useSyncExternalStore(props.engine.subscribe, props.engine.getSnapshot, props.engine.getSnapshot);
-    // Inline, the bar spans the pane like every Find surface (lab `.fd-bar`: 10 down, 14 in), so a narrow split
-    // leaf gets the compact capsule rather than a clipped one.
-    return <View pointerEvents="box-none" style={props.phone ? undefined : { position: 'absolute', left: 14, right: 14, top: 10, zIndex: 20 }}>
+    return <FindBarPlacement seatedInFlow={props.seatedInFlow}>{(presentation) =>
         <FindBar testID="terminal-find" surfaceLabel={t('find.surface.terminal', { name: props.title })}
-            presentation={props.phone ? 'keyboardSeated' : 'inline'} inputRef={props.inputRef}
+            presentation={presentation} inputRef={props.inputRef}
             query={snapshot.query} options={snapshot.options} status={snapshot.status} capabilities={props.controller.capabilities}
             onQueryChange={props.controller.setQuery} onOptionsChange={props.controller.setOptions}
             onStep={props.controller.step} onStop={props.controller.stop} onClose={props.controller.close}
             onInputFocus={props.onInputFocus} onInputBlur={props.onInputBlur}
-            // Said only when the search ended at what the terminal keeps (Find lab ST), never on every result.
-            note={snapshot.status.kind === 'results' && snapshot.status.coverage === 'limited'
+            // The retained-lines note is only for incomplete results (Find lab ST).
+            note={snapshot.status.kind === 'searching' ? { icon: 'history', text: t('common.loading') }
+                : snapshot.status.kind === 'results' && snapshot.status.coverage === 'limited'
                 ? { icon: 'info', text: t('find.note.terminalKept', { lines: snapshot.retainedLines.toLocaleString() }) } : null} />
-    </View>;
+    }</FindBarPlacement>;
 }

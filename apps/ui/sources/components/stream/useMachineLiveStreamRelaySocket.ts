@@ -5,6 +5,7 @@ import {
     type ServerScopedMachineLiveStreamRelaySocket,
 } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineLiveStreamRelaySocket';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
 /**
  * The production `server_relay` viewer socket for one source machine, whatever the stream shows
@@ -15,6 +16,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 export function useMachineLiveStreamRelaySocket(input: Readonly<{
     machineId?: string | null;
     serverId?: string | null;
+    accountLifetime?: ServerAccountScopeLifetime | null;
     enabled?: boolean;
     disconnectTag: string;
 }>): ServerScopedMachineLiveStreamRelaySocket | null {
@@ -22,6 +24,7 @@ export function useMachineLiveStreamRelaySocket(input: Readonly<{
     const machineId = String(input.machineId ?? '').trim();
     const serverId = String(input.serverId ?? '').trim();
     const tag = input.disconnectTag;
+    const accountLifetime = input.accountLifetime;
     const [socket, setSocket] = React.useState<ServerScopedMachineLiveStreamRelaySocket | null>(null);
 
     React.useEffect(() => {
@@ -31,7 +34,7 @@ export function useMachineLiveStreamRelaySocket(input: Readonly<{
         }
         let disposed = false;
         let resolved: ServerScopedMachineLiveStreamRelaySocket | null = null;
-        resolveServerScopedMachineLiveStreamRelaySocket({ machineId, serverId: serverId || null })
+        resolveServerScopedMachineLiveStreamRelaySocket({ machineId, serverId: serverId || null, accountLifetime })
             .then((next) => {
                 if (disposed) {
                     fireAndForget(next.disconnect(), { tag });
@@ -48,7 +51,7 @@ export function useMachineLiveStreamRelaySocket(input: Readonly<{
             fireAndForget(resolved?.disconnect(), { tag });
             setSocket(null);
         };
-    }, [enabled, machineId, serverId, tag]);
+    }, [accountLifetime, enabled, machineId, serverId, tag]);
 
     return socket;
 }

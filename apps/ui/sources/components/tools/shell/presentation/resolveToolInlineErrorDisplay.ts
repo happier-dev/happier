@@ -39,6 +39,7 @@ export function resolveToolInlineErrorDisplay(params: Readonly<{
     if (hideError || params.tool.state !== 'error' || !params.tool.result || parseToolUseError(params.tool.result).isToolUseError) {
         return { override: null, append: null };
     }
-    const raw = typeof params.tool.result === 'string' ? params.tool.result : JSON.stringify(params.tool.result, null, 2);
+    const typedError = parseToolUseError(params.tool.result).errorMessage;
+    const raw = typedError ?? (typeof params.tool.result === 'string' ? params.tool.result : JSON.stringify(params.tool.result, null, 2));
     return { override: null, append: resolveToolErrorDisplay(raw).text };
 }

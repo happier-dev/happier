@@ -15,9 +15,11 @@ export type LocalServiceLauncherSnapshotRequest = (
 export type LocalServiceLauncherSnapshotClientInput = Readonly<{
     machineId: string;
     serverId?: string | null;
+    accountId?: string | null;
     sessionId?: string | null;
     scope?: 'workspace' | 'machine' | null;
     workspaceRoot?: string | null;
+    projection?: 'managed_bindings';
     signal?: AbortSignal;
     request?: LocalServiceLauncherSnapshotRequest;
 }>;
@@ -48,6 +50,9 @@ export async function fetchLocalServiceLauncherSnapshot(
     if (!request) {
         return { ok: false, reason: 'unavailable' };
     }
+    // The legacy HTTP route has no strict native-read ingress. Only the authenticated
+    // exact Machine RPC can prove the explicit complete projection was understood.
+    if (input.projection === 'managed_bindings') return { ok: false, reason: 'unavailable' };
 
     try {
         // Structural parity with the machine-RPC transport: the snapshot request carries the

@@ -1,3 +1,4 @@
+import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -113,7 +114,7 @@ const HOSTED_HTML_ITEM: SessionSurfaceItemV1 = {
     height: { mode: 'auto', fallback: 'regular' },
     source: {
         kind: 'hostedHtml',
-        source: { kind: 'html', html: '<main>Build status</main>' },
+        source: artifactHtmlBundleFromBodyV1('<main>Build status</main>'),
         requestedCapabilities: { hostMethods: [], actions: [], networkOrigins: [] },
     },
 };

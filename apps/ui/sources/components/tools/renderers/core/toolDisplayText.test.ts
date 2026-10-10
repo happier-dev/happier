@@ -36,4 +36,15 @@ describe('projectToolFindText', () => {
         const tool = makeToolCall({ name: 'NewTool', state: 'error', input: {}, result });
         expect(projectToolFindText(tool).find((block) => block.id === 'tool-error-append')?.text).toBe(JSON.stringify(result, null, 2));
     });
+
+    it('presents the canonical typed title error without the diagnostic envelope', () => {
+        const tool = makeToolCall({ name: 'change_title', state: 'error', input: { title: 'Explore directory' }, result: {
+            success: false, errorCode: 'change_title_failed', error: 'target_unavailable', errorMessage: 'target_unavailable',
+            _happier: { v: 2, canonicalToolName: 'change_title' },
+            _raw: { content: '{"error":"target_unavailable"}' }, _acp: {},
+        } });
+        const blocks = projectToolFindText(tool);
+        expect(blocks.find((block) => block.id === 'tool-error-append')?.text).toBe('target_unavailable');
+        expect(blocks.map((block) => block.text).join('\n')).not.toContain('_raw');
+    });
 });

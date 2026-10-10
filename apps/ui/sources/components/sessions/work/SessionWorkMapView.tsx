@@ -1,6 +1,7 @@
 import * as React from 'react';
+import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { resolveHappierWorkMapNodePosition, type HappierWorkMapNodePresentation } from '@happier-dev/plugin-ui/presentation';
+import { resolveHappierWorkMapNodePosition, joinHappierFacts, type HappierWorkMapNodePresentation } from '@happier-dev/plugin-ui/presentation';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -9,7 +10,7 @@ import { workStatusWordStyle } from '@/components/work/status/workStatusTreatmen
 import { ExecutionRunAgentMark } from '@/components/sessions/runs/ExecutionRunAgentMark';
 import { t } from '@/text';
 
-import type { SessionWorkMap, SessionWorkMapNode } from './workMapProducer';
+import { readWorkFoldedFromMap, type SessionWorkMap, type SessionWorkMapNode } from './workMapProducer';
 import type { WorkItem, WorkProjection } from './workProjection';
 
 /**
@@ -24,6 +25,16 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontSize: 12,
         lineHeight: 16,
         color: theme.colors.text.secondary,
+    },
+    root: {
+        gap: 8,
+    },
+    foldNote: {
+        ...Typography.default(),
+        fontSize: 12,
+        lineHeight: 16,
+        color: theme.colors.text.tertiary,
+        paddingHorizontal: 8,
     },
     status: {
         ...Typography.default(),
@@ -43,7 +54,7 @@ export const SessionWorkMapView = React.memo((props: Readonly<{
     const { map, projection, onOpenItem } = props;
     const itemByKey = React.useMemo(() => {
         const byKey = new Map<string, WorkItem>();
-        for (const item of [...projection.sessions, ...projection.workflows, ...projection.backgroundRuns, ...projection.agents]) {
+        for (const item of [...projection.sessions, ...projection.workflows, ...projection.backgroundRuns, ...projection.agents, ...projection.projectCommands]) {
             byKey.set(item.key, item);
         }
         return byKey;
@@ -89,10 +100,21 @@ export const SessionWorkMapView = React.memo((props: Readonly<{
         <ExecutionRunAgentMark agentId={node.agentId} size={28} />
     ), []);
     const renderSubtitle = React.useCallback((node: SessionWorkMapNode) => (
-        node.facts.length > 0 ? <Text numberOfLines={1} style={styles.subtitle}>{node.facts.join(' · ')}</Text> : null
+        node.facts.length > 0 ? <Text numberOfLines={1} style={styles.subtitle}>{joinHappierFacts(...node.facts)}</Text> : null
     ), [styles]);
 
+    // Finished work leaves the map and is named once under it (lab `session-A2`, `session-B`); List keeps it.
+    const foldNote = React.useMemo(() => {
+        const folded = readWorkFoldedFromMap(projection);
+        if (folded.length === 0) return null;
+        const runs = folded.filter((item) => item.kind === 'background_run').length;
+        const names = folded.filter((item) => item.kind !== 'background_run').map((item) => item.title);
+        if (runs > 0) names.push(t('sessionWork.map.backgroundRuns', { count: runs }));
+        return joinHappierFacts(t('sessionWork.map.folded'), names.join(', '));
+    }, [projection]);
+
     return (
+        <View style={styles.root}>
         <WorkMapView
             map={map}
             selectedNodeId={null}
@@ -105,5 +127,7 @@ export const SessionWorkMapView = React.memo((props: Readonly<{
             isNodeDisabled={isNodeDisabled}
             onOpen={onOpen}
         />
+        {foldNote ? <Text testID={`${props.testIDPrefix}-fold-note`} numberOfLines={1} style={styles.foldNote}>{foldNote}</Text> : null}
+        </View>
     );
 });

@@ -3,7 +3,7 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 import { I18nManager, Platform, View, type ScrollView, type LayoutChangeEvent } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import type { EntityDragItemV1, EntityDragScopeV1 } from '@happier-dev/protocol/plugins/ui';
-import { describeHappierDropAnnouncement, resolveHappierDropChooserSections, resolveHappierStagedMoveKey } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_CARRIED_SOURCE_OPACITY, describeHappierDropAnnouncement, resolveHappierDropChooserSections, resolveHappierStagedMoveKey } from '@happier-dev/plugin-ui/presentation';
 
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { PoliteAccessibilityStatus } from '@/components/ui/accessibility/PoliteAccessibilityStatus';
@@ -82,11 +82,11 @@ export function useSessionSurfaceEntityDrag(binding: SessionSurfaceEntityBinding
                 const destination = context.pointer && rectangle && latest.current?.pointerDestination
                     ? latest.current.pointerDestination(rectangle, context.pointer) : context.destination;
                 const admission = latest.current?.target?.resolve({ ...context, destination }) ?? { status: 'refused' as const, reason: { code: 'target-gone', message: t('entityDragDrop.reasons.gone') } };
-                return admission.status === 'allowed' && admission.effect.actionId === 'widgets.instance.move'
+                return admission.status === 'allowed' && admission.effect.actionId === 'widgets.item.move'
                     ? latest.current?.admitWidgetMovement?.(admission.effect) ?? { status: 'refused', reason: { code: 'widget_admission_unavailable', message: t('entityDragDrop.surface.widgetMoveUnavailable') } }
                     : admission;
             },
-            execute: effect => effect.actionId === 'widgets.instance.move' ? (latest.current?.widgetMovement?.execute ?? executeWidgetEntityMovement)(effect, scope)
+            execute: effect => effect.actionId === 'widgets.item.move' ? (latest.current?.widgetMovement?.execute ?? executeWidgetEntityMovement)(effect, scope)
                 : latest.current?.target?.execute(effect) ?? Promise.resolve({ status: 'refused', reason: { code: 'target-gone', message: t('entityDragDrop.reasons.gone') } }),
             autoscroll: pointer => latest.current?.target?.autoscroll?.(pointer),
             containsPointer: pointer => latest.current?.target?.containsPointer?.(pointer) !== false,
@@ -117,6 +117,15 @@ export function useSessionSurfaceEntityDrag(binding: SessionSurfaceEntityBinding
 }
 
 export type SessionSurfaceEntityDrag = ReturnType<typeof useSessionSurfaceEntityDrag>;
+
+/**
+ * While a card or group is carried it stays in its place, dimmed, until the release settles (lab
+ * widget-groups wgdnd 2: its cell "stays as a soft gap"), the same dim every list gives a carried row.
+ */
+const CARRIED_SOURCE_STYLE = Object.freeze({ opacity: HAPPIER_CARRIED_SOURCE_OPACITY });
+export function useSessionSurfaceCarriedStyle(drag: SessionSurfaceEntityDrag): typeof CARRIED_SOURCE_STYLE | null {
+    return useEntityDragSourceState(drag.runtime, drag.sourceId).active ? CARRIED_SOURCE_STYLE : null;
+}
 
 /** Called once at each scroll/rail owner, not once for every card. */
 export function useSessionSurfaceGeometryRefresh(refresh: () => void) {
@@ -215,10 +224,41 @@ export function SessionSurfaceEntityTargetFeedback(props: Readonly<{ drag: Sessi
     const boardTarget = props.drag.getBoardTarget();
     const widgetAreaTarget = props.drag.getWidgetAreaTarget();
     const edge = resolveSessionSurfaceIndicatorEdge({ effect, bounds, pointer, ...(companionTarget ? { companionTarget } : {}), ...(boardTarget ? { boardTarget } : {}), ...(widgetAreaTarget ? { widgetAreaTarget } : {}) });
-    const outline = isCopy || effect.actionId === 'widgets.instance.move' && !edge;
+    const outline = isCopy || effect.actionId === 'widgets.item.move' && !edge;
     if (!outline && !edge) return null;
     return <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
         {outline ? <TreeDropOutline testID={`${props.testID}-drop-outline`} visual={{ kind: 'outline', targetId: props.drag.targetId }} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
         : <TreeDropIndicatorLine testID={`${props.testID}-drop-line`} visual={{ kind: 'line', targetId: props.drag.targetId, edge: edge ?? 'bottom', depth: 0 }} indentPx={0} style={{ position: 'absolute', left: 0, right: 0, ...(edge === 'top' ? { top: 0 } : { bottom: 0 }) }} />}
+    </View>;
+}
+
+/**
+ * A container target's feedback (lab widget-groups wgdnd): outlined while the carried item would enter
+ * it — also while the place under the pointer is one of its children, whose own line marks where — and
+ * the line at its edge while the item would land beside it. Reordering inside lights no outline.
+ */
+export function SessionSurfaceEntityContainerFeedback(props: Readonly<{
+    drag: SessionSurfaceEntityDrag;
+    /** The container's corner, so the outline coincides with its card. */
+    radius: number;
+    /** Whether an admitted effect puts the carried item into this container from outside it. */
+    enters: (effect: import('@happier-dev/protocol/plugins/ui').EntityDropEffectV1) => boolean;
+    testID: string;
+}>) {
+    const { drag } = props;
+    const enters = React.useRef(props.enters); enters.current = props.enters;
+    const state = React.useSyncExternalStore(drag.runtime.subscribe, (): 'into' | 'top' | 'bottom' | 'none' => {
+        const snapshot = drag.runtime.getSnapshot();
+        if (snapshot.phase !== 'carrying' || snapshot.admission?.status !== 'allowed') return 'none';
+        const effect = snapshot.admission.effect;
+        if (enters.current(effect)) return 'into';
+        if (snapshot.targetId !== drag.targetId) return 'none';
+        const widgetAreaTarget = drag.getWidgetAreaTarget();
+        return resolveSessionSurfaceIndicatorEdge({ effect, bounds: drag.getBounds(), pointer: drag.runtime.getPointer(), ...(widgetAreaTarget ? { widgetAreaTarget } : {}) }) ?? 'none';
+    }, () => 'none');
+    if (state === 'none') return null;
+    return <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
+        {state === 'into' ? <TreeDropOutline testID={`${props.testID}-drop-outline`} weight="container" radius={props.radius} visual={{ kind: 'outline', targetId: drag.targetId }} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
+        : <TreeDropIndicatorLine testID={`${props.testID}-drop-line`} visual={{ kind: 'line', targetId: drag.targetId, edge: state, depth: 0 }} indentPx={0} style={{ position: 'absolute', left: 0, right: 0, ...(state === 'top' ? { top: 0 } : { bottom: 0 }) }} />}
     </View>;
 }

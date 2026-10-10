@@ -27,6 +27,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { resolveServerProfileScopeId } from '@/sync/domains/server/serverProfiles';
 import { AppShellPluginUiProjectionValueProvider } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import type { SessionPluginRuntimeState } from '@/components/sessions/plugins/useSessionPluginRuntime';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { normalizePluginUiProjection } from '@/sync/domains/plugins/ui/projection';
 import type { SessionBoardItemProjection, SessionBoardMountHost } from '@/sync/domains/session/board';
 import { selectWidgetCandidates } from '@/components/widgets/widgetCatalog';
@@ -86,7 +87,6 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
         if (request.method === RPC_METHODS.DAEMON_PLUGIN_UI_ARTIFACT_BYTES_READ) return DaemonPluginUiArtifactBytesReadResponseSchema.parse({
             ok: true, artifactFamily: 'reactNative', cacheIdentity: { artifactDigest: nativeArtifactGraph.digest },
             artifact: { artifactKind: 'reactNativeBundle', digest: nativeArtifactGraph.digest, format: 'plainJs', byteSize: nativeBytes.byteLength },
-            bytesBase64: encodeBase64(nativeBytes),
             files: nativeArtifactGraph.files.map((file) => ({ ...file, bytesBase64: encodeBase64(nativeBytes) })),
         });
         if (request.method === RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ) {
@@ -376,6 +376,7 @@ function runtime(overrides: Partial<SessionPluginRuntimeState> = {}): SessionPlu
         machineId: 'machine-1',
         serverId: state.serverId,
         platform: 'web',
+        accountLifetime: captureActiveServerAccountScopeLifetime(),
         ...overrides,
     } as SessionPluginRuntimeState;
 }
@@ -591,7 +592,7 @@ describe('SessionWidgetHost installed surface placements', () => {
         if (!content || typeof content !== 'object' || !('body' in content) || typeof content.body !== 'string')
             throw new Error('Expected approval request body');
         const request = StoredApprovalRequestSchema.parse(JSON.parse(content.body));
-        expect(request).toMatchObject({ actionId: 'widgets.instance.size.set', actionArgs: {
+        expect(request).toMatchObject({ actionId: 'widgets.item.size.set', actionArgs: {
             ref: { surface: { serverId: state.serverId, accountId: 'viewer', owner: { kind: 'sessionBoard', sessionId: 'session-1' } },
                 instanceId: 'widget-1' }, size: 'large',
         } });

@@ -1,4 +1,9 @@
-import type { AcpCatalogSettingsV1, PersistedBackendTargetRefV2 } from '@happier-dev/protocol';
+import type { PersistedBackendTargetRefV2 } from '@happier-dev/protocol';
+import type { ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
+import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { backendTargetKeysMatch } from '@/agents/backendCatalog/backendTargetKeyV2';
+import type { resolveSessionRoutePresentation } from '@/providers/session/resolveSessionRoutePresentation';
+import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { PluginSourceCustodyV1Schema, pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { resolveEffectiveInputFields as resolveEffectiveActionInputFields } from '@happier-dev/protocol/inputs/inputFieldRuntime';
@@ -30,23 +35,29 @@ export function useExecutionRunLauncherOptionsModel(params: Readonly<{
     singleTarget?: boolean;
     enabledAgentIds: readonly string[];
     executionRunsBackends: Readonly<Record<string, ExecutionRunsBackendSnapshotEntry>> | null | undefined;
-    acpCatalogSettingsV1: AcpCatalogSettingsV1;
+    acpCatalogSnapshot?: AcpCatalogSnapshotV1;
     initialBackendTarget: PersistedBackendTargetRefV2 | null;
     fallbackAgentId: string | null;
     machineCapabilitiesState: MachineCapabilitiesCacheState;
     mergedBackendProjectionById?: Readonly<Record<string, MergedBackendProjectionEntry>> | null;
     mergedProviderProjectionById?: Readonly<Record<string, MergedProviderProjectionEntry>> | null;
+    /** Applied parent selection for draft presentation only; host admission still resolves omission. */
+    inheritedModelSelection?: ProviderBoundModelRef | null;
+    inheritedRoutePresentation?: ReturnType<typeof resolveSessionRoutePresentation>;
+    inheritedConnectedServicesSelection?: ConnectedServiceBindingsV2 | null;
 }>) {
     const actionId = resolveExecutionRunLauncherActionId(params.intent);
-    const backendChoices = React.useMemo(() => resolveExecutionRunLauncherBackendChoices({
+    const catalogReady = params.acpCatalogSnapshot?.status === 'ready';
+    const backendChoices = React.useMemo(() => !catalogReady ? [] : resolveExecutionRunLauncherBackendChoices({
         enabledAgentIds: params.enabledAgentIds,
         executionRunsBackends: params.executionRunsBackends,
-        acpCatalogSettingsV1: params.acpCatalogSettingsV1,
+        acpCatalogSnapshot: params.acpCatalogSnapshot,
         intent: params.intent,
         mergedBackendProjectionById: params.mergedBackendProjectionById ?? null,
         mergedProviderProjectionById: params.mergedProviderProjectionById ?? null,
     }), [
-        params.acpCatalogSettingsV1,
+        catalogReady,
+        params.acpCatalogSnapshot,
         params.enabledAgentIds,
         params.executionRunsBackends,
         params.intent,
@@ -105,6 +116,7 @@ export function useExecutionRunLauncherOptionsModel(params: Readonly<{
     );
 
     React.useEffect(() => {
+        if (!catalogReady) return;
         const selectable = backendChoices.filter((choice) => !choice.disabled);
         const selectableValues = selectable.map((choice) => params.intent === 'review' ? choice.backendId : choice.targetKey);
         const preserved = selectedValues
@@ -126,10 +138,10 @@ export function useExecutionRunLauncherOptionsModel(params: Readonly<{
             ...previous,
             ...setValueAtTopLevelPatch(previous, targetFieldPath, next),
         }));
-    }, [backendChoices, initialBackendTargetKey, params.intent, params.setActionInput, params.singleTarget, selectedValues, targetField?.requireExplicitSelection, targetFieldPath]);
+    }, [catalogReady, backendChoices, initialBackendTargetKey, params.intent, params.setActionInput, params.singleTarget, selectedValues, targetField?.requireExplicitSelection, targetFieldPath]);
 
     React.useEffect(() => {
-        if (!requestedProfileId) return;
+        if (!catalogReady || !requestedProfileId) return;
         if (selectedProfileChoice && !selectedProfileChoice.disabled && selectedProfileMatchesSelectedBackend) return;
         params.setActionInput((previous) => {
             const next = { ...previous };
@@ -137,7 +149,7 @@ export function useExecutionRunLauncherOptionsModel(params: Readonly<{
             delete next.profileSourceCustody;
             return next;
         });
-    }, [params.setActionInput, requestedProfileId, selectedProfileChoice, selectedProfileMatchesSelectedBackend]);
+    }, [catalogReady, params.setActionInput, requestedProfileId, selectedProfileChoice, selectedProfileMatchesSelectedBackend]);
 
     const permissionModeOptions = React.useMemo(() => {
         const agentId = resolveExecutionRunPermissionAgentId({ selectedBackendChoices, fallbackAgentId: params.fallbackAgentId });
@@ -199,12 +211,24 @@ export function useExecutionRunLauncherOptionsModel(params: Readonly<{
         params.setActionInput((previous) => ({ ...previous, ...normalized }));
     }, [actionId, params.setActionInput]);
 
+    const targetMatchesParent = selectedBackendChoice !== null && params.initialBackendTarget !== null
+        && backendTargetKeysMatch(selectedBackendChoice.targetKey, params.initialBackendTarget);
+    const inheritsModel = params.actionInput.modelSelection === undefined
+        && params.actionInput.modelId === undefined && params.actionInput.teamCredentialModel === undefined
+        && targetMatchesParent;
+    const inheritsRoute = inheritsModel && params.actionInput.connectedServices === undefined
+        && params.actionInput.connectedServicesByBackendTargetKey === undefined;
     return {
+        catalogReady,
         actionId,
         actionSpec,
         fields,
         backendChoices,
         selectedBackendChoice,
+        targetMatchesParent,
+        inheritedDraftSelection: inheritsModel ? params.inheritedModelSelection ?? null : null,
+        inheritedDraftRoutePresentation: inheritsRoute ? params.inheritedRoutePresentation ?? null : null,
+        inheritedDraftConnectedServicesSelection: inheritsRoute ? params.inheritedConnectedServicesSelection ?? null : null,
         selectedBackendTargetKeys: selectedBackendChoices.map((choice) => choice.targetKey),
         profileChoices,
         selectedProfileId: selectedProfileChoice?.id ?? '',

@@ -73,6 +73,14 @@ describe('Settings › Delegation', () => {
             .toContain('roles.delegation.ladderRefusedDetail:5');
     });
 
+    it('says something different on every ladder step: each level names the level that started it', async () => {
+        const screen = await renderSettingsView(<DelegationSettingsView />);
+        const details = [1, 2, 3, 4].map((level) => String(screen.findRow(`settings.delegation.ladder.level.${level}`)?.props.accessibilityLabel ?? ''));
+        expect(details[0]).toContain('roles.delegation.ladderLevelDetail:1');
+        expect(details[3]).toContain('roles.delegation.ladderLevelDetail:4');
+        expect(new Set(details).size).toBe(4);
+    });
+
     it('writes the chosen depth as the one Account limit', async () => {
         const screen = await renderSettingsView(<DelegationSettingsView />);
         await screen.pressByTestIdAsync('settings.delegation.workDepthLimit:2');

@@ -4,12 +4,12 @@ import {
     resolveHappierWorkStatusSurfaceStyle,
     resolveHappierWorkStatusWordColor,
     type HappierWorkColors,
-    type HappierWorkStateColors,
     type HappierWorkStatusColors,
 } from '@happier-dev/plugin-ui/presentation';
 
 import { Typography } from '@/constants/Typography';
 import type { Theme } from '@/theme';
+import { resolveAttentionStateColors } from '@/components/ui/status/StatusPill';
 
 import type { WorkStatusTone } from './resolveWorkStatusTone';
 
@@ -26,25 +26,6 @@ import type { WorkStatusTone } from './resolveWorkStatusTone';
  */
 
 const hostWorkColors = new WeakMap<Theme, HappierWorkColors>();
-
-type AttentionThemeColors = Readonly<{
-    attention: Readonly<{ foreground: string }>;
-    warning: HappierWorkStateColors;
-}>;
-
-/**
- * "Needs you" is the Brand-owned attention amber wherever it appears (DESIGN.md, "One attention
- * colour"), not the system warning orange: its ink and the ring drawn from it. The amber has no tint
- * token of its own, so the faint ground stays the warning tint (the attention ink is asserted AA on
- * an amber tint in `themeContrast.test.ts`).
- */
-function attentionStateColors(state: AttentionThemeColors): HappierWorkStateColors {
-    return {
-        foreground: state.attention.foreground,
-        background: state.warning.background,
-        border: state.attention.foreground,
-    };
-}
 
 /**
  * The exact colour roles the shared Work primitives (status treatment, Work sections and rows, the
@@ -67,7 +48,7 @@ export function projectWorkColors(theme: Theme): HappierWorkColors {
         hover: colors.surface.pressedOverlay,
         selected: colors.surface.selected,
         focus: colors.border.focus,
-        attention: attentionStateColors(colors.state),
+        attention: resolveAttentionStateColors(colors.state),
         danger: colors.state.danger,
     });
     hostWorkColors.set(theme, projected);
@@ -77,6 +58,7 @@ export function projectWorkColors(theme: Theme): HappierWorkColors {
 // Each entry reads `theme` itself: Unistyles' compiler attributes the theme dependency per style key,
 // so a value hoisted above the returned object would not follow a theme change.
 const styles = StyleSheet.create((theme) => ({
+    wordNeutral: { color: theme.colors.text.secondary },
     surfaceAttention: resolveHappierWorkStatusSurfaceStyle('attention', projectWorkColors(theme)),
     surfaceDanger: resolveHappierWorkStatusSurfaceStyle('danger', projectWorkColors(theme)),
     wordAttention: {
@@ -98,21 +80,21 @@ export function workStatusSurfaceStyle(tone: WorkStatusTone) {
 
 type ToneColors = Readonly<{
     text: Readonly<{ secondary: string }>;
-    state: AttentionThemeColors & Readonly<{ danger: HappierWorkStatusColors['danger'] }>;
+    state: Parameters<typeof resolveAttentionStateColors>[0] & Readonly<{ danger: HappierWorkStatusColors['danger'] }>;
 }>;
 
 /** A state glyph's colour in this tone (an icon has no text style): quiet secondary ink while healthy. */
 export function workStatusGlyphColor(colors: ToneColors, tone: WorkStatusTone): string {
     return resolveHappierWorkStatusGlyphColor(tone, {
         secondaryText: colors.text.secondary,
-        attention: attentionStateColors(colors.state),
+        attention: resolveAttentionStateColors(colors.state),
         danger: colors.state.danger,
     });
 }
 
-/** The state word's colour and weight in this tone; `null` keeps the surface's quiet text style. */
+/** Explicit quiet ink also works for standalone/custom subtitle text in either theme. */
 export function workStatusWordStyle(tone: WorkStatusTone) {
     if (tone === 'attention') return styles.wordAttention;
     if (tone === 'danger') return styles.wordDanger;
-    return null;
+    return styles.wordNeutral;
 }

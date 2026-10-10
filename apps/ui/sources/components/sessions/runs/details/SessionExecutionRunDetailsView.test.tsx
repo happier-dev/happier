@@ -17,6 +17,7 @@ import { createMachineFixture, createPendingMessageFixture, createSessionFixture
 import { createSessionMessagesFixture, createToolCallMessageFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
 import { serveActionHomes, type ServedHomeRequest } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
@@ -171,7 +172,9 @@ function publishMarker(status: ExecutionRunPublicState['status'] = 'running') {
     getStorage().getState().applyMessages('s1', [marker, result]);
     getStorage().getState().applyMessagesLoaded('s1');
 }
+let restorePopoverWebGlobals: (() => void) | undefined;
 beforeEach(async () => {
+    restorePopoverWebGlobals = withPopoverWebGlobals();
     resetSessionDraftRepositoryForTests();
     browserRuntime = null;
     latestToolResult = undefined;
@@ -241,6 +244,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
     standardCleanup();
+    restorePopoverWebGlobals?.();
     await disconnectActiveServerConnection();
     home?.dispose();
 });
@@ -426,6 +430,32 @@ describe('SessionExecutionRunDetailsView — real Home, transcript and interacti
         expect(calls(SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE)[0]![1]).toEqual({ runId: 'run_1', resume: true });
         await act(async () => settle({ ok: true }));
     });
+    it('refuses Resume through Action policy before issuing its transport', async () => {
+        runState = liveRun({ status: 'succeeded', interaction: undefined, lifecycle: { v: 1, state: 'recoverable' } });
+        getStorage().setState(state => ({ settings: { ...state.settings, actionsSettingsV1: {
+            v: 1, actions: { 'execution.run.ensure': { disabledSurfaces: ['ui'] } },
+        } } }));
+        await mount(); await loaded();
+        await screen.pressByTestIdAsync('session-run-details-resume');
+        await vi.waitFor(() => expect(JSON.stringify(screen.tree.toJSON())).toContain('action_disabled'));
+        expect(calls(SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE)).toHaveLength(0);
+    });
+    it.each([
+        ['execution.run.stop', 'session-run-details-stop', SESSION_RPC_METHODS.EXECUTION_RUN_STOP],
+        ['execution.run.cancel_turn', 'session-run-details-cancel-turn', SESSION_RPC_METHODS.EXECUTION_RUN_CANCEL_TURN_V1],
+    ] as const)('refuses %s through Action policy before issuing its transport', async (actionId, testId, method) => {
+        runState = liveRun({ inputTurns: { occurrenceId: 'occurrence-1', current: {
+            turnId: 'turn-1', inputIds: ['input-1'], state: 'active',
+        } } });
+        getStorage().setState(state => ({ settings: { ...state.settings, actionsSettingsV1: {
+            v: 1, actions: { [actionId]: { disabledSurfaces: ['ui'] } },
+        } } }));
+        await mount(); await loaded(); await menu();
+        await screen.pressByTestIdAsync(testId);
+        await vi.waitFor(() => expect(JSON.stringify(screen.tree.toJSON())).toContain('action_disabled'));
+        expect(calls(method)).toHaveLength(0);
+        expect(screen.findByTestId('session-run-details-stop-failed')).toBeNull();
+    });
     it.each(['android', 'ios', 'web'] as const)('keeps the view-owned Resume target accessible on %s', async (platform) => {
         runState = liveRun({ status: 'succeeded', interaction: undefined, lifecycle: { v: 1, state: 'recoverable' } });
         const originalPlatform = Platform.OS;
@@ -531,5 +561,79 @@ describe('SessionExecutionRunDetailsView — real Home, transcript and interacti
         expect(screen.getTextContent()).toContain('count=3');
         await screen.pressByTestIdAsync('session-run-details-stop-failed-secondary-action');
         expect(calls(RPC_METHODS.STOP_SESSION)).toHaveLength(1);
+    });
+});
+
+describe('Neighboring user Run Stop admission', () => {
+    async function mountStopSurface(surface: 'runs' | 'machine' | 'subagent') {
+        const { setServerProfileIdentityForUrl } = await import('@/sync/domains/server/serverProfiles');
+        await setServerProfileIdentityForUrl(home.homes.home!.serverUrl, serverId);
+        const original = boundary.call.getMockImplementation()!;
+        boundary.call.mockImplementation(async (method, input) => method === RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST
+            ? { runs: [{ ...runState,
+                happyHomeDir: '/tmp/happier', happySessionId: 's1', pid: 123 }] }
+            : original(method, input));
+        getStorage().setState({ machineListStatusByServerId: { [serverId]: 'idle' } });
+        if (surface === 'subagent') {
+            const { useSessionSubagentActions } = await import('@/components/sessions/agents/actions/useSessionSubagentActions');
+            let select: ((id: string) => void) | undefined;
+            function SubagentStop() {
+                select = useSessionSubagentActions({ sessionId: 's1', serverId, onOpenFull: null, onOpenAdvanced: null,
+                    subagent: { id: 'execution_run:run_1', kind: 'execution_run', status: 'running',
+                        display: { title: 'Reviewer' }, transcript: { sidechainId: 'toolu_1' },
+                        runRef: { runId: 'run_1', backendId: 'codex', intent: 'review' },
+                        recipient: { kind: 'execution_run', runId: 'run_1' }, timestamps: {},
+                        capabilities: { canOpen: true, canSend: true, canStop: true, canLaunchChild: false,
+                            canDelete: false, canOpenAdvancedRun: true } } }).select;
+                return null;
+            }
+            screen = await renderScreen(<SubagentStop />);
+            return async () => { await act(async () => select?.('stop')); };
+        }
+        const { router } = await import('expo-router');
+        router.setParams(surface === 'machine' ? { id: 'm1', serverId } : {});
+        const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+        const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+        const credentials = await TokenStorage.getCredentialsForServerUrl(home.homes.home!.serverUrl);
+        const Screen = surface === 'runs' ? (await import('@/app/(app)/runs')).default
+            : (await import('@/app/(app)/machine/[id]')).default;
+        screen = await renderScreen(<InjectedAuthProvider credentials={credentials}><AppPaneProvider><Screen /></AppPaneProvider></InjectedAuthProvider>);
+        await vi.waitFor(() => expect(screen.findAllByProps({ accessibilityLabel: 'runs.stop.stopRunA11y' }).length).toBeGreaterThan(0));
+        return async () => { await act(async () => {
+            await screen.findAllByProps({ accessibilityLabel: 'runs.stop.stopRunA11y' })[0]!.props.onPress();
+        }); };
+    }
+
+    it.each(['runs', 'machine', 'subagent'] as const)('refuses %s Stop through Action policy before transport or Session fallback', async surface => {
+        getStorage().setState(state => ({ settings: { ...state.settings, actionsSettingsV1: { v: 1, actions: {
+            'execution.run.stop': { enabled: false, enabledPlacements: [], disabledSurfaces: [], disabledPlacements: [] },
+        } } } }));
+        const stop = await mountStopSurface(surface);
+        await stop();
+        expect(calls(SESSION_RPC_METHODS.EXECUTION_RUN_STOP)).toEqual([]);
+        await vi.waitFor(() => expect(vi.mocked(Modal.alert)).toHaveBeenCalled());
+        expect(calls(RPC_METHODS.STOP_SESSION)).toEqual([]);
+        expect(vi.mocked(Modal.confirm)).not.toHaveBeenCalled();
+    });
+
+    it.each(['runs', 'machine', 'subagent'] as const)('sends admitted %s Stop to the exact Session and Home', async surface => {
+        const stop = await mountStopSurface(surface);
+        await stop();
+        await vi.waitFor(() => expect(calls(SESSION_RPC_METHODS.EXECUTION_RUN_STOP)).toHaveLength(1));
+        expect(boundary.requests.filter(request => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STOP)).toEqual([
+            { serverUrl: home.homes.home!.serverUrl, targetId: 's1', method: SESSION_RPC_METHODS.EXECUTION_RUN_STOP,
+                payload: { runId: 'run_1' } },
+        ]);
+        expect(calls(RPC_METHODS.STOP_SESSION)).toEqual([]);
+    });
+
+    it.each(['runs', 'machine'] as const)('preserves %s explicit Session fallback after an issued Run Stop fails', async surface => {
+        stopReply = async () => ({ ok: false, error: 'Unsupported response from session RPC' });
+        vi.mocked(Modal.confirm).mockResolvedValueOnce(true);
+        const stop = await mountStopSurface(surface);
+        await stop();
+        await vi.waitFor(() => expect(calls(RPC_METHODS.STOP_SESSION)).toHaveLength(1));
+        expect(calls(SESSION_RPC_METHODS.EXECUTION_RUN_STOP)).toHaveLength(1);
+        expect(vi.mocked(Modal.confirm)).toHaveBeenCalledOnce();
     });
 });

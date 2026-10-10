@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 const modalSpies = vi.hoisted(() => ({ alert: vi.fn() }));
 
@@ -17,6 +18,13 @@ import {
 } from './localServiceActionOutcome';
 
 describe('readLocalServiceActionOutcome', () => {
+    it('keeps a real Ask-first receipt pending rather than reporting a successful mutation', () => {
+        const receipt = ActionApprovalRequestCreatedResultSchema.parse({ kind: 'approval_request_created',
+            artifactId: 'service-approval', actionId: 'localServices.launcher.start' });
+        expect(readLocalServiceActionOutcome(receipt)).toEqual({ kind: 'approval_pending',
+            artifactId: receipt.artifactId, actionId: receipt.actionId });
+        expect(readLocalServiceActionOutcome(false)).toEqual({ kind: 'failed', reasonCode: null });
+    });
     it('classifies every failure shape the corridor can actually produce', () => {
         // A guard that never dispatched: no daemon code, still a failure the user must see.
         expect(readLocalServiceActionOutcome(undefined)).toEqual({ kind: 'failed', reasonCode: null });
@@ -50,6 +58,19 @@ function renderRunner() {
 describe('useLocalServiceActionRunner', () => {
     afterEach(standardCleanup);
     beforeEach(() => modalSpies.alert.mockReset());
+
+    it('does not trigger success affordances or a failure alert for a pending policy approval', async () => {
+        const { value, Harness } = renderRunner();
+        await renderScreen(<Harness />);
+        let outcome: boolean | undefined;
+        await act(async () => {
+            outcome = await value.current?.run({ id: 'row:approval', failureTitle: 'Could not start',
+                action: async () => ActionApprovalRequestCreatedResultSchema.parse({ kind: 'approval_request_created',
+                    artifactId: 'service-approval', actionId: 'localServices.launcher.start' }) });
+        });
+        expect(outcome).toBe(false);
+        expect(modalSpies.alert).not.toHaveBeenCalled();
+    });
 
     it('clears the in-flight row through the StrictMode effect replay', async () => {
         // The row spinner is driven by `pendingId`. A mounted-guard that is only ever set to

@@ -20,6 +20,26 @@ export type SessionWorkMapNode = HappierWorkMapPlaced<SessionWorkMapNodeDeclarat
 
 export type SessionWorkMap = HappierWorkMap<SessionWorkMapNode>;
 
+/**
+ * The work the map leaves out (lab `session-A2`: "Finished work leaves the map; List keeps it"):
+ * finished items with nothing still going under them, in projection order. A finished Session that
+ * leads outstanding work stays, so no outstanding node loses its place. The map hosts say what was
+ * folded in one quiet line.
+ */
+export function readWorkFoldedFromMap(projection: WorkProjection): readonly WorkItem[] {
+    const items = [...projection.sessions, ...projection.workflows, ...projection.backgroundRuns, ...projection.projectCommands];
+    const parentByKey = new Map<string, string>();
+    for (const item of projection.sessions) if (item.parentKey) parentByKey.set(item.key, item.parentKey);
+    const leadsOutstanding = new Set<string>();
+    for (const item of items) {
+        if (item.status.bucket === 'finished') continue;
+        for (let parent = parentByKey.get(item.key); parent && !leadsOutstanding.has(parent); parent = parentByKey.get(parent)) {
+            leadsOutstanding.add(parent);
+        }
+    }
+    return items.filter((item) => item.status.bucket === 'finished' && !leadsOutstanding.has(item.key));
+}
+
 export function projectSessionWorkMap(input: Readonly<{
     leadSessionId: string;
     leadTitle: string;
@@ -28,6 +48,7 @@ export function projectSessionWorkMap(input: Readonly<{
     projection: WorkProjection;
 }>): SessionWorkMap {
     const leadNodeId = `session:${input.leadSessionId}`;
+    const folded = new Set(readWorkFoldedFromMap(input.projection).map((item) => item.key));
     const nodes: SessionWorkMapNodeDeclaration[] = [{
         nodeId: leadNodeId,
         label: input.leadTitle,
@@ -39,7 +60,7 @@ export function projectSessionWorkMap(input: Readonly<{
         facts: input.leadFacts ?? [],
     }];
     for (const item of input.projection.sessions) {
-        if (item.open.kind !== 'session') continue;
+        if (item.open.kind !== 'session' || folded.has(item.key)) continue;
         nodes.push({
             nodeId: item.key,
             label: item.title,
@@ -55,7 +76,7 @@ export function projectSessionWorkMap(input: Readonly<{
         const runId = item.open.kind === 'workflow_run'
             ? item.open.runId
             : item.open.kind === 'agent_activity' ? item.open.runId : null;
-        if (!runId) continue;
+        if (!runId || folded.has(item.key)) continue;
         nodes.push({
             nodeId: item.key,
             label: item.title,
@@ -65,6 +86,13 @@ export function projectSessionWorkMap(input: Readonly<{
             status: item.status,
             agentId: item.agentId,
             facts: item.facts,
+        });
+    }
+    for (const item of input.projection.projectCommands) {
+        if (item.open.kind !== 'action_operation' || folded.has(item.key)) continue;
+        nodes.push({
+            nodeId: item.key, label: item.title, parentNodeId: leadNodeId, open: item.open,
+            kind: item.kind, status: item.status, agentId: item.agentId, facts: item.facts,
         });
     }
     return buildHappierWorkMap({ relationships: 'authored', nodes });

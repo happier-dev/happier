@@ -45,7 +45,7 @@ describe('Canvas browser drop at the shared entity owner', () => {
             return { scope, board: current, membership: projectBoardMembership(current, {
                 isHomeMounted: () => true, sections: {}, filtered: null }), isHomeMounted: () => true };
         };
-        const port = createWorkBoardUiActionPort(context, store.queue);
+        const port = createWorkBoardUiActionPort(context, store.queue, store.readBoardAccess);
         const binding: WorkBoardEntityBinding = { runtime, scope, isCurrent: () => true, getContext: context,
             execute: async effect => {
                 const input = WorkBoardActionInputSchemasV1['boards.apply'].parse(effect.input);

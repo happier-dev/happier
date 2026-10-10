@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { makeMutable, type SharedValue } from 'react-native-reanimated';
+import type { FrameRect } from '@happier-dev/plugin-ui/presentation';
 
 import type { SessionMobileSurface } from './sessionCockpitState';
 import type { PluginUiSurfacePlacementProjection } from '@/sync/domains/plugins/ui/projection';
@@ -116,7 +117,60 @@ const SessionCockpitComposerChromeReporterContext = React.createContext<SessionC
 const SessionCockpitDismissingSessionIdContext = React.createContext<string | null>(null);
 const SessionCockpitDismissControllerContext = React.createContext<SessionCockpitDismissController>(NOOP_DISMISS_CONTROLLER);
 
+export type SessionCockpitViewerScope = Readonly<{ sessionId: string; serverId?: string | null }>;
+type MeasuredRectScope = SessionCockpitViewerScope | null;
+type MeasuredRectBinding = Readonly<{ scope: MeasuredRectScope }>;
+type MountedMeasuredRect = Readonly<{ binding: MeasuredRectBinding; rect: FrameRect | null }>;
+type MeasuredRectReporter = Readonly<{
+    mount: (binding: MeasuredRectBinding) => () => void;
+    report: (binding: MeasuredRectBinding, rect: FrameRect | null) => void;
+}>;
+const NOOP_MEASURED_RECT_REPORTER: MeasuredRectReporter = { mount: () => () => {}, report: () => {} };
+const SessionCockpitViewerRectContext = React.createContext<FrameRect | null>(null);
+const SessionCockpitViewerRectReporterContext = React.createContext(NOOP_MEASURED_RECT_REPORTER);
+const SessionCockpitVoicePresenceRectContext = React.createContext<FrameRect | null>(null);
+const SessionCockpitVoicePresenceRectReporterContext = React.createContext(NOOP_MEASURED_RECT_REPORTER);
+const SessionCockpitPetRectContext = React.createContext<FrameRect | null>(null);
+const SessionCockpitPetRectReporterContext = React.createContext(NOOP_MEASURED_RECT_REPORTER);
+
+/** A named mounted shell fact; viewer, Voice and in-app pet each have one slot. */
+function useMountedMeasuredRect(): Readonly<{ rect: FrameRect | null; reporter: MeasuredRectReporter }> {
+    const [mounted, setMounted] = React.useState<MountedMeasuredRect | null>(null);
+    const mount = React.useCallback((binding: MeasuredRectBinding) => {
+        setMounted((current) => current?.binding === binding ? current : { binding, rect: null });
+        return () => {
+            setMounted((current) => current?.binding === binding ? null : current);
+        };
+    }, []);
+    const report = React.useCallback((binding: MeasuredRectBinding, rect: FrameRect | null) => {
+        setMounted((current) => {
+            if (current?.binding !== binding) return current;
+            const previous = current.rect;
+            if (previous === rect || (previous !== null && rect !== null
+                && previous.x === rect.x && previous.y === rect.y && previous.width === rect.width && previous.height === rect.height)) return current;
+            return { ...current, rect };
+        });
+    }, []);
+    const reporter = React.useMemo(() => ({ mount, report }), [mount, report]);
+    return { rect: mounted?.rect ?? null, reporter };
+}
+
+function useMountedMeasuredRectReporter(reporter: MeasuredRectReporter, scope: MeasuredRectScope, enabled: boolean) {
+    // The callback captures this mounted lifetime, rather than reading a latest ref: reopening
+    // the same component must not give its retired asynchronous measurements authority again.
+    const binding = React.useMemo<MeasuredRectBinding | null>(() => enabled ? { scope } : null, [enabled, scope]);
+    React.useEffect(() => {
+        if (binding) return reporter.mount(binding);
+    }, [binding, reporter]);
+    return React.useCallback((rect: FrameRect | null) => {
+        if (binding) reporter.report(binding, rect);
+    }, [binding, reporter]);
+}
+
 export function SessionCockpitChromeRegistryProvider(props: Readonly<{ children: React.ReactNode }>) {
+    const viewer = useMountedMeasuredRect();
+    const voicePresence = useMountedMeasuredRect();
+    const pet = useMountedMeasuredRect();
     const [bottomChromeHeight, setBottomChromeHeightState] = React.useState(0);
     const [floatingBottomChromeHeight, setFloatingBottomChromeHeight] = React.useState(0);
     const [composerChromeHeightById, setComposerChromeHeightById] = React.useState<Readonly<Record<string, number>>>({});
@@ -233,7 +287,19 @@ export function SessionCockpitChromeRegistryProvider(props: Readonly<{ children:
                                     <SessionCockpitDismissControllerContext.Provider value={dismissController}>
                                         <SessionCockpitDismissingSessionIdContext.Provider value={dismissingSessionId}>
                                             <SessionCockpitChromeRegistrationContext.Provider value={registration}>
-                                                {props.children}
+                                                <SessionCockpitViewerRectReporterContext.Provider value={viewer.reporter}>
+                                                    <SessionCockpitViewerRectContext.Provider value={viewer.rect}>
+                                                        <SessionCockpitVoicePresenceRectReporterContext.Provider value={voicePresence.reporter}>
+                                                            <SessionCockpitVoicePresenceRectContext.Provider value={voicePresence.rect}>
+                                                                <SessionCockpitPetRectReporterContext.Provider value={pet.reporter}>
+                                                                    <SessionCockpitPetRectContext.Provider value={pet.rect}>
+                                                                        {props.children}
+                                                                    </SessionCockpitPetRectContext.Provider>
+                                                                </SessionCockpitPetRectReporterContext.Provider>
+                                                            </SessionCockpitVoicePresenceRectContext.Provider>
+                                                        </SessionCockpitVoicePresenceRectReporterContext.Provider>
+                                                    </SessionCockpitViewerRectContext.Provider>
+                                                </SessionCockpitViewerRectReporterContext.Provider>
                                             </SessionCockpitChromeRegistrationContext.Provider>
                                         </SessionCockpitDismissingSessionIdContext.Provider>
                                     </SessionCockpitDismissControllerContext.Provider>
@@ -245,6 +311,36 @@ export function SessionCockpitChromeRegistryProvider(props: Readonly<{ children:
             </SessionCockpitBottomChromeHeightSetterContext.Provider>
         </SessionCockpitChromeRegisterContext.Provider>
     );
+}
+
+/** Settled floating measurement only. Dock, Close and Session/Home retirement withdraw it. */
+export function useSessionCockpitViewerRect(): FrameRect | null {
+    return React.useContext(SessionCockpitViewerRectContext);
+}
+
+export function useReportSessionCockpitViewerRect(scope: SessionCockpitViewerScope, enabled: boolean): (rect: FrameRect | null) => void {
+    const reporter = React.useContext(SessionCockpitViewerRectReporterContext);
+    const serverId = scope.serverId ?? null;
+    const binding = React.useMemo(() => ({ sessionId: scope.sessionId, serverId }), [scope.sessionId, serverId]);
+    return useMountedMeasuredRectReporter(reporter, binding, enabled);
+}
+
+/** Actual measured Island/Orb rectangle, shared with the current viewer constraints. */
+export function useSessionCockpitVoicePresenceRect(): FrameRect | null {
+    return React.useContext(SessionCockpitVoicePresenceRectContext);
+}
+
+export function useReportSessionCockpitVoicePresenceRect(enabled: boolean): (rect: FrameRect | null) => void {
+    return useMountedMeasuredRectReporter(React.useContext(SessionCockpitVoicePresenceRectReporterContext), null, enabled);
+}
+
+/** In-app pet geometry only; an external desktop mascot window is a separate surface. */
+export function useSessionCockpitPetRect(): FrameRect | null {
+    return React.useContext(SessionCockpitPetRectContext);
+}
+
+export function useReportSessionCockpitPetRect(enabled: boolean): (rect: FrameRect | null) => void {
+    return useMountedMeasuredRectReporter(React.useContext(SessionCockpitPetRectReporterContext), null, enabled);
 }
 
 export function useSessionCockpitChromeRegistration(): SessionCockpitChromeRegistration | null {

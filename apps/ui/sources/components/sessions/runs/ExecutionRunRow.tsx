@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import type { ExecutionRunPublicState } from '@happier-dev/protocol';
+import { isExecutionRunActive, type ExecutionRunPublicState } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import {
     readExecutionRunAgentActivityStatus,
     resolveAgentActivityStatusPresentation,
@@ -18,7 +18,7 @@ import { motionTokens } from '@/components/ui/motion/motionTokens';
 
 export type ExecutionRunRowRun =
     Pick<ExecutionRunPublicState, 'runId' | 'intent' | 'backendTarget' | 'status' | 'display'>
-    & Partial<Pick<ExecutionRunPublicState, 'startedAtMs' | 'finishedAtMs'>>;
+    & Partial<Pick<ExecutionRunPublicState, 'startedAtMs' | 'finishedAtMs' | 'runClass' | 'turnInFlight'>>;
 
 export const ExecutionRunRow = React.memo((props: Readonly<{
     run: ExecutionRunRowRun;
@@ -37,7 +37,7 @@ export const ExecutionRunRow = React.memo((props: Readonly<{
     const activityStatus = readExecutionRunAgentActivityStatus(run.status);
     const status = resolveWorkStatusTone({
         kind: 'agent_activity',
-        facts: { status: activityStatus, word: resolveAgentActivityStatusPresentation(activityStatus).label },
+        facts: { status: activityStatus, word: resolveAgentActivityStatusPresentation(activityStatus, isExecutionRunActive(run)).label },
     });
     const title =
         (run.display && typeof run.display === 'object' && typeof (run.display as any).title === 'string' && String((run.display as any).title).trim().length > 0)

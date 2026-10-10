@@ -1,3 +1,4 @@
+import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -110,7 +111,7 @@ describe('SessionBoardHostedHtmlEditorCard', () => {
                 address: { owner: 'host', namespace: 'surface', kind: 'item.v1', localId: 'interactive-1' },
                 content: { t: 'plain', v: {
                     v: 1, title: 'Dashboard', frame: 'card', height: { mode: 'auto', fallback: 'regular' },
-                    source: { kind: 'hostedHtml', source: { kind: 'html', html: attempt ? '<main>theirs</main>' : '<main>mine</main>' } },
+                    source: { kind: 'hostedHtml', source: artifactHtmlBundleFromBodyV1(attempt ? '<main>theirs</main>' : '<main>mine</main>') },
                 } },
                 revision: attempt ? revision3 : revision2,
                 createdAt: '2026-09-05T00:00:00.000Z', updatedAt: '2026-09-05T00:00:00.000Z',
@@ -194,7 +195,7 @@ describe('SessionBoardHostedHtmlEditorCard', () => {
         await vi.waitFor(() => expect(onSaved).toHaveBeenCalledOnce());
         expect(upserts[1]).toMatchObject({
             expectedItemRevision: revision3,
-            itemContent: { t: 'plain', v: { source: { kind: 'hostedHtml', source: { html: '<main>mine final</main>' } } } },
+            itemContent: { t: 'plain', v: { source: { kind: 'hostedHtml', source: artifactHtmlBundleFromBodyV1('<main>mine final</main>') } } },
         });
     });
 

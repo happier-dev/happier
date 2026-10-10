@@ -1,3 +1,4 @@
+import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -113,7 +114,7 @@ describe('buildSessionBoardItemActions', () => {
             canEdit: true,
             item: {
                 ...item,
-                source: { kind: 'hostedHtml', source: { kind: 'html', html: '<main />' } },
+                source: { kind: 'hostedHtml', source: artifactHtmlBundleFromBodyV1('<main />') },
             },
             onEdit,
         });

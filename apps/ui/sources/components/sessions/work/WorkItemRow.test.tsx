@@ -12,11 +12,15 @@ import {
 import { installSessionSubagentCommonModuleMocks } from '@/components/sessions/agents/sessionSubagentTestHelpers';
 import type { SessionWorkSources } from './sessionWorkSources';
 
-import type { WorkItem } from './workProjection';
+import { groupWorkByState, projectWork, type WorkItem, type WorkProjectionInput } from './workProjection';
+import { WORKER_KIND_GLYPHS } from './workerKindGlyphs';
+import { readSessionWorkStatusFacts } from '@/components/work/status/sessionWorkStatusFacts';
+import { createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const SCOPE = { serverId: 'server-1', accountId: 'account-1' };
+const rowPaints = new Map<string, number>();
 
 /** The exact-Run reader's Action client is the network boundary (as in the Run screen's tests). */
 const detailActions = vi.hoisted(() => ({
@@ -36,6 +40,15 @@ vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
 
 // Only the storage environment is replaced: the Run invocation window is the real canonical domain.
 installSessionSubagentCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            View: ({ children, ...props }: React.PropsWithChildren<{ testID?: string }>) => {
+                if (props.testID?.startsWith('session-work-summary:')) rowPaints.set(props.testID, (rowPaints.get(props.testID) ?? 0) + 1);
+                return React.createElement('View', props, children);
+            },
+        });
+    },
     storage: async () => {
         const { create } = await import('zustand');
         const { createWorkflowRunsDomain } = await import('@/sync/store/domains/workflowRuns');
@@ -61,11 +74,40 @@ function needsYouSession(): WorkItem {
     };
 }
 
-// The notification leaf uses the real Action graph. Load it outside the per-test
-// assertion deadline instead of mocking that graph or lengthening the deadline.
+// Load the row's module graph outside the per-test assertion deadline instead of
+// lengthening the deadline.
 await import('./WorkItemRow');
 
 describe('WorkItemRow', () => {
+    it('uses the same session identity glyph as worker updates', async () => {
+        const { presentWorkItem } = await import('./WorkItemRow');
+        expect(presentWorkItem(needsYouSession()).iconName).toBe(WORKER_KIND_GLYPHS.session);
+    });
+    it('does not repaint unchanged real rows when another projected Session changes', async () => {
+        const { WorkItemRow } = await import('./WorkItemRow');
+        const source = (id: string) => ({ sessionId: id, leadSessionId: id === 'a' ? 'b' : 'lead', title: id, agentId: 'claude', facts: [],
+            statusFacts: readSessionWorkStatusFacts(createSessionListRenderableSessionFixture({ id, active: id === 'a', thinking: id === 'a', thinkingAt: 1000, activeAt: 1000 }), 1000), stalled: false, archived: false });
+        const a = source('a');
+        const b = source('b');
+        const input: WorkProjectionInput = { sessionId: 'lead', reportSessions: [a, b], managedRuns: [], agentEntries: [], workflowHeadlineRuns: [],
+            ownTriggerRunIds: new Set(), describeAgentStatus: (entry) => entry.status, describeProgress: () => '' };
+        const first = projectWork(input);
+        const onOpen = vi.fn();
+        const draw = (items: readonly WorkItem[]) => <>{items.map((item) => <WorkItemRow key={item.key} item={item} onOpen={onOpen} />)}</>;
+        const firstGroups = groupWorkByState(first);
+        // The child lives in another state group: grouping must flatten it without replacing it
+        // again on the next unrelated update.
+        expect(first.sessions.find((item) => item.key === 'session:a')?.level).toBe(1);
+        expect(firstGroups.working.find((item) => item.key === 'session:a')?.level).toBe(0);
+        const screen = await renderScreen(draw([...firstGroups.needsYou, ...firstGroups.working, ...firstGroups.recent]));
+        const before = rowPaints.get('session-work-summary:session:a');
+        expect(before).toBeGreaterThan(0);
+        const next = projectWork({ ...input, reportSessions: [a, { ...b, title: 'Updated B' }] }, first);
+        const nextGroups = groupWorkByState(next, firstGroups);
+        await act(async () => screen.tree.update(draw([...nextGroups.needsYou, ...nextGroups.working, ...nextGroups.recent])));
+        expect(rowPaints.get('session-work-summary:session:a')).toBe(before);
+        expect(screen.getTextContent()).toContain('Updated B');
+    });
     it('states where the work stands and opens it, with no answer controls on the row (S-1)', async () => {
         const { WorkItemRow } = await import('./WorkItemRow');
         const onOpen = vi.fn();
@@ -83,6 +125,20 @@ describe('WorkItemRow', () => {
             screen.pressByTestId('session-work-row:session:checkout');
         });
         expect(onOpen).toHaveBeenCalledWith(item);
+    });
+
+    it("keeps a title's distinguishing end whole when the row truncates it, so sibling rows stay apart", async () => {
+        const { WorkItemRow } = await import('./WorkItemRow');
+        const item: WorkItem = { ...needsYouSession(), key: 'session:child-a', title: 'ORC QA seed 13 child A' };
+        const screen = await renderScreen(<WorkItemRow item={item} titleTailStart={15} onOpen={vi.fn()} />);
+
+        const tail = screen.findHostByTestId('session-work-summary:session:child-a:title-tail');
+        expect(tail?.props.numberOfLines).toBe(1);
+        expect(screen.getTextContent()).toContain('child A');
+        // The shared start is the part that gives way.
+        const head = screen.findHostByTestId('session-work-summary:session:child-a:title');
+        expect(JSON.stringify(head?.children)).toContain('ORC QA seed 13');
+        expect(JSON.stringify(head?.children)).not.toContain('child A');
     });
 
     it('says what kind of work each row is first in its subtitle, since the list groups by state', async () => {
@@ -187,6 +243,7 @@ const MANAGED_DEFINITION = createWorkflowDefinitionFixture({
         {
             kind: 'step',
             id: 'analyze',
+            name: 'Analyze the repository',
             document: { text: 'Analyze the repository', references: [], attachments: [] },
             input: [],
             result: { kind: 'text' },
@@ -194,6 +251,7 @@ const MANAGED_DEFINITION = createWorkflowDefinitionFixture({
         {
             kind: 'step',
             id: 'report',
+            name: 'Write the report',
             document: { text: 'Write the report', references: [], attachments: [] },
             input: [],
             result: { kind: 'text' },

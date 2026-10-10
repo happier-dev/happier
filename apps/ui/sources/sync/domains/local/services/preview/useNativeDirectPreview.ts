@@ -12,6 +12,8 @@ export type NativeDirectPreviewInput = Readonly<{
     machineId: string | null;
     serverId?: string | null;
     enabled: boolean;
+    /** Only actual registration metadata permits the Browser host's device-local lease path. */
+    nativeDirectEnabled?: boolean;
     fallbackUrl: string | null;
     requestedUrl?: string | null;
     initialPath?: string;
@@ -79,8 +81,8 @@ export function useNativeDirectPreview(input: NativeDirectPreviewInput): Readonl
     const runtimeActive = useSyncExternalStore(subscribeToRuntimeActiveChange, isRuntimeActive, isRuntimeActive);
     const { previewId, machineId, serverId } = input;
     const key = JSON.stringify([previewId, machineId, serverId ?? null]);
-    const active = input.enabled && Boolean(previewId && machineId) && runtimeActive && hasNativePreviewRenderer();
-    const allowed = active && eligibility !== 'standard_only';
+    const active = input.enabled && Boolean(previewId && machineId) && runtimeActive;
+    const allowed = active && input.nativeDirectEnabled !== false && hasNativePreviewRenderer() && eligibility !== 'standard_only';
     const [state, setState] = useState<LeaseState | null>(null);
     const [fallbackState, setFallbackState] = useState<FallbackState | null>(null);
     const previous = useRef<PreviousOrigin | null>(null);
@@ -123,7 +125,7 @@ export function useNativeDirectPreview(input: NativeDirectPreviewInput): Readonl
         && requested.origin !== readUrl(input.fallbackUrl)?.origin
         && requested.origin !== lease?.localOrigin && requested.origin !== prior?.origin);
     const nativePending = allowed && !current?.settled;
-    const needsFallback = active && !lease && !nativePending && Boolean(input.fallbackUrl) && !externalNavigation;
+    const needsFallback = active && !lease && !nativePending && !externalNavigation;
 
     useEffect(() => {
         if (!needsFallback || !previewId || !machineId) {

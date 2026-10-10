@@ -16,14 +16,22 @@ import {
     resolveWorkflowRunDisplayName,
 } from '@/components/workflows/presentation/workflowRunDisplayName';
 import { describeWorkflowRunState } from '@/components/workflows/presentation/workflowLifecyclePresentation';
-import { getAgentCore } from '@/agents/catalog/catalog';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import { getStorage } from '@/sync/domains/state/storage';
 import type { AutomationDefinition } from '@/sync/domains/automations/automationTypes';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
 import { readSessionWorkStalled, readSessionWorkStatusFacts } from '@/components/work/status/sessionWorkStatusFacts';
-import { getSessionName } from '@/utils/sessions/sessionUtils';
+import { getSessionName, getSessionWorkContext } from '@/utils/sessions/sessionUtils';
+import { describeActionOperationStatusLabel, resolveActionOperationStatus } from '@/components/inbox/actionOperations/actionOperationPresentation';
+import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
+import { useSessionActionOperations } from '@/sync/domains/actionOperations/useActionOperations';
+import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
+import { registerMountedWorkReadOwner } from '@/sync/ops/actions/mountedWorkReadAction';
+export { sessionInstructionsActions } from '@/sync/ops/promptLibrary/sessionInstructions';
 
 import { selectSessionReportSubtree } from './reportSubtree';
 import {
@@ -42,8 +50,9 @@ import {
  * The Session host mounts it ONCE, beside the header it feeds: the agent activity (narrow width, which
  * the host already pays for), the workflow activity headline, the managed workflow runs and the
  * `reportsTo` subtree. The header strip reads only the value-stable `summary`; the Work tab reads the
- * items of the same projection through context, so the two can never count differently and opening the
- * tab asks the server for nothing the host has not already read.
+ * items of the same projection through context, so the two can never count differently. Instruction
+ * content is not a source here: only the open Work tab's Instructions section demands the current
+ * qualified document (`useSessionInstructionsDetail`), so the permanent header and roster never read it.
  */
 
 export type SessionWorkSources = Readonly<{
@@ -73,21 +82,15 @@ function normalizeId(value: string | null | undefined): string | null {
     return trimmed ? trimmed : null;
 }
 
-function readAgentLabel(agentId: string | null): string | null {
-    if (!agentId) return null;
-    const core = getAgentCore(agentId);
-    return core ? t(core.displayNameKey) : null;
-}
-
 export function toWorkReportSessionSource(session: Session, nowMs: number): WorkReportSessionSource {
     const agentId = readSessionPresentationAgentId(session);
-    const agentLabel = readAgentLabel(agentId);
+    const context = getSessionWorkContext(session, session.serverId);
     return {
         sessionId: session.id,
         leadSessionId: normalizeId(session.reportsTo?.sessionId),
         title: getSessionName(session, session.serverId ?? null),
         agentId,
-        facts: agentLabel ? [agentLabel] : [],
+        facts: context ? [context] : [],
         statusFacts: readSessionWorkStatusFacts(session, nowMs),
         stalled: readSessionWorkStalled(session, nowMs),
         archived: typeof session.archivedAt === 'number',
@@ -130,6 +133,11 @@ function describeProgress(progress: Readonly<{ completed: number; total: number 
     return t('sessionWork.progress', progress);
 }
 
+function describeOperationStatus(operation: ActionOperationProjection): string {
+    const { label } = resolveActionOperationStatus(operation.snapshot, operation.observation);
+    return describeActionOperationStatusLabel(label);
+}
+
 /**
  * Mounts the Work sources for one Session and projects them once.
  *
@@ -143,6 +151,15 @@ export function useSessionWorkSourcesOwner(params: Readonly<{
     enabled?: boolean;
 }>): SessionWorkSources {
     const enabled = params.enabled ?? true;
+    const operationServerId = enabled && params.serverId
+        ? resolveServerProfileScopeIdForIdentifier(params.serverId) : null;
+    const credentialHomes = React.useMemo(() => operationServerId ? [operationServerId] : [], [operationServerId]);
+    const credentialBindings = useServerCredentialAccountScopeBindings(credentialHomes);
+    const operationBinding = operationServerId ? credentialBindings.get(operationServerId) : undefined;
+    const operationAccountId = operationBinding?.isCurrent() ? operationBinding.accountId : null;
+    const actionOperations = useSessionActionOperations({
+        serverId: operationServerId, sessionId: params.sessionId, accountId: operationAccountId,
+    });
     const workflowActivity = useSessionWorkflowActivity({
         sessionId: params.sessionId,
         ...(params.serverId ? { serverId: params.serverId } : {}),
@@ -151,8 +168,11 @@ export function useSessionWorkSourcesOwner(params: Readonly<{
     });
     const managedRuns = useSessionManagedWorkflowRuns({ sessionId: params.sessionId, serverId: params.serverId, enabled });
     const reportSessions = getStorage()(useShallow((state) => (
-        enabled ? selectSessionReportSubtree(state.sessions, params.sessionId, params.serverId) : EMPTY_SESSIONS
+        enabled ? selectSessionReportSubtree(state.sessions, params.sessionId, params.serverId, state.sessionListRowsByServerId) : EMPTY_SESSIONS
     )));
+    // Identity also depends on the named machine/workspace, not just the Session record. Only
+    // changed displayed facts invalidate Work; unrelated machine or settings updates stay local.
+    const reportContexts = getStorage()(useShallow(() => reportSessions.map(session => getSessionWorkContext(session, session.serverId))));
     // The Account's Automation record is stable between Automation changes; only those re-derive.
     const automations = getStorage()((state) => (enabled ? state.automations : EMPTY_AUTOMATIONS));
     const ownTriggerRunIds = React.useMemo(
@@ -161,10 +181,18 @@ export function useSessionWorkSourcesOwner(params: Readonly<{
     );
 
     const { entries } = params.agentActivity;
+    const previousProjection = React.useRef<Readonly<{
+        sessionId: string; serverId: string | null; accountId: string | null; projection: WorkProjection;
+    }> | null>(null);
     const projection = React.useMemo(() => {
         const nowMs = Date.now();
-        return projectWork({
+        const previous = previousProjection.current;
+        const next = projectWork({
             sessionId: params.sessionId,
+            serverId: operationServerId,
+            accountId: operationAccountId,
+            actionOperations,
+            describeOperationStatus,
             reportSessions: reportSessions.map((session) => toWorkReportSessionSource(session, nowMs)),
             agentEntries: entries,
             workflowHeadlineRuns: workflowActivity.activeRuns,
@@ -172,8 +200,23 @@ export function useSessionWorkSourcesOwner(params: Readonly<{
             ownTriggerRunIds,
             describeAgentStatus: (entry) => resolveAgentActivityStatusPresentation(entry.status).label,
             describeProgress,
+        }, previous?.sessionId === params.sessionId && previous.serverId === operationServerId && previous.accountId === operationAccountId
+            ? previous.projection : null);
+        previousProjection.current = { sessionId: params.sessionId, serverId: operationServerId, accountId: operationAccountId, projection: next };
+        return next;
+    }, [actionOperations, entries, managedRuns, operationAccountId, operationServerId, ownTriggerRunIds, params.sessionId, reportContexts, reportSessions, workflowActivity.activeRuns]);
+
+    React.useLayoutEffect(() => {
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!enabled || !operationBinding || !lifetime
+            || !areServerAccountScopesEqual(operationBinding.scope, lifetime.scope)) return;
+        return registerMountedWorkReadOwner({
+            scope: operationBinding.scope, sessionId: params.sessionId,
+            isCurrent: () => operationBinding.isCurrent() && lifetime.isCurrent(),
+            read: () => ({ projection, managedRuns,
+                transcriptLoaded: getStorage().getState().sessionMessages[params.sessionId]?.isLoaded ?? false }),
         });
-    }, [entries, managedRuns, ownTriggerRunIds, params.sessionId, reportSessions, workflowActivity.activeRuns]);
+    }, [enabled, managedRuns, operationBinding, params.sessionId, projection]);
 
     return React.useMemo(() => ({
         sessionId: params.sessionId,

@@ -2,8 +2,11 @@ import * as React from 'react';
 import { Dimensions } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AIBackendProfileSchema, buildBackendTargetKeyV2, parseBackendTargetKeyV2, DaemonContributionRegistryProjectionDescribeResponseSchema, ExecutionRunPublicStateSchema, FeaturesResponseSchema, MACHINE_PLAIN_DATA_KEY_MARKER, PersistedBackendTargetRefV2Schema, V2SessionByIdResponseSchema } from '@happier-dev/protocol';
+import { AIBackendProfileSchema, buildBackendTargetKeyV2, DaemonContributionRegistryProjectionDescribeResponseSchema, ExecutionRunPublicStateSchema, FeaturesResponseSchema, MACHINE_PLAIN_DATA_KEY_MARKER, PersistedBackendTargetRefV2Schema, V2SessionByIdResponseSchema } from '@happier-dev/protocol';
 import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import { PROMPT_LIBRARY_ROWS_ROUTE_V1, PromptLibraryRowsListResponseV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
+import { SavedSecretResourceMaterialsResponseV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 
 import { changeTextTestInstance, createMachineFixture, createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
 import { serveActionHomes, type ServedHomeRequest } from '@/dev/testkit/harness/actionHomesHttpHarness';
@@ -25,6 +28,13 @@ import { StartReviewDialog } from '@/components/sessions/reviews/walkthrough/Sta
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { restoreConnectionToActiveServer, disconnectActiveServerConnection } from '@/sync/runtime/orchestration/connectionManager';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
+import { applyProfileCatalogSnapshot, resetProfileCatalogSnapshotsForTests } from '@/sync/store/settings/profileCatalogSnapshot';
+import { resetProfileCatalogEngineForTests } from '@/sync/engine/settings/profileCatalogEngine';
+import { resolveReviewEngineTarget } from '@/sync/domains/reviews/reviewEngineCatalog';
+import { refreshSavedSecretCatalog, resetSavedSecretCatalogEngineForTests } from '@/sync/engine/settings/savedSecretCatalogEngine';
+import { resetSavedSecretCatalogSnapshotsForTests } from '@/sync/store/settings/savedSecretCatalogSnapshot';
+import { refreshPromptLibraryCatalog, resetPromptLibraryCatalogEngineForTests } from '@/sync/engine/settings/promptLibraryCatalogEngine';
+import { resetPromptLibraryCatalogSnapshotsForTests } from '@/sync/store/settings/promptLibraryCatalogSnapshot';
 
 // Platform, credentials, local persistence, HTTP and RPC are the boundaries. The composer,
 // capture/coordinator, draft repository, launcher options, role catalog, capability/feature
@@ -103,6 +113,8 @@ let listResult: Promise<unknown> | null;
 let emittedStarts: Array<Record<string, unknown>>;
 let outbound: ServedHomeRequest[];
 let pluginProjection = false;
+let secretAvailable = false;
+const secretRef = 'happier:shared-secret:v1:personal-secret';
 
 function record(value: unknown): Record<string, unknown> {
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected boundary object');
@@ -116,9 +128,17 @@ function run(runId: string, launchOrigin?: unknown): Run {
         retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming', ...(launchOrigin ? { launchOrigin } : {}) });
 }
 function startedTargetKey(value: Record<string, unknown>) { return buildBackendTargetKeyV2(PersistedBackendTargetRefV2Schema.parse(value.backendTarget)); }
-function canonicalTargetKey(optionId: string) { return buildBackendTargetKeyV2(parseBackendTargetKeyV2(optionId)); }
+function canonicalTargetKey(optionId: string) { return buildBackendTargetKeyV2(resolveReviewEngineTarget(optionId)); }
 function setSettings(patch: Partial<Settings>) {
     getStorage().setState((state) => ({ settings: { ...state.settings, ...patch } }));
+}
+function publishProfile(profile: ReturnType<typeof AIBackendProfileSchema.parse>) {
+    applyProfileCatalogSnapshot({ serverId, accountId: 'account_1' }, { status: 'ready', source: 'destination',
+        authority: 'active', diagnostics: [], referenceGuardRevision: 1,
+        records: [{ record: { v: 1, id: profile.id, definition: { kind: 'legacy', profile },
+            enabled: true, secretBindings: {}, promptStack: [] }, revision: 1 }],
+        controlRevision: 1, control: { revision: 1, record: { v: 1, phase: 'active', sourceSettingsVersion: 0,
+            migratedLogicalRevision: 1, inventory: [{ kind: 'account_row', id: profile.id, revision: 1 }] } } }, true);
 }
 function composer(): ComposerProps { return screen.root.findByType(Reflect.get(SessionParticipantComposer, 'type')).props as ComposerProps; }
 function chip(key: string): Chip {
@@ -144,7 +164,7 @@ async function waitFor(assertion: () => void) {
 }
 async function mount(props: Partial<React.ComponentProps<typeof SessionInteractiveExecutionRunDraftView>> = {}) {
     screen = await renderScreen(<SessionInteractiveExecutionRunDraftView sessionId="session_1" serverId={serverId} onRunStarted={vi.fn()} {...props} />, {
-        createNodeMock: (element) => element.type === 'TextInput'
+        createNodeMock: (element) => element.type === 'TextInput' || element.type === 'textarea'
             ? { focus: platform.focus, blur: vi.fn(), setNativeProps: vi.fn() }
             : null,
     });
@@ -175,7 +195,7 @@ async function reviewers() {
     const available = [...new Set(choices.root.findAll(node => typeof node.props.testID === 'string'
         && node.props.testID.startsWith(prefix)).map(node => String(node.props.testID)))];
     const ids = ['claude', 'codex'].map(agentId => {
-        const id = available.find(candidate => canonicalTargetKey(candidate.slice(prefix.length)) === canonicalTargetKey('agent:' + agentId));
+        const id = available.find(candidate => canonicalTargetKey(candidate.slice(prefix.length)) === canonicalTargetKey(agentId));
         if (!id) throw new Error('Expected selectable reviewer: ' + agentId);
         return id;
     });
@@ -194,11 +214,18 @@ function outboundText() {
 
 describe('SessionInteractiveExecutionRunDraftView — real composer and Action path', () => {
     beforeEach(async () => {
+        resetProfileCatalogEngineForTests();
+        resetProfileCatalogSnapshotsForTests();
+        resetSavedSecretCatalogEngineForTests();
+        resetSavedSecretCatalogSnapshotsForTests();
+        resetPromptLibraryCatalogEngineForTests();
+        resetPromptLibraryCatalogSnapshotsForTests();
         random.next = 0;
         protocolSupported = true;
         admissionFailure = false;
         admissionGate = null;
         pluginProjection = false;
+        secretAvailable = false;
         backends = { claude: { available: true, intents: ['delegate', 'review', 'plan'] }, codex: { available: true, intents: ['delegate', 'review', 'plan'] } };
         startResults = [];
         listedRuns = [];
@@ -221,8 +248,10 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
                     features: { detachedScope: true, startAndWait: true, exactInputResults: true, runScopedAgentBindings: protocolSupported, secretReferenceOverlay: protocolSupported },
                 } } },
             };
-            if (request.method === SESSION_RPC_METHODS.EXECUTION_RUN_START) {
-                emittedStarts.push(record(request.payload));
+            if (request.method === SESSION_RPC_METHODS.EXECUTION_RUN_START
+                || request.method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1) {
+                emittedStarts.push(record(request.method === SESSION_RPC_METHODS.EXECUTION_RUN_START
+                    ? request.payload : record(request.payload).start));
                 return await (startResults.shift() ?? started());
             }
             if (request.method === RPC_METHODS.SPAWN_HAPPY_SESSION || request.method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE) {
@@ -246,6 +275,15 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
                 }));
                 if (request.path === '/v1/machines/machine_1') return Response.json({ machine: { id: 'machine_1', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER } });
                 if (request.path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+                if (request.path === ACP_CATALOG_ROWS_ROUTE_V1) return Response.json(AcpCatalogRowReadResponseV1Schema.parse({ status: 'absent' }));
+                if (request.path === PROMPT_LIBRARY_ROWS_ROUTE_V1) return Response.json(PromptLibraryRowsListResponseV1Schema.parse({ status: 'listed', rows: [{ key: 'role-overrides', revision: 1,
+                    content: { t: 'plain', v: { key: 'role-overrides', value: { v: 1, overrides: getStorage().getState().settings.rolesV1?.overrides ?? {} } } } }] }));
+                if (request.path === '/v1/account/saved-secrets/resources/materials') return Response.json(SavedSecretResourceMaterialsResponseV1Schema.parse({ resources: secretAvailable ? [{
+                    resourceId: 'personal-secret', encryptionMode: 'plain', recipientEnvelope: null,
+                    storedContent: { t: 'plain', v: { v: 1, name: 'Personal secret', kind: 'token', value: 'sealed-secret' } },
+                    entry: { ref: secretRef, source: 'shared_resource', relationship: 'owner', name: 'Personal secret', kind: 'token', revision: 1,
+                        materialStatus: 'ready', capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
+                }] : [] }));
                 if (request.path === '/v2/sessions/session_1') {
                     const session = getStorage().getState().sessions.session_1!;
                     return Response.json(V2SessionByIdResponseSchema.parse({ session: { ...session, metadata: JSON.stringify(session.metadata), dataEncryptionKey: null } }));
@@ -290,6 +328,20 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         expect(outbound[0]).toMatchObject({ home: 'home', accountId: 'account_1', path: '/v2/sessions/session_1/execution-runs/run_1/pending' });
         expect(admitted()).toMatchObject({ localId: inputId, targetMachineId: 'machine_1' });
         expect(outboundText()).toContain('Inspect this');
+    });
+    it('refuses a disabled start Action before issuing a Run RPC and preserves the editable draft', async () => {
+        setSettings({ actionsSettingsV1: { v: 1, actions: { 'execution.run.start': { disabledSurfaces: ['ui'] } } } });
+        const opened = vi.fn();
+        await mount({ onRunStarted: opened });
+        const inputId = composer().initialLocalId;
+        await send();
+        expect(emittedStarts).toEqual([]);
+        expect(outbound).toEqual([]);
+        expect(opened).not.toHaveBeenCalled();
+        expect(input().props.value).toBe('Inspect this');
+        expect(composer().initialLocalId).toBe(inputId);
+        expect(composer().canSendMessages).toBe(true);
+        expect(screen.findByTestId('execution-run-conversation-start-another')).toBeNull();
     });
     it('clears the accepted Run draft before navigation retires the Account binding', async () => {
         let atNavigation: unknown;
@@ -359,8 +411,9 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         expect(screen.findByTestId('execution-run-conversation-error')?.props.children)
             .toBe(t('sessionDrafts.executionRunStart.unresolved'));
         expect(screen.findByTestId('execution-run-conversation-start-another')).not.toBeNull();
-        expect(transport.call.mock.calls.filter(([request]) => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_LIST))
-            .toEqual([[expect.objectContaining({ sessionId: 'session_1', serverId, payload: {} })]]);
+        const listRequests = transport.call.mock.calls.filter(([request]) => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_LIST);
+        expect(listRequests.length).toBeGreaterThan(0);
+        for (const [request] of listRequests) expect(request).toMatchObject({ sessionId: 'session_1', serverId, payload: {} });
     });
     it('offers no second Start while reconciliation is pending', async () => {
         startResults.push(uncertain());
@@ -587,7 +640,8 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         expect(roles, JSON.stringify(roles)).toMatchObject({ ok: true });
         await mount({ intent: 'delegate' });
         const codex = composer().engine!.options.find((option) => option.id.includes('codex'))!;
-        setSettings({ rolesV1: { overrides: { scout: { roleId: 'scout', engine: { agentTargetKey: codex.id } } } } });
+        setSettings({ rolesV1: { overrides: { scout: { roleId: 'scout', engine: { agentTargetKey: canonicalTargetKey(codex.id) } } } } });
+        await refreshPromptLibraryCatalog({ serverId, accountId: 'account_1' });
         invalidateRoleCatalog();
         await settle();
         await chooseRole('scout');
@@ -617,19 +671,21 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
 
     async function configureSecret() {
         const profile = AIBackendProfileSchema.parse({ id: 'work', name: 'Work', envVarRequirements: [{ name: 'ANTHROPIC_API_KEY', required: true, kind: 'secret' }] });
-        setSettings({ profiles: [profile], secrets: [{ id: 'personal-secret', name: 'Personal secret', kind: 'token', encryptedValue: { _isSecretValue: true, value: 'sealed-secret' }, createdAt: 1, updatedAt: 1 }] });
+        secretAvailable = true;
+        publishProfile(profile);
         getStorage().setState((state) => ({ sessions: { session_1: { ...state.sessions.session_1!, metadata: { ...state.sessions.session_1!.metadata!, profileId: 'work' } } } }));
         await mount();
         await screen.pressByTestIdAsync('execution-run-secret-overlay-edit');
         const params = record(modal.show.mock.calls.at(-1)?.[0]);
         const onResolve = record(params.props).onResolve as (value: unknown) => void;
-        await act(async () => onResolve({ action: 'selectSaved', envVarName: 'ANTHROPIC_API_KEY', secretId: 'personal-secret' }));
+        await act(async () => onResolve({ action: 'selectSaved', envVarName: 'ANTHROPIC_API_KEY', secretId: secretRef }));
         await settle();
     }
     it('admits a comparison dialog review through the same Saved Secret target checks as the launcher', async () => {
         protocolSupported = false;
         const profile = AIBackendProfileSchema.parse({ id: 'work', name: 'Work', envVarRequirements: [{ name: 'ANTHROPIC_API_KEY', required: true, kind: 'secret' }] });
-        setSettings({ profiles: [profile], secrets: [{ id: 'personal-secret', name: 'Personal secret', kind: 'token', encryptedValue: { _isSecretValue: true, value: 'sealed-secret' }, createdAt: 1, updatedAt: 1 }] });
+        secretAvailable = true;
+        publishProfile(profile);
         getStorage().setState((state) => ({ sessions: { session_1: { ...state.sessions.session_1!, metadata: { ...state.sessions.session_1!.metadata!, profileId: 'work' } } } }));
         screen = await renderScreen(<StartReviewDialog sessionId="session_1" serverId={serverId} cwd="/repo"
             comparison={{ kind: 'workingTree' }} comparisonId="captured-1" scopeLabel="Pending changes"
@@ -637,7 +693,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         await settle();
         await screen.pressByTestIdAsync('execution-run-secret-overlay-edit');
         const onResolve = record(record(modal.show.mock.calls.at(-1)?.[0]).props).onResolve as (value: unknown) => void;
-        await act(async () => onResolve({ action: 'selectSaved', envVarName: 'ANTHROPIC_API_KEY', secretId: 'personal-secret' }));
+        await act(async () => onResolve({ action: 'selectSaved', envVarName: 'ANTHROPIC_API_KEY', secretId: secretRef }));
         await settle();
         await waitFor(() => expect(screen.findByTestId('start-review-start')?.props.disabled).toBe(false));
         await screen.pressByTestIdAsync('start-review-start');
@@ -656,7 +712,8 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         await screen.pressByTestIdAsync('start-review-start');
         await waitFor(() => expect(emittedStarts, JSON.stringify({ text: screen.getTextContent(), rpc: transport.call.mock.calls.map(([request]) => request), http: home.requests.map((request) => request.path) })).toHaveLength(1));
         const resume = transport.call.mock.calls.findIndex(([request]) => request.method === RPC_METHODS.SPAWN_HAPPY_SESSION || request.method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE);
-        const review = transport.call.mock.calls.findIndex(([request]) => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_START);
+        const review = transport.call.mock.calls.findIndex(([request]) => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_START
+            || request.method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1);
         expect(resume).toBeGreaterThanOrEqual(0);
         expect(resume).toBeLessThan(review);
         expect(transport.call.mock.calls[resume]?.[0]).toMatchObject({ machineId: 'machine_1', serverId,
@@ -673,17 +730,18 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         protocolSupported = true;
         await send();
         expect(emittedStarts).toHaveLength(1);
-        expect(emittedStarts[0]).toMatchObject({ secretReferenceOverlay: { v: 1, bindings: { ANTHROPIC_API_KEY: { ref: 'personal-secret' } } } });
+        expect(emittedStarts[0]).toMatchObject({ secretReferenceOverlay: { v: 1, bindings: { ANTHROPIC_API_KEY: { ref: secretRef } } } });
     });
     it('forwards a value-free Saved Secret overlay after exact-target acceptance', async () => {
         await configureSecret();
         await send();
-        expect(emittedStarts[0]).toMatchObject({ secretReferenceOverlay: { v: 1, bindings: { ANTHROPIC_API_KEY: { ref: 'personal-secret' } } } });
+        expect(emittedStarts[0]).toMatchObject({ secretReferenceOverlay: { v: 1, bindings: { ANTHROPIC_API_KEY: { ref: secretRef } } } });
         expect(JSON.stringify(emittedStarts)).not.toContain('sealed-secret');
     });
     it('does not create a Run when a Saved Secret selection becomes unavailable', async () => {
         await configureSecret();
-        await act(async () => setSettings({ secrets: [] }));
+        secretAvailable = false;
+        await act(async () => { await refreshSavedSecretCatalog({ serverId, accountId: 'account_1' }); });
         await settle();
         await type('Keep this secret-bound draft');
         expect(composer().canSendMessages).toBe(false);

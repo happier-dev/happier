@@ -656,8 +656,8 @@ export function SessionBoardSurface(props: SessionBoardSurfaceProps): React.Reac
         const update = () => {
             const current = dragRuntime.getSnapshot();
             const effect = current.admission?.status === 'allowed' ? current.admission.effect : null;
-            const widgetMove = effect?.actionId === 'widgets.instance.move'
-                ? WidgetInstanceActionInputSchemasV1['widgets.instance.move'].safeParse(effect.input) : null;
+            const widgetMove = effect?.actionId === 'widgets.item.move'
+                ? WidgetInstanceActionInputSchemasV1['widgets.item.move'].safeParse(effect.input) : null;
             const targetsBoard = effect?.actionId === 'session.board.layout.update'
                 || widgetMove?.success && 'to' in widgetMove.data && widgetMove.data.to.surface.owner.kind === 'sessionBoard'
                     && widgetMove.data.to.surface.owner.sessionId === props.sessionId;

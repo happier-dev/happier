@@ -130,6 +130,15 @@ function flatStyle(style: unknown): Record<string, unknown> {
 }
 
 describe('WorkBoard widgets', () => {
+    it('defers a retained placement until the Board supplies its admitted runtime scope', async () => {
+        const placed = placement(copy('remote'));
+        const b = boardStore(boardWith([placed]));
+        await b.store.refresh();
+        const screen = await renderScreen(<BoardWidgetCard boardId="b1" placement={placed} scope={null}
+            descriptor={CHECKS} size={placed.size} index={0} count={1} dispatch={b.store.queue.dispatch}
+            active testID="board-widget:remote" />, { wrapper: Wrapper });
+        expect(screen.findHostByTestId('board-widget:remote.deferred')).not.toBeNull();
+    });
     it('demands only nearby Canvas widget bodies and retains offscreen frames when scrolling', async () => {
         const top = placement(copy('top'));
         const bottom = placement(copy('bottom'));
@@ -231,8 +240,8 @@ describe('WorkBoard widgets', () => {
         const b = boardStore(boardWith([first, second]));
         await b.store.refresh();
         const screen = await renderScreen(<>
-            <BoardWidgetCard boardId="b1" placement={first} descriptor={CHECKS} size={first.size} index={0} count={2} dispatch={b.store.queue.dispatch} active={false} testID="board-widget:c1" />
-            <BoardWidgetCard boardId="b1" placement={second} descriptor={CHECKS} size={second.size} index={1} count={2} dispatch={b.store.queue.dispatch} active={false} testID="board-widget:c2" />
+            <BoardWidgetCard boardId="b1" placement={first} scope={surface} descriptor={CHECKS} size={first.size} index={0} count={2} dispatch={b.store.queue.dispatch} active={false} testID="board-widget:c1" />
+            <BoardWidgetCard boardId="b1" placement={second} scope={surface} descriptor={CHECKS} size={second.size} index={1} count={2} dispatch={b.store.queue.dispatch} active={false} testID="board-widget:c2" />
         </>, { wrapper: Wrapper });
         const actions = (testID: string) => (screen.tree.findAll(node =>
             (node.props as { overflowTriggerTestID?: string }).overflowTriggerTestID === `${testID}.menu`
@@ -352,7 +361,7 @@ function canvasBinding(b: ReturnType<typeof boardStore>, commits: Record<string,
         const current = b.board();
         return { scope, board: current, membership: projectBoardMembership(current, { isHomeMounted: () => true, sections: {}, filtered: null }), isHomeMounted: () => true };
     };
-    const port = createWorkBoardUiActionPort(getContext, b.store.queue);
+    const port = createWorkBoardUiActionPort(getContext, b.store.queue, b.store.readBoardAccess);
     return { runtime: createEntityDragDropRuntime(), scope, isCurrent: () => true, getContext, execute: async effect => {
         const { intent } = WorkBoardActionInputSchemasV1['boards.apply'].parse(effect.input);
         const saved = await port.apply(intent);

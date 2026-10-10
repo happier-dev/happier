@@ -1,7 +1,9 @@
 import { BoardItemRefV1Schema, WorkBoardPositionV1Schema, buildWorkBoardItemKeyV1, buildWorkBoardWidgetKeyV1, resolveWorkBoardItemOrderV1, type BoardItemRefV1, type WorkBoardV1, type WorkBoardsV1 } from '@happier-dev/protocol/boards/workBoardV1';
 import { WorkBoardActionInputSchemasV1 } from '@happier-dev/protocol/boards/actionsV1';
 import { WorkBoardMutationErrorV1, type WorkBoardArtifactPortV1 } from '@happier-dev/protocol/boards/workBoardArtifactV1';
+import type { ActionExecutorDeps } from '@happier-dev/protocol';
 import type { WidgetInstanceRefV1, WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
+import { resolveWorkBoardWidgetPlacementV1 } from '@happier-dev/protocol/widgets';
 import { entityDragScopesEqualV1, type EntityDragItemV1, type EntityDragScopeV1, type EntityDropAdmissionV1 } from '@happier-dev/protocol/plugins/ui';
 import { t } from '@/text';
 import { resolveBoardPruneMembership, type BoardMembership } from './boardMembership';
@@ -49,7 +51,7 @@ export function resolveWorkBoardEntityDrop(input: Readonly<{
     if (!entityDragScopesEqualV1(item.scope, context.scope)) return refused('board-scope-mismatch', t('entityDragDrop.surface.scopeMismatch'));
     const configuredRef = widgetEntitySourceRef(item);
     if (configuredRef && (item.kind !== 'work-board-widget' || item.boardId !== context.board.id)) {
-        return { status: 'allowed', effect: { actionId: 'widgets.instance.move', input: { ref: configuredRef,
+        return { status: 'allowed', effect: { actionId: 'widgets.item.move', input: { ref: configuredRef,
             to: { surface: workBoardWidgetSurface(context.scope, context.board.id), index: resolveWorkBoardItemOrderV1(context.board).length } },
             preview: { glyph: 'move', verb: t('entityDragDrop.organize.title'), target: context.board.name } } };
     }
@@ -60,7 +62,8 @@ export function resolveWorkBoardEntityDrop(input: Readonly<{
     // Live-work references copy membership; configured copies above delegate to the widget owner.
     if (item.kind === 'work-board-item' && item.boardId !== context.board.id) return resolveWorkBoardAdd(item.item, context);
     if (!input.canvasAvailable || context.board.mode !== 'canvas') return refused('board-canvas-unavailable', t('entityDragDrop.reasons.generic'));
-    const key = workBoardCanvasKey(item)!;
+    const key = workBoardCanvasKey(item, context.board);
+    if (!key) return refused('board-item-gone', t('entityDragDrop.reasons.gone'));
     if (!readWorkBoardCanvasKeys(context).includes(key)) return refused('board-item-gone', t('entityDragDrop.reasons.gone'));
     const point = WorkBoardPositionV1Schema.safeParse(input.destination);
     if (!point.success) return refused('board-position-unavailable', t('entityDragDrop.keyboard.choose'));
@@ -86,9 +89,12 @@ export function readWorkBoardCanvasKeys(context: WorkBoardEntityContext): readon
 }
 
 /** The Canvas key a same-Board carry moves: a work card's ref key, or a widget placement's qualified key. */
-export function workBoardCanvasKey(item: EntityDragItemV1): string | null {
+export function workBoardCanvasKey(item: EntityDragItemV1, board: WorkBoardV1): string | null {
     if (item.kind === 'work-board-item') return buildWorkBoardItemKeyV1(item.item);
-    if (item.kind === 'work-board-widget') return buildWorkBoardWidgetKeyV1(workBoardWidgetRef(item.scope, item.boardId, item.instanceId));
+    if (item.kind === 'work-board-widget' && item.boardId === board.id) {
+        const placement = resolveWorkBoardWidgetPlacementV1(board, workBoardWidgetSurface(item.scope, item.boardId), item.instanceId);
+        return placement ? buildWorkBoardWidgetKeyV1(placement.ref) : null;
+    }
     return null;
 }
 
@@ -106,9 +112,11 @@ export function workBoardWidgetRef(scope: EntityDragScopeV1, boardId: string, in
 export function createWorkBoardUiActionPort(
     getContext: (boardId?: string) => WorkBoardEntityContext | null,
     queue: WorkBoardSaveQueue,
+    readBoardAccess: WorkBoardArtifactPortV1['readBoardAccess'],
     getBoards?: () => WorkBoardsV1 | null,
-): Pick<WorkBoardArtifactPortV1, 'read' | 'apply'> {
+): NonNullable<ActionExecutorDeps['workBoardArtifacts']> {
     return {
+        readBoardAccess,
         read: async () => {
             if (getBoards) { const boards = getBoards(); if (!boards) throw new WorkBoardMutationErrorV1('board_scope_retired'); return boards; }
             const context = getContext(); if (!context) throw new WorkBoardMutationErrorV1('board_scope_retired'); return { v: 1, boards: [context.board] };

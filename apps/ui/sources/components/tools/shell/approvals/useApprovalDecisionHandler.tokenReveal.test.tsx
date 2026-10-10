@@ -54,6 +54,7 @@ beforeEach(async () => {
     webLocks = installWebLockManagerMock();
     await home.reset();
     modal.boundary?.spies.show.mockClear();
+    modal.boundary?.spies.hide.mockClear();
 });
 afterEach(() => {
     standardCleanup();
@@ -95,4 +96,43 @@ describe('approved API token reveal', () => {
         await expect(deciding).resolves.toBe(false);
         expect(modal.boundary?.spies.show).not.toHaveBeenCalled();
     });
+});
+
+describe('approved Team invitation reveal', () => {
+    it.each(['teams.invitations.create', 'teams.invitations.reissue'] as const)(
+        'delivers the %s bearer only to the approving UI and retires the reveal with its Account', async (actionId) => {
+            const serverId = await home.addHome({ name: 'Home A', serverUrl: 'https://home-a.example',
+                serverIdentityId: 'srv_stable-home-a', accountId: 'account-a' });
+            const requested = await createDefaultActionExecutor().execute(actionId, actionId === 'teams.invitations.create'
+                ? { v: 1, teamId: 'team-a', role: 'member', historyAccess: 'from_membership', recipientEmail: null,
+                    requestKey: 'requested-invitation-create' }
+                : { v: 1, teamId: 'team-a', invitationId: 'old-invitation', recipientEmail: null,
+                    requestKey: 'requested-invitation-reissue' }, {
+                surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' },
+                serverId, actionRequestId: `requested-${actionId}`,
+            });
+            expect(requested).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+            if (!requested.ok || typeof requested.result !== 'object' || !requested.result
+                || !('artifactId' in requested.result) || typeof requested.result.artifactId !== 'string') return;
+            const artifactId = requested.result.artifactId;
+            const approval = ApprovalRequestSchema.parse(JSON.parse(home.artifacts(serverId).readPlainBody(artifactId)!));
+            const invitation = { id: 'invitation-a', teamId: 'team-a', role: 'member', historyAccess: 'from_membership',
+                state: 'active', recipientEmailMask: null, expiresAt: 2, createdAt: 1, createdByAccountId: 'account-a',
+                acceptedByAccountId: null, lastEmailDelivery: null };
+            const joinUrl = 'https://home-a.example/team-invitations/live-human-only';
+            const output = actionId === 'teams.invitations.create' ? { invitation, joinUrl }
+                : { previous: { ...invitation, id: 'old-invitation', state: 'revoked' }, replacement: invitation, joinUrl };
+            const path = `/v1/teams/invitations/${actionId === 'teams.invitations.create' ? 'create' : 'reissue'}`;
+            home.answer(serverId, `POST ${path}`, { body: output });
+            const hook = await renderHook(() => useApprovalDecisionHandler({ id: artifactId, header: null }, approval, '', serverId));
+            await expect(hook.getCurrent()('approve')).resolves.toBe(true);
+            const shown = modal.boundary?.spies.show.mock.calls.at(-1)?.[0];
+            expect(shown?.props).toMatchObject({ url: joinUrl });
+            expect(home.requestsFor(path)).toHaveLength(1);
+            expect(home.artifacts(serverId).readPlainBody(artifactId)).not.toContain(joinUrl);
+            await home.switchAccount(serverId, 'account-b');
+            expect(modal.boundary?.spies.hide).toHaveBeenCalled();
+            shown?.onHostUnmount?.();
+        },
+    );
 });

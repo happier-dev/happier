@@ -1,12 +1,6 @@
 import * as React from 'react';
 
-import {
-    PluginHostedHtmlSourceV1Schema,
-} from '@happier-dev/protocol/plugins/ui';
-import {
-    SessionSurfaceItemV1Schema,
-    type SessionSurfaceItemV1,
-} from '@happier-dev/protocol/sessions/board';
+import type { SessionSurfaceItemV1 } from '@happier-dev/protocol/sessions/board';
 
 import type {
     SessionBoardActionsPort,
@@ -17,10 +11,16 @@ import { sessionBoardHostedHtmlDraftBufferKey } from '../SessionBoardContinuity'
 import type { SessionBoardMutationApprovalRequest } from '../sessionBoardMutationApproval';
 import {
     useSessionBoardItemEditor,
-    type SessionBoardItemBuildResult,
     type SessionBoardItemEditorStatus,
     type SessionBoardItemRecoveryObservation,
 } from '../useSessionBoardItemEditor';
+import {
+    buildSessionBoardHostedHtmlItemResult,
+    readSessionBoardHostedHtmlItemText,
+    type SessionBoardHostedHtmlEditorInvalidReason,
+} from './sessionBoardHostedHtmlItem';
+export { buildSessionBoardHostedHtmlItem } from './sessionBoardHostedHtmlItem';
+export type { SessionBoardHostedHtmlEditorInvalidReason } from './sessionBoardHostedHtmlItem';
 
 /**
  * The person-authored interactive view, projected onto the one Board item
@@ -28,10 +28,6 @@ import {
  * {@link useSessionBoardItemEditor}; hosted HTML contributes only how a draft
  * becomes a `hostedHtml` item and how that item's source is read back out.
  */
-
-export type SessionBoardHostedHtmlEditorInvalidReason =
-    | 'hosted_html_source_too_large'
-    | 'session_board_invalid';
 
 export type SessionBoardHostedHtmlEditorStatus =
     SessionBoardItemEditorStatus<SessionBoardHostedHtmlEditorInvalidReason>;
@@ -62,51 +58,6 @@ export type SessionBoardHostedHtmlEditorInput = Readonly<{
     ) => void;
     flushHtml?: () => Promise<string | null>;
 }>;
-
-export function buildSessionBoardHostedHtmlItem(input: Readonly<{
-    title: string;
-    html: string;
-    baseItem?: SessionSurfaceItemV1;
-}>): SessionSurfaceItemV1 | null {
-    const result = buildSessionBoardHostedHtmlItemResult(input);
-    return result.ok ? result.item : null;
-}
-
-function buildSessionBoardHostedHtmlItemResult(input: Readonly<{
-    title: string;
-    html: string;
-    baseItem?: SessionSurfaceItemV1;
-}>): SessionBoardItemBuildResult<SessionBoardHostedHtmlEditorInvalidReason> {
-    if (input.baseItem && input.baseItem.source.kind !== 'hostedHtml') {
-        return { ok: false, error: 'session_board_invalid' };
-    }
-    const source = PluginHostedHtmlSourceV1Schema.safeParse({ kind: 'html', html: input.html });
-    // The constructed source has the schema's fixed kind and string type, so
-    // its only reachable refusal is the canonical UTF-8 source bound.
-    if (!source.success) return { ok: false, error: 'hosted_html_source_too_large' };
-    const item = SessionSurfaceItemV1Schema.safeParse(input.baseItem ? {
-        ...input.baseItem,
-        title: input.title.trim(),
-        source: { ...input.baseItem.source, source: source.data },
-    } : {
-        v: 1,
-        title: input.title.trim(),
-        frame: 'card',
-        height: { mode: 'auto', fallback: 'regular' },
-        source: { kind: 'hostedHtml', source: source.data },
-    });
-    return item.success
-        ? { ok: true, item: item.data }
-        : { ok: false, error: 'session_board_invalid' };
-}
-
-/** The editable source of a submitted interactive view, used only to reconcile recovery. */
-function readSessionBoardHostedHtmlItemText(item: SessionSurfaceItemV1): string | null {
-    const source = item.source;
-    return source.kind === 'hostedHtml' && source.source.kind === 'html'
-        ? source.source.html
-        : null;
-}
 
 export function useSessionBoardHostedHtmlEditor(input: SessionBoardHostedHtmlEditorInput) {
     const buildItem = React.useCallback((draft: Readonly<{

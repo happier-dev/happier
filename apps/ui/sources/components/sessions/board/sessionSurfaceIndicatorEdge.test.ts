@@ -33,6 +33,15 @@ function companionEffect(moved: SessionCompanionPresentationItemRefV1, target: S
 }
 
 describe('resolveSessionSurfaceIndicatorEdge', () => {
+    it('keeps Project insertion feedback in the destination area native sibling list', () => {
+        const surface = { ...scope, owner: { kind: 'project' as const, projectId: 'anchor' } };
+        const effect: EntityDropEffectV1 = { actionId: 'widgets.item.move', preview,
+            input: { ref: { surface, instanceId: 'main-a' }, to: { surface, area: 'aside', index: 1 } } };
+        expect(resolveSessionSurfaceIndicatorEdge({ effect, bounds: null, pointer: null,
+            widgetAreaTarget: { surface, area: 'aside', itemId: 'aside-a', itemIds: ['aside-a', 'aside-b'] } })).toBe('bottom');
+        expect(resolveSessionSurfaceIndicatorEdge({ effect, bounds: null, pointer: null,
+            widgetAreaTarget: { surface, area: 'main', itemId: 'main-b', itemIds: ['main-a', 'main-b'] } })).toBeNull();
+    });
     it.each([
         { moved: summary, target: boardRef },
         { moved: boardRef, target: summary },
@@ -85,7 +94,7 @@ describe('resolveSessionSurfaceIndicatorEdge', () => {
 
     it('does not reinterpret widget inventory ordinals as mixed Companion positions', () => {
         const effect: EntityDropEffectV1 = {
-            actionId: 'widgets.instance.move', preview,
+            actionId: 'widgets.item.move', preview,
             input: { ref: { surface: { ...scope, owner: { kind: 'companion', sessionId: address.sessionId } },
                 instanceId: 'configured' }, toIndex: 0 },
         };
@@ -102,7 +111,7 @@ describe('resolveSessionSurfaceIndicatorEdge', () => {
         const index = items.filter(item => sessionCompanionItemKey(item) !== sessionCompanionItemKey(instance))
             .findIndex(item => sessionCompanionItemKey(item) === target.itemKey);
         for (const side of ['before', 'after'] as const) {
-            const effect: EntityDropEffectV1 = { actionId: 'widgets.instance.move', preview,
+            const effect: EntityDropEffectV1 = { actionId: 'widgets.item.move', preview,
                 input: { ref: { surface, instanceId: 'configured' }, to: { surface, index: index + (side === 'after' ? 1 : 0) } } };
             expect(resolveSessionSurfaceIndicatorEdge({ effect, bounds: null, pointer: null, companionTarget: target })).toBe(side === 'before' ? 'top' : 'bottom');
         }

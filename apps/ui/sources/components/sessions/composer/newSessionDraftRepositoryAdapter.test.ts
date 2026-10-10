@@ -11,6 +11,7 @@ import type {
 } from '@/sync/domains/state/persistence';
 import {
     getSessionDraftSnapshot,
+    flushSessionDraft,
     resetSessionDraftRepositoryForTests,
     writeNewSessionDraft,
     writeSessionDraftLocalSupplement,
@@ -74,6 +75,29 @@ function cataloguedNewSessionAuthoring(
 }
 
 describe('newSessionDraftRepositoryAdapter', () => {
+    it('persists flushes and reopens two distinct definitions of the same Custom ACP Agent', async () => {
+        for (const definitionId of ['review-a', 'review-b']) {
+            const target = { kind: 'agent' as const,
+                identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' }, definitionId };
+            const draftId = `configured-${definitionId}`;
+            writeNewSessionDraftToRepository({ scope, draftId, draft: authoringDraft({ agentTarget: target,
+                backendTarget: { kind: 'backend', backendId: definitionId, configuredBackendId: definitionId },
+                executionTarget: { kind: 'machine', target: { serverId: scope.serverId, machineId: 'machine-b' } } }) });
+            await flushSessionDraft({ scope, address: { kind: 'newSession', draftId } });
+        }
+        resetSessionDraftRepositoryForTests();
+        for (const definitionId of ['review-a', 'review-b']) {
+            const reopened = readNewSessionDraftFromRepository({ scope, draftId: `configured-${definitionId}` });
+            expect(reopened?.agentTarget).toEqual({ kind: 'agent',
+                identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' }, definitionId });
+            if (!reopened) throw new Error('Expected retained configured choice');
+            const spawn = buildSessionSpawnNewInputV2FromAuthoringDraft({
+                draft: buildNewSessionAuthoringDraftFromPersistedDraft(reopened),
+                creationKey: `manual:configured-${definitionId}`, permissionMode: 'default', configurationUpdatedAtMs: 10,
+            });
+            expect(spawn.agentTarget).toEqual(reopened.agentTarget);
+        }
+    });
     it('materializes the ordinary local draft on the first Instructions edit without an Artifact', () => {
         const draftId = 'first-instructions-edit';
         const instructionsDraft = { title: 'Remit', markdown: 'Keep the remit.' };

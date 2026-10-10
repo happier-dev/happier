@@ -1,4 +1,8 @@
-import { HappierWorkFlatSheet, HappierWorkSection } from '@happier-dev/plugin-ui/presentation';
+import {
+    HappierWorkFlatSheet,
+    HappierWorkSection,
+    HappierWorkSectionEmptyLine,
+} from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -93,6 +97,22 @@ export function WorkFlatSheet(props: Readonly<{ testID?: string; children?: Reac
             <HappierWorkFlatSheet testID={props.testID} theme={theme}>{props.children}</HappierWorkFlatSheet>
         </ListPresentationProvider>
     );
+}
+
+/**
+ * A Work section with nothing in it yet says so in one quiet line (DESIGN.md "Emptiness is designed";
+ * lab `convo-ST`, the empty Notes row): the section description's text, on the rows' text edge, never
+ * a full-height row set in the row title's type. With `onPress` the line is the section's way to start
+ * ("Add notes for how this session should orchestrate"); without it, it only states what belongs here.
+ * Every Work section draws its empty state through this one line.
+ */
+export function WorkSectionEmptyLine(props: Readonly<{
+    testID: string;
+    text: string;
+    onPress?: () => void;
+}>) {
+    const theme = useWorkTheme();
+    return <HappierWorkSectionEmptyLine {...props} theme={theme} host={WORK_HOST} />;
 }
 
 function readCountText(props: WorkSectionProps): string | null {

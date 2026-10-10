@@ -1,4 +1,3 @@
-import Color from 'color';
 import * as React from 'react';
 import { Animated, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -27,15 +26,6 @@ export type PendingNavigationPillProps = Readonly<{
 
 /** The Next pill rises off the composer edge it stands on (the docked-capsule motion). */
 const RISE_MOTION = resolveOverlayMotionPreset({ kind: 'popover', direction: 'top' });
-
-/** The attention tint behind the amber ink (Find lab `.fd-ny`: amber at 12%, 18% under the pointer). */
-function tint(color: string, alpha: number, fallback: string): string {
-    try {
-        return Color(color).alpha(alpha).rgb().string();
-    } catch {
-        return fallback;
-    }
-}
 
 export type NextTarget = Readonly<{ title: string; reason: string | null }>;
 
@@ -101,8 +91,6 @@ export function PendingAttentionPill(props: Readonly<{ count: number; phone: boo
     const ink = theme.colors.state.attention.foreground;
     const testID = `pending-navigation-${phone ? 'phone' : 'header'}`;
     const label = t('pendingNavigation.nextWithCount', { count });
-    // A lighter well than the lab's 16% keeps the 10.5 pt keycaps AA on the white header.
-    const keyWell = tint(ink, 0.08, theme.colors.state.warning.background);
     return (
         <HappierPressable
             testID={testID}
@@ -112,7 +100,7 @@ export function PendingAttentionPill(props: Readonly<{ count: number; phone: boo
             style={({ hovered, pressed }) => [
                 styles.attention,
                 phone ? styles.attentionPhone : shortcut ? styles.attentionWithKeys : null,
-                { backgroundColor: tint(ink, hovered || pressed ? 0.18 : 0.12, theme.colors.state.warning.background) },
+                { backgroundColor: theme.colors.state.attention.background, opacity: pressed ? 0.8 : hovered ? 0.92 : 1 },
             ]}
         >
             <StatusDot color={ink} size={phone ? 6 : 7} />
@@ -122,7 +110,7 @@ export function PendingAttentionPill(props: Readonly<{ count: number; phone: boo
             {!phone && shortcut ? (
                 <View style={styles.keys}>
                     {splitKeybindingLabel(shortcut).map((key, index) => (
-                        <KeyHint key={`${key}-${index}`} label={key} tone="attention" style={{ backgroundColor: keyWell }} />
+                        <KeyHint key={`${key}-${index}`} label={key} tone="attention" />
                     ))}
                 </View>
             ) : null}
@@ -141,7 +129,8 @@ export function NextComposerPill(props: Readonly<{
     const phone = useDeviceType() === 'phone';
     const [dismissed, setDismissed] = React.useState(false);
     const visible = props.target !== null && !dismissed;
-    const motion = useOverlayMotionAnimation({ visible, preset: RISE_MOTION, disableTransformOnWeb: true });
+    const elementRef = React.useRef<React.ComponentRef<typeof View>>(null);
+    const motion = useOverlayMotionAnimation({ visible, preset: RISE_MOTION, elementRef });
     const { present } = useOverlayPresence(visible, motion.exitMs);
     // A leaving capsule keeps its last words while it settles out.
     const lastTargetRef = React.useRef<NextTarget | null>(null);
@@ -160,6 +149,7 @@ export function NextComposerPill(props: Readonly<{
 
     return (
         <Animated.View
+            ref={elementRef}
             style={[styles.composer, phone ? styles.composerPhone : null, motion.style]}
             pointerEvents={leaving ? 'none' : 'box-none'}
             aria-hidden={leaving ? true : undefined}
@@ -191,7 +181,9 @@ export function NextComposerPill(props: Readonly<{
                         style={({ hovered, pressed }) => [styles.go, { backgroundColor: ink, opacity: pressed ? 0.8 : hovered ? 0.92 : 1 }]}
                     >
                         <Text style={styles.goLabel}>{t('pendingNavigation.go')}</Text>
-                        {props.shortcut ? <Text style={[styles.goLabel, styles.goKeys]}>{props.shortcut}</Text> : null}
+                        {props.shortcut ? <View style={styles.keys}>{splitKeybindingLabel(props.shortcut).map((key, index) => (
+                            <KeyHint key={`${key}-${index}`} label={key} tone="onFill" />
+                        ))}</View> : null}
                     </HappierPressable>
                     <HappierPressable
                         testID="pending-navigation-composer-dismiss"
@@ -218,11 +210,10 @@ const styles = StyleSheet.create((theme) => ({
         borderRadius: 14,
         paddingLeft: 9,
         paddingRight: 10,
-        marginRight: 6,
     },
     attentionWithKeys: { paddingRight: 6 },
-    attentionPhone: { height: 26, borderRadius: 13, gap: 5, paddingLeft: 9, paddingRight: 9, marginRight: 0 },
-    attentionLabel: { fontSize: 12.5, ...Typography.default('semiBold'), ...Typography.tabular() },
+    attentionPhone: { height: 26, borderRadius: 13, gap: 5, paddingLeft: 9, paddingRight: 9 },
+    attentionLabel: { ...Typography.rowMeta(), ...Typography.default('semiBold'), ...Typography.tabular() },
     keys: { flexDirection: 'row', alignItems: 'center', gap: 2 },
     // Composer: the Next capsule (Find lab `.fd-next`, phone `.fd-pnext`).
     composer: { alignItems: 'center', paddingBottom: 12, paddingHorizontal: 12 },
@@ -232,17 +223,16 @@ const styles = StyleSheet.create((theme) => ({
     row: { minHeight: 44, gap: 10, paddingLeft: 14, paddingRight: 6, justifyContent: 'flex-start', maxWidth: 640, minWidth: 0 },
     phoneRow: { minHeight: 52, gap: 10, paddingLeft: 14, paddingRight: 6, paddingVertical: 6, justifyContent: 'flex-start' },
     phoneText: { flex: 1, minWidth: 0 },
-    kicker: { fontSize: 13, color: theme.colors.text.tertiary, ...Typography.default() },
-    title: { flexShrink: 1, fontSize: 13, color: theme.colors.text.primary, ...Typography.default('semiBold') },
+    kicker: { ...Typography.rowMeta(), color: theme.colors.text.tertiary },
+    title: { ...Typography.rowMeta(), flexShrink: 1, color: theme.colors.text.primary, ...Typography.default('semiBold') },
     // The session's name keeps its width (up to a cap); the reason gives way first.
     titleBesideReason: { flexShrink: 0, maxWidth: 260 },
-    reason: { flexShrink: 1, maxWidth: 300, fontSize: 13, color: theme.colors.text.secondary, ...Typography.default() },
-    reasonPhone: { fontSize: 12.5, color: theme.colors.text.secondary, ...Typography.default() },
+    reason: { ...Typography.rowMeta(), flexShrink: 1, maxWidth: 300, color: theme.colors.text.secondary },
+    reasonPhone: { ...Typography.rowMeta(), color: theme.colors.text.secondary },
     go: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 32, borderRadius: 16, paddingHorizontal: 12, flexShrink: 0 },
     goPhone: { height: 38, borderRadius: 19, paddingHorizontal: 14 },
     // The fill is the attention ink; its label is knocked out in the surface colour (AA in every profile).
-    goLabel: { fontSize: 12.5, color: theme.colors.surface.base, ...Typography.default('semiBold') },
-    goLabelPhone: { fontSize: 14 },
-    goKeys: { fontSize: 10.5, opacity: 0.78, ...Typography.default() },
+    goLabel: { ...Typography.rowMeta(), color: theme.colors.surface.base, ...Typography.default('semiBold') },
+    goLabelPhone: { ...Typography.rowTitle() },
     dismiss: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
 }));

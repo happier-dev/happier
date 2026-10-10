@@ -9,6 +9,7 @@ import {
     NavigationContainer,
     NavigationIndependentTree,
     useIsFocused,
+    useTheme,
 } from '@react-navigation/native';
 import { Platform, StyleSheet, View, type ViewProps } from 'react-native';
 
@@ -132,6 +133,10 @@ export function resolveSessionCockpitSurfaceFromNavigationState(state: unknown):
 }
 
 export const SessionCockpitTabNavigator = React.memo((props: SessionCockpitTabNavigatorProps) => {
+    // An independent navigation tree starts from the library's light default theme, whose scene
+    // background would paint every surface light under a dark app. Read the app's navigation theme
+    // (the root layout owns it) outside the tree and hand it to the nested container.
+    const navigationTheme = useTheme();
     const terminalTabAvailable = props.terminalTabAvailable !== false;
     const deviceType = useDeviceType();
     const activeServerAccountScope = useActiveServerAccountScope();
@@ -261,6 +266,7 @@ export const SessionCockpitTabNavigator = React.memo((props: SessionCockpitTabNa
         >
             <NavigationIndependentTree>
                 <NavigationContainer
+                    theme={navigationTheme}
                     linking={DISABLED_NAVIGATION_LINKING}
                     onStateChange={handleNavigatorStateChange}
                 >

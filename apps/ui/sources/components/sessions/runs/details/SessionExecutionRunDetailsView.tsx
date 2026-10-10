@@ -1,4 +1,5 @@
 import type { ExecutionRunPublicState } from '@happier-dev/protocol';
+import { AppShellActionOutputSchemas } from '@happier-dev/protocol/actions/appShellActionFamily';
 import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -6,9 +7,7 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import {
     isExecutionRunNotRunningMutationError,
-    sessionExecutionRunCancelTurn,
     sessionExecutionRunGet,
-    sessionExecutionRunResume,
     sessionExecutionRunStop,
 } from '@/sync/ops/sessionExecutionRuns';
 import {
@@ -58,6 +57,7 @@ import type { SessionParticipantTarget } from '@/sync/domains/session/participan
 import { useSessionBrowserContextRuntimeContext } from '@/components/sessions/browser/sessionBrowserContextRuntime';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { useAcpCatalog } from '@/sync/store/useAcpCatalog';
 import { useSessionViewShellSession } from '@/components/sessions/shell/sessionViewStableSession';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { PoliteAccessibilityStatus } from '@/components/ui/accessibility/PoliteAccessibilityStatus';
@@ -79,7 +79,8 @@ import { AppSessionTranscriptSourceProvider, createAppSidechainHistoryLoader } f
 import { useSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
 import { requestRegisteredSessionComposerFocus } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import { resolveExecutionRunBackendLabel } from '@/components/sessions/runs/resolveExecutionRunBackendLabel';
-import { writeSessionInitialPromptV1 } from '@/sync/domains/sessionInitialPrompt/sessionInitialPromptV1';
+import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
 import { useSetting } from '@/sync/domains/state/storage';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { sendExecutionRunResultToSession } from './sendExecutionRunResultToSession';
@@ -346,6 +347,9 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
     const pendingOutboxScope = pendingScopeResolution.kind === 'bound'
         ? pendingScopeResolution.scope
         : null;
+    const { execute: executeAction, isCurrent: actionScopeIsCurrent, approval } = useMountedActionExecution(pendingOutboxScope);
+    const { snapshot: acpCatalog } = useAcpCatalog(pendingOutboxScope);
+    const acpCatalogSnapshot = acpCatalog?.catalog.status === 'ready' && !acpCatalog.stale ? acpCatalog.catalog : undefined;
     const interaction = source.useInteraction();
     const resolvedTranscriptMessageId = useResolvedSessionMessageRouteId(props.sessionId, transcriptToolRouteId ?? '');
     const transcriptMessageFromStore = useMessage(props.sessionId, resolvedTranscriptMessageId ?? transcriptToolRouteId ?? '');
@@ -638,15 +642,11 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
                 resultText,
                 runTitle,
                 template: typeof sendTemplate === 'string' ? sendTemplate : '',
-                nowMs: Date.now,
-                writeInitialPrompt: async ({ destinationSessionId, serverId, prompt }) => {
-                    await sync.patchSessionMetadataWithRetry(destinationSessionId, (metadata) => writeSessionInitialPromptV1({
-                        metadata,
-                        text: prompt.text,
-                        mode: prompt.mode,
-                        createdAtMs: prompt.createdAtMs,
-                        sourceSessionId: prompt.sourceSessionId,
-                    }), { serverId });
+                appendDraft: async ({ sessionId, text, sourceSessionId }) => {
+                    const result = await executeAction('session.draft.append', { sessionId, text, sourceSessionId });
+                    if (!result.ok || !actionScopeIsCurrent()) return false;
+                    const parsed = AppShellActionOutputSchemas['session.draft.append'].safeParse(result.result);
+                    return parsed.success && parsed.data.status === 'appended';
                 },
                 // Beside the Session its composer is already on screen; the phone page returns to it.
                 revealPrimaryComposer: presentation === 'panel'
@@ -655,25 +655,26 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
                 focusPrimaryComposer: () => requestRegisteredSessionComposerFocus({ serverId: leadServerId, sessionId: props.sessionId }),
             }), { tag: 'SessionExecutionRunDetailsView.sendToSession' });
         },
-    } : null), [leadServerId, leadTitle, presentation, props.sessionId, router, runTitle, sendTemplate]);
+    } : null), [actionScopeIsCurrent, executeAction, leadServerId, leadTitle, presentation, props.sessionId, router, runTitle, sendTemplate]);
     // The one composer here answers this agent, and says so (lab `convo-C1`).
-    const replyAgentLabel = state.status === 'loaded' ? resolveExecutionRunBackendLabel(state.run.backendTarget) : null;
+    const replyAgentLabel = state.status === 'loaded' ? resolveExecutionRunBackendLabel(state.run.backendTarget, acpCatalogSnapshot) : null;
     const invokeInteraction = React.useCallback((kind: 'cancel_turn' | 'resume') => {
         if (pendingInteraction !== null) return;
         fireAndForget((async () => {
             setInteractionError(null);
             setPendingInteraction(kind);
             try {
-                const options = props.serverId ? { serverId: props.serverId } : undefined;
                 const result = kind === 'cancel_turn'
                     ? cancellableInputTurn
-                        ? await sessionExecutionRunCancelTurn(props.sessionId, {
+                        ? await executeAction('execution.run.cancel_turn', {
+                            sessionId: props.sessionId,
                             runId: props.runId,
                             occurrenceId: cancellableInputTurn.occurrenceId,
                             turnId: cancellableInputTurn.turnId,
-                        }, options)
+                        })
                         : { ok: false as const, error: t('runs.runDetails.controlFailed') }
-                    : await sessionExecutionRunResume(props.sessionId, { runId: props.runId }, options);
+                    : await executeAction('execution.run.ensure', { sessionId: props.sessionId, runId: props.runId, resume: true });
+                if (!actionScopeIsCurrent()) return;
                 if (result.ok === false) {
                     setInteractionError(String(result.error ?? t('runs.runDetails.controlFailed')));
                     if (isExecutionRunNotRunningMutationError(result)) await load();
@@ -686,7 +687,7 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
                 setPendingInteraction(null);
             }
         })(), { tag: `SessionExecutionRunDetailsView.${kind}` });
-    }, [cancellableInputTurn, load, pendingInteraction, props.runId, props.serverId, props.sessionId]);
+    }, [actionScopeIsCurrent, cancellableInputTurn, executeAction, load, pendingInteraction, props.runId, props.sessionId]);
 
     const content = state.status === 'loading' ? (
         // A named wait (agents lab ST "opening"): what is opening and where it is read from. The
@@ -729,6 +730,7 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
                 {props.showInfoCard === false ? null : (
                     <SessionExecutionRunInfoCard
                         run={state.run}
+                        acpCatalogSnapshot={acpCatalogSnapshot}
                         hostSessionId={props.sessionId}
                         daemonProcessLine={daemonProcessLine}
                         originTitle={discussionOriginTitle}
@@ -799,6 +801,12 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
                 ) : null}
             </View>
 
+            {approval.approvalPending && approval.approvalId && pendingOutboxScope ? (
+                <ActionApprovalPendingNotice
+                    message={t('approvals.title')}
+                    onOpenApproval={() => router.push(`/inbox/approvals/${encodeURIComponent(approval.approvalId!)}?serverId=${encodeURIComponent(pendingOutboxScope.serverId)}`)}
+                />
+            ) : null}
             {stopUnconfirmed ? (
                 <ExecutionRunStopFailedState
                     sessionId={props.sessionId}

@@ -1,11 +1,17 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import Animated, { FadeIn } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { useComposerTextValue } from '@/components/sessions/agentInput/composerTextStore';
 import type { NewSessionBotCreationModel } from '@/components/sessions/new/hooks/newSessionScreenModelTypes';
 import { Icon } from '@/components/ui/icons/Icon';
-import { PageHeader } from '@/components/ui/layout/PageHeader';
+import {
+  PageHeader,
+  renderPageHeaderText,
+} from '@/components/ui/layout/PageHeader';
+import { motionTokens } from '@/components/ui/motion';
+import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { t } from '@/text';
 
@@ -28,6 +34,10 @@ export const NewBotDraftHeader = React.memo(function NewBotDraftHeader(
   const { theme } = useUnistyles();
   const name = useComposerTextValue(props.botCreation.nameStore);
   const [naming, setNaming] = React.useState(false);
+  const reducedMotion = useReducedMotionPreference();
+  // The sentence the page opens with never animates in; only a swap does.
+  const swapped = React.useRef(false);
+  if (naming) swapped.current = true;
   const onSessionNameChange = props.botCreation.onSessionNameChange;
   const titleEditor = React.useMemo(
     () => ({
@@ -49,8 +59,23 @@ export const NewBotDraftHeader = React.memo(function NewBotDraftHeader(
         title={name.trim() || t('bots.name.placeholder')}
         alwaysShowTitle
         titleEditor={titleEditor}
+        // The purpose line becomes the naming hint and back with a soft arrival (lab `b-new` Motion);
+        // the first render and reduced motion place the sentence at once.
         description={
-          naming ? t('bots.name.hint') : t('bots.create.description')
+          <Animated.View
+            key={naming ? 'hint' : 'purpose'}
+            entering={
+              reducedMotion || !swapped.current
+                ? undefined
+                : FadeIn.duration(motionTokens.durationMs.base)
+            }
+          >
+            {renderPageHeaderText({
+              role: 'pageDescription',
+              header: false,
+              text: naming ? t('bots.name.hint') : t('bots.create.description'),
+            })}
+          </Animated.View>
         }
         leading={
           <PageHeaderMarkSlot testID="new-bot-draft-mark">

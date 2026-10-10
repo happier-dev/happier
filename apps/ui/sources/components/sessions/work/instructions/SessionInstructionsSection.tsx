@@ -9,21 +9,19 @@ import {
 import type { PromptDocArtifactRefV1 } from '@happier-dev/protocol/prompts/library/promptArtifactRefsV1';
 import * as React from 'react';
 import { type LayoutChangeEvent, View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { ActionSettingsTargetModeControl } from '@/components/settings/actions/ActionSettingsTargetModeControl';
 import { normalizeActionsSettings } from '@/components/settings/actions/normalizeActionsSettings';
 import { promptCollectionItemHref } from '@/components/settings/prompts/collection/promptCollectionModel';
-import { WorkSection } from '@/components/sessions/work/WorkSection';
+import { WorkSection, WorkSectionEmptyLine } from '@/components/sessions/work/WorkSection';
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import {
-  DropdownMenu,
-  type DropdownMenuItem,
-} from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon } from '@/components/ui/icons/Icon';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
+import { PromptStackDocumentMenu } from '@/components/settings/prompts/stacks/PromptStackDocumentMenu';
 import { Item } from '@/components/ui/lists/Item';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { Text } from '@/components/ui/text/Text';
@@ -35,7 +33,6 @@ import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSession
 import { areServerProfileIdentifiersEquivalent, getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import {
   useActiveServerAccountScope,
-  useArtifacts,
   useSettingMutable,
 } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -131,6 +128,8 @@ export const SessionInstructionsBody = React.memo(function SessionInstructionsBo
   const router = useRouter();
   const homeName = resolveHomeDisplayLabel(getServerProfileById(serverId), serverId);
   const [saveState, setSaveState] = React.useState<SaveState>('idle');
+  // A refused change says so in the section, where the change was asked for, until the next attempt.
+  const [refused, setRefused] = React.useState(false);
   const target = React.useMemo<SessionInstructionsTarget>(
     () => ({
       sessionId: session.id,
@@ -154,22 +153,16 @@ export const SessionInstructionsBody = React.memo(function SessionInstructionsBo
   const settle = React.useCallback(
     async (run: () => Promise<ActionExecuteResult>): Promise<boolean> => {
       setSaveState('pending');
+      setRefused(false);
       try {
         const outcome = readOutcome(await run());
-        if (outcome === 'refused')
-          Modal.alert(
-            t('sessionInstructions.title'),
-            t('sessionInstructions.refused'),
-          );
+        if (outcome === 'refused') setRefused(true);
         // An approval request leaves the line saying it is waiting; the accepted write re-renders the section.
         if (outcome !== 'pending') setSaveState('idle');
         return outcome === 'applied';
       } catch {
         setSaveState('idle');
-        Modal.alert(
-          t('sessionInstructions.title'),
-          t('sessionInstructions.refused'),
-        );
+        setRefused(true);
         return false;
       }
     },
@@ -238,7 +231,6 @@ export const SessionInstructionsBody = React.memo(function SessionInstructionsBo
       anatomy="page"
       title={t('sessionInstructions.title')}
       count=""
-      info={t('sessionInstructions.description')}
       nativeID="instructions"
       loading={status === 'loading' || status === 'inactive'}
       action={
@@ -259,6 +251,12 @@ export const SessionInstructionsBody = React.memo(function SessionInstructionsBo
           testID="session-work-instructions.pending"
           busy
           reason={t('sessionInstructions.savePending')}
+        />
+      ) : refused ? (
+        <SurfaceFreshnessLine
+          testID="session-work-instructions.refused"
+          tone="warning"
+          reason={t('sessionInstructions.refused')}
         />
       ) : status === 'refreshing' ? (
         <SurfaceFreshnessLine
@@ -282,20 +280,33 @@ export const SessionInstructionsBody = React.memo(function SessionInstructionsBo
         />
       ) : null}
       {document ? (
-        document.markdown.trim().length > 0 ? (
-          <ClampedInstructions
-            markdown={document.markdown}
-            title={document.title}
-            stale={source.stale}
-          />
-        ) : (
-          <Item
-            testID="session-work-instructions.empty"
-            title={t('sessionInstructions.empty')}
-            showChevron={false}
-            onPress={edit}
-          />
-        )
+        <>
+          {document.markdown.trim().length > 0 ? (
+            <ClampedInstructions
+              markdown={document.markdown}
+              title={document.title}
+              stale={source.stale}
+            />
+          ) : (
+            <WorkSectionEmptyLine
+              testID="session-work-instructions.empty"
+              text={t('sessionInstructions.empty')}
+              onPress={edit}
+            />
+          )}
+          {showEdit ? (
+            <View style={styles.actions}>
+              <RoundButton
+                testID="session-work-instructions.detach"
+                size="small"
+                display="secondary"
+                title={t('sessionInstructions.detach')}
+                onPress={detach}
+                disabled={saveState === 'pending'}
+              />
+            </View>
+          ) : null}
+        </>
       ) : status === 'none' ? (
         <View style={styles.invite}>
           <Text style={styles.inviteText}>{t('sessionInstructions.none')}</Text>
@@ -311,6 +322,7 @@ export const SessionInstructionsBody = React.memo(function SessionInstructionsBo
             <AttachExistingInstructions
               serverId={serverId}
               title={t('sessionInstructions.attach')}
+              quiet
               onAttach={attach}
             />
           </View>
@@ -326,6 +338,12 @@ export const SessionInstructionsBody = React.memo(function SessionInstructionsBo
                 : status === 'wrong_kind'
                   ? t('sessionInstructions.wrongKind')
                   : t('sessionInstructions.invalid')
+            }
+            // The cause is the title; what to do about it is the line beneath.
+            subtitle={
+              status === 'not_found'
+                ? t('sessionInstructions.missingHelp')
+                : undefined
             }
             showChevron={false}
           />
@@ -410,14 +428,19 @@ function ClampedInstructions(
         </View>
       </View>
       {overflows ? (
-        <Text
+        <TextLinkButton
           testID="session-work-instructions.more"
-          accessibilityRole="button"
-          style={styles.more}
+          label={t('sessionInstructions.more')}
+          expanded={false}
           onPress={() => setExpanded(true)}
-        >
-          {t('sessionInstructions.more')}
-        </Text>
+        />
+      ) : expanded ? (
+        <TextLinkButton
+          testID="session-work-instructions.less"
+          label={t('sessionInstructions.less')}
+          expanded
+          onPress={() => setExpanded(false)}
+        />
       ) : null}
       <Text
         style={[styles.meta, props.stale ? styles.metaStale : null]}
@@ -489,6 +512,8 @@ function AttachExistingInstructions(
   props: Readonly<{
     serverId: string;
     title: string;
+    /** Beside a primary way to start (Create instructions): the quiet second choice, not a second button. */
+    quiet?: boolean;
     onAttach: (ref: PromptDocArtifactRefV1) => void;
   }>,
 ) {
@@ -509,7 +534,7 @@ function AttachExistingInstructions(
       <RoundButton
         testID="session-work-instructions.attach"
         size="small"
-        display="secondary"
+        display={props.quiet ? 'inverted' : 'secondary'}
         title={props.title}
         onPress={() => setOpen(true)}
       />
@@ -538,79 +563,21 @@ export function AttachExistingMenu(
     serverId: string;
     onClose: () => void;
     onAttach: (ref: PromptDocArtifactRefV1) => void;
-    /** Given by a caller that also attaches skills; they are offered only then. */
-    onAttachSkill?: (artifactId: string) => void;
     testID?: string;
     searchPlaceholder?: string;
   }>,
 ) {
-  const { theme } = useUnistyles();
-  const artifacts = useArtifacts();
-  const offerSkills = props.onAttachSkill !== undefined;
-  const skillIds = React.useMemo(
-    () =>
-      new Set(
-        offerSkills
-          ? artifacts
-              .filter((artifact) => artifact.header?.kind === 'prompt_bundle.v2')
-              .map((artifact) => artifact.id)
-          : [],
-      ),
-    [artifacts, offerSkills],
-  );
-  const items = React.useMemo(
-    (): DropdownMenuItem[] =>
-      artifacts
-        .filter(
-          (artifact) =>
-            artifact.header?.kind === 'prompt_doc.v2' ||
-            (offerSkills && artifact.header?.kind === 'prompt_bundle.v2'),
-        )
-        .map((artifact) => ({
-          id: artifact.id,
-          title:
-            typeof artifact.header?.title === 'string'
-              ? artifact.header.title
-              : (artifact.title ?? t('promptLibrary.untitledPrompt')),
-          icon: (
-            <Icon
-              name={
-                artifact.header?.kind === 'prompt_bundle.v2'
-                  ? 'sparkle'
-                  : 'file-text'
-              }
-              size={18}
-              color={theme.colors.text.secondary}
-            />
-          ),
-        })),
-    [artifacts, offerSkills, theme.colors.text.secondary],
-  );
   return (
-    <DropdownMenu
+    <PromptStackDocumentMenu
       testID={props.testID ?? 'session-work-instructions.attachMenu'}
-      open
-      onOpenChange={(next) => {
-        if (!next) props.onClose();
-      }}
-      items={items}
-      selectedId={null}
-      search
+      purpose="instructions"
+      serverId={props.serverId}
+      anchorRef={props.anchorRef}
+      onClose={props.onClose}
       searchPlaceholder={
         props.searchPlaceholder ?? t('sessionInstructions.attachTitle')
       }
-      popoverAnchorRef={props.anchorRef}
-      matchTriggerWidth={false}
-      onSelect={(id) => {
-        const artifactId = String(id);
-        if (skillIds.has(artifactId)) props.onAttachSkill?.(artifactId);
-        else
-          props.onAttach({
-            kind: 'doc',
-            serverId: props.serverId,
-            artifactId,
-          });
-      }}
+      onPick={(ref) => { if (ref.kind === 'doc') props.onAttach(ref); }}
     />
   );
 }
@@ -629,12 +596,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     ...happierPageTextMetrics('pageDescription'),
     color: theme.colors.text.primary,
   },
-  more: {
-    ...Typography.default('semiBold'),
-    ...happierPageTextMetrics('meta'),
-    color: theme.colors.text.secondary,
-    alignSelf: 'flex-start',
-  },
   meta: {
     ...Typography.default(),
     ...happierPageTextMetrics('meta'),
@@ -649,7 +610,7 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   inviteText: {
     ...Typography.default(),
-    ...happierPageTextMetrics('pageDescription'),
+    ...happierPageTextMetrics('sectionDescription'),
     color: theme.colors.text.secondary,
   },
   repair: {
@@ -657,6 +618,7 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   actions: {
     flexDirection: 'row',
+    alignItems: 'center',
     flexWrap: 'wrap',
     gap: 8,
     paddingHorizontal: HAPPIER_WORK_PANE_METRICS.rowInsetPx,

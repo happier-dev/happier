@@ -57,6 +57,7 @@ import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback'
 import { PaneHeader } from '@/components/appShell/panes/PaneHeader';
 import { SurfaceStateSizeProvider } from '@/components/ui/surfaces/surfaceStateSize';
 import { PaneHeaderSlotProvider, PaneHeaderSlotScope, usePublishedPaneHeaderContent } from '@/components/appShell/panes/paneHeaderSlot';
+import { PaneHeaderActions } from '@/components/appShell/panes/PaneHeaderActions';
 import { getRightSidebarTabLabel } from '@/components/appShell/rightSidebar/rightSidebarTabRegistry';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import {
@@ -895,7 +896,7 @@ function SessionCockpitSurfaceHeader(props: Readonly<{ slotKey: string; title: s
             testID={props.testID}
             title={props.title}
             line={published?.line ?? null}
-            actions={published?.action}
+            actions={<PaneHeaderActions published={published} title={props.title} testID={props.testID} />}
         />
     );
 }

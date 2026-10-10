@@ -168,6 +168,22 @@ describe('createSystemTaskRunner', () => {
         await expect(waitForSystemTaskResult(runner, taskId)).resolves.toMatchObject({ ok: true, data: { completed: true } });
     });
 
+    it('aborts one wait without canceling the task or another observer', async () => {
+        const { createSystemTaskRunner, waitForSystemTaskResult } = await import('./createSystemTaskRunner');
+        const manual = createManualBridge();
+        const runner = createSystemTaskRunner({ bridge: manual.bridge });
+        const taskId = await runner.start(createSpec());
+        const controller = new AbortController();
+        const abandoned = waitForSystemTaskResult(runner, taskId, { signal: controller.signal });
+        const rejected = expect(abandoned).rejects.toMatchObject({ name: 'AbortError' });
+        const retained = waitForSystemTaskResult(runner, taskId);
+        controller.abort();
+        manual.emitResult(taskId, { protocolVersion: 1, taskId, ok: true, data: { completed: true } });
+        await rejected;
+        await expect(retained).resolves.toMatchObject({ taskId, ok: true, data: { completed: true } });
+        expect(manual.cancelMock).not.toHaveBeenCalled();
+    });
+
     it('ignores invalid events and converts an invalid result payload into a stable failure result', async () => {
         const { createSystemTaskRunner } = await import('./createSystemTaskRunner');
         const manual = createManualBridge();

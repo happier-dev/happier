@@ -59,6 +59,7 @@ beforeEach(() => {
                 startedAtMs: 1,
                 status: 'running',
                 sidechainId: 'toolu_1',
+                resolvedSelection: { source: 'inherited', modelId: 'applied-model', connectedServices: null },
             }],
         });
 });
@@ -77,6 +78,7 @@ describe('resolveDaemonExecutionRunFallback', () => {
                 runId: 'run_1',
                 backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
                 status: 'running',
+                resolvedSelection: { source: 'inherited', modelId: 'applied-model', connectedServices: null },
             }),
             daemonProcessLine: null,
         }));

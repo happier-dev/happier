@@ -7,13 +7,10 @@ import { useSessionViewShellSession } from '@/components/sessions/shell/sessionV
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
-import { getSessionName } from '@/utils/sessions/sessionUtils';
-import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 
 import { useSessionWorkSources } from './sessionWorkSources';
 import { SessionWorkMapView } from './SessionWorkMapView';
-import { useSessionWorkOpeners } from './useSessionWorkOpeners';
-import { projectSessionWorkMap } from './workMapProducer';
+import { useSessionWorkMap } from './useSessionWorkMap';
 
 /**
  * The strip's popover (lab `session-C`): the lead's work as a map, with "3 still working · 1 needs you"
@@ -63,20 +60,15 @@ export const SessionWorkStripPopoverContent = React.memo((props: Readonly<{
     const styles = stylesheet;
     const sources = useSessionWorkSources();
     const session = useSessionViewShellSession(props.sessionId, props.serverId);
-    const leadTitle = session ? getSessionName(session, props.serverId) : '';
-    const leadAgentId = session ? readSessionPresentationAgentId(session) : null;
-    const { openItem } = useSessionWorkOpeners({
+    const projection = sources?.projection ?? null;
+    const { map, openItem } = useSessionWorkMap({
         sessionId: props.sessionId,
         serverId: props.serverId,
         scopeId: props.scopeId,
         subagents: sources?.agentActivity.subagents ?? [],
-        leadTitle,
+        session,
+        projection,
     });
-    const projection = sources?.projection ?? null;
-    const map = React.useMemo(
-        () => (projection ? projectSessionWorkMap({ leadSessionId: props.sessionId, leadTitle, leadAgentId, projection }) : null),
-        [leadAgentId, leadTitle, projection, props.sessionId],
-    );
     const { onClose } = props;
     const openAndClose = React.useCallback((item: Parameters<typeof openItem>[0]) => {
         onClose();

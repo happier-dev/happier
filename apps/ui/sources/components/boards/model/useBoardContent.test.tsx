@@ -6,6 +6,7 @@ import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflow
 import { createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { readSessionStatusNextRefreshAtMs } from '@/utils/sessions/sessionUtils';
+import { sessionListRuntimeClock } from '@/hooks/session/sessionListRuntimeClock';
 import { workflowRunRowFromSummary } from '@/sync/store/domains/workflowRuns';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
@@ -53,6 +54,61 @@ function runsBoard(startedBy: readonly ('you' | 'agents' | 'triggers')[] = []) {
 }
 
 describe('Board shared Run filter membership', () => {
+    it('does not render an idle Board for other surfaces clock wakes', async () => {
+        vi.useFakeTimers();
+        // These retained idle rows are already past every freshness boundary.
+        vi.setSystemTime(1_000_000);
+        const rows = Array.from({ length: 20 }, (_, index) => createSessionListRenderableSessionFixture({ id: `idle-session-${index}`, active: false }));
+        const runs = Array.from({ length: 20 }, (_, index) => workflowRunRowFromSummary(
+            createWorkflowRunSummaryFixture({ id: `finished-run-${index}`, state: 'succeeded' }), null));
+        storage.setState({ sessionListRowsByServerId: { [homes.activeServerId!]: Object.fromEntries(rows.map(row => [row.id, row])) },
+            workflowRunsById: Object.fromEntries(runs.map(row => [row.id, row])) });
+        const refs = [
+            ...rows.map(row => ({ kind: 'session' as const, qualifiedId: { serverId: homes.activeServerId!, id: row.id } })),
+            ...runs.map(row => ({ kind: 'workflow_run' as const, qualifiedId: { serverId: homes.activeServerId!, id: row.id } })),
+        ];
+        const membership = { members: refs.map(ref => ({ key: buildWorkBoardItemKeyV1(ref), ref, picked: true, sourced: false, available: true })), complete: true };
+        let renders = 0;
+        const hook = await renderHook(() => { renders += 1; return useBoardCards(membership, homes); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+        const cards = hook.getCurrent();
+        expect(cards).toHaveLength(40);
+        const before = renders;
+        const otherSurface = {};
+        try {
+            for (let second = 0; second < 60; second += 1) {
+                sessionListRuntimeClock.requestWake(otherSurface, Date.now() + 1000);
+                await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+            }
+        } finally {
+            sessionListRuntimeClock.clearWake(otherSurface);
+        }
+        expect(hook.getCurrent()).toBe(cards);
+        expect(renders - before).toBe(0);
+        // Suppressing unrelated wakes must not suppress actual Board source changes.
+        const row = rows[0]!;
+        act(() => { storage.setState({ sessionListRowsByServerId: { [homes.activeServerId!]: {
+            ...storage.getState().sessionListRowsByServerId[homes.activeServerId!],
+            [row.id]: { ...row, active: true, activeAt: Date.now(), hasPendingPermissionRequests: true, pendingRequestObservedAt: Date.now() },
+        } } }); });
+        expect(hook.getCurrent()[0]?.status.bucket).toBe('needs_you');
+    });
+
+    it('keeps My machines own-only without hiding an unreadable owned Machine', async () => {
+        const owned = createMachineFixture({ id: 'owned', availability: {
+            kind: 'locked', reason: 'encryption_material_unavailable',
+        } });
+        const shared = createMachineFixture({ id: 'shared', isShared: true, access: {
+            custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'use',
+            resourceMode: 'plain', accessState: 'ready',
+        } });
+        storage.setState({ machineListByServerId: { [homes.activeServerId!]: [owned, shared] } });
+        const base = createWorkBoardV1({ id: 'my-machines', name: 'My machines' });
+        const board = { ...base, source: { ...base.source, sections: ['my_machines' as const] } };
+        const hook = await renderHook(() => useBoardMembership(board, homes));
+        expect(hook.getCurrent().members.map(member => member.ref.qualifiedId.id)).toEqual(['owned']);
+    });
+
     it('refreshes Session and machine statuses at canonical deadlines without store writes', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(100_000);
@@ -97,7 +153,8 @@ describe('Board shared Run filter membership', () => {
         await act(async () => { await vi.advanceTimersByTimeAsync(1001); });
         expect(renders).toBe(inactiveRenders);
         expect(hook.getCurrent()).toBe(retained);
-        expect(vi.getTimerCount()).toBe(0);
+        // The real Account transport has its own timers; clock-owned withdrawal
+        // is verified at sessionListRuntimeClock, not by counting the entire process.
         await hook.rerender({ enabled: true });
         expect(hook.getCurrent()[0]?.body).toMatchObject({ kind: 'machine', online: false });
     });

@@ -51,8 +51,11 @@ export function useWorkTheme(): HappierWorkTheme {
 
 const workTextStyles = new Map<string, TextStyle>();
 
-/** A Work text role in core's own family for its weight (and tabular figures where the role asks). */
-function workTextStyle(role: HappierWorkTextProps['role'], strong: boolean | undefined): TextStyle {
+/**
+ * A Work text role in core's own family for its weight (and tabular figures where the role asks). A host
+ * that must draw a shared slot with its own text (a find-aware transcript card) uses the same step.
+ */
+export function workTextStyle(role: HappierWorkTextProps['role'], strong?: boolean): TextStyle {
     const key = `${role}:${strong === true ? 'strong' : 'plain'}`;
     const existing = workTextStyles.get(key);
     if (existing) return existing;

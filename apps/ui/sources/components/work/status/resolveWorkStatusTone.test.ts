@@ -7,7 +7,7 @@ vi.mock('@/text', async () => {
 });
 
 import { describeWorkflowInvocationLifecycle, describeWorkflowRunState } from '@/components/workflows/presentation/workflowLifecyclePresentation';
-import { resolveWorkStatusTone } from './resolveWorkStatusTone';
+import { describeWorkerUpdateState, resolveWorkStatusTone } from './resolveWorkStatusTone';
 import { t } from '@/text';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 
@@ -30,6 +30,18 @@ describe('resolveWorkStatusTone', () => {
         expect(resolveWorkStatusTone({ kind: 'machine', facts: { ...facts, managedMachine: { ...managed, desired: 'delete' } } }).word).toBe(t('managedMachines.detail.power.stopped'));
         expect(resolveWorkStatusTone({ kind: 'machine', facts: { ...facts, managedMachine: { ...managed,
             submittedNativeEffect: { intent: 'start', intentRevision: 2, controller: managed.controller, requestId: 'start-a' } } } })).toMatchObject({ bucket: 'working', word: t('managedWake.starting', { machine: 'Build box' }) });
+        const stopping: ManagedMachineV1 = { ...managed, observation: { ...managed.observation!, power: 'running' },
+            submittedNativeEffect: { intent: 'stop', intentRevision: 1, controller: managed.controller, requestId: 'stop-a' } };
+        for (const online of [true, false]) {
+            expect(resolveWorkStatusTone({ kind: 'machine', facts: { ...facts, online, managedMachine: stopping } }))
+                .toMatchObject({ bucket: 'working', tone: 'neutral', word: t('managedPower.stopPending') });
+            expect(resolveWorkStatusTone({ kind: 'machine', facts: { ...facts, online, managedMachine: {
+                ...stopping, submittedNativeEffect: undefined, cleanup: { disposition: 'unavailable', reason: 'native_refused' },
+            } } })).toMatchObject({ bucket: 'needs_you', tone: 'attention' });
+        }
+        expect(resolveWorkStatusTone({ kind: 'machine', facts: { ...facts, online: true, managedMachine: {
+            ...stopping, submittedNativeEffect: undefined, desiredWhen: 'after-idle',
+        } } }).bucket).toBe('idle');
     });
     it('uses operation settlement facts and never presents lost active observation as completed', () => {
         const status = (state: 'accepted' | 'running' | 'succeeded' | 'failed' | 'cancelled', observation: 'available' | 'unavailable' = 'available') =>
@@ -44,23 +56,33 @@ describe('resolveWorkStatusTone', () => {
         expect(status('failed')).toEqual({ bucket: 'finished', tone: 'danger', word: 'failed' });
         expect(status('cancelled')).toEqual({ bucket: 'finished', tone: 'neutral', word: 'cancelled' });
     });
-    it('derives worker update tone from owner state and explicit wake facts', () => {
+    it('derives a worker update\'s tone and its state word from the update alone', () => {
         const base = { v: 1, headline: 'Check complete', result: '', canInspect: false } as const;
-        expect(resolveWorkStatusTone({ kind: 'worker_update', facts: { word: 'Failed', update: {
-            ...base, workerKind: 'execution_run', workerId: 'run_1', ownerState: 'failed', wake: 'finished',
-        } } })).toEqual({ bucket: 'finished', tone: 'danger', word: 'Failed' });
-        expect(resolveWorkStatusTone({ kind: 'worker_update', facts: { word: 'Settled', update: {
-            ...base, workerKind: 'session', workerId: 'worker', ownerState: 'settled', wake: 'needs_you',
-        } } })).toEqual({ bucket: 'needs_you', tone: 'attention', word: 'Settled' });
-        expect(resolveWorkStatusTone({ kind: 'worker_update', facts: { word: 'Stalled', update: {
-            ...base, workerKind: 'session', workerId: 'worker', ownerState: 'stalled', wake: 'stalled',
-        } } })).toEqual({ bucket: 'offline', tone: 'neutral', word: 'Stalled' });
-        expect(resolveWorkStatusTone({ kind: 'worker_update', facts: { word: 'Stalled', update: {
-            ...base, workerKind: 'session', workerId: 'worker', ownerState: 'stalled', wake: 'finished',
-        } } })).toEqual({ bucket: 'offline', tone: 'neutral', word: 'Stalled' });
-        expect(resolveWorkStatusTone({ kind: 'worker_update', facts: { word: 'Failed', update: {
-            ...base, workerKind: 'workflow_run', workerId: 'workflow', ownerState: 'failed', wake: 'finished',
-        } } })).toEqual({ bucket: 'finished', tone: 'danger', word: 'Failed' });
+        const status = (update: Parameters<typeof describeWorkerUpdateState>[0]) => resolveWorkStatusTone({ kind: 'worker_update', facts: { update } });
+        expect(status({ ...base, workerKind: 'execution_run', workerId: 'run_1', ownerState: 'failed', wake: 'finished' }))
+            .toEqual({ bucket: 'finished', tone: 'danger', word: t('sessionWork.workerUpdate.state.failed') });
+        expect(status({ ...base, workerKind: 'execution_run', workerId: 'run_1', ownerState: 'timeout', wake: 'finished' }))
+            .toEqual({ bucket: 'finished', tone: 'attention', word: t('sessionWork.workerUpdate.state.timedOut') });
+        expect(status({ ...base, workerKind: 'session', workerId: 'worker', ownerState: 'settled', wake: 'finished' }))
+            .toEqual({ bucket: 'finished', tone: 'neutral', word: t('sessionWork.workerUpdate.state.settled') });
+        // A wake that needs the person says so, whatever the owner's last state was.
+        expect(status({ ...base, workerKind: 'session', workerId: 'worker', ownerState: 'settled', wake: 'needs_you' }))
+            .toEqual({ bucket: 'needs_you', tone: 'attention', word: t('sessionWork.workerUpdate.state.needsYou') });
+        expect(status({ ...base, workerKind: 'workflow_run', workerId: 'workflow', ownerState: 'running', wake: 'needs_you' }))
+            .toEqual({ bucket: 'needs_you', tone: 'attention', word: t('sessionWork.workerUpdate.state.needsYou') });
+        expect(status({ ...base, workerKind: 'session', workerId: 'worker', ownerState: 'stalled', wake: 'stalled' }))
+            .toEqual({ bucket: 'offline', tone: 'neutral', word: t('sessionWork.workerUpdate.state.stalled') });
+        expect(status({ ...base, workerKind: 'session', workerId: 'worker', ownerState: 'stalled', wake: 'finished' }))
+            .toEqual({ bucket: 'offline', tone: 'neutral', word: t('sessionWork.workerUpdate.state.stalled') });
+        expect(status({ ...base, workerKind: 'workflow_run', workerId: 'workflow', ownerState: 'failed', wake: 'finished' }))
+            .toEqual({ bucket: 'finished', tone: 'danger', word: t('sessionWork.workerUpdate.state.failed') });
+        expect(status({ ...base, workerKind: 'workflow_run', workerId: 'workflow', ownerState: 'succeeded', wake: 'finished' }).word)
+            .toBe(t('sessionWork.workerUpdate.state.finished'));
+        // A workflow state the card has no word of its own for keeps the run owner's word.
+        expect(status({ ...base, workerKind: 'workflow_run', workerId: 'workflow', ownerState: 'interrupted', wake: 'finished' }).word)
+            .toBe(t('workflows.runState.interrupted'));
+        expect(describeWorkerUpdateState({ ...base, workerKind: 'session', workerId: 'worker', ownerState: 'published', wake: 'published' }))
+            .toBe(t('sessionWork.workerUpdate.state.published'));
     });
     it('keeps healthy workflow presenters neutral', () => {
         for (const state of ['queued', 'claimed', 'running', 'pause_requested', 'paused', 'succeeded', 'cancelled', 'skipped'] as const) {
@@ -75,6 +97,12 @@ describe('resolveWorkStatusTone', () => {
         expect(resolveWorkStatusTone({ kind: 'workflow_run', facts: {
             state: 'running', inAttentionWindow: true, machineReachable: false, word: 'Running',
         } })).toEqual({ bucket: 'needs_you', tone: 'attention', word: 'Running' });
+        expect(resolveWorkStatusTone({ kind: 'workflow_run', facts: {
+            state: 'cancelled', inAttentionWindow: true, machineReachable: false, word: 'Stopped',
+        } })).toEqual({ bucket: 'needs_you', tone: 'attention', word: 'Stopped' });
+        expect(resolveWorkStatusTone({ kind: 'workflow_run', facts: {
+            state: 'cancelled', inAttentionWindow: false, machineReachable: false, word: 'Stopped',
+        } })).toEqual({ bucket: 'finished', tone: 'neutral', word: 'Stopped' });
     });
 
     it('keeps exhausted reviews finished and neutral even when their machine is offline', () => {

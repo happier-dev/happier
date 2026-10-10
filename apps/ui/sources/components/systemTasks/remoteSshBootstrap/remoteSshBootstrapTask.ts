@@ -1,4 +1,5 @@
 import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
+import type { SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
 import type { SystemTaskRunState, SystemTaskRunner } from '../types';
 import { resolvePreferredPublicReleaseRingLabelForCurrentApp } from '@/sync/runtime/resolvePublicReleaseRing';
 import { buildRemoteSshManageHostSystemTaskSpec } from '../specs/remoteSsh/buildRemoteSshManageHostSystemTaskSpec';
@@ -9,6 +10,7 @@ export type RemoteSshTaskTarget = Readonly<{
     runner: SystemTaskRunner; relayUrl: string; homeTarget?: ResolvedHomeTarget;
     webappUrl?: string; publicRelayUrl?: string; serviceMode?: 'user' | 'none';
     intent?: 'machineSetup' | 'personalHome.create';
+    startSpec?: (spec: SystemTaskSpec) => Promise<string>;
 }>;
 
 /** One imperative task producer for the hook and the Action client. */
@@ -17,7 +19,8 @@ export async function startRemoteSshBootstrapTask(options: RemoteSshTaskTarget, 
     const ssh = { sshUsername: form.sshUsername, sshHost: form.sshHost, sshPort: form.sshPort, sshAuth: form.sshAuth,
         sshPassword: form.sshPassword, identityFilePath: form.identityFilePath,
         identityPrivateKey: form.sshAuth === 'keyfile' ? form.identityPrivateKey : undefined };
-    return options.runner.start(options.intent === 'personalHome.create'
+    const startSpec = options.startSpec ?? ((spec: SystemTaskSpec) => options.runner.start(spec));
+    return startSpec(options.intent === 'personalHome.create'
         ? buildRemoteSshManageHostSystemTaskSpec({ ...ssh, action: 'personalHome.create', channel,
             relayRuntime: { channel, mode: 'user' }, pairDevice: true, enrollInvokingClient: true, serviceMode: 'none' })
         : buildRemoteSshBootstrapMachineSystemTaskSpec({ ...ssh, relayUrl: options.relayUrl, webappUrl: options.webappUrl,

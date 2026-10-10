@@ -42,6 +42,7 @@ import { verifyRunnerConsentV1 } from '@happier-dev/protocol/ephemeralRunner/con
 import { verifyRunnerReadinessV1 } from '@happier-dev/protocol/ephemeralRunner/readiness';
 import { createPlainSessionOwnerMetadataEnvelopeV1, createSessionOwnerMetadataV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { parseMachinePublishedMetadataV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { sealBoxBundle } from '@happier-dev/protocol/crypto/boxBundle';
@@ -63,7 +64,7 @@ import {
 } from './runnerActivationKeyCustody';
 import { retainRunnerCreatorMachineContentKeyTrust } from './runnerCreatorMachineContentKeyTrust';
 import type { Encryption } from '@/sync/encryption/encryption';
-import { MachineMetadataSchema, type MachineMetadata } from '@/sync/domains/state/storageTypes';
+import type { MachineMetadata } from '@/sync/domains/state/storageTypes';
 import { MetadataSchema, type Metadata, type AgentState } from '@happier-dev/session-core/state';
 import type { RunnerActivationClient } from '@/sync/api/ephemeralRunner/runnerActivationClient';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
@@ -358,7 +359,7 @@ export function deriveRunnerMaterializationMetadataV1(input: Readonly<{
     if (endpointFacts.machine.platform !== expectedPlatform) {
         throw new RunnerMaterializationPreparationError('runner_review_mismatch');
     }
-    const machineMetadata = MachineMetadataSchema.parse(endpointFacts.machine);
+    const machineMetadata = parseMachinePublishedMetadataV1(endpointFacts.machine);
     const metadata = MetadataSchema.parse({
         path: endpointFacts.directory,
         host: machineMetadata.host,

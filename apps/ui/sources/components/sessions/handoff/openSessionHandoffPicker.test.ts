@@ -139,4 +139,26 @@ describe('openSessionHandoffPicker', () => {
         capturedConfig.props.onResolve(selection);
         expect(onSubmitAgain).not.toHaveBeenCalled();
     });
+
+    it('keeps an existing-state rejection on the retained picker so the user can correct and resubmit', async () => {
+        let capturedConfig: any = null;
+        showMock.mockImplementation((config: any) => { capturedConfig = config; return 'modal_1'; });
+        const { openSessionHandoffPicker } = await import('./openSessionHandoffPicker');
+        const onRetained = vi.fn();
+        const onSubmitAgain = vi.fn();
+        const pending = openSessionHandoffPicker({
+            sessionId: 'sess_1', serverId: 'server_a', retainOnSubmit: true, onRetained, onSubmitAgain,
+        });
+        const selection = { targetMachineId: 'machine_target', stateTransfer: 'existing', workspaceAction: { kind: 'none' } };
+        capturedConfig.props.onResolve(selection);
+        await expect(pending).resolves.toEqual(selection);
+        const setInlineError = onRetained.mock.calls[0]?.[3] as (code: string | null) => void;
+        expect(setInlineError).toBeTypeOf('function');
+        setInlineError('existing_session_state_unavailable');
+        expect(updateMock).toHaveBeenCalledWith('modal_1', { inlineErrorCode: 'existing_session_state_unavailable' });
+        expect(hideMock).not.toHaveBeenCalled();
+        capturedConfig.props.onResolve({ ...selection, stateTransfer: 'transfer' });
+        expect(onSubmitAgain).toHaveBeenCalledWith(expect.objectContaining({ stateTransfer: 'transfer' }));
+        onRetained.mock.calls[0]?.[0]();
+    });
 });

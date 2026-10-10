@@ -47,7 +47,7 @@ async function canvas() {
         const board = persistence.acknowledged().boards[0]!;
         return { scope, board, membership: projectBoardMembership(board, { isHomeMounted: () => true, sections: {}, filtered: null }), isHomeMounted: () => true };
     };
-    const port = createWorkBoardUiActionPort(getContext, store.queue);
+    const port = createWorkBoardUiActionPort(getContext, store.queue, store.readBoardAccess);
     const runtime = createEntityDragDropRuntime();
     const binding: WorkBoardEntityBinding = { scope, runtime, getContext, isCurrent: () => true,
         execute: async effect => { await port.apply(WorkBoardActionInputSchemasV1['boards.apply'].parse(effect.input).intent); return { status: 'applied' }; } };

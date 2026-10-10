@@ -1,17 +1,71 @@
 import { describe, expect, it } from 'vitest';
 
 import { resolveRowlessExecutionRunStartOptions } from './resolveRowlessExecutionRunStartOptions';
+import type { ExecutionRunLauncherBackendChoice } from './resolveExecutionRunLauncherBackendChoices';
 
 const choice = {
-    backendTarget: { kind: 'backend' as const, backendId: 'codex' },
-    targetKey: 'agent:codex',
+    backendTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+    targetKey: 'agent:happier.agent.codex/codex',
     backendId: 'codex',
     agentId: 'codex',
     title: 'Codex',
     disabled: false,
-};
+} satisfies ExecutionRunLauncherBackendChoice;
 
 describe('resolveRowlessExecutionRunStartOptions', () => {
+    it.each(['native', null])('preserves explicit native connected-service choice %s instead of inheriting', (connectedServices) => {
+        expect(resolveRowlessExecutionRunStartOptions({
+            choice, input: { permissionMode: 'read_only', connectedServices },
+        })).toMatchObject({ ok: true, options: { connectedServices: null } });
+    });
+
+    it('preserves an explicit native model reset on first Send', () => {
+        expect(resolveRowlessExecutionRunStartOptions({
+            choice, input: { permissionMode: 'read_only', modelSelection: null },
+        })).toMatchObject({ ok: true, options: { modelSelection: null } });
+    });
+
+    it.each(['connection-work', null])('preserves the exact model tuple for connection %s on first Send', (providerConnectionId) => {
+        const modelSelection = { agentTargetKey: choice.targetKey, providerConnectionId, modelId: 'shared-model' };
+        expect(resolveRowlessExecutionRunStartOptions({
+            choice, input: { permissionMode: 'read_only', modelSelection },
+        })).toMatchObject({ ok: true, options: { modelSelection } });
+        expect(resolveRowlessExecutionRunStartOptions({
+            choice, input: { permissionMode: 'read_only', modelId: ' shared-model ', modelSelection },
+        })).toMatchObject({ ok: true, options: { modelId: 'shared-model', modelSelection } });
+    });
+
+    it('matches a retained target spelling to the current Agent without rewriting the model ref', () => {
+        const modelSelection = { agentTargetKey: 'agent:codex', providerConnectionId: 'connection-work', modelId: 'shared-model' };
+        expect(resolveRowlessExecutionRunStartOptions({
+            choice, input: { permissionMode: 'read_only', modelSelection },
+        })).toMatchObject({ ok: true, options: { modelSelection } });
+    });
+
+    it.each([
+        { agentTargetKey: 'agent:claude', providerConnectionId: 'connection-work', modelId: 'shared-model' },
+        { agentTargetKey: choice.targetKey, providerConnectionId: 'connection-work', modelId: 'other-model' },
+        { agentTargetKey: choice.targetKey, modelId: 'shared-model' },
+    ])('refuses an invalid or conflicting exact model selection %j before first Send', (modelSelection) => {
+        expect(resolveRowlessExecutionRunStartOptions({
+            choice, input: { permissionMode: 'read_only', modelId: 'shared-model', modelSelection },
+        })).toEqual({ ok: false });
+    });
+
+    it('refuses competing Account and Team model selections before first Send', () => {
+        expect(resolveRowlessExecutionRunStartOptions({
+            choice,
+            input: {
+                permissionMode: 'read_only', modelId: 'shared-model',
+                modelSelection: { agentTargetKey: choice.targetKey, providerConnectionId: 'connection-work', modelId: 'shared-model' },
+                teamCredentialModel: {
+                    kind: 'team_credential_provider_model', resourceId: 'resource-team', teamId: 'team-1',
+                    expectedResourceRevision: 7, deliveryMode: 'brokered', agentTargetKey: choice.targetKey, modelId: 'shared-model',
+                },
+            },
+        })).toEqual({ ok: false });
+    });
+
     it.each([true, false])('preserves the report chip value %s on first Send', (notifyParentOnCompletion) => {
         expect(resolveRowlessExecutionRunStartOptions({
             choice, input: { permissionMode: 'read_only', notifyParentOnCompletion },
@@ -34,7 +88,7 @@ describe('resolveRowlessExecutionRunStartOptions', () => {
                 modelId: 'gpt-5.6',
                 configOptions: { reasoning_effort: 'high' },
                 connectedServices: 'anthropic:team',
-                connectedServicesByBackendTargetKey: { 'agent:codex': 'openai-codex:native' },
+                connectedServicesByBackendTargetKey: { [choice.targetKey]: 'openai-codex:native' },
                 secretReferenceOverlay: {
                     v: 1,
                     bindings: {
@@ -50,7 +104,7 @@ describe('resolveRowlessExecutionRunStartOptions', () => {
                     teamId: 'team-1',
                     expectedResourceRevision: 7,
                     deliveryMode: 'brokered',
-                    agentTargetKey: 'agent:codex',
+                    agentTargetKey: choice.targetKey,
                     modelId: 'gpt-5.6',
                 },
                 teamCredentialSessionBindingConsent: {
@@ -66,7 +120,7 @@ describe('resolveRowlessExecutionRunStartOptions', () => {
         expect(result).toEqual({
             ok: true,
             options: expect.objectContaining({
-                backendTarget: { kind: 'backend', backendId: 'codex' },
+                backendTarget: choice.backendTarget,
                 permissionMode: 'workspace_write',
                 profileId: 'profile_work',
                 profileSourceCustody: { kind: 'managed', immutableGenerationId: 'generation_2', installSource: 'archive' },
@@ -98,7 +152,7 @@ describe('resolveRowlessExecutionRunStartOptions', () => {
                     teamId: 'team-1',
                     expectedResourceRevision: 7,
                     deliveryMode: 'brokered',
-                    agentTargetKey: 'agent:codex',
+                    agentTargetKey: choice.targetKey,
                     modelId: 'gpt-5.6',
                 },
                 teamCredentialSessionBindingConsent: {

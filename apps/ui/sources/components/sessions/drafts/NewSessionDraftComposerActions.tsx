@@ -82,8 +82,8 @@ export const NewSessionDraftComposerActions = React.memo(function NewSessionDraf
                     onPress={runDelete}
                     style={[styles.labeledAction, props.deleteDisabled && styles.disabled]}
                 >
-                    <Icon name="trash" size={15} color={theme.colors.state.danger.foreground} />
-                    <Text style={styles.dangerLabel} numberOfLines={1}>
+                    <Icon name="trash" size={15} color={theme.colors.text.tertiary} />
+                    <Text style={styles.deleteLabel} numberOfLines={1}>
                         {t('sessionDrafts.delete.action')}
                     </Text>
                 </Pressable>
@@ -116,8 +116,9 @@ const styles = StyleSheet.create((theme) => ({
     secondaryLabel: {
         color: theme.colors.text.secondary,
     },
-    dangerLabel: {
-        color: theme.colors.state.danger.foreground,
+    deleteLabel: {
+        color: theme.colors.text.tertiary,
+        fontSize: 13,
     },
     disabled: {
         opacity: 0.4,

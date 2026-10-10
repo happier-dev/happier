@@ -1,10 +1,14 @@
-import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
+import { happierPageTextMetrics, resolveHappierRoleRunsAsPresentation } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
+import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { readSessionRolesV1, type SessionRolesV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
-import type { ResolvedRoleV1, RoleInstructionsOverrideV1 } from '@happier-dev/protocol/prompts/roles/rolesV1';
-import type { RoleArtifactV1, RoleEngineV1 } from '@happier-dev/protocol/prompts/roles/roleArtifactV1';
+import type { RoleInstructionsOverrideV1 } from '@happier-dev/protocol/prompts/roles/rolesV1';
+import type { RoleEngineV1 } from '@happier-dev/protocol/prompts/roles/roleArtifactV1';
+import { resolveRoleRunsAsKindV1 } from '@happier-dev/protocol/prompts/roles/roleArtifactV1';
+import { resolvedRoleToArtifact } from '@/sync/domains/roles/roleCatalog';
+import { describeRoleRunsAs } from '@/components/roles/catalog/rolePresentation';
 
 import { useRoleCatalog } from '@/components/roles/catalog/useRoleCatalog';
 import { useRoleEnginePresentation } from '@/components/roles/catalog/useRoleEnginePresentation';
@@ -49,7 +53,7 @@ function useSessionRolesConfiguration(sessionId: string, serverId?: string | nul
  * differences from Settings, one line each (name · "changed" or "this session" · engine · runs-as),
  * then "All roles ›", which opens the session's Role popover (with Hands-off at its foot). "+" adds a
  * role or changes one for this session; "Use defaults" and "Apply to sessions under it" are in the
- * Work pane's ⋯ (`SessionWorkMoreMenu`). Mounted by the Work pane's roles slot, below Triggers.
+ * Work pane header's ⋯ (`useSessionWorkMenuActions`). Mounted by the Work pane's roles slot, below Triggers.
  */
 export const SessionRolesSection = React.memo(function SessionRolesSection(props: SessionRolesSectionProps) {
     return <SessionRolesContent key={sessionAddressKey({ sessionId: props.sessionId, serverId: props.serverId ?? '' })} {...props} />;
@@ -64,10 +68,10 @@ function SessionRolesContent(props: SessionRolesSectionProps) {
     const overrides = Object.values(sessionRoles.overrides);
     const sessionOnly = Object.values(sessionRoles.sessionRoles);
     const enabledCount = catalog.entries.filter((entry) => entry.role.enabled).length + sessionOnly.length;
-    const summary = [
+    const summary = joinHappierFacts(...[
         ...(overrides.length > 0 ? [t('roles.session.countChanged', { count: overrides.length })] : []),
         ...(sessionOnly.length > 0 ? [t('roles.session.countAdded', { count: sessionOnly.length })] : []),
-    ].join(' · ');
+    ]);
 
     return (
         <WorkSection
@@ -96,7 +100,7 @@ function SessionRolesContent(props: SessionRolesSectionProps) {
                     kind="session"
                     roleId={role.roleId}
                     onEngineChange={(engine) => {
-                        void roleActions.addSessionRole(sessionId, role.roleId, { ...toArtifact(role), engine }, { serverId }).then(settleSessionRoleWrite);
+                        void roleActions.addSessionRole(sessionId, role.roleId, { ...resolvedRoleToArtifact(role), engine }, { serverId }).then(settleSessionRoleWrite);
                     }}
                 />
             ))}
@@ -104,7 +108,8 @@ function SessionRolesContent(props: SessionRolesSectionProps) {
                 <Item
                     testID="session-work-roles.all"
                     title={t('roles.session.allRoles')}
-                    detail={t('roles.session.inUse', { count: enabledCount })}
+                    detail={catalog.status === 'loading' ? t('common.loading') : catalog.status === 'failed' ? t('roles.settings.loadFailed')
+                        : t('roles.session.inUse', { count: enabledCount })}
                     onPress={() => setRolePopoverOpen(true)}
                 />
             </View>
@@ -146,11 +151,6 @@ export function useSessionRolesMenuActions(input: Readonly<{ sessionId: string; 
             }] : []),
         ];
     }, [hasChanges, input.serverId, input.hasReports, input.sessionId, sessionRoles.overrides, sessionRoles.sessionRoles]);
-}
-
-function toArtifact(role: ResolvedRoleV1): RoleArtifactV1 {
-    const { roleId: _roleId, changedAt: _changedAt, profileUnavailable: _profileUnavailable, ...artifact } = role;
-    return artifact;
 }
 
 async function setSessionOverride(sessionId: string, override: RoleInstructionsOverrideV1, serverId?: string | null): Promise<void> {
@@ -234,10 +234,10 @@ function SessionRoleDifferenceRow(props: Readonly<{
                     />
                     <View
                         accessible
-                        accessibilityLabel={runsAs === 'session' ? t('roles.settings.runsAsSession') : t('roles.settings.runsAsBackgroundRun')}
+                        accessibilityLabel={describeRoleRunsAs(runsAs)}
                     >
                         <Icon
-                            name={runsAs === 'session' ? 'chat' : 'lightning'}
+                            name={resolveHappierRoleRunsAsPresentation(runsAs).glyph}
                             size={14}
                             color={theme.colors.text.tertiary}
                         />
@@ -341,7 +341,7 @@ function AddSessionRoleForm(props: Readonly<{ sessionId: string; serverId?: stri
                 name: roleName,
                 instructions,
                 ...(engine ? { engine } : {}),
-                runsAs: runsAs === 'session' ? { kind: 'session' } : { kind: 'background_run', intent: 'task' },
+                runsAs: resolveRoleRunsAsKindV1(runsAs),
                 workspaceWrites: 'allow',
                 secondOpinion: 'off',
                 enabled: true,
@@ -379,8 +379,8 @@ function AddSessionRoleForm(props: Readonly<{ sessionId: string; serverId?: stri
                     testIDPrefix="session-work-roles.addForm.runsAs"
                     compact
                     tabs={[
-                        { id: 'session', label: t('roles.settings.runsAsSession') },
-                        { id: 'background_run', label: t('roles.settings.runsAsBackgroundRun') },
+                        { id: 'session', label: describeRoleRunsAs('session') },
+                        { id: 'background_run', label: describeRoleRunsAs('background_run') },
                     ]}
                     activeTabId={runsAs}
                     onSelectTab={(id) => setRunsAs(id === 'background_run' ? 'background_run' : 'session')}

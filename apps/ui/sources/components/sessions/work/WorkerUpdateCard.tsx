@@ -1,7 +1,9 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { View, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { WorkerDeliverableReferenceV1, WorkerUpdateV1 } from '@happier-dev/protocol';
+import { HAPPIER_WORK_UPDATE_CARD_MARK_SIZE_PX, HappierWorkUpdateCard, type HappierWorkUpdateCardFact, type HappierWorkUpdateCardSurface, joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
+import { useWorkTheme, WORK_HOST, workTextStyle } from '@/components/work/map/WorkMapView';
 
 import { hasAgentIconMark } from '@/agents/catalog/catalog';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
@@ -10,54 +12,47 @@ import { buildSessionExecutionRunRouteHref } from '@/components/sessions/agents/
 import { resolveExecutionRunBackendLabel } from '@/components/sessions/runs/resolveExecutionRunBackendLabel';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SurfaceCard } from '@/components/ui/cards/SurfaceCard';
-import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { Icon } from '@/components/ui/icons/Icon';
+import { describeWorkKind, WORKER_KIND_GLYPHS } from './workerKindGlyphs';
 import { Text } from '@/components/ui/text/Text';
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
-import { describeWorkStatusBucket } from '@/components/work/status/workStatusBuckets';
-import { workStatusSurfaceStyle, workStatusWordStyle } from '@/components/work/status/workStatusTreatment';
+import { workStatusWordStyle } from '@/components/work/status/workStatusTreatment';
 import { Typography } from '@/constants/Typography';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
-import { useSessionDisplayNameSource } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScope, useSessionDisplayNameSource, useWorkflowRun } from '@/sync/domains/state/storage';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { t } from '@/text';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
 import { FindHighlightedText } from '@/components/ui/text/FindHighlightedText';
 import { StructuredFindText, useStructuredFindState, type StructuredFindTextBlock } from '@/components/sessions/transcript/structured/structuredFindText';
+import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
+import { useOptionalAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
+import { useDestinationPaneScopeId } from '@/components/appShell/workspace/DestinationInstanceHost';
+import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
+import { AppSessionTranscriptSourceProvider } from '@/components/sessions/transcript/source/appSessionTranscriptSource';
+import { SessionPendingPromptCards } from '@/components/tools/shell/permissions/SessionPendingPromptCards';
+import { useSessionPendingPrompts } from '@/components/voice/presence/VoiceNeedsYouPrompts';
+import { describeWorkflowRunProgress } from '@/components/workflows/presentation/workflowRunProgress';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { normalizeSessionAddress, type SessionAddress } from '@/sync/domains/session/sessionAddress';
+import { createWorkflowInvocationRoute, createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
+import { useDeviceType } from '@/utils/platform/responsive';
+import { createSessionPeekDetailsTab } from './createSessionPeekDetailsTab';
 
-const MARK_SIZE = 15;
-
-function readOwnerWord(update: WorkerUpdateV1): string {
-    if (update.workerKind === 'workflow_run') return t(`workflows.runState.${update.ownerState}`);
-    switch (update.ownerState) {
-        case 'settled': return t('sessionWork.workerUpdate.settled');
-        case 'needs_input': return describeWorkStatusBucket('needs_you');
-        case 'stalled': return t('sessionWork.workerUpdate.stalled');
-        case 'published': return t('sessionWork.workerUpdate.published');
-        case 'timeout': return t('sessionAgentActivity.status.timedOut');
-        case 'failed': return t('workflows.runState.failed');
-        case 'cancelled': return t('workflows.runState.cancelled');
-        case 'succeeded': return t('workflows.runState.succeeded');
-    }
-}
-
-const KIND_LABEL_KEYS = {
-    session: 'sessionWork.kinds.session',
-    execution_run: 'sessionWork.kinds.backgroundRun',
-    workflow_run: 'sessionWork.kinds.workflowRun',
-} as const satisfies Record<WorkerUpdateV1['workerKind'], string>;
+const MARK_SIZE = HAPPIER_WORK_UPDATE_CARD_MARK_SIZE_PX;
 
 function buildWorkerUpdateDisplayText(update: WorkerUpdateV1, options: Readonly<{ title?: string; at?: number; canInspect?: boolean }> = {}) {
     const age = options.at === undefined ? '' : formatShortRelativeTime(options.at);
-    const kind = t(KIND_LABEL_KEYS[update.workerKind]);
+    const kind = describeWorkKind(update.workerKind);
     const engine = update.engine;
     const engineLabel = engine ? resolveExecutionRunBackendLabel({ kind: 'backend', backendId: engine.agentId }) ?? engine.agentId : null;
     return {
         title: options.title ?? update.headline,
-        state: readOwnerWord(update),
-        kind: age ? `${kind} · ${age}` : kind,
+        state: resolveWorkStatusTone({ kind: 'worker_update', facts: { update } }).word,
+        kind: joinHappierFacts(kind, age),
         result: update.result,
-        engine: engineLabel ? `${engineLabel}${engine?.modelId ? ` · ${engine.modelId}` : ''}` : null,
+        engine: engineLabel ? joinHappierFacts(engineLabel, engine?.modelId) : null,
         truncated: update.truncated ? t('sessionWork.workerUpdate.truncated') : null,
         inspect: options.canInspect ? (update.transcriptPointer?.kind === 'session' ? t('runs.openSession') : t('runs.openRun')) : null,
     };
@@ -69,13 +64,6 @@ export function projectWorkerUpdateFindText(update: WorkerUpdateV1, options: Rea
     return Object.entries(content).flatMap(([field, text]) => field !== 'inspect' && text ? [{ id: `structured-worker-${field}`, text }] : []);
 }
 
-/** A run has no agent of its own to show, so it is marked by its kind (Work rows use the same glyphs). */
-const KIND_GLYPHS = {
-    session: 'sparkle',
-    execution_run: 'play-circle',
-    workflow_run: 'stack-simple',
-} as const satisfies Record<WorkerUpdateV1['workerKind'], IconName>;
-
 /** A session worker is named by its own title when this device knows it; a run by its producer's headline. */
 function useWorkerTitle(update: WorkerUpdateV1, serverId: string | null | undefined): string {
     const source = useSessionDisplayNameSource(update.workerKind === 'session' ? update.workerId : '', serverId);
@@ -86,7 +74,7 @@ const WorkerMark = React.memo(function WorkerMark(props: Readonly<{ update: Work
     const { theme } = useUnistyles();
     const agentId = props.update.workerKind === 'session' ? props.update.engine?.agentId ?? null : null;
     if (agentId && hasAgentIconMark(agentId, theme)) return <AgentIcon agentId={agentId} size={MARK_SIZE} />;
-    return <Icon name={KIND_GLYPHS[props.update.workerKind]} size={MARK_SIZE} color={theme.colors.text.secondary} />;
+    return <Icon name={WORKER_KIND_GLYPHS[props.update.workerKind]} size={MARK_SIZE} color={theme.colors.text.secondary} />;
 });
 
 /** Closed rows do no reads. File destinations own their reads; inline Artifacts recheck access. */
@@ -157,10 +145,64 @@ function WorkerDeliverable(props: Readonly<{
 }
 
 /**
+ * A worker Session's waiting requests on its needs-you card (ORC S-1, lab `cards-T1`: "Deny · Allow
+ * for this session · Allow once"): the real request cards, decided through that Session's own approval
+ * custody — the same owner the composer, the peek and the Inbox answer through. Mounted only on a
+ * card whose worker needs the person, so the worker's requests are read only while there may be
+ * something to decide; once it is answered anywhere, it leaves every card.
+ */
+const WorkerUpdateAnswers = React.memo(function WorkerUpdateAnswers(props: Readonly<{ address: SessionAddress }>) {
+    const { session, prompts } = useSessionPendingPrompts(props.address);
+    if (!session || !prompts) return null;
+    return (
+        <View testID="worker-update-answers" style={styles.answers}>
+            {/* The card sits in the lead's transcript; the request, its navigation and its custody are the worker's. */}
+            <AppSessionTranscriptSourceProvider sessionId={props.address.sessionId} serverId={props.address.serverId}>
+                <SessionPendingPromptCards
+                    testID="worker-update-prompts"
+                    sessionId={props.address.sessionId}
+                    serverId={props.address.serverId}
+                    session={session}
+                    permissions={prompts.permissions}
+                    userActions={prompts.userActions}
+                    chrome="inline"
+                />
+            </AppSessionTranscriptSourceProvider>
+        </View>
+    );
+});
+
+/** Peek, mounted only where a pane host exists: it opens the worker in the lead's Details pane. */
+function WorkerUpdatePeekAction(props: Readonly<{ sessionId: string; title: string }>) {
+    const transcriptSource = useSessionTranscriptSource();
+    const paneScopeId = useDestinationPaneScopeId(createSessionPaneScopeId(transcriptSource.sessionId, transcriptSource.serverId));
+    const pane = useAppPaneScope(paneScopeId);
+    const peek = () => pane.openDetailsTab(createSessionPeekDetailsTab({ sessionId: props.sessionId, title: props.title }), { intent: 'preview' });
+    return <RoundButton testID="worker-update-peek" size="small" display="inverted" title={t('sessionWork.workerUpdate.peek')} onPress={peek} />;
+}
+
+/** The card stands on core's inset card material; the frame hands it the tone's ring and tint. */
+function renderWorkerUpdateSurface(surface: HappierWorkUpdateCardSurface) {
+    return (
+        <SurfaceCard testID={surface.testID} tone="muted" padding="none" style={surface.toneStyle as StyleProp<ViewStyle>}>
+            {surface.children}
+        </SurfaceCard>
+    );
+}
+
+/**
  * One transcript card for host worker updates and retained historical completions (ORC §3.2, lab
- * `cards-T1`/`T2`): head (mark · worker · state word · kind · age), the result, then a footer of facts
- * with the inspect action. Healthy updates stay neutral; the tone owner rings and tints the ones
- * that need the person. Ids never show: the inspect action carries the pointer.
+ * `cards-T1`/`T2`), drawn with the shared Work update card (`HappierWorkUpdateCard`, the frame a
+ * plugin's own work draws with): head (mark · worker · state word · kind · age), the result, then a
+ * footer of facts and the actions its state calls for.
+ *
+ * - Healthy updates stay neutral with one quiet way in; the tone owner rings and tints the ones that
+ *   need the person or failed.
+ * - A worker Session that needs the person carries its waiting requests, answered in place, and a
+ *   quiet Peek beside the lead.
+ * - A workflow run that needs the person carries the one primary: Review, at the step that waits.
+ *
+ * Ids never show: the actions carry the pointer.
  */
 export function WorkerUpdateCard(props: Readonly<{
     update: WorkerUpdateV1;
@@ -174,6 +216,8 @@ export function WorkerUpdateCard(props: Readonly<{
     facts?: React.ReactNode;
 }>) {
     const transcriptSource = useSessionTranscriptSource();
+    const workTheme = useWorkTheme();
+    const deviceType = useDeviceType();
     const { update } = props;
     const find = useStructuredFindState();
     const decorate = (field: string, text: string, selectable = false) => {
@@ -185,12 +229,26 @@ export function WorkerUpdateCard(props: Readonly<{
     const pointer = update.transcriptPointer;
     const canInspect = update.canInspect && props.navigationEnabled !== false && transcriptSource.navigate !== null && pointer !== undefined;
     const content = buildWorkerUpdateDisplayText(update, { title, at: props.at, canInspect });
-    const status = resolveWorkStatusTone({ kind: 'worker_update', facts: { update, word: content.state } });
+    const status = resolveWorkStatusTone({ kind: 'worker_update', facts: { update } });
+    const needsYou = status.bucket === 'needs_you';
+    const serverId = props.serverId ?? transcriptSource.serverId;
+
+    // The run's own progress, when this device already knows the run in its exact Home (the active
+    // store holds only the active Account's runs). A stated fact, never a read the card starts.
+    const activeScope = useActiveServerAccountScope();
+    const runInActiveHome = update.workerKind === 'workflow_run' && activeScope !== null && Boolean(serverId)
+        && areServerProfileIdentifiersEquivalent(activeScope.serverId, serverId ?? '');
+    const run = useWorkflowRun(runInActiveHome ? update.workerId : null);
+    const progress = run?.summary ? describeWorkflowRunProgress(run.summary.stepProgress) : null;
+
     const inspect = () => {
         if (!canInspect || !pointer) return;
         if (pointer.kind === 'workflow_run') {
-            const query = props.serverId ? `?serverId=${encodeURIComponent(props.serverId)}` : '';
-            transcriptSource.navigate?.(`/workflows/runs/${encodeURIComponent(pointer.runId)}${query}`);
+            // The step that waits when the update names it; otherwise the run.
+            const route = pointer.invocationRecordId
+                ? createWorkflowInvocationRoute(pointer.runId, pointer.invocationRecordId, props.serverId)
+                : createWorkflowRunRoute(pointer.runId, props.serverId);
+            transcriptSource.navigate?.(route);
             return;
         }
         const href = pointer.kind === 'session'
@@ -198,75 +256,81 @@ export function WorkerUpdateCard(props: Readonly<{
             : buildSessionExecutionRunRouteHref({ sessionId: pointer.sessionId, runId: pointer.runId, serverId: props.serverId });
         if (href) transcriptSource.navigate?.(href);
     };
+
+    // Peek: the worker beside the lead, in the lead's own Details pane (lab `session-D`). Offered only
+    // where that pane exists: not on a phone (the one way in is the Session itself) and not where the
+    // card renders outside a pane host (a run page, a shared transcript).
+    const hasPaneHost = useOptionalAppPaneContext() !== null;
+    const peekSessionId = canInspect && needsYou && pointer?.kind === 'session' && deviceType !== 'phone' && hasPaneHost
+        ? pointer.sessionId : null;
+
+    const answersAddress = needsYou && update.workerKind === 'session' && props.navigationEnabled !== false
+        ? normalizeSessionAddress(serverId, update.workerId) : null;
     const resultBody = props.children === undefined
         ? (content.result ? <Text testID="worker-update-result" selectable style={styles.result}>{decorate('result', content.result, true)}</Text> : null)
         : props.children;
-    const deliverableServerId = props.serverId ?? transcriptSource.serverId;
-    const body = resultBody || update.deliverables?.length ? <>
+    const body = resultBody || update.deliverables?.length || answersAddress ? <>
         {resultBody}
         {update.deliverables?.map((reference, index) => <WorkerDeliverable
-            key={JSON.stringify([deliverableServerId, reference, index])} reference={reference} index={index}
-            serverId={deliverableServerId} enabled={props.navigationEnabled !== false && Boolean(deliverableServerId)} />)}
+            key={JSON.stringify([serverId, reference, index])} reference={reference} index={index}
+            serverId={serverId} enabled={props.navigationEnabled !== false && Boolean(serverId)} />)}
+        {answersAddress ? <WorkerUpdateAnswers address={answersAddress} /> : null}
     </> : null;
-    const hasFooter = props.facts !== undefined || engine !== undefined || update.truncated === true || canInspect;
+
+    const facts: HappierWorkUpdateCardFact[] = [];
+    if (props.facts !== undefined) facts.push({ id: 'caller', label: props.facts });
+    if (progress) facts.push({ id: 'progress', label: progress });
+    if (engine) {
+        facts.push({ id: 'engine', label: <StructuredFindText blockId="structured-worker-engine" testID="worker-update-engine" numberOfLines={1} style={styles.fact} text={content.engine ?? ''} /> });
+    }
+    if (content.truncated) {
+        facts.push({ id: 'truncated', label: <StructuredFindText blockId="structured-worker-truncated" testID="worker-update-truncated" numberOfLines={1} style={styles.fact} text={content.truncated} /> });
+    }
+
+    // One primary at most, and only where the person is the blocker and the card cannot answer in
+    // place: a run's review or request is decided on its own page.
+    const review = canInspect && needsYou && update.workerKind === 'workflow_run';
+    const actions = !content.inspect ? undefined : review ? (
+        <RoundButton testID="worker-update-action:review" size="small" display="default" title={t('inboxWork.rows.review')} onPress={inspect} />
+    ) : (
+        <RoundButton testID="worker-update-inspect" size="small"
+            display={needsYou && update.workerKind === 'execution_run' ? 'default' : 'inverted'}
+            title={decorate('inspect', content.inspect)} onPress={inspect} />
+    );
+
     return (
-        <SurfaceCard testID={`worker-update:${update.workerId}`} tone="muted" padding="none" style={workStatusSurfaceStyle(status.tone)}>
-            <View style={[styles.head, body ? null : styles.headAlone]}>
-                <WorkerMark update={update} />
-                <StructuredFindText blockId="structured-worker-title" testID="worker-update-title" numberOfLines={1} style={styles.title} text={content.title} />
-                <StructuredFindText blockId="structured-worker-state" testID="worker-update-state" numberOfLines={1} style={[styles.word, workStatusWordStyle(status.tone)]} text={status.word} />
-                <View style={styles.grow} />
-                <StructuredFindText blockId="structured-worker-kind" testID="worker-update-kind" numberOfLines={1} style={styles.kind} text={content.kind} />
-            </View>
-            {body ? <View style={styles.body}>{body}</View> : null}
-            {hasFooter ? (
-                <View testID="worker-update-footer" style={styles.footer}>
-                    {props.facts}
-                    {engine ? <StructuredFindText blockId="structured-worker-engine" testID="worker-update-engine" numberOfLines={1} style={styles.fact} text={content.engine ?? ''} /> : null}
-                    {content.truncated ? <StructuredFindText blockId="structured-worker-truncated" testID="worker-update-truncated" numberOfLines={1} style={styles.fact} text={content.truncated} /> : null}
-                    <View style={styles.grow} />
-                    {content.inspect ? <RoundButton testID="worker-update-inspect" size="small" display="inverted" title={decorate('inspect', content.inspect)} onPress={inspect} /> : null}
-                </View>
-            ) : null}
-        </SurfaceCard>
+        <HappierWorkUpdateCard
+            testID={`worker-update:${update.workerId}`}
+            slotTestIDPrefix="worker-update"
+            tone={status.tone}
+            theme={workTheme}
+            host={WORK_HOST}
+            renderSurface={renderWorkerUpdateSurface}
+            mark={<WorkerMark update={update} />}
+            title={<StructuredFindText blockId="structured-worker-title" testID="worker-update-title" numberOfLines={1} style={styles.title} text={content.title} />}
+            state={<StructuredFindText blockId="structured-worker-state" testID="worker-update-state" numberOfLines={1} style={[styles.word, workStatusWordStyle(status.tone)]} text={status.word} />}
+            meta={<StructuredFindText blockId="structured-worker-kind" testID="worker-update-kind" numberOfLines={1} style={styles.kind} text={content.kind} />}
+            facts={facts}
+            leadingAction={peekSessionId ? <WorkerUpdatePeekAction sessionId={peekSessionId} title={title} /> : undefined}
+            actions={actions}
+        >{body}</HappierWorkUpdateCard>
     );
 }
 
+// The head's text is the shared card's own steps (`HAPPIER_WORK_TEXT`), drawn by the transcript's
+// find-aware text so a match in a worker's name or state is marked and revealed.
 const styles = StyleSheet.create((theme) => ({
-    head: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-        minWidth: 0,
-        paddingHorizontal: theme.margins.md,
-        paddingTop: theme.margins.md,
-        paddingBottom: theme.margins.xs,
-    },
     title: {
-        ...Typography.rowTitle(),
+        ...workTextStyle('cardTitle'),
         color: theme.colors.text.primary,
-        flexShrink: 1,
     },
     word: {
-        ...Typography.default(),
+        ...workTextStyle('cardWord'),
         color: theme.colors.text.secondary,
-        flexShrink: 1,
-    },
-    headAlone: {
-        paddingBottom: theme.margins.md,
-    },
-    grow: {
-        flexGrow: 1,
     },
     kind: {
-        ...Typography.rowMeta(),
-        ...Typography.tabular(),
+        ...workTextStyle('cardMeta'),
         color: theme.colors.text.tertiary,
-        flexShrink: 1,
-    },
-    body: {
-        paddingHorizontal: theme.margins.md,
-        paddingBottom: theme.margins.md,
     },
     result: {
         ...Typography.default(),
@@ -278,21 +342,12 @@ const styles = StyleSheet.create((theme) => ({
         gap: theme.margins.xs,
         marginTop: theme.margins.sm,
     },
-    footer: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        alignItems: 'center',
-        gap: theme.margins.sm,
-        minWidth: 0,
-        paddingLeft: theme.margins.md,
-        paddingRight: theme.margins.sm,
-        paddingVertical: theme.margins.xs,
-        borderTopWidth: StyleSheet.hairlineWidth,
-        borderTopColor: theme.colors.border.default,
+    answers: {
+        alignSelf: 'stretch',
+        marginTop: theme.margins.sm,
     },
     fact: {
-        ...Typography.rowMeta(),
+        ...workTextStyle('cardFact'),
         color: theme.colors.text.secondary,
-        flexShrink: 1,
     },
 }));

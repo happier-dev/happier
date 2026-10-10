@@ -1,6 +1,7 @@
 import { readSessionWorkStateGroupV1 } from '@happier-dev/protocol/sessions/awareness/presentationV1';
 import type { SessionWorkflowRunHeadlineV1 } from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowActivityHeadlineV1';
 import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { shallow } from 'zustand/shallow';
 
 import {
     resolveWorkStatusTone,
@@ -297,7 +298,7 @@ function progressFacts(
     return progress && progress.total > 0 ? [describe(progress)] : [];
 }
 
-export function projectWork(input: WorkProjectionInput): WorkProjection {
+export function projectWork(input: WorkProjectionInput, previous?: WorkProjection | null): WorkProjection {
     const { items: sessions, stalledKeys } = projectReportSessions(input);
 
     const headlineByRunId = new Map<string, SessionWorkflowRunHeadlineV1>();
@@ -421,7 +422,7 @@ export function projectWork(input: WorkProjectionInput): WorkProjection {
         if (itemStalled) stalled += 1;
     }
 
-    return {
+    const next: WorkProjection = {
         sessions: sessions.length === 0 ? EMPTY_ITEMS : sessions,
         workflows: workflows.length === 0 ? EMPTY_ITEMS : workflows,
         backgroundRuns: backgroundRuns.length === 0 ? EMPTY_ITEMS : backgroundRuns,
@@ -435,6 +436,33 @@ export function projectWork(input: WorkProjectionInput): WorkProjection {
             runs: workflows.length + backgroundRuns.length + projectCommands.length,
         },
     };
+    if (!previous) return next;
+    const retained: WorkProjection = {
+        sessions: retainWorkItems(next.sessions, previous.sessions),
+        workflows: retainWorkItems(next.workflows, previous.workflows),
+        backgroundRuns: retainWorkItems(next.backgroundRuns, previous.backgroundRuns),
+        agents: retainWorkItems(next.agents, previous.agents),
+        projectCommands: retainWorkItems(next.projectCommands, previous.projectCommands),
+        summary: areWorkSummariesEqual(next.summary, previous.summary) ? previous.summary : next.summary,
+    };
+    return shallow(retained, previous) ? previous : retained;
+}
+
+/** Compare the closed row projection, not its sources: fresh owner facts still reach changed rows. */
+function retainWorkItems(next: readonly WorkItem[], previous: readonly WorkItem[]): readonly WorkItem[] {
+    const byKey = new Map(previous.map((item) => [item.key, item]));
+    const retained = next.map((item) => {
+        const old = byKey.get(item.key);
+        if (!old) return item;
+        const projectCommands = item.projectCommands && old.projectCommands
+            ? retainWorkItems(item.projectCommands, old.projectCommands) : item.projectCommands;
+        if (item.kind === old.kind && item.title === old.title && item.agentId === old.agentId
+            && item.parentKey === old.parentKey && item.level === old.level && item.operation === old.operation
+            && shallow(item.facts, old.facts) && shallow(item.status, old.status) && shallow(item.progress, old.progress)
+            && shallow(item.open, old.open) && projectCommands === old.projectCommands) return old;
+        return projectCommands === item.projectCommands ? item : { ...item, projectCommands };
+    });
+    return shallow(retained, previous) ? previous : retained;
 }
 
 export function areWorkSummariesEqual(a: WorkSummary, b: WorkSummary): boolean {
@@ -495,7 +523,7 @@ type WorkStateGroupKey = keyof WorkStateGroups;
  * its own line there instead of hanging under a row that is elsewhere. Items whose level holds keep
  * their identity, so their rows do not re-render.
  */
-export function groupWorkByState(projection: WorkProjection): WorkStateGroups {
+export function groupWorkByState(projection: WorkProjection, previous?: WorkStateGroups | null): WorkStateGroups {
     const groups: Record<WorkStateGroupKey, WorkItem[]> = { needsYou: [], working: [], recent: [] };
     const placed = new Map<string, Readonly<{ group: WorkStateGroupKey; level: number }>>();
     for (const item of [...projection.sessions, ...projection.backgroundRuns, ...projection.workflows, ...projection.agents, ...projection.projectCommands]) {
@@ -505,9 +533,13 @@ export function groupWorkByState(projection: WorkProjection): WorkStateGroups {
         placed.set(item.key, { group, level });
         groups[group].push(level === item.level ? item : { ...item, level });
     }
-    return {
+    const next = {
         needsYou: groups.needsYou.length === 0 ? EMPTY_ITEMS : groups.needsYou,
         working: groups.working.length === 0 ? EMPTY_ITEMS : groups.working,
         recent: groups.recent.length === 0 ? EMPTY_ITEMS : groups.recent,
     };
+    if (!previous) return next;
+    const retained = { needsYou: retainWorkItems(next.needsYou, previous.needsYou), working: retainWorkItems(next.working, previous.working),
+        recent: retainWorkItems(next.recent, previous.recent) };
+    return shallow(retained, previous) ? previous : retained;
 }

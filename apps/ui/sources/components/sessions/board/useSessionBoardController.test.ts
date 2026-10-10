@@ -1,3 +1,4 @@
+import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
@@ -73,7 +74,7 @@ function hostedHtml(title: string, html: string): SessionSurfaceItemV1 {
         height: { mode: 'fixed', size: 'tall' },
         source: {
             kind: 'hostedHtml',
-            source: { kind: 'html', html },
+            source: artifactHtmlBundleFromBodyV1(html),
             requestedCapabilities: { hostMethods: ['notify'] },
         },
         input: { v: 1, values: { mode: 'review' } },
@@ -683,6 +684,16 @@ describe('useSessionBoardController', () => {
 
     it('opens an existing caller-hosted HTML item in the canonical editor with its CAS revision', async () => {
         const item = hostedHtml('Dashboard', '<main>Before</main>');
+        if (item.source.kind !== 'hostedHtml') throw new Error('Expected hosted HTML fixture');
+        const entrypoint = item.source.source.files[item.source.source.entrypoint];
+        item.source.source = {
+            v: 1,
+            entrypoint: 'pages/dashboard.html',
+            files: {
+                'pages/dashboard.html': entrypoint,
+                'app.js': { mime: 'application/javascript', contentBase64: 'YWxlcnQoMSk=' },
+            },
+        };
         const hook = await mountController({
             snapshot: readySnapshot({
                 layout: LAYOUT_TWO_VIEWS,

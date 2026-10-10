@@ -87,6 +87,7 @@ export function createWorkBoardAccountStore(transport: WorkBoardArtifactTranspor
     };
     return {
         queue,
+        readBoardAccess: port.readBoardAccess,
         getBoard,
         getDisplayedBoard,
         getBoards: () => boards,

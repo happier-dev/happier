@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
-import { applyWorkBoardIntentV1, createWorkBoardV1, buildWorkBoardItemKeyV1, type BoardItemRefV1, type WorkBoardV1 } from '@happier-dev/protocol';
+import { applyWorkBoardIntentV1, createWorkBoardV1, buildWorkBoardItemKeyV1, buildWorkBoardWidgetKeyV1, type BoardItemRefV1, type WorkBoardV1 } from '@happier-dev/protocol';
 import { createEntityDragDropRuntime, createEntityDragGestureAdapter } from '@/components/ui/treeDragDrop';
 import { createWorkBoardArtifactBoundary } from '@/dev/testkit/harness/workBoardArtifactBoundary';
 import { createWorkBoardAccountStore } from './workBoardAccountStore';
 import { createWorkBoardUiActionPort, resolveWorkBoardAdd, resolveWorkBoardEntityDrop, workBoardDragItem, type WorkBoardEntityContext } from './workBoardEntityDrop';
 import { projectBoardMembership } from './boardMembership';
 import { resolveBoardCardDrop } from './boardCanvasGeometry';
+import { admitWidgetActionSurfaceV1, readWidgetActionSurfacePortV1, type WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
 
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 const scope = { serverId: 'home-a', accountId: 'account-a' };
@@ -16,12 +17,59 @@ function context(board: WorkBoardV1): WorkBoardEntityContext {
 }
 
 describe('WorkBoard shared entity owner', () => {
+    it('moves a retained widget on its original Canvas key under this caller’s routing scope', () => {
+        const instance = { v: 1 as const, id: 'from-cli', definition: { kind: 'builtin' as const, id: 'changes' as const }, bindings: {} };
+        const ref = { surface: { ...scope, serverId: 'cli-profile', owner: { kind: 'workBoard' as const, boardId: 'b1' } }, instanceId: instance.id };
+        const storedKey = buildWorkBoardWidgetKeyV1(ref);
+        const board: WorkBoardV1 = { ...createWorkBoardV1({ id: 'b1', name: 'Board' }),
+            widgets: [{ kind: 'widget', ref, instance, size: 'medium' }], positionsByItemRef: { [storedKey]: { x: 24, y: 48 } } };
+        expect(resolveWorkBoardEntityDrop({ item: { kind: 'work-board-widget', scope, boardId: board.id, instanceId: instance.id },
+            context: context(board), destination: { x: 48, y: 72 }, canvasAvailable: true })).toMatchObject({
+            status: 'allowed', effect: { input: { intent: { kind: 'set_positions', positionsByItemRef: { [storedKey]: { x: 48, y: 72 } } } } },
+        });
+    });
+    it('admits native and authored widgets through the mounted port and preserves live Artifact access', async () => {
+        const board = createWorkBoardV1({ id: 'b1', name: 'Board' });
+        const persistence = createWorkBoardArtifactBoundary({ v: 1, boards: [board] });
+        let current = true;
+        const store = createWorkBoardAccountStore(persistence.transport, () => current);
+        await store.refresh();
+        const port = createWorkBoardUiActionPort(() => context(store.getBoards().boards[0]!), store.queue, store.readBoardAccess, store.getBoards);
+        const deps = { workBoardArtifacts: port, widgetAccountScope: () => scope };
+        const surface = { ...scope, owner: { kind: 'workBoard', boardId: board.id } } as const;
+        const actionContext = { serverId: scope.serverId, surface: 'ui' } as const;
+        expect(await admitWidgetActionSurfaceV1(deps, surface, actionContext)).toBeNull();
+        const adapter = readWidgetActionSurfacePortV1(deps, surface)!;
+        const instances: WidgetInstanceV1[] = [
+            { v: 1, id: 'native', definition: { kind: 'builtin', id: 'session_summary' }, bindings: {} },
+            { v: 1, id: 'authored', definition: { kind: 'inline', definition: { v: 1, id: 'checks', name: 'Checks',
+                sizeDeclaration: { sizes: ['medium', 'full'], defaultSize: 'medium' },
+                inputs: { fields: [] }, inputSchema: { type: 'object', additionalProperties: false },
+                body: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Checks' } } },
+                provenance: { source: { kind: 'authored' } } } }, bindings: {} },
+        ];
+        for (const instance of instances) expect(await adapter.apply(surface, { kind: 'add', instance }, actionContext)).toMatchObject({ ok: true });
+        expect(persistence.acknowledged().boards[0]!.widgets?.map(item => item.instance)).toEqual(instances);
+        expect(await adapter.captureMove!(surface, 'native', actionContext)).toMatchObject({ expectedInstance: instances[0] });
+        expect(await adapter.apply(surface, { kind: 'size', instanceId: 'native', size: 'full' }, actionContext)).toMatchObject({ ok: true });
+        expect(await adapter.apply(surface, { kind: 'frame', instanceId: 'native', frameStyle: 'plain' }, actionContext)).toMatchObject({ ok: true });
+        expect(await adapter.apply(surface, { kind: 'inputs', instanceId: 'authored', bindings: {} }, actionContext)).toMatchObject({ ok: true });
+        expect(await adapter.apply(surface, { kind: 'remove', instanceId: 'authored' }, actionContext)).toMatchObject({ ok: true });
+        const row = persistence.rows.get(board.id)!;
+        persistence.rows.set(board.id, { ...row, access: 'view', shared: true, ownerAccountId: scope.accountId });
+        expect(await adapter.read(surface, actionContext)).toMatchObject({ canEdit: false, isShared: true });
+        await expect(adapter.apply(surface, { kind: 'remove', instanceId: 'native' }, actionContext)).rejects.toMatchObject({ code: 'artifact_access_denied' });
+        expect(persistence.acknowledged().boards[0]!.widgets?.map(item => item.instance.id)).toEqual(['native']);
+        expect(await admitWidgetActionSurfaceV1(deps, { ...surface, accountId: 'wrong-owner' }, actionContext)).toMatchObject({ errorCode: 'account_target_mismatch' });
+        current = false;
+        expect(await admitWidgetActionSurfaceV1(deps, surface, actionContext)).toMatchObject({ errorCode: 'board_scope_retired' });
+    });
     it('refuses a Canvas edit when the mounted membership context is no longer available', async () => {
         const board = { ...createWorkBoardV1({ id: 'b1', name: 'Board' }), source: { picked: [ref] } };
         const persistence = createWorkBoardArtifactBoundary({ v: 1, boards: [board] });
         const store = createWorkBoardAccountStore(persistence.transport, () => true);
         await store.refresh();
-        const port = createWorkBoardUiActionPort(() => null, store.queue, store.getBoards);
+        const port = createWorkBoardUiActionPort(() => null, store.queue, store.readBoardAccess, store.getBoards);
         await expect(port.apply({ kind: 'set_positions', boardId: board.id, positionsByItemRef: { [key]: { x: 24, y: 48 } } }))
             .rejects.toMatchObject({ code: 'board_context_unavailable' });
         expect(persistence.acknowledged().boards[0]!.positionsByItemRef).toEqual({});
@@ -36,7 +84,7 @@ describe('WorkBoard shared entity owner', () => {
             } },
         ]) {
             expect(resolveWorkBoardEntityDrop({ item, context: context(board), destination: null, canvasAvailable: false })).toMatchObject({
-                status: 'allowed', effect: { actionId: 'widgets.instance.move', input: {
+                status: 'allowed', effect: { actionId: 'widgets.item.move', input: {
                     to: { surface: { ...scope, owner: { kind: 'workBoard', boardId: board.id } }, index: 1 },
                 }, preview: { target: 'Launch' } },
             });
@@ -59,6 +107,7 @@ describe('WorkBoard shared entity owner', () => {
                 if (!input || typeof input !== 'object' || Array.isArray(input) || !('intent' in input)) throw new Error('invalid effect');
                 const { WorkBoardIntentV1Schema } = await import('@happier-dev/protocol');
                 const outcome = await store.queue.dispatch(WorkBoardIntentV1Schema.parse(input.intent));
+                if (outcome.status === 'pending') throw new Error('The Artifact boundary cannot request approval.');
                 return outcome.status === 'applied' ? { status: 'applied' } : { status: outcome.status, reason: { code: outcome.code, message: outcome.code } };
             } });
         const carry = runtime.begin('session')!;
@@ -94,7 +143,7 @@ describe('WorkBoard shared entity owner', () => {
         if (admission.status !== 'allowed') throw new Error('expected move');
         const { WorkBoardActionInputSchemasV1 } = await import('@happier-dev/protocol');
         const intent = WorkBoardActionInputSchemasV1['boards.apply'].parse(admission.effect.input).intent;
-        const port = createWorkBoardUiActionPort(() => current, store.queue);
+        const port = createWorkBoardUiActionPort(() => current, store.queue, store.readBoardAccess);
         await port.apply(intent);
         const saved = persistence.acknowledged().boards[0]!;
         expect(saved.positionsByItemRef).toEqual({ [key]: position, [otherKey]: { x: 200, y: 20 } });
@@ -132,7 +181,7 @@ describe('WorkBoard shared entity owner', () => {
         const current = { ...board, source: { picked: [] } };
         const persistence = createWorkBoardArtifactBoundary({ v: 1, boards: [current] });
         const store = createWorkBoardAccountStore(persistence.transport, () => true);
-        const port = createWorkBoardUiActionPort(() => context(current), store.queue);
+        const port = createWorkBoardUiActionPort(() => context(current), store.queue, store.readBoardAccess);
         const { WorkBoardActionInputSchemasV1 } = await import('@happier-dev/protocol');
         await expect(port.apply(WorkBoardActionInputSchemasV1['boards.apply'].parse(admission.effect.input).intent))
             .rejects.toMatchObject({ code: 'board-item-gone' });

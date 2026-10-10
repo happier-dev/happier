@@ -2,9 +2,11 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BUILT_IN_ROLES_V1 } from '@happier-dev/protocol';
+import { PROMPT_LIBRARY_ROWS_ROUTE_V1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { Metadata } from '@happier-dev/session-core/state';
 
-import { createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createSessionFixture, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
@@ -60,7 +62,7 @@ installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
 const { SessionRolesSection } = await import('./SessionRolesSection');
 const { SessionNotesSection } = await import('./SessionNotesSection');
-const { SessionWorkMoreMenu } = await import('../SessionWorkMoreMenu');
+const { useSessionWorkMenuActions } = await import('../sessionWorkMenuActions');
 const { SessionHandsOffRow } = await import('@/components/roles/session/sessionRole');
 const { invalidateRoleCatalog } = await import('@/components/roles/catalog/useRoleCatalog');
 const { storage } = await import('@/sync/domains/state/storageStore');
@@ -103,18 +105,23 @@ describe('Work › Roles and Notes', () => {
         previousState = storage.getState();
         previousSnapshot = getAppliedActiveServerSnapshot();
         previousAvailable = isAppliedActiveServerRuntimeAvailable();
-        connection = await restoreServerAccountForTest({
+        const activeConnection = await restoreServerAccountForTest({
             serverUrl: 'https://session-roles.test', accountId: 'account-1',
             request: async (url) => {
                 const path = new URL(String(url)).pathname;
                 if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
                 if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
-                if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
+                if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 0 });
+                if (path === PROMPT_LIBRARY_ROWS_ROUTE_V1) return Response.json({ status: 'listed', rows: [{
+                    key: 'role-overrides', revision: 1,
+                    content: { t: 'plain', v: { key: 'role-overrides', value: { v: 1, overrides: {} } } },
+                }] });
                 return Response.json({}, { status: 404 });
             },
         });
+        connection = activeConnection;
         await act(async () => {
-        storage.getState().activateProfileScope({ serverId: connection.home.id, accountId: 'account-1' });
+        storage.getState().activateProfileScope({ serverId: activeConnection.home.id, accountId: 'account-1' });
         shared.calls = [];
         shared.refused = new Set();
         shared.alerts = [];
@@ -124,7 +131,7 @@ describe('Work › Roles and Notes', () => {
                 sessionRolesV1: {
                     roleId: 'orchestrator',
                     overrides: {
-                        builder: { roleId: 'builder', engine: { agentTargetKey: 'agent:codex' } },
+                        builder: { roleId: 'builder', engine: { agentTargetKey: buildBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' }), modelId: 'session-model' } },
                         orchestrator: { roleId: 'orchestrator', workspaceWrites: 'deny' },
                     },
                     sessionRoles: { 'session:research': researchRole },
@@ -176,11 +183,21 @@ describe('Work › Roles and Notes', () => {
         expect(declared(screen, 'session-work-roles.all', 'detail')!.props.detail).toBe('roles.session.inUse:2');
     });
 
+    it('offers session-only roles and the session override engine in All roles', async () => {
+        const screen = await renderScreen(<SessionRolesSection sessionId="lead" />);
+        await act(async () => { screen.findByTestId('session-work-roles.all')!.props.onPress(); });
+        expect(screen.findByTestId('roles-rail-option:session:research')).toBeTruthy();
+        const builder = screen.findByTestId('roles-rail-option:builder')!;
+        expect(builder.findAll((node) => node.children.some((child) => typeof child === 'string' && child.includes('session-model'))).length).toBeGreaterThan(0);
+        await act(async () => { screen.findByTestId('roles-rail-option:session:research')!.props.onPress(); });
+        expect(writes()).toEqual([{ actionId: 'session.role.set', input: { sessionId: 'lead', roleId: 'session:research' } }]);
+    });
+
     it('offers Use defaults and Apply to sessions under it from the Work ⋯ menu', async () => {
-        const screen = await renderScreen(<SessionWorkMoreMenu sessionId="lead" hasReports />);
-        const menu = declared(screen, 'session-work-more.menu', 'items')!;
-        expect(menu.props.items.map((item: { id: string }) => item.id)).toEqual(['roles.useDefaults', 'roles.applyToReports']);
-        await act(async () => { await menu.props.onSelect('roles.useDefaults'); });
+        const hook = await renderHook(() => useSessionWorkMenuActions({ sessionId: 'lead', hasReports: true }));
+        expect(hook.getCurrent().map((item) => item.id)).toEqual(['roles.useDefaults', 'roles.applyToReports']);
+        await act(async () => { hook.getCurrent()[0]!.onPress?.(); });
+        await vi.waitFor(() => expect(writes()).toHaveLength(3));
         expect(writes()).toEqual([
             { actionId: 'session.roles.override.clear', input: { sessionId: 'lead', roleId: 'builder' } },
             { actionId: 'session.roles.override.clear', input: { sessionId: 'lead', roleId: 'orchestrator' } },
@@ -188,10 +205,15 @@ describe('Work › Roles and Notes', () => {
         ]);
     });
 
+    it('keeps the larger view of the map out of the Work ⋯ menu: ⤢ is a header control (lab convo-W7)', async () => {
+        const hook = await renderHook(() => useSessionWorkMenuActions({ sessionId: 'lead', hasReports: true }));
+        expect(hook.getCurrent().map((item) => item.id)).not.toContain('work.expandMap');
+    });
+
     it('has no ⋯ menu when there is nothing to reset and no sessions under it', async () => {
         setMetadata({ work: { sessionRolesV1: { roleId: 'orchestrator', overrides: {}, sessionRoles: {}, notes: '' } } });
-        const screen = await renderScreen(<SessionWorkMoreMenu sessionId="lead" hasReports={false} />);
-        expect(screen.findByTestId('session-work-more.menu')).toBeNull();
+        const hook = await renderHook(() => useSessionWorkMenuActions({ sessionId: 'lead', hasReports: false }));
+        expect(hook.getCurrent()).toEqual([]);
     });
 
     it('resets a changed role back to its Settings default', async () => {

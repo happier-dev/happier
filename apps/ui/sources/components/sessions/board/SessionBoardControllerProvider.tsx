@@ -60,6 +60,8 @@ export type MountedSessionBoardController = Readonly<{
     callerHostedHtmlRuntime: CallerHostedHtmlRuntime | null;
     /** One exact-session policy selection shared by Add visibility and picker rows. */
     installedWidgetCandidates: readonly WidgetCandidate[];
+    /** Actual open Board/Companion inventory consumers share this content demand. */
+    acquireContent?: () => () => void;
     /**
      * The Session shell's OWN derived executable placement, carried for hosts that
      * are too deep in the tree to receive it as a prop — today, the inline
@@ -211,10 +213,16 @@ function SessionBoardControllerRuntimeOwner(props: React.PropsWithChildren<Reado
     resolvePrimaryHost?: SessionBoardPlacementPrimaryMountResolver;
 }>>): React.ReactElement {
     const boardFeatureEnabled = useSessionBoardFeatureEnabled(props.address.serverId);
+    const [contentDemand, setContentDemand] = React.useState(0);
+    const acquireContent = React.useCallback(() => {
+        setContentDemand(value => value + 1);
+        return () => setContentDemand(value => value - 1);
+    }, []);
     const binding = useSessionBoardSnapshot({
         serverId: props.address.serverId,
         sessionId: props.address.sessionId,
         boardFeatureEnabled,
+        demanded: contentDemand > 0,
     });
     const actions = React.useMemo<SessionBoardActionsPort>(
         () => createSessionBoardActionsPort(props.address),
@@ -375,6 +383,7 @@ function SessionBoardControllerRuntimeOwner(props: React.PropsWithChildren<Reado
                     pluginRuntime={pluginRuntime}
                     callerHostedHtmlRuntime={callerHostedHtmlRuntime}
                     installedWidgetCandidates={installedWidgetCandidates}
+                    acquireContent={acquireContent}
                     onViewFocusTargetChange={onViewFocusTargetChange}
                     onViewActionsFocusTargetChange={onViewActionsFocusTargetChange}
                     viewActionsFocusTargetRef={viewActionsFocusTargetRef}
@@ -398,6 +407,7 @@ export function SessionBoardControllerOwner(props: React.PropsWithChildren<Reado
     pluginRuntime: SessionPluginRuntimeState;
     callerHostedHtmlRuntime: CallerHostedHtmlRuntime | null;
     installedWidgetCandidates?: readonly WidgetCandidate[];
+    acquireContent?: () => () => void;
     resolvePrimaryHost?: SessionBoardPlacementPrimaryMountResolver;
     onViewFocusTargetChange?: (viewId: string, target: FocusReturnTarget) => void;
     onViewActionsFocusTargetChange?: (target: FocusReturnTarget) => void;
@@ -467,12 +477,13 @@ export function SessionBoardControllerOwner(props: React.PropsWithChildren<Reado
         pluginRuntime: props.pluginRuntime,
         callerHostedHtmlRuntime: props.callerHostedHtmlRuntime,
         installedWidgetCandidates,
+        ...(props.acquireContent ? { acquireContent: props.acquireContent } : {}),
         resolvePrimaryHost,
         onBodyEligibilityChange,
         onViewFocusTargetChange: props.onViewFocusTargetChange ?? (() => {}),
         onViewActionsFocusTargetChange: props.onViewActionsFocusTargetChange ?? (() => {}),
         viewActionsFocusTargetRef: props.viewActionsFocusTargetRef,
-    }), [props.actions, props.address, props.approvalPending, props.binding, props.callerHostedHtmlRuntime, installedWidgetCandidates, props.onViewActionsFocusTargetChange, props.onViewFocusTargetChange, props.pluginRuntime, props.requestApprovalContinuation, props.viewActionsFocusTargetRef, controller, resolvePrimaryHost, onBodyEligibilityChange]);
+    }), [props.acquireContent, props.actions, props.address, props.approvalPending, props.binding, props.callerHostedHtmlRuntime, installedWidgetCandidates, props.onViewActionsFocusTargetChange, props.onViewFocusTargetChange, props.pluginRuntime, props.requestApprovalContinuation, props.viewActionsFocusTargetRef, controller, resolvePrimaryHost, onBodyEligibilityChange]);
     return (
         <SessionBoardControllerContext.Provider value={value}>
             {props.children}

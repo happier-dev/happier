@@ -98,6 +98,8 @@ const ENGINE_PANE_COLUMNS: SelectionListColumnsLayout = {
 export type OptionPickerOption<TValue = string> = Readonly<{
     value: TValue;
     label: string;
+    /** Quiet text after the label ("· via DeepSeek") that tells apart rows with the same name; searchable. */
+    labelSuffix?: string;
     icon?: React.ReactNode;
     trailingStatusIcon?: React.ReactNode;
     description?: string;
@@ -162,6 +164,8 @@ export type OptionPickerOverlayProps<TValue = string> = Readonly<{
     summary?: React.ReactNode;
     summaryTestID?: string;
     headerAccessory?: React.ReactNode;
+    /** One quiet line below the options (with a grid, inside its reserved status footer), e.g. hidden sources. */
+    footerContent?: React.ReactNode;
     options: ReadonlyArray<OptionPickerOption<TValue>>;
     sections?: ReadonlyArray<OptionPickerSection<TValue>>;
     selectedValue: TValue;
@@ -172,6 +176,7 @@ export type OptionPickerOverlayProps<TValue = string> = Readonly<{
      */
     selectedValues?: ReadonlyArray<TValue>;
     getValueKey?: (value: TValue) => string;
+    /** Says there is nothing to choose (shown only with no options); a search that matches none says "No matches". */
     emptyText: string;
     customLabel?: string;
     customDescription?: string;
@@ -398,6 +403,7 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
     const notes = props.probe?.failed
         ? [...(props.notes ?? []), t('agentInput.model.unavailable')]
         : props.notes ?? [];
+    const headerNotes = props.multiColumn ? [] : notes;
     const optionTestIDPrefix = props.optionTestIDPrefix ?? 'model-picker-overlay-option';
     const refreshTestID = props.refreshTestID ?? 'model-picker-overlay-refresh';
     // SelectionList treats root identity changes as scope replacement. Keep
@@ -579,6 +585,7 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
                     id: valueKey,
                     testID: `${optionTestIDPrefix}:${valueKey}`,
                     label: option.label,
+                    ...(option.labelSuffix ? { titleAccessory: option.labelSuffix, searchText: option.labelSuffix } : {}),
                     onPressIn: () => {
                         selectionPressPendingRef.current = true;
                     },
@@ -631,9 +638,10 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
         inputPlaceholder: totalOptionCount >= 10
             ? (props.searchPlaceholder ?? t('modelPickerOverlay.searchPlaceholder'))
             : undefined,
-        emptyStateLabel: props.emptyText,
+        // The list only renders with options, so its empty state is a search that matched none: the
+        // list's own "No matches", never `emptyText`, which describes an empty catalog (DESIGN-9 N50).
         sections: selectionSections,
-    }), [props.emptyText, props.searchPlaceholder, selectionSections, totalOptionCount]);
+    }), [props.searchPlaceholder, selectionSections, totalOptionCount]);
 
     const probe = props.probe;
     const shouldRenderProbeControl = probe ? typeof probe.onRefresh === 'function' || probe.phase !== 'idle' : false;
@@ -674,14 +682,14 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
         </View>
     );
 
-    // One pane, one scroll owner (0.2 parity): the pane title, its status and notices, the search
-    // field, the options and the "Custom…" entry scroll together inside the list's body. Only when there
-    // is no list (no options) does the pane lay them out itself.
+    // One pane, one scroll owner: the title, search, options and custom entry
+    // scroll together. Grid status has a reserved footer so arriving notices
+    // cannot move the cards' origin; ordinary lists retain their header notices.
     const headerNode = (
         props.showTitle !== false
                 || props.summary
                 || props.effectiveLabel
-                || notes.length > 0
+                || headerNotes.length > 0
                 || probeHintText
                 || props.headerAccessory
                 || shouldRenderProbeControl ? (
@@ -691,13 +699,13 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
                     {props.summary ? (
                         <View testID={props.summaryTestID ?? 'model-picker-overlay-summary'} style={styles.effectiveBlock}>
                             {typeof props.summary === 'string' ? <Text style={styles.noteText}>{props.summary}</Text> : props.summary}
-                            {notes.map((note, index) => <Text key={`${index}:${note}`} style={styles.noteText}>{note}</Text>)}
+                            {headerNotes.map((note, index) => <Text key={`${index}:${note}`} style={styles.noteText}>{note}</Text>)}
                             {probeHintText ? <Text style={styles.noteText}>{probeHintText}</Text> : null}
                         </View>
-                    ) : (props.effectiveLabel || notes.length > 0 || probeHintText) ? (
+                    ) : (props.effectiveLabel || headerNotes.length > 0 || probeHintText) ? (
                         <View testID="model-picker-overlay-summary" style={styles.effectiveBlock}>
                             {props.effectiveLabel ? <Text style={styles.noteText}>{t('modelPickerOverlay.effectiveLabel', { label: props.effectiveLabel })}</Text> : null}
-                            {notes.map((note, index) => <Text key={`${index}:${note}`} style={styles.noteText}>{note}</Text>)}
+                            {headerNotes.map((note, index) => <Text key={`${index}:${note}`} style={styles.noteText}>{note}</Text>)}
                             {probeHintText ? <Text style={styles.noteText}>{probeHintText}</Text> : null}
                         </View>
                     ) : null}
@@ -799,6 +807,14 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
                 )
             ) : null
     );
+    // A grid reserves its status line below the scroll area. Notices can wrap without moving the cards'
+    // starting position or clipping the message.
+    const notesNode = props.multiColumn || props.footerContent ? (
+        <View testID="model-picker-overlay-notes" style={styles.notesFooter} accessibilityLiveRegion="polite">
+            {props.multiColumn ? notes.map((note, index) => <Text key={`${index}:${note}`} style={styles.noteText}>{note}</Text>) : null}
+            {props.footerContent}
+        </View>
+    ) : null;
 
     return (
         <View
@@ -879,6 +895,7 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
                     {customNode}
                 </>
             )}
+            {notesNode}
         </View>
     );
 }
@@ -901,6 +918,7 @@ const styles = StyleSheet.create((theme) => ({
      */
     title: { flex: 1, fontSize: 13, lineHeight: 18, ...Typography.default('semiBold'), color: theme.colors.text.primary },
     effectiveBlock: { gap: 0 },
+    notesFooter: { flexShrink: 0, minHeight: Typography.rowMeta().lineHeight },
     noteText: { fontSize: 11, color: theme.colors.text.tertiary },
     /**
      * The loading twin of the refresh control's drawn box. Same square, so the

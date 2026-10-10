@@ -5,7 +5,6 @@ import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { convertBackendTargetRefV2ToV1, readBackendTargetRefV2, type BackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import type { AcpCatalogSettingsV1 } from '@happier-dev/protocol/acp/catalog/settingsV1';
 import type { LlmTaskRunnerConfigV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
 
 import {
@@ -27,6 +26,7 @@ import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { useSetting } from '@/sync/domains/state/storage';
 import { useAllMachines } from '@/sync/store/hooks';
+import { useAcpCatalogForServer } from '@/sync/store/useAcpCatalog';
 import { t } from '@/text';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -56,7 +56,8 @@ export function LlmTaskRunnerConfigV1BackendModelPicker(props: Readonly<{
   const { theme } = useUnistyles();
   const showLabels = props.showLabels !== false;
   const enabledAgentIds = useEnabledAgentIds();
-  const acpCatalogSettings = useSetting('acpCatalogSettingsV1') as AcpCatalogSettingsV1 | undefined;
+  const { snapshot: acpCatalog } = useAcpCatalogForServer(String(getActiveServerSnapshot().serverId ?? '').trim() || null);
+  const catalogReady = acpCatalog?.catalog.status === 'ready' && !acpCatalog.stale;
   const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey') as Record<string, boolean> | undefined;
   const machines = useAllMachines();
   const recentMachinePaths = useAuthoringMemoryField('recentMachinePaths');
@@ -79,14 +80,15 @@ export function LlmTaskRunnerConfigV1BackendModelPicker(props: Readonly<{
   const backendEntries = React.useMemo(() => {
     return getResolvedBackendCatalogEntries({
       enabledAgentIds,
-      acpCatalogSettingsV1: acpCatalogSettings ?? { v: 2, backends: [] },
+      acpCatalogSnapshot: acpCatalog?.catalog,
       backendEnabledByTargetKey,
       discoveredBackendIds: daemonMergedProjection.inputs?.discoveredBackendIds ?? undefined,
       mergedProviderProjectionById: daemonMergedProjection.inputs?.mergedProviderProjectionById ?? null,
       mergedBackendProjectionById: daemonMergedProjection.inputs?.mergedBackendProjectionById ?? null,
     });
   }, [
-    acpCatalogSettings,
+    acpCatalog,
+    catalogReady,
     backendEnabledByTargetKey,
     daemonMergedProjection.inputs?.discoveredBackendIds,
     daemonMergedProjection.inputs?.mergedBackendProjectionById,
@@ -110,6 +112,8 @@ export function LlmTaskRunnerConfigV1BackendModelPicker(props: Readonly<{
     backendTarget: selectedBackendTargetForModelOptions,
     selectedMachineId: preflightMachineId,
     capabilityServerId: String(getActiveServerSnapshot().serverId ?? '').trim(),
+    enabled: selectedBackendEntry !== null
+      && (selectedBackendEntry.kind !== 'configuredBackend' || catalogReady),
   });
 
   const backendMenuItems = React.useMemo(() => {
@@ -160,7 +164,7 @@ export function LlmTaskRunnerConfigV1BackendModelPicker(props: Readonly<{
   }, [modelId, selectableModelMenuItems]);
 
   // A different backend/model retires an unfinished custom id instead of applying it to another agent.
-  const selectedBackendKey = selectedBackendEntry?.backendTargetKey ?? null;
+  const selectedBackendKey = props.value?.backendTarget ? resolveBackendTargetKeyV2(props.value.backendTarget) : null;
   React.useEffect(() => setCustomModelDraft(null), [selectedBackendKey, props.value?.modelId]);
   const customModelTestID = `${props.modelTestID ?? 'llm-task-runner-model'}.custom`;
   const saveCustomModel = () => {

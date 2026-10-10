@@ -1,8 +1,11 @@
-import { resolveRunnerMcpMaterialV1 } from '@happier-dev/protocol/ephemeralRunner/runnerMcpMaterial';
-import type { SavedSecret } from '@happier-dev/protocol/profiles/backendProfileSchema';
+import { resolveRunnerMcpMaterialV1, resolveRunnerMcpSelectionV1 } from '@happier-dev/protocol/ephemeralRunner/runnerMcpMaterial';
 import type { SessionMcpSelectionV1 } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
 import type { RunnerMcpMaterialV1, RunnerMcpMaterializationFailureV1 } from '@happier-dev/protocol/ephemeralRunner/runnerMcpMaterial';
-import { normalizeMcpServersSettingsV1 } from '@/sync/domains/settings/mcpServers/normalizeMcpServersSettingsV1';
+import { listMcpServerCatalogSavedSecretRefsV1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
+import { readMcpServerCatalogInContext, McpServerCatalogOperationError, type McpServerCatalogAccountContext } from '@/sync/api/account/apiMcpServerCatalog';
+import { readSavedSecretReferenceInContext } from '@/sync/api/account/apiSavedSecretCatalog';
+import { readAccountSettingsBaseline } from '@/sync/engine/settings/accountSettingsBaseline';
+import { settingsParse } from '@/sync/domains/settings/settings';
 
 export class RunnerMcpMaterializationUnavailableError extends Error {
     constructor(readonly failure: RunnerMcpMaterializationFailureV1) {
@@ -12,27 +15,38 @@ export class RunnerMcpMaterializationUnavailableError extends Error {
 }
 
 /** Resolves only the selected MCP values into creator custody for endpoint sealing. */
-export function prepareRunnerMcpMaterial(input: Readonly<{
-    settingsLike: unknown;
+export async function prepareRunnerMcpMaterial(input: Readonly<{
+    context: McpServerCatalogAccountContext;
     selection: SessionMcpSelectionV1 | null;
-    secrets: readonly SavedSecret[];
-    decryptSecretValue: (value: SavedSecret['encryptedValue']) => string | null;
-}>): RunnerMcpMaterialV1 | null {
-    const settings = normalizeMcpServersSettingsV1(input.settingsLike);
-    const secretsById = new Map(input.secrets.map((secret) => [secret.id, secret]));
+    signal?: AbortSignal;
+}>): Promise<RunnerMcpMaterialV1 | null> {
+    const { context, signal } = input;
+    context.assertCurrent();
+    const catalog = await readMcpServerCatalogInContext(context, signal);
+    if (catalog.status !== 'ready' || catalog.authority !== 'active') {
+        throw new McpServerCatalogOperationError(catalog.status === 'unavailable'
+            ? catalog.reason : catalog.status === 'partial' ? 'invalid-stored-content' : 'authority-not-confirmed');
+    }
+    // Activation may extract policy into Settings. The caller's pre-admission
+    // projection is not the fresh source baseline for this reviewed package.
+    const { accountMode, encryption } = await context.resolveAccountEncryption();
+    const baseline = await readAccountSettingsBaseline({ credentials: context.credentials, accountMode, encryption,
+        request: (path, init) => context.request(path, { ...init, signal }, { retry: 'none' }) });
+    context.assertCurrent();
+    const selected = resolveRunnerMcpSelectionV1({ settings: { ...catalog.catalog,
+        strictMode: settingsParse(baseline.raw).mcpServersStrictMode === true }, selection: input.selection });
+    if (!selected.ok) throw new RunnerMcpMaterializationUnavailableError(selected);
+    const references = [...new Set(listMcpServerCatalogSavedSecretRefsV1({ v: 1,
+        servers: selected.selectedServers.map(server => server.config), bindings: [] }).map(reference => reference.secretId))];
+    const material = new Map(await Promise.all(references.map(async reference => {
+        const read = await readSavedSecretReferenceInContext(context, reference, signal);
+        return [reference, read.ok ? { value: read.value, revision: read.revision } : null] as const;
+    })));
+    context.assertCurrent();
     const resolved = resolveRunnerMcpMaterialV1({
-        settings,
-        selection: input.selection,
-        resolveSavedSecret: (secretId) => {
-            const secret = secretsById.get(secretId);
-            if (!secret) return null;
-            try {
-                const value = input.decryptSecretValue(secret.encryptedValue);
-                return value === null ? null : { value, revision: secret.updatedAt };
-            } catch {
-                return null;
-            }
-        },
+        settings: selected.settings,
+        selection: selected.selection,
+        resolveSavedSecret: reference => material.get(reference) ?? null,
     });
     if (!resolved.ok) throw new RunnerMcpMaterializationUnavailableError(resolved);
     return resolved.material.servers.length === 0 ? null : resolved.material;

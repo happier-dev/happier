@@ -20,13 +20,18 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ translate: (key: string, params?: Record<string, unknown>) => (params && 'count' in params ? `${key}:${String(params.count)}` : key) });
 });
 
+// The Action executor is the outward write boundary; nothing a section draws here executes an Action.
+vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
+    createDefaultActionExecutor: () => ({ execute: vi.fn() }),
+}));
+
 // The user's list density is a stored local setting (storage boundary); the density owner itself runs.
 vi.mock('@/sync/store/hooks', async () => {
     const { createUseLocalSettingMock } = await import('@/dev/testkit/mocks/storage');
     return { useLocalSetting: createUseLocalSettingMock({ values: { uiItemDensity: 'cozy', uiFontScale: 1 } }) };
 });
 
-const { WorkSection, WorkFlatSheet } = await import('./WorkSection');
+const { WorkSection, WorkFlatSheet, WorkSectionEmptyLine } = await import('./WorkSection');
 const { Item } = await import('@/components/ui/lists/Item');
 const { CollectionListGroupLabel } = await import('@/components/ui/lists/collection/CollectionList');
 
@@ -48,6 +53,24 @@ function rendersThrough(node: ReactTestInstance, component: unknown): boolean {
 function separators(screen: Awaited<ReturnType<typeof renderScreen>>) {
     return screen.findAll((node) => typeof node.type === 'string' && node.props.role === 'separator');
 }
+
+describe('WorkSectionEmptyLine', () => {
+    it('is the section\'s way to start when it can be pressed, and only a statement otherwise', async () => {
+        const onPress = vi.fn();
+        const screen = await renderScreen(
+            <WorkSection testID="notes" anatomy="page" title="Notes" count="">
+                <WorkSectionEmptyLine testID="notes.add" text="Add notes" onPress={onPress} />
+                <WorkSectionEmptyLine testID="context.empty" text="Nothing added yet" />
+            </WorkSection>,
+        );
+        const start = screen.findByTestId('notes.add');
+        expect(start?.props.accessibilityRole).toBe('button');
+        await screen.pressByTestIdAsync('notes.add');
+        expect(onPress).toHaveBeenCalledTimes(1);
+        expect(screen.findByTestId('context.empty')?.props.accessibilityRole).toBeUndefined();
+        expect(screen.getTextContent()).toContain('Nothing added yet');
+    });
+});
 
 describe('WorkSection', () => {
     it('draws a configuration section flat on the pane: a full-width hairline, title · quiet count · ⓘ · one action, rows on the list inset with no hairlines', async () => {

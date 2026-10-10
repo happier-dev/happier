@@ -1,3 +1,4 @@
+import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
@@ -5,9 +6,8 @@ import type {
     SessionBoardApprovalRequestCreatedResultV1,
     SessionSurfaceItemV1,
 } from '@happier-dev/protocol/sessions/board';
-import { SessionSurfaceItemV1Schema } from '@happier-dev/protocol/sessions/board';
-import { MAX_PLUGIN_HOSTED_HTML_SOURCE_UTF8_BYTES_V1 } from '@happier-dev/protocol/plugins/ui';
-import { renderHook } from '@/dev/testkit';
+import { SessionSurfaceItemV1Schema } from '@happier-dev/protocol/sessions/board/item';
+import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import type {
     SessionBoardActionsPort,
     SessionBoardItemUpsertInput,
@@ -71,16 +71,6 @@ function actions(outcome: Awaited<ReturnType<SessionBoardActionsPort['upsertItem
 }
 
 describe('useSessionBoardHostedHtmlEditor', () => {
-    it('builds the canonical capability-free hosted HTML item', () => {
-        expect(buildSessionBoardHostedHtmlItem({ title: ' Dashboard ', html: '<main>Hello</main>' })).toEqual({
-            v: 1,
-            title: 'Dashboard',
-            frame: 'card',
-            height: { mode: 'auto', fallback: 'regular' },
-            source: { kind: 'hostedHtml', source: { kind: 'html', html: '<main>Hello</main>' } },
-        });
-    });
-
     it('flushes the shared code editor before one atomic item and placement write', async () => {
         const stored = actions({
             status: 'ok',
@@ -107,7 +97,7 @@ describe('useSessionBoardHostedHtmlEditor', () => {
         expect(stored.upserts[0]).toMatchObject({
             expectedItemRevision: null,
             placement: { tabId: 'overview' },
-            item: { source: { kind: 'hostedHtml', source: { html: '<main>final!</main>' } } },
+            item: { source: { kind: 'hostedHtml', source: artifactHtmlBundleFromBodyV1('<main>final!</main>') } },
         });
         // The third operand is the settlement fact: nothing newer was typed while the save ran.
         expect(onSaved).toHaveBeenCalledWith(expect.any(Object), 'rev-1', true);
@@ -125,7 +115,7 @@ describe('useSessionBoardHostedHtmlEditor', () => {
             height: { mode: 'fixed', size: 'tall' },
             source: {
                 kind: 'hostedHtml',
-                source: { kind: 'html', html: '<main>before</main>' },
+                source: artifactHtmlBundleFromBodyV1('<main>before</main>'),
                 requestedCapabilities: { hostMethods: ['notify'] },
             },
             input: { v: 1, values: { tone: 'calm' } },
@@ -153,7 +143,7 @@ describe('useSessionBoardHostedHtmlEditor', () => {
             title: 'Existing',
             source: {
                 ...baseItem.source,
-                source: { kind: 'html', html: '<main>after</main>' },
+                source: artifactHtmlBundleFromBodyV1('<main>after</main>'),
             },
         });
         expect(stored.upserts[0]).not.toHaveProperty('placement');
@@ -199,6 +189,7 @@ describe('useSessionBoardHostedHtmlEditor', () => {
         // stale snapshot as the new CAS operand.
         let latestRevision = 'rev-1';
         let latestHtml = '<main>base</main>';
+        let latestItem = buildSessionBoardHostedHtmlItem({ title: 'Dashboard', html: latestHtml })!;
         const requestRecoveryRefresh = vi.fn();
         const onSaved = vi.fn();
         const flushHtml = vi.fn(async () => '<main>mine, including final keystroke</main>');
@@ -211,6 +202,7 @@ describe('useSessionBoardHostedHtmlEditor', () => {
             initialTitle: 'Dashboard',
             initialHtml: '<main>base</main>',
             baseItem: buildSessionBoardHostedHtmlItem({ title: 'Dashboard', html: '<main>base</main>' })!,
+            recoveryObservation: { state: 'settled', revision: latestRevision, item: latestItem },
             reachable: true,
             actions: port,
             onSaved,
@@ -236,6 +228,21 @@ describe('useSessionBoardHostedHtmlEditor', () => {
 
         latestRevision = 'rev-2';
         latestHtml = '<main>theirs v2</main>';
+        const latestBundle = artifactHtmlBundleFromBodyV1(latestHtml);
+        latestItem = SessionSurfaceItemV1Schema.parse({
+            ...latestItem,
+            source: {
+                kind: 'hostedHtml',
+                source: {
+                    v: 1,
+                    entrypoint: 'pages/latest.html',
+                    files: {
+                        'pages/latest.html': latestBundle.files[latestBundle.entrypoint],
+                        'app.js': { mime: 'application/javascript', contentBase64: 'YWxlcnQoMik=' },
+                    },
+                },
+            },
+        });
         await hook.rerender();
         hook.getCurrent().reviewLatest();
         await hook.rerender();
@@ -246,8 +253,16 @@ describe('useSessionBoardHostedHtmlEditor', () => {
         expect(await hook.getCurrent().save()).toBe(false);
         await hook.rerender();
         expect(upserts[1]?.expectedItemRevision).toBe('rev-2');
-        expect(upserts[1]?.item).toMatchObject({
-            source: { kind: 'hostedHtml', source: { html: '<main>mine, including final keystroke</main>' } },
+        expect(upserts[1]?.item.source).toMatchObject({
+            source: {
+                entrypoint: 'pages/latest.html',
+                files: {
+                    'pages/latest.html': {
+                        contentBase64: artifactHtmlBundleFromBodyV1('<main>mine, including final keystroke</main>').files['index.html'].contentBase64,
+                    },
+                    'app.js': { mime: 'application/javascript', contentBase64: 'YWxlcnQoMik=' },
+                },
+            },
         });
         expect(hook.getCurrent().status).toEqual({ kind: 'conflict', reviewed: false });
         expect(hook.getCurrent().canSave).toBe(false);
@@ -261,6 +276,7 @@ describe('useSessionBoardHostedHtmlEditor', () => {
 
         latestRevision = 'rev-3';
         latestHtml = '<main>theirs v3</main>';
+        latestItem = buildSessionBoardHostedHtmlItem({ title: 'Dashboard', html: latestHtml, baseItem: latestItem })!;
         await hook.rerender();
         expect(hook.getCurrent().latestHtml).toBe('<main>theirs v3</main>');
         hook.getCurrent().reviewLatest();
@@ -271,7 +287,7 @@ describe('useSessionBoardHostedHtmlEditor', () => {
         expect(requestRecoveryRefresh).toHaveBeenCalledTimes(2);
     });
 
-    it('refuses an oversized UTF-8 source before persistence and preserves the exact draft', async () => {
+    it('persists a valid bundle beyond the retired source-string ceiling', async () => {
         const stored = actions({ status: 'ok', value: upsertResult({ itemId: 'interactive-1', itemRevision: 'rev-1' }) });
         const hook = await renderHook(() => useSessionBoardHostedHtmlEditor({
             sessionId: 'session-1', itemId: 'interactive-1',
@@ -279,14 +295,12 @@ describe('useSessionBoardHostedHtmlEditor', () => {
             placement: { tabId: 'overview', tabTitle: 'Overview', width: 'medium' },
             reachable: true, actions: stored.port, onSaved: vi.fn(),
         }));
-        const oversizedHtml = 'é'.repeat(MAX_PLUGIN_HOSTED_HTML_SOURCE_UTF8_BYTES_V1 / 2 + 1);
-        expect(new TextEncoder().encode(oversizedHtml).byteLength).toBe(MAX_PLUGIN_HOSTED_HTML_SOURCE_UTF8_BYTES_V1 + 2);
+        const oversizedHtml = 'é'.repeat(524289);
         hook.getCurrent().setHtml(oversizedHtml);
         await hook.rerender();
-        expect(await hook.getCurrent().save()).toBe(false);
+        expect(await hook.getCurrent().save()).toBe(true);
         await hook.rerender();
-        expect(stored.upserts).toHaveLength(0);
-        expect(hook.getCurrent().status).toEqual({ kind: 'invalid', error: 'hosted_html_source_too_large' });
+        expect(stored.upserts[0]?.item.source).toEqual({ kind: 'hostedHtml', source: artifactHtmlBundleFromBodyV1(oversizedHtml) });
         expect(hook.getCurrent().html).toBe(oversizedHtml);
     });
 

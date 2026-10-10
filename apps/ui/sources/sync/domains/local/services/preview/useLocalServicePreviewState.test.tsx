@@ -1,6 +1,6 @@
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { LocalServicePreviewResourceV1 } from '@happier-dev/protocol';
+import type { DaemonLocalServicePreviewSnapshotResponseV1, LocalServicePreviewResourceV1 } from '@happier-dev/protocol';
 
 import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 
@@ -13,7 +13,7 @@ import type { LocalServicePreviewSnapshotClient } from './useLocalServicePreview
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
-import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createAccountTokenForTests, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
 
@@ -131,6 +131,7 @@ describe('useLocalServicePreviewState', () => {
             const url = new URL(String(input));
             if (url.origin !== home.serverUrl) throw new Error(`Unexpected preview Home: ${url.origin}`);
             if (url.pathname === '/v1/auth/ping') return Response.json({});
+            if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
             if (url.pathname === '/v1/machines/machine_1') return Response.json({ machine: {
                 id: 'machine_1', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
             } });
@@ -143,10 +144,11 @@ describe('useLocalServicePreviewState', () => {
                 machineId: 'machine_1',
                 generatedAt: 1_000,
                 refreshState: 'idle',
+                resources: [],
                 previews: [],
                 diagnostics: [],
             },
-        };
+        } satisfies DaemonLocalServicePreviewSnapshotResponseV1;
         const { useLocalServicePreviewState } = await import('./useLocalServicePreviewState');
 
         const hook = await renderHook(() => useLocalServicePreviewState({
@@ -157,6 +159,9 @@ describe('useLocalServicePreviewState', () => {
 
         await flushHookEffects({ cycles: 2, turns: 2 });
 
+        await act(async () => {
+            await waitForHomeGovernance(() => expect(daemonBoundary.requests).not.toEqual([]));
+        });
         expect(daemonBoundary.requests).toEqual([{ serverUrl: home.serverUrl, token,
             method: 'machine_1:daemon.localServices.preview.snapshot', params: { machineId: 'machine_1' } }]);
         expect(hook.getCurrent().refreshState).toBe('idle');

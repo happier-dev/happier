@@ -10,10 +10,9 @@ import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactive
 import { useMachineEnvPresence } from '@/hooks/machine/useMachineEnvPresence';
 import { Modal } from '@/modal';
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
-import type { Settings } from '@/sync/domains/settings/settings';
 import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import type { SavedSecretReferenceResolution } from '@/sync/store/settings/savedSecretCatalogSnapshot';
-import { projectAiLaunchProfileForLegacyUi, readUiAiLaunchProfilesForLegacyUi } from '@/sync/domains/profiles/aiLaunchProfileCollection';
+import { projectAiLaunchProfileForLegacyUi } from '@/sync/domains/profiles/aiLaunchProfileCollection';
 import { getBuiltInProfile } from '@/sync/domains/profiles/profileUtils';
 import { t } from '@/text';
 import { resolveStrictV2ProfileSecretReadiness, type StrictV2ProfileSecretReadiness } from '@/components/sessions/new/modules/resolveStrictV2ProfileSecretReadiness';
@@ -25,16 +24,15 @@ export type ExecutionRunSecretReferenceOverlayState = Readonly<{
 }>;
 
 export function resolveExecutionRunSessionLaunchProfile(
-    settings: Pick<Settings, 'profiles'>,
     sessionMetadata: unknown,
-    profiles?: readonly AiLaunchProfile[],
+    profiles: readonly AiLaunchProfile[],
 ): (AIBackendProfile & AiLaunchProfileSourceV1) | null {
     const rawProfileId = sessionMetadata && typeof sessionMetadata === 'object' && !Array.isArray(sessionMetadata)
         ? Reflect.get(sessionMetadata, 'profileId')
         : null;
     const profileId = typeof rawProfileId === 'string' ? rawProfileId.trim() : '';
     if (!profileId) return null;
-    return (profiles ? profiles.map(projectAiLaunchProfileForLegacyUi) : readUiAiLaunchProfilesForLegacyUi(settings.profiles ?? [])).find((profile) => profile.id === profileId)
+    return profiles.map(projectAiLaunchProfileForLegacyUi).find((profile) => profile.id === profileId)
         ?? getBuiltInProfile(profileId);
 }
 

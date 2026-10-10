@@ -3,6 +3,7 @@ import type { Message } from "@happier-dev/session-core/messages";
 import { loadSyncTuning } from '@/sync/runtime/syncTuning';
 import { LruMap } from '@/utils/cache/lruMap';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { SessionForkVisualOriginV1Schema, SessionForkVisualsV1Schema, type SessionForkVisualCopyV1 } from '@happier-dev/protocol/sessions/board/forkVisualCopies';
 
 export type ForkedTranscriptSegment = Readonly<{
   sessionId: string;
@@ -23,10 +24,12 @@ export type ForkedTranscriptSnapshot = Readonly<{
   combinedMessagesById: Readonly<Record<string, Message>>;
   messageOriginById: Readonly<Record<string, { sessionId: string; isReadOnlyContext: boolean }>>;
   isLoaded: boolean;
+  visualSessionId?: string;
+  visualCopies?: readonly SessionForkVisualCopyV1[];
 }>;
 
 type MinimalState = Pick<StorageState, 'sessions' | 'sessionMessages'>
-  & Partial<Pick<StorageState, 'sessionMessagesHistoryStartLoaded'>>;
+  & Partial<Pick<StorageState, 'sessionMessagesHistoryStartLoaded' | 'sessionLocalStateScope'>>;
 
 type CacheEntry = Readonly<{
   key: string;
@@ -57,7 +60,11 @@ function buildSegmentsRootToChild(state: MinimalState, childSessionId: string): 
   cutoffSeqInclusive: number | null;
 }> | null {
   const childFork = readForkV1(state, childSessionId);
-  if (!childFork) return null;
+  if (!childFork) {
+    return SessionForkVisualsV1Schema.safeParse(state.sessions[childSessionId]?.metadata?.forkVisualsV1).success
+      ? [{ sessionId: childSessionId, isReadOnlyContext: false, cutoffSeqInclusive: null }]
+      : null;
+  }
 
   const segments: Array<{ sessionId: string; isReadOnlyContext: boolean; cutoffSeqInclusive: number | null }> = [];
 
@@ -98,15 +105,21 @@ export function getForkedTranscriptSnapshotCached(state: MinimalState, childSess
   const segmentsRaw = buildSegmentsRootToChild(state, childSessionId);
   if (!segmentsRaw) return null;
 
+  const childSession = state.sessions[childSessionId];
+  const ownerFork = readForkV1(state, childSessionId);
+  const sharedVisuals = SessionForkVisualsV1Schema.safeParse(childSession?.metadata?.forkVisualsV1);
+  const ownerVisuals = SessionForkVisualsV1Schema.safeParse({ v: 1, copies: ownerFork?.visualCopies });
+  const visualCopies = sharedVisuals.success ? sharedVisuals.data.copies : ownerVisuals.success ? ownerVisuals.data.copies : [];
+
   const keyParts: string[] = [];
   for (const seg of segmentsRaw) {
     const sessionMessages = state.sessionMessages[seg.sessionId];
     const version = sessionMessages?.messagesVersion ?? 0;
     const idsLen = sessionMessages?.messageIdsOldestFirst?.length ?? 0;
     const historyStartLoaded = state.sessionMessagesHistoryStartLoaded?.[seg.sessionId] === true;
-    keyParts.push(`${seg.sessionId}:${seg.cutoffSeqInclusive ?? 'full'}:${version}:${idsLen}:${historyStartLoaded}:${sessionMessages?.isLoaded === true}`);
+    keyParts.push(`${state.sessions[seg.sessionId]?.serverId ?? state.sessionLocalStateScope?.serverId ?? ''}:${seg.sessionId}:${seg.cutoffSeqInclusive ?? 'full'}:${version}:${idsLen}:${historyStartLoaded}:${sessionMessages?.isLoaded === true}`);
   }
-  const key = keyParts.join('|');
+  const key = `${keyParts.join('|')}|${JSON.stringify(visualCopies)}`;
 
   const existing = cacheByChildSessionId.get(childSessionId);
   if (existing && existing.key === key) {
@@ -159,6 +172,56 @@ export function getForkedTranscriptSnapshotCached(state: MinimalState, childSess
     segmentDrafts[index]!.messageIdsOldestFirst = [];
   }
 
+  // Imported visual rows live in the child's transcript. Prefer them over the
+  // ancestor's original provider-native row so reads never depend on its grant.
+  const importedOrigins = new Map<string, { id: string; message: Message; storageSessionId: string }>();
+  for (const segment of segmentDrafts) {
+    for (const id of segment.messageIdsOldestFirst) {
+      const origin = SessionForkVisualOriginV1Schema.safeParse(segment.allMessagesById[id]?.meta?.forkVisualOriginV1);
+      if (origin.success) {
+        const message = segment.allMessagesById[id];
+        if (message) importedOrigins.set(JSON.stringify([origin.data.serverId, origin.data.sessionId,
+          message.kind === 'tool-call' && message.tool.id ? `tool:${message.tool.id}` : origin.data.sourceMessageId]),
+          { id, message, storageSessionId: segment.sessionId });
+      }
+    }
+  }
+  const placedImportedOrigins = new Set<string>();
+  const importedStorageOrigins = new Map<string, string>();
+  for (const segment of segmentDrafts) {
+    const projectedIds: string[] = [];
+    for (const id of segment.messageIdsOldestFirst) {
+      const message = segment.allMessagesById[id];
+      const origin = SessionForkVisualOriginV1Schema.safeParse(message?.meta?.forkVisualOriginV1);
+      const key = JSON.stringify([
+        origin.success ? origin.data.serverId : state.sessions[segment.sessionId]?.serverId ?? state.sessionLocalStateScope?.serverId ?? null,
+        origin.success ? origin.data.sessionId : segment.sessionId,
+        message?.kind === 'tool-call' && message.tool.id ? `tool:${message.tool.id}` : origin.success ? origin.data.sourceMessageId : message?.realID ?? id,
+      ]);
+      const imported = importedOrigins.get(key);
+      if (!imported) {
+        projectedIds.push(id);
+        continue;
+      }
+      if (placedImportedOrigins.has(key)) continue;
+      placedImportedOrigins.add(key);
+      projectedIds.push(imported.id);
+      segment.allMessagesById = { ...segment.allMessagesById, [imported.id]: imported.message };
+      importedStorageOrigins.set(imported.id, imported.storageSessionId);
+    }
+    segment.messageIdsOldestFirst = projectedIds;
+    if (!segment.isReadOnlyContext) {
+      const inherited = segment.messageIdsOldestFirst.filter(id => SessionForkVisualOriginV1Schema.safeParse(segment.allMessagesById[id]?.meta?.forkVisualOriginV1).success);
+      inherited.sort((a, b) => {
+        const aOrigin = SessionForkVisualOriginV1Schema.parse(segment.allMessagesById[a]!.meta!.forkVisualOriginV1);
+        const bOrigin = SessionForkVisualOriginV1Schema.parse(segment.allMessagesById[b]!.meta!.forkVisualOriginV1);
+        return aOrigin.serverId === bOrigin.serverId && aOrigin.sessionId === bOrigin.sessionId ? aOrigin.sourceSeq - bOrigin.sourceSeq : 0;
+      });
+      const own = segment.messageIdsOldestFirst.filter(id => !SessionForkVisualOriginV1Schema.safeParse(segment.allMessagesById[id]?.meta?.forkVisualOriginV1).success);
+      segment.messageIdsOldestFirst = [...inherited, ...own];
+    }
+  }
+
   // De-duplicate message ids across visible segments by preferring the earliest (ancestor) segment.
   // This matters for provider-native forks where the provider may reuse message ids across forked sessions,
   // which would otherwise render duplicate rows in the forked transcript view.
@@ -192,7 +255,8 @@ export function getForkedTranscriptSnapshotCached(state: MinimalState, childSess
       if (!message) continue;
       combinedMessageIdsOldestFirst.push(id);
       combinedMessagesById[id] = message;
-      messageOriginById[id] = { sessionId: seg.sessionId, isReadOnlyContext: seg.isReadOnlyContext };
+      messageOriginById[id] = { sessionId: importedStorageOrigins.get(id) ?? seg.sessionId, isReadOnlyContext: seg.isReadOnlyContext
+        || SessionForkVisualOriginV1Schema.safeParse(message.meta?.forkVisualOriginV1).success };
     }
   }
 
@@ -204,6 +268,8 @@ export function getForkedTranscriptSnapshotCached(state: MinimalState, childSess
     combinedMessagesById,
     messageOriginById,
     isLoaded,
+    visualSessionId: childSessionId,
+    visualCopies,
   };
 
   cacheByChildSessionId.set(childSessionId, { key, snapshot });

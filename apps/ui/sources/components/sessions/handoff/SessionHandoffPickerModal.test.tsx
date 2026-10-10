@@ -2,6 +2,7 @@ import * as React from 'react';
 import { act, ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { computeWorkspaceSyncPolicyDigest, encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
 import { createHomeGovernanceHarness, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -14,8 +15,14 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { FetchedMachineRow } from '@/sync/engine/machines/syncMachines';
 import { installSessionHandoffCommonModuleMocks } from './sessionHandoffTestHelpers';
 import type { CustomModalChromeConfig } from '@/modal';
+import type { SessionHandoffPickerModalProps } from './SessionHandoffPickerModal';
 
 const pathBrowserModuleLoadedMock = vi.fn();
+const handoffCapabilityRpc = vi.hoisted(() => vi.fn());
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
+    const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
+    return createServerScopedMachineRpcBoundaryMock(handoffCapabilityRpc);
+});
 let activeServerIdState = '';
 
 
@@ -150,6 +157,8 @@ afterAll(() => { refreshMachinesThrottledMock.mockRestore(); listWorkspaceSyncSt
 
 describe('SessionHandoffPickerModal', () => {
     beforeEach(async () => {
+        handoffCapabilityRpc.mockReset();
+        handoffCapabilityRpc.mockResolvedValue({ protocolVersion: 3, atomicTargetResume: true, targetCleanup: true, existingState: true });
         storage.setState(initialStorage, true);
         activeServerIdState = '';
         machineListByServerIdState = {};
@@ -253,6 +262,101 @@ describe('SessionHandoffPickerModal', () => {
             ignoredIncludeGlobs: ['dist/**'],
             directTargetMode: 'convert_to_persisted',
         };
+    });
+
+    it('defaults to transferring session data and submits existing-state only after turning it off', async () => {
+        const onResolve = vi.fn();
+        let chrome: CustomModalChromeConfig | null = null;
+        const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
+        const screen = await renderScreen(<SessionHandoffPickerModal onClose={vi.fn()} setChrome={(next) => { chrome = next; }} onResolve={onResolve} sessionId="sess_1" serverId={homeA.id} />);
+        await act(async () => { invokeTestInstanceHandler(screen.tree.findByType(MachineSelector), 'onSelect', allMachinesState[0]); });
+        const transferSwitch = () => screen.tree.findByProps({ testID: 'session-handoff-transfer-session-data' });
+        await vi.waitFor(() => expect(transferSwitch().props.disabled).toBe(false));
+        expect(transferSwitch().props.value).toBe(true);
+        const start = () => findElementByTestId(requireCardChrome(chrome).footer, 'session-handoff-start') as React.ReactElement<{ onPress: () => void }>;
+        await act(async () => { start().props.onPress(); });
+        expect(onResolve).toHaveBeenLastCalledWith(expect.objectContaining({ stateTransfer: 'transfer' }));
+        await act(async () => { invokeTestInstanceHandler(transferSwitch(), 'onValueChange', false); });
+        await act(async () => { start().props.onPress(); });
+        expect(onResolve).toHaveBeenLastCalledWith(expect.objectContaining({ stateTransfer: 'existing', workspaceAction: { kind: 'none' } }));
+        expect(screen.tree.findByProps({ testID: 'session-handoff-workspace-sync-mode-trigger' }).props.disabled).toBe(true);
+    });
+
+    it.each(['machine_source', 'machine_target'])('keeps transfer on and disabled when %s lacks existing-state support', async (unsupportedMachine) => {
+        handoffCapabilityRpc.mockImplementation(async ({ machineId }: { machineId: string }) => ({ protocolVersion: 3, atomicTargetResume: true, targetCleanup: true, ...(machineId === unsupportedMachine ? {} : { existingState: true }) }));
+        const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
+        const screen = await renderScreen(<SessionHandoffPickerModal onClose={vi.fn()} setChrome={vi.fn()} onResolve={vi.fn()} sessionId="sess_1" serverId={homeA.id} />);
+        await act(async () => { invokeTestInstanceHandler(screen.tree.findByType(MachineSelector), 'onSelect', allMachinesState[0]); });
+        const control = screen.tree.findByProps({ testID: 'session-handoff-transfer-session-data' });
+        expect(control.props.value).toBe(true);
+        expect(control.props.disabled).toBe(true);
+        expect(control.props.accessibilityHint).toBe('sessionHandoff.transferSessionData.updateRequired');
+    });
+
+    it('shows the native-state recovery inline and hides the transfer choice for same-machine moves', async () => {
+        const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
+        const screen = await renderScreen(<SessionHandoffPickerModal onClose={vi.fn()} setChrome={vi.fn()} onResolve={vi.fn()} sessionId="sess_1" serverId={homeA.id} inlineErrorCode="existing_session_state_unavailable" />);
+        await act(async () => { invokeTestInstanceHandler(screen.tree.findByType(MachineSelector), 'onSelect', allMachinesState[0]); });
+        expect(screen.tree.findByProps({ testID: 'session-handoff-session-data-error' }).props.children).toBe('sessionHandoff.transferSessionData.sessionMissing');
+        await act(async () => { invokeTestInstanceHandler(screen.tree.findByType(MachineSelector), 'onSelect', allMachinesState[1]); });
+        expect(screen.tree.findAll((node) => node.props.testID === 'session-handoff-transfer-session-data')).toHaveLength(0);
+    });
+
+    it('resets a new destination to visible transfer-on and blocks no-copy while its capability is pending or absent', async () => {
+        settingsState.sessionHandoffDefaultsV1.workspaceSyncMode = 'none';
+        const otherTarget = createMachineFixture({ id: 'machine_old', active: true, activeAt: Date.now() });
+        allMachinesState.push(otherTarget);
+        machineListByServerIdState[homeA.id].push(otherTarget);
+        let resolveOldCapability!: (value: unknown) => void;
+        handoffCapabilityRpc.mockImplementation(async ({ machineId }: { machineId: string }) => machineId === 'machine_old'
+            ? await new Promise((resolve) => { resolveOldCapability = resolve; })
+            : { protocolVersion: 3, atomicTargetResume: true, targetCleanup: true, existingState: true });
+        let chrome: CustomModalChromeConfig | null = null;
+        const onResolve = vi.fn();
+        const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
+        const screen = await renderScreen(<SessionHandoffPickerModal onClose={vi.fn()} setChrome={(next) => { chrome = next; }} onResolve={onResolve} sessionId="sess_1" serverId={homeA.id} />);
+        await act(async () => { invokeTestInstanceHandler(screen.tree.findByType(MachineSelector), 'onSelect', allMachinesState[0]); });
+        const control = () => screen.tree.findByProps({ testID: 'session-handoff-transfer-session-data' });
+        await vi.waitFor(() => expect(control().props.disabled).toBe(false));
+        await act(async () => { invokeTestInstanceHandler(control(), 'onValueChange', false); });
+        await act(async () => { invokeTestInstanceHandler(screen.tree.findByType(MachineSelector), 'onSelect', otherTarget); });
+        expect(control().props.value).toBe(true);
+        expect(control().props.disabled).toBe(true);
+        await act(async () => { invokeTestInstanceHandler(control(), 'onValueChange', false); });
+        expect(control().props.value).toBe(true);
+        await act(async () => { resolveOldCapability({ protocolVersion: 3, atomicTargetResume: true, targetCleanup: true, existingState: false }); });
+        await vi.waitFor(() => expect(control().props.accessibilityHint).toBe('sessionHandoff.transferSessionData.updateRequired'));
+        const start = () => findElementByTestId(requireCardChrome(chrome).footer, 'session-handoff-start') as React.ReactElement<{ onPress: () => void; disabled: boolean }>;
+        await act(async () => { start().props.onPress(); });
+        expect(onResolve).toHaveBeenLastCalledWith(expect.objectContaining({ stateTransfer: 'transfer' }));
+        expect(control().props.value).toBe(true);
+        expect(control().props.disabled).toBe(true);
+    });
+
+    it('retains the real picker flow after native-state rejection and retries only the corrected choice', async () => {
+        await applyFixtureState();
+        modalMock.spies.show.mockClear();
+        modalMock.spies.hide.mockClear();
+        modalMock.spies.update.mockClear();
+        handoffCapabilityRpc.mockImplementation(async ({ method }: { method: string }) => method === RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3
+            ? { ok: false, errorCode: 'existing_session_state_unavailable', error: 'Native session is unavailable' }
+            : { protocolVersion: 3, atomicTargetResume: true, targetCleanup: true, existingState: true });
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const executor = createDefaultActionExecutor();
+        const { runSessionHandoffPickerFlow } = await import('@/sync/domains/sessionHandoff/runSessionHandoffPickerFlow');
+        const flow = runSessionHandoffPickerFlow({ execute: executor.execute, sessionId: 'sess_1', sourceMachineId: 'machine_source', serverId: homeA.id, placement: 'session_info' });
+        await vi.waitFor(() => expect(modalMock.spies.show).toHaveBeenCalled());
+        // The modal presentation boundary exposes the real picker's submitted values.
+        const config = modalMock.spies.show.mock.calls[0]?.[0] as { props: SessionHandoffPickerModalProps };
+        config.props.onResolve({ targetMachineId: 'machine_target', stateTransfer: 'existing', workspaceAction: { kind: 'none' } });
+        await expect(flow).resolves.toMatchObject({ ok: false, errorCode: 'existing_session_state_unavailable' });
+        expect(handoffCapabilityRpc).toHaveBeenCalledWith(expect.objectContaining({ method: RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3, payload: expect.objectContaining({ stateTransfer: 'existing' }) }));
+        expect(modalMock.spies.update).toHaveBeenCalledWith('modal-id', { inlineErrorCode: 'existing_session_state_unavailable' });
+        expect(modalMock.spies.hide).not.toHaveBeenCalled();
+        config.props.onResolve({ targetMachineId: 'machine_target', stateTransfer: 'transfer', workspaceAction: { kind: 'none' } });
+        await vi.waitFor(() => expect(handoffCapabilityRpc).toHaveBeenCalledWith(expect.objectContaining({ method: RPC_METHODS.DAEMON_SESSION_HANDOFF_START_V3, payload: expect.objectContaining({ stateTransfer: 'transfer' }) })));
+        expect(modalMock.spies.update).toHaveBeenCalledWith('modal-id', { inlineErrorCode: null });
+        config.props.onResolve(null);
     });
 
     it('retains the Account credential while its socket is offline and withdraws it when the runtime retires', async () => {

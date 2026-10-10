@@ -1,4 +1,9 @@
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
+import type { SetSessionPinRequest, SetSessionPinResponse } from '@happier-dev/protocol/sessions/organization/mutations';
+import { readSessionBotV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
+import { getStorage } from '@/sync/domains/state/storageStore';
+import { readSessionListRowForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
+import { HappyError } from '@/utils/errors/errors';
 import {
     areSessionFolderDefinitionsEqual,
     type SessionFolderV1,
@@ -155,11 +160,23 @@ export async function writeSessionOrganizationPin(params: Readonly<{
     scope: SessionOrganizationMutationScope;
     sessionId: string;
     pinned: boolean;
-}>): Promise<void> {
-    await setSessionPin({
+    surface?: SetSessionPinRequest['surface'];
+    sortKey?: string | null;
+}>): Promise<SetSessionPinResponse> {
+    params.scope.assertCurrent?.();
+    if (params.surface === 'rail' && params.pinned) {
+        const row = readSessionListRowForServerId(getStorage().getState().sessionListRowsByServerId,
+            params.scope.serverId, params.sessionId);
+        if (readSessionBotV1(row?.metadata?.bot)?.kind !== 'bot') {
+            throw new HappyError('session_not_bot', false, { code: 'session_not_bot' });
+        }
+    }
+    return await setSessionPin({
         ...params.scope,
         sessionId: params.sessionId,
         pinned: params.pinned,
+        surface: params.surface,
+        sortKey: params.sortKey,
     });
 }
 

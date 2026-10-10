@@ -17,6 +17,7 @@ import type { StatusPillVariant } from '@/components/ui/status/StatusPill';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { t } from '@/text';
 import { resolveManagedMachineWakeStateV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
+import { managedCreationState } from '@/components/settings/machines/managed/managedCreationPresentation';
 
 /**
  * The shared status presentation is owned by `@happier-dev/plugin-ui/presentation` (plugin authors
@@ -29,6 +30,26 @@ export type WorkStatusPresentation = HappierWorkStatusPresentation;
 
 /** The `StatusPill` variant for a tone, where a surface states its word as a badge (ring and tint: `workStatusTreatment`). */
 export const WORK_STATUS_PILL_VARIANT = HAPPIER_WORK_STATUS_SEMANTIC_TONE satisfies Record<WorkStatusTone, StatusPillVariant>;
+
+/**
+ * The state word of a worker update, as its card heads it: "<worker> finished its turn" (lab
+ * `cards-T1`/`T2`). Lower-case and descriptive, because it continues the worker's name. A wake that
+ * needs the person says so whatever the owner's last state was. A workflow state with no card word of
+ * its own keeps the run owner's word.
+ */
+export function describeWorkerUpdateState(update: WorkerUpdateV1): string {
+    if (update.wake === 'needs_you' || update.ownerState === 'needs_input') return t('sessionWork.workerUpdate.state.needsYou');
+    if (update.wake === 'stalled' || update.ownerState === 'stalled') return t('sessionWork.workerUpdate.state.stalled');
+    switch (update.ownerState) {
+        case 'settled': return t('sessionWork.workerUpdate.state.settled');
+        case 'published': return t('sessionWork.workerUpdate.state.published');
+        case 'succeeded': return t('sessionWork.workerUpdate.state.finished');
+        case 'failed': return t('sessionWork.workerUpdate.state.failed');
+        case 'cancelled': return t('sessionWork.workerUpdate.state.stopped');
+        case 'timeout': return t('sessionWork.workerUpdate.state.timedOut');
+        default: return t(`workflows.runState.${update.ownerState}`);
+    }
+}
 
 // The approved FIN hold/stop words are presentation inputs until its protocol seam lands.
 export type WorkStatusRunState = WorkflowRunStateV1 | 'waiting_for_review' | 'cancel_requested';
@@ -52,7 +73,7 @@ export type WorkStatusInput =
         setupReview?: ActionOperationSnapshotV1['setupReview'];
         word: string;
     }> }>
-    | Readonly<{ kind: 'worker_update'; facts: Readonly<{ update: WorkerUpdateV1; word: string }> }>
+    | Readonly<{ kind: 'worker_update'; facts: Readonly<{ update: WorkerUpdateV1 }> }>
     | Readonly<{ kind: 'workflow_run'; facts: WorkflowFacts & Readonly<{ state: WorkStatusRunState }> }>
     | Readonly<{ kind: 'workflow_step'; facts: WorkflowFacts & Readonly<{ lifecycle: WorkStatusStepLifecycle }> }>
     | Readonly<{ kind: 'session'; facts: Readonly<{
@@ -147,7 +168,8 @@ export function resolveWorkStatusTone(input: WorkStatusInput): WorkStatusPresent
             return { bucket: 'working', tone: observation === 'available' ? 'neutral' : 'attention', word };
         }
         case 'worker_update': {
-            const { update, word } = input.facts;
+            const { update } = input.facts;
+            const word = describeWorkerUpdateState(update);
             const failed = update.ownerState === 'failed' || update.ownerState === 'dispatch_failed';
             if (update.wake === 'needs_you') return { bucket: 'needs_you', tone: failed ? 'danger' : 'attention', word };
             if (update.wake === 'stalled') return { bucket: 'offline', tone: 'neutral', word };
@@ -164,11 +186,19 @@ export function resolveWorkStatusTone(input: WorkStatusInput): WorkStatusPresent
         }
         case 'machine': {
             const { online, needsYouCount, runningSessionCount, word } = input.facts;
+            const managed = input.facts.managedMachine;
+            const hasManagedOwner = managed?.creationState === 'active' && managed.archivedAt === undefined
+                && !(typeof input.facts.revokedAt === 'number' && input.facts.revokedAt > 0) && input.facts.machineId
+                && managed.enrolledMachineId === input.facts.machineId;
+            if (hasManagedOwner) {
+                // Consume Lane 12's existing lifecycle projection, including native
+                // refusal/uncertainty; connectivity is not the native intent owner.
+                const lifecycle = managedCreationState(managed);
+                if (lifecycle.kind === 'stopPending') return { bucket: 'working', tone: 'neutral', word: t('managedPower.stopPending') };
+                if (lifecycle.kind === 'cleanupUnknown') return { bucket: 'needs_you', tone: 'attention', word: t('managedMachines.cleanup.unknownCause') };
+            }
             if (!online) {
-                const managed = input.facts.managedMachine;
-                if (managed?.creationState === 'active' && managed.archivedAt === undefined
-                    && !(typeof input.facts.revokedAt === 'number' && input.facts.revokedAt > 0) && input.facts.machineId
-                    && managed.enrolledMachineId === input.facts.machineId) {
+                if (hasManagedOwner) {
                     const observation = managed.observation;
                     if (managed.allocation === 'confirmed-absent' || observation?.availability === 'absent') {
                         return { bucket: 'needs_you', tone: 'attention', word: t('managedPower.resourceAbsent') };

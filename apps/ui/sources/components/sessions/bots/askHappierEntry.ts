@@ -5,6 +5,9 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import type { AskHappierContext } from '@/sync/domains/pending/pendingSetupIntent.shared';
 import { t } from '@/text';
 import type { SessionState } from '@/utils/sessions/sessionUtils';
+import type { MountedAuthoringActionExecute } from '@/sync/ops/actions/sessionAuthoringActions';
+import type { AskHappierDraftResult } from './happierGuideDraft';
+import type { PromptDocArtifactRefV1 } from '@happier-dev/protocol/prompts/library/promptArtifactRefsV1';
 
 /**
  * Every Ask Happier entry (offer card, Bots menu, palette, What's new, showcase end, an error
@@ -17,8 +20,10 @@ export async function startAskHappier(
     lifetime: ServerAccountScopeLifetime | null;
     context?: AskHappierContext;
     currentUiContext?: CurrentUiContextSnapshotV1 | null;
+    executeAction?: MountedAuthoringActionExecute;
+    guideRef?: PromptDocArtifactRefV1;
   }>,
-): Promise<void> {
+): Promise<AskHappierDraftResult> {
   // Lazy: the guide asset and draft owners load only when someone asks.
   const { openAskHappierDraft, openBlankAskHappierDraft } =
     await import('./happierGuideDraft');
@@ -26,15 +31,17 @@ export async function startAskHappier(
     lifetime: params.lifetime,
     context: params.context,
     currentUiContext: params.currentUiContext,
+    executeAction: params.executeAction,
+    guideRef: params.guideRef,
   });
   const unavailable =
     result.kind === 'documentUnavailable' ||
     (result.kind === 'unavailable' && result.reason === 'client_unavailable');
-  if (!unavailable) return;
+  if (!unavailable) return result;
   const lifetime = params.lifetime;
   if (result.kind !== 'documentUnavailable' || !lifetime) {
     await Modal.alertAsync(t('bots.guide.offer'), t('bots.guide.unavailable'));
-    return;
+    return result;
   }
   const startBlank = await Modal.confirm(
     t('bots.guide.offer'),
@@ -45,7 +52,8 @@ export async function startAskHappier(
     },
   );
   if (startBlank && lifetime.isCurrent())
-    await openBlankAskHappierDraft(lifetime);
+    return { ...await openBlankAskHappierDraft(lifetime, params.executeAction), guideRef: result.guideRef };
+  return result;
 }
 
 /**

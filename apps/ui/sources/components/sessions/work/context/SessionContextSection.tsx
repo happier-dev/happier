@@ -6,19 +6,16 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { memoryDocumentHref } from '@/components/memory/memoryDocumentRoutes';
-import { promptCollectionItemHref } from '@/components/settings/prompts/collection/promptCollectionModel';
-import { WorkSection } from '@/components/sessions/work/WorkSection';
+import { PromptStackDocumentMenu } from '@/components/settings/prompts/stacks/PromptStackDocumentMenu';
+import { PromptStackEntryRow } from '@/components/settings/prompts/stacks/PromptStackEntryRow';
+import { promptStackEntryHref, promptStackPlacementLabel } from '@/components/settings/prompts/stacks/promptStackEntryPresentation';
+import { WorkSection, WorkSectionEmptyLine } from '@/components/sessions/work/WorkSection';
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { Switch } from '@/components/ui/forms/Switch';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { CollectionListGroupLabel } from '@/components/ui/lists/collection/CollectionList';
-import { Item } from '@/components/ui/lists/Item';
-import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { Text } from '@/components/ui/text/Text';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { Typography } from '@/constants/Typography';
-import { Modal } from '@/modal';
 import { randomUUID } from '@/platform/randomUUID';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -30,12 +27,11 @@ import {
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
-import { AttachExistingMenu, resolveSessionInstructionsAccess } from '../instructions/SessionInstructionsSection';
+import { resolveSessionInstructionsAccess } from '../instructions/SessionInstructionsSection';
 import { useSessionContextLayers, type SessionContextRow } from './useSessionContextLayers';
 
 /** Session-layer entries that already have their own Work section. */
 const OWN_SECTION_ENTRY_IDS = new Set(['session.instructions', 'session.memory']);
-const OVERFLOW_ONLY_WIDTH_PX = 1;
 
 /**
  * Work › Context (plan 65 §2/§8, lab `c-mem O`): everything this Session reads before each turn, in
@@ -68,6 +64,8 @@ const SessionContextBody = React.memo(function SessionContextBody(props: Readonl
         sessionId: session.id, serverId, ownerMetadata: props.ownerMetadata, metadataVersion: session.metadataVersion,
     });
     const [saving, setSaving] = React.useState(false);
+    // A refused change says so in the section until the next attempt.
+    const [refused, setRefused] = React.useState(false);
     const [adding, setAdding] = React.useState(false);
     const addAnchorRef = React.useRef<View>(null);
     const target = React.useMemo<MemorySessionTarget>(
@@ -77,23 +75,20 @@ const SessionContextBody = React.memo(function SessionContextBody(props: Readonl
 
     const update = React.useCallback((intent: SessionContextIntentV1) => {
         setSaving(true);
+        setRefused(false);
         fireAndForget((async () => {
             let result: ActionExecuteResult | null = null;
             try {
                 result = await memoryDocumentActions.updateSessionContext(target, intent);
             } catch { /* reported below */ }
             setSaving(false);
-            if (!result || readMemoryActionOutcome(result) !== 'applied') {
-                Modal.alert(t('memoryContext.session.contextTitle'), t('memoryContext.session.refused'));
-            }
+            if (!result || readMemoryActionOutcome(result) !== 'applied') setRefused(true);
         })(), { tag: 'SessionContextSection.update' });
     }, [target]);
 
     const open = React.useCallback((row: SessionContextRow) => {
-        const ref = row.entry.ref;
-        router.push((row.kind === 'memory'
-            ? memoryDocumentHref({ artifactId: ref.artifactId, serverId: ref.serverId ?? serverId })
-            : promptCollectionItemHref(row.kind === 'skill' ? 'bundle' : 'doc', ref.artifactId, { serverId: ref.serverId ?? serverId })) as never);
+        const href = promptStackEntryHref(row.entry, row.currentPresentation().kind, serverId);
+        if (href) router.push(href as never);
     }, [router, serverId]);
 
     const added = layers.session.filter((row) => !OWN_SECTION_ENTRY_IDS.has(row.entry.id));
@@ -108,7 +103,15 @@ const SessionContextBody = React.memo(function SessionContextBody(props: Readonl
         { id: 'session', icon: 'file-text', label: t('memoryContext.session.addedHere'), rows: added },
     ];
     const visible = groups.filter((group) => group.rows.length > 0);
+    const layersKnown = layers.accountStatus === 'ready' && layers.profile.status === 'ready'
+        && (layers.project.status === 'ready' || layers.project.status === 'none') && layers.sessionStackValid;
+    const unavailable = layers.accountStatus === 'unavailable' || layers.profile.status === 'unavailable' || !layers.sessionStackValid;
     const onCount = visible.reduce((sum, group) => sum + group.rows.filter((row) => row.on).length, 0);
+    // Documents already in this Session's own layer are left out of "Add document".
+    const attachedRefs = React.useMemo(
+        () => layers.session.map(row => row.entry.ref),
+        [layers.session],
+    );
 
     return (
         <WorkSection
@@ -131,41 +134,37 @@ const SessionContextBody = React.memo(function SessionContextBody(props: Readonl
                         onPress={() => setAdding(true)}
                     />
                     {adding ? (
-                        <AttachExistingMenu
+                        <PromptStackDocumentMenu
                             testID="session-work-context.addMenu"
                             anchorRef={addAnchorRef}
                             serverId={serverId}
-                            searchPlaceholder={t('memoryContext.session.addDocument')}
+                            attachedRefs={attachedRefs}
                             onClose={() => setAdding(false)}
-                            onAttach={(ref) => {
+                            onPick={(ref) => {
                                 setAdding(false);
                                 update({ kind: 'attach', entry: { id: `session.${randomUUID()}`, ref, enabled: true, placement: 'system_append' } });
-                            }}
-                            onAttachSkill={(artifactId) => {
-                                setAdding(false);
-                                update({ kind: 'attach', entry: { id: `session.${randomUUID()}`, ref: { kind: 'bundle', artifactId, serverId }, enabled: true, placement: 'system_append' } });
                             }}
                         />
                     ) : null}
                 </View>
             ) : null}
         >
+            {!layersKnown && layers.project.status !== 'unavailable' ? (
+                <SurfaceFreshnessLine testID="session-work-context.layersUnavailable" tone={unavailable ? 'warning' : 'neutral'}
+                    busy={!unavailable}
+                    reason={t(unavailable ? 'memoryContext.session.layersUnavailable' : 'memoryContext.session.layersLoading')} />
+            ) : null}
+            {refused ? (
+                <SurfaceFreshnessLine testID="session-work-context.refused" tone="warning" reason={t('memoryContext.session.refused')} />
+            ) : null}
             {layers.project.status === 'unavailable' ? (
                 <SurfaceFreshnessLine testID="session-work-context.projectUnavailable" tone="warning" reason={t('memoryContext.session.projectUnavailable')} />
             ) : null}
             {visible.length > 0 ? (
                 <Text style={styles.description}>{t('memoryContext.session.contextDescription')}</Text>
             ) : null}
-            {visible.length === 0 ? (
-                <Item
-                    testID="session-work-context.empty"
-                    mode="info"
-                    showChevron={false}
-                    showDivider={false}
-                    title={t('memoryContext.session.contextEmpty')}
-                    titleLines={3}
-                    titleStyle={styles.empty}
-                />
+            {visible.length === 0 && layersKnown ? (
+                <WorkSectionEmptyLine testID="session-work-context.empty" text={t('memoryContext.session.contextEmpty')} />
             ) : visible.map((group) => (
                 <HappierPageSheetGroup
                     key={group.id}
@@ -173,61 +172,54 @@ const SessionContextBody = React.memo(function SessionContextBody(props: Readonl
                         <CollectionListGroupLabel
                             testID={`session-work-context.group.${group.id}`}
                             title={group.label}
-                            count={group.rows.length > 1 ? group.rows.length : undefined}
                             mark={<Icon name={group.icon} size={16} color={theme.colors.text.secondary} />}
                         />
                     )}
                 >
-                    {group.rows.map((row) => {
+                    {group.rows.map((row, index) => {
                         const title = row.title ?? (row.kind === 'memory' ? t('memoryContext.memory.title') : t('promptLibrary.untitledPrompt'));
                         const label = row.kind === 'memory'
                             ? (row.layer === 'account' ? t('memoryContext.session.yourMemory')
                                 : row.layer === 'project' ? t('memoryContext.session.projectMemory') : title)
                             : title;
-                        const subtitle = row.off === 'session' ? t('memoryContext.session.offForSession')
+                        const subtitle = row.kind === 'unknown' ? t('common.unavailable') : row.off === 'session' ? t('memoryContext.session.offForSession')
                             : row.off === 'source' ? t('memoryContext.session.offAtSource')
                                 : row.off === 'memory' ? t('memoryContext.session.memoryOff')
                                     : row.kind === 'memory' ? t('memoryContext.memory.title')
-                                        : row.kind === 'skill' ? t('memoryContext.session.skill') : t('memoryContext.session.document');
+                                        // What it is to the agent ("System append", "Skill instructions"), as its own page says it.
+                                        : promptStackPlacementLabel(row.entry.placement);
                         const inherited = row.layer !== 'session';
+                        // The one Context row every layer draws; this layer adds only what a Session decides:
+                        // its own on/off over an inherited entry, and that an inherited entry is not removed here.
                         return (
-                            <Item
+                            <PromptStackEntryRow
                                 key={`${row.layer}:${row.entry.id}`}
                                 testID={`session-work-context.entry.${row.layer}.${row.entry.id}`}
+                                entry={row.entry}
                                 title={label}
-                                titleStyle={row.on ? undefined : styles.off}
-                                subtitle={subtitle}
-                                showChevron={false}
+                                note={subtitle}
+                                on={row.on}
+                                unavailable={row.kind === 'unknown'}
+                                disabled={saving}
                                 showDivider={false}
-                                onPress={() => open(row)}
-                                rightElementOutsidePressable
-                                rightElement={(
-                                    <View style={styles.controls}>
-                                        {inherited ? null : (
-                                            <ItemRowActions
-                                                title={label}
-                                                layoutWidthPx={OVERFLOW_ONLY_WIDTH_PX}
-                                                overflowTriggerTestID={`session-work-context.entry.${row.entry.id}.more`}
-                                                actions={[
-                                                    { id: 'open', title: t('memoryContext.session.open'), icon: 'arrow-square-out', onPress: () => open(row) },
-                                                    {
-                                                        id: 'remove', title: t('memoryContext.session.remove'), icon: 'trash', destructive: true, disabled: saving,
-                                                        onPress: () => update({ kind: 'detach', entryId: row.entry.id }),
-                                                    },
-                                                ]}
-                                            />
-                                        )}
-                                        <Switch
-                                            testID={`session-work-context.entry.${row.entry.id}.switch`}
-                                            value={row.on}
-                                            disabled={saving || row.off === 'source' || row.off === 'memory'}
-                                            accessibilityLabel={label}
-                                            onValueChange={(enabled) => update(inherited
-                                                ? { kind: 'inherited_enable', entryId: row.entry.id, enabled }
-                                                : { kind: 'set_enabled', entryId: row.entry.id, enabled })}
-                                        />
-                                    </View>
-                                )}
+                                onOpen={row.kind === 'unknown' ? undefined : () => open(row)}
+                                // An inherited entry is edited where it was added: opening it is the row's press.
+                                {...(inherited ? {} : {
+                                    onRemove: () => update({ kind: 'detach', entryId: row.entry.id }),
+                                    removeLabel: t('memoryContext.session.remove'),
+                                    onMove: (delta: -1 | 1) => {
+                                        const sibling = added[index + delta];
+                                        if (sibling) update({ kind: 'reorder', entryId: row.entry.id,
+                                            siblingId: sibling.entry.id, position: delta < 0 ? 'before' : 'after' });
+                                    },
+                                    canMoveUp: index > 0,
+                                    canMoveDown: index < added.length - 1,
+                                    onBudgetChange: (maxChars: number | null) => update({ kind: 'set_budget', entryId: row.entry.id, maxChars }),
+                                })}
+                                switchDisabled={row.kind === 'unknown' || row.off === 'source' || row.off === 'memory'}
+                                onEnabledChange={(enabled) => update(inherited
+                                    ? { kind: 'inherited_enable', entryId: row.entry.id, enabled }
+                                    : { kind: 'set_enabled', entryId: row.entry.id, enabled })}
                             />
                         );
                     })}
@@ -238,23 +230,11 @@ const SessionContextBody = React.memo(function SessionContextBody(props: Readonl
 });
 
 const stylesheet = StyleSheet.create((theme) => ({
-    controls: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-    },
     description: {
         ...Typography.default(),
         ...happierPageTextMetrics('sectionDescription'),
         color: theme.colors.text.secondary,
         paddingHorizontal: HAPPIER_WORK_PANE_METRICS.rowInsetPx,
         paddingBottom: 6,
-    },
-    off: {
-        color: theme.colors.text.tertiary,
-    },
-    empty: {
-        ...Typography.default(),
-        color: theme.colors.text.secondary,
     },
 }));

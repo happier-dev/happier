@@ -44,14 +44,16 @@ describe('Session organization Action scope', () => {
                 return { body: { sessionId: 'session-a', folderId: SetSessionFolderAssignmentRequestSchema.parse(input).folderId }, respondAfter: response.promise };
             },
         });
-        const { createSessionOrganizationMutationScopeForAccount, writeSessionOrganizationGroupOrder, writeSessionOrganizationFolderAssignment } = await import('./sessionOrganizationMutationOwner');
+        const { createSessionOrganizationMutationScopeForAccount, writeSessionOrganizationGroupOrder } = await import('./sessionOrganizationMutationOwner');
+        const { createSessionOrganizationResourceAction } = await import('./sessionOrganizationAction');
         const itemKey = `${serverId}:session-a`;
         const scope = createSessionOrganizationMutationScopeForAccount(account);
         const writing = kind === 'order' ? writeSessionOrganizationGroupOrder({
             scope,
             next: { project: [itemKey] },
             orderItemAddressByItemKey: { [itemKey]: { itemKind: 'session', serverId, sessionId: 'session-a' } },
-        }) : writeSessionOrganizationFolderAssignment({ scope, sessionId: 'session-a', folderId: 'folder-a' });
+        }) : createSessionOrganizationResourceAction(account)({ actionId: 'session.folder.set',
+            input: { sessionId: 'session-a', folderId: 'folder-a' }, context: {} });
         const result = writing.then(() => 'completed', () => 'retired');
         await started.promise;
         await home.switchAccount(serverId, 'account-b');
@@ -95,4 +97,23 @@ describe('Session organization Action scope', () => {
             .some(value => value.folderId === folder.folderId)).toBe(false);
         account.dispose();
     });
+    it('projects the folder-set Action acknowledgement through the scoped organization writer', async () => {
+        const serverId = await home.addHome({ name: 'Folder Home', serverUrl: 'https://folder-home.example', accountId: 'account-a' });
+        home.answer(serverId, 'PUT /v2/session-organization/folder-assignments/session-a', {
+            select: input => ({ body: { sessionId: 'session-a', folderId: SetSessionFolderAssignmentRequestSchema.parse(input).folderId } }),
+        });
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const account = await captureLazyActionAccountContext(serverId);
+        const { createSessionOrganizationResourceAction, isSessionOrganizationResourceAction } = await import('./sessionOrganizationAction');
+        expect(isSessionOrganizationResourceAction('session.folder.set')).toBe(true);
+        const execute = createSessionOrganizationResourceAction(account);
+        expect(await execute({ actionId: 'session.folder.set', input: { sessionId: 'session-a', folderId: 'folder-a' }, context: {} }))
+            .toEqual({ sessionId: 'session-a', folderId: 'folder-a' });
+        const { getStorage } = await import('@/sync/domains/state/storageStore');
+        const { buildSessionOrganizationSessionKey } = await import('@/sync/domains/session/organization');
+        expect(getStorage().getState().sessionOrganizationFolderAssignmentsBySessionKey[buildSessionOrganizationSessionKey(serverId, 'session-a')])
+            .toEqual(expect.objectContaining({ sessionId: 'session-a', folderId: 'folder-a' }));
+        account.dispose();
+    });
+
 });

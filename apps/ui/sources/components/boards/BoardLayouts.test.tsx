@@ -83,7 +83,7 @@ function canvasBinding(placed: BoardCard, commits: Record<string, { x: number; y
         const current = persistence.acknowledged().boards[0]!;
         return { scope, board: current, membership: projectBoardMembership(current, { isHomeMounted: () => true, sections: {}, filtered: null }), isHomeMounted: () => true };
     };
-    const port = createWorkBoardUiActionPort(getContext, store.queue);
+    const port = createWorkBoardUiActionPort(getContext, store.queue, store.readBoardAccess);
     return { runtime: createEntityDragDropRuntime(), scope, isCurrent: () => true, getContext, execute: async effect => {
         const { intent } = WorkBoardActionInputSchemasV1['boards.apply'].parse(effect.input);
         const saved = await port.apply(intent);
@@ -93,6 +93,59 @@ function canvasBinding(placed: BoardCard, commits: Record<string, { x: number; y
 }
 
 describe('Board layouts', () => {
+    it('flows filtered cards around saved hand positions and retains geometry and identity on an unrelated update', async () => {
+        const picked = [card('workflow', 'own-workflow', 'idle'), card('workflow_run', 'stopped-run', 'finished'),
+            card('machine', 'own-machine', 'working'), card('session', 'own-session', 'working')];
+        const filtered = Array.from({ length: 17 }, (_, index) => ({ ...card('session', `filtered-${index}`, 'needs_you'), picked: false }));
+        const cards = [...picked, ...filtered];
+        const positionsByItemRef = { [picked[0]!.key]: { x: 24, y: 0 }, [picked[1]!.key]: { x: 0, y: 112 },
+            [picked[2]!.key]: { x: 424, y: 0 }, [picked[3]!.key]: { x: 424, y: 256 } };
+        const commits: Record<string, { x: number; y: number }>[] = [];
+        const props = { cards, positionsByItemRef, snap: true, binding: canvasBinding(picked[0]!, commits), onOpen: () => {} };
+        const screen = await renderScreen(<BoardCanvas {...props} />);
+        const frame = (key: string) => {
+            let node = screen.findHostByTestId(`board-canvas-card:${key}`)!;
+            while (!node.props.onLayout) node = node.parent!;
+            return node;
+        };
+        await act(async () => {
+            screen.findHostByTestId('board-canvas')!.props.onLayout({ nativeEvent: { layout: { width: 992, height: 900 } } });
+        });
+        await act(async () => {
+            for (const [index, member] of cards.entries()) frame(member.key).props.onLayout({ nativeEvent: { layout: {
+                x: 0, y: Math.max(0, Math.floor((index - picked.length) / 2)) * 88, width: 400,
+                height: index < 2 ? 88 : 64,
+            } } });
+        });
+        const rectangles = () => cards.map((member, index) => {
+            const flatten = (style: unknown): Record<string, unknown> => Array.isArray(style)
+                ? Object.assign({}, ...style.map(flatten)) : style && typeof style === 'object' ? style as Record<string, unknown> : {};
+            const style = flatten(frame(member.key).props.style);
+            const flowIndex = index - picked.length;
+            // Before the fix, native masonry starts at the padded origin, independently of saved XY.
+            return { key: member.key, x: Number(style.left ?? 24 + flowIndex % 2 * 424),
+                y: Number(style.top ?? 24 + Math.floor(flowIndex / 2) * 88), width: 400, height: index < 2 ? 88 : 64 };
+        });
+        const before = rectangles();
+        const overlaps = before.flatMap((a, index) => before.slice(index + 1).filter(b =>
+            a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height)
+            .map(b => [a.key, b.key]));
+        expect(overlaps).toEqual([]);
+        for (const member of picked) {
+            const rectangle = before.find(rectangle => rectangle.key === member.key)!;
+            expect({ x: rectangle.x - 24, y: rectangle.y - 24 }).toEqual(positionsByItemRef[member.key]);
+        }
+        for (const rectangle of before.slice(picked.length)) {
+            expect((rectangle.x - 24) % BOARD_CANVAS_METRICS.gridStepPx).toBe(0);
+            expect((rectangle.y - 24) % BOARD_CANVAS_METRICS.gridStepPx).toBe(0);
+        }
+        const hosts = cards.map(member => screen.findHostByTestId(`board-canvas-card:${member.key}`));
+        await screen.update(<BoardCanvas {...props} cards={cards.map((member, index) => index === 20 ? { ...member, title: 'Updated session' } : member)} />);
+        expect(rectangles()).toEqual(before);
+        cards.forEach((member, index) => expect(screen.findHostByTestId(`board-canvas-card:${member.key}`)).toBe(hosts[index]));
+        expect(commits).toEqual([]);
+    });
+
     it('has one primary tab stop and moves through status columns with the shared Collection cursor', async () => {
         const cards = MIXED.filter(card => card.status.bucket !== 'finished');
         const screen = await renderScreen(<BoardByStatus cards={cards} onOpen={() => {}} stacked={false} />, { wrapper: Wrapper });
@@ -126,6 +179,10 @@ describe('Board layouts', () => {
         expect(keysIn('needs_you')).toEqual(['checkout', 'release']);
         expect(keysIn('working')).toEqual(['macbook']);
         expect(keysIn('offline')).toEqual(['build-vps']);
+        for (const card of MIXED) {
+            expect(screen.findByTestId(`board-card:${card.key}:word`)).toBeNull();
+            expect(screen.findHostByTestId(`board-status-card:${card.key}`)?.props.accessibilityLabel).toContain(card.status.word);
+        }
     });
 
     it('on a phone, By status stacks only the statuses that hold something', async () => {
@@ -158,9 +215,11 @@ describe('Board layouts', () => {
         const binding = canvasBinding(placed, []);
         const props = { cards: [placed], snap: true, binding, onOpen: () => {} };
         const screen = await renderScreen(<BoardCanvas {...props} positionsByItemRef={{}} />);
+        const retained = screen.findHostByTestId(`board-canvas-card:${placed.key}`);
         await act(async () => { screen.findHostByTestId(`board-canvas-card:${placed.key}`)?.props.onFocus?.(); });
         physicalFocus.keys.length = 0;
         await screen.update(<BoardCanvas {...props} positionsByItemRef={{ [placed.key]: { x: 48, y: 24 } }} />);
+        expect(screen.findHostByTestId(`board-canvas-card:${placed.key}`)).toBe(retained);
         expect(physicalFocus.keys).toContain(`board-canvas-card:${placed.key}`);
         await screen.update(<BoardCanvas key="grip-focus" {...props} positionsByItemRef={{}} />);
         physicalFocus.keys.length = 0;

@@ -8,7 +8,10 @@ import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { encodeBase64 } from '@/encryption/base64';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
+import { renderScreen } from '@/dev/testkit';
+import { BoardScreen } from '../BoardScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { storage } from '@/sync/domains/state/storage';
 import { getActiveServerSnapshot, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
@@ -22,6 +25,20 @@ import { readPresentationNotice, retirePresentationNotice } from '@/components/s
 const runtimeFetch = vi.hoisted(() => vi.fn());
 vi.mock('@/utils/system/runtimeFetch', () => ({ runtimeFetch: (...args: unknown[]) => runtimeFetch(...args) }));
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+vi.mock('react-native', async () => {
+    const native = await import('@/dev/testkit/mocks/reactNative');
+    // The platform list renders its items; retain the real Collection and widget body below it.
+    const FlatList = React.forwardRef<unknown, { data: readonly unknown[];
+        renderItem: (args: { item: unknown; index: number }) => React.ReactNode;
+        keyExtractor: (item: unknown, index: number) => string }>((props, ref) => {
+        React.useImperativeHandle(ref, () => ({ scrollToIndex() {}, scrollToOffset() {}, scrollToEnd() {}, getScrollResponder: () => ({ scrollTo() {} }) }));
+        return React.createElement('FlatList', props, props.data.map((item, index) =>
+            <React.Fragment key={props.keyExtractor(item, index)}>{props.renderItem({ item, index })}</React.Fragment>));
+    });
+    return native.createReactNativeWebMock({ FlatList });
+});
+vi.mock('@legendapp/list/react-native', async original => (await import('@/dev/testkit/mocks/legendList'))
+    .createCapturingLegendListMock({ original: await original<Record<string, unknown>>() }).module);
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 const previousState = storage.getState();
 const previousAppliedSnapshot = getAppliedActiveServerSnapshot();
@@ -39,7 +56,7 @@ async function mountAccount(name: string, boards: readonly WorkBoardV1[], enable
     storage.setState({ profileScope: { serverId: home.id, accountId: 'board-account' }, settingsScope: { serverId: home.id, accountId: 'board-account' }, isDataReady: true,
         settings: { ...storage.getState().settings, actionsSettingsV1: normalizeActionsSettingsV1({ v: 1,
             actions: { 'boards.apply': { enabled } } }) } });
-    const rows = new Map<string, Artifact>(boards.map(board => [board.id, { id: board.id, ownerAccountId: 'board-account', access: 'owner', encryptionMode: 'plain',
+    const rows = new Map<string, Artifact>(boards.map(board => [board.id, { id: board.id, ownerAccountId: 'board-account', access: 'owner', encryptionMode: 'plain', publicAudience: 'none',
         dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, header: encodePlainArtifactStoredContent(buildWorkBoardArtifactHeaderV1(board)),
         body: encodePlainArtifactStoredContent({ body: JSON.stringify(board) }), headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 }]));
     let offline = false;
@@ -52,9 +69,11 @@ async function mountAccount(name: string, boards: readonly WorkBoardV1[], enable
             minimumProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION, currentProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
             declarationTransport: 'http-header-and-socket-auth-v1' } } });
         if (path === '/v1/account/encryption') return json({ mode: 'plain', updatedAt: 0 });
+        if (path === '/v1/account/encryption/currentness') return json(createPlainAccountEncryptionCurrentnessFixture());
         if (path === '/v1/artifacts' && init?.method !== 'POST') return json([...rows.values()]);
         const id = path.split('/')[3];
         const row = rows.get(id!);
+        if (path.endsWith('/access/grants') && row) return json({ artifactId: row.id, ownerAccountId: row.ownerAccountId, access: row.access, grants: [] });
         if (path.endsWith('/recipients') && row) return json({ artifactId: row.id, ownerAccountId: row.ownerAccountId, access: row.access,
             encryptionMode: row.encryptionMode, dataEncryptionKey: row.dataEncryptionKey, callerDataEncryptionKey: row.dataEncryptionKey,
             provenanceDataEncryptionKey: null, callerProvenanceDataEncryptionKey: null, recipients: [] });
@@ -63,7 +82,7 @@ async function mountAccount(name: string, boards: readonly WorkBoardV1[], enable
             if (offline) throw new Error('Connection lost after dispatch');
             if (path === '/v1/artifacts') {
                 const request = JSON.parse(String(init.body)) as ArtifactCreateRequest;
-                rows.set(request.id, { ...request, ownerAccountId: 'board-account', access: 'owner', encryptionMode: 'plain', headerVersion: 1,
+                rows.set(request.id, { ...request, ownerAccountId: 'board-account', access: 'owner', encryptionMode: 'plain', publicAudience: 'none', headerVersion: 1,
                     bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
                 return json(rows.get(request.id));
             }
@@ -84,6 +103,34 @@ async function mountAccount(name: string, boards: readonly WorkBoardV1[], enable
 }
 
 describe('mounted WorkBoard Action settlement', () => {
+    it('edits a retained placement through admitted Actions while preserving its stored ref', async () => {
+        const ref = { surface: { serverId: 'cli-profile', accountId: 'board-account', owner: { kind: 'workBoard' as const, boardId: 'retained-edit' } }, instanceId: 'copy' };
+        const instance = { v: 1 as const, id: 'copy', definition: { kind: 'inline' as const, definition: {
+            v: 1 as const, id: 'checks', name: 'Checks', provenance: { source: { kind: 'authored' as const } },
+            sizeDeclaration: { sizes: ['medium', 'wide'] as ('medium' | 'wide')[], defaultSize: 'medium' as const },
+            inputs: { fields: [] }, inputSchema: { type: 'object' as const, properties: {}, additionalProperties: false },
+            body: { kind: 'declarative' as const, document: { version: 1 as const, root: { kind: 'text' as const, text: 'Checks' } } },
+        } }, bindings: {} };
+        const board: WorkBoardV1 = { ...createWorkBoardV1({ id: 'retained-edit', name: 'Retained' }), widgets: [{ kind: 'widget', ref, instance, size: 'medium' }] };
+        const b = await mountAccount('retained-edit', [board]);
+        const hook = await renderHook(() => ({ dispatch: useDispatchWorkBoardIntent(), board: useWorkBoard(board.id) }), { wrapper: b.wrapper });
+        await vi.waitFor(() => expect(hook.getCurrent().board?.widgets?.[0]?.size).toBe('medium'));
+        await act(async () => { expect(await hook.getCurrent().dispatch({ kind: 'widget_size', boardId: board.id, ref, size: 'wide' })).toMatchObject({ status: 'applied' }); });
+        await act(async () => { expect(await hook.getCurrent().dispatch({ kind: 'widget_rename', boardId: board.id, ref, displayName: 'Renamed' })).toMatchObject({ status: 'applied' }); });
+        expect(hook.getCurrent().board?.widgets?.[0]).toMatchObject({ ref, size: 'wide', instance: { displayName: 'Renamed' } });
+    });
+    it('renders a retained CLI-created copy through the Board’s current runtime scope', async () => {
+        const instance = { v: 1 as const, id: 'from-cli', definition: { kind: 'builtin' as const, id: 'session_summary' as const }, bindings: {} };
+        const ref = { surface: { serverId: 'cli-profile', accountId: 'board-account', owner: { kind: 'workBoard' as const, boardId: 'retained' } }, instanceId: instance.id };
+        const board: WorkBoardV1 = { ...createWorkBoardV1({ id: 'retained', name: 'Retained' }), mode: 'by_status',
+            widgets: [{ kind: 'widget', ref, instance, size: 'medium' }] };
+        const b = await mountAccount('retained', [board]);
+        const screen = await renderScreen(<BoardScreen boardId={board.id} />, { wrapper: b.wrapper });
+        await vi.waitFor(() => expect({ ids: screen.tree.findAll(node => typeof node.props.testID === 'string').map(node => node.props.testID), text: screen.getTextContent() }).toMatchObject({
+            ids: expect.arrayContaining(['board-widget:from-cli.widget-inputs-repair']),
+        }));
+        expect(b.rows.get(board.id)?.body).toBe(encodePlainArtifactStoredContent({ body: JSON.stringify(board) }));
+    });
     it.each([true, false])('keeps truthful acknowledged size and reports pending approval without a failed save (approval: %s)', async approval => {
         const board = createWorkBoardV1({ id: 'board-size-pending', name: 'Size' });
         const b = await mountAccount('size-pending', [board]);
@@ -97,7 +144,7 @@ describe('mounted WorkBoard Action settlement', () => {
         const hook = await renderHook(() => ({ dispatch: useDispatchWorkBoardIntent(), board: useWorkBoard(board.id), save: useWorkBoardSaveState() }), { wrapper: b.wrapper });
         await act(async () => { expect(await hook.getCurrent().dispatch({ kind: 'widget_add', boardId: board.id, ref, instance })).toMatchObject({ status: 'applied' }); });
         storage.setState({ settings: { ...storage.getState().settings, actionsSettingsV1: normalizeActionsSettingsV1({ v: 1,
-            actions: { 'widgets.instance.size.set': { approvalRequiredSurfaces: approval ? ['ui'] : [] } } }) } });
+            actions: { 'widgets.item.size.set': { approvalRequiredSurfaces: approval ? ['ui'] : [] } } }) } });
         const before = b.rows.get(board.id);
         await act(async () => { expect(await hook.getCurrent().dispatch({ kind: 'widget_size', boardId: board.id, ref, size: 'wide' }))
             .toMatchObject({ status: approval ? 'pending' : 'applied' }); });
@@ -111,7 +158,7 @@ describe('mounted WorkBoard Action settlement', () => {
         const board = createWorkBoardV1({ id: 'board-size', name: 'Size' });
         const b = await mountAccount('size-policy', [board]);
         storage.setState({ settings: { ...storage.getState().settings, actionsSettingsV1: normalizeActionsSettingsV1({ v: 1,
-            actions: { 'boards.apply': { enabled: true }, 'widgets.instance.size.set': { enabled: false } } }) } });
+            actions: { 'boards.apply': { enabled: true }, 'widgets.item.size.set': { enabled: false } } }) } });
         const hook = await renderHook(() => ({ dispatch: useDispatchWorkBoardIntent(), save: useWorkBoardSaveState() }), { wrapper: b.wrapper });
         const before = b.rows.get(board.id);
         await act(async () => { expect(await hook.getCurrent().dispatch({ kind: 'widget_size', boardId: board.id,
@@ -212,7 +259,7 @@ describe('mounted WorkBoard Action settlement', () => {
         const ref = { kind: 'machine', qualifiedId: { serverId: home.id, id: 'machine-a' } } as const;
         const key = buildWorkBoardItemKeyV1(ref);
         const board = { ...createWorkBoardV1({ id: 'board-a', name: 'Board' }), source: { picked: [ref] }, positionsByItemRef: { [key]: { x: 24, y: 24 } } };
-        const row = { id: board.id, ownerAccountId: 'board-account', access: 'owner', encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+        const row = { id: board.id, ownerAccountId: 'board-account', access: 'owner', encryptionMode: 'plain', publicAudience: 'none', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
             header: encodePlainArtifactStoredContent(buildWorkBoardArtifactHeaderV1(board)), body: encodePlainArtifactStoredContent({ body: JSON.stringify(board) }),
             headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
         runtimeFetch.mockImplementation(async (url: unknown, init?: RequestInit) => {
@@ -222,7 +269,9 @@ describe('mounted WorkBoard Action settlement', () => {
                 minimumProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION, currentProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
                 declarationTransport: 'http-header-and-socket-auth-v1' } } });
             if (path === '/v1/account/encryption') return json({ mode: 'plain', updatedAt: 0 });
+            if (path === '/v1/account/encryption/currentness') return json(createPlainAccountEncryptionCurrentnessFixture());
             if (path === '/v1/artifacts') return json([row]);
+            if (path === `/v1/artifacts/${board.id}/access/grants`) return json({ artifactId: row.id, ownerAccountId: row.ownerAccountId, access: row.access, grants: [] });
             if (path === `/v1/artifacts/${board.id}` && init?.method === 'POST') {
                 if (disposition === 'unknown') throw new Error('Connection lost after dispatch');
                 return json({ error: 'not_found' }, 404);

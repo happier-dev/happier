@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { resolveToolTranscriptSidechainId } from './resolveToolTranscriptSidechainId';
 
-import type { ToolCall } from "@happier-dev/session-core/messages";
+import type { ToolCall } from '@happier-dev/session-core/messages';
 
 function makeToolCall(overrides: Partial<ToolCall> = {}): ToolCall {
     const now = Date.now();
@@ -18,18 +19,13 @@ function makeToolCall(overrides: Partial<ToolCall> = {}): ToolCall {
     };
 }
 
-async function loadSubject() {
-    const mod = await import('./resolveToolTranscriptSidechainId');
-    return mod.resolveToolTranscriptSidechainId;
-}
-
 describe('resolveToolTranscriptSidechainId', () => {
-    beforeEach(() => {
-        vi.resetModules();
+    it('uses an explicit native child sidechain independently of the per-turn call id', () => {
+        const tool = makeToolCall({ id: JSON.stringify([' child ', 'child-turn']), name: 'SubAgent', input: { sidechainId: ' child ', threadId: ' child ', providerTurnId: 'child-turn' } });
+        expect(resolveToolTranscriptSidechainId({ tool, normalizedToolName: 'SubAgent' })).toBe(' child ');
     });
 
-    it('prefers result.sidechainId for SubAgentRun tools', async () => {
-        const resolveToolTranscriptSidechainId = await loadSubject();
+    it('prefers result.sidechainId for SubAgentRun tools', () => {
         const tool = makeToolCall({
             id: 'tool_use_123',
             name: 'SubAgentRun',
@@ -38,8 +34,7 @@ describe('resolveToolTranscriptSidechainId', () => {
         expect(resolveToolTranscriptSidechainId({ tool, normalizedToolName: 'SubAgentRun' })).toBe('sidechain_run_456');
     });
 
-    it('prefers input.sidechainId for SubAgentRun tools when result.sidechainId missing', async () => {
-        const resolveToolTranscriptSidechainId = await loadSubject();
+    it('prefers input.sidechainId for SubAgentRun tools when result.sidechainId missing', () => {
         const tool = makeToolCall({
             name: 'SubAgentRun',
             input: { sidechainId: 'subagent_run_abc' },
@@ -48,8 +43,7 @@ describe('resolveToolTranscriptSidechainId', () => {
         expect(resolveToolTranscriptSidechainId({ tool, normalizedToolName: 'SubAgentRun' })).toBe('subagent_run_abc');
     });
 
-    it('falls back to input.callId for SubAgentRun tools when input.sidechainId missing', async () => {
-        const resolveToolTranscriptSidechainId = await loadSubject();
+    it('falls back to input.callId for SubAgentRun tools when input.sidechainId missing', () => {
         const tool = makeToolCall({
             name: 'SubAgentRun',
             input: { callId: 'subagent_run_def' },
@@ -58,8 +52,7 @@ describe('resolveToolTranscriptSidechainId', () => {
         expect(resolveToolTranscriptSidechainId({ tool, normalizedToolName: 'SubAgentRun' })).toBe('subagent_run_def');
     });
 
-    it('falls back to tool.id for SubAgentRun tools when result.sidechainId missing', async () => {
-        const resolveToolTranscriptSidechainId = await loadSubject();
+    it('falls back to tool.id for SubAgentRun tools when result.sidechainId missing', () => {
         const tool = makeToolCall({
             id: 'tool_use_123',
             name: 'SubAgentRun',
@@ -68,8 +61,7 @@ describe('resolveToolTranscriptSidechainId', () => {
         expect(resolveToolTranscriptSidechainId({ tool, normalizedToolName: 'SubAgentRun' })).toBe('tool_use_123');
     });
 
-    it('keeps the tool_use id for Task tools even when teammate metadata is present', async () => {
-        const resolveToolTranscriptSidechainId = await loadSubject();
+    it('keeps the tool_use id for Task tools even when teammate metadata is present', () => {
         const tool = makeToolCall({
             id: 'tool_use_123',
             name: 'Task',
@@ -78,8 +70,7 @@ describe('resolveToolTranscriptSidechainId', () => {
         expect(resolveToolTranscriptSidechainId({ tool, normalizedToolName: 'Task' })).toBe('tool_use_123');
     });
 
-    it('keeps the tool_use id for Agent tools even when teammate metadata is present', async () => {
-        const resolveToolTranscriptSidechainId = await loadSubject();
+    it('keeps the tool_use id for Agent tools even when teammate metadata is present', () => {
         const tool = makeToolCall({
             id: 'tool_use_789',
             name: 'Agent',
@@ -88,8 +79,7 @@ describe('resolveToolTranscriptSidechainId', () => {
         expect(resolveToolTranscriptSidechainId({ tool, normalizedToolName: 'Agent' })).toBe('tool_use_789');
     });
 
-    it('falls back to tool.id for Task tools when no teammate id present', async () => {
-        const resolveToolTranscriptSidechainId = await loadSubject();
+    it('falls back to tool.id for Task tools when no teammate id present', () => {
         const tool = makeToolCall({
             id: 'tool_use_123',
             name: 'Task',
@@ -98,8 +88,7 @@ describe('resolveToolTranscriptSidechainId', () => {
         expect(resolveToolTranscriptSidechainId({ tool, normalizedToolName: 'Task' })).toBe('tool_use_123');
     });
 
-    it('falls back to tool.id for SubAgent tools when no teammate id present', async () => {
-        const resolveToolTranscriptSidechainId = await loadSubject();
+    it('falls back to tool.id for SubAgent tools when no teammate id present', () => {
         const tool = makeToolCall({
             id: 'tool_use_subagent_123',
             name: 'SubAgent',

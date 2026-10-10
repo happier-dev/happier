@@ -13,8 +13,8 @@ export const SessionCompanionDestinationSchema = z.object({ side: z.enum(['befor
 
 /** Await the existing controller's Action/approval/recovery owner, including unknown acknowledgements. */
 export async function executeSessionBoardEntityDrop(controller: SessionBoardController, effect: EntityDropEffectV1): Promise<EntityDropOutcomeV1> {
-    if (effect.actionId === 'widgets.instance.move') {
-        const move = WidgetInstanceActionInputSchemasV1['widgets.instance.move'].safeParse(effect.input);
+    if (effect.actionId === 'widgets.item.move') {
+        const move = WidgetInstanceActionInputSchemasV1['widgets.item.move'].safeParse(effect.input);
         if (move.success) return executeWidgetEntityMovement(effect, move.data.ref.surface);
     }
     const parsed = SessionBoardLayoutUpdateInputV1Schema.safeParse(effect.input);

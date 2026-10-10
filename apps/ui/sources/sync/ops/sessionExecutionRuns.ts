@@ -3,7 +3,9 @@ import type {
     ExecutionRunActionResponse,
     ExecutionRunCancelTurnRequest,
     ExecutionRunCancelTurnResponse,
+    ExecutionRunEnsureRequest,
     ExecutionRunEnsureResponse,
+    ExecutionRunEnsureOrStartRequest,
     ExecutionRunGetRequest,
     ExecutionRunGetResponse,
     ExecutionRunListRequest,
@@ -16,8 +18,10 @@ import type {
 import {
     ExecutionRunGetResponseSchema,
     ExecutionRunListResponseSchema,
+    ExecutionRunStartResponseSchema,
     withExecutionRunStartFailureDetails,
 } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { requiresProviderSafeExecutionRunStartRpc } from '@happier-dev/protocol/execution/runs/startRequest';
 import { RPC_ERROR_CODES, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
@@ -52,7 +56,7 @@ export type SessionExecutionRunCancelTurnResult =
     | ExecutionRunCancelTurnResponse
     | { ok: false; error: string; errorCode?: string };
 
-export type SessionExecutionRunResumeResult =
+export type SessionExecutionRunEnsureResult =
     | ExecutionRunEnsureResponse
     | { ok: false; error: string; errorCode?: string };
 
@@ -167,8 +171,9 @@ function notifyExecutionRunMutationSuccess(
 export async function sessionExecutionRunStart(
     sessionId: string,
     request: ExecutionRunStartRequest,
-    opts?: Readonly<{ serverId?: string | null; expectedMachineId?: string | null }>,
+    opts?: Readonly<{ serverId?: string | null; expectedMachineId?: string | null; scope?: ServerAccountScope }>,
 ): Promise<SessionExecutionRunStartResult> {
+    const protectedSelection = requiresProviderSafeExecutionRunStartRpc(request, true);
     try {
         const serverId = resolveExecutionRunSessionServerId(sessionId, opts?.serverId);
         if (!serverId) return createExecutionRunHomeUnavailableResult();
@@ -186,25 +191,21 @@ export async function sessionExecutionRunStart(
         }
         const inactiveSessionResult = ensureExecutionRunMutationAllowed(sessionId);
         if (inactiveSessionResult) return inactiveSessionResult;
-        const response = await sessionRpcWithServerScope<ExecutionRunStartResponse, ExecutionRunStartRequest>({
+        const response = await executionRunSessionRpc<unknown, ExecutionRunStartRequest | ExecutionRunEnsureOrStartRequest>({
             sessionId,
             serverId,
-            method: SESSION_RPC_METHODS.EXECUTION_RUN_START,
-            payload: request,
+            ...(opts?.scope ? { scope: opts.scope } : {}),
+            method: protectedSelection ? SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1 : SESSION_RPC_METHODS.EXECUTION_RUN_START,
+            payload: protectedSelection ? { runId: null, resume: false, start: request } : request,
         });
         const errorResponse = readErrorResponseShape(response);
         if (errorResponse) return errorResponse;
-        if (
-            !response
-            || typeof response !== 'object'
-            || typeof (response as any).runId !== 'string'
-            || typeof (response as any).callId !== 'string'
-            || typeof (response as any).sidechainId !== 'string'
-        ) {
+        const parsed = ExecutionRunStartResponseSchema.safeParse(response);
+        if (!parsed.success) {
             return { ok: false, error: 'Unsupported response from session RPC' };
         }
         notifyExecutionRunActivity({ serverId, sessionId });
-        return response;
+        return parsed.data;
     } catch (error) {
         return {
             ok: false,
@@ -248,14 +249,15 @@ export async function sessionExecutionRunStop(
 export async function sessionExecutionRunCancelTurn(
     sessionId: string,
     request: ExecutionRunCancelTurnRequest,
-    opts?: Readonly<{ serverId?: string | null }>,
+    opts?: Readonly<{ serverId?: string | null; scope?: ServerAccountScope }>,
 ): Promise<SessionExecutionRunCancelTurnResult> {
     try {
-        const serverId = resolveExecutionRunSessionServerId(sessionId, opts?.serverId);
+        const serverId = opts?.scope?.serverId ?? resolveExecutionRunSessionServerId(sessionId, opts?.serverId);
         if (!serverId) return createExecutionRunHomeUnavailableResult();
-        const response = await sessionRpcWithServerScope<ExecutionRunCancelTurnResponse, ExecutionRunCancelTurnRequest>({
+        const response = await executionRunSessionRpc<ExecutionRunCancelTurnResponse, ExecutionRunCancelTurnRequest>({
             sessionId,
             serverId,
+            scope: opts?.scope,
             method: SESSION_RPC_METHODS.EXECUTION_RUN_CANCEL_TURN_V1,
             payload: request,
         });
@@ -275,20 +277,21 @@ export async function sessionExecutionRunCancelTurn(
     }
 }
 
-/** Explicit UI resume over the canonical Run ensure/resume owner. */
-export async function sessionExecutionRunResume(
+/** Transport for the canonical Run ensure/resume owner. */
+export async function sessionExecutionRunEnsure(
     sessionId: string,
-    request: Readonly<{ runId: string }>,
-    opts?: Readonly<{ serverId?: string | null }>,
-): Promise<SessionExecutionRunResumeResult> {
+    request: ExecutionRunEnsureRequest,
+    opts?: Readonly<{ serverId?: string | null; scope?: ServerAccountScope }>,
+): Promise<SessionExecutionRunEnsureResult> {
     try {
-        const serverId = resolveExecutionRunSessionServerId(sessionId, opts?.serverId);
+        const serverId = opts?.scope?.serverId ?? resolveExecutionRunSessionServerId(sessionId, opts?.serverId);
         if (!serverId) return createExecutionRunHomeUnavailableResult();
-        const response = await sessionRpcWithServerScope<ExecutionRunEnsureResponse, Readonly<{ runId: string; resume: true }>>({
+        const response = await executionRunSessionRpc<ExecutionRunEnsureResponse, ExecutionRunEnsureRequest>({
             sessionId,
             serverId,
+            scope: opts?.scope,
             method: SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE,
-            payload: { runId: request.runId, resume: true },
+            payload: request,
         });
         const errorResponse = readErrorResponseShape(response);
         if (errorResponse) return errorResponse;

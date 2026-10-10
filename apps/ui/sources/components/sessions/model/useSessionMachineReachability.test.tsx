@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
 import { createMachineFixture, createSessionFixture, renderHook, standardCleanup } from '@/dev/testkit';
@@ -17,7 +17,7 @@ beforeEach(async () => {
     const session = createSessionFixture({ id: 's1', serverId, active: true, metadata: { machineId: 'm1', path: '/repo', host: 'host-1' } });
     getStorage().setState({ sessions: { s1: session }, machines: { m1: machine }, machineListByServerId: { [serverId]: [machine] } });
 });
-afterEach(() => { standardCleanup(); getStorage().setState(initialStorage, true); });
+afterEach(() => { standardCleanup(); vi.useRealTimers(); getStorage().setState(initialStorage, true); });
 
 describe('useSessionMachineReachability', () => {
     it('normalizes session ids before resolving the reachable machine target', async () => {
@@ -26,7 +26,15 @@ describe('useSessionMachineReachability', () => {
     });
 
     it('normalizes session ids and observes offline status even when no RPC target is available', async () => {
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
         const hook = await renderHook(() => useSessionMachineReachability('  s1  ', serverId));
+        expect(hook.getCurrent()).toEqual({ machineReachable: true, machineOnline: true,
+            machineRpcTargetAvailable: true, machineReachability: 'reachable' });
+        await act(async () => { vi.advanceTimersByTime(60_001); });
+        expect(hook.getCurrent()).toEqual({ machineReachable: false, machineOnline: false,
+            machineRpcTargetAvailable: false, machineReachability: 'unreachable' });
+        const refreshed = { ...getStorage().getState().machines.m1!, activeAt: Date.now() };
+        await act(async () => getStorage().setState({ machines: { m1: refreshed }, machineListByServerId: { [serverId]: [refreshed] } }));
         expect(hook.getCurrent()).toEqual({ machineReachable: true, machineOnline: true,
             machineRpcTargetAvailable: true, machineReachability: 'reachable' });
         const machine = getStorage().getState().machines.m1!;

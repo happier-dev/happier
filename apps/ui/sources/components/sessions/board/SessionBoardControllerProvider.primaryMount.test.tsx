@@ -1,3 +1,4 @@
+import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -163,7 +164,7 @@ function viewportSnapshot(recovered: boolean): SessionBoardSnapshot {
         }] } } },
         items: new Map([['item-b', { revision: 'ssr1:item', outcome: { status: 'ready', value: {
             v: 1, title: 'B', frame: 'card', height: { mode: 'fixed', size: 'regular' },
-            source: { kind: 'hostedHtml', source: { kind: 'html', html: '<main>One live B</main>' } },
+            source: { kind: 'hostedHtml', source: artifactHtmlBundleFromBodyV1('<main>One live B</main>') },
         } } }]]),
         capabilities: { readTranscript: true, editSessionRecords: true }, freshness: 'fresh',
         reachability: 'reachable', loading: 'idle', incomplete: false,

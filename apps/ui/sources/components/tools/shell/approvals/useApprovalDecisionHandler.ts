@@ -67,7 +67,7 @@ export function useApprovalDecisionHandler(
     approval: ApprovalRequest | null,
     sessionId: string,
     serverIdHint?: string | null,
-): (decision: 'approve' | 'reject', options?: ApprovalDecisionOptions) => Promise<boolean> {
+): (decision: 'approve' | 'reject' | 'cancel', options?: ApprovalDecisionOptions) => Promise<boolean> {
     const serverProfilesGeneration = useServerProfilesGeneration();
     const executor = React.useMemo(
         () => createDefaultActionExecutor({
@@ -84,7 +84,7 @@ export function useApprovalDecisionHandler(
         [approval, artifact, replayRoute, serverIdHint, sessionId],
     );
 
-    return React.useCallback(async (decision: 'approve' | 'reject', options?: ApprovalDecisionOptions) => {
+    return React.useCallback(async (decision: 'approve' | 'reject' | 'cancel', options?: ApprovalDecisionOptions) => {
         if (!approval) return false;
         // Portable or daemon-owned origins must resolve their immutable Home identity. A
         // present-user UI approval intentionally has no cryptographic Home identity and stays

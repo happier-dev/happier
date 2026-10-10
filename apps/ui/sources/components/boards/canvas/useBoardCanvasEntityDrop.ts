@@ -62,7 +62,7 @@ export function useBoardCanvasEntityDrop(binding: WorkBoardEntityBinding, measur
             const context = { ...latest.current.binding.getContext(), measuredPositions: measured.current };
             let point: unknown = destination;
             // A work card or a widget: the same XY shape over its Canvas key.
-            const key = workBoardCanvasKey(item);
+            const key = workBoardCanvasKey(item, context.board);
             if (key && destination && !Array.isArray(destination) && typeof destination === 'object'
                 && 'kind' in destination && destination.kind === 'grid-step' && 'direction' in destination) {
                 const origin = context.board.positionsByItemRef[key] ?? measured.current.get(key);
@@ -82,7 +82,7 @@ export function useBoardCanvasEntityDrop(binding: WorkBoardEntityBinding, measur
                 });
             }
             const admission = resolveWorkBoardEntityDrop({ item, context, destination: point, canvasAvailable: true });
-            return admission.status === 'allowed' && admission.effect.actionId === 'widgets.instance.move'
+            return admission.status === 'allowed' && admission.effect.actionId === 'widgets.item.move'
                 ? latest.current.binding.admitWidgetMovement?.(admission.effect) ?? widgetMovementRefused('widget_admission_unavailable', admission.effect.preview)
                 : admission;
         },

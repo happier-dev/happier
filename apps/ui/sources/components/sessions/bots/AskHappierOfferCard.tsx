@@ -1,9 +1,10 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Text } from '@/components/ui/text/Text';
 import { VoiceMarkArt } from '@/components/voice/presence/VoiceMark';
 import { Typography } from '@/constants/Typography';
@@ -11,6 +12,7 @@ import { t } from '@/text';
 
 /** The planet is Happier's identity; it stands still here (no live energy source). */
 export const ASK_HAPPIER_MARK_SIZE_PX = 30;
+const ASK_HAPPIER_NOTE_MARK_SIZE_PX = 20;
 
 /** Happier's planet identity at rest, for every Ask Happier entry (no mascot, no tile behind it). */
 export const AskHappierMark = React.memo(function AskHappierMark(
@@ -66,26 +68,48 @@ export const AskHappierOfferCard = React.memo(function AskHappierOfferCard(
         />
         <View style={styles.grow} />
         {/* Lab `b-rail G`: a quiet text link, not a third button. */}
-        <Pressable
+        <TextLinkButton
           testID={`${testID}.dontShowAgain`}
-          accessibilityRole="button"
-          accessibilityLabel={t('bots.guide.dontShowAgain')}
-          hitSlop={8}
+          tone="strong"
+          label={t('bots.guide.dontShowAgain')}
           onPress={props.onDontShowAgain}
-        >
-          <Text style={styles.link}>{t('bots.guide.dontShowAgain')}</Text>
-        </Pressable>
+        />
       </View>
     </View>
   );
 });
 
-/** The one contextual link a status row carries (lab `b-ask E`): quiet text, the status row's own height. */
-export const AskHappierStatusLink = React.memo(function AskHappierStatusLink(props: Readonly<{ onPress: () => void }>) {
-    return (
-        <RoundButton testID="ask-happier-status-link" size="mini" display="inverted" title={t('bots.guide.offer')}
-            accessibilityLabel={t('bots.guide.offer')} onPress={props.onPress} />
-    );
+/** The one contextual link a status row carries (lab `b-ask E`): words ending the status sentence, not a button. */
+export const AskHappierStatusLink = React.memo(function AskHappierStatusLink(
+  props: Readonly<{ onPress: () => void }>,
+) {
+  return (
+    <TextLinkButton
+      testID="ask-happier-status-link"
+      tone="strong"
+      label={t('bots.guide.offer')}
+      onPress={props.onPress}
+    />
+  );
+});
+
+/**
+ * Where Ask Happier is offered at the end of a story (lab `b-ask SH`): the planet and two sentences
+ * saying what pressing the action beside it starts. It is a note, never a control.
+ */
+export const AskHappierNote = React.memo(function AskHappierNote(
+  props: Readonly<{ testID?: string }>,
+) {
+  const styles = stylesheet;
+  return (
+    <View testID={props.testID ?? 'ask-happier-note'} style={styles.note}>
+      <AskHappierMark size={ASK_HAPPIER_NOTE_MARK_SIZE_PX} />
+      <Text style={styles.noteText}>
+        <Text style={styles.noteLead}>{t('bots.guide.noteLead')}</Text>{' '}
+        {t('bots.guide.noteLine')}
+      </Text>
+    </View>
+  );
 });
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -127,10 +151,24 @@ const stylesheet = StyleSheet.create((theme) => ({
   actionsUnderText: {
     marginLeft: ASK_HAPPIER_MARK_SIZE_PX + 12,
   },
-  link: {
+  note: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    padding: 12,
+    borderRadius: 14,
+    backgroundColor: theme.colors.surface.selected,
+  },
+  noteText: {
+    flex: 1,
+    minWidth: 0,
     ...Typography.default(),
     ...happierPageTextMetrics('rowDescription'),
     color: theme.colors.text.secondary,
+  },
+  noteLead: {
+    ...Typography.default('semiBold'),
+    color: theme.colors.text.primary,
   },
   grow: {
     flexGrow: 1,

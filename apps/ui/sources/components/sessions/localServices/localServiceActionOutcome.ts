@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { Modal } from '@/modal';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
@@ -23,6 +24,7 @@ type UnknownRecord = Record<string, unknown>;
 
 export type LocalServiceActionOutcome =
     | Readonly<{ kind: 'succeeded' }>
+    | Readonly<{ kind: 'approval_pending'; artifactId: string; actionId: string }>
     /**
      * `reasonCode` is `null` only when the action never dispatched — a guard in the action hook
      * returned `undefined` because the target could not be addressed. That is still a failure the
@@ -55,9 +57,11 @@ function readNonEmptyString(value: unknown): string | null {
  * Anything else is a success payload the caller already knows how to parse.
  */
 export function readLocalServiceActionOutcome(result: unknown): LocalServiceActionOutcome {
-    if (result === undefined || result === null) {
+    if (result === undefined || result === null || result === false) {
         return { kind: 'failed', reasonCode: null };
     }
+    const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result);
+    if (approval.success) return { kind: 'approval_pending', artifactId: approval.data.artifactId, actionId: approval.data.actionId };
     const record = asRecord(result);
     if (!record) {
         return { kind: 'succeeded' };
@@ -144,7 +148,7 @@ export function useLocalServiceActionRunner(): LocalServiceActionRunner {
             });
             return false;
         }
-        return true;
+        return outcome.kind === 'succeeded';
     }, []);
 
     return { pendingId, run };

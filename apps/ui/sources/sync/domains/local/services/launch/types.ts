@@ -1,7 +1,9 @@
 import type {
     DaemonLocalServiceLauncherHistoryClearResponseV1,
+    DaemonLocalServiceLauncherLeafRequestV1,
     DaemonLocalServiceLauncherOpenPreviewResponseV1,
     DaemonLocalServiceLauncherRegisterPreviewResponseV1,
+    DaemonLocalServiceLauncherStartRequestV1,
     DaemonLocalServiceLauncherStartResponseV1,
     LocalServiceLauncherSnapshotV1,
     LocalServiceLaunchTargetV1,
@@ -20,6 +22,10 @@ export type LocalServiceLauncherStartClientInput = Readonly<{
     serverId?: string | null;
     sessionId?: string | null;
     workspaceId?: string | null;
+    choice?: DaemonLocalServiceLauncherStartRequestV1['choice'];
+    workspace?: DaemonLocalServiceLauncherStartRequestV1['workspace'];
+    declaration?: DaemonLocalServiceLauncherStartRequestV1['declaration'];
+    expectedEffectDigest?: DaemonLocalServiceLauncherStartRequestV1['expectedEffectDigest'];
     signal?: AbortSignal;
 }>;
 
@@ -37,9 +43,10 @@ export type LocalServiceLauncherLeafTargetClientInput = Readonly<{
     signal?: AbortSignal;
 }>;
 
-export type LocalServiceLauncherHistoryClearClientInput = Readonly<{
+export type LocalServiceLauncherHistoryClearClientInput = Pick<DaemonLocalServiceLauncherLeafRequestV1, 'scope' | 'workspaceRoot' | 'targetId'> & Readonly<{
     machineId: string;
     serverId?: string | null;
+    accountId?: string;
     sessionId?: string | null;
     signal?: AbortSignal;
 }>;

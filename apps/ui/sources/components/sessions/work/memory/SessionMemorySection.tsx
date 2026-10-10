@@ -2,18 +2,19 @@ import type { PromptDocArtifactRefV1 } from '@happier-dev/protocol/prompts/libra
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 
 import { MemoryDocumentBody } from '@/components/memory/MemoryDocumentBody';
 import { MemorySearchPanel } from '@/components/memory/MemorySearchPanel';
 import { useMemoryDocument } from '@/components/memory/useMemoryDocument';
-import { WorkSection } from '@/components/sessions/work/WorkSection';
+import { useMemoryCreationReceipt } from '@/components/memory/useMemoryCreationReceipt';
+import { WorkSection, WorkSectionEmptyLine } from '@/components/sessions/work/WorkSection';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
-import { Modal } from '@/modal';
+import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
-import { useArtifact } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import {
     memoryDocumentActions,
@@ -21,6 +22,7 @@ import {
     type MemorySessionTarget,
 } from '@/sync/ops/promptLibrary/memoryDocuments';
 import { t } from '@/text';
+import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { resolveSessionInstructionsAccess } from '../instructions/SessionInstructionsSection';
@@ -53,9 +55,13 @@ export function selectSessionMemory(layers: SessionContextLayers, serverId: stri
             ref: own ? { kind: 'doc', artifactId: own.entry.ref.artifactId, serverId: own.entry.ref.serverId ?? serverId } : null,
         };
     }
-    if (layers.project.status === 'pending') return { resolving: true, ref: null, scope: 'project' };
+    if (layers.project.status === 'pending' || layers.project.status === 'unavailable'
+        || layers.project.rows.some(row => row.kind === 'unknown')) return { resolving: true, ref: null, scope: 'project' };
     const project = refOf(layers.project.rows);
     if (project) return { resolving: false, ref: project, scope: 'project' };
+    if (layers.accountStatus !== 'ready' || layers.account.some(row => row.kind === 'unknown')) {
+        return { resolving: true, ref: null, scope: 'account' };
+    }
     return { resolving: false, ref: refOf(layers.account), scope: 'account' };
 }
 
@@ -87,8 +93,15 @@ const SessionMemoryBody = React.memo(function SessionMemoryBody(props: Readonly<
     });
     const enabled = layers.memoryEnabled;
     const selection = React.useMemo(() => selectSessionMemory(layers, serverId), [layers, serverId]);
-    const source = useMemoryDocument({ ref: selection.ref, serverId, enabled });
-    const row = useArtifact(selection.ref?.artifactId ?? '');
+    const { receipt, ref, onCreatedMemory } = useMemoryCreationReceipt({
+        serverId, scopeKey: JSON.stringify([session.id, selection.scope]), attachedRef: selection.ref,
+    });
+    // The Action's saved receipt proves this document even while its attachment cannot be resolved.
+    const resolving = selection.resolving && receipt === null;
+    const source = useMemoryDocument({ ref, serverId, enabled });
+    // Keep the renderer's draft/notice mounted through the owning catalog's read; unknown is not empty.
+    const displayedSource = React.useMemo(() => resolving
+        ? { ...source, status: 'loading' as const, view: null, target: null, stale: false } : source, [resolving, source]);
     const navigateToSession = useNavigateToSession();
     const openSession = React.useCallback((ref: Readonly<{ serverId: string; sessionId: string }>) => {
         fireAndForget(navigateToSession(ref.sessionId, { serverId: ref.serverId }), { tag: 'SessionMemorySection.source' });
@@ -101,29 +114,34 @@ const SessionMemoryBody = React.memo(function SessionMemoryBody(props: Readonly<
         [serverId, session.id, session.metadataVersion],
     );
 
+    // A refused switch says so in the section, beside the switch it did not move, until the next attempt.
+    const [refused, setRefused] = React.useState(false);
     const setEnabled = React.useCallback((next: boolean) => {
         setSaving(true);
+        setRefused(false);
         fireAndForget((async () => {
             try {
                 const outcome = readMemoryActionOutcome(await memoryDocumentActions.setSessionMemory(sessionTarget, next));
-                if (outcome === 'refused' || outcome === 'conflict') {
-                    Modal.alert(t('memoryContext.memory.title'), t('memoryContext.session.refused'));
-                }
+                if (outcome === 'refused' || outcome === 'conflict') setRefused(true);
             } catch {
-                Modal.alert(t('memoryContext.memory.title'), t('memoryContext.session.refused'));
+                setRefused(true);
             } finally {
                 setSaving(false);
             }
         })(), { tag: 'SessionMemorySection.setEnabled' });
     }, [sessionTarget]);
 
-    const shared = row?.access === 'view' || row?.access === 'edit' || row?.access === 'admin';
-    const footer = shared
-        ? `${t('memoryContext.memory.accessShared')} · ${t('memoryContext.memory.writesAskFirst')}`
-        : `${selection.scope === 'project' ? t('memoryContext.session.projectMemory')
-            : selection.scope === 'account' ? t('memoryContext.session.yourMemory') : t('memoryContext.memory.accessPrivate')
-        } · ${t('memoryContext.memory.writesWithoutAsking')}`;
-    const loading = enabled && (selection.resolving || source.status === 'loading');
+    const documentAccess = displayedSource.view?.access ?? null;
+    const shared = documentAccess !== null && documentAccess !== 'owner';
+    const readOnly = ref !== null && (documentAccess === null || documentAccess === 'view');
+    const canRemember = !readOnly && Boolean(displayedSource.target || (!ref && !resolving && displayedSource.status === 'none'));
+    const footer = resolving || (ref && documentAccess === null) ? undefined : shared
+        ? joinHappierFacts(t('memoryContext.memory.accessShared'), t('memoryContext.memory.writesAskFirst'))
+        : joinHappierFacts(selection.scope === 'project' ? t('memoryContext.session.projectMemory')
+            : selection.scope === 'account' ? t('memoryContext.session.yourMemory') : t('memoryContext.memory.accessPrivate'),
+        // A Bot's own memory names who writes to it (lab `c-mem A`).
+            layers.isBot ? t('memoryContext.memory.remembersWithoutAsking', { name: getSessionName(session, serverId) })
+            : t('memoryContext.memory.writesWithoutAsking'));
     return (
         <WorkSection
             testID="session-work-memory"
@@ -131,7 +149,6 @@ const SessionMemoryBody = React.memo(function SessionMemoryBody(props: Readonly<
             title={t('memoryContext.memory.title')}
             count=""
             nativeID="memory"
-            loading={loading}
             action={enabled ? (
                 <View style={styles.actions}>
                     <IconButton
@@ -143,21 +160,25 @@ const SessionMemoryBody = React.memo(function SessionMemoryBody(props: Readonly<
                         expanded={searching}
                         onPress={() => { setSearching((open) => !open); setComposing(false); }}
                     />
-                    {searching || shared && row?.access === 'view' ? null : (
+                    {searching || !canRemember ? null : (
                         <IconButton
                             testID="session-work-memory.remember"
                             iconName="plus"
                             variant="plain"
                             accessibilityLabel={t('memoryContext.memory.remember')}
                             tooltip={t('memoryContext.memory.remember')}
-                            disabled={selection.resolving}
+                            disabled={resolving}
                             onPress={() => setComposing(true)}
                         />
                     )}
                 </View>
             ) : null}
         >
-            <Item
+            {refused ? (
+                <SurfaceFreshnessLine testID="session-work-memory.refused" tone="warning" reason={t('memoryContext.session.refused')} />
+            ) : null}
+            {/* Search takes the section's body: what you look through, not the switch that turns it on. */}
+            {searching && enabled && !resolving ? null : <Item
                 testID="session-work-memory.enabled"
                 title={t('memoryContext.session.useMemory')}
                 subtitle={!enabled ? t('memoryContext.session.offDescription')
@@ -173,27 +194,34 @@ const SessionMemoryBody = React.memo(function SessionMemoryBody(props: Readonly<
                         accessibilityLabel={t('memoryContext.session.useMemory')}
                     />
                 )}
-            />
-            {!enabled || selection.resolving ? null : searching ? (
+            />}
+            {!enabled ? null : searching && !resolving ? (
                 <MemorySearchPanel testID="session-work-memory.searchPanel" serverId={serverId} />
             ) : (
                 <MemoryDocumentBody
                     testID="session-work-memory.doc"
-                    source={source}
+                    source={displayedSource}
                     serverId={serverId}
                     collapsedFactCount={COLLAPSED_FACTS}
                     footer={footer}
-                    readOnly={row?.access === 'view'}
+                    readOnly={readOnly}
                     composing={composing}
                     onComposingChange={setComposing}
-                    sessionTarget={selection.ref ? null : sessionTarget}
+                    sessionTarget={ref || resolving ? null : sessionTarget}
+                    onCreatedMemory={onCreatedMemory}
                     emptyText={t('memoryContext.session.emptyOn')}
+                    renderEmpty={renderMemoryEmptyLine}
                     onOpenSession={openSession}
                 />
             )}
         </WorkSection>
     );
 });
+
+/** Module scope: the document body's memo keeps its identity across the section's renders. */
+function renderMemoryEmptyLine(line: Readonly<{ testID: string; text: string }>) {
+    return <WorkSectionEmptyLine testID={line.testID} text={line.text} />;
+}
 
 const styles = StyleSheet.create(() => ({
     actions: {

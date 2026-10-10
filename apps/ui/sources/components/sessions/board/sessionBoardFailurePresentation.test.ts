@@ -7,7 +7,6 @@ import { resolveSessionBoardFailurePresentation } from './sessionBoardFailurePre
 describe('resolveSessionBoardFailurePresentation', () => {
     it.each([
         ['session_board_invalid', 'invalid', 'sessionBoard.mutation.invalid'],
-        ['hosted_html_source_too_large', 'hostedHtmlSourceTooLarge', 'sessionBoard.mutation.hostedHtmlSourceTooLarge'],
         ['session_board_note_too_large', 'noteTooLarge', 'sessionBoard.mutation.noteTooLarge'],
         ['malformed', 'invalid', 'sessionBoard.mutation.invalid'],
         ['session_board_forbidden', 'forbidden', 'sessionBoard.mutation.denied'],

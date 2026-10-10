@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { flushHookEffects, renderHook } from '@/dev/testkit';
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { renderHook } from '@/dev/testkit/hooks/renderHook';
 
 const harness = vi.hoisted(() => ({
     renewAuthority: null as null | (() => Promise<unknown>),

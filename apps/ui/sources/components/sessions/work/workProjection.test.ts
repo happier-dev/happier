@@ -12,12 +12,19 @@ import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatu
 import { readSessionWorkStatusFacts } from '@/components/work/status/sessionWorkStatusFacts';
 import type { AgentActivityEntry } from '@/sync/domains/session/agentActivity';
 import { NO_SESSION_AGENT_ACTIVITY_ATTENTION } from '@/sync/domains/session/agentActivity';
+import { createActionOperationSelectors } from '@/sync/domains/actionOperations/actionOperationSelectors';
+import { createActionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
+import { resolveActionOperationStatus } from '@/components/inbox/actionOperations/actionOperationPresentation';
+import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
+import { projectSessionWorkMap } from './workMapProducer';
 
 import {
     groupWorkByState,
     projectWork,
     resolveWorkItemOpenTarget,
+    resolveWorkItemContextActions,
     resolveWorkReadPresentation,
+    resolveWorkTitleTailStarts,
     type WorkItem,
     type WorkManagedRunSource,
     type WorkProjectionInput,
@@ -103,16 +110,155 @@ function input(overrides: Partial<WorkProjectionInput>): WorkProjectionInput {
 }
 
 describe('projectWork', () => {
+    it('retains unchanged work identities when unrelated work updates', () => {
+        const a = report({ sessionId: 'a', leadSessionId: 'lead' });
+        const b = report({ sessionId: 'b', leadSessionId: 'lead' });
+        const first = projectWork(input({ reportSessions: [a, b], managedRuns: [managed('run', 'running')] }));
+        const next = projectWork(input({ reportSessions: [a, { ...b, title: 'Updated B' }], managedRuns: [managed('run', 'running')] }), first);
+        expect(next.sessions[0]).toBe(first.sessions[0]);
+        expect(next.sessions[1]).not.toBe(first.sessions[1]);
+        expect(next.sessions[1]?.title).toBe('Updated B');
+        expect(next.workflows).toBe(first.workflows);
+        expect(next.summary).toBe(first.summary);
+        expect(projectWork(input({ reportSessions: [a, b], managedRuns: [managed('run', 'running')] }), first)).toBe(first);
+    });
+    it('retains a report flattened into a different state group when unrelated work changes', () => {
+        const parent = report({ sessionId: 'parent', leadSessionId: 'lead', statusFacts: needsYouFacts });
+        const child = report({ sessionId: 'child', leadSessionId: 'parent' });
+        const other = report({ sessionId: 'other', leadSessionId: 'lead' });
+        const first = projectWork(input({ reportSessions: [parent, child, other] }));
+        const groups = groupWorkByState(first);
+        const next = groupWorkByState(projectWork(input({ reportSessions: [parent, child, { ...other, title: 'Changed' }] }), first), groups);
+        expect(next.working.find((item) => item.key === 'session:child')).toBe(groups.working.find((item) => item.key === 'session:child'));
+        expect(next.working.find((item) => item.key === 'session:child')?.level).toBe(0);
+    });
+    it('projects an admitted Script once before output exists, retaining its exact target after failure and cancellation', () => {
+        const store = createActionOperationStore();
+        const selectors = createActionOperationSelectors();
+        // The process/output target may differ from the authenticated operation's custody Home and Machine.
+        const attachment = { kind: 'projectCommand', purpose: 'script', serverId: 'target-home', machineId: 'target-machine', workspaceRefId: 'workspace', cwd: '/repo' } as const;
+        const snapshot: ActionOperationSnapshotV1 = {
+            version: 1, operationId: 'command', revision: 1, actionId: 'projects.script.run',
+            state: 'accepted', scope: { accountId: 'account', machineId: 'machine', sessionId: 'lead' },
+            title: 'Build', createdAt: 1, cancellation: 'supported',
+            domainRef: attachment,
+        };
+        const read = () => projectWork(input({ serverId: 'home', accountId: 'account',
+            actionOperations: selectors.selectForSession(store.getSnapshot(), { serverId: 'home', accountId: 'account', sessionId: 'lead' }),
+            describeOperationStatus: (operation) => resolveActionOperationStatus(operation.snapshot, operation.observation).label.value }));
+        store.mergeSnapshots({ serverId: 'home', snapshots: [snapshot] });
+        let projection = read();
+        expect(projection.projectCommands).toHaveLength(1);
+        expect(projection.projectCommands[0].operation?.snapshot.domainRef).toEqual(attachment);
+        const key = projection.projectCommands[0].key;
+        expect(groupWorkByState(projection).working.map((item) => item.key)).toEqual([key]);
+        expect(projection.summary).toMatchObject({ outstanding: 1, runs: 1 });
+        expect(projection.projectCommands[0].open).toEqual({ kind: 'action_operation', serverId: 'home', operationId: 'command' });
+        expect(resolveWorkItemContextActions(projection.projectCommands[0])).toEqual({
+            open: { kind: 'action_operation', serverId: 'home', operationId: 'command' },
+            transcript: { serverId: 'home', sessionId: 'lead' },
+            stop: { serverId: 'home', machineId: 'machine', operationId: 'command' },
+        });
+        expect(projectSessionWorkMap({ leadSessionId: 'lead', leadTitle: 'Lead', projection }).nodesById.get(key)?.open)
+            .toEqual(projection.projectCommands[0].open);
+        store.mergeSnapshots({ serverId: 'home', snapshots: [{ ...snapshot, revision: 2,
+            setupReview: { kind: 'pendingApproval', code: 'project_setup_effect_changed', reviewedEffectDigest: 'reviewed', reviewedEffect: {} },
+        }] });
+        projection = read();
+        expect(projection.projectCommands[0].status).toEqual({ bucket: 'needs_you', tone: 'attention', word: 'needs_review' });
+        expect(groupWorkByState(projection).needsYou.map((item) => item.key)).toEqual([key]);
+        expect(projection.summary).toMatchObject({ outstanding: 1, needsYou: 1, runs: 1 });
+        expect(projection.projectCommands[0].operation?.snapshot.state).toBe('accepted');
+        expect(resolveWorkItemContextActions(projection.projectCommands[0]).stop)
+            .toEqual({ serverId: 'home', machineId: 'machine', operationId: 'command' });
+        for (const [revision, kind] of [[3, 'outcome_uncertain'], [4, 'stop_unconfirmed']] as const) {
+            store.mergeSnapshots({ serverId: 'home', snapshots: [{ ...snapshot, revision, state: 'running', startedAt: 2,
+                observation: { kind, code: 'owner_not_observed' } }] });
+            projection = read();
+            expect(projection.projectCommands[0].status).toMatchObject({ bucket: 'working', tone: 'attention', word: 'unavailable' });
+            expect(projection.summary.outstanding).toBe(1);
+            expect(projection.projectCommands[0].operation?.snapshot.state).toBe('running');
+            expect(resolveWorkItemContextActions(projection.projectCommands[0]).stop)
+                .toEqual(kind === 'stop_unconfirmed' ? { serverId: 'home', machineId: 'machine', operationId: 'command' } : null);
+            expect(selectors.selectForSession(store.getSnapshot(), { serverId: 'home', accountId: 'account', sessionId: 'lead' })[0].observation)
+                .toBe('unavailable');
+        }
+        store.setMachineObservation({ serverId: 'home', machineId: 'machine' }, 'unavailable');
+        expect(read().projectCommands[0].status).toMatchObject({ bucket: 'working', tone: 'attention' });
+        for (const [revision, state] of [[2, 'failed'], [3, 'cancelled']] as const) {
+            const terminal = { ...snapshot, revision, state, startedAt: 2, settledAt: 3,
+                ...(state === 'failed' ? { error: { errorCode: 'exit', error: 'Exit 1' } } : {}),
+                domainRef: { ...attachment, terminalId: 'terminal' },
+            };
+            // A new store models each independent owner settlement (terminal outcomes never transition).
+            const settledStore = createActionOperationStore();
+            settledStore.mergeSnapshots({ serverId: 'home', snapshots: [terminal] });
+            projection = projectWork(input({ serverId: 'home', accountId: 'account', actionOperations: selectors.selectForSession(
+                settledStore.getSnapshot(), { serverId: 'home', accountId: 'account', sessionId: 'lead' }) }));
+            expect(groupWorkByState(projection).recent.map((item) => item.key)).toEqual([key]);
+            expect(projection.projectCommands[0].operation?.snapshot.domainRef).toMatchObject({ terminalId: 'terminal' });
+            expect(projection.summary.outstanding).toBe(0);
+            expect(resolveWorkItemContextActions(projection.projectCommands[0]).stop).toBeNull();
+        }
+    });
+
+    it('keeps workflow command leaves in the represented run and excludes own trigger, foreign Home, Account and sessionless work', () => {
+        const store = createActionOperationStore();
+        const command = (id: string, runId?: string): ActionOperationSnapshotV1 => ({
+            version: 1, operationId: id, revision: 1, actionId: 'projects.script.run', state: 'accepted',
+            scope: { accountId: 'account', machineId: 'machine', sessionId: 'lead' }, title: id,
+            createdAt: 1, cancellation: 'supported', domainRef: { kind: 'projectCommand', purpose: 'script',
+                serverId: 'home', machineId: 'machine', workspaceRefId: 'workspace', cwd: '/repo',
+                ...(runId ? { originRun: { kind: 'workflow_run', serverId: 'home', runId } } : {}),
+            },
+        });
+        store.mergeSnapshots({ serverId: 'home', snapshots: [command('leaf', 'run'), command('trigger-leaf', 'trigger'),
+            { ...command('other-account'), scope: { accountId: 'other', machineId: 'machine', sessionId: 'lead' } },
+            { ...command('no-session'), scope: { accountId: 'account', machineId: 'machine' } }] });
+        store.mergeSnapshots({ serverId: 'elsewhere', snapshots: [command('leaf')] });
+        const operations = createActionOperationSelectors().selectAll(store.getSnapshot());
+        const projection = projectWork(input({ serverId: 'home', accountId: 'account', actionOperations: operations,
+            managedRuns: [managed('run', 'running')], ownTriggerRunIds: new Set(['trigger']) }));
+        expect(projection.projectCommands).toEqual([]);
+        expect(projection.workflows[0].projectCommands?.map((item) => item.title)).toEqual(['leaf']);
+        expect(projection.summary).toMatchObject({ outstanding: 1, runs: 1 });
+        const elsewhere = projectWork(input({ serverId: 'elsewhere', accountId: 'account', actionOperations: operations }));
+        expect(elsewhere.projectCommands.map((item) => item.open)).toEqual([
+            { kind: 'action_operation', serverId: 'elsewhere', operationId: 'leaf' },
+        ]);
+    });
+
     it('distinguishes an unreadable first managed read from proven empty work and quiet disabled work', () => {
         const projection = projectWork(input({}));
         const read = (phase: 'idle' | 'loading' | 'loaded' | 'failed', refreshFailed = false) =>
             resolveWorkReadPresentation({ projection, managedRuns: { phase, refreshFailed }, transcriptLoaded: true });
-        expect(read('failed', true)).toEqual({ nothingYet: false, managedLoading: false, managedUnavailable: true });
-        expect(read('loading')).toEqual({ nothingYet: false, managedLoading: true, managedUnavailable: false });
-        expect(read('loaded')).toEqual({ nothingYet: true, managedLoading: false, managedUnavailable: false });
-        expect(read('idle')).toEqual({ nothingYet: true, managedLoading: false, managedUnavailable: false });
+        expect(read('failed', true)).toEqual({ nothingYet: false, holdWorkingPlace: false, managedUnavailable: true });
+        expect(read('loading')).toEqual({ nothingYet: false, holdWorkingPlace: true, managedUnavailable: false });
+        expect(read('loaded')).toEqual({ nothingYet: true, holdWorkingPlace: false, managedUnavailable: false });
+        expect(read('idle')).toEqual({ nothingYet: true, holdWorkingPlace: false, managedUnavailable: false });
         // A failed refresh, including one of a known empty window, is not proof of current emptiness.
         expect(read('loaded', true).nothingYet).toBe(false);
+    });
+
+    it('keeps the words that tell sibling titles apart, with one word of context, and leaves distinct titles alone', () => {
+        expect(resolveWorkTitleTailStarts(['ORC QA seed 13 child A', 'ORC QA seed 13 child B', 'Webhook replay tool']))
+            .toEqual([15, 15, null]);
+        // Titles that already differ in their first words truncate at the end as usual.
+        expect(resolveWorkTitleTailStarts(['Fix login bug', 'Fix logout bug'])).toEqual([null, null]);
+        // The difference already sits in the first words (kept by an ordinary end truncation); identical titles have none to show.
+        expect(resolveWorkTitleTailStarts(['Deploy', 'Deploy the staging stack'])).toEqual([null, null]);
+        expect(resolveWorkTitleTailStarts(['Nightly deploy of the payments api', 'Nightly deploy of the billing api']))
+            .toEqual([18, 18]);
+        expect(resolveWorkTitleTailStarts(['Same name', 'Same name'])).toEqual([null, null]);
+    });
+
+    it('holds Working\'s place while runs arrive only when nothing else is shown, so known rows never jump up', () => {
+        const withReports = projectWork(input({ reportSessions: [report({ sessionId: 'child', leadSessionId: 'lead' })] }));
+        const loading = resolveWorkReadPresentation({
+            projection: withReports, managedRuns: { phase: 'loading', refreshFailed: false }, transcriptLoaded: true,
+        });
+        // The Sessions under the lead already fill the list: no placeholder above them that later collapses.
+        expect(loading).toEqual({ nothingYet: false, holdWorkingPlace: false, managedUnavailable: false });
     });
 
     it('lists the reportsTo subtree once, each session under its lead, and ignores unrelated sessions', () => {

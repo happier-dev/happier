@@ -1,15 +1,15 @@
-import { happierPageTextMetrics, HAPPIER_WORK_PANE_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { happierPageTextMetrics, HappierWorkDisclosureLine, HAPPIER_WORK_PANE_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { useWorkTheme, WORK_HOST } from '@/components/work/map/WorkMapView';
 import * as React from 'react';
 import { type LayoutChangeEvent, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { readSessionRolesV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
 
 import { settleSessionRoleWrite } from '@/components/roles/session/sessionRole';
-import { WorkSection } from '@/components/sessions/work/WorkSection';
+import { WorkSection, WorkSectionEmptyLine } from '@/components/sessions/work/WorkSection';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
-import { Item } from '@/components/ui/lists/Item';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useSessionMetadata } from '@/sync/domains/state/storage';
@@ -91,12 +91,7 @@ function SessionNotesContent(props: SessionNotesSectionProps) {
             ) : notes ? (
                 <ClampedNotes notes={notes} />
             ) : (
-                <Item
-                    testID="session-work-notes.add"
-                    title={t('roles.session.addNotes')}
-                    showChevron={false}
-                    onPress={startEditing}
-                />
+                <WorkSectionEmptyLine testID="session-work-notes.add" text={t('roles.session.addNotes')} onPress={startEditing} />
             )}
         </WorkSection>
     );
@@ -108,6 +103,7 @@ function SessionNotesContent(props: SessionNotesSectionProps) {
  * clamped text (`onTextLayout` line counts are not reported on web).
  */
 function ClampedNotes(props: Readonly<{ notes: string }>) {
+    const workTheme = useWorkTheme();
     const [expanded, setExpanded] = React.useState(false);
     const [clampedHeight, setClampedHeight] = React.useState(0);
     const [fullHeight, setFullHeight] = React.useState(0);
@@ -143,14 +139,14 @@ function ClampedNotes(props: Readonly<{ notes: string }>) {
                 )}
             </View>
             {overflows ? (
-                <Text
+                <HappierWorkDisclosureLine
                     testID="session-work-notes.more"
-                    accessibilityRole="button"
-                    style={styles.more}
+                    label={t('roles.session.more')}
                     onPress={() => setExpanded(true)}
-                >
-                    {t('roles.session.more')}
-                </Text>
+                    insetPx={0}
+                    theme={workTheme}
+                    host={WORK_HOST}
+                />
             ) : null}
         </View>
     );
@@ -174,12 +170,6 @@ const styles = StyleSheet.create((theme) => ({
         right: 0,
         opacity: 0,
         pointerEvents: 'none',
-    },
-    more: {
-        ...Typography.default('semiBold'),
-        ...happierPageTextMetrics('meta'),
-        color: theme.colors.text.secondary,
-        alignSelf: 'flex-start',
     },
     actions: {
         flexDirection: 'row',

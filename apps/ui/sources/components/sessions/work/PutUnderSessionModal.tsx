@@ -8,7 +8,6 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Modal, type CustomModalInjectedProps } from '@/modal';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import { getStorage } from '@/sync/domains/state/storage';
-import type { Session } from '@/sync/domains/state/storageTypes';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { setSessionReportsTo } from '@/sync/ops/relations/setSessionReportsTo';
 import { t } from '@/text';
@@ -20,6 +19,7 @@ import { describeReportsToRefusal } from './putSessionUnderLead';
 import { buildPutUnderChooserSections, PUT_UNDER_TOP_LEVEL_OPTION_ID } from './putUnderChooser';
 import { resolvePutUnderEligibility } from './putUnderCandidates';
 import { describeSessionListDropReason } from '@/components/sessions/shell/dropPreview/sessionListDropPresentation';
+import { selectSessionRelationRecords } from './reportSubtree';
 
 /**
  * "Put under…" (ORC §3.8, R-03; DnD lab K1c): the keyboard, phone and screen-reader equivalent of
@@ -58,7 +58,8 @@ export function PutUnderSessionModal(props: PutUnderSessionModalProps) {
     const busy = pendingId !== null;
     // A snapshot taken when the sheet opens: the choice is made against what the person saw.
     const [snapshot] = React.useState(() => {
-        const sessions = getStorage().getState().sessions as Readonly<Record<string, Session>>;
+        const state = getStorage().getState();
+        const sessions = selectSessionRelationRecords(state.sessions, props.serverId, state.sessionListRowsByServerId);
         const self = sessions[props.sessionId] ?? null;
         return { sessions, currentLeadId: self?.reportsTo?.sessionId ?? null,
             sessionId: props.sessionId, serverId: props.serverId,
@@ -136,7 +137,8 @@ export function PutUnderSessionModal(props: PutUnderSessionModalProps) {
 
     const onSelect = React.useCallback((optionId: string) => {
         if (busy) return;
-        const sessions = getStorage().getState().sessions as Readonly<Record<string, Session>>;
+        const state = getStorage().getState();
+        const sessions = selectSessionRelationRecords(state.sessions, props.serverId, state.sessionListRowsByServerId);
         const self = sessions[props.sessionId];
         if (!snapshot.lifetime?.isCurrent() || props.serverId !== snapshot.serverId || props.sessionId !== snapshot.sessionId
             || !self || (self.serverId ?? null) !== snapshot.serverId) {

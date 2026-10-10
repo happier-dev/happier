@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HappierFactLine, HappierPressable, joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
@@ -13,6 +13,7 @@ import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { Text } from '@/components/ui/text/Text';
 import { workStatusWordStyle } from '@/components/work/status/workStatusTreatment';
 import { Typography } from '@/constants/Typography';
+import { useWorkTheme, WORK_HOST } from '@/components/work/map/WorkMapView';
 import { t } from '@/text';
 
 import { SessionWorkStripPopoverContent } from './SessionWorkStripPopover';
@@ -40,7 +41,11 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderRadius: 999,
         borderWidth: 1,
         borderColor: 'transparent',
-        backgroundColor: theme.colors.surface.elevated,
+        // Transparent until hovered (lab `session-C`): the strip reads as part of the header row.
+        backgroundColor: 'transparent',
+    },
+    stripHovered: {
+        backgroundColor: theme.colors.surface.pressedOverlay,
     },
     text: {
         ...Typography.default(),
@@ -49,9 +54,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.text.primary,
         fontSize: 12.5,
         lineHeight: 16,
-    },
-    separator: {
-        color: theme.colors.text.tertiary,
     },
 }));
 
@@ -63,6 +65,7 @@ export const SessionHeaderWorkStrip = React.memo((props: Readonly<{
 }>) => {
     const styles = stylesheet;
     const { theme } = useUnistyles();
+    const workTheme = useWorkTheme();
     const pane = useAppPaneScope(props.scopeId);
     const testId = useOptionalSessionScreenTestId('session-header-work-strip');
     const anchorRef = React.useRef<View>(null);
@@ -76,7 +79,10 @@ export const SessionHeaderWorkStrip = React.memo((props: Readonly<{
     }, [pane]);
 
     const { outstanding, needsYou } = props.summary;
-    if (outstanding <= 0) return null;
+    // The Work tab says the same thing at length; while it is open beside the session the glance
+    // steps aside (lab `session-C`: hidden while the tab is open).
+    const workTabOpen = pane.scopeState?.right.isOpen === true && pane.scopeState.right.activeTabId === 'agents';
+    if (outstanding <= 0 || workTabOpen) return null;
 
     const working = t('sessionWork.strip.stillWorking', { count: outstanding });
     const attention = needsYou > 0 ? t('sessionWork.strip.needsYou', { count: needsYou }) : null;
@@ -92,21 +98,15 @@ export const SessionHeaderWorkStrip = React.memo((props: Readonly<{
                 summary: attention ? `${working}, ${attention}` : working,
             })}
             onPress={onPress}
-            style={({ focused, pressed }) => [
+            style={({ focused, pressed, hovered }) => [
                 styles.strip,
+                hovered || open ? styles.stripHovered : null,
                 focusRingStyle({ focused, color: theme.colors.border.focus }),
                 { opacity: pressed ? motionTokens.press.opacitySubtle : 1 },
             ]}
         >
-            <Text numberOfLines={1} style={styles.text}>
-                {working}
-                {attention ? (
-                    <>
-                        <Text style={styles.separator}>{' · '}</Text>
-                        <Text testID={testId ? `${testId}:needs-you` : undefined} style={workStatusWordStyle('attention')}>{attention}</Text>
-                    </>
-                ) : null}
-            </Text>
+            <HappierFactLine numberOfLines={1} style={styles.text} theme={workTheme} host={WORK_HOST}
+                facts={[working, attention ? <Text testID={testId ? `${testId}:needs-you` : undefined} style={workStatusWordStyle('attention')}>{attention}</Text> : null]} />
             <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
                 <Icon name="caret-down" size={12} color={theme.colors.text.secondary} />
             </View>
@@ -129,7 +129,7 @@ export const SessionHeaderWorkStrip = React.memo((props: Readonly<{
                             sessionId={props.sessionId}
                             serverId={props.serverId}
                             scopeId={props.scopeId}
-                            line={attention ? `${working} · ${attention}` : working}
+                            line={joinHappierFacts(working, attention)}
                             onOpenInSidebar={openInSidebar}
                             onClose={close}
                         />

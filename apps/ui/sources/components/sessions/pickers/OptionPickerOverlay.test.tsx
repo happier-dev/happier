@@ -32,6 +32,25 @@ vi.mock('@/text', async () => {
 });
 
 describe('OptionPickerOverlay', () => {
+    it('keeps model rows ahead of status notes that arrive after a selection', async () => {
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+        function Picker() {
+            const [selected, setSelected] = React.useState('model-a');
+            return <OptionPickerOverlay title="Model" showTitle={false} multiColumn fillAvailableSpace
+                options={[{ value: 'model-a', label: 'Model A' }, { value: 'model-b', label: 'Model B' }]}
+                selectedValue={selected} emptyText="Empty" canEnterCustomValue={false} onSelect={setSelected}
+                notes={selected === 'model-b' ? ['Discovery is unavailable'] : []} />;
+        }
+        const screen = await renderScreen(<Picker />);
+        expect(screen.findByTestId('model-picker-overlay-notes')).not.toBeNull();
+        expect(screen.findByTestId('model-picker-overlay-title-row')).toBeNull();
+        await screen.pressByTestIdAsync('model-picker-overlay-option:model-b');
+        const text = screen.getTextContent();
+        expect(text).toContain('Discovery is unavailable');
+        expect(text.indexOf('Discovery is unavailable')).toBeGreaterThan(text.indexOf('Model B'));
+        expect(screen.findByTestId('model-picker-overlay-notes')).not.toBeNull();
+        expect(screen.findByTestId('model-picker-overlay-title-row')).toBeNull();
+    });
     it('scrolls its header, rows and custom entry together in one scroll owner (0.2 engine pane)', async () => {
         const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
         const screen = await renderScreen(
@@ -575,6 +594,22 @@ describe('OptionPickerOverlay', () => {
             expect(list.props.onLayout).toBeUndefined();
             expect(countColumnRows(screen)).toBe(0);
         });
+    });
+
+    it('says a search found nothing, never the caller\'s empty-catalog text, while it still has options (DESIGN-9 N50)', async () => {
+        const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
+        const options = Array.from({ length: 12 }, (_, index) => ({ value: `role-${index}`, label: `Role ${index}` }));
+        const screen = await renderScreen(<OptionPickerOverlay title="Role" options={options} selectedValue=""
+            emptyText="No roles yet" canEnterCustomValue={false} onSelect={vi.fn()} />);
+        const input = screen.findAll((node) => (node.type as unknown) === 'TextInput' && typeof node.props.onChangeText === 'function')[0]!;
+        await act(async () => { input.props.onChangeText('zzzz'); await new Promise(resolve => setTimeout(resolve, 10)); });
+        const text = screen.getTextContent();
+        expect(text).toContain('selectionList.emptyMatch');
+        expect(text).not.toContain('No roles yet');
+
+        const empty = await renderScreen(<OptionPickerOverlay title="Role" options={[]} selectedValue=""
+            emptyText="No roles yet" canEnterCustomValue={false} onSelect={vi.fn()} />);
+        expect(empty.getTextContent()).toContain('No roles yet');
     });
 
     it('selects a named option', async () => {

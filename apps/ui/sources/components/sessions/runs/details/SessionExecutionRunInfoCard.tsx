@@ -1,6 +1,7 @@
 import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import type { ExecutionRunPublicState } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { isExecutionRunActive, type ExecutionRunPublicState } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { parsePermissionIntentAlias } from '@happier-dev/agents/permissions';
+import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -14,6 +15,8 @@ import {
 import { ExecutionRunAgentMark } from '@/components/sessions/runs/ExecutionRunAgentMark';
 import { resolveExecutionRunBackendLabel } from '@/components/sessions/runs/resolveExecutionRunBackendLabel';
 import { resolveExecutionRunTitle } from '@/components/sessions/runs/resolveExecutionRunTitle';
+import { resolveExecutionRunSelectionLabel } from '@/components/sessions/runs/resolveExecutionRunSelectionLabel';
+import { useProviderSettingsForServer } from '@/providers/hooks/useProviderSettings';
 import { ExecutionRunActionsMenu, type ExecutionRunMenuFact } from '@/components/sessions/runs/details/ExecutionRunActionsMenu';
 import { DetailsTabHeader, type DetailsTabHeaderMetaFact } from '@/components/appShell/panes/details/header/DetailsTabHeader';
 import { StatusPill } from '@/components/ui/status/StatusPill';
@@ -109,6 +112,7 @@ const RunElapsed = React.memo((props: Readonly<{ startedAtMs: number }>) => {
  */
 export const SessionExecutionRunInfoCard = React.memo((props: Readonly<{
     run: ExecutionRunPublicState;
+    acpCatalogSnapshot?: AcpCatalogSnapshotV1;
     hostSessionId?: string | null;
     daemonProcessLine?: string | null;
     /** The title of the conversation this Run was started from, when known. */
@@ -130,19 +134,27 @@ export const SessionExecutionRunInfoCard = React.memo((props: Readonly<{
     const styles = stylesheet;
     const status = readExecutionRunAgentActivityStatus(props.run.status);
     const attention = props.attention ?? null;
-    const statusPresentation = attention ?? resolveAgentActivityStatusPresentation(status);
-    const running = status === 'running';
+    const running = isExecutionRunActive(props.run);
+    const statusPresentation = attention ?? resolveAgentActivityStatusPresentation(status, running);
     const agentId = resolveAgentId(props.run);
     const originLabel = resolveLaunchOriginLabel(props.run, props.hostSessionId ?? null, props.originTitle ?? null);
-    const modelId = props.run.requestedConfiguration?.modelId?.trim() || null;
-    const agentLabel = resolveExecutionRunBackendLabel(props.run.backendTarget);
-    const agentAndModel = [agentLabel, modelId].filter((part): part is string => Boolean(part)).join(' · ') || null;
+    const modelId = (props.run.resolvedSelection?.modelSelection?.modelId
+        ?? props.run.resolvedSelection?.teamCredentialModel?.modelId
+        ?? props.run.resolvedSelection?.modelId
+        ?? props.run.requestedConfiguration?.modelId)?.trim() || null;
+    const agentLabel = resolveExecutionRunBackendLabel(props.run.backendTarget, props.acpCatalogSnapshot);
+    const providerConnections = useProviderSettingsForServer().connections;
+    // D9: "Inherit session · <route> · <model>" or "Chosen for this run · …" when the host recorded it.
+    const selectionLabel = resolveExecutionRunSelectionLabel(props.run.resolvedSelection, (connectionId) => (
+        providerConnections.find((connection) => connection.id === connectionId)?.displayName ?? null
+    ));
+    const agentAndModel = [agentLabel, selectionLabel ?? modelId].filter((part): part is string => Boolean(part)).join(' · ') || null;
     const permissionLabel = resolvePermissionLabel(props.run, agentId);
     // `> 0`, not `typeof === 'number'`: an unrecorded start or finish arrives as 0, and a time or a
     // duration made from it would be presented as though it were a fact (D-8).
     const startedAtMs = typeof props.run.startedAtMs === 'number' && props.run.startedAtMs > 0 ? props.run.startedAtMs : null;
     const finishedAtMs = typeof props.run.finishedAtMs === 'number' && props.run.finishedAtMs > 0 ? props.run.finishedAtMs : null;
-    const tookSeconds = !running && startedAtMs !== null && finishedAtMs !== null && finishedAtMs >= startedAtMs
+    const tookSeconds = status !== 'running' && startedAtMs !== null && finishedAtMs !== null && finishedAtMs >= startedAtMs
         ? Math.round((finishedAtMs - startedAtMs) / 1000)
         : null;
 

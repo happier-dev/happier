@@ -5,7 +5,7 @@ import { AIBackendProfileSchema, buildBackendTargetKeyV2, FeatureGatesSchema, Fe
 import { TeamCredentialProviderModelSelectionV1Schema, TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protocol/teams';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import { createDeferred, createMachineFixture, createSessionFixture, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, createMachineFixture, createPlainAccountEncryptionCurrentnessFixture, createSessionFixture, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import type { HomeCredentialMutationEvent } from '@/auth/storage/tokenStorage';
 import { upsertServerProfileOnly } from '@/sync/domains/server/serverRuntime';
 import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
@@ -27,8 +27,17 @@ import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/act
 import '@/sync/syncEngine';
 import { StartReviewDialog } from '@/components/sessions/reviews/walkthrough/StartReviewDialog';
 import type { sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
+import type { ProfileCatalogSnapshotV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
+import { applyProfileCatalogSnapshot, resetProfileCatalogSnapshotsForTests } from '@/sync/store/settings/profileCatalogSnapshot';
+import { resetProfileCatalogEngineForTests } from '@/sync/engine/settings/profileCatalogEngine';
+import { applyAcpCatalogSnapshot, beginAcpCatalogLoad, resetAcpCatalogSnapshotsForTests } from '@/sync/store/settings/acpCatalogSnapshot';
+import { resetAcpCatalogEngineForTests } from '@/sync/engine/settings/acpCatalogEngine';
+import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRecordV1Schema, AcpCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import { SavedSecretResourceMaterialsResponseV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 
 import { admitExecutionRunLaunchTarget } from './executionRunLaunchAdmission';
+import { useExecutionRunLaunchContext } from './useExecutionRunLaunchContext';
 
 const boundary = vi.hoisted(() => ({
     rpc: vi.fn<(input: Parameters<typeof machineRpcWithServerScope>[0]) => Promise<unknown>>(),
@@ -78,6 +87,14 @@ function capabilityResponse(features: Readonly<{ secretReferenceOverlay: boolean
 
 const supportedCapabilities = capabilityResponse({ secretReferenceOverlay: true, runScopedAgentBindings: true });
 
+function activeProfileCatalog(profile: ReturnType<typeof AIBackendProfileSchema.parse>): Extract<ProfileCatalogSnapshotV1, { status: 'ready' }> {
+    return { status: 'ready', authority: 'active', source: 'destination', diagnostics: [], referenceGuardRevision: 1,
+        records: [{ record: { v: 1, id: profile.id, definition: { kind: 'legacy', profile },
+            enabled: true, secretBindings: {}, promptStack: [] }, revision: 1 }],
+        controlRevision: 1, control: { revision: 1, record: { v: 1, phase: 'active', sourceSettingsVersion: 0,
+            migratedLogicalRevision: 1, inventory: [{ kind: 'account_row', id: profile.id, revision: 1 }] } } };
+}
+
 async function launchFixture() {
     const home = await upsertServerProfileOnly({ serverUrl: 'https://launch-admission.example.test', name: 'Launch test Home' });
     const requestedServerIds = [home.id];
@@ -85,6 +102,7 @@ async function launchFixture() {
     const accountLifetime = bindingHook.getCurrent().get(home.id);
     expect(accountLifetime?.isCurrent()).toBe(true);
     if (!accountLifetime) throw new Error('Credential boundary did not bind the test Account');
+    applyAcpCatalogSnapshot(accountLifetime.scope, { status: 'ready', revision: 1, record: { v: 1, definitions: [] } }, true);
     const session = createSessionFixture({
         id: 'rejoined-session', serverId: home.id, active: false,
         metadata: {
@@ -115,7 +133,21 @@ async function launchFixture() {
     return { home, bindingHook, input, session, machine };
 }
 
+it('admits an exact detached workspace without resuming or acquiring a Session', async () => {
+    const { input, bindingHook } = await launchFixture();
+    boundary.rpc.mockResolvedValue(supportedCapabilities);
+    await expect(admitExecutionRunLaunchTarget({ ...input, sessionId: null, session: null,
+        cwd: '/work/rejoined', defaultBackend: null })).resolves.toBeUndefined();
+    expect(boundary.rpc.mock.calls.some(([call]) => call.machineId === 'launch-machine')).toBe(true);
+    expect(boundary.sessionRpc).not.toHaveBeenCalled();
+    await bindingHook.unmount();
+});
+
 beforeEach(() => {
+    resetAcpCatalogEngineForTests();
+    resetAcpCatalogSnapshotsForTests();
+    resetProfileCatalogEngineForTests();
+    resetProfileCatalogSnapshotsForTests();
     boundary.accountId = 'launch-account';
     boundary.rpc.mockReset();
     boundary.sessionRpc.mockReset();
@@ -137,14 +169,124 @@ afterEach(() => {
 });
 
 describe('real execution Run launch admission', () => {
+    it('projects the owner-applied draft selection instead of visible pending intent', async () => {
+        const { input, session } = await launchFixture();
+        const applied = { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'applied-model' };
+        storage.setState({ settingsScope: input.accountLifetime.scope, settings: settingsDefaults,
+            sessions: { [session.id]: { ...session, active: true, modelMode: 'pending-model',
+                metadataLayoutVersion: 1, ownerMetadataView: { ...session.metadata!, connectedServices: {
+                    v: 2, bindingsByServiceId: { 'happier.agent.claude/anthropic': {
+                        source: 'connected', selection: 'group', groupId: 'parent-pool',
+                    } },
+                }, sessionAppliedModelV1: {
+                    v: 1, provider: 'claude', modelId: 'applied-model', selection: applied, updatedAt: 1,
+                } },
+            } },
+        });
+        const hook = await renderHook(() => useExecutionRunLaunchContext(session.id, input.serverId));
+        expect(hook.getCurrent().inheritedModelSelection).toEqual(applied);
+        expect(hook.getCurrent().inheritedRoutePresentation?.applied).toMatchObject({
+            kind: 'native', authSource: 'connected', connectedCount: 1, modelId: 'applied-model',
+        });
+        expect(hook.getCurrent().inheritedConnectedServicesSelection?.bindingsByServiceId['happier.agent.claude/anthropic'])
+            .toEqual({ source: 'connected', selection: 'group', groupId: 'parent-pool' });
+        await act(async () => storage.setState({ sessions: { [session.id]: {
+            ...storage.getState().sessions[session.id]!, ownerMetadataView: null,
+        } } }));
+        expect(hook.getCurrent().inheritedModelSelection).toBeNull();
+        expect(hook.getCurrent().inheritedRoutePresentation?.applied).toEqual({ kind: 'unknown' });
+    });
+
+    it('admits the exact configured ACP target from a ready Account row', async () => {
+        const { input } = await launchFixture();
+        const record = AcpCatalogRecordV1Schema.parse({ v: 1, definitions: [{
+            id: 'review-bot', name: 'review-bot', title: 'Review Bot', command: 'acp', args: [], createdAt: 1, updatedAt: 1,
+        }] });
+        applyAcpCatalogSnapshot(input.accountLifetime.scope, { status: 'ready', revision: 2, record }, true);
+        await expect(admitExecutionRunLaunchTarget({ ...input, session: { ...input.session, active: true },
+            defaultBackend: { ...input.defaultBackend!, agentTarget: null, backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' } },
+            requirements: { secretReferenceOverlay: false, teamCredentialModel: false },
+        })).resolves.toBeUndefined();
+    });
+    it('refuses an authored configured ACP Run from a bundled host after the Account catalog starts loading', async () => {
+        const { input, session } = await launchFixture();
+        storage.setState({
+            settingsScope: input.accountLifetime.scope, settings: settingsDefaults,
+            sessions: { [session.id]: { ...session, active: true } },
+        });
+        const hook = await renderHook(() => useExecutionRunLaunchContext(session.id, input.serverId));
+        await act(async () => {
+            applyAcpCatalogSnapshot(input.accountLifetime.scope, { status: 'ready', revision: 1, record: { v: 1, definitions: [] } }, true);
+            beginAcpCatalogLoad(input.accountLifetime.scope);
+        });
+        await expect(hook.getCurrent().startAction('subagents.delegate.start', {
+            backendTargetKeys: ['acpBackend:review-bot'], instructions: 'Inspect the work', permissionMode: 'read_only',
+        }, 'configured-run')).rejects.toMatchObject({ code: 'acp_catalog_unavailable' });
+    });
+    it('refuses a retained configured ACP launch after its Account catalog starts loading', async () => {
+        const { input } = await launchFixture();
+        applyAcpCatalogSnapshot(input.accountLifetime.scope, { status: 'ready', revision: 1, record: { v: 1, definitions: [] } }, true);
+        beginAcpCatalogLoad(input.accountLifetime.scope);
+        const launch = { ...input,
+            session: { ...input.session, active: true },
+            defaultBackend: { ...input.defaultBackend!, agentTarget: null, backendTarget: { kind: 'backend' as const, backendId: 'review-bot', configuredBackendId: 'review-bot' } },
+            requirements: { secretReferenceOverlay: false, teamCredentialModel: false },
+        };
+        await expect(admitExecutionRunLaunchTarget(launch)).rejects.toMatchObject({ code: 'acp_catalog_unavailable' });
+        expect(boundary.rpc).not.toHaveBeenCalled();
+    });
+    it.each(['loading', 'partial', 'legacy', 'unavailable'] as const)('refuses a Session profile from a %s catalog before launch', async (state) => {
+        const { input } = await launchFixture();
+        const profile = AIBackendProfileSchema.parse({ id: 'admission-profile', name: 'Admission profile' });
+        const ready = activeProfileCatalog(profile);
+        const catalog: ProfileCatalogSnapshotV1 = state === 'loading' ? { status: 'loading' }
+            : state === 'unavailable' ? { status: 'unavailable', reason: 'unreachable' }
+            : state === 'partial' ? { ...ready, status: 'partial' }
+            : { ...ready, source: 'legacy' };
+        applyProfileCatalogSnapshot(input.accountLifetime.scope, catalog, true);
+        const launch = { ...input, session: { ...input.session, active: true, metadata: { ...input.session.metadata!, profileId: profile.id } },
+            requirements: { secretReferenceOverlay: false, teamCredentialModel: false } };
+
+        await expect(admitExecutionRunLaunchTarget(launch)).rejects.toThrow();
+        expect(boundary.rpc).not.toHaveBeenCalled();
+    });
+
+    it('admits a Session profile from a ready active catalog', async () => {
+        const { input } = await launchFixture();
+        const profile = AIBackendProfileSchema.parse({ id: 'admission-profile', name: 'Admission profile' });
+        applyProfileCatalogSnapshot(input.accountLifetime.scope, activeProfileCatalog(profile), true);
+
+        await expect(admitExecutionRunLaunchTarget({ ...input,
+            session: { ...input.session, active: true, metadata: { ...input.session.metadata!, profileId: profile.id } },
+            requirements: { secretReferenceOverlay: false, teamCredentialModel: false } })).resolves.toBeUndefined();
+    });
+
+    it('admits a fresh destination Profile catalog without a predecessor transfer control', async () => {
+        const { input } = await launchFixture();
+        applyProfileCatalogSnapshot(input.accountLifetime.scope, { status: 'ready', source: 'destination',
+            authority: 'inactive', records: [], diagnostics: [], referenceGuardRevision: 'absent', control: null,
+            controlRevision: 'absent' }, true);
+
+        await expect(admitExecutionRunLaunchTarget({ ...input,
+            session: { ...input.session, active: true, metadata: { ...input.session.metadata!, profileId: 'codex' } },
+            requirements: { secretReferenceOverlay: false, teamCredentialModel: false } })).resolves.toBeUndefined();
+    });
+
     it.each(['Triage host selection', 'StartReviewDialog'] as const)('composes %s with real Secret and Team controls, consent and stopped Session resume', async (entry) => {
         restoreExecutorModuleLoader = await installRealActionExecutorModuleLoader();
         const { input, home, session, machine } = await launchFixture();
         const profile = AIBackendProfileSchema.parse({ id: 'review-profile', name: 'Review profile',
             envVarRequirements: [{ name: 'OPENAI_API_KEY', required: true, kind: 'secret' }] });
-        const secret = { id: 'review-secret', name: 'Review key', kind: 'apiKey',
+        const secret = { id: formatSharedSavedSecretRefV1('review-secret'), name: 'Review key', kind: 'apiKey',
             encryptedValue: { _isSecretValue: true, value: 'synthetic-test-value' }, createdAt: 1, updatedAt: 1 };
-        const settings = settingsParse({ ...settingsDefaults, profiles: [profile], secrets: [secret] });
+        const settings = settingsParse(settingsDefaults);
+        const secretMaterials = SavedSecretResourceMaterialsResponseV1Schema.parse({ resources: [{
+            resourceId: 'review-secret', encryptionMode: 'plain', recipientEnvelope: null,
+            storedContent: { t: 'plain', v: { v: 1, name: secret.name, kind: secret.kind, value: secret.encryptedValue.value } },
+            entry: { ref: secret.id, source: 'shared_resource', relationship: 'owner', name: secret.name, kind: secret.kind,
+                encryptionMode: 'plain', revision: 1, materialStatus: 'ready',
+                capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
+        }] });
         const teamModel = TeamCredentialProviderModelSelectionV1Schema.parse({
             kind: 'team_credential_provider_model', teamId: 'review-team', resourceId: 'review-resource',
             expectedResourceRevision: 3, deliveryMode: 'brokered', agentTargetKey: buildBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' }), modelId: 'shared-review-model',
@@ -169,6 +311,11 @@ describe('real execution Run launch admission', () => {
             httpRequests.push({ path, authorization: new Headers(init?.headers).get('Authorization') });
             if (path === '/health' || path === '/v1/auth/ping') return Response.json({});
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+            if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            if (path === ACP_CATALOG_ROWS_ROUTE_V1) return Response.json(AcpCatalogRowReadResponseV1Schema.parse({
+                status: 'present', revision: 1, content: { t: 'plain', v: { v: 1, definitions: [] } },
+            }));
+            if (path === '/v1/account/saved-secrets/resources/materials') return Response.json(secretMaterials);
             if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
             const body = path === '/v1/features'
                 ? FeaturesResponseSchema.parse(createRootLayoutFeaturesResponse({ features: { teams: FeatureGatesSchema.shape.teams.parse({
@@ -184,6 +331,7 @@ describe('real execution Run launch admission', () => {
             machines: { [machine.id]: { ...machine, activeAt: Date.now() } },
             machineListByServerId: { [home.id]: [{ ...machine, activeAt: Date.now() }] },
         });
+        applyProfileCatalogSnapshot(input.accountLifetime.scope, activeProfileCatalog(profile), true);
         const readiness = createDeferred<unknown>();
         boundary.rpc.mockImplementation(async (request) => {
             if (request.method === RPC_METHODS.CAPABILITIES_DETECT) return supportedCapabilities;
@@ -262,7 +410,7 @@ describe('real execution Run launch admission', () => {
             readiness.resolve({ status: 'success', sessionId: session.id });
         });
         const credentials = {
-            secretReferenceOverlay: { v: 1, bindings: { OPENAI_API_KEY: { ref: secret.id } } },
+            secretReferenceOverlay: { v: 1, bindings: { OPENAI_API_KEY: { ref: secret.id, revision: 1 } } },
             teamCredentialModel: teamModel,
             teamCredentialSessionBindingConsent: { v: 1, sessionId: session.id, teamId: teamModel.teamId,
                 resourceId: teamModel.resourceId, expectedResourceRevision: teamModel.expectedResourceRevision },

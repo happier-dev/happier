@@ -428,6 +428,7 @@ export const createSystemTasksRunner = createSystemTaskRunner;
 export function waitForSystemTaskResult(
     runner: SystemTaskRunner,
     taskId: string,
+    options: Readonly<{ signal?: AbortSignal }> = {},
 ): Promise<SystemTaskResult> {
     const normalizedTaskId = String(taskId ?? '').trim();
     if (!normalizedTaskId) return Promise.reject(new Error('System task id is required.'));
@@ -435,11 +436,23 @@ export function waitForSystemTaskResult(
     return new Promise<SystemTaskResult>((resolve, reject) => {
         let settled = false;
         let unsubscribe: (() => void) | null = null;
+        const release = () => {
+            unsubscribe?.();
+            options.signal?.removeEventListener('abort', aborted);
+        };
+        const aborted = () => {
+            if (settled) return;
+            settled = true;
+            release();
+            const error = new Error('System task wait aborted.');
+            error.name = 'AbortError';
+            reject(options.signal?.reason ?? error);
+        };
         const settle = (result: SystemTaskResult | null): void => {
             if (settled) return;
             if (!result) return;
             settled = true;
-            unsubscribe?.();
+            release();
             resolve(result);
         };
         const inspect = (): void => {
@@ -447,14 +460,16 @@ export function waitForSystemTaskResult(
             if (!snapshot) {
                 if (!unsubscribe) return;
                 settled = true;
-                unsubscribe();
+                release();
                 reject(new Error(`Unknown system task: ${normalizedTaskId}`));
                 return;
             }
             settle(snapshot.result);
         };
-
+        if (options.signal?.aborted) { aborted(); return; }
+        options.signal?.addEventListener('abort', aborted, { once: true });
         unsubscribe = runner.subscribe(normalizedTaskId, inspect);
+        if (settled) release();
         inspect();
     });
 }

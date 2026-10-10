@@ -6,6 +6,9 @@ import { PluginSourceCustodyV1Schema, type PluginSourceCustodyV1 } from '@happie
 import { findSpawnConfigOptionAliasConflicts, mergeSpawnConfigOptionAliases, type SpawnConfigOptionValue } from '@happier-dev/protocol/actions/sessionSpawnConfigOptions';
 import { normalizeConnectedServiceSelectionInput } from '@happier-dev/protocol/connect/normalizeConnectedServiceSelectionInput';
 import type { ExecutionRunStartRequest } from '@happier-dev/protocol/execution/runs/index';
+import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
+
+import { backendTargetKeysMatch } from '@/agents/backendCatalog/backendTargetKeyV2';
 
 import type { ExecutionRunLauncherBackendChoice } from './resolveExecutionRunLauncherBackendChoices';
 
@@ -16,6 +19,7 @@ type RowlessRunStartOptions = Pick<ExecutionRunStartRequest,
     | 'notifyParentOnCompletion'
     | 'profileId'
     | 'modelId'
+    | 'modelSelection'
     | 'sessionConfigOptionOverrides'
     | 'connectedServices'
     | 'connectedServicesDefaultServiceIds'
@@ -52,6 +56,14 @@ export function resolveRowlessExecutionRunStartOptions(params: Readonly<{
     if (profileSourceCustody && !profileSourceCustody.success) return { ok: false };
     if (Boolean(profileId) !== Boolean(profileSourceCustody?.success)) return { ok: false };
     const modelId = typeof params.input.modelId === 'string' && params.input.modelId.trim() ? params.input.modelId.trim() : null;
+    const modelSelection = params.input.modelSelection === undefined
+        ? null
+        : ProviderBoundModelRefSchema.nullable().safeParse(params.input.modelSelection);
+    if (modelSelection && !modelSelection.success) return { ok: false };
+    if (modelSelection?.success && modelSelection.data !== null && (
+        !backendTargetKeysMatch(modelSelection.data.agentTargetKey, params.choice.backendTarget)
+        || (modelId !== null && modelId !== modelSelection.data.modelId)
+    )) return { ok: false };
     const parsedCanonical = params.input.sessionConfigOptionOverrides === undefined
         ? null
         : AcpConfigOptionOverridesV1Schema.safeParse(params.input.sessionConfigOptionOverrides);
@@ -88,7 +100,8 @@ export function resolveRowlessExecutionRunStartOptions(params: Readonly<{
         : TeamCredentialProviderModelSelectionV1Schema.safeParse(params.input.teamCredentialModel);
     if (teamCredentialModel && !teamCredentialModel.success) return { ok: false };
     if (teamCredentialModel?.success && (
-        teamCredentialModel.data.agentTargetKey !== params.choice.targetKey
+        modelSelection?.success
+        || teamCredentialModel.data.agentTargetKey !== params.choice.targetKey
         || teamCredentialModel.data.modelId !== modelId
     )) return { ok: false };
     const teamCredentialSessionBindingConsent = params.input.teamCredentialSessionBindingConsent === undefined
@@ -119,8 +132,9 @@ export function resolveRowlessExecutionRunStartOptions(params: Readonly<{
                 ? { profileId, profileSourceCustody: profileSourceCustody.data }
                 : {}),
             ...(modelId ? { modelId } : {}),
+            ...(modelSelection?.success ? { modelSelection: modelSelection.data } : {}),
             ...(sessionConfigOptionOverrides ? { sessionConfigOptionOverrides } : {}),
-            ...(connectedServices?.ok && connectedServices.bindings ? { connectedServices: connectedServices.bindings } : {}),
+            ...(connectedServices?.ok && connectedServices.bindings !== undefined ? { connectedServices: connectedServices.bindings } : {}),
             ...(connectedServices?.ok && connectedServices.defaultServiceIds.length > 0
                 ? { connectedServicesDefaultServiceIds: [...connectedServices.defaultServiceIds] }
                 : {}),

@@ -198,7 +198,7 @@ const BoardBody = React.memo(function BoardBody(props: Readonly<{ board: WorkBoa
                 : [{ destination: { kind: 'add' }, label: binding.getContext().board.name, group: binding.getContext().board.name }],
             resolve: ({ item }) => {
                 const admission = resolveWorkBoardEntityDrop({ item, context: binding.getContext(), destination: null, canvasAvailable: false });
-                return admission.status === 'allowed' && admission.effect.actionId === 'widgets.instance.move'
+                return admission.status === 'allowed' && admission.effect.actionId === 'widgets.item.move'
                     ? binding.admitWidgetMovement?.(admission.effect) ?? widgetMovementRefused('widget_admission_unavailable', admission.effect.preview)
                     : admission;
             },
@@ -234,10 +234,14 @@ const BoardBody = React.memo(function BoardBody(props: Readonly<{ board: WorkBoa
         placement,
     })), [widgetDescriptors, widgets]);
     const arrivals = useBoardWidgetArrivals(board.id, ownAdds.current, dispatchIntent);
+    const widgetRuntimeScopes = React.useMemo(() => widgets.map(placement => widgetSurface
+        ? { ...placement.ref.surface, serverId: widgetSurface.serverId }
+        : null), [widgets, widgetSurface]);
     const renderWidget = React.useCallback<BoardCanvasWidgetRender>((widget, state) => (
         <BoardWidgetCard
             boardId={board.id}
             placement={widget.placement}
+            scope={widgetRuntimeScopes[widgets.indexOf(widget.placement)] ?? null}
             descriptor={widgetDescriptors[widgets.indexOf(widget.placement)] ?? null}
             size={widget.size!}
             index={widgets.indexOf(widget.placement)}
@@ -248,7 +252,7 @@ const BoardBody = React.memo(function BoardBody(props: Readonly<{ board: WorkBoa
             fresh={arrivals.arrived.has(widget.placement.instance.id)}
             testID={`board-widget:${widget.placement.instance.id}`}
         />
-    ), [arrivals.arrived, board.id, dispatchIntent, routeFocused, widgetDescriptors, widgets]);
+    ), [arrivals.arrived, board.id, dispatchIntent, routeFocused, widgetDescriptors, widgetRuntimeScopes, widgets]);
 
     const onRemoveItem = React.useCallback((ref: BoardItemRefV1) => {
         dispatch({

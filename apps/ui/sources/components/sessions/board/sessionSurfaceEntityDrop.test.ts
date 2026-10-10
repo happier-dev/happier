@@ -32,11 +32,11 @@ describe('qualified Session surface entity drops', () => {
         const ref = { surface: { ...scope, owner: { kind: 'project' as const, projectId: 'portable-source' } }, instanceId: 'configured-one' };
         const carried: EntityDragItemV1 = { kind: 'widget-area-instance', scope, ref };
         expect(resolveSessionBoardEntityDrop({ item: carried, scope, address, board: board(), viewId: 'b', preview })).toMatchObject({
-            status: 'allowed', effect: { actionId: 'widgets.instance.move', input: { ref,
+            status: 'allowed', effect: { actionId: 'widgets.item.move', input: { ref,
                 to: { surface: { ...scope, owner: { kind: 'sessionBoard', sessionId: address.sessionId } }, tabId: 'b', index: 1 } } },
         });
         expect(resolveSessionCompanionEntityDrop({ item: carried, scope, address, board: board(), items: [], ready: true, preview })).toMatchObject({
-            status: 'allowed', effect: { actionId: 'widgets.instance.move', input: { ref,
+            status: 'allowed', effect: { actionId: 'widgets.item.move', input: { ref,
                 to: { surface: { ...scope, owner: { kind: 'companion', sessionId: address.sessionId } }, index: 0 } } },
         });
     });
@@ -44,11 +44,11 @@ describe('qualified Session surface entity drops', () => {
         const carried: EntityDragItemV1 = { kind: 'work-board-widget', scope, boardId: 'launch', instanceId: 'configured-one' };
         const ref = { surface: { ...scope, owner: { kind: 'workBoard', boardId: 'launch' } }, instanceId: 'configured-one' };
         expect(resolveSessionBoardEntityDrop({ item: carried, scope, address, board: board(), viewId: 'b', preview })).toMatchObject({
-            status: 'allowed', effect: { actionId: 'widgets.instance.move', input: { ref,
+            status: 'allowed', effect: { actionId: 'widgets.item.move', input: { ref,
                 to: { surface: { ...scope, owner: { kind: 'sessionBoard', sessionId: address.sessionId } }, tabId: 'b', index: 1 } } },
         });
         expect(resolveSessionCompanionEntityDrop({ item: carried, scope, address, board: board(), items: [], ready: true, preview })).toMatchObject({
-            status: 'allowed', effect: { actionId: 'widgets.instance.move', input: { ref,
+            status: 'allowed', effect: { actionId: 'widgets.item.move', input: { ref,
                 to: { surface: { ...scope, owner: { kind: 'companion', sessionId: address.sessionId } }, index: 0 } } },
         });
     });
@@ -57,7 +57,7 @@ describe('qualified Session surface entity drops', () => {
             v: 1, id: 'configured-one', definition: { kind: 'builtin', id: 'changes' }, bindings: {},
         } } };
         expect(resolveSessionBoardEntityDrop({ item: carried, scope, address, board: board(), viewId: 'b', preview })).toMatchObject({
-            status: 'allowed', effect: { actionId: 'widgets.instance.move', input: {
+            status: 'allowed', effect: { actionId: 'widgets.item.move', input: {
                 ref: { surface: { ...scope, owner: { kind: 'companion', sessionId: address.sessionId } }, instanceId: 'configured-one' },
                 to: { surface: { ...scope, owner: { kind: 'sessionBoard', sessionId: address.sessionId } }, tabId: 'b', index: 1 },
             } },
@@ -65,7 +65,7 @@ describe('qualified Session surface entity drops', () => {
     });
     it('moves a configured Board widget to Companion but keeps ordinary Board references as copies', () => {
         expect(resolveSessionCompanionEntityDrop({ item, scope, address, board: board(true), items: [], ready: true, preview })).toMatchObject({
-            status: 'allowed', effect: { actionId: 'widgets.instance.move', input: {
+            status: 'allowed', effect: { actionId: 'widgets.item.move', input: {
                 ref: { surface: { ...scope, owner: { kind: 'sessionBoard', sessionId: address.sessionId } }, instanceId: 'configured-one' },
                 to: { surface: { ...scope, owner: { kind: 'companion', sessionId: address.sessionId } }, index: 0 },
             } },
@@ -76,7 +76,7 @@ describe('qualified Session surface entity drops', () => {
         const carried: EntityDragItemV1 = { kind: 'companion-item', scope, address, item: ref };
         const items = [ref, { kind: 'builtin' as const, id: 'session_summary' as const }, { kind: 'widget' as const, widgetId: 'two' }];
         expect(resolveSessionCompanionEntityDrop({ item: carried, scope, address, board: board(), items, ready: true,
-            anchor: { side: 'after', itemKey: 'widget:two' }, preview })).toMatchObject({ status: 'allowed', effect: { actionId: 'widgets.instance.move', input: {
+            anchor: { side: 'after', itemKey: 'widget:two' }, preview })).toMatchObject({ status: 'allowed', effect: { actionId: 'widgets.item.move', input: {
                 ref: { surface: { ...scope, owner: { kind: 'companion', sessionId: address.sessionId } }, instanceId: ref.instance.id },
                 to: { surface: { ...scope, owner: { kind: 'companion', sessionId: address.sessionId } }, index: 2 },
             } } });
@@ -84,7 +84,7 @@ describe('qualified Session surface entity drops', () => {
     it('moves configured Board placements through the widget Action with an explicit destination tab and native index', () => {
         const admission = resolveSessionBoardEntityDrop({ item, scope, address, board: board(true), viewId: 'a', anchor: { side: 'after', itemId: 'two' }, preview });
         const surface = { ...scope, owner: { kind: 'sessionBoard', sessionId: address.sessionId } };
-        expect(admission).toMatchObject({ status: 'allowed', effect: { actionId: 'widgets.instance.move', input: {
+        expect(admission).toMatchObject({ status: 'allowed', effect: { actionId: 'widgets.item.move', input: {
             ref: { surface, instanceId: 'configured-one' }, to: { surface, tabId: 'a', index: 1 },
         } } });
         expect(resolveSessionBoardEntityDrop({ item, scope, address, board: board(true), viewId: 'b', preview })).toMatchObject({ status: 'allowed', effect: { input: {

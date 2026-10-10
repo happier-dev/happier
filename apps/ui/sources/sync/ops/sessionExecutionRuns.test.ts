@@ -93,6 +93,18 @@ describe('sessionExecutionRuns', () => {
         sessionState.settings = {};
     });
 
+    it('starts an omitted attached choice through safe ensure/start and preserves the complete start identity', async () => {
+        sessionRpcMock.mockResolvedValue({ ok: true, created: true, runId: 'run-1', callId: 'call-1', sidechainId: 'side-1' });
+        const request = {
+            intent: 'delegate', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, instructions: 'Inspect',
+            permissionMode: 'read_only', retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response',
+        } as const;
+        const result = await sessionExecutionRuns.sessionExecutionRunStart('session-1', request);
+        expect(result).toMatchObject({ runId: 'run-1', callId: 'call-1', sidechainId: 'side-1' });
+        expect(sessionRpcMock).toHaveBeenCalledWith('session-1', SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1,
+            { runId: null, resume: false, start: request }, expectRpcTimeout);
+    });
+
     it('preserves the captured Account refusal instead of using ambient Session RPC', async () => {
         sessionRpcMock.mockResolvedValue({ ok: true });
         const refusal = { ok: false, error: 'Account scope retired', errorCode: 'scope_retired' };
@@ -102,6 +114,30 @@ describe('sessionExecutionRuns', () => {
             runId: 'run_1', actionId: 'review.follow_up', input: { messageMarkdown: 'Explain this finding' },
         }, { serverId: 'server-a', scope: { serverId: 'server-a', accountId: 'captured-account' } });
         expect(response).toEqual(refusal);
+        expect(notifyExecutionRunActivityMock).not.toHaveBeenCalled();
+    });
+
+    it.each(['start', 'ensure', 'cancel_turn'] as const)('keeps %s on its captured Account without ambient fallback', async (kind) => {
+        const scope = { serverId: 'server-a', accountId: 'captured-account' };
+        const refusal = { ok: false, error: 'Account scope retired', errorCode: 'scope_retired' };
+        sessionAccountRpcMock.mockResolvedValue(refusal);
+        const result = kind === 'start'
+            ? await sessionExecutionRuns.sessionExecutionRunStart('session-1', {
+                intent: 'delegate', backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+                permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming',
+            }, { scope })
+            : kind === 'ensure'
+            ? await sessionExecutionRuns.sessionExecutionRunEnsure('session-1', { runId: 'run-1', resume: true }, { scope })
+            : await sessionExecutionRuns.sessionExecutionRunCancelTurn('session-1', {
+                runId: 'run-1', occurrenceId: 'occurrence-1', turnId: 'turn-1',
+            }, { scope });
+        expect(result).toEqual(refusal);
+        expect(sessionAccountRpcMock).toHaveBeenCalledWith(expect.objectContaining({
+            scope, serverId: 'server-a',
+            method: kind === 'start' ? SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1
+                : kind === 'ensure' ? SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE : SESSION_RPC_METHODS.EXECUTION_RUN_CANCEL_TURN_V1,
+        }));
+        expect(sessionRpcMock).not.toHaveBeenCalled();
         expect(notifyExecutionRunActivityMock).not.toHaveBeenCalled();
     });
 
@@ -155,12 +191,14 @@ describe('sessionExecutionRuns', () => {
         });
     });
 
-    it('calls execution.run.start through session RPC', async () => {
+    it('calls execution.run.start for a fully explicit legacy-safe native selection', async () => {
         sessionRpcMock.mockResolvedValue({ runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' });
 
         const response = await sessionExecutionRuns.sessionExecutionRunStart('session-1', {
             intent: 'review',
             backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+            modelId: 'sonnet',
+            connectedServices: null,
             instructions: 'Review this repo.',
             permissionMode: 'read_only',
             retentionPolicy: 'ephemeral',
@@ -174,6 +212,8 @@ describe('sessionExecutionRuns', () => {
             {
                 intent: 'review',
                 backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+                modelId: 'sonnet',
+                connectedServices: null,
                 instructions: 'Review this repo.',
                 permissionMode: 'read_only',
                 retentionPolicy: 'ephemeral',
@@ -286,8 +326,8 @@ describe('sessionExecutionRuns', () => {
         await expect(sessionExecutionRuns.sessionExecutionRunCancelTurn('session-1', {
             runId: 'run_1', occurrenceId: 'occurrence_1', turnId: 'turn_1',
         })).resolves.toMatchObject({ ok: true, status: 'requested' });
-        await expect(sessionExecutionRuns.sessionExecutionRunResume('session-1', {
-            runId: 'run_1',
+        await expect(sessionExecutionRuns.sessionExecutionRunEnsure('session-1', {
+            runId: 'run_1', resume: true,
         })).resolves.toEqual({ ok: true });
 
         expect(sessionRpcMock.mock.calls.slice(-2).map((call) => [call[1], call[2]])).toEqual([

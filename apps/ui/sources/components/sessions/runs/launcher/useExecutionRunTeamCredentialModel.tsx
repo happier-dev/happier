@@ -28,7 +28,7 @@ export type ExecutionRunTeamCredentialModel = Readonly<{
  * `teamCredentialSessionBindingConsent`, `modelId`); this hook only reads and writes it.
  */
 export function useExecutionRunTeamCredentialModel(params: Readonly<{
-    sessionId: string;
+    sessionId: string | null;
     serverId: string | null;
     selectedBackendChoice: ExecutionRunLauncherBackendChoice | null;
     hasBackendChoices: boolean;
@@ -120,7 +120,7 @@ export function useExecutionRunTeamCredentialModel(params: Readonly<{
                 ...previous,
                 teamCredentialModel: outcome.selection,
                 modelId: outcome.selection.modelId,
-                ...(teamVisible
+                ...(teamVisible && sessionId
                     ? {
                         teamCredentialSessionBindingConsent: {
                             v: 1,
@@ -132,7 +132,7 @@ export function useExecutionRunTeamCredentialModel(params: Readonly<{
                     }
                     : {}),
             };
-            if (!teamVisible) delete next.teamCredentialSessionBindingConsent;
+            if (!teamVisible || !sessionId) delete next.teamCredentialSessionBindingConsent;
             delete next.modelSelection;
             return next;
         });

@@ -267,4 +267,30 @@ describe('sessionOrganizationMutationOwner', () => {
             },
         }));
     }, 120_000);
+
+    it('admits rail additions only from the exact Home canonical Bot, but can clear a retained demoted choice', async () => {
+        const { createSessionFixture } = await import('@/dev/testkit');
+        const { getStorage } = await import('@/sync/domains/state/storageStore');
+        const { writeSessionOrganizationPin } = await import('./sessionOrganizationMutationOwner');
+        const ordinary = createSessionFixture({ id: 'same-session' });
+        const bot = createSessionFixture({ id: 'same-session', metadata: { path: '/repo', host: 'host', bot: { kind: 'bot' } } });
+        getStorage().setState({ sessionListRowsByServerId: {
+            'rail-home': { [ordinary.id]: ordinary }, 'other-home': { [bot.id]: bot },
+        } });
+        const scope = { credentials, serverId: 'rail-home', serverIdAliases: [], serverUrl: 'https://rail.example.test' };
+        await expect(writeSessionOrganizationPin({ scope, sessionId: ordinary.id, surface: 'rail', pinned: true }))
+            .rejects.toMatchObject({ code: 'session_not_bot' });
+        expect(mocks.setSessionOrganizationPin).not.toHaveBeenCalled();
+        mocks.setSessionOrganizationPin.mockResolvedValue({ pin: null });
+        await writeSessionOrganizationPin({ scope, sessionId: ordinary.id, surface: 'rail', pinned: false });
+        expect(mocks.setSessionOrganizationPin).toHaveBeenCalledWith(expect.objectContaining({
+            serverUrl: 'https://rail.example.test', credentials,
+            request: expect.objectContaining({ surface: 'rail', pinned: false }),
+        }));
+        getStorage().setState({ sessionListRowsByServerId: { 'rail-home': { [bot.id]: bot } } });
+        mocks.setSessionOrganizationPin.mockResolvedValue({ pin: {
+            sessionId: bot.id, sortKey: null, pinnedAt: 1, listPinned: false, railPinned: true,
+        } });
+        await expect(writeSessionOrganizationPin({ scope, sessionId: bot.id, surface: 'rail', pinned: true })).resolves.not.toThrow();
+    }, 120_000);
 });

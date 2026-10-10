@@ -1,11 +1,15 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  createSessionFixture,
-  renderScreen,
-  standardCleanup,
-} from '@/dev/testkit';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createVoiceSettingsAccountTestHarness } from '@/voice/settings/panels/voiceSettingsAccountTestHarness';
+import { settingsParse } from '@/sync/domains/settings/settings';
+import { storage } from '@/sync/domains/state/storage';
+import { ActionSettingsTargetModeControl } from '@/components/settings/actions/ActionSettingsTargetModeControl';
 import type { SessionInstructionsSource } from '../useSessionInstructionsSource';
 
 (
@@ -25,10 +29,18 @@ vi.mock('@/modal', async () => {
   const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
   return createModalModuleMock().module;
 });
+vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>();
+  const { createFrontDoorActionExecuteForVitest } = await import('@/dev/testkit/harness/frontDoorActionExecutorBoundary');
+  return { ...original, createFrontDoorActionExecute: createFrontDoorActionExecuteForVitest(original) };
+});
+installDisconnectedServerSocketBoundary();
+const originalState = storage.getState();
 
 afterEach(() => {
   standardCleanup();
   navigation.push.mockClear();
+  storage.setState(originalState, true);
 });
 
 const { SessionInstructionsBody, resolveSessionInstructionsAccess } =
@@ -62,18 +74,50 @@ function documentOf(markdown: string) {
   } as unknown as NonNullable<SessionInstructionsSource['document']>;
 }
 
-async function render(state: SessionInstructionsSource) {
-  const session = createSessionFixture({ id: 'bot', serverId: 'home-a' });
+async function render(state: SessionInstructionsSource, serverId = 'home-a') {
+  const session = createSessionFixture({ id: 'bot', serverId });
   return renderScreen(
     <SessionInstructionsBody
       session={session}
-      serverId="home-a"
+      serverId={serverId}
       source={state}
     />,
   );
 }
 
 describe('Work › Instructions', () => {
+  it('admits the exact Agent edits mode and preserves current neighboring Account policies', async () => {
+    const account = await createVoiceSettingsAccountTestHarness(settingsParse({ actionsSettingsV1: { v: 1, actions: {} } }));
+    try {
+      const screen = await render(source({ status: 'ready', ref, document: documentOf('Current instructions') }), account.scope.serverId);
+      const control = screen.findAllByType(ActionSettingsTargetModeControl)[0];
+      if (!control) throw new Error('Agent edits control missing');
+      const select = control.props.onChange;
+      act(() => account.replaceSettings(settingsParse({ ...account.settings, actionsSettingsV1: { v: 1, actions: {
+        'prompt_doc.create': { disabledSurfaces: ['mcp'] },
+        'prompt_doc.update': { disabledSurfaces: ['cli'] },
+      } } })));
+      await act(async () => { select('allowed'); });
+      await vi.waitFor(() => expect(account.persistedSettings.actionsSettingsV1.actions['prompt_doc.update']?.approvalWaivedSurfaces).toContain('agent'));
+      expect(account.persistedSettings.actionsSettingsV1.actions['prompt_doc.create']?.disabledSurfaces).toEqual(['mcp']);
+      expect(account.persistedSettings.actionsSettingsV1.actions['prompt_doc.update']?.disabledSurfaces).toEqual(['cli']);
+    } finally { standardCleanup(); await account.dispose(); }
+  });
+
+  it('does not bypass disabled settings.set when changing Agent edits', async () => {
+    const account = await createVoiceSettingsAccountTestHarness(settingsParse({ actionsSettingsV1: { v: 1, actions: {
+      'settings.set': { disabledSurfaces: ['ui'] },
+    } } }));
+    try {
+      const screen = await render(source({ status: 'ready', ref, document: documentOf('Current instructions') }), account.scope.serverId);
+      const control = screen.findAllByType(ActionSettingsTargetModeControl)[0];
+      if (!control) throw new Error('Agent edits control missing');
+      await act(async () => { control.props.onChange('allowed'); });
+      expect(account.settings.actionsSettingsV1.actions['prompt_doc.update']?.approvalWaivedSurfaces).not.toContain('agent');
+      expect(account.writes).toEqual([]);
+    } finally { standardCleanup(); await account.dispose(); }
+  });
+
   it('renders an attached document in place with its source line, and Edit opens the Prompt Library editor', async () => {
     const screen = await render(
       source({
@@ -118,6 +162,13 @@ describe('Work › Instructions', () => {
       offline.findByTestId('session-work-instructions.stale'),
     ).toBeTruthy();
     expect(offline.findByTestId('session-work-instructions.body')).toBeTruthy();
+  });
+
+  it('offers Detach for a healthy attachment without hiding the document', async () => {
+    const screen = await render(source({ status: 'ready', ref, document: documentOf('Current instructions') }));
+    expect(screen.findByTestId('session-work-instructions.detach')).toBeTruthy();
+    await screen.pressByTestIdAsync('session-work-instructions.detach');
+    expect(screen.findByTestId('session-work-instructions.body')).toBeTruthy();
   });
 
   it('distinguishes a valid empty document, no attachment, a deleted document and owner-private instructions', async () => {

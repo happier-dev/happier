@@ -155,7 +155,7 @@ function iconFor(item: WorkItem): SessionAgentActivityPresentation['iconName'] {
             return WORKER_KIND_GLYPHS.execution_run;
         case 'session':
         case 'agent':
-            return 'stack-simple';
+            return WORKER_KIND_GLYPHS.session;
     }
 }
 
@@ -200,6 +200,11 @@ export const WorkRowShell = React.memo((props: Readonly<{
     testID: string;
     accessibilityLabel: string;
     selected?: boolean;
+    expanded?: HappierWorkRowShellProps['expanded'];
+    controlRef?: HappierWorkRowShellProps['controlRef'];
+    accessibilityActions?: HappierWorkRowShellProps['accessibilityActions'];
+    onAccessibilityAction?: HappierWorkRowShellProps['onAccessibilityAction'];
+    trailingAccessory?: React.ReactNode;
     level?: number;
     onPress: () => void;
     onLongPress?: HappierWorkRowShellProps['onLongPress'];
@@ -212,6 +217,11 @@ export const WorkRowShell = React.memo((props: Readonly<{
             testID={props.testID}
             accessibilityLabel={props.accessibilityLabel}
             selected={props.selected}
+            expanded={props.expanded}
+            controlRef={props.controlRef}
+            accessibilityActions={props.accessibilityActions}
+            onAccessibilityAction={props.onAccessibilityAction}
+            trailingAccessory={props.trailingAccessory}
             level={props.level}
             onPress={props.onPress}
             onLongPress={props.onLongPress}

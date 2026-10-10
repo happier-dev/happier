@@ -16,6 +16,7 @@ import { SessionBoardSurface } from './SessionBoardSurface';
 import type { SessionWidgetDensity } from './SessionWidgetHost';
 import { SessionBoardNoteEditorCard } from './note/SessionBoardNoteEditorCard';
 import { SessionBoardHostedHtmlEditorCard } from './hostedHtml/SessionBoardHostedHtmlEditorCard';
+import { readSessionBoardHostedHtmlItemText } from './hostedHtml/sessionBoardHostedHtmlItem';
 import { useSessionBoardHostActionBindings } from './useSessionBoardHostActionBindings';
 import type { SessionPluginRuntimeState } from '@/components/sessions/plugins/useSessionPluginRuntime';
 import type { CallerHostedHtmlRuntime } from '@/components/ui/surfaces/hostedHtml/HostedHtmlSurfaceAdapter';
@@ -94,6 +95,11 @@ export function SessionBoardPane(props: SessionBoardPaneProps): React.ReactEleme
         [props.serverId, props.sessionId],
     );
     const mounted = useMountedSessionBoardController(boardAddress);
+    const acquireContent = mounted?.acquireContent;
+    React.useEffect(() => {
+        if (props.retained) return;
+        return acquireContent?.();
+    }, [acquireContent, props.retained]);
     const binding = mounted?.binding ?? null;
     const controller = mounted?.controller ?? null;
     const actions = mounted?.actions ?? null;
@@ -352,8 +358,5 @@ function readLatestNoteBody(snapshot: SessionBoardSnapshot, itemId: string): str
 function readLatestHostedHtml(snapshot: SessionBoardSnapshot, itemId: string): string | null {
     const latest = snapshot.itemsById.get(itemId);
     if (latest?.state.kind !== 'ready') return null;
-    const source = latest.state.item.source;
-    return source.kind === 'hostedHtml' && source.source.kind === 'html'
-        ? source.source.html
-        : null;
+    return readSessionBoardHostedHtmlItemText(latest.state.item);
 }

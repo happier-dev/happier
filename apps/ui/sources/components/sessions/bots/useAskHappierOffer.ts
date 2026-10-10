@@ -5,6 +5,11 @@ import { useHomeSetupDismissals } from '@/components/hub/layout/useHomeSetupDism
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { AskHappierContext } from '@/sync/domains/pending/pendingSetupIntent.shared';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
+import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import type { AskHappierDraftResult } from './happierGuideDraft';
+import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import type { PromptDocArtifactRefV1 } from '@happier-dev/protocol/prompts/library/promptArtifactRefsV1';
 
 import { startAskHappier } from './askHappierEntry';
 
@@ -57,7 +62,7 @@ export function useAskHappierOfferChoices(): Readonly<{
   const { dismiss } = useHomeSetupDismissals();
   return React.useMemo(
     () => ({
-      start: () => open(),
+      start: () => fireAndForget(open(), { tag: 'AskHappier.startOffer' }),
       notNow: snoozeOffer,
       dontShowAgain: () =>
         fireAndForget(dismiss(ASK_HAPPIER_SETUP_STEP_ID), {
@@ -72,17 +77,29 @@ export function useAskHappierOfferChoices(): Readonly<{
  * The entry opener a mounted control calls. The Account lifetime and the visible screen are
  * captured at the press, never read again after the draft opens.
  */
-export function useAskHappierOpener(): (context?: AskHappierContext) => void {
+export function useAskHappierOpener(): (context?: AskHappierContext) => Promise<AskHappierDraftResult> {
   const currentUiContextReader = useOptionalCurrentUiContextReader();
+  const start = useAskHappierStarter();
+  return React.useCallback(async (context?: AskHappierContext) => start({
+    lifetime: captureActiveServerAccountScopeLifetime(), context,
+    currentUiContext: currentUiContextReader?.readCurrentUiContext() ?? null,
+  }), [currentUiContextReader, start]);
+}
+
+/** Captured entry data also serves authenticated resume and the shell palette. */
+export function useAskHappierStarter(): (params: Parameters<typeof startAskHappier>[0]) => Promise<AskHappierDraftResult> {
+  const scope = useAccountSettingsScope();
+  const { execute } = useMountedActionExecution(scope);
+  const acknowledged = React.useRef<Readonly<{ scope: ServerAccountScope; guideRef: PromptDocArtifactRefV1 }> | null>(null);
   return React.useCallback(
-    (context?: AskHappierContext) => {
-      const lifetime = captureActiveServerAccountScopeLifetime();
-      const currentUiContext =
-        currentUiContextReader?.readCurrentUiContext() ?? null;
-      fireAndForget(startAskHappier({ lifetime, context, currentUiContext }), {
-        tag: 'AskHappier.start',
-      });
+    async params => {
+      const { lifetime } = params;
+      const guideRef = lifetime && acknowledged.current && areServerAccountScopesEqual(lifetime.scope, acknowledged.current.scope)
+        ? acknowledged.current.guideRef : undefined;
+      const result = await startAskHappier({ ...params, executeAction: execute, guideRef: params.guideRef ?? guideRef });
+      if (result.guideRef && lifetime) acknowledged.current = { scope: lifetime.scope, guideRef: result.guideRef };
+      return result;
     },
-    [currentUiContextReader],
+    [execute],
   );
 }

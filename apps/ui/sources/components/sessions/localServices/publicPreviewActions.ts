@@ -4,6 +4,7 @@ import { DaemonLocalServicePublicPreviewCopyUrlResponseV1Schema, DaemonLocalServ
 import type { LocalServiceLaunchTargetV1 } from '@happier-dev/protocol/local/services/launcher/v1';
 import type { RuntimeActionExecute } from '@happier-dev/protocol/actions/executor/types';
 import type { BrowserViewTargetV1 } from '@happier-dev/protocol/browser/target/v1';
+import { LocalServicePreviewServiceTargetV1Schema } from '@happier-dev/protocol/local/services/preview/v1';
 
 import {
     isPublicPreviewCopyUrlResponseForRequest,
@@ -11,6 +12,8 @@ import {
     isPublicPreviewRevokeResponseForRequest,
 } from '@/sync/domains/local/services/publicPreview/api';
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { executeLocalServiceActionWithAdmission, type LocalServiceActionAdmission } from './localServiceActionAdmission';
 
 type CopyToClipboard = (value: string) => Promise<boolean>;
 export type LocalServicePublicPreviewActionTarget = LocalServiceLaunchTargetV1 | Extract<BrowserViewTargetV1, { kind: 'localServicePreview' }>;
@@ -45,7 +48,7 @@ type CreateLocalServicePublicPreviewActionsInput = Readonly<{
     sessionId?: string | null;
     serverId?: string | null;
     copyToClipboard?: CopyToClipboard;
-}>;
+}> & LocalServiceActionAdmission;
 
 function normalizeNonEmptyString(value: unknown): string | undefined {
     if (typeof value !== 'string') return undefined;
@@ -53,11 +56,7 @@ function normalizeNonEmptyString(value: unknown): string | undefined {
     return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function readPreviewTarget(target: LocalServicePublicPreviewActionTarget): Readonly<{
-    machineId: string;
-    sessionId: string;
-    previewId: string;
-}> | null {
+function readPreviewTarget(target: LocalServicePublicPreviewActionTarget): Pick<DaemonLocalServicePublicPreviewCreateRequestV1, 'machineId' | 'sessionId' | 'serviceTarget' | 'previewId'> | null {
     const browserTarget = 'id' in target ? target.browserTarget : target;
     if (browserTarget?.kind !== 'localServicePreview') {
         return null;
@@ -67,6 +66,12 @@ function readPreviewTarget(target: LocalServicePublicPreviewActionTarget): Reado
     const sessionId = normalizeNonEmptyString(browserTarget.sessionId)
         ?? normalizeNonEmptyString(target.sessionId);
     const previewId = normalizeNonEmptyString(browserTarget.targetId);
+    if (browserTarget.serviceTarget !== undefined) {
+        const service = LocalServicePreviewServiceTargetV1Schema.safeParse(browserTarget.serviceTarget);
+        return service.success && machineId === service.data.machineId && previewId && browserTarget.sessionId === undefined
+            ? { machineId, previewId, serviceTarget: service.data }
+            : null;
+    }
     return machineId && sessionId && previewId
         ? { machineId, sessionId, previewId }
         : null;
@@ -88,6 +93,12 @@ function defaultCreateRequest(
     options?: LocalServicePublicPreviewCreateOptions,
 ): DaemonLocalServicePublicPreviewCreateRequestV1 | null {
     const preview = readPreviewTarget(target);
+    if (preview?.serviceTarget) return {
+        ...preview,
+        mode: options?.mode ?? 'secret_link',
+        ttlMs: options?.ttlMs ?? DEFAULT_LOCAL_SERVICE_PUBLIC_PREVIEW_TTL_MS,
+        confirmation: { acknowledged: true },
+    };
     const machineId = preview?.machineId ?? normalizeNonEmptyString(input.machineId);
     const sessionId = preview?.sessionId ?? normalizeNonEmptyString(input.sessionId);
     const previewId = preview?.previewId;
@@ -112,7 +123,7 @@ function exposureRequest(
 ): DaemonLocalServicePublicPreviewRevokeRequestV1 {
     return {
         machineId: exposure.machineId,
-        sessionId: exposure.sessionId,
+        ...(exposure.serviceTarget ? { serviceTarget: exposure.serviceTarget } : { sessionId: exposure.sessionId }),
         previewId: exposure.previewId,
         exposureId: exposure.exposureId,
     };
@@ -121,11 +132,15 @@ function exposureRequest(
 export function createLocalServicePublicPreviewActions(
     input: CreateLocalServicePublicPreviewActionsInput,
 ): LocalServicePublicPreviewActions {
-    const runtimeActionExecute = input.runtimeActionExecute ?? undefined;
+    const runtimeActionExecute: RuntimeActionExecute | undefined = input.runtimeActionExecute
+        ? request => executeLocalServiceActionWithAdmission({ execute: input.runtimeActionExecute!, request, admission: input })
+        : undefined;
     const copyToClipboard = input.copyToClipboard ?? setClipboardStringSafe;
 
     return {
         async create(target, options) {
+            if ('id' in target && target.workspace && input.serverId
+                && !areServerProfileIdentifiersEquivalent(target.workspace.serverId, input.serverId)) return undefined;
             const request = defaultCreateRequest(target, input, options);
             if (!runtimeActionExecute || !request) {
                 return undefined;
@@ -190,11 +205,13 @@ export function useLocalServicePublicPreviewActions(
             return undefined;
         }
         return createLocalServicePublicPreviewActions({
+            ...input,
             runtimeActionExecute,
             machineId,
             sessionId,
             serverId,
             copyToClipboard,
         });
-    }, [copyToClipboard, machineId, runtimeActionExecute, serverId, sessionId]);
+    }, [copyToClipboard, machineId, runtimeActionExecute, serverId, sessionId,
+        input.expectedAccountId, input.signal, input.isCurrent, input.onApprovalPending]);
 }

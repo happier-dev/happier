@@ -1,5 +1,5 @@
 import { SessionBoardLayoutV1StoredSchema, type SessionBoardLayoutV1 } from '@happier-dev/protocol/sessions/board/layout';
-import { SessionSurfaceItemV1StoredSchema, type SessionSurfaceItemV1 } from '@happier-dev/protocol/sessions/board/item';
+import type { SessionSurfaceItemV1 } from '@happier-dev/protocol/sessions/board/item';
 import type { SessionSystemRecordStoredPageResponse } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
 import { openSessionSystemRecord, type SessionSystemRecordPayloadResult } from '@/sync/domains/sessionSystemRecords/codec';
 import { projectSessionBoard, type SessionBoardOpenedRecord } from '@/sync/domains/session/board';
@@ -7,34 +7,20 @@ import type {
     SessionSystemRecordQuery,
     SessionSystemRecordRepositoryEntry,
 } from '@/sync/domains/sessionSystemRecords/repository';
-import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
-import type { SessionSystemRecordRepository } from '@/sync/domains/sessionSystemRecords/repository';
-import type { SessionStoredContentContext } from '@happier-dev/sync-client';
-import type { SessionBoardCapabilities, SessionBoardSnapshot } from '@/sync/domains/session/board';
+import type { SessionBoardSnapshot } from '@/sync/domains/session/board';
 import type { SessionSystemRecordFetchResult } from '@/sync/domains/sessionSystemRecords/transport';
-import type { ServerCredentialAccountScopeResolution } from '@/sync/domains/scope/serverCredentialAccountScope';
+import type { SessionSystemRecordAuthority, SessionSystemRecordObservationBase, SessionSystemRecordUnavailableReason } from '@/sync/domains/sessionSystemRecords/observation';
 
 // The credential-resolution kinds are read from their own owner rather than
 // copied here, so a new non-bound kind can never silently fall outside the
 // Board's unavailable reasons.
-export type SessionBoardBindingUnavailableReason = Exclude<SessionSystemRecordFetchResult<never>, { status: 'ok' }>['status']
-    | 'board_feature_disabled' | 'invalid_address'
-    | Exclude<ServerCredentialAccountScopeResolution['kind'], 'bound' | 'resolving'>;
+export type SessionBoardBindingUnavailableReason = SessionSystemRecordUnavailableReason | 'board_feature_disabled';
 export type SessionBoardBinding = Readonly<{ status: 'ready'; snapshot: SessionBoardSnapshot }>
     | Readonly<{ status: 'unavailable'; reason: SessionBoardBindingUnavailableReason }>;
-export type SessionBoardAuthority = Readonly<{
-    contentContext: SessionStoredContentContext | null;
-    capabilities: SessionBoardCapabilities | null;
-}>;
-export type SessionBoardObservationOptions = Readonly<{
-    session: SessionAddress;
-    repository: SessionSystemRecordRepository;
-    authority: SessionBoardAuthority;
-    /** Read the already-hydrated canonical Session access projection. */
-    readCapabilities: () => SessionBoardCapabilities | null;
-    readContentContext: () => SessionStoredContentContext | null;
-    renewAuthority: () => Promise<SessionSystemRecordFetchResult<SessionBoardAuthority>>;
-    isCurrent: () => boolean;
+export type SessionBoardAuthority = SessionSystemRecordAuthority;
+export type SessionBoardObservationOptions = SessionSystemRecordObservationBase & Readonly<{
+    /** Unopened/retained presentation never inventories Session content. */
+    demanded?: boolean;
     onChange: (binding: SessionBoardBinding) => void;
 }>;
 
@@ -46,6 +32,7 @@ function toBoardUnavailableReason(
 
 /** A placement-local projection; all stored bytes, requests and invalidation stay in the repository. */
 export function observeSessionBoard(options: SessionBoardObservationOptions): () => void {
+    if (options.demanded === false) return () => {};
     type ListQuery = Extract<SessionSystemRecordQuery, { type: 'list' }>;
     type Page = SessionSystemRecordRepositoryEntry<SessionSystemRecordStoredPageResponse>;
     type ObservedPage = { query: ListQuery; snapshot: Page; stop: () => void };
@@ -207,8 +194,8 @@ export function observeSessionBoard(options: SessionBoardObservationOptions): ()
                     layout = { revision: record.revision, outcome: await openSessionSystemRecord({ record, address: record.address,
                         context: authority.contentContext, decode: value => decode(SessionBoardLayoutV1StoredSchema, value) }) };
                 } else if (record.address.kind === 'item.v1') {
-                    items.set(record.address.localId, { revision: record.revision, outcome: await openSessionSystemRecord({ record,
-                        address: record.address, context: authority.contentContext, decode: value => decode(SessionSurfaceItemV1StoredSchema, value) }) });
+                    items.set(record.address.localId, { revision: record.revision,
+                        outcome: await options.repository.openSurfaceItem(record, authority.contentContext) });
                 }
             }
             if (!isCurrent()) return;

@@ -1,13 +1,22 @@
 import * as React from 'react';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useShallow } from 'zustand/react/shallow';
+import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
+import {
+  RailPopoverRoster,
+  resolveRailPopoverRosterListMaxHeight,
+} from '@/components/navigation/shell/sidebarFooter/RailPopoverRoster';
 import { buildSessionListFilterHomeOptions } from '@/components/sessions/shell/search/useSessionListViewFilterController';
 import {
   buildSessionListFilterQueryHomes,
   resolveSessionListViewContextDefaults,
 } from '@/components/sessions/shell/search/sessionListViewFilters';
 import { SessionItem } from '@/components/sessions/shell/SessionItem';
+import { filterCollapsedSessionListItems } from '@/components/sessions/shell/filterCollapsedSessionListItems';
+import { selectSessionReportSubtree } from '@/components/sessions/work/reportSubtree';
+import { nestSessionListReports } from '@/sync/domains/session/listing/nestSessionListReports';
 import {
   buildSessionListRowViewModel,
   resolveSessionListRowViewModelAdjacency,
@@ -16,9 +25,9 @@ import {
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { Icon } from '@/components/ui/icons/Icon';
-import { ActionListSection } from '@/components/ui/lists/ActionListSection';
 import { MENU_ROW_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
+import { StatusDot } from '@/components/ui/status/StatusDot';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import {
@@ -28,13 +37,11 @@ import {
 import { useSessionListSelectionState } from '@/hooks/session/useSessionListSelectionState';
 import { useVisibleSessionListPaneState } from '@/hooks/session/useVisibleSessionListPaneState';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import {
-  isUrgentSessionListAttentionState,
-  mapSessionAwarenessToListAttentionState,
-} from '@/sync/domains/session/listing/deriveSessionListActivity';
-import { useSessionListQueryHomeSupportByServerId } from '@/sync/domains/session/listing/useSessionListQuerySourceState';
-import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
-import { useSessionListRowRenderablesForItems } from '@/sync/domains/state/storage';
+import { useSessionListQueryHomeSupportByServerId, useSessionListQuerySourceState } from '@/sync/domains/session/listing/useSessionListQuerySourceState';
+import { buildSessionListIndexNodeId, type SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
+import { storage, useLocalSettingMutable, useSessionListRowRenderablesForItems } from '@/sync/domains/state/storage';
+import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import type { Session } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -44,16 +51,20 @@ import {
   useAskHappierOfferVisible,
   useAskHappierOpener,
 } from './useAskHappierOffer';
+import { classifyBotActivity } from './botActivity';
 import { BOTS_GLYPH } from './botsGlyph';
 import { openNewBotDraft } from './newBotDraft';
+import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 
 type SessionIndexItem = Extract<SessionListIndexItem, { type: 'session' }>;
 
 const NO_REACHABLE_DISPLAY = new Map();
 const NO_PINNED_KEYS: ReadonlySet<string> = new Set();
 const NO_TAGS: Record<string, string[]> = {};
-/** The header and the New bot / Ask Happier rows beneath the roster. */
-const CHROME_HEIGHT_PX = 150;
+const NO_COLLAPSED_GROUPS: Readonly<Record<string, boolean>> = {};
+/** The plus beside the invite's New bot, on the small button's text. */
+const EMPTY_ACTION_GLYPH_SIZE_PX = 14;
 
 /**
  * The exact Homes the ordinary Sessions list shows, each asked for its Bots with the ordinary query
@@ -98,13 +109,56 @@ function readRosterCounts(
   let needsYou = 0;
   let working = 0;
   for (const row of rows) {
-    const primary = row.sessionStatus?.awareness.operational.primary;
-    if (!primary) continue;
-    const state = mapSessionAwarenessToListAttentionState(primary);
-    if (isUrgentSessionListAttentionState(state)) needsYou += 1;
-    else if (state === 'thinking') working += 1;
+    const activity = classifyBotActivity(
+      row.sessionStatus?.awareness.operational.primary,
+    );
+    if (activity === 'needsYou') needsYou += 1;
+    else if (activity === 'working') working += 1;
   }
   return { needsYou, working };
+}
+
+function useRosterRows(items: readonly SessionIndexItem[]) {
+  const renderables = useSessionListRowRenderablesForItems(items);
+  const relativeNowMs = useSessionListRelativeNowMs(true);
+  const runtimeNowMs = useSessionListRuntimeNowMs(true);
+  return React.useMemo(() => items.map((item, index) => buildSessionListRowViewModel({
+    item, adjacency: resolveSessionListRowViewModelAdjacency(items, index),
+    unscopedSelectionIsUnique: false, reachableSessionDisplayById: NO_REACHABLE_DISPLAY,
+    rowRenderableByKey: renderables, relativeNowMs, runtimeNowMs,
+    workingTextMode: 'static', identityDisplay: 'avatar', hasMultipleMachines: false,
+    pinnedSessionKeys: NO_PINNED_KEYS, sessionTags: NO_TAGS, selectedSessionId: null,
+    showServerBadge: false, showPinnedServerBadge: false,
+  })), [items, relativeNowMs, renderables, runtimeNowMs]);
+}
+
+/** Only an expanded lead mounts its exact-Home subtree query. Shared rows and reportsTo own membership. */
+function BotRosterReports(props: Readonly<{
+  lead: SessionListRenderableSession;
+  item: SessionIndexItem;
+}>) {
+  const serverId = props.item.serverId ?? '';
+  const homeIds = React.useMemo(() => [serverId], [serverId]);
+  const support = useSessionListQueryHomeSupportByServerId(homeIds, true);
+  const homes = React.useMemo(() => [{ serverId, queryMembership: 'rowOnly' as const, query: {
+    v: 1 as const, storage: 'active' as const, includeInactive: true,
+    scope: 'all_accessible' as const, attention: 'any' as const, audiences: [], tagIds: [],
+    underSessionId: props.lead.id,
+  } }], [props.lead.id, serverId]);
+  const query = useSessionListQuerySourceState({ enabled: support[serverId] === true, homes });
+  const state = query.statesByServerId[serverId];
+  const cursor = state?.phase === 'ready' && (state.hasNext || state.attentionHasNext)
+    ? `${state.nextCursor}:${state.attentionNextCursor}` : '';
+  React.useEffect(() => {
+    if (cursor) fireAndForget(query.loadNext(), { tag: 'BotsRoster.reports.loadNext' });
+  }, [cursor, query]);
+  return <>
+    {support[serverId] === true && !query.coverageComplete ? <SurfaceFreshnessLine
+      testID={`bots-roster.reports:${props.lead.id}.partial`}
+      reason={t('bots.partial')}
+      action={{ label: t('common.retry'), onPress: () => fireAndForget(query.refresh(), { tag: 'BotsRoster.reports.retry' }) }}
+    /> : null}
+  </>;
 }
 
 /**
@@ -122,46 +176,60 @@ export function BotsPopoverContent(
 ) {
   const { theme } = useUnistyles();
   const styles = stylesheet;
+  const [collapsedPreference, setCollapsedPreference] = useLocalSettingMutable('collapsedGroupKeysV1');
+  const collapsed = collapsedPreference ?? NO_COLLAPSED_GROUPS;
+  const collapsedRef = React.useRef(collapsed);
+  collapsedRef.current = collapsed;
+  const setCollapsed = React.useCallback((nodeId: string, value: boolean) => {
+    setCollapsedPreference({ ...collapsedRef.current, [nodeId]: value });
+  }, [setCollapsedPreference]);
   const queryHomes = useBotsRosterQueryHomes();
   const pane = useVisibleSessionListPaneState('all', {
     botsRoster: true,
     queryHomes,
     sessionListSurfaceDataActive: true,
   });
-  const items = React.useMemo(
+  const botItems = React.useMemo(
     () =>
       (pane.visibleSessionListIndex ?? []).filter(
         (item): item is SessionIndexItem => item.type === 'session',
       ),
     [pane.visibleSessionListIndex],
   );
-  const renderables = useSessionListRowRenderablesForItems(items);
-  const relativeNowMs = useSessionListRelativeNowMs(true);
-  const runtimeNowMs = useSessionListRuntimeNowMs(true);
-  const rows = React.useMemo(
-    () =>
-      items.map((item, index) =>
-        buildSessionListRowViewModel({
-          item,
-          adjacency: resolveSessionListRowViewModelAdjacency(items, index),
-          unscopedSelectionIsUnique: false,
-          reachableSessionDisplayById: NO_REACHABLE_DISPLAY,
-          rowRenderableByKey: renderables,
-          relativeNowMs,
-          runtimeNowMs,
-          workingTextMode: 'static',
-          identityDisplay: 'avatar',
-          hasMultipleMachines: false,
-          pinnedSessionKeys: NO_PINNED_KEYS,
-          sessionTags: NO_TAGS,
-          selectedSessionId: null,
-          showServerBadge: false,
-          showPinnedServerBadge: false,
-        }),
-      ),
-    [items, relativeNowMs, renderables, runtimeNowMs],
-  );
-  const counts = React.useMemo(() => readRosterCounts(rows), [rows]);
+  const botRows = useRosterRows(botItems);
+  const descendants = storage(useShallow(state => {
+    const records: Record<string, Session> = {};
+    for (const item of botItems) {
+      if (collapsed[buildSessionListIndexNodeId(item)] !== false) continue;
+      for (const session of selectSessionReportSubtree(state.sessions, item.sessionId, item.serverId ?? null, state.sessionListRowsByServerId)) {
+        records[buildSessionListIndexNodeId({ type: 'session', serverId: item.serverId, sessionId: session.id })] = session;
+      }
+    }
+    return records;
+  }));
+  const items = React.useMemo(() => {
+    const byHome = new Map<string, Map<string, SessionIndexItem>>();
+    const records = new Map<string, SessionListRenderableSession>();
+    const add = (item: SessionIndexItem, session: SessionListRenderableSession | null) => {
+      const home = item.serverId ?? '';
+      const group = byHome.get(home) ?? new Map<string, SessionIndexItem>();
+      const key = buildSessionListIndexNodeId(item);
+      group.set(key, { ...item, groupKey: JSON.stringify(['bots-roster', home]) });
+      byHome.set(home, group);
+      if (session) records.set(key, session);
+    };
+    botItems.forEach((item, index) => add(item, botRows[index]!.session));
+    for (const [key, session] of Object.entries(descendants)) {
+      if (records.has(key)) continue;
+      add({ type: 'session', sessionId: session.id, serverId: session.serverId }, session);
+    }
+    const source = [...byHome.values()].flatMap(group => [...group.values()]);
+    return filterCollapsedSessionListItems(nestSessionListReports(source, (serverId, sessionId) => records.get(
+      buildSessionListIndexNodeId({ type: 'session', serverId: serverId ?? undefined, sessionId }),
+    ) ?? null), collapsed).filter((item): item is SessionIndexItem => item.type === 'session');
+  }, [botItems, botRows, collapsed, descendants]);
+  const rows = useRosterRows(items);
+  const counts = React.useMemo(() => readRosterCounts(botRows), [botRows]);
 
   // Page to the end of every Home's Bot candidates and attention frontier, one page at a time.
   const query = pane.query;
@@ -213,21 +281,19 @@ export function BotsPopoverContent(
   const offerVisible = useAskHappierOfferVisible();
   const offer = useAskHappierOfferChoices();
   const openAskHappier = useAskHappierOpener();
+  const { execute: executeAuthoring } = useMountedActionExecution(useAccountSettingsScope());
   const { close } = props;
   const newBot = React.useCallback(() => {
-    close();
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (lifetime)
-      fireAndForget(openNewBotDraft(lifetime), { tag: 'BotsRoster.newBot' });
-  }, [close]);
+      fireAndForget(openNewBotDraft(lifetime, executeAuthoring).then(result => { if (result.kind === 'opened') close(); }), { tag: 'BotsRoster.newBot' });
+  }, [close, executeAuthoring]);
   const askHappier = React.useCallback(() => {
-    close();
-    openAskHappier();
+    fireAndForget(openAskHappier().then(result => { if (result.kind === 'opened' || result.kind === 'authenticationRequired') close(); }), { tag: 'BotsRoster.askHappier' });
   }, [close, openAskHappier]);
   const startOffer = React.useCallback(() => {
-    close();
-    offer.start();
-  }, [close, offer]);
+    fireAndForget(openAskHappier().then(result => { if (result.kind === 'opened' || result.kind === 'authenticationRequired') close(); }), { tag: 'BotsRoster.startOffer' });
+  }, [close, openAskHappier]);
   const retry = React.useCallback(() => {
     if (query) fireAndForget(query.refresh(), { tag: 'BotsRoster.retry' });
   }, [query]);
@@ -279,6 +345,17 @@ export function BotsPopoverContent(
               size="small"
               display={offerVisible ? 'secondary' : 'default'}
               title={t('bots.new')}
+              leading={
+                <Icon
+                  name="plus"
+                  size={EMPTY_ACTION_GLYPH_SIZE_PX}
+                  color={
+                    offerVisible
+                      ? theme.colors.text.secondary
+                      : theme.colors.button.primary.tint
+                  }
+                />
+              }
               onPress={newBot}
             />
           }
@@ -309,45 +386,64 @@ export function BotsPopoverContent(
     );
   }
 
+  const summary = [
+    counts.needsYou > 0
+      ? t('bots.roster.needsYou', { count: counts.needsYou })
+      : null,
+    counts.working > 0
+      ? t('bots.roster.working', { count: counts.working })
+      : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
   return (
-    <View testID="bots-roster">
-      <View style={styles.header}>
-        <Text style={styles.title} accessibilityRole="header">
-          {t('bots.title')}
-        </Text>
-        <View style={styles.summary}>
-          {counts.needsYou > 0 ? <View style={styles.attentionDot} /> : null}
-          <Text style={styles.summaryText} numberOfLines={1}>
-            {[
-              counts.needsYou > 0
-                ? t('bots.roster.needsYou', { count: counts.needsYou })
-                : null,
-              counts.working > 0
-                ? t('bots.roster.working', { count: counts.working })
-                : null,
-            ]
-              .filter(Boolean)
-              .join(' · ')}
-          </Text>
-        </View>
-      </View>
+    <RailPopoverRoster
+      testID="bots-roster"
+      title={t('bots.title')}
+      actions={footerActions}
+      summary={
+        summary ? (
+          <View style={styles.summary}>
+            {counts.needsYou > 0 ? (
+              <StatusDot color={theme.colors.state.warning.foreground} />
+            ) : null}
+            <Text style={styles.summaryText} numberOfLines={1}>
+              {summary}
+            </Text>
+          </View>
+        ) : null
+      }
+    >
       {offlineHomeLabel ? (
         <View style={styles.line}>
           <SurfaceFreshnessLine
             testID="bots-roster.offline"
-            reason={t('bots.offline', { home: offlineHomeLabel })}
+            // With nothing retained there is no "last known" roster to promise.
+            reason={
+              rows.length > 0
+                ? t('bots.offline', { home: offlineHomeLabel })
+                : t('bots.offlineEmpty', { home: offlineHomeLabel })
+            }
+            action={
+              rows.length > 0
+                ? undefined
+                : { label: t('common.retry'), onPress: retry }
+            }
           />
         </View>
       ) : null}
       <ScrollView
-        style={{ maxHeight: Math.max(160, props.maxHeight - CHROME_HEIGHT_PX) }}
+        style={{
+          maxHeight: resolveRailPopoverRosterListMaxHeight(props.maxHeight),
+        }}
         keyboardShouldPersistTaps="always"
         testID="bots-roster.list"
       >
         {rows.map((row, index) =>
           row.session ? (
+            <React.Fragment key={row.sessionKey ?? items[index]!.sessionId}>
             <SessionItem
-              key={row.sessionKey ?? items[index]!.sessionId}
               rowViewModel={row}
               session={row.session}
               serverId={items[index]!.serverId ?? undefined}
@@ -355,8 +451,18 @@ export function BotsPopoverContent(
               embedded
               embeddedIsLast={index === rows.length - 1}
               showTalkAction
+              actionMenuSurface="botsRoster"
+              reportsDepth={items[index]!.reportsDepth}
+              reportsDisclosure={(row.session.reports?.total ?? 0) > 0
+                ? (collapsed[buildSessionListIndexNodeId(items[index]!)] ?? (row.session.metadata?.bot?.kind === 'bot')) ? 'collapsed' : 'expanded'
+                : undefined}
+              onSetReportsCollapsed={setCollapsed}
               onOpened={close}
             />
+            {(row.session.reports?.total ?? 0) > 0 && collapsed[buildSessionListIndexNodeId(items[index]!)] === false
+              ? <BotRosterReports lead={row.session} item={items[index]!} />
+              : null}
+            </React.Fragment>
           ) : null,
         )}
         {loading ? (
@@ -377,51 +483,26 @@ export function BotsPopoverContent(
           />
         </View>
       ) : null}
-      <View style={styles.divider} />
-      <ActionListSection style={styles.actions} actions={footerActions} />
-    </View>
+    </RailPopoverRoster>
   );
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 4,
-  },
-  title: {
-    ...Typography.default('semiBold'),
-    fontSize: 13,
-    lineHeight: 18,
-    color: theme.colors.text.primary,
-  },
   summary: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     flexShrink: 1,
   },
-  attentionDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: theme.colors.state.warning.foreground,
-  },
   summaryText: {
     ...Typography.default(),
-    fontSize: 12,
-    lineHeight: 16,
+    ...happierPageTextMetrics('meta'),
     color: theme.colors.text.secondary,
     fontVariant: ['tabular-nums'],
   },
   hint: {
     ...Typography.default(),
-    fontSize: 12,
-    lineHeight: 16,
+    ...happierPageTextMetrics('rowDescription'),
     color: theme.colors.text.tertiary,
   },
   line: {
@@ -432,10 +513,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     height: StyleSheet.hairlineWidth,
     marginHorizontal: 12,
     backgroundColor: theme.colors.border.default,
-  },
-  actions: {
-    paddingTop: 4,
-    paddingBottom: 4,
   },
   emptyRoot: {
     paddingBottom: 12,

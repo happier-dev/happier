@@ -90,6 +90,9 @@ export function useSessionPluginRuntime(params: Readonly<{
     const pluginBrowserProjection = hasRegisteredPaneScope
         ? registeredPaneScope?.pluginBrowserProjection ?? null
         : scopedProjection.pluginBrowserProjection;
+    const accountLifetime = hasRegisteredPaneScope
+        ? registeredPaneScope?.accountLifetime ?? null
+        : scopedProjection.accountLifetime ?? null;
     const platform = resolveLocalServicePreviewPlatform(
         hasRegisteredPaneScope ? registeredPaneScope?.platform : params.platform,
     );
@@ -102,6 +105,7 @@ export function useSessionPluginRuntime(params: Readonly<{
         machineId,
         serverId,
         platform,
+        accountLifetime,
     }), [
         interactionEnabled,
         machineId,
@@ -110,6 +114,7 @@ export function useSessionPluginRuntime(params: Readonly<{
         pluginUiProjection,
         pluginBrowserProjection,
         serverId,
+        accountLifetime,
     ]);
 }
 
@@ -139,6 +144,7 @@ export function createSessionPaneSurfaceScope(sessionId: string, runtime: Sessio
         machineId: runtime.machineId, serverId: runtime.serverId,
         pluginUiProjection: runtime.pluginUiProjection,
         pluginBrowserProjection: runtime.pluginBrowserProjection,
+        accountLifetime: runtime.accountLifetime,
         projectionPhase: runtime.phase, interactionEnabled: runtime.interactionEnabled,
         platform: runtime.platform,
     };

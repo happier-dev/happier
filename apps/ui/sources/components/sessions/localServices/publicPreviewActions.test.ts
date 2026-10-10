@@ -58,6 +58,69 @@ const snapshot = {
 } satisfies LocalServicePublicPreviewSnapshotV1;
 
 describe('local service public preview actions', () => {
+    it('does not create a public exposure for a stale qualified row from another Home', async () => {
+        const serviceTarget = { kind: 'managed_service' as const, machineId: 'machine_1', managedServiceId: 'actual-instance',
+            workspaceId: 'accepted-workspace', cwd: '/accepted/web',
+            declaration: { workspaceRefId: 'accepted-workspace', selection: { kind: 'manifest' as const, name: 'web' } } };
+        const qualifiedTarget = { ...target, sessionId: undefined,
+            workspace: { serverId: 'home-a', machineId: 'machine_1', workspaceId: 'accepted-workspace', rootPath: '/accepted' },
+            browserTarget: { kind: 'localServicePreview' as const, targetId: 'preview_1', machineId: 'machine_1', serviceTarget },
+        } satisfies LocalServiceLaunchTargetV1;
+        const requests: Parameters<import('@happier-dev/protocol').RuntimeActionExecute>[0][] = [];
+        const runtimeActionExecute: import('@happier-dev/protocol').RuntimeActionExecute = async request => {
+            requests.push(request);
+            return { ok: false, errorCode: 'approval_required', error: 'approval_required' };
+        };
+        const { createLocalServicePublicPreviewActions } = await import('./publicPreviewActions');
+        const actions = createLocalServicePublicPreviewActions({ runtimeActionExecute, serverId: 'home-b' });
+        expect(await actions.create(qualifiedTarget)).toBeUndefined();
+        expect(requests).toEqual([]);
+    });
+
+    it('creates, copies and revokes a sessionless preview using its exact service binding', async () => {
+        const serviceTarget = { kind: 'managed_service' as const, machineId: 'machine_1', managedServiceId: 'actual-instance',
+            workspaceId: 'accepted-workspace', cwd: '/accepted/web',
+            declaration: { workspaceRefId: 'accepted-workspace', selection: { kind: 'manifest' as const, name: 'web' } } };
+        const { sessionId: _sessionId, ...baseExposure } = exposure;
+        const serviceExposure = { ...baseExposure, serviceTarget } satisfies LocalServicePublicExposureV1;
+        const { sessionId: _snapshotSessionId, ...baseSnapshot } = snapshot;
+        const serviceSnapshot = { ...baseSnapshot, exposures: [serviceExposure] } satisfies LocalServicePublicPreviewSnapshotV1;
+        const requests: Parameters<import('@happier-dev/protocol').RuntimeActionExecute>[0][] = [];
+        // The remote Action receipts and OS clipboard are system boundaries; projection stays real.
+        const runtimeActionExecute: import('@happier-dev/protocol').RuntimeActionExecute = async request => {
+            requests.push(request);
+            if (request.actionId === 'localServices.publicPreview.create') return { protocolVersion: 1, exposure: serviceExposure, snapshot: serviceSnapshot };
+            if (request.actionId === 'localServices.publicPreview.copyUrl') return { protocolVersion: 1, machineId: 'machine_1', previewId: 'preview_1', exposureId: 'public_preview_1', serviceTarget, publicUrl: serviceExposure.publicUrl };
+            return { protocolVersion: 1, exposureId: 'public_preview_1', revokedAt: 3_000, snapshot: { ...serviceSnapshot, exposures: [{ ...serviceExposure, state: 'revoked', revokedAt: 3_000 }] } };
+        };
+        const copyToClipboard = vi.fn(async () => true);
+        const { createLocalServicePublicPreviewActions } = await import('./publicPreviewActions');
+        const actions = createLocalServicePublicPreviewActions({ runtimeActionExecute, serverId: 'server_1', sessionId: 'invoking-session', copyToClipboard });
+        const browserTarget = { kind: 'localServicePreview' as const, targetId: 'preview_1', machineId: 'machine_1', serviceTarget };
+        await expect(actions.create(browserTarget, { mode: 'secret_link', ttlMs: 900_000 })).resolves.toMatchObject({ exposure: serviceExposure });
+        await expect(actions.copyUrl(serviceExposure)).resolves.toBe(true);
+        await expect(actions.revoke(serviceExposure)).resolves.toMatchObject({ exposureId: 'public_preview_1' });
+        for (const request of requests) {
+            expect(request.input).toMatchObject({ machineId: 'machine_1', previewId: 'preview_1', serviceTarget });
+            expect(request.input).not.toHaveProperty('sessionId');
+        }
+        expect(requests[0]!.input).toMatchObject({ ttlMs: 900_000, confirmation: { acknowledged: true } });
+        expect(copyToClipboard).toHaveBeenCalledWith(serviceExposure.publicUrl);
+    });
+
+    it('refuses a Copy receipt bound to another managed occurrence', async () => {
+        const serviceTarget = { kind: 'managed_service' as const, machineId: 'machine_1', managedServiceId: 'actual-instance', cwd: '/accepted/web',
+            declaration: { workspaceRefId: 'accepted-workspace', selection: { kind: 'manifest' as const, name: 'web' } } };
+        const { sessionId: _sessionId, ...baseExposure } = exposure;
+        const serviceExposure = { ...baseExposure, serviceTarget } satisfies LocalServicePublicExposureV1;
+        const runtimeActionExecute = vi.fn(async () => ({ protocolVersion: 1, machineId: 'machine_1', previewId: 'preview_1', exposureId: 'public_preview_1',
+            serviceTarget: { ...serviceTarget, managedServiceId: 'another-instance' }, publicUrl: exposure.publicUrl }));
+        const copyToClipboard = vi.fn(async () => true);
+        const { createLocalServicePublicPreviewActions } = await import('./publicPreviewActions');
+        const actions = createLocalServicePublicPreviewActions({ runtimeActionExecute, copyToClipboard });
+        await expect(actions.copyUrl(serviceExposure)).resolves.toBe(false);
+        expect(copyToClipboard).not.toHaveBeenCalled();
+    });
     it('creates a link directly from a browser preview target through the same action owner', async () => {
         const runtimeActionExecute = vi.fn(async () => ({ protocolVersion: 1 as const, exposure, snapshot }));
         const { createLocalServicePublicPreviewActions } = await import('./publicPreviewActions');

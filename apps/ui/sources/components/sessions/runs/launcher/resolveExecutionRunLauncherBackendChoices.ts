@@ -1,7 +1,7 @@
-import { buildBackendTargetKeyV2, convertBackendTargetRefV2ToV1, type PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { BackendTargetKeyV2Schema, buildBackendTargetKeyV2, convertBackendTargetRefV2ToV1, type PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { buildBackendTargetKey } from '@happier-dev/protocol/backends/targets/backendTargetRef';
 import { readLegacyConfiguredAcpBackendId } from '@happier-dev/protocol/backends/targets/compat/customAcp';
-import type { AcpCatalogSettingsV1 } from '@happier-dev/protocol/acp/catalog/settingsV1';
+import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 
 import {
     getResolvedBackendCatalogEntries,
@@ -13,7 +13,7 @@ import type {
 import {
     LEGACY_COMPAT_PRIMARY_AGENT_ID,
 } from '@/agents/backendCatalog/legacyCompatAgents';
-import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
+import { backendTargetKeysMatch, resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { buildAvailableReviewEngineOptions, resolveReviewEngineTarget, type ExecutionRunsBackendSnapshotEntry } from '@/sync/domains/reviews/reviewEngineCatalog';
 import { resolveExecutionRunAvailableBackends } from '@/sync/domains/executionRuns/resolveExecutionRunAvailableBackends';
 
@@ -64,7 +64,8 @@ function collapseConfiguredAcpBackendCollisions(
 }
 
 function isCanonicalCatalogBackendId(value: string): boolean {
-    return value.length > 0 && value !== LEGACY_COMPAT_PRIMARY_AGENT_ID && !readLegacyConfiguredAcpBackendId(value);
+    return value.length > 0 && value !== LEGACY_COMPAT_PRIMARY_AGENT_ID && !readLegacyConfiguredAcpBackendId(value)
+        && !BackendTargetKeyV2Schema.safeParse(value).success;
 }
 
 function hasLegacyCompatExecutionRunAvailabilityCarrier(
@@ -98,7 +99,7 @@ function resolveReviewBackendLabel(params: Readonly<{
 export function resolveExecutionRunLauncherBackendChoices(params: Readonly<{
     enabledAgentIds: readonly string[];
     executionRunsBackends: Readonly<Record<string, ExecutionRunsBackendSnapshotEntry>> | null | undefined;
-    acpCatalogSettingsV1: AcpCatalogSettingsV1;
+    acpCatalogSnapshot?: AcpCatalogSnapshotV1;
     intent: string;
     mergedBackendProjectionById?: Readonly<Record<string, MergedBackendProjectionEntry>> | null;
     mergedProviderProjectionById?: Readonly<Record<string, MergedProviderProjectionEntry>> | null;
@@ -114,6 +115,13 @@ export function resolveExecutionRunLauncherBackendChoices(params: Readonly<{
     const availableBackendIds = new Set(
         resolveExecutionRunAvailableBackends(params.executionRunsBackends, params.intent),
     );
+    const catalogEntries = getResolvedBackendCatalogEntries({
+        enabledAgentIds: catalogBackendIds,
+        acpCatalogSnapshot: params.acpCatalogSnapshot,
+        discoveredBackendIds: Object.keys(params.executionRunsBackends ?? {}).map((id) => String(id ?? '').trim()).filter(isCanonicalCatalogBackendId),
+        mergedBackendProjectionById: params.mergedBackendProjectionById ?? null,
+        mergedProviderProjectionById: params.mergedProviderProjectionById ?? null,
+    });
 
     if (params.intent === 'review') {
         return buildAvailableReviewEngineOptions({
@@ -124,32 +132,30 @@ export function resolveExecutionRunLauncherBackendChoices(params: Readonly<{
                 executionRunBackend: params.executionRunsBackends?.[id] ?? null,
                 mergedBackendProjectionById: params.mergedBackendProjectionById ?? null,
             }),
-        }).map((option) => {
+        }).flatMap((option) => {
             const target = resolveReviewEngineTarget(option.id);
+            if (target.kind === 'backend' && target.configuredBackendId
+                && !catalogEntries.some((entry) => entry.kind === 'configuredBackend' && backendTargetKeysMatch(entry.backendTarget, target))) {
+                return [];
+            }
             const backendId = target.kind === 'backend' ? target.backendId : option.id;
             const projectedAgentId = target.kind === 'backend' && target.sourceKind === 'configured'
                 ? LEGACY_COMPAT_PRIMARY_AGENT_ID
                 : params.mergedBackendProjectionById?.[backendId]?.agentId?.trim()
                     || params.mergedProviderProjectionById?.[backendId]?.agentId?.trim()
                     || backendId;
-            return {
+            return [{
                 backendTarget: target,
                 targetKey: resolveBackendTargetKeyV2(target),
                 backendId,
                 agentId: projectedAgentId,
                 title: option.label,
                 disabled: option.disabled === true,
-            };
+            }];
         });
     }
 
-    return collapseConfiguredAcpBackendCollisions(getResolvedBackendCatalogEntries({
-        enabledAgentIds: catalogBackendIds,
-        acpCatalogSettingsV1: params.acpCatalogSettingsV1,
-        discoveredBackendIds: Object.keys(params.executionRunsBackends ?? {}).map((id) => String(id ?? '').trim()).filter(isCanonicalCatalogBackendId),
-        mergedBackendProjectionById: params.mergedBackendProjectionById ?? null,
-        mergedProviderProjectionById: params.mergedProviderProjectionById ?? null,
-    })).map((entry) => {
+    return collapseConfiguredAcpBackendCollisions(catalogEntries).map((entry) => {
         const backendId = entry.backendId;
         const catalogAgentId = entry.catalogAgentId;
         const isAvailable = entry.kind === 'configuredBackend'

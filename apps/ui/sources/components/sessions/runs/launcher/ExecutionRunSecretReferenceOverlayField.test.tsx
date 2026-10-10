@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { Modal } from '@/modal';
 
-import { ExecutionRunSecretReferenceOverlayField } from './ExecutionRunSecretReferenceOverlayField';
+import { ExecutionRunSecretReferenceOverlayField, resolveExecutionRunSessionLaunchProfile } from './ExecutionRunSecretReferenceOverlayField';
 
 const sharedRef = 'happier:shared-secret:v1:shared-resource';
 const catalogState = vi.hoisted(() => ({
@@ -71,6 +71,13 @@ const profile = AIBackendProfileSchema.parse({
 });
 
 describe('ExecutionRunSecretReferenceOverlayField', () => {
+    it('resolves the Session profile from the canonical catalog with its entity bindings', () => {
+        const canonicalProfile = { ...profile, secretBindings: { OPENAI_API_KEY: sharedRef } };
+
+        expect(resolveExecutionRunSessionLaunchProfile({ profileId: profile.id }, [canonicalProfile])).toEqual(canonicalProfile);
+        expect(resolveExecutionRunSessionLaunchProfile({ profileId: profile.id }, [])).toBeNull();
+    });
+
     beforeEach(() => {
         catalogState.enabledArgs = [];
         catalogState.sharedStatus = 'ready';

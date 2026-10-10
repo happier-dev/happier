@@ -5,40 +5,45 @@ import { sendExecutionRunResultToSession } from './sendExecutionRunResultToSessi
 describe('sendExecutionRunResultToSession', () => {
     it('appends the result to the lead composer through the initial-prompt handoff, then reveals and focuses it', async () => {
         const order: string[] = [];
-        const writeInitialPrompt = vi.fn(async () => { order.push('write'); });
+        const appendDraft = vi.fn(async () => { order.push('write'); return true; });
         const sent = await sendExecutionRunResultToSession({
             sessionId: 'lead_1',
             serverId: 'home_1',
             resultText: '  Checkpoint per batch.  ',
             runTitle: 'Add a resume point',
             template: 'From {{SOURCE_SESSION_NAME}}:\n{{MESSAGES}}',
-            nowMs: () => 42,
-            writeInitialPrompt,
+            appendDraft,
             revealPrimaryComposer: () => { order.push('reveal'); },
             focusPrimaryComposer: () => { order.push('focus'); },
         });
 
         expect(sent).toBe(true);
-        expect(writeInitialPrompt).toHaveBeenCalledWith({
-            destinationSessionId: 'lead_1',
+        expect(appendDraft).toHaveBeenCalledWith({
+            sessionId: 'lead_1',
             serverId: 'home_1',
-            prompt: {
-                v: 1,
-                text: 'From Add a resume point:\nCheckpoint per batch.',
-                mode: 'append',
-                createdAtMs: 42,
-                sourceSessionId: 'lead_1',
-            },
+            text: 'From Add a resume point:\nCheckpoint per batch.',
+            sourceSessionId: 'lead_1',
         });
         expect(order).toEqual(['write', 'reveal', 'focus']);
     });
 
     it('stages nothing for an empty result', async () => {
-        const writeInitialPrompt = vi.fn(async () => undefined);
+        const appendDraft = vi.fn(async () => true);
         await expect(sendExecutionRunResultToSession({
-            sessionId: 'lead_1', serverId: 'home_1', resultText: '   ', runTitle: null, template: '', nowMs: () => 1,
-            writeInitialPrompt, revealPrimaryComposer: vi.fn(), focusPrimaryComposer: vi.fn(),
+            sessionId: 'lead_1', serverId: 'home_1', resultText: '   ', runTitle: null, template: '',
+            appendDraft, revealPrimaryComposer: vi.fn(), focusPrimaryComposer: vi.fn(),
         })).resolves.toBe(false);
-        expect(writeInitialPrompt).not.toHaveBeenCalled();
+        expect(appendDraft).not.toHaveBeenCalled();
+    });
+
+    it('does not reveal or focus the composer when Action admission refuses the append', async () => {
+        const revealPrimaryComposer = vi.fn();
+        const focusPrimaryComposer = vi.fn();
+        await expect(sendExecutionRunResultToSession({
+            sessionId: 'lead_1', serverId: 'home_1', resultText: 'Result', runTitle: null, template: '',
+            appendDraft: async () => false, revealPrimaryComposer, focusPrimaryComposer,
+        })).resolves.toBe(false);
+        expect(revealPrimaryComposer).not.toHaveBeenCalled();
+        expect(focusPrimaryComposer).not.toHaveBeenCalled();
     });
 });

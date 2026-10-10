@@ -45,6 +45,7 @@ import {
     type SessionBoardMutationApprovalRequest,
 } from './sessionBoardMutationApproval';
 import { resolveSessionBoardFailurePresentation } from './sessionBoardFailurePresentation';
+import { readSessionBoardHostedHtmlItemText } from './hostedHtml/sessionBoardHostedHtmlItem';
 
 import type { SessionBoardBinding } from './observeSessionBoard';
 import {
@@ -1099,7 +1100,9 @@ export function useSessionBoardController(input: SessionBoardControllerInput): S
                 const opened = projected.state.item;
                 const openedRevision = projected.revision;
                 const source = opened.source;
-                if (source.kind === 'hostedHtml' && source.source.kind === 'html') {
+                if (source.kind === 'hostedHtml') {
+                    const initialHtml = readSessionBoardHostedHtmlItemText(opened);
+                    if (initialHtml === null) return;
                     if (hostedHtmlDraftRef.current?.itemId === command.itemId) return;
                     const replace = () => {
                         setNoteDraft(null);
@@ -1107,7 +1110,7 @@ export function useSessionBoardController(input: SessionBoardControllerInput): S
                             itemId: command.itemId,
                             expectedItemRevision: openedRevision,
                             initialTitle: opened.title,
-                            initialHtml: source.source.html,
+                            initialHtml,
                             baseItem: opened,
                         });
                     };

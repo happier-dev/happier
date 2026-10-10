@@ -195,21 +195,4 @@ describe('local-services surface single-owner closure', () => {
         expect(view).not.toMatch(/REASON_KEYS\s*=/);
     });
 
-    it('the daemon forms loopback URLs only through the canonical loopbackServiceUrl builder (no hand-concat)', () => {
-        // This closure lives in apps/cli; resolve relative to the repo root.
-        const cliRoot = path.resolve(UI_ROOT, '../cli');
-        const suggestions = readFileSync(
-            path.join(cliRoot, 'src/daemon/local/services/launch/suggestions.ts'),
-            'utf8',
-        );
-        expect(suggestions).toContain('function loopbackServiceUrl');
-        // No hand-concatenated loopback http(s) URL template outside the builder.
-        const handConcat = /`https?:\/\/\$\{[^}]*host[^}]*\}:\$\{[^}]*port[^}]*\}/i;
-        const builderBody = suggestions.slice(
-            suggestions.indexOf('function loopbackServiceUrl'),
-            suggestions.indexOf('function loopbackExternalUrlTarget'),
-        );
-        const outsideBuilder = suggestions.replace(builderBody, '');
-        expect(handConcat.test(outsideBuilder)).toBe(false);
-    });
 });

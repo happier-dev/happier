@@ -99,7 +99,7 @@ describe('session managed workflow section', () => {
                     createWorkflowRunSummaryFixture({ id: 'run-unread', origin: { kind: 'direct', originSessionId: 'session-1' } }),
                     createWorkflowRunSummaryFixture({ id: 'run-locked', origin: { kind: 'direct', originSessionId: 'session-1' } }),
                 ],
-                metadataByRunId: { 'run-locked': { kind: 'unavailable' } },
+                metadataByRunId: { 'run-locked': { kind: 'unavailable', reason: 'content_unavailable' } },
                 attentionRunIds: new Set<string>(),
             },
         });

@@ -8,20 +8,19 @@ import {
 import type { VoiceProviderSettingsJsonValueV1 } from '@happier-dev/protocol/voice/realtime/providerSettings';
 import * as React from 'react';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { happierPageTextMetrics, joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
-import { WorkSection } from '@/components/sessions/work/WorkSection';
+import { WorkSection, WorkSectionEmptyLine } from '@/components/sessions/work/WorkSection';
 import {
   DropdownMenu,
   type DropdownMenuItem,
 } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
 import { Icon } from '@/components/ui/icons/Icon';
-import { Item } from '@/components/ui/lists/Item';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { Modal } from '@/modal';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
 import { useSetting } from '@/sync/domains/state/storage';
@@ -43,9 +42,10 @@ import {
   useRealtimeVoiceCatalog,
 } from '@/voice/settings/panels/realtime/realtimeVoiceCatalogMenu';
 import { useBundledConversationProviderSettings } from '@/voice/settings/panels/realtime/useBundledConversationProviderSettings';
+import type { VoiceCatalogPreviewSynthesizer } from '@/voice/settings/panels/realtime/catalogPreview';
 import { resolveSessionVoicePreference } from '@/voice/settings/resolveSessionVoicePreference';
 
-import { resolveSessionVoiceLine } from './sessionVoiceLine';
+import { readSessionVoiceInUse, resolveSessionVoiceLine } from './sessionVoiceLine';
 
 const providerRegistry = createDefaultVoiceProviderRegistry();
 
@@ -86,25 +86,14 @@ export const SessionVoiceSection = React.memo(function SessionVoiceSection(
   const settings = useBundledConversationProviderSettings(voice);
   useVoiceProviderRegistryRevision(providerRegistry);
   if (voiceEnabled !== true || !settings.providerId) return null;
-  const entry = providerRegistry.get(settings.providerId);
-  const declaration =
-    entry?.kind === 'voice.conversation-provider.v1' &&
-    entry.declaration?.kind === 'conversation'
-      ? entry.declaration
-      : null;
-  // Only the account's conversation provider has a per-Session voice choice here.
-  if (
-    !declaration ||
-    !settings.bundledUi ||
-    !settings.descriptor ||
-    !settings.config
-  )
-    return null;
-  const field = readSessionVoiceSettingFieldV1(declaration);
+  const choice = settings.sessionChoice;
+  if (!choice) return null;
+  const declaration = choice.declaration;
+  const field = declaration ? readSessionVoiceSettingFieldV1(declaration) : null;
   const providerLabel =
     tLoose(
       resolveSelectedVoiceProviderTitleKey(voice, providerRegistry) ?? '',
-    ) || settings.providerId;
+    ) || choice.providerId;
   return (
     <WorkSection
       testID="session-work-voice"
@@ -113,30 +102,27 @@ export const SessionVoiceSection = React.memo(function SessionVoiceSection(
       count=""
       nativeID="voice"
     >
-      {field ? (
+      {field && declaration ? (
         <SessionVoicePicker
           session={props.session}
           serverId={props.serverId}
-          providerId={settings.providerId}
+          providerId={choice.providerId}
           providerLabel={providerLabel}
           declaration={declaration}
-          client={settings.bundledUi.client}
-          // The settings owner's parsed config is the provider's JSON settings value (same value the
-          // Action executor admits); only its static type is the wider record.
-          config={
-            settings.config as unknown as VoiceProviderSettingsJsonValueV1
-          }
+          client={choice.client}
+          catalogTargetKey={choice.targetKey}
+          preview={choice.preview}
+          config={choice.config}
           searchPlaceholderKey={
-            settings.descriptor.fields.find(
+            settings.descriptor?.fields.find(
               (candidate) => candidate.path === field.path,
             )?.searchPlaceholderKey
           }
         />
       ) : (
-        <Item
+        <WorkSectionEmptyLine
           testID="session-work-voice.noChoice"
-          title={t('sessionVoice.emptyCatalog')}
-          showChevron={false}
+          text={t('sessionVoice.emptyCatalog')}
         />
       )}
     </WorkSection>
@@ -151,6 +137,8 @@ const SessionVoicePicker = React.memo(function SessionVoicePicker(
     providerLabel: string;
     declaration: Parameters<typeof readSessionVoiceSettingFieldV1>[0];
     client: Parameters<typeof useRealtimeVoiceCatalog>[0]['client'];
+    catalogTargetKey: string;
+    preview?: VoiceCatalogPreviewSynthesizer;
     config: VoiceProviderSettingsJsonValueV1;
     searchPlaceholderKey?: unknown;
   }>,
@@ -173,13 +161,14 @@ const SessionVoicePicker = React.memo(function SessionVoicePicker(
   const [open, setOpen] = React.useState(false);
   const [customOpen, setCustomOpen] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
+  const [refused, setRefused] = React.useState(false);
   const { catalog, requestCatalog } = useRealtimeVoiceCatalog({
     client: props.client,
     credentialUsable: true,
-    targetKey: providerId,
+    targetKey: props.catalogTargetKey,
   });
   const { previewingId, playPreview, stopPreview } =
-    useRealtimeCatalogPreview(providerId);
+    useRealtimeCatalogPreview(providerId, { targetKey: props.catalogTargetKey, synthesize: props.preview });
   const catalogRows = catalog.phase === 'ready' ? catalog.rows : null;
   const resolution = React.useMemo(
     () =>
@@ -199,10 +188,8 @@ const SessionVoicePicker = React.memo(function SessionVoicePicker(
     snapshot.status === 'connected'
       ? voiceSessionManager.getAttemptTargetSessionAddress()
       : null;
-  const inUse =
-    attemptTarget?.sessionId === session.id && snapshot.inUseVoice
-      ? snapshot.inUseVoice
-      : null;
+  const sessionAddress = { serverId, sessionId: session.id };
+  const inUse = readSessionVoiceInUse(snapshot.inUseVoice, sessionAddress, attemptTarget);
 
   const nameOf = React.useCallback(
     (id: string | null) => {
@@ -221,7 +208,13 @@ const SessionVoicePicker = React.memo(function SessionVoicePicker(
   const desiredId = chosenId ?? accountVoiceId;
   const inUseId = inUse ? readVoiceId(inUse.value) : null;
   const line = resolveSessionVoiceLine({
+    providerId,
+    inUseProviderId: inUse?.providerContributionId ?? null,
+    catalogLoaded: catalog.phase === 'ready',
+    sessionAddress,
+    attemptTargetSessionAddress: attemptTarget,
     saving,
+    refused,
     unavailable: resolution.kind === 'unavailable' ? resolution.reason : null,
     providerLabel,
     inUseName: inUse?.displayName ?? null,
@@ -233,6 +226,7 @@ const SessionVoicePicker = React.memo(function SessionVoicePicker(
   const write = React.useCallback(
     (next: SessionVoicePreferenceV1 | null) => {
       setSaving(true);
+      setRefused(false);
       fireAndForget(
         (async () => {
           try {
@@ -248,15 +242,14 @@ const SessionVoicePicker = React.memo(function SessionVoicePicker(
               },
               { serverId, surface: 'ui', authority: 'present_user' },
             );
-            if (!result.ok)
-              Modal.alert(t('sessionVoice.title'), t('sessionVoice.refused'));
+            if (!result.ok) setRefused(true);
             else if (
               ActionApprovalRequestCreatedResultSchema.safeParse(result.result)
                 .success
             )
               return;
           } catch {
-            Modal.alert(t('sessionVoice.title'), t('sessionVoice.refused'));
+            setRefused(true);
           } finally {
             setSaving(false);
           }
@@ -283,7 +276,8 @@ const SessionVoicePicker = React.memo(function SessionVoicePicker(
     credentialUnavailableDetail: t('sessionVoice.loading'),
     previewingId,
     onPreview: playPreview,
-    inUseId,
+    canPreview: Boolean(props.preview),
+    inUseId: inUse?.providerContributionId === providerId ? inUseId : null,
     category: t('sessionVoice.voicesHeading', { provider: providerLabel }),
   });
   const accountVoiceName = nameOf(accountVoiceId);
@@ -353,16 +347,16 @@ const SessionVoicePicker = React.memo(function SessionVoicePicker(
         rowKind="item"
         itemRowProps={{ rightElementOutsidePressable: true }}
         footer={
-          inUse ? (
-            <Text style={styles.footer}>
-              {t('sessionVoice.preferenceHint')}
-            </Text>
-          ) : undefined
+          <Text style={styles.footer}>{t('sessionVoice.preferenceHint')}</Text>
         }
         itemTrigger={{
           title: line,
           showSelectedSubtitle: false,
-          detailFormatter: () => selectedName ?? t('sessionVoice.chooseVoice'),
+          // One value, as it is said: "Sage · OpenAI".
+          detailFormatter: () =>
+            selectedName
+              ? joinHappierFacts(selectedName, providerLabel)
+              : t('sessionVoice.chooseVoice'),
           field: {
             leading: (
               <Icon
@@ -371,7 +365,6 @@ const SessionVoicePicker = React.memo(function SessionVoicePicker(
                 color={theme.colors.text.secondary}
               />
             ),
-            secondary: providerLabel,
             invalid: resolution.kind === 'unavailable',
           },
           itemProps: {
@@ -424,8 +417,7 @@ const styles = StyleSheet.create((theme) => ({
   // The picker's quiet footer: when the choice applies, said once.
   footer: {
     ...Typography.default(),
-    fontSize: 12,
-    lineHeight: 16,
+    ...happierPageTextMetrics('rowDescription'),
     color: theme.colors.text.secondary,
     paddingHorizontal: 12,
     paddingTop: 8,

@@ -15,7 +15,7 @@ import type { WidgetSetupCommandResult } from '@/components/widgets/surface/widg
 import { SelectionList, type SelectionListOption, type SelectionListStep } from '@/components/ui/selectionList';
 import { Text } from '@/components/ui/text/Text';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { formatRelativeTimeShort } from '@/components/ui/selectionList/formatRelativeTimeShort';
+import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { useWorkflowDefinitionLibrary, useWorkflowRunWindow } from '@/components/workflows/library/workflowLibraryReads';
 import { formatWorkflowDefinitionLibraryTitle, formatWorkflowDefinitionContentUnavailableReason } from '@/components/workflows/presentation/workflowProblemPresentation';
 import { describeWorkflowRunState } from '@/components/workflows/presentation/workflowLifecyclePresentation';

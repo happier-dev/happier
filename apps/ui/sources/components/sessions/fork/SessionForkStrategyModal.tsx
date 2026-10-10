@@ -4,6 +4,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
+import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -173,7 +174,7 @@ export function SessionForkStrategyModal(props: SessionForkStrategyModalProps) {
     // Every choice is inert while an effect is in flight, and once the outcome is
     // unknown the fork must not be reissued at all: a second attempt is exactly
     // how a duplicate provider-side fork gets created.
-    const choicesDisabled = flow.isBusy || phase.type === 'unknown' || phase.type === 'opening' || phase.type === 'navigated';
+    const choicesDisabled = !flow.ready || flow.isBusy || phase.type === 'unknown' || phase.type === 'opening' || phase.type === 'navigated';
 
     const submit = React.useCallback((route: SessionForkOperationRoute) => {
         fireAndForget(flow.submit(route), { tag: 'SessionForkStrategyModal.submit' });
@@ -227,7 +228,8 @@ export function SessionForkStrategyModal(props: SessionForkStrategyModalProps) {
             : failure.message ?? t('session.forking.strategy.failure.generic'))
         : null;
     const announcement = failureAnnouncement
-        ?? (statusLine ? [statusLine.title, statusLine.body].filter(Boolean).join('. ') : null);
+        ?? (phase.type === 'awaiting_approval' ? t('approvals.status.open')
+            : statusLine ? [statusLine.title, statusLine.body].filter(Boolean).join('. ') : null);
     React.useEffect(() => {
         if (!announcement) return;
         announceAccessibilityMessage(announcement);
@@ -333,6 +335,18 @@ export function SessionForkStrategyModal(props: SessionForkStrategyModalProps) {
                 </View>
             ) : null}
 
+            {phase.type === 'awaiting_approval' ? (
+                <ActionApprovalPendingNotice
+                    testID="session-fork-strategy-approval"
+                    message={t('approvals.status.open')}
+                    onOpenApproval={() => {
+                        onClose();
+                        props.navigation.push(`/inbox/approvals/${encodeURIComponent(phase.artifactId)}${props.request.serverId
+                            ? `?serverId=${encodeURIComponent(props.request.serverId)}` : ''}`);
+                    }}
+                />
+            ) : null}
+
             {phase.type === 'unknown' ? (
                 <View style={styles.noticeActions}>
                     <RoundButton
@@ -377,6 +391,7 @@ function resolveStatusLine(
     switch (phase.type) {
         case 'choosing':
         case 'navigated':
+        case 'awaiting_approval':
             return null;
         case 'submitting':
             return {

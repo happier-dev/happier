@@ -1,11 +1,11 @@
 import { Modal } from '@/modal';
 import { getStorage } from '@/sync/domains/state/storage';
-import type { Session } from '@/sync/domains/state/storageTypes';
 import { setSessionReportsTo } from '@/sync/ops/relations/setSessionReportsTo';
 import { loadSessionReportsToEligibility } from '@/sync/ops/relations/sessionReportsToEligibility';
 import { t } from '@/text';
 
 import { canDropSessionUnder } from './putUnderCandidates';
+import { selectSessionRelationRecords } from './reportSubtree';
 
 /** The words for a refused `session.reports_to.set` — shared by "Put under…" and the list drag. */
 export function describeReportsToRefusal(errorCode: string | undefined): string {
@@ -36,13 +36,15 @@ export async function putSessionUnderLead(input: Readonly<{
     signal?: AbortSignal;
     accountId?: string;
 }>): Promise<PutSessionUnderLeadResult> {
-    const initialSessions = getStorage().getState().sessions;
+    const initialState = getStorage().getState();
+    const initialSessions = selectSessionRelationRecords(initialState.sessions, input.serverId, initialState.sessionListRowsByServerId);
     if (!input.serverId || (initialSessions[input.sessionId]?.serverId ?? null) !== input.serverId
         || (initialSessions[input.leadSessionId]?.serverId ?? null) !== input.serverId) return 'not-eligible';
     const facts = await loadSessionReportsToEligibility({
         serverId: input.serverId, sessionId: input.sessionId, candidateSessionIds: [input.leadSessionId], signal: input.signal,
     });
-    const sessions = getStorage().getState().sessions as Readonly<Record<string, Session>>;
+    const state = getStorage().getState();
+    const sessions = selectSessionRelationRecords(state.sessions, input.serverId, state.sessionListRowsByServerId);
     if (!canDropSessionUnder(sessions, input.sessionId, input.leadSessionId, facts, {
         serverId: input.serverId, ...(input.accountId ? { accountId: input.accountId } : {}),
     })) {

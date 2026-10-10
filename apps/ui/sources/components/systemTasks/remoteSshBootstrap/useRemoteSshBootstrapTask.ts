@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
 import { parseApproveRemoteProvisioningPromptData, parseSshPasswordPromptData, parseSshTrustPromptData, type ReplaceRemoteBackgroundServicesPromptData, type SshTrustPromptData } from '@happier-dev/protocol/system/tasks/promptPayloadContracts';
-import type { SystemTaskResult } from '@happier-dev/protocol/system/tasks/spec';
+import type { SystemTaskResult, SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
 
 import { getSystemTasksRunner } from '@/components/systemTasks/systemTasksRuntime';
 import {
@@ -136,7 +136,7 @@ export function useRemoteSshBootstrapTask(options: Readonly<{
     }, [options.onTaskIdChange]);
     const [isStarting, setIsStarting] = React.useState(false);
     const [promptResolution, setPromptResolution] = React.useState<RemoteSshPromptResolution>({});
-    const latestFormStateRef = React.useRef<RemoteSshBootstrapFormState | null>(null);
+    const latestPasswordDraftRef = React.useRef('');
     const answeredPasswordPromptTaskIdRef = React.useRef<string | null>(null);
     const rawSnapshot = useSystemTaskSnapshot(runner, activeTaskId);
     const activeTaskSnapshot = React.useMemo(() => normalizeRemoteSnapshot(rawSnapshot), [rawSnapshot]);
@@ -145,11 +145,14 @@ export function useRemoteSshBootstrapTask(options: Readonly<{
     const startWithResolution = React.useCallback(async (
         params: RemoteSshBootstrapFormState,
         nextPromptResolution: RemoteSshPromptResolution,
+        startSpec?: (spec: SystemTaskSpec) => Promise<string>,
     ) => {
-        latestFormStateRef.current = params;
+        // Referenced credentials belong to the admitted task, not a later UI
+        // auto-response. Only an explicitly entered password draft is retained.
+        latestPasswordDraftRef.current = startSpec ? '' : params.sshPassword;
         setIsStarting(true);
         try {
-            const taskId = await startRemoteSshBootstrapTask({ ...options, runner }, params, nextPromptResolution);
+            const taskId = await startRemoteSshBootstrapTask({ ...options, runner, startSpec }, params, nextPromptResolution);
             setActiveTaskId(taskId);
             return taskId;
         } finally {
@@ -157,11 +160,11 @@ export function useRemoteSshBootstrapTask(options: Readonly<{
         }
     }, [options.homeTarget, options.intent, options.publicRelayUrl, options.relayUrl, options.serviceMode, options.webappUrl, runner, setActiveTaskId]);
 
-    const start = React.useCallback(async (params: RemoteSshBootstrapFormState) => {
-        return await startWithResolution(params, promptResolution);
+    const start = React.useCallback(async (params: RemoteSshBootstrapFormState, startSpec?: (spec: SystemTaskSpec) => Promise<string>) => {
+        return await startWithResolution(params, promptResolution, startSpec);
     }, [promptResolution, startWithResolution]);
 
-    const continueAfterPrompt = React.useCallback(async (params: RemoteSshBootstrapFormState) => {
+    const continueAfterPrompt = React.useCallback(async (params: RemoteSshBootstrapFormState, startSpec?: (spec: SystemTaskSpec) => Promise<string>) => {
         if (!prompt) {
             throw new Error('No prompt is waiting for continuation.');
         }
@@ -169,8 +172,8 @@ export function useRemoteSshBootstrapTask(options: Readonly<{
             throw new Error('SSH password prompts must be answered via answerPasswordPrompt().');
         }
         if (!activeTaskId) throw new Error('No remote SSH prompt task is active.');
-        latestFormStateRef.current = params;
-        const continued = await continueRemoteSshBootstrapTask({ options: { ...options, runner }, form: params,
+        latestPasswordDraftRef.current = startSpec ? '' : params.sshPassword;
+        const continued = await continueRemoteSshBootstrapTask({ options: { ...options, runner, startSpec }, form: params,
             taskId: activeTaskId, snapshot: rawSnapshot, prompt, resolution: promptResolution });
         setPromptResolution(continued.resolution);
         setActiveTaskId(continued.taskId);
@@ -185,7 +188,7 @@ export function useRemoteSshBootstrapTask(options: Readonly<{
             throw new Error('No SSH password prompt task is active.');
         }
 
-        latestFormStateRef.current = params;
+        latestPasswordDraftRef.current = '';
         const password = String(params.sshPassword ?? '').trim();
         if (!password) {
             throw new Error('SSH password is required.');
@@ -233,7 +236,7 @@ export function useRemoteSshBootstrapTask(options: Readonly<{
         if (!activeTaskId || answeredPasswordPromptTaskIdRef.current === activeTaskId) {
             return;
         }
-        const password = String(latestFormStateRef.current?.sshPassword ?? '').trim();
+        const password = latestPasswordDraftRef.current.trim();
         if (!password) {
             return;
         }

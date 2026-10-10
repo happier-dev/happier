@@ -36,7 +36,7 @@ export function useWorkBoardEntityBinding(context: Omit<WorkBoardEntityContext, 
         const getContext = (): WorkBoardEntityContext => ({ ...latest.current.context, scope });
         return { runtime, scope, isCurrent, getContext, admitWidgetMovement: effect => latest.current.movement.admit(effect), async execute(effect) {
             if (!isCurrent()) return { status: 'refused', reason: { code: 'board_scope_retired', message: t('entityDragDrop.reasons.gone') } };
-            if (effect.actionId === 'widgets.instance.move') return executeWidgetEntityMovement(effect, scope);
+            if (effect.actionId === 'widgets.item.move') return executeWidgetEntityMovement(effect, scope);
             if (effect.actionId !== 'boards.apply') return { status: 'refused', reason: { code: 'invalid-board-action', message: t('entityDragDrop.reasons.generic') } };
             try {
                 const parsed = WorkBoardActionInputSchemasV1['boards.apply'].safeParse(effect.input);

@@ -12,7 +12,7 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { saveAccountSettings } from '@/sync/domains/state/accountSettingsPersistence';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { withDirectConnectionsEnabled, withMachineDirectConnectionChoice } from '@/sync/domains/settings/peerMediationPreferences';
-import { acquireNativeDirectPreviewAccess } from './nativeDirectAccess';
+import { acquireNativeDirectPreviewAccess, acquireServerPreviewAccess } from './nativeDirectAccess';
 import { useNativeDirectPreview, type NativeDirectPreviewInput } from './useNativeDirectPreview';
 
 const boundaries = vi.hoisted(() => ({
@@ -133,6 +133,54 @@ afterEach(async () => {
 });
 
 describe('native preview viewer access', () => {
+    it('opens an already registered web preview through viewer admission without a custodian URL or native renderer', async () => {
+        vi.stubGlobal('__TAURI_INTERNALS__', undefined);
+        const hook = await renderHook(useNativeDirectPreview, { initialProps: { ...baseInput, serverId, fallbackUrl: null } });
+        try {
+            await flushHookEffects({ cycles: 40 });
+            expect(hook.getCurrent()).toMatchObject({ url: `${fallbackUrl}?previewToken=fresh-server-admission`,
+                localOrigin: null, acquiring: false });
+            expect(boundaries.invoke.mock.calls.some(([command]) => command === 'iroh_start_machine_tunnel')).toBe(false);
+        } finally { await hook.unmount(); }
+    });
+    it('uses only Home HTTP for a target-only desktop view without native registration metadata', async () => {
+        const { BrowserViewHost } = await import('@/components/browser/BrowserViewHost');
+        const { buildBrowserAdapterCapabilities } = await import('@/sync/domains/browser/adapters/capabilities');
+        const { renderScreen } = await import('@/dev/testkit/render/renderScreen');
+        const view: BrowserControlViewState = {
+            browserSessionId: 'target-browser', viewId: 'target-view', target: {
+                kind: 'localServicePreview', targetId: 'preview-1', machineId: 'machine-1', display: { title: 'Web' } },
+            platform: 'desktop', adapterKind: 'localPreview', engineKind: 'desktopWebView',
+            adapterCapabilities: buildBrowserAdapterCapabilities({ adapterKind: 'localPreview', supportedTargetKinds: ['localServicePreview'],
+                supportedRenderEngines: ['desktopWebView'], desktopWebViewSupport: desktopAvailability.supports }),
+            currentUrl: null, currentUrlExpiresAt: null, pendingUrl: null, title: 'Web', faviconUrl: null,
+            loadingState: 'idle', loadingProgress: null, navigationGeneration: 0, canGoBack: false, canGoForward: false,
+            securityOrigin: null, lastError: null, openerViewId: null, adapterRefreshStatus: 'idle', adapterRefreshError: null,
+        };
+        const screen = await renderScreen(React.createElement(BrowserViewHost, { view, localServicePreviewServerId: serverId }));
+        try {
+            await flushHookEffects({ cycles: 40 });
+            expect(boundaries.fetch.mock.calls.some(([, init]) => isServerAccessCall(init))).toBe(true);
+            expect(boundaries.invoke.mock.calls.some(([command]) => command === 'iroh_start_machine_tunnel')).toBe(false);
+        } finally { await screen.unmount(); }
+    });
+    it('mints a shareable server URL for a web viewer using its actual captured Home Account credential', async () => {
+        vi.stubGlobal('__TAURI_INTERNALS__', undefined);
+        let authenticatedViewerReached = false;
+        boundaries.fetch.mockImplementation(async (url, init) => {
+            if (url === 'https://preview-home.example.test/v1/local-services/preview/preview-1/access'
+                && new Headers(init?.headers).get('Authorization') === `Bearer ${boundaries.credentialsToken}`
+                && isServerAccessCall(init)) {
+                authenticatedViewerReached = true;
+                return Response.json(serverAccessResponse('web-viewer-admission'));
+            }
+            return Response.json({ error: 'preview_access_denied' }, { status: 403 });
+        });
+        expect(await acquireServerPreviewAccess({ previewId: 'preview-1', machineId: 'machine-1', serverId }))
+            .toBe('https://preview.example.test/start?previewToken=web-viewer-admission');
+        expect(authenticatedViewerReached).toBe(true);
+        expect(await acquireServerPreviewAccess({ previewId: 'preview-1', machineId: 'another-machine', serverId })).toBeNull();
+    });
     it('mints fresh preview access and binds the native handshake and inner open to the same proof', async () => {
         const lease = await acquireNativeDirectPreviewAccess({ ...baseInput, previewId: 'preview-1', machineId: 'machine-1', serverId });
         expect(lease?.localOrigin).toBe('http://127.0.0.1:42123');
@@ -351,7 +399,7 @@ describe('native preview viewer access', () => {
         await denied.unmount();
     });
 
-    it('does not refresh admission for plain web or explicit external navigation', async () => {
+    it('refreshes plain web admission but leaves disabled and explicit external navigation alone', async () => {
         const input: NativeDirectPreviewInput = { ...baseInput, serverId, enabled: false };
         const hook = await renderHook(useNativeDirectPreview, { initialProps: input });
         await flushHookEffects();
@@ -362,10 +410,11 @@ describe('native preview viewer access', () => {
         await hook.rerender({ ...input, enabled: true, requestedUrl: 'https://external.example.test/docs' });
         await flushHookEffects({ cycles: 40 });
         expect(hook.getCurrent().url).toBe('https://external.example.test/docs');
+        expect(boundaries.fetch.mock.calls.some(([, init]) => isServerAccessCall(init))).toBe(false);
         vi.stubGlobal('__TAURI_INTERNALS__', undefined);
         await hook.rerender({ ...input, enabled: true });
         await flushHookEffects({ cycles: 40 });
-        expect(boundaries.fetch.mock.calls.some(([, init]) => isServerAccessCall(init))).toBe(false);
+        expect(hook.getCurrent().url).toBe(`${fallbackUrl}?previewToken=fresh-server-admission`);
         await hook.unmount();
     });
 

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View, type LayoutChangeEvent } from 'react-native';
 import { type WorkBoardWidgetIntentV1, type WorkBoardWidgetPlacementV1 } from '@happier-dev/protocol';
-import { resolveWidgetSizeChoicesV1, type WidgetInputBindingsV1, type WidgetSizeV1 } from '@happier-dev/protocol/widgets';
+import { resolveWidgetSizeChoicesV1, type WidgetInputBindingsV1, type WidgetSizeV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 import { getWidgetSizeFootprintV1 } from '@happier-dev/protocol/widgets';
 
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
@@ -38,6 +38,8 @@ const ALWAYS_OVERFLOW = Number.POSITIVE_INFINITY;
 export type BoardWidgetCardProps = Readonly<{
     boardId: string;
     placement: WorkBoardWidgetPlacementV1;
+    /** Runtime routing from the Board's current binding, never its retained placement label. */
+    scope: WidgetSurfaceRefV1 | null;
     /** The parent's current header projection, shared with Canvas sizing. */
     descriptor: WidgetCandidate | null;
     size: WidgetSizeV1;
@@ -65,7 +67,7 @@ export const BoardWidgetCard = React.memo(function BoardWidgetCard(props: BoardW
     const { placement, boardId, dispatch } = props;
     const { instance } = placement;
     const appRuntime = useAppShellPluginUiProjection();
-    const scope = placement.ref.surface;
+    const scope = props.scope;
     const candidate = props.descriptor;
     const size = props.size;
     const widgetPresentation = React.useMemo(() => ({ size, footprint: getWidgetSizeFootprintV1('workBoard', size)! }), [size]);
@@ -128,7 +130,7 @@ export const BoardWidgetCard = React.memo(function BoardWidgetCard(props: BoardW
     }, []);
     const body = React.useMemo(() => ({
         kind: 'content' as const,
-        children: props.active ? (
+        children: props.active && scope ? (
             <View onLayout={onBodyLayout}><WidgetSurface
                 scope={scope}
                 instance={instance}

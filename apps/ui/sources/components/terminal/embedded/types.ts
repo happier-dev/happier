@@ -1,4 +1,5 @@
 import type { EmbeddedTerminalWriteCompleteEvent } from './embeddedTerminalRendererHandle';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 
 export type EmbeddedTerminalPaneStatus = 'idle' | 'connecting' | 'connected' | 'error' | 'exited';
 
@@ -19,6 +20,10 @@ export type EmbeddedTerminalPaneController = Readonly<{
     onBell?: (label: string) => void;
     terminalTitle?: string | null;
     terminalBell?: string | null;
+    approvalPending?: boolean;
+    approvalId?: string | null;
+    approvalServerId?: string;
+    onOpenApproval?: () => void;
     copySelection?: (request?: Readonly<{
         source: 'user-selection' | 'remote-osc52';
         text: string;
@@ -27,7 +32,7 @@ export type EmbeddedTerminalPaneController = Readonly<{
     onReady: (cols: number, rows: number) => void;
     onWriteComplete: (event: EmbeddedTerminalWriteCompleteEvent) => void;
     clearTerminal: () => void;
-    requestRestart: () => void;
+    requestRestart: (context?: ActionExecutorContext) => void;
     retryConnect: () => void;
     dismissDetectedUrl: () => void;
 }>;

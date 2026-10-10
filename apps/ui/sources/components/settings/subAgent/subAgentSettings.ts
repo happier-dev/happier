@@ -7,20 +7,20 @@ export const SUB_AGENT_SETTINGS = defineSettingsPage({
         instructions: {
             titleKey: 'subAgentGuidance.settings.instructionsTitle',
             settings: {
-                notifyParentOnCompletion: { storage: { scope: 'account', key: 'executionRunsNotifyParentOnCompletionDefault', access: 'read_write' }, titleKey: 'subAgentGuidance.settings.notifyParentOnCompletion.title', descriptionKey: 'subAgentGuidance.settings.notifyParentOnCompletion.subtitle' },
+                notifyParentOnCompletion: {},
             },
         },
         disabled: {
             titleKey: 'subAgentGuidance.settings.disabled.title',
             settings: {
-                enableExecutionRuns: { titleKey: 'subAgentGuidance.settings.disabled.enableExecutionRuns.title' },
+                enableExecutionRuns: {},
             },
         },
         related: {
             titleKey: 'subAgentGuidance.settings.related.groupTitle',
             settings: {
-                session: { titleKey: 'subAgentGuidance.settings.related.sessionTitle', descriptionKey: 'subAgentGuidance.settings.related.sessionSubtitle' },
-                agents: { titleKey: 'subAgentGuidance.settings.related.agentsTitle', descriptionKey: 'subAgentGuidance.settings.related.agentsSubtitle' },
+                session: {},
+                agents: {},
             },
         },
     },

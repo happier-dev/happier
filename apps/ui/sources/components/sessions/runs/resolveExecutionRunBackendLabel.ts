@@ -1,40 +1,28 @@
-import { readBackendTargetRefV2, type BackendTargetRefV2, type BackendTargetRefV2Input } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import type { AcpCatalogSettingsV1 } from '@happier-dev/protocol/acp/catalog/settingsV1';
+import { readBackendTargetRefV2, type BackendTargetRefV2Input } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 
-import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
-import { normalizeAcpCatalogSettingsV1 } from '@happier-dev/protocol/acp/catalog/catalogMutationsV1';
-import { storage } from '@/sync/domains/state/storage';
-import { t } from '@/text';
-
-function resolveConfiguredBackendLabel(target: BackendTargetRefV2, catalog: AcpCatalogSettingsV1): string {
-    const configuredBackendId = target.configuredBackendId ?? '';
-    if (!configuredBackendId) return target.backendId;
-
-    const normalized = normalizeAcpCatalogSettingsV1(catalog);
-    const backend = normalized.backends.find((candidate) => candidate.id === configuredBackendId) ?? null;
-    if (!backend) return configuredBackendId;
-    return backend.title || backend.name || configuredBackendId;
-}
+import { isBundledAgentId } from '@/agents/catalog/catalog';
+import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
+import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { backendTargetKeysMatch } from '@/agents/backendCatalog/backendTargetKeyV2';
 
 export function resolveExecutionRunBackendLabel(
     backendTarget: BackendTargetRefV2Input | null | undefined,
-    catalog?: AcpCatalogSettingsV1 | null,
+    catalog?: AcpCatalogSnapshotV1 | null,
 ): string | null {
     if (!backendTarget) return null;
 
-    const canonicalTarget: BackendTargetRefV2 = readBackendTargetRefV2(backendTarget);
+    const canonicalTarget = readBackendTargetRefV2(backendTarget);
 
     if (!canonicalTarget.configuredBackendId) {
         if (isBundledAgentId(canonicalTarget.backendId)) {
-            return t(getAgentCore(canonicalTarget.backendId).displayNameKey);
+            return resolveAgentCatalogTitle(canonicalTarget.backendId);
         }
         return canonicalTarget.backendId;
     }
 
-    return resolveConfiguredBackendLabel(
-        canonicalTarget,
-        catalog
-            ?? storage.getState()?.settings?.acpCatalogSettingsV1
-            ?? { v: 2, backends: [] },
-    );
+    if (catalog?.status !== 'ready') return canonicalTarget.configuredBackendId;
+    const entry = getResolvedBackendCatalogEntries({ enabledAgentIds: [], acpCatalogSnapshot: catalog })
+        .find(candidate => candidate.kind === 'configuredBackend' && backendTargetKeysMatch(candidate.backendTarget, canonicalTarget));
+    return entry?.title ?? canonicalTarget.configuredBackendId;
 }

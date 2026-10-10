@@ -1,3 +1,4 @@
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -83,7 +84,7 @@ describe('AddToBoardButton library recovery', () => {
         const screen = await renderScreen(
             <AppShellPluginUiProjectionValueProvider value={{ pluginUiProjection: projection, pluginBrowserProjection: null, phase: 'current',
                 interactionEnabled: true, machineId: 'machine', serverId, platform: 'web',
-                clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {} }}>
+                accountLifetime: captureActiveServerAccountScopeLifetime(), clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {} }}>
                 <QuickWidgetPicker />
             </AppShellPluginUiProjectionValueProvider>, layout,
         );
@@ -120,7 +121,7 @@ describe('AddToBoardButton library recovery', () => {
         const screen = await renderScreen(
             <AppShellPluginUiProjectionValueProvider value={{ pluginUiProjection: projection, pluginBrowserProjection: null, phase: 'current',
                 interactionEnabled: true, machineId: 'machine', serverId, platform: 'web',
-                clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {} }}>
+                accountLifetime: captureActiveServerAccountScopeLifetime(), clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {} }}>
                 <QuickWidgetPicker />
             </AppShellPluginUiProjectionValueProvider>, layout,
         );

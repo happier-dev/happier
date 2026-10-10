@@ -10,6 +10,7 @@ import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 
 import { collectRenderedTestIds } from '@/dev/testkit/render/collectRenderedTestIds';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
@@ -170,6 +171,8 @@ function withApiAdmission(request: ApprovalRequestV2): ApprovalRequestV2 {
         token: 'approval-invocation-authorization',
         binding: {
             serverIdentityId: origin.serverIdentityId, accountId: origin.accountId,
+            // This foreign admission selected a same-Account daemon installation.
+            custodianAccountId: origin.accountId, installationId: 'installation-exact',
             principalId: origin.principalId, credentialId: origin.credentialId,
             grant: API_TOKEN_FULL_GRANT_V1, machineId: origin.machineId, actionId: request.actionId,
             requestId: origin.requestId, target: origin.target,
@@ -230,6 +233,11 @@ describe('ApprovalPromptCard', () => {
         await home.reset();
         homeId = await home.addHome({ name: 'Home A', serverUrl: 'https://approval-home-a.example',
             serverIdentityId: 'srv_stable-home-a', accountId: 'account-1' });
+        // Replay first admits the exact daemon's custody from its Home's genuine machine census.
+        home.answer(homeId, 'GET /v1/machines', { body: [{
+            ...createPlainMachineRowFixture({ id: 'machine-exact', accountId: 'account-1' }),
+            installationId: 'installation-exact',
+        }] });
         headerHomeId = await home.addHome({ name: 'Header Home', serverUrl: 'https://approval-header.example',
             serverIdentityId: 'srv_stable-home-b', accountId: 'account-1', active: false });
         v1HomeId = await home.addHome({ name: 'V1 Home', serverUrl: 'https://approval-v1.example',
@@ -278,6 +286,13 @@ describe('ApprovalPromptCard', () => {
         expect(screen.findByTestId('approval-prompt-card')).toBeTruthy();
         expect(screen.getTextContent()).toContain('List sessions before continuing');
         expect(screen.getTextContent()).toContain('Agent wants to inspect active sessions');
+    });
+
+    it('shows an Agent instructions edit as its proposed document diff, not raw Action fields', async () => {
+        const screen = await renderCard({ ...approvalRequest(), actionId: 'prompt_doc.update', summary: 'Update its instructions',
+            actionArgs: { artifactId: 'instructions-doc', title: 'Release captain', markdown: 'Check prerelease versions first.' } });
+        expect(screen.findByTestId('approval-prompt-prompt-doc-diff')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('sessionInstructions.nextBoundary');
     });
 
     it('withholds approve for a released V1 request while preserving rejection', async () => {

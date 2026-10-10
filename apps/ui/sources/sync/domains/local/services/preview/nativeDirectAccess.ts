@@ -34,7 +34,9 @@ export async function acquireServerPreviewAccess(input: Readonly<{
     signal?: AbortSignal;
     onScopeCaptured?: (scope: ServerAccountScope) => void;
 }>): Promise<string | null> {
-    const eligible = () => !input.signal?.aborted && isRuntimeActive() && hasNativePreviewRenderer();
+    // Standard HTTPS admission is shareable and available to web viewers too.
+    // Only the device-local iroh lease below requires a native renderer.
+    const eligible = () => !input.signal?.aborted && isRuntimeActive();
     try {
         const server = resolveTargetServer(input.serverId ?? input.scope?.serverId);
         if (!server || !eligible() || input.scope && input.scope.serverId !== server.serverId) return null;

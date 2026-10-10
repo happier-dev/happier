@@ -1,4 +1,4 @@
-import { readExecutionRunStartRunCreation } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { ExecutionRunStartResponseSchema, readExecutionRunStartRunCreation } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { resolveExecutionRunImplicitRoleIdV1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
 import { resolveExecutionRunNotifyParentDefaultV1 } from '@happier-dev/protocol/execution/runs/executionRunNotifyParentDefaultV1';
 import type { SessionDiscussionSelectionSourceV1 } from '@happier-dev/protocol/sessions/discussions/content';
@@ -44,7 +44,6 @@ import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactive
 import { randomUUID } from '@/platform/randomUUID';
 import {
     sessionExecutionRunList,
-    sessionExecutionRunStart,
 } from '@/sync/ops/sessionExecutionRuns';
 import { writeExistingSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
@@ -59,6 +58,8 @@ import {
     type ExecutionRunIntent,
 } from './executionRunLauncherModel';
 import { createExecutionRunReportChip, createExecutionRunReviewerChip, createExecutionRunStartContentChip } from './executionRunStartChips';
+import { ExecutionRunRouteChoiceContent } from './ExecutionRunRouteChoiceContent';
+import { resolveExecutionRunRouteChoice } from './resolveExecutionRunRouteChoice';
 import type { ExecutionRunLauncherBackendChoice } from './resolveExecutionRunLauncherBackendChoices';
 import { useExecutionRunTeamCredentialModel } from './useExecutionRunTeamCredentialModel';
 import { ExecutionRunDraftSelectionContext } from './ExecutionRunDraftSelectionContext';
@@ -176,8 +177,8 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         sessionId: props.sessionId,
     });
     const serverId = preferredServerId;
-    const { session, accountBinding, accountLifetime, exactSettings, settings, enabledAgentIds, defaultBackend,
-        backendTarget, machineId, admitExactTarget: admitTarget, startAction } = useExecutionRunLaunchContext(props.sessionId, serverId);
+    const { session, accountBinding, accountLifetime, exactSettings, settings, profileCatalogReady, acpCatalogSnapshot, enabledAgentIds, defaultBackend,
+        backendTarget, inheritedModelSelection, inheritedRoutePresentation, inheritedConnectedServicesSelection, machineId, startAction } = useExecutionRunLaunchContext(props.sessionId, serverId);
     const [mountedComposerRef, setMountedComposerRef] = React.useState<Extract<ComposerRefV1, { kind: 'participantMessage' }> | null>(null);
     React.useEffect(() => {
         if (!props.autoFocusComposer || !mountedComposerRef) return;
@@ -187,14 +188,12 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         scopeKind: 'spawn',
         serverId,
     });
-    const launchProfiles = useHomeAiLaunchProfiles(settings.profiles, accountBinding?.scope ?? null);
+    const launchProfiles = useHomeAiLaunchProfiles(accountBinding?.scope ?? null);
     const sessionLaunchProfile = React.useMemo(
-        () => resolveExecutionRunSessionLaunchProfile(settings, session?.metadata, launchProfiles),
-        [session?.metadata, settings, launchProfiles],
+        () => resolveExecutionRunSessionLaunchProfile(session?.metadata, launchProfiles),
+        [session?.metadata, launchProfiles],
     );
-    const defaultSecretBindings = React.useMemo(() => sessionLaunchProfile
-        ? { ...sessionLaunchProfile.secretBindings, ...settings.currentSecretBindingsByProfileId[sessionLaunchProfile.id] }
-        : null, [sessionLaunchProfile, settings.currentSecretBindingsByProfileId]);
+    const defaultSecretBindings = sessionLaunchProfile?.secretBindings ?? null;
     const { canLaunchExecutionRuns, launchUnavailableReason, executionRunsBackends } = useSessionExecutionRunLaunchability(
         props.sessionId,
         session,
@@ -247,8 +246,11 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         singleTarget: intent !== 'review',
         enabledAgentIds,
         executionRunsBackends,
-        acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
+        acpCatalogSnapshot,
         initialBackendTarget: backendTarget,
+        inheritedModelSelection,
+        inheritedRoutePresentation,
+        inheritedConnectedServicesSelection,
         fallbackAgentId: defaultBackend?.defaultAgentId ?? null,
         machineCapabilitiesState,
         mergedBackendProjectionById: daemonMergedProjection.inputs?.mergedBackendProjectionById ?? null,
@@ -303,15 +305,6 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         });
         return matches.length === 1 ? matches[0]!.runId : null;
     }, [identity.correlationId, props.launchOrigin, props.sessionId, serverId]);
-
-    /**
-     * The exact-target checks every start takes before it reaches the Home: a Saved Secret overlay
-     * or a Team credential model is admitted by the exact daemon, and a stopped Session resumes.
-     * Throws with the person-facing reason; nothing has been created when it does.
-     */
-    const admitExactTarget = React.useCallback((requires: Parameters<typeof admitTarget>[0]) => (
-        admitTarget(requires, identity.correlationId)
-    ), [admitTarget, identity.correlationId]);
 
     /**
      * A review, plan or delegated task: the first message is its instructions, started through the
@@ -414,17 +407,14 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
             acceptedCurrentness: ComposerDraftFieldCurrentness;
         }> | null = null;
         try {
-            await admitExactTarget({
-                secretReferenceOverlay: startOptions.options.secretReferenceOverlay !== undefined,
-                teamCredentialModel: startOptions.options.teamCredentialModel !== undefined,
-                roleBinding: startOptions.options.roleId !== undefined,
-            });
             let runId = runIdRef.current;
             if (!runId) {
-                startIssued = true;
                 const intentTitle = resolveExecutionRunIntentTitle(submission.displayText ?? submission.text);
                 startedTitleRef.current = intentTitle;
-                const started = await sessionExecutionRunStart(props.sessionId, {
+                const launchOrigin = props.launchOrigin
+                    ? { ...props.launchOrigin, draftCorrelationId: identity.correlationId }
+                    : { kind: 'session' as const, sessionId: props.sessionId, draftCorrelationId: identity.correlationId };
+                const started = await startAction('execution.run.start', {
                     intent: 'delegate',
                     ...startOptions.options,
                     ...(intentTitle ? { display: { title: intentTitle } } : {}),
@@ -433,29 +423,24 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
                     ioMode: 'streaming',
                     // Each attempt carries its own correlation so a lost response can be
                     // reconciled; a Discussion launch keeps its selection provenance.
-                    launchOrigin: props.launchOrigin
-                        ? { ...props.launchOrigin, draftCorrelationId: identity.correlationId }
-                        : {
-                            kind: 'session',
-                            sessionId: props.sessionId,
-                            draftCorrelationId: identity.correlationId,
-                        },
-                }, {
-                    ...(serverId ? { serverId } : {}),
-                    ...(machineId ? { expectedMachineId: machineId } : {}),
-                });
-                if ('runId' in started) {
-                    runId = started.runId;
-                } else if (readExecutionRunStartRunCreation(started.details) !== 'noRunCreated') {
+                    launchOrigin,
+                }, identity.correlationId, launchOrigin);
+                startIssued = true;
+                const parsedStart = started.ok ? ExecutionRunStartResponseSchema.safeParse(started.result) : null;
+                if (parsedStart?.success) {
+                    runId = parsedStart.data.runId;
+                } else if (started.ok || readExecutionRunStartRunCreation(started.details) !== 'noRunCreated') {
                     runId = await findCorrelatedRun();
                 }
                 if (!runId) {
-                    const knownNoRun = !('runId' in started)
+                    const knownNoRun = !started.ok
                         && readExecutionRunStartRunCreation(started.details) === 'noRunCreated';
                     setPhase(knownNoRun ? 'idle' : 'unresolved');
                     // An unknown outcome is not a failure: the Run may already exist, so the copy
                     // says so and warns that another Start may create a second conversation.
-                    const message = knownNoRun ? started.error : t('sessionDrafts.executionRunStart.unresolved');
+                    const message = knownNoRun
+                        ? resolveActionExecutionFailureMessage(started, t('common.requestFailed')) ?? t('common.requestFailed')
+                        : t('sessionDrafts.executionRunStart.unresolved');
                     setError(message);
                     throw new Error(message);
                 }
@@ -544,7 +529,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         } finally {
             submitInFlightRef.current = false;
         }
-    }, [accountLifetime, actionInput, admitExactTarget, findCorrelatedRun, identity, machineId, notifyRunStarted, options.selectedBackendChoice, props.launchOrigin, props.sessionId, secretOverlayState.overlay, secretOverlayState.readiness.ok, selectionContext, serverId, teamCredential.available]);
+    }, [accountLifetime, actionInput, startAction, findCorrelatedRun, identity, notifyRunStarted, options.selectedBackendChoice, props.launchOrigin, props.sessionId, secretOverlayState.overlay, secretOverlayState.readiness.ok, selectionContext, serverId, teamCredential.available]);
 
     const submitPreparedMessage = React.useCallback(
         (submission: ParticipantComposerPreparedSubmission) => (intent
@@ -558,6 +543,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
         ? options.selectedBackendTargetKeys.length > 0
         : options.selectedBackendChoice !== null;
     const unavailable = exactSettings === null
+        || !profileCatalogReady
         || !session
         || canLaunchExecutionRuns !== true
         || !hasTarget
@@ -745,6 +731,38 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
                 renderContent: () => renderOptions(['permissions']),
             }));
         }
+        // RT4: a new Run follows the session's route and model unless the draft chooses its own.
+        if (intent !== 'review' && options.selectedBackendChoice) {
+            const inherits = options.inheritedDraftRoutePresentation !== null;
+            const routeChoice = resolveExecutionRunRouteChoice({
+                inherits,
+                inheritedSelection: options.targetMatchesParent ? inheritedModelSelection ?? null : null,
+                inheritedRoutePresentation: options.targetMatchesParent ? inheritedRoutePresentation ?? null : null,
+            });
+            const hasModelField = options.fields.some((field) => field.path === 'modelId' && field.visible !== false);
+            chips.push(createExecutionRunStartContentChip({
+                key: 'execution-run-start-route',
+                icon: inherits ? 'arrow-elbow-down-right' : 'path',
+                label: routeChoice.label,
+                title: t('agentInput.model.title'),
+                testID: 'execution-run-start-route-chip',
+                disabled,
+                revision: `${chipRevision}:${routeChoice.label}:${routeChoice.inheritDetail ?? ''}`,
+                renderContent: () => (
+                    <ExecutionRunRouteChoiceContent
+                        inherits={inherits}
+                        canInherit={options.targetMatchesParent}
+                        inheritDetail={routeChoice.inheritDetail}
+                        onInherit={() => {
+                            setError(null);
+                            setActionInput(({ modelSelection: _modelSelection, modelId: _modelId, teamCredentialModel: _teamCredentialModel,
+                                connectedServices: _connectedServices, connectedServicesByBackendTargetKey: _byTarget, ...rest }) => rest);
+                        }}
+                        chooseContent={hasModelField ? renderOptions(['fields'], (path) => path === 'modelId') : null}
+                    />
+                ),
+            }));
+        }
         const scopeField = intent === 'review' ? options.fields.find((field) => field.path === 'changeType') : undefined;
         if (scopeField) {
             const changeType = actionInput.changeType;
@@ -787,7 +805,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
             }));
         }
         return chips;
-    }, [actionInput.changeType, chipRevision, editable, intent, onPatch, onSelectBackend, roleItem?.name, roleValue, rolesRail, options.backendChoices, options.fields, options.profileChoices.length, options.selectedBackendTargetKeys, options.selectedPermissionMode, options.visiblePermissionModeOptions, renderOptions, reportToSession, teamCredential.picker]);
+    }, [actionInput.changeType, chipRevision, editable, inheritedModelSelection, inheritedRoutePresentation, intent, onPatch, onSelectBackend, roleItem?.name, roleValue, rolesRail, options.backendChoices, options.fields, options.inheritedDraftRoutePresentation, options.profileChoices.length, options.selectedBackendChoice, options.selectedBackendTargetKeys, options.selectedPermissionMode, options.targetMatchesParent, options.visiblePermissionModeOptions, renderOptions, reportToSession, teamCredential.picker]);
 
     // Why it can't start yet, said above the kept draft (lab `convo-ST` "Machine offline"): still
     // reading what the machine offers, or the reason agents can't start in this Session.

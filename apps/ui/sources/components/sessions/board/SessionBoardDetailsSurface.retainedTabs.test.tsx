@@ -1,3 +1,4 @@
+import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -182,7 +183,7 @@ function hostedHtmlItem(title: string, html: string): SessionSurfaceItemV1 {
         height: { mode: 'fixed', size: 'tall' },
         source: {
             kind: 'hostedHtml',
-            source: { kind: 'html', html },
+            source: artifactHtmlBundleFromBodyV1(html),
             requestedCapabilities: { hostMethods: ['notify'] },
         },
     } as SessionSurfaceItemV1;

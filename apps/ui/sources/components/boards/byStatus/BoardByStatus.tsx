@@ -44,14 +44,15 @@ export const BoardByStatus = React.memo(function BoardByStatus(props: Readonly<{
         // Widgets lead, in the Board's order; a Board without them keeps its five status groups.
         axis: [
             ...(hasWidgets ? [{ key: WIDGETS_GROUP, title: t('boards.widgets.group') }] : []),
-            ...WORK_STATUS_BUCKETS.map(bucket => ({ key: bucket, title: describeWorkStatusBucket(bucket) })),
+            ...WORK_STATUS_BUCKETS.map(bucket => ({ key: bucket, title: describeWorkStatusBucket(bucket),
+                tone: bucket === 'needs_you' ? 'attention' as const : 'neutral' as const })),
         ],
         groupOf, retainEmpty: !props.stacked,
     }), [hasWidgets, props.stacked]);
     const items = React.useMemo((): readonly StatusItem[] => hasWidgets ? [...widgets, ...props.cards] : props.cards, [hasWidgets, props.cards, widgets]);
     const renderWidget = props.renderWidget;
     const anatomy = React.useMemo((): CollectionAnatomy<StatusItem> => ({
-        boardContent: item => isWidget(item) ? renderWidget?.(item, { grip: null, lifted: false, active: true }) ?? null : <BoardCardView card={item} />,
+        boardContent: item => isWidget(item) ? renderWidget?.(item, { grip: null, lifted: false, active: true }) ?? null : <BoardCardView card={item} showStatusWord={false} />,
         glyph: () => null,
         title: item => item.title,
         accessibilityLabel: item => `${item.title}, ${isWidget(item) ? t('boards.widgets.kind') : item.status.word}`,

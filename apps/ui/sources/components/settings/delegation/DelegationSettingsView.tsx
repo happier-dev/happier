@@ -43,7 +43,8 @@ export const DelegationSettingsView = React.memo(function DelegationSettingsView
         <ItemList testID="settings.delegation">
             <SettingsPageHeader description={t('roles.delegation.description')} />
             <SettingSection section={DELEGATION_SETTINGS.sectionRefs.approvalReviewer}>
-                <ItemGroup title={t('roles.delegation.approvalReviewer')}>
+                {/* One row that names itself: a section title over it would only repeat "Approval reviewer". */}
+                <ItemGroup>
                     <SettingRow
                         setting={DELEGATION_SETTINGS.settings.approvalReviewerEnabled}
                         testID="settings.delegation.approvalReviewerEnabled"
@@ -95,7 +96,7 @@ export function DepthLadder(props: Readonly<{ limit: number }>) {
                     testID={`settings.delegation.ladder.level.${level}`}
                     glyph={<Text style={styles.levelNumber}>{level}</Text>}
                     title={t('roles.delegation.ladderLevel', { level })}
-                    detail={t('roles.delegation.ladderLevelDetail')}
+                    detail={t('roles.delegation.ladderLevelDetail', { level })}
                     connected
                 />
             ))}

@@ -16,6 +16,29 @@ function boundary() {
 }
 
 describe('WorkBoard Account Artifact save queue', () => {
+    it('reloads the old source before acknowledgement and the edited source after acknowledgement', async () => {
+        const b = boundary();
+        let release!: () => void;
+        const writeGate = new Promise<void>(resolve => { release = resolve; });
+        const store = createWorkBoardAccountStore({ ...b.transport, update: async input => {
+            await writeGate;
+            return b.transport.update(input);
+        } }, () => true);
+        await store.refresh();
+        const saving = store.queue.dispatch({ kind: 'update', boardId: 'b1', patch: { source: { sections: ['my_machines'] } } });
+        expect(projectDisplayedWorkBoards(store.getBoards(), store.queue.getState().pending).boards[0]?.source.sections)
+            .toEqual(['my_machines']);
+        const beforeAck = createWorkBoardAccountStore(b.transport, () => true);
+        // Hold only the write boundary; a fresh reader still sees acknowledged bytes.
+        await beforeAck.refresh();
+        expect(beforeAck.getBoards().boards[0]?.source.sections ?? []).toEqual([]);
+        release();
+        expect(await saving).toMatchObject({ status: 'applied' });
+        const afterAck = createWorkBoardAccountStore(b.transport, () => true);
+        await afterAck.refresh();
+        expect(afterAck.getBoards().boards[0]?.source.sections).toEqual(['my_machines']);
+        expect(store.queue.getState().pending).toEqual([]);
+    });
     it('keeps an acknowledged add renderable while its pending intent is still being retired', async () => {
         const b = boundary(); await b.store.refresh();
         const surface = { serverId: 'home-a', accountId: 'owner', owner: { kind: 'workBoard', boardId: 'b1' } } as const;

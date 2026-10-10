@@ -1,8 +1,9 @@
 import * as React from 'react';
 
-import type { LlmTaskRunnerConfigV1, SessionForkPoint } from '@happier-dev/protocol';
+import { SessionForkRpcResultSchema, type LlmTaskRunnerConfigV1, type SessionForkPoint } from '@happier-dev/protocol';
 
-import { forkSession } from '@/sync/ops';
+import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import type { ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 import { storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { getStorage } from '@/sync/domains/state/storageStore';
@@ -46,6 +47,8 @@ export type SessionForkStrategyFailure = Readonly<{
 export type SessionForkStrategyFlowPhase =
     | Readonly<{ type: 'choosing' }>
     | Readonly<{ type: 'submitting'; route: SessionForkOperationRoute }>
+    /** Admission created an approval; no fork mutation has been issued. */
+    | Readonly<{ type: 'awaiting_approval'; route: SessionForkOperationRoute; artifactId: string }>
     /** The daemon named the child; it is not visible/navigable here yet. */
     | Readonly<{ type: 'opening'; route: SessionForkOperationRoute; childSessionId: string; stalled: boolean }>
     /** The request was emitted and its outcome cannot be established. */
@@ -60,8 +63,10 @@ export type SessionForkStrategyFlowPhase =
 export type SessionForkStrategyFlow = Readonly<{
     phase: SessionForkStrategyFlowPhase;
     failure: SessionForkStrategyFailure | null;
-    /** True while an effectful request or a reconciliation pass is running. */
+    /** True while admission, approval custody, an effect or reconciliation is pending. */
     isBusy: boolean;
+    /** The existing mounted Action owner has bound this Home's Account. */
+    ready: boolean;
     submit: (route: SessionForkOperationRoute) => Promise<void>;
     checkForFork: () => Promise<void>;
     retryOpen: () => Promise<void>;
@@ -107,7 +112,6 @@ export function useSessionForkStrategyFlow(params: Readonly<{
     onNavigated: () => void;
 }>): SessionForkStrategyFlow {
     const { request, navigate, onNavigated } = params;
-
     const [phase, setPhase] = React.useState<SessionForkStrategyFlowPhase>({ type: 'choosing' });
     const [failure, setFailure] = React.useState<SessionForkStrategyFailure | null>(null);
 
@@ -134,6 +138,19 @@ export function useSessionForkStrategyFlow(params: Readonly<{
         if (!mountedRef.current) return;
         setPhase(next);
     }, []);
+    const activeRouteRef = React.useRef<SessionForkOperationRoute | null>(null);
+    const onApprovalPending = React.useCallback((registration: ActionApprovalContinuation) => {
+        const route = activeRouteRef.current;
+        if (route) applyPhase({ type: 'awaiting_approval', route, artifactId: registration.artifactId });
+    }, [applyPhase]);
+    const execution = useMountedActionExecution(request.serverId ?? getStorage().getState().profileScope?.serverId,
+        { onApprovalPending });
+    const executeAction = execution.execute;
+    React.useEffect(() => {
+        if (phase.type === 'awaiting_approval' && execution.approval.approvalStatus === 'executing') {
+            applyPhase({ type: 'submitting', route: phase.route });
+        }
+    }, [applyPhase, execution.approval.approvalStatus, phase]);
 
     const openChild = React.useCallback(async (
         route: SessionForkOperationRoute,
@@ -173,12 +190,13 @@ export function useSessionForkStrategyFlow(params: Readonly<{
     }, [applyPhase, navigate, onNavigated, request]);
 
     const submit = React.useCallback(async (route: SessionForkOperationRoute): Promise<void> => {
-        if (inFlightRef.current) return;
+        if (!execution.ready || inFlightRef.current) return;
         // An emitted request whose outcome is unknown must never be reissued:
         // that is exactly how a duplicate provider-side fork gets created.
         if (phase.type !== 'choosing') return;
 
         inFlightRef.current = true;
+        activeRouteRef.current = route;
         setFailure(null);
         applyPhase({ type: 'submitting', route });
         knownChildrenRef.current = readMatchingChildSessionIds({
@@ -198,10 +216,9 @@ export function useSessionForkStrategyFlow(params: Readonly<{
                 requestId,
                 onStart: 'current',
             });
-            const result = await forkSession({
-                ...(request.machineId ? { machineId: request.machineId } : {}),
+            const action = await executeAction('session.fork', {
                 ...(request.serverId ? { serverId: request.serverId } : {}),
-                parentSessionId: request.parentSessionId,
+                sessionId: request.parentSessionId,
                 forkPoint: request.forkPoint,
                 strategy: route,
                 requestId,
@@ -209,8 +226,15 @@ export function useSessionForkStrategyFlow(params: Readonly<{
                     ? { replayMaxSeedChars: request.replayMaxSeedChars }
                     : {}),
                 ...(request.replaySummaryRunner ? { replaySummaryRunner: request.replaySummaryRunner } : {}),
-            });
-            const outcome = classifySessionForkRpcOutcome(result);
+            }, { actionRequestId: requestId });
+            const result = action.ok
+                ? SessionForkRpcResultSchema.safeParse(action.result)
+                : { success: true as const, data: { ok: false as const, errorCode: action.errorCode, errorMessage: action.error } };
+            if (!result.success) {
+                applyPhase({ type: 'unknown', route, checking: false, lastCheck: null });
+                return;
+            }
+            const outcome = classifySessionForkRpcOutcome(result.data);
             if (outcome.type === 'created') {
                 await openChild(route, outcome.childSessionId);
                 return;
@@ -232,7 +256,7 @@ export function useSessionForkStrategyFlow(params: Readonly<{
             releaseUserRequestLease();
             inFlightRef.current = false;
         }
-    }, [applyPhase, onNavigated, openChild, phase.type, request, requestIdFor]);
+    }, [applyPhase, executeAction, execution.ready, openChild, phase.type, request, requestIdFor]);
 
     const checkForFork = React.useCallback(async (): Promise<void> => {
         if (inFlightRef.current) return;
@@ -283,8 +307,9 @@ export function useSessionForkStrategyFlow(params: Readonly<{
     }, [openChild, phase]);
 
     const isBusy = phase.type === 'submitting'
+        || phase.type === 'awaiting_approval'
         || (phase.type === 'opening' && !phase.stalled)
         || (phase.type === 'unknown' && phase.checking);
 
-    return { phase, failure, isBusy, submit, checkForFork, retryOpen };
+    return { phase, failure, isBusy, ready: execution.ready, submit, checkForFork, retryOpen };
 }

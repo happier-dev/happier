@@ -117,14 +117,16 @@ export function useWorkBoardSaveQueue(context?: Omit<WorkBoardEntityContext, 'sc
         const executor = createDefaultActionExecutor({ workBoardArtifacts: createWorkBoardUiActionPort(boardId => {
             const current = latestContext.current;
             return isCurrent() && scope && current && current.board.id === boardId ? { ...current, scope } : null;
-        }, queue, () => isCurrent() ? projectDisplayedWorkBoards(store.getBoards(), queue.getState().pending) : null) });
+        }, queue, store.readBoardAccess, () => isCurrent() ? projectDisplayedWorkBoards(store.getBoards(), queue.getState().pending) : null) });
         const dispatch = async (intent: WorkBoardIntentV1): Promise<WorkBoardSaveOutcome> => {
             if (!isCurrent() || !scope) return { status: 'refused', code: 'board_scope_retired' };
             const previousFailure = queue.getState().failure;
             let result: Awaited<ReturnType<typeof executor.execute>>;
             try {
                 result = intent.kind === 'widget_size'
-                    ? await executor.execute('widgets.instance.size.set', { ref: intent.ref, size: intent.size }, {
+                    ? await executor.execute('widgets.item.size.set', { ref: {
+                        ...intent.ref, surface: { ...intent.ref.surface, serverId: scope.serverId },
+                    }, size: intent.size }, {
                         serverId: scope.serverId, expectedAccountId: scope.accountId, surface: 'ui', authority: 'present_user',
                         actionCaller: { kind: 'host' }, actionRequestId: randomUUID(),
                     })
@@ -133,7 +135,7 @@ export function useWorkBoardSaveQueue(context?: Omit<WorkBoardEntityContext, 'sc
                 if (isCurrent()) queue.recordFailure(intent, 'unavailable');
                 return { status: 'refused', code: isCurrent() ? 'board_action_unavailable' : 'board_scope_retired' };
             }
-            const sizeOutcome = intent.kind === 'widget_size' ? classifyWidgetDefinitionCommandResult('widgets.instance.size.set', result) : null;
+            const sizeOutcome = intent.kind === 'widget_size' ? classifyWidgetDefinitionCommandResult('widgets.item.size.set', result) : null;
             if (sizeOutcome?.kind === 'approvalPending' && intent.kind === 'widget_size') {
                 queue.dismissFailure();
                 publishPresentationNotice({ key: `${intent.boardId}:${intent.ref.instanceId}:size`, severity: 'info',

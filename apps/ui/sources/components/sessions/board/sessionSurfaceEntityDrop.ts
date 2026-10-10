@@ -35,7 +35,7 @@ export function resolveSessionBoardEntityDrop(input: Context & Readonly<{ viewId
         if (!input.board.canEdit) return sessionSurfaceDropRefused('board-read-only');
         const index = input.anchor ? target.placements.findIndex(placement => placement.itemId === input.anchor!.itemId) : target.placements.length;
         if (index < 0) return sessionSurfaceDropRefused('anchor-gone');
-        return { status: 'allowed', effect: { actionId: 'widgets.instance.move', preview: { ...input.preview, glyph: 'move' }, input: { ref: configuredRef,
+        return { status: 'allowed', effect: { actionId: 'widgets.item.move', preview: { ...input.preview, glyph: 'move' }, input: { ref: configuredRef,
             to: { surface: { ...input.scope, owner: { kind: 'sessionBoard', sessionId: input.address.sessionId } }, tabId: target.id,
                 index: index + (input.anchor?.side === 'after' ? 1 : 0) } } } };
     }
@@ -55,7 +55,7 @@ export function resolveSessionBoardEntityDrop(input: Context & Readonly<{ viewId
     const state = board.itemsById.get(item.itemId)?.state;
     if (state?.kind === 'ready' && state.item.source.kind === 'widget') {
         const surface = { ...input.scope, owner: { kind: 'sessionBoard' as const, sessionId: input.address.sessionId } };
-        return { status: 'allowed', effect: { actionId: 'widgets.instance.move', preview: { ...input.preview, glyph: 'move' },
+        return { status: 'allowed', effect: { actionId: 'widgets.item.move', preview: { ...input.preview, glyph: 'move' },
             input: { ref: { surface, instanceId: state.item.source.instance.id }, to: { surface, tabId: target.id, index } } } };
     }
     return { status: 'allowed', effect: { actionId: 'session.board.layout.update', preview: { ...input.preview, glyph: anchor ? anchor.side === 'before' ? 'above' : 'below' : 'move' }, input: {
@@ -73,7 +73,7 @@ export function resolveSessionCompanionEntityDrop(input: Context & Readonly<{ it
         if (!input.ready) return sessionSurfaceDropRefused('companion-unavailable');
         const index = input.anchor ? input.items.findIndex(ref => sessionCompanionItemKey(ref) === input.anchor!.itemKey) : input.items.length;
         if (index < 0) return sessionSurfaceDropRefused('anchor-gone');
-        return { status: 'allowed', effect: { actionId: 'widgets.instance.move', preview: { ...input.preview, glyph: 'move' }, input: { ref: configuredRef,
+        return { status: 'allowed', effect: { actionId: 'widgets.item.move', preview: { ...input.preview, glyph: 'move' }, input: { ref: configuredRef,
             to: { surface: { ...input.scope, owner: { kind: 'companion', sessionId: input.address.sessionId } }, index: index + (input.anchor?.side === 'after' ? 1 : 0) } } } };
     }
     if (!exactSession(input)) return sessionSurfaceDropRefused('scope-mismatch');
@@ -86,7 +86,7 @@ export function resolveSessionCompanionEntityDrop(input: Context & Readonly<{ it
             if (!input.board?.canEdit) return sessionSurfaceDropRefused('board-read-only');
             const index = anchor ? items.findIndex(ref => sessionCompanionItemKey(ref) === anchor.itemKey) : items.length;
             if (index < 0) return sessionSurfaceDropRefused('anchor-gone');
-            return { status: 'allowed', effect: { actionId: 'widgets.instance.move', preview: { ...input.preview, glyph: 'move' }, input: {
+            return { status: 'allowed', effect: { actionId: 'widgets.item.move', preview: { ...input.preview, glyph: 'move' }, input: {
                 ref: { surface: { ...input.scope, owner: { kind: 'sessionBoard', sessionId: input.address.sessionId } }, instanceId: state.item.source.instance.id },
                 to: { surface: { ...input.scope, owner: { kind: 'companion', sessionId: input.address.sessionId } }, index: index + (anchor?.side === 'after' ? 1 : 0) },
             } } };
@@ -106,7 +106,7 @@ export function resolveSessionCompanionEntityDrop(input: Context & Readonly<{ it
     if (toIndex === current) return sessionSurfaceDropRefused('same-position');
     if (item.item.kind === 'instance') {
         const surface = { ...input.scope, owner: { kind: 'companion' as const, sessionId: input.address.sessionId } };
-        return { status: 'allowed', effect: { actionId: 'widgets.instance.move', preview: { ...input.preview, glyph: 'move' },
+        return { status: 'allowed', effect: { actionId: 'widgets.item.move', preview: { ...input.preview, glyph: 'move' },
             input: { ref: { surface, instanceId: item.item.instance.id }, to: { surface, index: toIndex } } } };
     }
     return { status: 'allowed', effect: { actionId: 'session.presentation.apply', preview: { ...input.preview, glyph: 'move' },

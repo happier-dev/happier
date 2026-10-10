@@ -1,11 +1,10 @@
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
-import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { ApprovalDecisionBar } from '@/components/approvals/ApprovalDecisionBar';
 import type { TranscriptPermissionDisabledReason } from '@/utils/sessions/deriveTranscriptInteraction';
 import { resolvePermissionDisabledMessage } from '@/components/tools/shell/permissions/permissionDisabledMessage';
 import { usePendingPromptPrimaryFocus } from '@/components/tools/shell/permissions/usePendingPromptPrimaryFocus';
@@ -25,7 +24,6 @@ export const ApprovalDecisionFooter = React.memo(function ApprovalDecisionFooter
     testIDPrefix?: string;
     requestId?: string;
 }>) {
-    const { theme } = useUnistyles();
     const disabled = props.disabled === true || props.decisionDisabled === true || props.isDeciding;
     const approveDisabled = disabled || props.approveDisabled === true;
     const testIDPrefix = props.testIDPrefix ?? 'approval-prompt';
@@ -45,86 +43,15 @@ export const ApprovalDecisionFooter = React.memo(function ApprovalDecisionFooter
     }
 
     return (
-        <View style={styles.container}>
-            <Pressable
-                testID={`${testIDPrefix}-approve`}
-                ref={primaryAnswerRef}
-                accessibilityRole="button"
-                accessibilityLabel={props.approveLabel ?? t('approvals.approve')}
-                accessibilityHint={props.approveAccessibilityHint}
-                disabled={approveDisabled}
-                onPress={props.onApprove}
-                style={({ pressed }) => [
-                    styles.button,
-                    styles.approveButton,
-                    pressed && !approveDisabled ? styles.buttonPressed : null,
-                    approveDisabled ? styles.buttonDisabled : null,
-                ]}
-            >
-                {props.isDeciding ? (
-                    <ActivitySpinner size="small" color={theme.colors.button.primary.tint} />
-                ) : (
-                    <Text style={styles.approveText}>{props.approveLabel ?? t('approvals.approve')}</Text>
-                )}
-            </Pressable>
-            <Pressable
-                testID={`${testIDPrefix}-reject`}
-                accessibilityRole="button"
-                accessibilityLabel={props.rejectLabel ?? t('approvals.reject')}
-                disabled={disabled}
-                onPress={props.onReject}
-                style={({ pressed }) => [
-                    styles.button,
-                    styles.rejectButton,
-                    pressed && !disabled ? styles.buttonPressed : null,
-                    disabled ? styles.buttonDisabled : null,
-                ]}
-            >
-                <Text style={styles.rejectText}>{props.rejectLabel ?? t('approvals.reject')}</Text>
-            </Pressable>
-        </View>
+        <ApprovalDecisionBar size="small" disabled={disabled}
+            approve={{ label: props.approveLabel, testID: `${testIDPrefix}-approve`, controlRef: primaryAnswerRef,
+                accessibilityHint: props.approveAccessibilityHint, disabled: approveDisabled,
+                busy: props.isDeciding, onPress: props.onApprove }}
+            reject={{ label: props.rejectLabel, testID: `${testIDPrefix}-reject`, onPress: props.onReject }} />
     );
 });
 
 const styles = StyleSheet.create((theme) => ({
-    container: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'flex-start',
-        gap: 8,
-    },
-    button: {
-        minHeight: Platform.select({ ios: 44, default: 48 }),
-        minWidth: Platform.select({ ios: 44, default: 48 }),
-        paddingHorizontal: 12,
-        borderRadius: 8,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    buttonPressed: {
-        opacity: motionTokens.press.opacity,
-    },
-    buttonDisabled: {
-        opacity: 0.5,
-    },
-    rejectButton: {
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.base,
-    },
-    approveButton: {
-        backgroundColor: theme.colors.button.primary.background,
-    },
-    rejectText: {
-        fontSize: 13,
-        fontWeight: '600',
-        color: theme.colors.text.primary,
-    },
-    approveText: {
-        fontSize: 13,
-        fontWeight: '700',
-        color: theme.colors.button.primary.tint,
-    },
     disabledNotice: {
         marginTop: 4,
         borderRadius: 10,

@@ -2,11 +2,14 @@ import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildWorkBoardItemKeyV1, createWorkBoardV1 } from '@happier-dev/protocol';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import type { BoardCard } from '../model/boardCards';
 import { BoardSettingsButton } from './BoardSettingsPopover';
 
-afterEach(standardCleanup);
+afterEach(() => {
+    standardCleanup();
+    vi.useRealTimers();
+});
 
 // The renderer has no layout engine; only the physical anchor is supplied.
 const layout = { createNodeMock: () => ({
@@ -22,6 +25,7 @@ describe('Board settings picked items', () => {
                 status: { bucket: 'idle', tone: 'neutral', word: 'Idle' }, body: { kind: 'none' } };
         });
         const remove = vi.fn();
+        vi.useFakeTimers();
         const screen = await renderScreen(<BoardSettingsButton
             board={{ ...createWorkBoardV1({ id: 'board', name: 'Board' }), source: { picked: cards.map(card => card.ref) } }}
             homes={{ activeServerId: null, mountedServerIds: [], isHomeMounted: () => false }}
@@ -32,6 +36,9 @@ describe('Board settings picked items', () => {
         const summary = screen.findHostByTestId('board-settings.picks:settings:option:picks');
         expect(Boolean(summary)).toBe(true);
         expect(screen.findHostByTestId(`board-settings.remove.${cards[0]!.key}`)).toBeNull();
+        // Advance the real Deferred clock boundary before inspecting its switches.
+        await flushHookEffects({ cycles: 1, runOnlyPendingTimers: true });
+        vi.useRealTimers();
         expect(screen.findHostByTestId('board-settings.snap')).not.toBeNull();
         expect(screen.findHostByTestId('board-settings.pin')).not.toBeNull();
         expect(screen.findHostByTestId('board-settings.delete')).not.toBeNull();

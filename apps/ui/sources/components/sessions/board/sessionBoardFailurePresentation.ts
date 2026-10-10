@@ -7,7 +7,6 @@ export type SessionBoardFailurePresentationKind =
     | 'offline'
     | 'unavailable'
     | 'updateRequired'
-    | 'hostedHtmlSourceTooLarge'
     | 'noteTooLarge'
     | 'invalid'
     | 'notFound'
@@ -57,12 +56,6 @@ export function resolveSessionBoardFailurePresentation(code: string): SessionBoa
         case 'session_board_invalid':
         case 'malformed':
             return { kind: 'invalid', message: t('sessionBoard.mutation.invalid'), severity: 'error' };
-        case 'hosted_html_source_too_large':
-            return {
-                kind: 'hostedHtmlSourceTooLarge',
-                message: t('sessionBoard.mutation.hostedHtmlSourceTooLarge'),
-                severity: 'error',
-            };
         case 'session_board_note_too_large':
             return {
                 kind: 'noteTooLarge',

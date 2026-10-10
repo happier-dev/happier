@@ -18,6 +18,10 @@ vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({ translate: (key: string) => key });
 });
+vi.mock('@/sync/domains/state/storage', async () => {
+    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleStub({ storage: { getState: () => ({ settingsScope: null, settings: {} }) } });
+});
 vi.mock('@/components/ui/text/Text', async () => {
     const ReactModule = await import('react');
     return { Text: (props: any) => ReactModule.createElement('Text', props, props.children) };
@@ -36,6 +40,15 @@ async function renderRow(onPress?: () => void) {
 }
 
 describe('ExecutionRunRow', () => {
+    it('shows the host-resolved provenance and model in the existing subtitle while retaining operational facts', async () => {
+        const screen = await renderScreen(<ExecutionRunRow run={{ ...run,
+            resolvedSelection: { source: 'inherited', modelId: 'applied-model', connectedServices: null },
+        }} subtitle="Run run_1 · PID 123" />);
+        expect(screen.getTextContent()).toContain('runPage.menu.selectionInherited · applied-model');
+        expect(screen.getTextContent()).toContain('Run run_1 · PID 123');
+        standardCleanup();
+    });
+
     it('announces an actionable row as a button with its own title and an open hint', async () => {
         const screen = await renderRow(vi.fn());
 
@@ -97,4 +110,3 @@ describe('ExecutionRunRow', () => {
         standardCleanup();
     });
 });
-

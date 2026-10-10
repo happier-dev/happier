@@ -6,13 +6,10 @@ import type { DetailsTab } from '@/components/appShell/panes/model/appPaneReduce
 import { useSessionViewShellSession } from '@/components/sessions/shell/sessionViewStableSession';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
-import { getSessionName } from '@/utils/sessions/sessionUtils';
-import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 
 import { useSessionWorkSources } from './sessionWorkSources';
 import { SessionWorkMapView } from './SessionWorkMapView';
-import { useSessionWorkOpeners } from './useSessionWorkOpeners';
-import { projectSessionWorkMap } from './workMapProducer';
+import { useSessionWorkMap } from './useSessionWorkMap';
 
 export const SESSION_WORK_MAP_DETAILS_TAB_KIND = 'sessionWorkMap';
 
@@ -46,20 +43,15 @@ export const SessionWorkMapDetailsView = React.memo((props: Readonly<{
     const styles = stylesheet;
     const sources = useSessionWorkSources();
     const session = useSessionViewShellSession(props.sessionId, props.serverId);
-    const leadTitle = session ? getSessionName(session, props.serverId) : '';
-    const leadAgentId = session ? readSessionPresentationAgentId(session) : null;
-    const { openItem } = useSessionWorkOpeners({
+    const projection = sources && sources.sessionId === props.sessionId ? sources.projection : null;
+    const { map, openItem } = useSessionWorkMap({
         sessionId: props.sessionId,
         serverId: props.serverId,
         scopeId: props.scopeId,
         subagents: sources?.agentActivity.subagents ?? [],
-        leadTitle,
+        session,
+        projection,
     });
-    const projection = sources && sources.sessionId === props.sessionId ? sources.projection : null;
-    const map = React.useMemo(
-        () => (projection ? projectSessionWorkMap({ leadSessionId: props.sessionId, leadTitle, leadAgentId, projection }) : null),
-        [leadAgentId, leadTitle, projection, props.sessionId],
-    );
     if (!map || !projection) {
         return (
             <View style={styles.content}>

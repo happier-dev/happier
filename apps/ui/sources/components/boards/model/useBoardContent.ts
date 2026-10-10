@@ -11,7 +11,7 @@ import {
 
 import { useInboxModelWhen } from '@/hooks/inbox/useInboxModel';
 import { useSessionListSelectionState } from '@/hooks/session/useSessionListSelectionState';
-import { useSessionListRuntimeNowMs, useSessionListRuntimeWake } from '@/hooks/session/sessionListRuntimeClock';
+import { useSessionListRuntimeDeadlineNowMs } from '@/hooks/session/sessionListRuntimeClock';
 import { buildSessionListFilterQueryHomes } from '@/components/sessions/shell/search/sessionListViewFilters';
 import { useWorkflowDefinitionLibrary, useWorkflowRunWindow, type WorkflowLibraryDefinition } from '@/components/workflows/library/workflowLibraryReads';
 import { useWorkflowLibrarySummaries, type WorkflowLibraryRunSummary } from '@/components/workflows/library/useWorkflowLibrarySummaries';
@@ -284,7 +284,22 @@ function useBoardFacts(membership: BoardMembership, homes: BoardHomes, enabled =
     const library = useWorkflowDefinitionLibrary({ enabled: workflowIds.length > 0 });
     const summaries = useWorkflowLibrarySummaries(workflowIds);
     const readsRuntimeTime = enabled && (sessionMembers.length > 0 || hasMachines);
-    const runtimeNowMs = useSessionListRuntimeNowMs(readsRuntimeTime);
+    const readNextRefreshAtMs = React.useCallback((nowMs: number) => {
+        let next: number | null = null;
+        const take = (at: number | null) => { if (at !== null) next = next === null ? at : Math.min(next, at); };
+        for (const row of sessionRows) {
+            if (row) take(readSessionStatusNextRefreshAtMs(row, nowMs));
+        }
+        // Machine cards also classify the already-loaded Sessions associated with that machine.
+        if (hasMachines) for (const rows of Object.values(allRows)) {
+            for (const row of Object.values(rows ?? {})) take(readSessionStatusNextRefreshAtMs(row, nowMs));
+        }
+        for (const machine of machines) {
+            if (machine) take(readMachineStatusNextRefreshAtMs(machine, nowMs));
+        }
+        return next;
+    }, [allRows, hasMachines, machines, sessionRows]);
+    const runtimeNowMs = useSessionListRuntimeDeadlineNowMs(readNextRefreshAtMs, readsRuntimeTime);
 
     const workflowEntries = React.useRef(new Map<string, BoardWorkflowEntry>());
     const workflowById = React.useMemo(() => {
@@ -336,22 +351,6 @@ function useBoardFacts(membership: BoardMembership, homes: BoardHomes, enabled =
         };
         return facts;
     }, [allRows, hasMachines, homes.activeServerId, machineMembers, machines, machinesByEnrolledMachineIdByServerId, runRows, runtimeNowMs, sessionMembers, sessionRows, workflowById]);
-    const nextRefreshAtMs = React.useMemo(() => {
-        let next: number | null = null;
-        const take = (at: number | null) => { if (at !== null) next = next === null ? at : Math.min(next, at); };
-        for (const row of sessionRows) {
-            if (row) take(readSessionStatusNextRefreshAtMs(row, facts.nowMs));
-        }
-        // Machine cards also classify the already-loaded Sessions associated with that machine.
-        if (hasMachines) for (const rows of Object.values(allRows)) {
-            for (const row of Object.values(rows ?? {})) take(readSessionStatusNextRefreshAtMs(row, facts.nowMs));
-        }
-        for (const machine of machines) {
-            if (machine) take(readMachineStatusNextRefreshAtMs(machine, facts.nowMs));
-        }
-        return next;
-    }, [allRows, facts.nowMs, hasMachines, machines, sessionRows]);
-    useSessionListRuntimeWake(nextRefreshAtMs, readsRuntimeTime);
     return facts;
 }
 

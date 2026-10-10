@@ -9,6 +9,8 @@ import type {
     LocalServicePublicExposureV1,
     LocalServicePublicPreviewSnapshotV1,
 } from '@happier-dev/protocol';
+import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
+import type { LocalServicePreviewServiceTargetV1 } from '@happier-dev/protocol/local/services/preview/v1';
 
 export type LocalServicePublicPreviewFailureReason =
     | 'unavailable'
@@ -59,15 +61,22 @@ function exposureMatchesRequest(
     exposure: LocalServicePublicExposureV1,
     request: Readonly<{
         machineId: string;
-        sessionId: string;
+        sessionId?: string;
+        serviceTarget?: LocalServicePreviewServiceTargetV1;
         previewId: string;
         exposureId?: string;
     }>,
 ): boolean {
     return exposure.machineId === request.machineId
         && exposure.sessionId === request.sessionId
+        && serviceBindingMatches(exposure.serviceTarget, request.serviceTarget)
         && exposure.previewId === request.previewId
         && (!request.exposureId || exposure.exposureId === request.exposureId);
+}
+
+function serviceBindingMatches(actual: LocalServicePreviewServiceTargetV1 | undefined, expected: LocalServicePreviewServiceTargetV1 | undefined): boolean {
+    if (!actual || !expected) return actual === expected;
+    return createCanonicalJsonSigningInput(actual) === createCanonicalJsonSigningInput(expected);
 }
 
 function snapshotMatchesRequest(
@@ -77,6 +86,7 @@ function snapshotMatchesRequest(
     return snapshot.machineId === request.machineId
         && (!request.sessionId || snapshot.sessionId === request.sessionId)
         && (!request.previewId || snapshot.previewId === request.previewId)
+        && (!request.serviceTarget || snapshot.exposures.every(exposure => serviceBindingMatches(exposure.serviceTarget, request.serviceTarget)))
         && (!request.exposureId || snapshot.exposures.every((exposure) => exposure.exposureId === request.exposureId));
 }
 
@@ -109,6 +119,7 @@ export function isPublicPreviewCopyUrlResponseForRequest(
 ): boolean {
     return response.machineId === request.machineId
         && response.sessionId === request.sessionId
+        && serviceBindingMatches(response.serviceTarget, request.serviceTarget)
         && response.previewId === request.previewId
         && response.exposureId === request.exposureId;
 }

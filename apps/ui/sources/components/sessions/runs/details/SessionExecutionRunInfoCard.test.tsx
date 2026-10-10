@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { flattenTestStyle, renderScreen } from '@/dev/testkit';
 import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { installSessionExecutionRunDetailsCommonModuleMocks } from './sessionExecutionRunDetailsTestHelpers';
+import { ExecutionRunPublicStateSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -77,6 +78,21 @@ async function openRunMenu(screen: Awaited<ReturnType<typeof renderScreen>>): Pr
 }
 
 describe('SessionExecutionRunInfoCard', () => {
+    it('shows the host-resolved model instead of requested intent in the child summary', async () => {
+        const screen = await renderScreen(<SessionExecutionRunInfoCard run={ExecutionRunPublicStateSchema.parse({
+            runId: 'run_1', callId: 'call_1', sidechainId: 'side_1', intent: 'delegate',
+            backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived',
+            ioMode: 'streaming', status: 'running', startedAtMs: 1,
+            requestedConfiguration: { modelId: 'pending-model' },
+            resolvedSelection: { source: 'inherited', modelSelection: {
+                agentTargetKey: 'agent:codex', providerConnectionId: 'connection-parent', modelId: 'applied-model',
+            } },
+        })} />);
+        expect(screen.getTextContent()).toContain('applied-model');
+        expect(screen.getTextContent()).not.toContain('pending-model');
+    });
+
     it('titles the conversation by its intent, with its status and the time it has been running', async () => {
         const startedAtMs = Date.now() - 72_000;
         {
@@ -386,4 +402,21 @@ describe('SessionExecutionRunInfoCard', () => {
         // A genuinely recorded start is still shown.
         expect(await render(1_700_000_000_000)).toContain('runPage.menu.started');
     });
+});
+
+
+it('retains idle long-lived run controls without showing a live elapsed clock', async () => {
+    const { ExecutionRunPublicStateSchema } = await import('@happier-dev/protocol');
+    const run = ExecutionRunPublicStateSchema.parse({
+        runId: 'idle', callId: 'call-idle', sidechainId: 'sidechain-idle', intent: 'delegate',
+        backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, permissionMode: 'default',
+        retentionPolicy: 'ephemeral', runClass: 'long_lived', ioMode: 'streaming', status: 'running',
+        turnInFlight: false, startedAtMs: Date.now() - 72_000,
+    });
+    const screen = await renderScreen(<SessionExecutionRunInfoCard run={run} stopAction={{ stopping: false, onStop: () => {} }} />);
+    expect(screen.findAllHostsByTestId('session-run-header-elapsed')).toHaveLength(0);
+    expect(screen.getTextContent()).toContain('diagnosis.machineRuns.idle');
+    const { ExecutionRunRow } = await import('../ExecutionRunRow');
+    const row = await renderScreen(<ExecutionRunRow run={run} />);
+    expect(row.getTextContent()).toContain('diagnosis.machineRuns.idle');
 });

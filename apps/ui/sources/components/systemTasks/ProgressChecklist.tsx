@@ -1,8 +1,14 @@
 import * as React from 'react';
-import { useUnistyles } from 'react-native-unistyles';
+import { View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
+
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
 
 import { Item } from '@/components/ui/lists/Item';
-import { Icon, type IconName, type IconWeight } from '@/components/ui/icons/Icon';
+import { Icon, ICON_SIZE, type IconName, type IconWeight } from '@/components/ui/icons/Icon';
 
 export type ProgressChecklistStepStatus =
     | 'pending'
@@ -33,9 +39,53 @@ export const ProgressChecklist = React.memo(function ProgressChecklist(props: Re
     steps: readonly ProgressChecklistStep[];
     testIDPrefix: string;
     showStepMessages?: boolean;
+    /**
+     * `compact`: one quiet line per step for a popover or a card's corner, where the steps sit beside
+     * other content. The marks stay ink (a thin check, a spinner, a ring) so the current step reads by
+     * weight; only a failed step takes colour. `regular` (default) is a sheet of full rows.
+     */
+    density?: 'regular' | 'compact';
 }>) {
     const { theme } = useUnistyles();
     const showStepMessages = props.showStepMessages ?? true;
+
+    if (props.density === 'compact') {
+        return (
+            <View style={styles.compactList}>
+                {props.steps.map((step) => {
+                    const current = step.status === 'active' || step.status === 'waiting';
+                    const failed = step.status === 'failed';
+                    const message = showStepMessages && typeof step.message === 'string' && step.message.trim() ? step.message.trim() : null;
+                    return (
+                        <View
+                            key={step.stepId}
+                            testID={`${props.testIDPrefix}-${step.status}-${encodeProgressChecklistStepIdForTestId(step.stepId)}`}
+                            accessible
+                            accessibilityLabel={message ? `${step.title}. ${message}` : step.title}
+                            accessibilityState={{ busy: step.status === 'active' }}
+                            style={styles.compactRow}
+                        >
+                            <View style={styles.compactMark}>
+                                {step.status === 'active' ? (
+                                    <ActivitySpinner size="small" accessibilityElementsHidden importantForAccessibility="no" />
+                                ) : (
+                                    <Icon
+                                        name={step.status === 'done' ? 'check' : failed ? 'x' : step.status === 'canceled' ? 'minus-circle' : step.status === 'waiting' ? 'question' : 'circle'}
+                                        size={ICON_SIZE.xs}
+                                        color={failed ? theme.colors.state.danger.foreground : current ? theme.colors.text.primary : theme.colors.text.tertiary}
+                                    />
+                                )}
+                            </View>
+                            <Text style={[styles.compactTitle, current ? styles.compactTitleCurrent : null, step.status === 'pending' || step.status === 'canceled' ? styles.compactTitlePending : null, failed ? styles.compactTitleFailed : null]}>
+                                {message ? `${step.title} · ${message}` : step.title}
+                            </Text>
+                            {step.detail ? <Text style={styles.compactDetail}>{step.detail}</Text> : null}
+                        </View>
+                    );
+                })}
+            </View>
+        );
+    }
 
     return props.steps.map((step) => {
         const testId = `${props.testIDPrefix}-${step.status}-${encodeProgressChecklistStepIdForTestId(step.stepId)}`;
@@ -78,3 +128,43 @@ export const ProgressChecklist = React.memo(function ProgressChecklist(props: Re
         );
     });
 });
+
+const styles = StyleSheet.create((theme) => ({
+    compactList: {
+        gap: 6,
+    },
+    compactRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    compactMark: {
+        width: ICON_SIZE.sm,
+        height: ICON_SIZE.sm,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    compactTitle: {
+        ...Typography.default(),
+        ...happierPageTextMetrics('rowDescription'),
+        color: theme.colors.text.secondary,
+        flex: 1,
+        minWidth: 0,
+    },
+    compactTitleCurrent: {
+        ...Typography.default('medium'),
+        color: theme.colors.text.primary,
+    },
+    compactTitlePending: {
+        color: theme.colors.text.tertiary,
+    },
+    compactTitleFailed: {
+        color: theme.colors.state.danger.foreground,
+    },
+    compactDetail: {
+        ...Typography.default(),
+        ...Typography.tabular(),
+        ...happierPageTextMetrics('meta'),
+        color: theme.colors.text.tertiary,
+    },
+}));
