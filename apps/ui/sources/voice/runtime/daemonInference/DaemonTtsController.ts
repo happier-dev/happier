@@ -206,6 +206,10 @@ export class DaemonTtsController {
                 signal: abortController.signal,
             });
 
+            // Cancellation can race a completed synthesis/download. Never admit
+            // that late result to playback after the owning stopper retired it.
+            if (abortController.signal.aborted) return;
+
             await this.deps.playAudioBytesWithStopper({
                 bytes: toExactArrayBuffer(synthesized.bytes),
                 format: toPlayableAudioFormat(synthesized.output),

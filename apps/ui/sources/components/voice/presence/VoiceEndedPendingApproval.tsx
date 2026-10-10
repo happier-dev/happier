@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';

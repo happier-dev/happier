@@ -10,6 +10,7 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 
 import { useVoicePresenceDrag, type VoicePresenceDragRelease } from './useVoicePresenceDrag';
 import { resolveVoicePresenceGeometry, resolveVoicePresenceBottomReservation } from './voicePresenceGeometry';
+import { registerVoicePresencePosition } from './voiceCompanionSectionReveal';
 
 /** Held, a floating container lifts 6 % (lab I/Id), the same lift the orb has always had. */
 const LIFT_SCALE = 0.06;
@@ -68,6 +69,7 @@ export const VoicePresenceFloat = React.memo(function VoicePresenceFloat(props: 
     const [host, setHost] = React.useState({ w: 0, h: 0 });
     const [containerSize, setContainerSize] = React.useState<{ width: number; height: number } | null>(null);
     const [bottomDocked, setBottomDocked] = React.useState(true);
+    const [normalizedPosition, setNormalizedPosition] = React.useState<Readonly<{ x: number; y: number }> | null>(null);
     const passthrough = resolveOverlayPointerEvents(Platform.OS === 'web' ? 'none' : 'box-none');
     const interactionPadding = props.interactionPaddingHorizontal ?? 0;
     const interactive = resolveOverlayPointerEvents(interactionPadding > 0 ? 'box-none' : 'auto');
@@ -91,9 +93,15 @@ export const VoicePresenceFloat = React.memo(function VoicePresenceFloat(props: 
     });
     const { minX, maxX, minY, maxY } = geometry.dragBounds;
     const bounds = React.useMemo(() => ({ minX, maxX, minY, maxY }), [maxX, maxY, minX, minY]);
-    const restX = geometry.restingPoint.x;
-    const restY = geometry.restingPoint.y;
+    const restX = normalizedPosition ? minX + normalizedPosition.x * (maxX - minX) : geometry.restingPoint.x;
+    const restY = normalizedPosition ? minY + normalizedPosition.y * (maxY - minY) : geometry.restingPoint.y;
     const initialPoint = React.useMemo(() => ({ x: restX, y: restY }), [restX, restY]);
+    React.useLayoutEffect(() => registerVoicePresencePosition((point) => {
+        if (host.w <= 0 || host.h <= 0 || !Number.isFinite(point.x) || !Number.isFinite(point.y)
+            || point.x < 0 || point.x > 1 || point.y < 0 || point.y > 1) return false;
+        setNormalizedPosition(current => current?.x === point.x && current.y === point.y ? current : point);
+        return true;
+    }), [host.h, host.w]);
     const onDragRelease = React.useCallback((release: VoicePresenceDragRelease) => {
         setBottomDocked(release.point.y === maxY);
         props.onRectChange?.({ ...release.point, width, height });

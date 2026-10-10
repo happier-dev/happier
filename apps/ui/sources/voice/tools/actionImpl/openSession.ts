@@ -2,7 +2,8 @@ import { getCurrentAuth } from '@/auth/context/currentAuth';
 import { storage } from '@/sync/domains/state/storage';
 import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
-import { router } from 'expo-router';
+import { router, type Href } from 'expo-router';
+import { captureMountedWorkspaceAction } from '@/components/appShell/workspace/workspaceActionRuntime';
 import { resolveVoiceSessionReference, resolveVoiceSessionRef, type VoiceSessionCandidate } from './sessionReference';
 import { setPrimaryActionSessionId } from './sessionTargets';
 import { Platform } from 'react-native';
@@ -134,11 +135,17 @@ export async function openSessionForVoiceTool(params: Readonly<{
   await setPrimaryActionSessionId({ sessionId, serverId: address.serverId, updateLastFocused: true });
 
   try {
-    router.navigate(buildScopedSessionRouteHref({ ...address, query: params.query }) as any, {
-      dangerouslySingular() {
-        return 'session';
-      },
-    } as any);
+    const href = buildScopedSessionRouteHref({ ...address, query: params.query });
+    const workspaceAction = captureMountedWorkspaceAction();
+    if (workspaceAction) {
+      await workspaceAction({ actionId: 'workspace.tabs.open', input: { href } });
+    } else {
+      router.navigate(href as Href, {
+        dangerouslySingular() {
+          return 'session';
+        },
+      });
+    }
   } catch {
     // best-effort
   }

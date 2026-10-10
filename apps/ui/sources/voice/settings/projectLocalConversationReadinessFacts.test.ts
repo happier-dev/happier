@@ -19,6 +19,8 @@ import {
 } from './resolveVoiceProviderAvailability';
 import { projectLocalConversationReadinessFacts } from './projectLocalConversationReadinessFacts';
 import { buildVoiceConversationsPipeline } from './pipeline/voicePipelineSteps';
+import { projectVoiceConfiguredAgentTarget } from '@/voice/agent/resolveVoiceConfiguredAgentTarget';
+import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 
 const registry = createDefaultVoiceProviderRegistry();
 const executionMachineId = 'machine-a';
@@ -129,6 +131,7 @@ describe('projectLocalConversationReadinessFacts credential readiness', () => {
       connectedPurposes: { v: 1, bindings: [] }, platform: 'web', local, localInput,
       executionMachineId, executionMachineSelectionKind: scenario.selectionKind,
       voiceAgentEnabled: scenario.enabled,
+      voiceAgentRuntime: 'ready',
     });
     expect(facts).toMatchObject({ thinkReadiness: { code: scenario.code, recoveryAction: scenario.recoveryAction } });
     const pipeline = buildVoiceConversationsPipeline({
@@ -138,6 +141,32 @@ describe('projectLocalConversationReadinessFacts credential readiness', () => {
     expect(pipeline?.pipeline.steps.map(step => step.readiness)).toEqual([
       facts.speechReadiness.hear, facts.thinkReadiness, facts.speechReadiness.speak,
     ]);
+  });
+
+  it.each(['unknown', 'incompatible'] as const)('keeps %s Agent runtime availability separate from ready device speech', (runtime) => {
+    const settings = createLocalSettings('device', 'device');
+    const config = readLocalConversationVoiceSettings(settings.voice);
+    const voice = writeLocalConversationVoiceSettings(settings.voice, { ...config, conversationMode: 'agent' });
+    const facts = projectLocalConversationReadinessFacts({
+      registry, voice, voiceSettingsV1: settings.voiceSettingsV1, secrets: settings.secrets,
+      connectedPurposes: null, platform: 'web', local, localInput, executionMachineId,
+      voiceAgentEnabled: true, voiceAgentRuntime: runtime,
+    });
+    expect(facts.thinkReadiness).toMatchObject({ code: `runtime_${runtime}`, recoveryAction: 'switch_provider' });
+    expect(facts.runtime).toBe(runtime);
+    expect(facts.speechReadiness).toMatchObject({ hear: { status: 'ready' }, speak: { status: 'ready' } });
+  });
+
+  it('projects exact, disabled, unknown and legacy Agent selections from incumbent catalog facts', () => {
+    const selection = { agentId: 'claude', agentTargetKey: 'backend:claude', agentIdentity: null };
+    const entries = getResolvedBackendCatalogEntries({ enabledAgentIds: ['claude'] });
+    expect(projectVoiceConfiguredAgentTarget({ selection, entries, backendEnabledByTargetKey: null })).toMatchObject({
+      ok: true, kind: 'catalog', backendTarget: { kind: 'backend', backendId: 'claude' },
+    });
+    expect(projectVoiceConfiguredAgentTarget({ selection, entries: null, backendEnabledByTargetKey: null })).toBeNull();
+    expect(projectVoiceConfiguredAgentTarget({ selection, entries: null, backendEnabledByTargetKey: { 'backend:claude': false } })).toMatchObject({ ok: false });
+    expect(projectVoiceConfiguredAgentTarget({ selection: { agentId: 'custom-agent', agentTargetKey: null, agentIdentity: null },
+      entries: null, backendEnabledByTargetKey: null })).toMatchObject({ ok: true, kind: 'legacy', agentId: 'custom-agent' });
   });
 
   it('makes fresh device defaults runnable where recognition exists and reports setup when it does not', () => {
@@ -172,7 +201,7 @@ describe('projectLocalConversationReadinessFacts credential readiness', () => {
       localInput,
       executionMachineId,
       voiceAgentEnabled: false,
-    }).serverFeature).toBe('ready');
+    })).toMatchObject({ serverFeature: 'ready', thinkReadiness: { status: 'ready' } });
 
     const current = readLocalConversationVoiceSettings(direct.voice);
     const agentVoice = writeLocalConversationVoiceSettings(direct.voice, {

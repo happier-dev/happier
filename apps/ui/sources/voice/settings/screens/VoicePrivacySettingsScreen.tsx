@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams } from '@/components/appShell/workspace/destinationRoute';
 
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';

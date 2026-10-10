@@ -363,126 +363,6 @@ function redactCompletedLocalEffectOutcome(
   )[0] ?? createLocalToolErrorResult(entry.t, null, 'redaction_failed');
 }
 
-function isSuccessfulToolShortcutResult(value: unknown): value is Readonly<Record<string, unknown>> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value) && (value as { ok?: unknown }).ok === true;
-}
-
-function isDeferredApprovalShortcutResult(value: unknown): value is Readonly<Record<string, unknown>> {
-  return isSuccessfulToolShortcutResult(value)
-    && (value as { kind?: unknown }).kind === 'approval_request_created';
-}
-
-export function resolveDirectUserActionShortcutAssistantText(
-  decision: 'allow' | 'deny',
-  result: unknown,
-): string {
-  if (isDeferredApprovalShortcutResult(result)) {
-    return 'Created a confirmation request. The pending request has not been approved yet.';
-  }
-  return decision === 'allow'
-    ? 'Approved the pending request.'
-    : 'Denied the pending request.';
-}
-
-function getToolShortcutErrorCode(value: unknown): string | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const errorCode = (value as { errorCode?: unknown }).errorCode;
-  return typeof errorCode === 'string' ? errorCode : null;
-}
-
-const DIRECT_PERMISSION_SHORTCUT_ALLOWED_TOKENS = new Set([
-  'a',
-  'allow',
-  'an',
-  'approve',
-  'current',
-  'decline',
-  'deny',
-  'do',
-  "don't",
-  'file',
-  'grant',
-  'it',
-  'not',
-  'pending',
-  'permission',
-  'please',
-  'read',
-  'reject',
-  'request',
-  'session',
-  'that',
-  'the',
-  'this',
-  'tool',
-  'write',
-]);
-const DIRECT_PERMISSION_SHORTCUT_BLOCKED_TOKENS = new Set(['after', 'also', 'and', 'because', 'next', 'plus', 'then']);
-
-function tokenizeDirectShortcut(userText: string): string[] {
-  return userText
-    .trim()
-    .toLowerCase()
-    .replace(/[.!?,;:]+/g, ' ')
-    .split(/\s+/)
-    .filter((token) => token.length > 0);
-}
-
-function resolveDirectPermissionDecision(userText: string): 'allow' | 'deny' | null {
-  const tokens = tokenizeDirectShortcut(userText);
-  if (tokens.length === 0) return null;
-
-  if (tokens.some((token) => DIRECT_PERMISSION_SHORTCUT_BLOCKED_TOKENS.has(token))) {
-    return null;
-  }
-
-  const hasDenyKeyword =
-    tokens.includes('deny')
-    || tokens.includes('reject')
-    || tokens.includes('decline')
-    || tokens.includes("don't")
-    || (tokens.includes('do') && tokens.includes('not') && tokens.includes('allow'));
-  const hasAllowKeyword = tokens.includes('approve') || tokens.includes('allow') || tokens.includes('grant');
-
-  if (hasAllowKeyword && hasDenyKeyword) {
-    return null;
-  }
-
-  if (tokens.some((token) => !DIRECT_PERMISSION_SHORTCUT_ALLOWED_TOKENS.has(token))) {
-    return null;
-  }
-
-  if (hasDenyKeyword) {
-    return 'deny';
-  }
-
-  if (hasAllowKeyword) {
-    return 'allow';
-  }
-
-  return null;
-}
-
-function mapDirectDecisionToUserActionDecision(decision: 'allow' | 'deny'): 'approve' | 'reject' {
-  return decision === 'allow' ? 'approve' : 'reject';
-}
-
-function resolveDirectPermissionDisambiguationText(
-  userActionShortcutResult: unknown,
-): string | null {
-  const errorCodes = new Set([
-    getToolShortcutErrorCode(userActionShortcutResult),
-  ]);
-
-  if (errorCodes.has('request_not_in_current_session')) {
-    return 'I found a pending request outside the current session. Please name the target session first.';
-  }
-  if (errorCodes.has('multiple_permission_requests') || errorCodes.has('multiple_user_action_requests')) {
-    return 'There are multiple pending requests in the current session. Please say which request you want me to answer.';
-  }
-  return null;
-}
-
 function normalizeAssistantTextForActions(
   assistantText: string,
   actions: ReadonlyArray<unknown>,
@@ -553,80 +433,12 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
     ...(params.currentUiContext ? { currentUiContext: params.currentUiContext } : {}),
   });
 
-  const directPermissionDecision = resolveDirectPermissionDecision(params.userText);
-  let outerTranscriptCommitted = false;
   let userTranscriptAccepted = false;
   const noteUserTranscriptAccepted = async () => {
     if (userTranscriptAccepted) return;
     userTranscriptAccepted = true;
     await params.onUserTranscriptAccepted?.();
   };
-  if (directPermissionDecision) {
-    if (!params.voiceAgentSessions.commitUserTranscript) {
-      throw new Error('voice_user_transcript_commit_required');
-    }
-    await params.voiceAgentSessions.commitUserTranscript(
-      params.sessionId,
-      params.userText,
-      params.durableLocalId,
-    );
-    outerTranscriptCommitted = true;
-    await noteUserTranscriptAccepted();
-    const userActionShortcutResult = parseToolResult(
-      await (tools as any).answerUserActionRequest({
-        decision: mapDirectDecisionToUserActionDecision(directPermissionDecision),
-        currentSessionOnly: true,
-      }),
-    );
-    throwIfAborted(params.signal);
-    if (isSuccessfulToolShortcutResult(userActionShortcutResult)) {
-      const toolResults = [
-        {
-          t: 'answerUserActionRequest',
-          args: { decision: mapDirectDecisionToUserActionDecision(directPermissionDecision) },
-          result: userActionShortcutResult,
-        },
-      ] satisfies LocalVoiceAgentToolResultEntry[];
-      const assistantText = resolveDirectUserActionShortcutAssistantText(
-        directPermissionDecision,
-        userActionShortcutResult,
-      );
-
-      await params.onAssistantTurn?.({
-        assistantText,
-        actions: [{ t: 'answerUserActionRequest', args: { decision: mapDirectDecisionToUserActionDecision(directPermissionDecision) } }],
-        turnIndex: 0,
-      });
-      await params.onToolResults?.({
-        toolResults,
-        turnIndex: 0,
-      });
-
-      return {
-        disposition: 'completed',
-        assistantTurns: [assistantText],
-        toolResultBatches: [toolResults],
-        totalActions: 1,
-      };
-    }
-
-    const directPermissionDisambiguation = resolveDirectPermissionDisambiguationText(
-      userActionShortcutResult,
-    );
-    if (directPermissionDisambiguation) {
-      await params.onAssistantTurn?.({
-        assistantText: directPermissionDisambiguation,
-        actions: [],
-        turnIndex: 0,
-      });
-      return {
-        disposition: 'completed',
-        assistantTurns: [directPermissionDisambiguation],
-        toolResultBatches: [],
-        totalActions: 0,
-      };
-    }
-  }
 
   const retainedEffectOutcomes = getRetainedLocalVoiceEffectOutcomes(params.sessionId);
 
@@ -763,9 +575,7 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
           ? { onUserTranscriptAccepted: noteUserTranscriptAccepted }
           : {}),
         userTranscript: turnIndex === 0
-          ? (outerTranscriptCommitted
-              ? { mode: 'suppress' as const, localId: params.durableLocalId }
-              : { mode: 'persist' as const, localId: params.durableLocalId })
+          ? { mode: 'persist' as const, localId: params.durableLocalId }
           : { mode: 'suppress' as const },
       },
     );

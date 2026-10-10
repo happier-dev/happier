@@ -71,6 +71,8 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
   executionMachineId: string | null | undefined;
   executionMachineSelectionKind?: 'resolved' | 'selected_unreachable' | 'none';
   voiceAgentEnabled: boolean;
+  /** Existing configured-Agent/catalog availability; never a speech runtime fact. */
+  voiceAgentRuntime?: VoiceReadinessFact;
   rawCredentialAuthorizationByContribution?: Readonly<Record<string, Readonly<{
     contribution: Readonly<{ pluginId: string; localId: string }>;
     machineId: string | null;
@@ -89,6 +91,7 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
   credential: VoiceCredentialReadinessFact;
   daemonRouteReadiness: VoiceRoleReadiness | null;
   speechReadiness: LocalVoiceSpeechReadiness;
+  thinkReadiness: VoiceRoleReadiness;
 }> {
   const local = resolveLocalVoiceAdapterSettings({ voice: input.voice });
   const stt = parseLocalVoiceSttSettings(local.config.stt);
@@ -161,6 +164,27 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
   const adapterSettings = adapterEntry
     ? projectVoiceProviderSettings(adapterEntry, input.voice.providers[local.adapterId] ?? null)
     : null;
+  const needsAgent = local.config.conversationMode === 'agent';
+  const thinkSettings: VoiceSettingsReadinessFact = adapterSettings?.status !== 'ready'
+    ? adapterSettings?.status ?? 'unknown'
+    : needsAgent && local.config.agent.agentSource === 'agent' && !local.config.agent.agentId.trim()
+      ? 'missing_required_setting'
+      : 'ready';
+  const agentRuntime = input.voiceAgentRuntime ?? 'unknown';
+  const thinkReadiness = resolveVoiceRoleReadiness({
+    registry: input.registry,
+    role: 'conversation_stt',
+    providerId: local.adapterId,
+    platform: input.platform,
+    settingsRequirements: needsAgent ? ['server_feature', 'execution_machine', 'runtime'] : [],
+    facts: {
+      settings: thinkSettings,
+      serverFeature,
+      executionMachine: input.executionMachineSelectionKind === 'selected_unreachable'
+        ? 'incompatible' : input.executionMachineId ? 'ready' : 'missing',
+      runtime: agentRuntime,
+    },
+  });
   const projectSpeechReadiness = (
     role: 'conversation_stt' | 'conversation_tts',
     providerId: string,
@@ -199,9 +223,10 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
   const speak = projectSpeechReadiness('conversation_tts', tts.provider, endpointFacts[1], credentialFacts[1]);
   // Preserve the aggregate's exact endpoint repair before a leaf's generic
   // missing-setting result. Other required leaf settings still block readiness.
-  const settings = endpoint === 'missing' && adapterSettings?.status === 'ready'
+  const speechSettings = endpoint === 'missing' && adapterSettings?.status === 'ready'
     ? 'ready'
     : [hear.settings, speak.settings].find((fact) => fact !== 'ready') ?? 'ready';
+  const settings = thinkSettings !== 'ready' ? thinkSettings : speechSettings;
   const speechReadiness: LocalVoiceSpeechReadiness = {
     hear: hear.readiness,
     speak: speak.readiness,
@@ -218,6 +243,7 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
       credential,
       daemonRouteReadiness: null,
       speechReadiness,
+      thinkReadiness,
     };
   }
 
@@ -231,7 +257,8 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
       platformOs: input.platform,
     }).preferredExecution === 'daemon'
   ));
-  const executionMachine: VoiceReadinessFact = requiresDaemon
+  const executionMachine: VoiceReadinessFact = needsAgent && input.executionMachineSelectionKind === 'selected_unreachable'
+    ? 'incompatible' : requiresDaemon
     ? input.executionMachineSelectionKind === 'selected_unreachable'
       ? 'incompatible'
       : projectVoiceDaemonExecutionMachineReadinessFact(
@@ -274,11 +301,12 @@ export function projectLocalConversationReadinessFacts(input: Readonly<{
     settings,
     serverFeature,
     executionMachine,
-    runtime,
+    runtime: needsAgent && agentRuntime !== 'ready' ? agentRuntime : runtime,
     model,
     endpoint,
     credential,
     daemonRouteReadiness,
     speechReadiness,
+    thinkReadiness,
   };
 }

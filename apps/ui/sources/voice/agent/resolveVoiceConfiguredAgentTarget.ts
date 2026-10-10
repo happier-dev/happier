@@ -89,22 +89,12 @@ export async function resolveVoiceConfiguredAgentTarget(params: Readonly<{
     accountScope?: ServerAccountScope | null;
 }>): Promise<ResolvedVoiceConfiguredAgentTarget> {
     const agentId = normalizeNonEmptyString(params.selection.agentId);
-    if (!agentId) {
-        return {
-            ok: false,
-            errorCode: VOICE_AGENT_SELECTION_UNAVAILABLE_ERROR_CODE,
-            agentId: '',
-            agentTargetKey: normalizeNonEmptyString(params.selection.agentTargetKey),
-        };
-    }
     const targetKeySelection = normalizeNonEmptyString(params.selection.agentTargetKey);
     const identitySelection = params.selection.agentIdentity ?? null;
-    const hasExactFacts = Boolean(targetKeySelection || identitySelection);
-    const configuredCompatBackendId = readLegacyConfiguredAcpBackendId(agentId);
     const unavailable = (): ResolvedVoiceConfiguredAgentTarget => ({
         ok: false,
         errorCode: VOICE_AGENT_SELECTION_UNAVAILABLE_ERROR_CODE,
-        agentId,
+        agentId: agentId ?? '',
         agentTargetKey: targetKeySelection,
     });
     const state = storage.getState();
@@ -112,22 +102,16 @@ export async function resolveVoiceConfiguredAgentTarget(params: Readonly<{
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (params.accountScope !== undefined && (!scope || !lifetime
         || !areAccountSettingsScopesEqual(scope, lifetime.scope))) return unavailable();
-    if (!hasExactFacts && !configuredCompatBackendId) {
-        if (isLegacyCompatAgentType(agentId)) return unavailable();
-        return {
-            ok: true,
-            kind: 'legacy',
-            agentId,
-            backendTarget: { kind: 'backend', backendId: agentId },
-            targetKey: null,
-        };
-    }
+    const backendEnabledByTargetKey = state.settings?.backendEnabledByTargetKey ?? null;
+    const knownTarget = projectVoiceConfiguredAgentTarget({
+        selection: params.selection, entries: null, backendEnabledByTargetKey,
+    });
+    if (knownTarget) return knownTarget;
 
     if (!scope || !lifetime || !areAccountSettingsScopesEqual(scope, lifetime.scope)) return unavailable();
     const snapshot = getAcpCatalogSnapshot(scope);
     if (snapshot?.catalog.status !== 'ready' || snapshot.stale) await refreshAcpCatalog(scope);
     if (!lifetime.isCurrent()) return unavailable();
-    const backendEnabledByTargetKey = state.settings?.backendEnabledByTargetKey ?? null;
     const externalIdentitySelection = identitySelection;
     const projectionInputs = externalIdentitySelection
         ? await loadDaemonMergedProjectionInputs({
@@ -166,6 +150,7 @@ export function projectVoiceConfiguredAgentTarget(params: Readonly<{
     const agentId = normalizeNonEmptyString(params.selection.agentId);
     const targetKeySelection = normalizeNonEmptyString(params.selection.agentTargetKey);
     const externalIdentitySelection = params.selection.agentIdentity ?? null;
+    const hasExactFacts = Boolean(targetKeySelection || externalIdentitySelection);
     const configuredCompatBackendId = readLegacyConfiguredAcpBackendId(agentId);
     const unavailable = (): ResolvedVoiceConfiguredAgentTarget => ({
         ok: false, errorCode: VOICE_AGENT_SELECTION_UNAVAILABLE_ERROR_CODE,

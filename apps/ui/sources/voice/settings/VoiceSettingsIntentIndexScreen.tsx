@@ -104,6 +104,7 @@ export function VoiceSettingsIntentIndexScreen() {
     serviceTitle,
     readiness: conversations.selectedProviderReadiness ?? null,
     localSpeechReadiness: conversations.selectedLocalSpeechReadiness,
+    localThinkReadiness: conversations.selectedLocalThinkReadiness,
     machine,
   });
   const dictationPipeline = buildVoiceDictationPipeline({

@@ -18,7 +18,7 @@ import { VoiceMark, VoiceMarkArt } from './VoiceMark';
 import { VoiceStatusLine } from './VoiceStatusLine';
 import { VoiceTransport } from './VoiceTransport';
 import { VoiceTargetIdentity } from './VoiceTargetIdentity';
-import { revealVoiceCompanionSection } from './voiceCompanionSectionReveal';
+import { registerVoiceGlancePresentation, revealVoiceCompanionSection } from './voiceCompanionSectionReveal';
 import { useVoicePresenceContainer } from './useVoicePresenceContainer';
 
 import { VoiceTopBarAnatomy, VOICE_TOP_BAR_PILL_HEIGHT as PILL_HEIGHT } from './voicePresenceAnatomy';
@@ -73,6 +73,7 @@ const VoiceTopBarPill = React.memo(function VoiceTopBarPill(props: Readonly<{
     const { voice } = props;
     const anchorRef = React.useRef<View | null>(null);
     const [open, setOpen] = React.useState(false);
+    React.useLayoutEffect(() => registerVoiceGlancePresentation(setOpen), []);
     const close = React.useCallback(() => setOpen(false), []);
     // The label shows the Voice section: in the Companion when it is beside the work, otherwise
     // anchored under the pill. The mark never does this — it is always start/end.

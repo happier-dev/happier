@@ -94,6 +94,11 @@ import {
   type ResolveVoiceProviderAvailabilityInput,
 } from '@/voice/settings/resolveVoiceProviderAvailability';
 import { projectLocalConversationReadinessFacts } from '@/voice/settings/projectLocalConversationReadinessFacts';
+import { getEnabledAgentIds } from '@/agents/catalog/enabled';
+import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { getAcpCatalogSnapshot, subscribeAcpCatalogSnapshots } from '@/sync/store/settings/acpCatalogSnapshot';
+import { projectVoiceConfiguredAgentTarget } from '@/voice/agent/resolveVoiceConfiguredAgentTarget';
 import {
   projectVoiceProviderAgentRealtimePassiveSetup,
   readVoiceProviderConnectedServicesBinding,
@@ -111,6 +116,7 @@ const registry = createDefaultVoiceProviderRegistry();
 const selectReadinessAccountSettings = (settings: Settings) => ({
   voiceSettingsV1: settings.voiceSettingsV1,
   secrets: settings.secrets,
+  backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
 });
 
 type CheckedVoiceProviderReadinessResult =
@@ -340,6 +346,32 @@ export function useVoiceConversationsReadinessModel(props: {
     ?? props.executionMachineId
     ?? null;
   const localAdapterSettings = resolveLocalVoiceAdapterSettings({ voice });
+  const configuredAgent = localAdapterSettings.config.conversationMode === 'agent'
+    && localAdapterSettings.config.agent.agentSource === 'agent'
+    ? localAdapterSettings.config.agent : null;
+  const readAgentCatalog = React.useCallback(() => getAcpCatalogSnapshot(settingsScope), [settingsScope]);
+  const agentCatalog = React.useSyncExternalStore(subscribeAcpCatalogSnapshots, readAgentCatalog, readAgentCatalog);
+  const agentProjection = useDaemonMergedProjectionInputs({
+    machineId: props.executionMachineId,
+    serverId: settingsScope?.serverId,
+    enabled: configuredAgent !== null,
+    load: false,
+  });
+  const agentCatalogReady = agentCatalog?.catalog.status === 'ready' && !agentCatalog.stale
+    && (!configuredAgent?.agentIdentity || agentProjection.phase === 'ready');
+  const configuredAgentTarget = configuredAgent ? projectVoiceConfiguredAgentTarget({
+    selection: configuredAgent,
+    backendEnabledByTargetKey: accountSettings.backendEnabledByTargetKey,
+    entries: agentCatalogReady ? getResolvedBackendCatalogEntries({
+      enabledAgentIds: getEnabledAgentIds({ backendEnabledByTargetKey: accountSettings.backendEnabledByTargetKey }),
+      acpCatalogSnapshot: agentCatalog.catalog,
+      backendEnabledByTargetKey: accountSettings.backendEnabledByTargetKey,
+      mergedProviderProjectionById: agentProjection.inputs?.mergedProviderProjectionById,
+      mergedBackendProjectionById: agentProjection.inputs?.mergedBackendProjectionById,
+      discoveredBackendIds: agentProjection.inputs?.discoveredBackendIds,
+    }) : null,
+    mergedProviderProjectionById: agentProjection.inputs?.mergedProviderProjectionById,
+  }) : null;
   const selectedSpeechProviderIds = [
     parseLocalVoiceSttSettings(localAdapterSettings.config.stt).provider,
     parseLocalVoiceTtsSettings(localAdapterSettings.config.tts).provider,
@@ -357,6 +389,8 @@ export function useVoiceConversationsReadinessModel(props: {
     executionMachineId: props.executionMachineId,
     executionMachineSelectionKind: props.executionMachineSelectionKind,
     voiceAgentEnabled,
+    voiceAgentRuntime: configuredAgentTarget === null
+      ? 'unknown' : configuredAgentTarget.ok ? 'ready' : 'incompatible',
     rawCredentialAuthorizationByContribution:
       checkedReadiness?.rawCredentialAuthorizationByContribution,
     resolveSavedSecret: savedSecretCatalog.resolveReference,
@@ -1012,6 +1046,7 @@ export function useVoiceConversationsReadinessModel(props: {
     selectedDeclarativeSettingsRow, localizePluginText, writeExternalSetting,
     selectedProviderRow, selectedUnavailableProvider, localAdapterSettings, selectedSpeechProviderIds,
     selectedReadinessCheckKey,
+    selectedLocalThinkReadiness: localConversationReadinessFacts.thinkReadiness,
     selectedLocalSpeechReadiness: checkedReadiness?.rawCredentialAuthorizationByContribution
       && !checkedReadinessIsCurrent
       ? null
@@ -1029,7 +1064,7 @@ export function VoiceProviderSection(props: Parameters<typeof useVoiceConversati
   const router = useRouter();
   const {
     serviceTiles, isOff, select, selectService, voice, visibleRows, selectedServiceBillingRows, selectedProviderReadiness,
-    selectedLocalSpeechReadiness, selectedReadinessCheckKey,
+    selectedLocalSpeechReadiness, selectedLocalThinkReadiness, selectedReadinessCheckKey,
     checkProviderReadiness, showCheckedReadiness,
     checkedProviderResult, checkedReadinessRevision, checkedReadiness,
     selectedExternalRow, selectedExternalDeclaration, selectedExternalCredentials, selectedExternalContribution,
@@ -1053,8 +1088,9 @@ export function VoiceProviderSection(props: Parameters<typeof useVoiceConversati
     serviceTitle: selectedServiceTitle,
     readiness: selectedProviderReadiness ?? null,
     localSpeechReadiness: selectedLocalSpeechReadiness,
+    localThinkReadiness: selectedLocalThinkReadiness,
     machine: { machineId: executionMachine.selectedMachineId, machineLabel: executionMachine.machineLabel },
-  }), [executionMachine.machineLabel, executionMachine.selectedMachineId, selectedLocalSpeechReadiness, selectedProviderReadiness, selectedServiceTitle, voice]);
+  }), [executionMachine.machineLabel, executionMachine.selectedMachineId, selectedLocalSpeechReadiness, selectedLocalThinkReadiness, selectedProviderReadiness, selectedServiceTitle, voice]);
 
   const payWith = selectedServiceBillingRows.length > 1 ? (
       <SegmentedChoiceItem<string>

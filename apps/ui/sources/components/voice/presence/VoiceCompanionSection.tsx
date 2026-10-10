@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View, type LayoutChangeEvent } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import { SessionCompanionItemFrame } from '@/components/sessions/companion/SessionCompanionItemFrame';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';

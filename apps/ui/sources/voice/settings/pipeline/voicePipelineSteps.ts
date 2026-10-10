@@ -68,6 +68,7 @@ export function buildLocalVoiceConversationSteps(
     machine: VoicePipelineMachine,
     registry: VoiceProviderRegistry = defaultRegistry,
     speechReadiness?: LocalVoiceSpeechReadiness | null,
+    thinkReadiness?: VoiceRoleReadiness | null,
 ): VoiceSettingsPipelineStep[] {
     const { config: cfg } = resolveLocalVoiceAdapterSettings({ voice });
     const stt = parseLocalVoiceSttSettings(cfg.stt);
@@ -81,13 +82,13 @@ export function buildLocalVoiceConversationSteps(
                 ? { kind: 'agent', agentId: cfg.agent.agentId, title: agentTitle(cfg.agent.agentId) }
                 : { kind: 'agent', title: t('settingsVoice.pages.pipeline.voiceAgentFollowsSession') },
             placement: onMachine(machine),
-            readiness: null,
+            readiness: thinkReadiness ?? null,
         }
         : {
             roles: ['think'],
             engine: { kind: 'session', title: t('settingsVoice.pages.pipeline.theSessionYoureIn') },
             placement: { kind: 'session' },
-            readiness: null,
+            readiness: thinkReadiness ?? null,
         };
     return [
         {
@@ -135,12 +136,13 @@ export function buildVoiceConversationsPipeline(input: Readonly<{
     machine: VoicePipelineMachine;
     registry?: VoiceProviderRegistry;
     localSpeechReadiness?: LocalVoiceSpeechReadiness | null;
+    localThinkReadiness?: VoiceRoleReadiness | null;
 }>): Readonly<{ pipeline: VoiceSettingsPipeline; cardReadiness: VoiceRoleReadiness | null }> | null {
     const registry = input.registry ?? defaultRegistry;
     const providerId = resolveVoiceProviderId(input.voice.providerId);
     if (!providerId) return null;
     if (providerId === 'local_conversation' || providerId === 'local_direct') {
-        const steps = buildLocalVoiceConversationSteps(input.voice, input.machine, registry, input.localSpeechReadiness);
+        const steps = buildLocalVoiceConversationSteps(input.voice, input.machine, registry, input.localSpeechReadiness, input.localThinkReadiness);
         const ready = input.readiness?.status === 'ready';
         return {
             pipeline: projectVoiceSettingsPipeline({
@@ -148,7 +150,8 @@ export function buildVoiceConversationsPipeline(input: Readonly<{
                 providerId,
                 steps: ready ? steps.map((step) => ({
                     ...step,
-                    readiness: input.localSpeechReadiness !== undefined && step.roles.some((role) => role === 'hear' || role === 'speak')
+                    readiness: (input.localSpeechReadiness !== undefined && step.roles.some((role) => role === 'hear' || role === 'speak'))
+                        || (input.localThinkReadiness !== undefined && step.roles.includes('think'))
                         ? step.readiness
                         : step.readiness ?? input.readiness,
                 })) : steps,

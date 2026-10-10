@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';

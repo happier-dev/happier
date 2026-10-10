@@ -23,8 +23,8 @@ import {
 } from '@/sync/domains/session/listing/sessionListLookupState';
 import {
   createDefaultActionExecutor,
-  projectServerScopedSessionSendMessageResult,
 } from '@/sync/ops/actions/defaultActionExecutor';
+import { projectServerScopedSessionSendMessageResult } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionSendMessage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
 import { resolveAskUserQuestionDecisionAnswers } from '@/voice/requests/resolveAskUserQuestionDecisionAnswers';

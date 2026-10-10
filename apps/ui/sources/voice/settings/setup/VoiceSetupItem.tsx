@@ -16,6 +16,7 @@ import { VoiceCompactTranscript } from '@/components/voice/presence/VoiceCompact
 import { VoiceMarkArt } from '@/components/voice/presence/VoiceMark';
 import { VoiceStatusLine } from '@/components/voice/presence/VoiceStatusLine';
 import { VoiceTransport } from '@/components/voice/presence/VoiceTransport';
+import { registerVoiceSetupPresentation } from '@/components/voice/presence/voiceCompanionSectionReveal';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
@@ -119,6 +120,10 @@ export function useVoiceSetupBlock(input: Readonly<{ layout: 'card' | 'row'; spa
     return {
         id: VOICE_SETUP_STEP_ID,
         span: input.span,
+        registerPresentation: ({ open, close }) => registerVoiceSetupPresentation((expanded) => {
+            setPanelOpen(expanded);
+            if (expanded) open(); else close();
+        }),
         renderTile: ({ open }) => (
             <VoiceSetupTile
                 layout={input.layout}

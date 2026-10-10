@@ -11,7 +11,6 @@ const actionHome = await installLocalVoiceActionHomeForTests();
 const currentToolSessionAddress = { serverId: actionHome.homes.voice!.id, sessionId: 's1' };
 const { useVoiceTargetStore } = await import('@/voice/runtime/voiceTargetStore');
 const {
-  resolveDirectUserActionShortcutAssistantText,
   runVoiceAgentTurnWithTools,
 } = await import('./runVoiceAgentTurnWithTools');
 afterAll(() => actionHome.dispose());
@@ -21,19 +20,6 @@ describe('runVoiceAgentTurnWithTools permission shortcuts', () => {
   // large shared Voice harness import to every individual permission assertion.
   registerLocalVoiceEngineHarnessHooks({ resetModulesBetweenTests: false });
   beforeEach(() => actionHome.restore());
-
-  it('reports deferred approval truthfully without claiming the user action executed', () => {
-    expect(resolveDirectUserActionShortcutAssistantText('allow', {
-      ok: true,
-      kind: 'approval_request_created',
-      artifactId: 'approval-1',
-      actionId: 'session.user_action.answer',
-    })).toBe('Created a confirmation request. The pending request has not been approved yet.');
-    expect(resolveDirectUserActionShortcutAssistantText('allow', {
-      ok: true,
-      status: 'done',
-    })).toBe('Approved the pending request.');
-  });
 
   it('does not treat neutral approve-or-deny wording as a deny command', async () => {
     const storage = await getStorage();

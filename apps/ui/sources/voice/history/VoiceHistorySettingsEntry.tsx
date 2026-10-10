@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useRouter } from 'expo-router';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import { SettingRow } from '@/components/settings/shell/SettingRow';
 import { VOICE_PRIVACY_SETTINGS } from '@/voice/settings/voiceSettingsDeclarations';

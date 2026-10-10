@@ -26,7 +26,7 @@ import { VoiceGlancePopover } from './VoiceGlancePopover';
 import { VoiceIsland, VOICE_ISLAND_DESKTOP, VOICE_ISLAND_PHONE } from './VoiceIsland';
 import { VoiceOrb, VOICE_ORB_BODY_SIZE } from './VoiceOrb';
 import { VoicePresenceFloat } from './VoicePresenceFloat';
-import { revealVoiceCompanionSection } from './voiceCompanionSectionReveal';
+import { registerVoiceGlancePresentation, revealVoiceCompanionSection } from './voiceCompanionSectionReveal';
 import { useVoicePresenceContainer } from './useVoicePresenceContainer';
 import { resolveVoiceOrbInteractionPadding } from './voicePresenceAnatomy';
 import {
@@ -93,6 +93,7 @@ function VoiceFloatingPresenceRuntime(props: Readonly<{ container: 'island' | 'o
     const reservesComposerSpace = visible && phone && !orb && keyboardHeight === 0;
     const reportBottomReservation = useReportSessionCockpitFloatingBottomChromeHeight(reservesComposerSpace);
     const reportPresenceRect = useReportSessionCockpitVoicePresenceRect(visible);
+    React.useLayoutEffect(() => visible ? registerVoiceGlancePresentation(setOpen) : undefined, [visible]);
     if (!visible) return null;
 
     // Desktop mascot windows retain their incumbent band. In-app pets publish their actual

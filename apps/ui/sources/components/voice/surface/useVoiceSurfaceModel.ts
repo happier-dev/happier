@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { usePathname } from 'expo-router';
+import { usePathname } from '@/components/appShell/workspace/destinationRoute';
 import { Platform } from 'react-native';
 
 import { useSetting } from '@/sync/domains/state/storage';
