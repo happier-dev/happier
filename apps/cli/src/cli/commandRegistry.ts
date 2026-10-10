@@ -238,8 +238,6 @@ const DEDICATED_STATIC_COMMAND_PATHS: readonly (readonly string[])[] = Object.fr
   Object.freeze(['session', 'run', 'action']),
   Object.freeze(['session', 'voice-agent', 'start']),
   Object.freeze(['session', 'voice_agent', 'start']),
-  Object.freeze(['workflow', 'definition', 'export']),
-  Object.freeze(['workflow', 'definition', 'import']),
 ]);
 
 export function assertComposedCommandPathsAreUnambiguous(

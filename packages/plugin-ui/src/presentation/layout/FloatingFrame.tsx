@@ -4,10 +4,11 @@ import {
   useRef,
   useState,
   type HTMLAttributes,
+  type PointerEvent as WebPointerEvent,
   type ComponentType,
   type ReactNode,
 } from 'react';
-import { Platform, View, type ViewStyle } from 'react-native';
+import { Platform, View, type PointerEvent as NativePointerEvent, type ViewStyle } from 'react-native';
 
 import { useOptionalHappierUiTheme } from '../../environment/context.js';
 import { useOptionalPluginUiPresentationHost } from '../../presentationHost/context.js';
@@ -554,8 +555,8 @@ export function FloatingFrame(props: FloatingFrameProps) {
     onKeyDown,
     onFocus: () => setFocused(true),
     onBlur: () => setFocused(false),
-    onPointerEnter: (event) => {
-      if (event.pointerType === 'touch') setTouchPointer(true);
+    onPointerEnter: (event: WebPointerEvent<HTMLElement> | NativePointerEvent) => {
+      if ('pointerType' in event && event.pointerType === 'touch') setTouchPointer(true);
       setHovered(true);
     },
     onPointerLeave: () => setHovered(false),

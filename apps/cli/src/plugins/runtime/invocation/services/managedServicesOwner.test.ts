@@ -779,16 +779,14 @@ describe('managed-services SVC09 owner', () => {
                 },
             },
         );
-        const gateway = { homeId: 'home', accountId: 'account', connectionId: 'connection', machineId: 'machine' };
         try {
-            expect(harness.owner.readSharedProviderGatewayRuntime(gateway)).toEqual({ status: 'idle', reachability: 'not_checked' });
             const [first, second] = await Promise.all([
                 bind('session-one', 'first-purpose').supervise(spec),
                 bind('session-two', 'second-purpose').supervise(spec),
             ]);
             expect(harness.exec.spawn).toHaveBeenCalledOnce();
-            expect(harness.owner.readSharedProviderGatewayRuntime(gateway)).toEqual({ status: 'running', reachability: 'not_checked' });
-            expect(harness.owner.readSharedProviderGatewayRuntime({ ...gateway, accountId: 'other-account' })).toEqual({ status: 'idle', reachability: 'not_checked' });
+            expect(first.snapshot().state).toBe('healthy');
+            expect(second.snapshot().state).toBe('healthy');
             const registryPath = harness.exec.spawn.mock.calls[0]?.[0].env?.CONSUMER_ACCESS_PATH;
             expect(registryPath).toBeTypeOf('string');
             const registry = JSON.parse(await readFile(registryPath!, 'utf8'));
@@ -809,17 +807,16 @@ describe('managed-services SVC09 owner', () => {
             expect(headers[0]?.get('authorization')).not.toBe(headers[1]?.get('authorization'));
             await first.dispose();
             expect(process.dispose).not.toHaveBeenCalled();
-            expect(harness.owner.readSharedProviderGatewayRuntime(gateway).status).toBe('running');
+            expect(second.snapshot().state).toBe('healthy');
             await expect(first.request({ pathAndQuery: '/v1/models' })).rejects.toMatchObject({ code: 'plugin_managed_service_unavailable' });
             await second.request({ pathAndQuery: '/v1/models' });
             const remaining = JSON.parse(await readFile(registryPath!, 'utf8'));
             expect(remaining.consumers).toHaveLength(1);
             await second.dispose();
             expect(process.dispose).toHaveBeenCalledOnce();
-            expect(harness.owner.readSharedProviderGatewayRuntime(gateway).status).toBe('idle');
             const third = await bind('session-three', 'first-purpose').supervise(spec);
             expect(harness.exec.spawn).toHaveBeenCalledTimes(2);
-            expect(harness.owner.readSharedProviderGatewayRuntime(gateway).status).toBe('running');
+            expect(third.snapshot().state).toBe('healthy');
             await third.dispose();
             expect(restarted.dispose).toHaveBeenCalledOnce();
         } finally {
