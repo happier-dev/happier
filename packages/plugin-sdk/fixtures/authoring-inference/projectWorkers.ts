@@ -1,4 +1,39 @@
-import type { PluginActionInputById, PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
+import {
+  isPluginActionApprovalRequestCreated,
+  type ActionsService,
+  type PluginActionInputById,
+  type PluginActionResultById,
+} from '@happier-dev/plugin-sdk/actions';
+
+/** Compare against the observed entry, so this finite edit preserves service siblings. */
+export async function configureProjectWorkers(actions: ActionsService,
+  workspace: PluginActionInputById['projects.worker.preferences.get']['workspace'],
+  next: PluginActionInputById['projects.worker.preferences.set']['next']) {
+  const current = await actions.execute('projects.worker.preferences.get', { workspace });
+  if (isPluginActionApprovalRequestCreated(current) || current.status !== 'ready') return current;
+  return await actions.execute('projects.worker.preferences.set', {
+    workspace, expectedRevision: current.revision,
+    expected: current.provenance === 'default' ? { kind: 'absent' } : { kind: 'value', value: current.preference },
+    next,
+  });
+}
+
+export async function inspectProjectWorker(actions: ActionsService, input: PluginActionInputById['projects.worker.status']) {
+  return await actions.execute('projects.worker.status', input);
+}
+
+/** Saving next-start placement never restarts or moves an existing service. */
+export async function configureProjectServicePlacement(actions: ActionsService,
+  input: PluginActionInputById['projects.service.placement.get'],
+  value: PluginActionInputById['projects.service.placement.set']['value']) {
+  const current = await actions.execute('projects.service.placement.get', input);
+  if (isPluginActionApprovalRequestCreated(current) || current.status !== 'ready') return current;
+  return await actions.execute('projects.service.placement.set', {
+    ...input, expectedRevision: current.revision,
+    expected: current.provenance === 'default' ? { kind: 'absent' } : { kind: 'value', value: current.placement },
+    value,
+  });
+}
 
 const preference = { enabled: false, unavailable: 'ask', allowAdHoc: false, scriptOverrides: {} } as const;
 const get = { workspace: { serverId: 'home', refId: 'checkout' } } satisfies PluginActionInputById['projects.worker.preferences.get'];
