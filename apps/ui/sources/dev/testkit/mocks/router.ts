@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { vi } from 'vitest';
+import { createReactNavigationNativeMock } from './reactNavigation';
 import {
     createExpoRouterRuntime,
     createStackOptionsCapture,
@@ -30,7 +31,12 @@ export function createExpoRouterMock(options: ExpoRouterMockOptions = {}) {
         ) => vi.fn((...args: TArgs) => implementation?.(...args) as TResult),
         isTrackedMethod: isVitestMockFunction,
     };
-    const runtime = createExpoRouterRuntime(options, adapters);
+    // Expo exposes the native navigator in a mounted route. Reuse the shared
+    // boundary's defaults, while preserving an explicitly supplied object/null.
+    const navigation = options.navigation === undefined
+        ? createReactNavigationNativeMock().useNavigation()
+        : options.navigation;
+    const runtime = createExpoRouterRuntime({ ...options, navigation }, adapters);
 
     return {
         state: runtime.state,

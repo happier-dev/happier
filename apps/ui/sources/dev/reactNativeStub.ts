@@ -127,6 +127,10 @@ export function useAnimatedValue(initialValue: number): AnimatedValue {
 
 export const Animated = {
     Value: AnimatedValue as any,
+    subtract: (left: number | Readonly<{ __getValue(): number }>, right: number | Readonly<{ __getValue(): number }>) => ({
+        __getValue: () => (typeof left === 'number' ? left : left.__getValue())
+            - (typeof right === 'number' ? right : right.__getValue()),
+    }),
     multiply: (left: number | Readonly<{ __getValue(): number }>, right: number | Readonly<{ __getValue(): number }>) => ({
         __getValue: () => (typeof left === 'number' ? left : left.__getValue())
             * (typeof right === 'number' ? right : right.__getValue()),
@@ -135,6 +139,12 @@ export const Animated = {
     timing: (_value: any, _config: any) => ({
         start: (cb?: any) => {
             cb?.({ finished: true });
+        },
+        stop: () => {},
+    }),
+    spring: (_value: unknown, _config: unknown) => ({
+        start: (callback?: (result: { finished: boolean }) => void) => {
+            callback?.({ finished: true });
         },
         stop: () => {},
     }),

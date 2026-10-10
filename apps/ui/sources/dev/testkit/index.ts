@@ -18,6 +18,7 @@ export * from './fixtures/releasedServerV021Compatibility';
 export * from './fixtures/localServices';
 export * from './fixtures/machineFixtures';
 export * from './fixtures/permissionFixtures';
+export * from './fixtures/projectAccountRows';
 export * from './fixtures/pluginProviderDaemonProjection';
 export * from './fixtures/pluginImageFixtures';
 export * from './fixtures/reviewComments';

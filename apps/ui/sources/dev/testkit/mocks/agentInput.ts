@@ -63,6 +63,7 @@ export function createAgentInputModuleMock(options: Readonly<{
                 autocompleteSuggestions: props.autocompleteSuggestions,
                 agentLabel: props.agentLabel,
                 engineLabel: props.engineLabel,
+                voiceAffordance: props.voiceAffordance,
             }, chips);
         },
     };

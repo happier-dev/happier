@@ -1,9 +1,10 @@
-import { decodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { ArtifactAccessGrantsListResponseV1Schema, ArtifactAccessRecipientCensusResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { Buffer } from 'buffer';
 
 import type { Artifact } from '@/sync/domains/artifacts/artifactTypes';
 import { vi } from 'vitest';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 
 /**
  * One Account's Artifact rows as its Home persists them, answered over HTTP.
@@ -257,6 +258,7 @@ export function createArtifactStoreBoundary(params: Readonly<{
 
 /** Real qualified client operations above the shared HTTP/CAS boundary. */
 export async function createPlainArtifactHomeFixture(serverUrl: string, options?: Readonly<{
+    accountSettingsVersion?: number;
     /** Additional real Home HTTP routes needed by the consumer under test. */
     handleRequest?: (path: string, init?: RequestInit) => Promise<Response | null>;
 }>) {
@@ -275,8 +277,9 @@ export async function createPlainArtifactHomeFixture(serverUrl: string, options?
         const path = `${url.pathname}${url.search}`;
         if (url.pathname === '/health' || url.pathname === '/v1/auth/ping' || url.pathname === '/v1/features') return json({});
         if (url.pathname === '/v1/account/encryption') return json({ mode: 'plain', updatedAt: 0 });
-        if (url.pathname === '/v1/account/encryption/currentness') return json({ mode: 'plain', version: 0,
-            signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 0 });
+        if (url.pathname === '/v1/account/encryption/currentness') return json(createPlainAccountEncryptionCurrentnessFixture({
+            version: 0, updatedAt: 0, settingsVersion: options?.accountSettingsVersion,
+        }));
         if (url.origin !== new URL(serverUrl).origin) throw new Error(`Unexpected Home ${url.origin}`);
         requests.push({ path, method: init?.method ?? 'GET' });
         const additional = await options?.handleRequest?.(path, init);
@@ -293,6 +296,23 @@ export async function createPlainArtifactHomeFixture(serverUrl: string, options?
     applied.publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
     return {
         home, boundary, requests,
+        /** Hydrate this focused Home from its real Account Settings wire reader, as Sync does. */
+        async hydrateAccountSettings() {
+            const [{ captureLazyActionAccountContext }, { readAccountSettingsBaseline }, { settingsParse }] = await Promise.all([
+                import('@/sync/ops/actions/actionAccountContext'),
+                import('@/sync/engine/settings/accountSettingsBaseline'),
+                import('@/sync/domains/settings/settings'),
+            ]);
+            const account = await captureLazyActionAccountContext(home.id);
+            try {
+                const { accountMode, encryption } = await account.resolveAccountEncryption();
+                const baseline = await readAccountSettingsBaseline({ request: account.request,
+                    credentials: account.credentials, accountMode, encryption });
+                account.assertCurrent();
+                storage.setState({ settingsScope: account.accountLifetime.scope,
+                    settings: settingsParse(baseline.raw), settingsVersion: baseline.version });
+            } finally { account.dispose(); }
+        },
         dispose() {
             resetRuntimeFetch(); credentialSpy.mockRestore();
             storage.setState(previousState, true);

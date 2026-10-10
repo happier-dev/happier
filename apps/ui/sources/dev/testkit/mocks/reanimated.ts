@@ -240,6 +240,7 @@ export function createReanimatedModuleMock(options: ReanimatedModuleMockOptions 
         FadeIn: createLayoutAnimationBuilderMock('FadeIn'),
         ZoomIn: createLayoutAnimationBuilderMock('ZoomIn'),
         FadeOut: createLayoutAnimationBuilderMock('FadeOut'),
+        ZoomOut: createLayoutAnimationBuilderMock('ZoomOut'),
         LinearTransition: createLayoutAnimationBuilderMock('LinearTransition'),
         ReduceMotion,
         // Reanimated's real `Extrapolation` is a plain enum of string constants; production code

@@ -86,19 +86,22 @@ export async function replayApprovedAsDaemon(input: Readonly<{
 }>): Promise<ExecuteResult> {
     const [{ createActionExecutor }, { approvalArtifactBodyMatchesHeaderV1 },
         { captureLazyActionAccountContext }, { createMachineConnectionActionDeps },
-        { writeApprovalRequestArtifact }, { isApprovalExecutionOriginCurrentForAccountContext }] = await Promise.all([
+        { writeApprovalRequestArtifact }, { isApprovalExecutionOriginCurrentForAccountContext },
+        { createUiConnectedServiceAction }] = await Promise.all([
         import('@happier-dev/protocol/actions/actionExecutor'),
         import('@happier-dev/protocol/approvals/approvalArtifactHeaderV1'),
         import('@/sync/ops/actions/actionAccountContext'),
         import('@/sync/ops/actions/machineConnectionActionDeps'),
         import('@/sync/ops/actions/approvalArtifactWriter'),
         import('@/sync/ops/actions/defaultActionExecutor'),
+        import('@/sync/ops/actions/connectedServiceActionDeps'),
     ]);
     const account = await captureLazyActionAccountContext(input.serverId, input.signal);
     try {
         const read = (artifactId: string) => account.fetchArtifact(artifactId);
         const deps = {
             ...createMachineConnectionActionDeps(),
+            connectedServiceAction: createUiConnectedServiceAction(account),
             approvalsGet: async ({ artifactId }) => {
                 const artifact = await read(artifactId);
                 if (!artifact?.header || typeof artifact.body !== 'string') return null;

@@ -18,6 +18,7 @@ import {
     createUseSettingMock as createUseSettingRuntimeMock,
     createUseSettingMutableMock as createUseSettingRuntimeMutableMock,
     createStableStorageReader,
+    createProjectAccountRowHookMocks,
     adaptStorageStoreLike,
     isStorageStoreLike,
     type CreateUseLocalSettingMockOptions as CreateUseLocalSettingRuntimeMockOptions,
@@ -82,6 +83,7 @@ export async function createStorageModuleMock(options: CreateStorageModuleMockOp
         return extendModuleMock(moduleWithCurrentSecretBindings, {
             storage,
             getStorage: () => storage,
+            ...createProjectAccountRowHookMocks(storage, overrides),
             ...(!Object.prototype.hasOwnProperty.call(overrides, 'useAuthoringMemoryField') ? {
                 useAuthoringMemoryField: ((name: keyof typeof authoringMemoryDefaults) =>
                     (storage.getState().authoringMemory ?? authoringMemoryDefaults)[name]) as StorageModule['useAuthoringMemoryField'],

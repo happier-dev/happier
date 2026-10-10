@@ -6,7 +6,7 @@ import type { HomeHubArtifactTransportV1 } from '@happier-dev/protocol/home';
 export function createWorkBoardArtifactBoundary(initial: WorkBoardsV1) {
     const rows = new Map<string, WorkBoardArtifactV1>(initial.boards.map(board => [board.id, {
         artifactId: board.id, header: buildWorkBoardArtifactHeaderV1(board), body: JSON.stringify(board),
-        revision: { headerVersion: 1, bodyVersion: 1 },
+        revision: { headerVersion: 1, bodyVersion: 1 }, access: 'owner', shared: false,
     }]));
     let gate = Promise.resolve();
     let offline = false;
@@ -18,14 +18,14 @@ export function createWorkBoardArtifactBoundary(initial: WorkBoardsV1) {
             artifactId: row.artifactId, header: row.header, headerVersion: row.revision.headerVersion,
         })) }; },
         create: async input => { await available(); if (!rows.has(input.artifactId)) rows.set(input.artifactId,
-            { ...input, revision: { headerVersion: 1, bodyVersion: 1 } }); },
+            { ...input, revision: { headerVersion: 1, bodyVersion: 1 }, access: 'owner', shared: false }); },
         update: async input => {
             await available(); const row = rows.get(input.artifactId);
             if (!row) return { ok: false, errorCode: 'not_found', error: 'not_found' };
             if (row.revision.headerVersion !== input.expectedRevision.headerVersion || row.revision.bodyVersion !== input.expectedRevision.bodyVersion)
                 return { ok: false, errorCode: 'version_mismatch', error: 'version_mismatch' };
             const revision = { headerVersion: row.revision.headerVersion + 1, bodyVersion: row.revision.bodyVersion + 1 };
-            rows.set(input.artifactId, { artifactId: input.artifactId, header: input.header, body: input.body, revision });
+            rows.set(input.artifactId, { ...row, artifactId: input.artifactId, header: input.header, body: input.body, revision });
             return { ok: true, revision };
         },
         delete: async (id, options) => {

@@ -234,6 +234,9 @@ export default defineConfig({
             { find: /^react-native\//, replacement: resolve('./sources/dev/reactNativeInternalStub.ts') },
             // Vitest runs in node; avoid parsing React Native's Flow entrypoint.
             { find: /^react-native$/, replacement: resolve('./sources/dev/reactNativeStub.ts') },
+            // Plugin UI's nested SVG peer must reach the same native drawing boundary as UI leaves.
+            { find: /^react-native-svg$/, replacement: resolve('./sources/dev/testkit/mocks/reactNativeSvg.ts') },
+            { find: /(?:^|[\\/])node_modules[\\/]react-native-svg[\\/].*$/, replacement: resolve('./sources/dev/testkit/mocks/reactNativeSvg.ts') },
             { find: '@livekit/react-native-webrtc', replacement: resolve('./sources/dev/reactNativeWebRtcStub.ts') },
             // `react-native-safe-area-context` imports native modules that don't exist in node/Vitest.
             { find: 'react-native-safe-area-context', replacement: resolve('./sources/dev/reactNativeSafeAreaContextStub.ts') },

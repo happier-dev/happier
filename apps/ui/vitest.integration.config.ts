@@ -11,12 +11,17 @@ const resolve = (...paths: string[]) => resolvePath(packageRoot, ...paths);
 
 const base = baseConfig as any;
 const integrationAliases = Array.isArray(base.resolve?.alias)
-    ? base.resolve.alias.filter((entry: unknown) => (
+    ? [{
+        // tsconfigPaths otherwise routes this runtime import to the compiler-only
+        // declaration mapping in tsconfig.json. Exercise the installed web entry.
+        find: /^react-native-unistyles$/,
+        replacement: resolve('./node_modules/react-native-unistyles/lib/module/index.js'),
+    }, ...base.resolve.alias.filter((entry: unknown) => (
         !entry
         || typeof entry !== 'object'
         || !('find' in entry)
         || (entry as { find?: unknown }).find !== '@'
-    ))
+    ))]
     : base.resolve?.alias;
 
 /**
@@ -43,6 +48,8 @@ export const NATIVE_LEGEND_INTEGRATION_INCLUDE_GLOB = 'sources/**/*.native.real.
 export const SHIPPED_NATIVE_LEGEND_INCLUDE_GLOB = 'sources/**/*.fabric.native.real.integration.test.{ts,tsx}';
 
 export default defineConfig({
+    // The same JSX transform as the unit lane: published TSX icon leaves omit React imports.
+    esbuild: base.esbuild,
     define: base.define,
     optimizeDeps: base.optimizeDeps,
     plugins: [

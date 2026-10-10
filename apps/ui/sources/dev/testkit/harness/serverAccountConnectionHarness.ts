@@ -1,6 +1,37 @@
 import { vi } from 'vitest';
 import type { Socket } from 'socket.io-client';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import type { SessionSystemRecordStored } from '@happier-dev/protocol';
+
+/** Session/record HTTP fixture below the real Sync, authority, repository and codec owners. */
+export function createSessionSystemRecordHttpFixture(params: Readonly<{
+    sessionId: string;
+    records: readonly SessionSystemRecordStored[];
+    encryptionMode?: 'plain' | 'e2ee';
+    dataEncryptionKey?: string | null;
+}>) {
+    const recordReads: string[] = [];
+    const request: NonNullable<Parameters<typeof import('@/utils/system/runtimeFetch').setRuntimeFetch>[0]> = async url => {
+        const parsed = new URL(String(url));
+        const prefix = `/v2/sessions/${encodeURIComponent(params.sessionId)}`;
+        if (parsed.pathname === prefix) return Response.json({ session: {
+            id: params.sessionId, createdAt: 1, updatedAt: 2, seq: 0, active: true, activeAt: 2,
+            encryptionMode: params.encryptionMode ?? 'plain', dataEncryptionKey: params.dataEncryptionKey ?? null,
+            metadataVersion: 0, metadata: JSON.stringify({ path: '/repo', host: 'test' }),
+            agentStateVersion: 1, agentState: null, share: null,
+        } });
+        if (parsed.pathname === `${prefix}/system-records/record`) {
+            const localId = parsed.searchParams.get('localId');
+            if (localId) recordReads.push(localId);
+            const record = params.records.find(candidate => candidate.address.owner === parsed.searchParams.get('owner')
+                && candidate.address.namespace === parsed.searchParams.get('namespace')
+                && candidate.address.kind === parsed.searchParams.get('kind') && candidate.address.localId === localId);
+            return Response.json({ record: record ?? null });
+        }
+        return new Response('{}', { status: 404 });
+    };
+    return { request, recordReads };
+}
 
 type ConfigureSocketBoundary = (socket: Socket, serverUrl: string | undefined) => void;
 const socketBoundary = vi.hoisted(() => ({ configure: undefined as ConfigureSocketBoundary | undefined }));
@@ -10,11 +41,16 @@ export async function createSocketIoClientBoundary(importOriginal: <T>() => Prom
     const actual = await importOriginal<typeof import('socket.io-client')>();
     const createSocket = (...args: Parameters<typeof actual.io>) => {
         const socket = actual.io(...args);
-        vi.spyOn(socket, 'connect').mockReturnValue(socket);
+        // These replacements belong to this cold external transport for its
+        // entire lifetime, including teardown after a test restores its spies.
+        socket.connect = vi.fn<typeof socket.connect>(() => socket);
+        // SDK send() delegates to emit(). A configured ready fixture must never
+        // send presence packets through an Engine.IO connection it did not open.
+        socket.emit = vi.fn<typeof socket.emit>(() => socket);
         // This cold SDK fixture never opens an Engine.IO connection or creates
         // namespace/ACK teardown state. Deliver the external disconnect event
         // through the real listeners; Sync and Account lifetime teardown stay real.
-        vi.spyOn(socket, 'disconnect').mockImplementation(() => {
+        socket.disconnect = vi.fn<typeof socket.disconnect>(() => {
             if (!socket.connected) return socket;
             socket.connected = false;
             for (const listener of socket.listeners('disconnect')) listener('io client disconnect');
@@ -32,16 +68,15 @@ export async function createSocketIoClientBoundary(importOriginal: <T>() => Prom
 /**
  * Keep the real Socket and Sync owners; only the external transport is replaced.
  *
- * The `vi.mock` here is registered when this harness module loads. A test that statically imports a
- * transport owner (for example the transfer plumbing, whose server-scoped RPC pool imports
- * `socket.io-client`) before this harness binds the real client first. Such a test also registers
- * the boundary itself, so it is hoisted above every import:
+ * Install only when requested: importing this harness through a barrel must not
+ * replace another suite's Socket.IO boundary. A test that statically imports a
+ * transport owner also registers the boundary itself, hoisted above every import:
  * `vi.mock('socket.io-client', async (importOriginal) => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal))`.
  * This call then only configures it.
  */
 export function installDisconnectedServerSocketBoundary(configure?: ConfigureSocketBoundary): void {
     socketBoundary.configure = configure;
-    vi.mock('socket.io-client', createSocketIoClientBoundary);
+    vi.doMock('socket.io-client', createSocketIoClientBoundary);
 }
 
 /** Apply a real Account lifetime before a test installs its domain data or fake clock. */
@@ -52,8 +87,13 @@ export async function restoreServerAccountForTest(params: Readonly<{
     accountId?: string;
     /** Genuine synthetic credentials for tests exercising encrypted Account/Session owners. */
     credentials?: AuthCredentials;
+    /** Other saved Homes remain signed out in a single-Home boundary fixture. */
+    credentialScope?: 'restored-home';
     request?: NonNullable<Parameters<typeof import('@/utils/system/runtimeFetch').setRuntimeFetch>[0]>;
 }>) {
+    // Match the app entry: the real implementation publishes the public Sync
+    // singleton before connection restoration can hydrate or switch its Home.
+    await import('@/sync/syncEngine');
     const { upsertServerProfileOnly, setActiveServer } = await import('@/sync/domains/server/serverRuntime');
     const { setServerProfileIdentityForUrl } = await import('@/sync/domains/server/serverProfiles');
     const { TokenStorage } = await import('@/auth/storage/tokenStorage');
@@ -75,9 +115,16 @@ export async function restoreServerAccountForTest(params: Readonly<{
         if (!identifiedHome) throw new Error('Test Home identity could not be established');
         home = identifiedHome;
     }
-    await setActiveServer({ serverId: home.id });
     const credentials = params.credentials ?? { token: `e30.${Buffer.from(JSON.stringify({ sub: params.accountId ?? 'account-a' })).toString('base64url')}.signature` };
-    const credentialBoundary = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue(credentials);
+    const { canonicalizeServerUrl } = await import('@/sync/domains/server/url/serverUrlCanonical');
+    const restoredHomeUrl = canonicalizeServerUrl(home.serverUrl);
+    // Activation can start connection readiness immediately. Its first credential
+    // read must see this restoration's Account, not a previously mounted fixture.
+    const credentialBoundary = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async serverUrl => {
+        if (params.credentialScope === 'restored-home' && canonicalizeServerUrl(serverUrl) !== restoredHomeUrl) return null;
+        return credentials;
+    });
+    await setActiveServer({ serverId: home.id });
     await restoreConnectionToActiveServer(credentials);
     return {
         home,

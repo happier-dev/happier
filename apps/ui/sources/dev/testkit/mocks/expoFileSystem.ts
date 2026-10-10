@@ -48,6 +48,11 @@ export function createExpoFileSystemFileMock(cacheUri = 'file:///cache') {
             if (!bytes) throw new Error('File does not exist');
             return new TextDecoder().decode(new Uint8Array(bytes));
         }
+        async bytes() {
+            const bytes = files.get(this.uri);
+            if (!bytes) throw new Error('File does not exist');
+            return new Uint8Array(bytes);
+        }
         open() {
             open(this.uri);
             return { offset: 0, writeBytes: (bytes: Uint8Array) => writeBytes(this.uri, bytes), close: () => close(this.uri) };

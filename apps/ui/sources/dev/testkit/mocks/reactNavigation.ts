@@ -32,6 +32,9 @@ export function createReactNavigationNativeMock(options: CreateReactNavigationNa
         border: '#d1d1d6',
         notification: '#ff3b30',
     };
+    const defaultTheme = { dark: false, colors: defaultColors, fonts: {} };
+    // The real library hands the nearest provider's theme to `useTheme`.
+    const ThemeContext = React.createContext<unknown>(null);
 
     return {
         CommonActions: {
@@ -42,11 +45,7 @@ export function createReactNavigationNativeMock(options: CreateReactNavigationNa
             colors: { ...defaultColors, background: '#000000', card: '#000000', text: '#ffffff' },
             fonts: {},
         },
-        DefaultTheme: {
-            dark: false,
-            colors: defaultColors,
-            fonts: {},
-        },
+        DefaultTheme: defaultTheme,
         NavigationContext: React.createContext<Readonly<Record<string, unknown>> | undefined>(undefined),
         NavigationRouteContext: React.createContext<Readonly<{ key?: string; name?: string }> | undefined>(undefined),
         NavigationContainer: passThrough,
@@ -55,7 +54,9 @@ export function createReactNavigationNativeMock(options: CreateReactNavigationNa
         createNavigatorFactory: (_Navigator: unknown) => () => ({
             Navigator: passThrough, Screen: passThrough, Group: passThrough,
         }),
-        ThemeProvider: passThrough,
+        ThemeProvider: ({ children, value }: { children?: React.ReactNode; value: unknown }) =>
+            React.createElement(ThemeContext.Provider, { value }, children),
+        useTheme: () => React.useContext(ThemeContext) ?? defaultTheme,
         useIsFocused: () => isFocused,
         useFocusEffect: (effect: () => void | (() => void)) => {
             React.useEffect(() => effect(), [effect]);

@@ -10,6 +10,10 @@ function createGestureChain(): any {
         chain.__config.minDistance = value;
         return chain;
     };
+    chain.maxDistance = (value: number) => {
+        chain.__config.maxDistance = value;
+        return chain;
+    };
     chain.maxDuration = (value: number) => {
         chain.__config.maxDuration = value;
         return chain;
@@ -75,6 +79,7 @@ export const Gesture = {
     Pan: () => createGestureChain(),
     Tap: () => createGestureChain(),
     LongPress: () => createGestureChain(),
+    Hover: () => createGestureChain(),
     Exclusive: (...gestures: unknown[]) => ({ __kind: 'Exclusive', gestures }),
     Simultaneous: (...gestures: unknown[]) => ({ __kind: 'Simultaneous', gestures }),
     Race: (...gestures: unknown[]) => ({ __kind: 'Race', gestures }),

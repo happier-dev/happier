@@ -97,11 +97,12 @@ export async function installSessionOpsNetworkBoundary() {
     const { canonicalizeServerUrl } = await import('@/sync/domains/server/url/serverUrlCanonical');
     const homes = new Map<string, string>();
     const credentialRequests: Array<{ serverUrl: string; serverId: string | undefined }> = [];
-    const credentialBoundary = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async (serverUrl, options) => {
+    const readBoundaryCredentials: typeof TokenStorage.getCredentialsForServerUrl = async (serverUrl, options) => {
         credentialRequests.push({ serverUrl, serverId: options?.serverId ?? undefined });
         const token = homes.get(serverUrl);
         return token ? { token } : null;
-    });
+    };
+    let credentialBoundary = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(readBoundaryCredentials);
     const httpRequests: Array<{ url: string; token: string | null }> = [];
     const runtimeFetchBoundary: RuntimeFetch = async (input, init) => {
         const url = new URL(String(input));
@@ -110,6 +111,9 @@ export async function installSessionOpsNetworkBoundary() {
         if (!homes.has(url.origin)) throw new Error(`Unexpected test Home: ${url.origin}`);
         const response = httpResponder ? await httpResponder(input, init) : null;
         if (response !== null) return response;
+        // Public saved-Home discovery uses a tokenless readiness probe whose
+        // contract is the HTTP status, not a response body.
+        if (url.pathname === '/health') return new Response(null, { status: 200 });
         if (url.pathname === '/v1/auth/ping') return Response.json({});
         if (url.pathname.startsWith('/v1/machines/')) return Response.json({ machine: {
             id: decodeURIComponent(url.pathname.slice('/v1/machines/'.length)),
@@ -126,6 +130,11 @@ export async function installSessionOpsNetworkBoundary() {
         resetRequests() {
             // The global UI cleanup retires runtimeFetch after every test.
             setRuntimeFetch(runtimeFetchBoundary);
+            // Real-custody cases restore this shortcut to exercise the native
+            // credential parser/mutation owner. A reused fixture starts the
+            // next case with its original external credential boundary again.
+            credentialBoundary.mockRestore();
+            credentialBoundary = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(readBoundaryCredentials);
             requests.length = 0;
             httpRequests.length = 0;
             credentialRequests.length = 0;

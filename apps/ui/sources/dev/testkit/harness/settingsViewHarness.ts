@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { ReactTestInstance } from 'react-test-renderer';
+import { SettingsPageSearchProvider } from '@/components/settings/shell/SettingsPageSearchContext';
 
 import {
     renderScreen,
@@ -37,7 +38,13 @@ export async function renderSettingsView(
     element: React.ReactElement,
     options: RenderWithAppProvidersOptions = {},
 ): Promise<SettingsViewHarness> {
-    const screen = await renderScreen(element, options);
+    const CallerWrapper = options.wrapper;
+    // The real Settings shell owns this query through leaf navigation and updates.
+    function SettingsShellProviders({ children }: React.PropsWithChildren) {
+        const content = React.createElement(SettingsPageSearchProvider, { children });
+        return CallerWrapper ? React.createElement(CallerWrapper, null, content) : content;
+    }
+    const screen = await renderScreen(element, { ...options, wrapper: SettingsShellProviders });
 
     return {
         ...screen,

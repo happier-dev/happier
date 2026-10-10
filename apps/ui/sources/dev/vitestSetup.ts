@@ -486,37 +486,7 @@ vi.mock('@shopify/react-native-skia', async () => {
 // mock for node/Vitest so components rendering SVG (gauges/rings) can mount. Any
 // named export resolves to a host component of the same name. Tests that need to
 // assert on specific SVG props may still mock it locally (local mocks win).
-vi.mock('react-native-svg', () => {
-    const makeHost = (name: string) => {
-        const Component = (props: Record<string, unknown> & { children?: unknown }) =>
-            React.createElement(name, props, props?.children as never);
-        Component.displayName = name;
-        return Component;
-    };
-    const Svg = makeHost('Svg');
-    return {
-        default: Svg,
-        Svg,
-        Circle: makeHost('Circle'),
-        Line: makeHost('Line'),
-        Path: makeHost('Path'),
-        Text: makeHost('SvgText'),
-        SvgXml: makeHost('SvgXml'),
-        // Gradient primitives. The Voice light material is built from stacked
-        // radial gradients, and a golden-frame test reads their resolved
-        // `offset`/`stopOpacity` props — so these must be real host elements
-        // that preserve props, not omitted.
-        Defs: makeHost('Defs'),
-        G: makeHost('G'),
-        Rect: makeHost('Rect'),
-        Ellipse: makeHost('Ellipse'),
-        Stop: makeHost('Stop'),
-        RadialGradient: makeHost('RadialGradient'),
-        LinearGradient: makeHost('SvgLinearGradient'),
-        ClipPath: makeHost('ClipPath'),
-        Mask: makeHost('Mask'),
-    };
-});
+vi.mock('react-native-svg', async () => await import('./testkit/mocks/reactNativeSvg'));
 
 // Call-time Node requires must share the native boundary that Vitest imports use.
 const svgBoundaryRequire = getVitestNodeBuiltin<typeof import('node:module')>('node:module').createRequire(import.meta.url);
@@ -606,21 +576,3 @@ vi.mock('@/components/ui/icons/Icon', () => ({
     Icon: 'Icon',
     ICON_SIZE: { xs: 14, sm: 16, md: 20, lg: 24, xl: 29 },
 }));
-
-// Phosphor draws with `react-native-svg`, whose native primitives do not exist in the node test
-// runtime — without this, every component rendering a real icon fails to construct. Host-element
-// stand-ins keep the icon component in the tree while the leaf drawing primitives become
-// inspectable placeholders. A test needing different behaviour can still mock it locally.
-vi.mock('react-native-svg', () => {
-    const host = (name: string) => name;
-    return {
-        default: host('Svg'), Svg: host('Svg'), SvgXml: host('SvgXml'),
-        Path: host('Path'), G: host('G'), Circle: host('Circle'), Ellipse: host('Ellipse'),
-        Rect: host('Rect'), Line: host('Line'), Polyline: host('Polyline'), Polygon: host('Polygon'),
-        Text: host('SvgText'), TSpan: host('TSpan'), Defs: host('Defs'), Use: host('Use'),
-        Mask: host('Mask'), ClipPath: host('ClipPath'), Pattern: host('Pattern'),
-        Image: host('SvgImage'), LinearGradient: host('LinearGradient'),
-        RadialGradient: host('RadialGradient'), Stop: host('Stop'), Symbol: host('SvgSymbol'),
-        Marker: host('Marker'), ForeignObject: host('ForeignObject'),
-    };
-});

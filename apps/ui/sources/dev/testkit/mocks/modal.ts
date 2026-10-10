@@ -6,6 +6,8 @@ export type ModalModuleMockOptions = Readonly<{
     confirmResult?: boolean;
     /** Mount real custom modal content beneath the mocked presentation boundary. */
     renderCustomModals?: boolean;
+    /** Keep transient confirmation dialogs open for tests that press their real public controls. */
+    settleTransientConfirmations?: boolean;
     spies?: Partial<{
         show: IModal['show'];
         hide: IModal['hide'];
@@ -31,7 +33,7 @@ export function createModalModuleMock(options: ModalModuleMockOptions = {}) {
             chrome?: Readonly<{ testID?: string }>;
             props?: Readonly<{ onConfirm?(): void; onCancel?(): void }>;
         }>;
-        if (candidate.chrome?.testID === 'app-shell-transient-interaction-dialog') {
+        if (candidate.chrome?.testID === 'app-shell-transient-interaction-dialog' && options.settleTransientConfirmations !== false) {
             queueMicrotask(() => {
                 if (confirmResult) candidate.props?.onConfirm?.();
                 else candidate.props?.onCancel?.();
@@ -92,7 +94,7 @@ export function createModalModuleMock(options: ModalModuleMockOptions = {}) {
             () => modals,
         );
         return React.createElement('ModalProvider', { active }, children ?? null,
-            ...snapshot.map(({ id, config }) => React.createElement(config.component, {
+            snapshot.map(({ id, config }) => React.createElement(config.component, {
                 ...config.props,
                 key: id,
                 onClose: () => spies.hide(id),

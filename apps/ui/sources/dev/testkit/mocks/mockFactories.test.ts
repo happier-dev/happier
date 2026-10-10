@@ -562,19 +562,26 @@ describe('UI testkit mock factories', () => {
         expect(provider.props.children).toBe('child');
     });
 
-    it('mounts opted-in custom content, updates it, and removes it on close or hideAll', async () => {
+    it('preserves requesting sibling state while mounting, updating, and closing custom content', async () => {
         const { createModalModuleMock } = await import('./modal');
         const modalMock = createModalModuleMock({ renderCustomModals: true });
         const Content = ({ label, onClose }: { label: string; onClose(): void }) =>
             React.createElement('button', { onClick: onClose }, label);
+        function Owner() {
+            const [selected, setSelected] = React.useState(false);
+            return React.createElement('owner', { selected, onClick: () => setSelected(true) });
+        }
         let screen!: ReturnType<typeof renderer.create>;
         await act(async () => {
-            screen = renderer.create(React.createElement(modalMock.module.ModalProvider, null, 'child'));
+            screen = renderer.create(React.createElement(modalMock.module.ModalProvider, null,
+                React.createElement('peer'), React.createElement(Owner)));
         });
         try {
+            await act(async () => { screen.root.findByType('owner').props.onClick(); });
             let id = '';
             await act(async () => { id = modalMock.module.Modal.show({ component: Content, props: { label: 'first' } }); });
             expect(screen.root.findByType('button').children).toEqual(['first']);
+            expect(screen.root.findByType('owner').props.selected).toBe(true);
             await act(async () => { modalMock.module.Modal.update(id, { label: 'updated' }); });
             expect(screen.root.findByType('button').children).toEqual(['updated']);
             await act(async () => { screen.root.findByType('button').props.onClick(); });
@@ -586,6 +593,7 @@ describe('UI testkit mock factories', () => {
             expect(screen.root.findAllByType('button')).toHaveLength(2);
             await act(async () => { modalMock.module.Modal.hideAll(); });
             expect(screen.root.findAllByType('button')).toHaveLength(0);
+            expect(screen.root.findByType('owner').props.selected).toBe(true);
         } finally {
             await act(async () => { screen.unmount(); });
         }
@@ -819,6 +827,43 @@ describe('UI testkit mock factories', () => {
         expect(mockStore.getState().sessionMessages['session-1']?.messagesMap).toEqual({});
         expect(mockStore.getState().sessionTailContiguousBoundary).toEqual({});
         expect(mockStore.getState().settings.mobileWorkspaceExperienceV1).toBeDefined();
+    });
+
+    it('lets a partial live store defer and evict unmounted transcripts while retaining mounted ones', async () => {
+        const { createLiveStorageStoreMock } = await import('./storage');
+        const { createSessionMessagesFixture } = await import('../fixtures/transcriptFixtures');
+        const { createSessionTranscriptRetentionController } = await import('@/sync/engine/sessions/sessionTranscriptRetention');
+        let sessionMessages: import('@/sync/store/types').StorageState['sessionMessages'] = {
+            unmounted: createSessionMessagesFixture(),
+            mounted: createSessionMessagesFixture(),
+        };
+        const store = createLiveStorageStoreMock(() => ({ sessionMessages }));
+        const evictedSessionIds: string[] = [];
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000);
+        const retention = createSessionTranscriptRetentionController({
+            readHydratedSessionIds: () => Object.keys(store.getState().sessionMessages),
+            readProtectedSessionIds: () => new Set(['mounted']),
+            readLastViewedAtBySessionId: () => store.getState().sessionLastViewed,
+            evictSessionTranscript: (sessionId) => {
+                evictedSessionIds.push(sessionId);
+                sessionMessages = { ...sessionMessages };
+                delete sessionMessages[sessionId];
+            },
+            tuning: { recentKeepCount: 0, graceMs: 100, sweepDebounceMs: 10 },
+        });
+        try {
+            retention.scheduleSweep();
+            vi.advanceTimersByTime(10);
+            expect(evictedSessionIds).toEqual([]);
+            expect(Object.keys(store.getState().sessionMessages)).toEqual(['unmounted', 'mounted']);
+            vi.advanceTimersByTime(100);
+            expect(evictedSessionIds).toEqual(['unmounted']);
+            expect(Object.keys(store.getState().sessionMessages)).toEqual(['mounted']);
+        } finally {
+            retention.dispose();
+            vi.useRealTimers();
+        }
     });
 
     it('creates a useSetting mock from a keyed settings map with optional fallback', async () => {

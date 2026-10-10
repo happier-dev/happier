@@ -58,6 +58,7 @@ export function teamSummaryFixture(overrides?: Partial<TeamSummaryV1>): TeamSumm
         // Built by its own owner so a change to what a Team may offer fails here
         // rather than being frozen into a local literal.
         admission: resolveTeamAdmissionProjectionV1(),
+        counts: null,
         ...overrides,
     };
 }
@@ -65,7 +66,9 @@ export function teamSummaryFixture(overrides?: Partial<TeamSummaryV1>): TeamSumm
 export function teamCapabilitiesFixture(
     granted: Partial<TeamCapabilitiesV1>,
 ): TeamCapabilitiesV1 {
-    return { ...NO_TEAM_CAPABILITIES_V1, viewTeam: true, ...granted };
+    // A member's read pair: the Team and its roster/Groups. A case for a viewer who sees the
+    // Team but not its roster (a non-member Home administrator) withdraws `viewRoster` itself.
+    return { ...NO_TEAM_CAPABILITIES_V1, viewTeam: true, viewRoster: true, ...granted };
 }
 
 export function teamGroupFixture(overrides?: Partial<TeamGroupV1>): TeamGroupV1 {

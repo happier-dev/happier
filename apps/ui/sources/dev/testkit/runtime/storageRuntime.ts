@@ -8,11 +8,13 @@ import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settin
 import { buildSessionListServerScopedRowKey } from '@/sync/domains/session/listing/sessionListKeyNormalization';
 import { createReducer } from "@happier-dev/session-core/reducer";
 import type { StorageState } from '@/sync/store/types';
+import { readCurrentProjectAccountRows, readProjectWorkspaceRefs, EMPTY_PROJECT_ORGANIZATIONS, EMPTY_WORKSPACE_RELATIONSHIPS, EMPTY_PINNED_WORKSPACE_REF_IDS } from '@/sync/store/domains/projectAccountRows';
 import { authoringMemoryDefaults } from '@/sync/store/domains/authoringMemory';
 import { readSessionMessagesSnapshot } from '@/sync/store/sessionMessagesSnapshot';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
 import type { StoreApi, UseBoundStore } from 'zustand';
+import type { CurrentSecretBindingsByProfileId } from '@/sync/domains/settings/secretBindings';
 
 const { isDeepStrictEqual } = getVitestNodeBuiltin<{
     isDeepStrictEqual: (left: unknown, right: unknown) => boolean;
@@ -33,10 +35,11 @@ export type StorageMutableSetterFactory = () => (value: unknown) => void;
 
 export type StorageRuntimeOptions = Readonly<{
     createMutableSetter?: StorageMutableSetterFactory;
+    readCurrentSecretBindingsByProfileId?: () => CurrentSecretBindingsByProfileId;
 }>;
 
 const createDefaultMutableSetter: StorageMutableSetterFactory = () => () => undefined;
-const emptyCurrentSecretBindingsByProfileId: Settings['currentSecretBindingsByProfileId'] = {};
+const emptyCurrentSecretBindingsByProfileId: CurrentSecretBindingsByProfileId = {};
 const defaultStorageSettings = settingsParse({});
 
 const defaultProfile: Profile = Object.freeze({
@@ -68,17 +71,18 @@ function resolveMutableSetterFactory(options?: StorageRuntimeOptions): StorageMu
 }
 
 export function createUseCurrentSecretBindingsByProfileIdMutableMock(
-    useSetting: StorageModule['useSetting'],
+    _useSetting: StorageModule['useSetting'],
     options?: StorageRuntimeOptions,
 ): StorageModule['useCurrentSecretBindingsByProfileIdMutable'] {
     const createMutableSetter = resolveMutableSetterFactory(options);
     return () => {
-        const value = useSetting('currentSecretBindingsByProfileId');
+        const value = options?.readCurrentSecretBindingsByProfileId?.() ?? emptyCurrentSecretBindingsByProfileId;
+        const setter = createMutableSetter();
         return [
             value && typeof value === 'object' && !Array.isArray(value)
                 ? value
                 : emptyCurrentSecretBindingsByProfileId,
-            createMutableSetter(),
+            async next => { await setter(next); },
         ];
     };
 }
@@ -179,6 +183,7 @@ function completePartialStorageState(state: Partial<StorageState>): StorageState
         sessions: {},
         machines: {},
         sessionMessages: {},
+        sessionLastViewed: {},
         sessionPending: {},
         sessionListRowsByServerId: {},
         ordinarySessionListMembershipByServerId: {},
@@ -189,6 +194,10 @@ function completePartialStorageState(state: Partial<StorageState>): StorageState
         concurrentSessionListCacheByServerId: {},
         sessionListQueryMembershipByKey: {},
         authoringMemory: authoringMemoryDefaults,
+        applyAuthoringMemory: () => undefined,
+        resetAuthoringMemory: () => undefined,
+        projectAccountRows: null,
+        pinnedWorkspaceRefIds: EMPTY_PINNED_WORKSPACE_REF_IDS,
         applyLocalSettings: () => undefined,
         ...state,
         settings: state.settings
@@ -405,12 +414,14 @@ export function createStorageModuleStub<TOverrides extends object>(
             const session = state.sessions[sessionId];
             return session ? resolveSessionMachineId(readSessionOwnerMetadataView(session)) : null;
         }) };
+    const projectRowReaders = createProjectAccountRowHookMocks(finalStorage, overrides);
     if (finalStorage !== moduleWithCurrentSecretBindings.storage) {
         return {
             ...moduleWithCurrentSecretBindings,
             storage: finalStorage,
             getStorage: () => finalStorage,
             ...sessionMachineReader,
+            ...projectRowReaders,
             ...(!Object.prototype.hasOwnProperty.call(overrides, 'useAuthoringMemoryField') ? {
                 useAuthoringMemoryField: ((name: keyof typeof authoringMemoryDefaults) =>
                     (finalStorage.getState().authoringMemory ?? authoringMemoryDefaults)[name]) as StorageModule['useAuthoringMemoryField'],
@@ -421,7 +432,20 @@ export function createStorageModuleStub<TOverrides extends object>(
         ...moduleWithCurrentSecretBindings,
         getStorage: () => finalStorage,
         ...sessionMachineReader,
+        ...projectRowReaders,
     };
+}
+
+/** Boundary hook mocks select the same explicit row projection as production. */
+export function createProjectAccountRowHookMocks(storage: StorageStore, overrides: object = {}): Partial<StorageModule> {
+    const readers = {
+        useProjectAccountRows: () => storage(readCurrentProjectAccountRows),
+        useWorkspaceRefs: () => storage(readProjectWorkspaceRefs),
+        useProjectOrganizations: () => storage(state => readCurrentProjectAccountRows(state)?.organizations ?? EMPTY_PROJECT_ORGANIZATIONS),
+        useWorkspaceSyncRelationships: () => storage(state => readCurrentProjectAccountRows(state)?.relationships ?? EMPTY_WORKSPACE_RELATIONSHIPS),
+        usePinnedWorkspaceRefIds: () => storage(state => readCurrentProjectAccountRows(state) ? state.pinnedWorkspaceRefIds : EMPTY_PINNED_WORKSPACE_REF_IDS),
+    } satisfies Partial<StorageModule>;
+    return Object.fromEntries(Object.entries(readers).filter(([key]) => !Object.prototype.hasOwnProperty.call(overrides, key)));
 }
 
 export type CreateUseSettingMockOptions = Readonly<{

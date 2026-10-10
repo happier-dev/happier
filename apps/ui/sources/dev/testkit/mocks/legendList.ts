@@ -46,6 +46,8 @@ type CapturingLegendListMockOptions = Readonly<{
     renderItems?: boolean;
     /** Render only the first N virtual rows while retaining the complete captured data set. */
     renderItemLimit?: number;
+    /** Native viewability follows the rows rendered by this measured-viewport substitute. */
+    emitViewability?: boolean;
     /** Stateful geometry feed: merged over the static defaults on every getState() read. */
     resolveState?: () => Partial<LegendListMockState> | null | undefined;
 }>;
@@ -93,6 +95,13 @@ export function createCapturingLegendListMock(
         if (typeof ref === 'function') ref(refHandle);
         else if (ref && typeof ref === 'object') ref.current = refHandle;
 
+        React.useEffect(() => {
+            if (!options.emitViewability || !nextProps.onViewableItemsChanged || !Array.isArray(nextProps.data)) return;
+            const viewableItems = nextProps.data.slice(0, options.renderItemLimit ?? nextProps.data.length)
+                .map((item: unknown, index: number) => ({ item, index, key: nextProps.keyExtractor(item, index), isViewable: true }));
+            nextProps.onViewableItemsChanged?.({ viewableItems, changed: viewableItems });
+        }, [nextProps.data, nextProps.onViewableItemsChanged]);
+
         const renderAuxiliary = (component: any) => {
             if (!component) return null;
             if (React.isValidElement(component)) return component;
@@ -112,6 +121,7 @@ export function createCapturingLegendListMock(
             nextProps,
             renderAuxiliary(nextProps.ListHeaderComponent),
             ...items,
+            Array.isArray(nextProps.data) && nextProps.data.length === 0 ? renderAuxiliary(nextProps.ListEmptyComponent) : null,
             renderAuxiliary(nextProps.ListFooterComponent),
         );
     });
