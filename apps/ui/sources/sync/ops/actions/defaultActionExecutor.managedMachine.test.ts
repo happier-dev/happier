@@ -23,6 +23,34 @@ beforeAll(loadSyncSingletonForTests);
 afterEach(() => { resetRuntimeFetch(); invalidateAccountEncryptionModeCache(); vi.restoreAllMocks(); });
 
 describe('managed native UI Action frontdoor', () => {
+    it('invokes author options through the captured UI Account ingress', async () => {
+        const target = await upsertServerProfile({ serverUrl: 'https://native-options.test' });
+        await setServerProfileIdentityForUrl(target.serverUrl, 'srv_native_options');
+        await resetPendingQueueState({ serverId: 'server-b', accountId: 'account-b' });
+        const token = `e30.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: 'account-a', tokenEpoch: 3,
+            provenance: { v: 1, kind: 'account', authority: 'present_user' } })), 'base64url')}.signature`;
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token });
+        const input = { homeId: 'srv_native_options', controller: { machineId: 'controller', installationId: 'installation' },
+            contribution: { pluginId: 'examples.machine-provisioner', localId: 'guest' }, selectors: {} };
+        const output = { choices: [{ id: 'small', title: 'Small', launch: { name: 'guest' } }] };
+        const requests: unknown[] = [];
+        setRuntimeFetch(async (rawUrl, init) => {
+            const url = new URL(String(rawUrl));
+            expect(url.origin).toBe(target.serverUrl);
+            if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+            expect(url.pathname).toBe('/v1/actions/machines.provisioners.options');
+            const envelope = JSON.parse(String(init?.body)) as Readonly<{ requestId: string }>;
+            requests.push(envelope);
+            return Response.json({ v: 1, actionId: 'machines.provisioners.options', requestId: envelope.requestId,
+                execution: { ok: true, result: output } });
+        });
+        expect(await createDefaultActionExecutor().execute('machines.provisioners.options', input, {
+            serverId: target.id, expectedAccountId: 'account-a', surface: 'ui',
+        })).toEqual({ ok: true, result: output });
+        expect(requests).toEqual([expect.objectContaining({ target: { kind: 'machine', machineId: input.controller.machineId }, input })]);
+    });
+
     it.each(['own', 'foreign'] as const)('admits Move at the selected destination when the retained controller is unavailable (%s row)', async (ownership) => {
         const target = await upsertServerProfile({ serverUrl: 'https://native-move.test' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_native_move');
