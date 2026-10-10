@@ -1,0 +1,42 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": [],
+  "categories": { "correctness": "off" },
+  "rules": {
+    "no-debugger": "error",
+    "no-dupe-keys": "error",
+    "constructor-super": "error",
+    "no-unsafe-negation": "error",
+    "valid-typeof": "error"
+  },
+  "ignorePatterns": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "build/**",
+    "apps/*/build/**",
+    "packages/*/build/**",
+    "packages/plugins/*/build/**",
+    "**/coverage/**",
+    "**/vendor/**",
+    "**/.happier-plugin/**",
+    "**/*.generated.*",
+    "**/generated*/**",
+    "**/generatedBundled*",
+    "**/.expo/**",
+    "apps/ui/ios/**",
+    "apps/ui/android/**"
+  ],
+  "overrides": [
+    {
+      "files": [
+        "apps/ui/sources/**/*.{ts,tsx}",
+        "packages/plugins/*/src/ui/**/*.{ts,tsx}"
+      ],
+      "plugins": ["react"],
+      "rules": {
+        "react/void-use-memo": "error",
+        "react/set-state-in-render": "error"
+      }
+    }
+  ]
+}

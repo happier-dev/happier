@@ -1,12 +1,25 @@
 import './utils/env/env.mjs';
+import { readdir } from 'node:fs/promises';
+import { join, relative, resolve } from 'node:path';
 import { parseArgs } from './utils/cli/args.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
-import { getComponentDir, getRootDir } from './utils/paths/paths.mjs';
+import {
+  getComponentDir,
+  getRepoDir,
+  getRootDir,
+} from './utils/paths/paths.mjs';
 import { createCommandDependencyAdmission } from './utils/proc/pm.mjs';
 import { pathExists } from './utils/fs/fs.mjs';
-import { run } from './utils/proc/proc.mjs';
-import { detectPackageManagerCmd, pickFirstScript, readPackageJsonScripts } from './utils/proc/package_scripts.mjs';
-import { getInvokedCwd, inferComponentFromCwd } from './utils/cli/cwd_scope.mjs';
+import { run, runCapture } from './utils/proc/proc.mjs';
+import {
+  detectPackageManagerCmd,
+  pickFirstScript,
+  readPackageJsonScripts,
+} from './utils/proc/package_scripts.mjs';
+import {
+  getInvokedCwd,
+  inferComponentFromCwd,
+} from './utils/cli/cwd_scope.mjs';
 
 const VALID_TARGETS = ['ui', 'cli', 'server'];
 
@@ -14,7 +27,13 @@ function targetFromComponent(component) {
   const c = String(component ?? '').trim();
   if (c === 'happier-ui' || c === 'happy') return 'ui';
   if (c === 'happier-cli' || c === 'happy-cli') return 'cli';
-  if (c === 'happier-server' || c === 'happier-server-light' || c === 'happy-server' || c === 'happy-server-light') return 'server';
+  if (
+    c === 'happier-server' ||
+    c === 'happier-server-light' ||
+    c === 'happy-server' ||
+    c === 'happy-server-light'
+  )
+    return 'server';
   return null;
 }
 
@@ -27,7 +46,9 @@ function componentFromTarget(target) {
 }
 
 function normalizeTargetsOrThrow(rawTargets) {
-  const requested = Array.isArray(rawTargets) ? rawTargets.map((t) => String(t ?? '').trim()).filter(Boolean) : [];
+  const requested = Array.isArray(rawTargets)
+    ? rawTargets.map((t) => String(t ?? '').trim()).filter(Boolean)
+    : [];
   if (!requested.length) return ['all'];
 
   const mapped = requested
@@ -91,7 +112,16 @@ async function main() {
       ? inferComponentFromCwd({
           rootDir,
           invokedCwd: getInvokedCwd(process.env),
-          components: ['happier-ui', 'happier-cli', 'happier-server', 'happier-server-light', 'happy', 'happy-cli', 'happy-server', 'happy-server-light'],
+          components: [
+            'happier-ui',
+            'happier-cli',
+            'happier-server',
+            'happier-server-light',
+            'happy',
+            'happy-cli',
+            'happy-server',
+            'happy-server-light',
+          ],
         })
       : null;
   if (inferredComponent) {
@@ -100,54 +130,173 @@ async function main() {
     }
   }
 
-  const inferredTarget = inferredComponent ? targetFromComponent(inferredComponent.component) : null;
-  const requested = normalizeTargetsOrThrow(positionals.length ? positionals : inferredTarget ? [inferredTarget] : ['all']);
+  const inferredTarget =
+    inferredComponent &&
+    resolve(getInvokedCwd(process.env)) !== resolve(inferredComponent.repoDir)
+      ? targetFromComponent(inferredComponent.component)
+      : null;
+  const requested = normalizeTargetsOrThrow(
+    positionals.length
+      ? positionals
+      : inferredTarget
+        ? [inferredTarget]
+        : ['all'],
+  );
   const wantAll = requested.includes('all');
   const targets = wantAll ? VALID_TARGETS : requested;
   const admitDependencies = createCommandDependencyAdmission();
 
   const results = [];
-  for (const target of targets) {
-    if (!VALID_TARGETS.includes(target)) {
-      results.push({ target, ok: false, skipped: false, error: `unknown target (expected one of: ${[...VALID_TARGETS, 'all'].join(', ')})` });
-      continue;
+  const repoDir = getRepoDir(rootDir);
+  const rootScripts = await readPackageJsonScripts(repoDir);
+  const rootLint =
+    typeof rootScripts?.lint === 'string' && rootScripts.lint.trim();
+  if (rootLint) {
+    await admitDependencies(repoDir, 'lint', {
+      quiet: json,
+      refreshExisting: false,
+      prepareComponentOutputs: false,
+    });
+    const pm = await detectPackageManagerCmd(repoDir);
+    for (const target of wantAll ? ['all'] : targets) {
+      const paths =
+        target === 'all'
+          ? []
+          : [
+              relative(
+                repoDir,
+                getComponentDir(rootDir, componentFromTarget(target)),
+              ),
+            ];
+      if (target === 'ui') {
+        const pluginsDir = join(repoDir, 'packages', 'plugins');
+        const plugins = await readdir(pluginsDir, {
+          withFileTypes: true,
+        }).catch((error) => {
+          if (error.code === 'ENOENT') return [];
+          throw error;
+        });
+        for (const plugin of plugins) {
+          if (
+            plugin.isDirectory() &&
+            (await pathExists(join(pluginsDir, plugin.name, 'src', 'ui')))
+          ) {
+            paths.push(`packages/plugins/${plugin.name}/src/ui`);
+          }
+        }
+      }
+      try {
+        if (!json)
+          console.log(`[lint] ${target}: running root ${pm.name} lint`);
+        await (json ? runCapture : run)(
+          pm.cmd,
+          [...pm.argsForScript('lint'), ...paths],
+          { cwd: repoDir, env: process.env },
+        );
+        results.push({
+          target,
+          ok: true,
+          skipped: false,
+          dir: repoDir,
+          pm: pm.name,
+          script: 'lint',
+        });
+      } catch (error) {
+        results.push({
+          target,
+          ok: false,
+          skipped: false,
+          dir: repoDir,
+          pm: pm.name,
+          script: 'lint',
+          error: String(error?.message ?? error),
+        });
+      }
     }
+  } else
+    for (const target of targets) {
+      if (!VALID_TARGETS.includes(target)) {
+        results.push({
+          target,
+          ok: false,
+          skipped: false,
+          error: `unknown target (expected one of: ${[...VALID_TARGETS, 'all'].join(', ')})`,
+        });
+        continue;
+      }
 
-    const component = componentFromTarget(target);
-    const dir = getComponentDir(rootDir, component);
-    if (!(await pathExists(dir))) {
-      results.push({ target, ok: false, skipped: false, dir, error: `missing target dir: ${dir}` });
-      continue;
+      const component = componentFromTarget(target);
+      const dir = getComponentDir(rootDir, component);
+      if (!(await pathExists(dir))) {
+        results.push({
+          target,
+          ok: false,
+          skipped: false,
+          dir,
+          error: `missing target dir: ${dir}`,
+        });
+        continue;
+      }
+
+      const scripts = await readPackageJsonScripts(dir);
+      if (!scripts) {
+        results.push({
+          target,
+          ok: true,
+          skipped: true,
+          dir,
+          reason: 'no package.json',
+        });
+        continue;
+      }
+
+      const script = pickLintScript(scripts);
+      if (!script) {
+        results.push({
+          target,
+          ok: true,
+          skipped: true,
+          dir,
+          reason: 'no lint script found in package.json',
+        });
+        continue;
+      }
+
+      await admitDependencies(dir, target);
+      const pm = await detectPackageManagerCmd(dir);
+
+      try {
+        // eslint-disable-next-line no-console
+        console.log(`[lint] ${target}: running ${pm.name} ${script}`);
+        await run(pm.cmd, pm.argsForScript(script), {
+          cwd: dir,
+          env: process.env,
+        });
+        results.push({
+          target,
+          ok: true,
+          skipped: false,
+          dir,
+          pm: pm.name,
+          script,
+        });
+      } catch (e) {
+        results.push({
+          target,
+          ok: false,
+          skipped: false,
+          dir,
+          pm: pm.name,
+          script,
+          error: String(e?.message ?? e),
+        });
+      }
     }
-
-    const scripts = await readPackageJsonScripts(dir);
-    if (!scripts) {
-      results.push({ target, ok: true, skipped: true, dir, reason: 'no package.json' });
-      continue;
-    }
-
-    const script = pickLintScript(scripts);
-    if (!script) {
-      results.push({ target, ok: true, skipped: true, dir, reason: 'no lint script found in package.json' });
-      continue;
-    }
-
-    await admitDependencies(dir, target);
-    const pm = await detectPackageManagerCmd(dir);
-
-    try {
-      // eslint-disable-next-line no-console
-      console.log(`[lint] ${target}: running ${pm.name} ${script}`);
-      await run(pm.cmd, pm.argsForScript(script), { cwd: dir, env: process.env });
-      results.push({ target, ok: true, skipped: false, dir, pm: pm.name, script });
-    } catch (e) {
-      results.push({ target, ok: false, skipped: false, dir, pm: pm.name, script, error: String(e?.message ?? e) });
-    }
-  }
 
   const ok = results.every((r) => r.ok);
   if (json) {
     printResult({ json, data: { ok, results } });
+    if (!ok) process.exitCode = 1;
     return;
   }
 
@@ -158,7 +307,9 @@ async function main() {
     } else if (r.ok) {
       lines.push(`- ✅ ${r.target}: ok (${r.pm} ${r.script})`);
     } else {
-      lines.push(`- ❌ ${r.target}: failed (${r.pm ?? 'unknown'} ${r.script ?? ''})`);
+      lines.push(
+        `- ❌ ${r.target}: failed (${r.pm ?? 'unknown'} ${r.script ?? ''})`,
+      );
       if (r.error) lines.push(`  - ${r.error}`);
     }
   }
