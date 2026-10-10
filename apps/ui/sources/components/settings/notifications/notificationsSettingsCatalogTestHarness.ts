@@ -9,6 +9,15 @@ import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStore
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { SharedSavedSecretPromoteInputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { PROFILE_ROWS_ROUTE_V1, PROFILE_REFERENCE_GUARD_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileRecordV1';
+import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileTransferV1';
+import { REMOTE_HOST_ROWS_ROUTE_V1 } from '@happier-dev/protocol/remoteHosts/remoteHostRecordV1';
+import { MCP_SERVER_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
+import { ACP_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import { PROVIDER_CONNECTIONS_ROWS_ROUTE_V1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 
 type CatalogFixture = Readonly<{ status: 'present'; record: NotificationChannelCatalogRecordV1 }>
     | Readonly<{ status: 'deleted' | 'absent' }>;
@@ -38,6 +47,13 @@ export async function restoreNotificationsSettingsCatalog(params: Readonly<{
     let catalogRefusal: 'conflict' | 'settings-conflict' | null = null;
     const pairedWrites: unknown[] = [];
     const settingsWrites: unknown[] = [];
+    const catalogWrites: ReturnType<typeof NotificationChannelCatalogMutationV1Schema.parse>[] = [];
+    const secretPromotions: ReturnType<typeof SharedSavedSecretPromoteInputV1Schema.parse>[] = [];
+    let secretPromotionGate: Readonly<{
+        entered: (input: ReturnType<typeof SharedSavedSecretPromoteInputV1Schema.parse>) => void;
+        released: Promise<void>;
+        release: () => void;
+    }> | null = null;
     const requests: Readonly<{ path: string; method: string }>[] = [];
     const features = params.features ?? createRootLayoutFeaturesResponse();
     const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => params.accountId, encryptionMode: 'plain' });
@@ -70,7 +86,41 @@ export async function restoreNotificationsSettingsCatalog(params: Readonly<{
             const artifactResponse = artifacts.handle(`${path}${requestUrl.search}`, init);
             if (artifactResponse) return artifactResponse;
             if (path === '/v2/account/settings/history') return Response.json({ snapshots: [] });
-            if (path === '/v1/account/saved-secrets/resources/materials') return Response.json({ resources: [] });
+            if (path === PROFILE_ROWS_ROUTE_V1) return Response.json({ status: 'listed', rows: [], nextCursor: null,
+                complete: true, referenceGuardRevision: 3, transferControl: { status: 'absent' }, diagnostics: [] });
+            if (path === PROFILE_REFERENCE_GUARD_ROUTE_V1) return Response.json({ status: 'ready', revision: 3 });
+            if ([PROFILE_TRANSFER_ROUTE_V1, REMOTE_HOST_ROWS_ROUTE_V1, MCP_SERVER_CATALOG_ROWS_ROUTE_V1,
+                ACP_CATALOG_ROWS_ROUTE_V1, PROVIDER_CONNECTIONS_ROWS_ROUTE_V1,
+                `${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/configurations`, `${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/purposes`].includes(path))
+                return Response.json({ status: 'absent' });
+            if (path === '/v1/account/saved-secrets/resources/materials') return Response.json({ resources: secretPromotions.map(input => ({
+                resourceId: input.resourceId, encryptionMode: 'plain', recipientEnvelope: null, storedContent: input.storedContent,
+                entry: { ref: formatSharedSavedSecretRefV1(input.resourceId), source: 'shared_resource', relationship: 'owner',
+                    name: input.displayName, kind: input.kind, revision: 1, materialStatus: 'ready',
+                    capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
+            })) });
+            if (path === '/v1/account/saved-secrets/resources/promote' && method === 'POST') {
+                const input = SharedSavedSecretPromoteInputV1Schema.parse(JSON.parse(String(init?.body)));
+                const gate = secretPromotionGate;
+                if (gate) {
+                    gate.entered(input);
+                    await gate.released;
+                    secretPromotionGate = null;
+                }
+                const mutation = input.notificationChannelMutation;
+                if (!mutation || mutation.content?.t !== 'plain' || input.storedContent.t !== 'plain'
+                    || input.profileMutations.length || input.catalogMutations || input.remoteHostMutation)
+                    throw new Error('Expected an atomic Plain signing Resource/channel mutation');
+                if (input.expectedSettingsVersion !== settingsVersion || mutation.expectedRevision !== revision
+                    || input.referenceCensus.notificationChannels?.revision !== revision || catalogRefusal)
+                    return Response.json({ error: 'references_conflict' }, { status: 409 });
+                if (input.nextSettings?.t === 'encrypted') throw new Error('This Plain Account has no Account encryption key');
+                if (input.nextSettings) { raw = { ...input.nextSettings.v }; settingsVersion += 1; }
+                secretPromotions.push(input);
+                catalogWrites.push(mutation);
+                record = mutation.content.v; authority = 'present'; revision += 1;
+                return Response.json({ resourceId: input.resourceId, settingsVersion, notificationChannelRevision: revision });
+            }
             if (path === '/v1/push-tokens') return Response.json(PushTokensRemoteAlertProjectionV2Schema.parse({
                 v: 2, accountRemoteAlerts: { status: 'current', settingsVersion }, tokens: [],
             }));
@@ -100,6 +150,7 @@ export async function restoreNotificationsSettingsCatalog(params: Readonly<{
                     pairedWrites.push(paired); raw = { ...nextRaw }; settingsVersion += 1;
                 }
                 record = mutation.content.v; authority = 'present'; revision += 1;
+                catalogWrites.push(mutation);
                 return Response.json({ status: 'updated', revision, cursor: revision, ...(paired ? { settingsVersion } : {}) });
             }
             if (path === NOTIFICATION_CHANNELS_ROUTE_V1) return Response.json(authority === 'present'
@@ -122,8 +173,17 @@ export async function restoreNotificationsSettingsCatalog(params: Readonly<{
         const { localSettingsParse } = await import('@/sync/domains/settings/localSettings');
         storage.getState().applyLocalSettings(localSettingsParse(params.localSettings));
     }
-    return { scope, storage, policy: accountSettingsParse(raw).attentionDeliveryPolicyV1, pairedWrites, settingsWrites, requests, artifacts,
+    return { scope, storage, policy: accountSettingsParse(raw).attentionDeliveryPolicyV1, pairedWrites, settingsWrites, catalogWrites, secretPromotions, requests, artifacts,
         readRecord: () => record, readRaw: () => raw,
         refuseCatalogWrites: (reason: typeof catalogRefusal) => { catalogRefusal = reason; },
-        dispose: home.dispose };
+        deferNextSecretPromotion: () => {
+            if (secretPromotionGate) throw new Error('A signing HTTP response is already deferred');
+            let entered!: (input: ReturnType<typeof SharedSavedSecretPromoteInputV1Schema.parse>) => void;
+            let release!: () => void;
+            const started = new Promise<ReturnType<typeof SharedSavedSecretPromoteInputV1Schema.parse>>(resolve => { entered = resolve; });
+            const released = new Promise<void>(resolve => { release = resolve; });
+            secretPromotionGate = { entered, released, release };
+            return { started, release };
+        },
+        dispose: async () => { secretPromotionGate?.release(); await home.dispose(); } };
 }

@@ -12,10 +12,12 @@ import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
 import { readAccountNotificationPreference } from './notificationPreferences';
 import { loadNotificationsSettingsActionExecutorForTests, restoreNotificationsSettingsCatalog } from './notificationsSettingsCatalogTestHarness';
-import { clearActiveUnsavedChangesGuard } from '@/utils/navigation/runGuardedNavigation';
+import { clearActiveUnsavedChangesGuard, runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { ActionsSettingsV1Schema, type ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 
 // Rendering, dialogs and Socket.IO are external SDK boundaries. The store,
 // Settings writer, catalog loader and typed Action executor remain real.
@@ -49,20 +51,23 @@ afterAll(() => { disposeActionBridge?.(); });
 
 let disposeHome: (() => Promise<void>) | undefined;
 let disposeScreen: (() => Promise<void>) | undefined;
+let pendingCatalogOperation: Promise<unknown> | undefined;
 afterEach(async () => {
-    modalAlert.mockReset();
-    routerPush.mockReset();
     clearActiveUnsavedChangesGuard();
     await disposeScreen?.();
     disposeScreen = undefined;
     await disposeHome?.();
     disposeHome = undefined;
+    await pendingCatalogOperation?.catch(() => undefined);
+    pendingCatalogOperation = undefined;
     storage?.getState().clearSettingsScope();
     storage?.getState().clearProfileScope();
+    modalAlert.mockReset();
+    routerPush.mockReset();
 });
 
 type Membership = 'builtin' | 'empty' | 'deleted' | 'absent';
-async function openCatalogScreen(membership: Membership, independentlyEnabledPreferences = false) {
+async function openCatalogScreen(membership: Membership, independentlyEnabledPreferences = false, actionsSettingsV1?: ActionsSettingsV1) {
     const accountId = `notification-controls-${membership}`;
     const legacyNotifications = {
         v: 1, pushEnabled: false, ready: false, permissionRequest: false, userActionRequest: false,
@@ -87,6 +92,7 @@ async function openCatalogScreen(membership: Membership, independentlyEnabledPre
     });
     const raw: Record<string, unknown> = { notificationsSettingsV1: legacyNotifications, attentionDeliveryPolicyV1: policy,
         sessionRemoteAlertsEnabled: true, futurePreference: { retained: 'opaque sibling' },
+        ...(actionsSettingsV1 ? { actionsSettingsV1 } : {}),
         ...(membership === 'absent' ? { notificationChannelsV1: [] } : {}),
     };
     const fixture = await restoreNotificationsSettingsCatalog({
@@ -111,14 +117,14 @@ type CatalogScreenFixture = Awaited<ReturnType<typeof restoreNotificationsSettin
 
 /** Ask-first is an open durable request, an actual Detail decision, then the original mounted result. */
 async function approveCatalogMutation(fixture: CatalogScreenFixture, actionId: ActionId,
-    start: () => unknown, terminalStatus: 'executed' | 'failed' = 'executed') {
+    start: () => unknown, terminalStatus: 'executed' | 'failed' | 'rejected' = 'executed', whilePending?: () => Promise<void>) {
     const existingIds = new Set(fixture.artifacts.list().map(artifact => artifact.id));
     const recordBefore = structuredClone(fixture.readRecord());
     const rawBefore = structuredClone(fixture.readRaw());
     const pairedBefore = fixture.pairedWrites.length;
     const settingsBefore = fixture.settingsWrites.length;
     let operation: Promise<unknown> | undefined;
-    await act(async () => { operation = Promise.resolve(start()); });
+    await act(async () => { operation = Promise.resolve(start()); pendingCatalogOperation = operation; });
     let artifactId = '';
     await vi.waitFor(() => {
         const artifact = fixture.artifacts.list().find(row => !existingIds.has(row.id));
@@ -136,24 +142,43 @@ async function approveCatalogMutation(fixture: CatalogScreenFixture, actionId: A
     expect(fixture.pairedWrites).toHaveLength(pairedBefore);
     expect(fixture.settingsWrites).toHaveLength(settingsBefore);
     expect(modalAlert.mock.calls).toEqual([]);
-    expect(fixture.screen.findHostByTestId('settings-notifications-approval-pending')).toBeTruthy();
-    const notice = fixture.screen.findAll(node => node.props.testID === 'settings-notifications-approval-pending'
-        && typeof node.props.onOpenApproval === 'function')[0];
-    if (!notice) throw new Error('The originating notification operation did not retain its approval');
-    await act(async () => { notice.props.onOpenApproval(); });
-    expect(routerPush).toHaveBeenLastCalledWith(`/inbox/approvals/${encodeURIComponent(artifactId)}?serverId=${encodeURIComponent(fixture.scope.serverId)}`);
+    // Raw signing input stays on the real blocking invocation; only deferred
+    // Actions publish a mounted result-continuation notice (actionApprovalPolicy).
+    const spec = getActionSpec(actionId);
+    if (spec.approvalInputCustody !== 'live_only' && spec.approvalResultCustody !== 'live_only') {
+        await vi.waitFor(() => { expect(fixture.screen.findHostByTestId('settings-notifications-approval-pending')).toBeTruthy(); });
+        const notice = fixture.screen.findAll(node => node.props.testID === 'settings-notifications-approval-pending'
+            && typeof node.props.onOpenApproval === 'function')[0];
+        if (!notice) throw new Error('The originating notification operation did not retain its approval');
+        await act(async () => { notice.props.onOpenApproval(); });
+        expect(routerPush).toHaveBeenLastCalledWith(`/inbox/approvals/${encodeURIComponent(artifactId)}?serverId=${encodeURIComponent(fixture.scope.serverId)}`);
+    }
+    await whilePending?.();
     const { ApprovalDetailScreen } = await import('@/components/approvals/ApprovalDetailScreen');
     const detail = await renderSettingsView(<ApprovalDetailScreen artifactId={artifactId} serverId={fixture.scope.serverId} />);
     try {
-        await vi.waitFor(() => { expect(detail.findByTestId('approvals.approve')?.props.disabled).toBe(false); });
-        await detail.pressByTestIdAsync('approvals.approve');
+        const decisionId = terminalStatus === 'rejected' ? 'approvals.reject' : 'approvals.approve';
+        await vi.waitFor(() => { expect(detail.findByTestId(decisionId)?.props.disabled).toBe(false); });
+        await detail.pressByTestIdAsync(decisionId);
         await vi.waitFor(() => {
             const request = StoredApprovalRequestSchema.parse(JSON.parse(fixture.artifacts.readPlainBody(artifactId)!));
             expect(request.status).toBe(terminalStatus);
         });
         await act(async () => { await operation; });
+        pendingCatalogOperation = undefined;
         expect(fixture.screen.findHostByTestId('settings-notifications-approval-pending')).toBeNull();
-    } finally { await detail.unmount(); }
+    } finally {
+        // A failed assertion must settle the real blocking invocation before
+        // retiring its Account; otherwise its eventual failure leaks into the
+        // next rendered fixture as an unrelated scope-change alert.
+        const remaining = StoredApprovalRequestSchema.parse(JSON.parse(fixture.artifacts.readPlainBody(artifactId)!));
+        if (remaining.status === 'open') {
+            await detail.pressByTestIdAsync('approvals.reject');
+            await act(async () => { await operation; });
+            pendingCatalogOperation = undefined;
+        }
+        await detail.unmount();
+    }
 }
 
 async function setControl(fixture: CatalogScreenFixture, idOrTitle: string, value: boolean,
@@ -166,6 +191,165 @@ async function setControl(fixture: CatalogScreenFixture, idOrTitle: string, valu
 }
 
 describe('NotificationsSettingsView catalog control authority', () => {
+    it('keeps URL and signing drafts on declined disclosure and departure, then discards only when accepted', async () => {
+        const webhook = WebhookNotificationChannelRecordV1Schema.parse({ v: 1, id: 'webhook-primary', kind: 'webhook',
+            url: 'https://hooks.example.test/notify', signingSecretRef: null, topics: {} });
+        const fixture = await restoreNotificationsSettingsCatalog({ accountId: 'notification-navigation-draft',
+            serverUrl: 'https://notification-navigation-draft.example.test', rawSettings: {},
+            catalog: { status: 'present', record: { v: 1, channels: [webhook] } } });
+        disposeHome = fixture.dispose;
+        const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+        disposeScreen = screen.unmount;
+        const { refreshNotificationChannelCatalog } = await import('@/sync/engine/settings/notificationChannelCatalogEngine');
+        await act(async () => { await refreshNotificationChannelCatalog(fixture.scope); });
+        const urlId = 'settings-notifications-webhook-webhook-primary-url';
+        const secretId = 'settings-notifications-webhook-webhook-primary-secret-input';
+        await act(async () => { screen.pressRow('settings-notifications-webhook-webhook-primary'); });
+        await act(async () => { screen.pressRow('settings-notifications-webhook-webhook-primary-edit'); });
+        await act(async () => { screen.changeTextByTestId(urlId, 'https://draft.example.test/hook'); });
+        await act(async () => { screen.pressRow('settings-notifications-webhook-webhook-primary-set-secret'); });
+        await act(async () => { screen.changeTextByTestId(secretId, 'test-only-draft'); });
+        const decide = async (style: 'cancel' | 'destructive') => {
+            await act(async () => {
+                const buttons = modalAlert.mock.lastCall?.[2] as ReadonlyArray<{ style: string; onPress: () => void }>;
+                buttons.find(button => button.style === style)!.onPress();
+            });
+        };
+        await act(async () => { screen.pressRow('settings-notifications-webhook-webhook-primary'); });
+        expect(modalAlert).toHaveBeenCalled();
+        await decide('cancel');
+        expect(screen.findByTestId(urlId)?.props.value).toBe('https://draft.example.test/hook');
+        expect(screen.findByTestId(secretId)?.props.value).toBe('test-only-draft');
+        const depart = vi.fn();
+        let departure: true | Promise<boolean> = true;
+        await act(async () => { departure = runGuardedNavigation(depart); });
+        await decide('cancel');
+        expect(await departure).toBe(false);
+        expect(depart).not.toHaveBeenCalled();
+        await act(async () => { screen.pressRow('settings-notifications-webhook-webhook-primary'); });
+        await decide('destructive');
+        expect(screen.findByTestId(urlId)).toBeNull();
+        expect(screen.findByTestId(secretId)).toBeNull();
+        await act(async () => { screen.pressRow('settings-notifications-add-webhook'); });
+        await act(async () => { screen.changeTextByTestId('settings-notifications-webhook-new-url', 'https://new-draft.example.test'); });
+        await act(async () => { departure = runGuardedNavigation(depart); });
+        await decide('cancel');
+        expect(await departure).toBe(false);
+        expect(screen.findByTestId('settings-notifications-webhook-new-url')?.props.value).toBe('https://new-draft.example.test');
+        await act(async () => { departure = runGuardedNavigation(depart); });
+        await decide('destructive');
+        expect(await departure).toBe(true);
+        expect(screen.findByTestId('settings-notifications-webhook-new-url')).toBeNull();
+        expect(fixture.catalogWrites).toEqual([]);
+        expect(fixture.secretPromotions).toEqual([]);
+    });
+
+    it('keeps later creation URL input and saves it against the acknowledged channel instead of adding another', async () => {
+        const fixture = await openCatalogScreen('builtin');
+        const editorId = 'settings-notifications-webhook-new-url';
+        await act(async () => { fixture.screen.pressRow('settings-notifications-add-webhook'); });
+        await act(async () => { fixture.screen.changeTextByTestId(editorId, 'https://submitted.example.test/hook'); });
+        await approveCatalogMutation(fixture, 'notifications.webhooks.add', () =>
+            fixture.screen.findByTestId(`${editorId}-save`)?.props.onPress(), 'executed', async () => {
+            await act(async () => { fixture.screen.changeTextByTestId(editorId, 'https://later.example.test/hook'); });
+        });
+        const acknowledged = fixture.readRecord().channels.find(channel => channel.kind === 'webhook');
+        expect(acknowledged).toMatchObject({ url: 'https://submitted.example.test/hook' });
+        if (!acknowledged) throw new Error('The creation did not acknowledge its channel');
+        expect(fixture.screen.findByTestId(editorId)?.props.value).toBe('https://later.example.test/hook');
+        await approveCatalogMutation(fixture, 'notifications.webhooks.update', () =>
+            fixture.screen.findByTestId(`${editorId}-save`)?.props.onPress());
+        expect(fixture.readRecord().channels.filter(channel => channel.kind === 'webhook')).toEqual([
+            { ...acknowledged, url: 'https://later.example.test/hook' },
+        ]);
+        expect(fixture.catalogWrites.map(write => write.expectedRevision)).toEqual([3, 4]);
+        expect(fixture.screen.findByTestId(editorId)).toBeNull();
+        expect(fixture.settingsWrites).toEqual([]);
+    });
+
+    it('preserves later URL edits across acknowledgement, rejected approval and failed CAS, then saves the latest draft', async () => {
+        const fixture = await openCatalogScreen('builtin');
+        await act(async () => { fixture.screen.pressRow('settings-notifications-add-webhook'); });
+        await act(async () => { fixture.screen.changeTextByTestId('settings-notifications-webhook-new-url', 'https://initial.example.test/hook'); });
+        await approveCatalogMutation(fixture, 'notifications.webhooks.add', () =>
+            fixture.screen.findByTestId('settings-notifications-webhook-new-url-save')?.props.onPress());
+        const webhook = fixture.readRecord().channels.find(channel => channel.kind === 'webhook');
+        if (!webhook) throw new Error('Expected the created webhook');
+        const editorId = `settings-notifications-webhook-${webhook.id}-url`;
+        await act(async () => { fixture.screen.pressRow(`settings-notifications-webhook-${webhook.id}-edit`); });
+        await act(async () => { fixture.screen.changeTextByTestId(editorId, 'https://submitted.example.test/hook'); });
+        await approveCatalogMutation(fixture, 'notifications.webhooks.update', () =>
+            fixture.screen.findByTestId(`${editorId}-save`)?.props.onPress(), 'executed', async () => {
+            await act(async () => { fixture.screen.changeTextByTestId(editorId, 'https://later.example.test/hook'); });
+        });
+        expect(fixture.screen.findByTestId(editorId)?.props.value).toBe('https://later.example.test/hook');
+        const acknowledged = fixture.readRecord().channels.find(channel => channel.id === webhook.id);
+        expect(acknowledged).toMatchObject({ url: 'https://submitted.example.test/hook' });
+        await approveCatalogMutation(fixture, 'notifications.webhooks.update', () =>
+            fixture.screen.findByTestId(`${editorId}-save`)?.props.onPress(), 'rejected');
+        expect(fixture.screen.findByTestId(editorId)?.props.value).toBe('https://later.example.test/hook');
+        expect(fixture.readRecord().channels.find(channel => channel.id === webhook.id)).toEqual(acknowledged);
+        modalAlert.mockReset();
+        fixture.refuseCatalogWrites('conflict');
+        await approveCatalogMutation(fixture, 'notifications.webhooks.update', () =>
+            fixture.screen.findByTestId(`${editorId}-save`)?.props.onPress(), 'failed');
+        expect(fixture.screen.findByTestId(editorId)?.props.value).toBe('https://later.example.test/hook');
+        expect(fixture.readRecord().channels.find(channel => channel.id === webhook.id)).toEqual(acknowledged);
+        modalAlert.mockReset();
+        fixture.refuseCatalogWrites(null);
+        await approveCatalogMutation(fixture, 'notifications.webhooks.update', () =>
+            fixture.screen.findByTestId(`${editorId}-save`)?.props.onPress());
+        expect(fixture.readRecord().channels.find(channel => channel.id === webhook.id)).toEqual({ ...acknowledged, url: 'https://later.example.test/hook' });
+        expect(fixture.catalogWrites.map(write => write.expectedRevision)).toEqual([3, 4, 5]);
+        expect(fixture.screen.findByTestId(editorId)).toBeNull();
+    });
+
+    it('keeps later signing input while the Resource HTTP transaction acknowledges the submitted secret', async () => {
+        // Explicit user policy permits this Action on UI. Ask-first signing is
+        // separately blocked by required-secret observation admission (Main).
+        const fixture = await openCatalogScreen('builtin', false, ActionsSettingsV1Schema.parse({ v: 1,
+            approvalWaivedSurfaces: { 'notifications.webhooks.signingSecret.set': ['ui'] } }));
+        await act(async () => { fixture.screen.pressRow('settings-notifications-add-webhook'); });
+        await act(async () => { fixture.screen.changeTextByTestId('settings-notifications-webhook-new-url', 'https://signed.example.test/hook'); });
+        await approveCatalogMutation(fixture, 'notifications.webhooks.add', () =>
+            fixture.screen.findByTestId('settings-notifications-webhook-new-url-save')?.props.onPress());
+        const webhook = fixture.readRecord().channels.find(channel => channel.kind === 'webhook');
+        if (!webhook) throw new Error('Expected the created webhook');
+        const inputId = `settings-notifications-webhook-${webhook.id}-secret-input`;
+        const saveId = `settings-notifications-webhook-${webhook.id}-secret-save`;
+        await act(async () => { fixture.screen.pressRow(`settings-notifications-webhook-${webhook.id}-set-secret`); });
+        await act(async () => { fixture.screen.changeTextByTestId(inputId, 'test-only-submitted-secret'); });
+        const response = fixture.deferNextSecretPromotion();
+        let operation: Promise<unknown> | undefined;
+        await act(async () => { operation = Promise.resolve(fixture.screen.findByTestId(saveId)?.props.onPress());
+            pendingCatalogOperation = operation; });
+        try {
+            const submitted = await response.started;
+            expect(submitted.storedContent).toMatchObject({ t: 'plain', v: { value: 'test-only-submitted-secret' } });
+            expect(fixture.secretPromotions).toEqual([]);
+            await act(async () => { fixture.screen.changeTextByTestId(inputId, 'test-only-later-secret'); });
+        } finally { response.release(); }
+        await act(async () => { await operation; });
+        pendingCatalogOperation = undefined;
+        expect(fixture.secretPromotions[0]?.storedContent).toMatchObject({ t: 'plain', v: { value: 'test-only-submitted-secret' } });
+        expect(fixture.screen.findByTestId(inputId)?.props.value).toBe('test-only-later-secret');
+        fixture.refuseCatalogWrites('conflict');
+        await act(async () => { await fixture.screen.findByTestId(saveId)?.props.onPress(); });
+        expect(fixture.secretPromotions).toHaveLength(1);
+        expect(fixture.screen.findByTestId(inputId)?.props.value).toBe('test-only-later-secret');
+        fixture.refuseCatalogWrites(null);
+        modalAlert.mockReset();
+        await act(async () => { await fixture.screen.findByTestId(saveId)?.props.onPress(); });
+        expect(fixture.secretPromotions.map(input => input.notificationChannelMutation?.expectedRevision)).toEqual([4, 5]);
+        expect(fixture.secretPromotions[1]?.storedContent).toMatchObject({ t: 'plain', v: { value: 'test-only-later-secret' } });
+        expect(fixture.readRecord().channels.find(channel => channel.id === webhook.id)).toMatchObject({
+            signingSecretRef: formatSharedSavedSecretRefV1(fixture.secretPromotions[1]!.resourceId),
+        });
+        expect(fixture.screen.findByTestId(inputId)).toBeNull();
+        expect(fixture.settingsWrites).toEqual([]);
+    });
+
     it('clears a stored signing Resource reference through the approved Action without creating material or changing raw Settings', async () => {
         const webhook = WebhookNotificationChannelRecordV1Schema.parse({ v: 1, id: 'webhook-signed', kind: 'webhook',
             enabled: true, url: 'https://hooks.example.test/signed', topics: {},
