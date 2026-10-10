@@ -1,10 +1,12 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 import { readSessionRoleIdV1, readSessionRolesV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
 import { resolveRoleSelectionV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
 import type { ResolvedRoleV1 } from '@happier-dev/protocol/prompts/roles/rolesV1';
-import type { RoleArtifactV1 } from '@happier-dev/protocol/prompts/roles/roleArtifactV1';
+import { resolvedRoleToArtifact } from '@/sync/domains/roles/roleCatalog';
+import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { useRoleCatalog } from '@/components/roles/catalog/useRoleCatalog';
@@ -58,19 +60,36 @@ function useSessionAgentTargetKey(sessionId: string, serverId?: string | null): 
     });
 }
 
+type SessionRoleWriteResult = Readonly<{ ok: boolean; errorCode?: string; error?: string }>;
+
+/**
+ * What a refused session-role write tells the person: the typed refusals the role Action host returns
+ * (`apps/cli/src/session/actions/roleActions.ts`) in words, each with its next step. A hands-off role
+ * on an agent that cannot hold back its own edits is `role_policy_unenforceable` (ORC §3.3); a
+ * refusal with no words here keeps the host's own detail under the generic failure.
+ */
+export function describeSessionRoleRefusal(result: SessionRoleWriteResult): Readonly<{ title: string; message: string }> {
+    switch (result.errorCode) {
+        case 'role_policy_unenforceable':
+            return { title: t('roles.session.refusal.unenforceableTitle'), message: t('roles.session.refusal.unenforceableBody') };
+        case 'role_policy_restart_required':
+            return { title: t('roles.session.refusal.restartRequiredTitle'), message: t('roles.session.refusal.restartRequiredBody') };
+        case 'role_target_unavailable':
+            return { title: t('roles.session.refusal.roleUnavailableTitle'), message: t('roles.session.refusal.roleUnavailableBody') };
+        default:
+            return { title: t('roles.session.saveFailed'), message: result.error ?? '' };
+    }
+}
+
 /**
  * Settles one session-role write: a refusal is reported, and the answer says whether the write landed.
  * An editor closes (and drops what was typed) only on `true`; on `false` it keeps the draft for retry.
  */
-export async function settleSessionRoleWrite(result: Readonly<{ ok: boolean; error?: string }>): Promise<boolean> {
+export async function settleSessionRoleWrite(result: SessionRoleWriteResult): Promise<boolean> {
     if (result.ok) return true;
-    await Modal.alertAsync(t('roles.session.saveFailed'), result.error ?? '');
+    const refusal = describeSessionRoleRefusal(result);
+    await Modal.alertAsync(refusal.title, refusal.message);
     return false;
-}
-
-function toArtifact(role: ResolvedRoleV1): RoleArtifactV1 {
-    const { roleId: _roleId, changedAt: _changedAt, profileUnavailable: _profileUnavailable, ...artifact } = role;
-    return artifact;
 }
 
 /**
@@ -90,7 +109,7 @@ export function useSessionRoleSelection(sessionId: string, roleId: string | null
         if (!roleId) return null;
         const resolved = resolveRoleSelectionV1({
             roleId,
-            settingsRoles: entry ? { [roleId]: toArtifact(entry.role) } : {},
+            settingsRoles: entry ? { [roleId]: resolvedRoleToArtifact(entry.role) } : {},
             settingsOverrides: entry?.override ? { [roleId]: entry.override } : {},
             ...(sessionRoles ? { sessionRoles } : {}),
         });
@@ -158,6 +177,7 @@ export function useSessionRolesRailParams(input: Readonly<{
     return React.useMemo(() => ({
         serverId,
         value,
+        sessionId,
         onChange,
         describeConsequence,
         onManageRoles,
@@ -184,25 +204,40 @@ export function SessionRolePopover(props: Readonly<{
             placement="bottom"
             maxWidthCap={560}
             maxHeightCap={560}
+            edgePadding={ROLE_POPOVER_EDGE_PADDING}
             autoFocusOnOpen
             onRequestClose={props.onRequestClose}
-            portal={{ web: true, native: true, matchAnchorWidth: false }}
+            // The row sits in a right-hand pane: the popover keeps its right edge on the row's and
+            // grows toward the transcript, never past the window edge.
+            portal={{ web: true, native: true, matchAnchorWidth: false, anchorAlign: 'end' }}
         >
-            {({ maxHeight }) => (
-                <FloatingOverlay maxHeight={maxHeight} scrollEnabled>
+            {({ maxHeight, maxWidth }) => (
+                <FloatingOverlay maxHeight={maxHeight} scrollEnabled={false} surfaceChrome="theme">
+                    {/* A fixed frame, so the rail's grid scrolls inside it and its footer stays at the foot. */}
+                    <View testID="session-role-popover" style={[styles.rolePopover, { height: maxHeight, width: maxWidth }]}>
                     <RolesRailDetail
                         serverId={props.serverId}
                         value={params.value}
+                        sessionId={props.sessionId}
                         onChange={(roleId) => { params.onChange(roleId); props.onRequestClose(); }}
                         describeConsequence={params.describeConsequence}
                         onManageRoles={params.onManageRoles ? () => { params.onManageRoles?.(); props.onRequestClose(); } : undefined}
                         footer={params.footer}
                     />
+                    </View>
                 </FloatingOverlay>
             )}
         </Popover>
     );
 }
+
+const ROLE_POPOVER_EDGE_PADDING = { vertical: 8, horizontal: 8 } as const;
+
+const styles = StyleSheet.create({
+    // The composer picker's detail inset (`AgentInputChipPickerPanel` detail content), so the Roles
+    // rail reads the same wherever it opens.
+    rolePopover: { paddingHorizontal: 12, paddingVertical: 15 },
+});
 
 /**
  * The session's Role as a value row ("Role · Orchestrator · hands-off ›"; lab `convo-W8full`), which
@@ -228,7 +263,7 @@ export const SessionRoleValueRow = React.memo(function SessionRoleValueRow(props
     const value = roleName === null
         ? t('sessionWork.role.none')
         : selection?.workspaceWrites === 'deny'
-            ? `${roleName} · ${t('sessionWork.role.handsOff')}`
+            ? joinHappierFacts(roleName, t('sessionWork.role.handsOff'))
             : roleName;
 
     return (

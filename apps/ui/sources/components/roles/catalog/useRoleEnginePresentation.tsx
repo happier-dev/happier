@@ -5,12 +5,17 @@ import { getResolvedBackendCatalogEntries, type ResolvedBackendCatalogEntry } fr
 import { getEnabledAgentIds } from '@/agents/catalog/enabled';
 import { AgentCatalogIdentityIcon } from '@/agents/presentation/AgentCatalogIdentityIcon';
 import { useActiveServerAccountScope, useSetting } from '@/sync/domains/state/storage';
+import { useAcpCatalog } from '@/sync/store/useAcpCatalog';
+import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 
 export type RoleEnginePresentation = Readonly<{
     /** "Claude · opus-5.5 · high"; null when the engine follows the default agent. */
     label: string | null;
     icon: React.ReactNode;
-    /** The engine names an agent this Account has not enabled: "choose an engine". */
+    /**
+     * The engine names an agent this Account has not enabled: "choose an engine". Said only once the
+     * Agent catalog has answered (or cannot be read here); a catalog still loading claims nothing.
+     */
     unavailable: boolean;
 }>;
 
@@ -18,19 +23,29 @@ export type RoleEnginePresentation = Readonly<{
  * Names a role's engine with the Agent catalog's own identity (title and mark). It reads only the
  * Account's enabled agents — no machine is asked anything — so a picker can name every role at once.
  */
-export function useRoleEnginePresentation(serverId?: string | null): (engine: RoleEngineV1 | undefined, iconSize?: number) => RoleEnginePresentation {
+export function useRoleEngineCatalog(serverId?: string | null) {
     const scope = useActiveServerAccountScope(serverId);
     const catalogAvailable = serverId === undefined || scope !== null;
-    const acpCatalogSettingsV1 = useSetting('acpCatalogSettingsV1');
+    const { snapshot } = useAcpCatalog(serverId === undefined ? undefined : scope);
     const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
-    const entriesByTargetKey = React.useMemo(() => {
-        const entries = catalogAvailable ? getResolvedBackendCatalogEntries({
+    const ready = catalogAvailable && snapshot?.catalog.status === 'ready' && !snapshot.stale;
+    const entries = React.useMemo(() => {
+        return ready && snapshot?.catalog.status === 'ready' ? getResolvedBackendCatalogEntries({
             enabledAgentIds: getEnabledAgentIds({ backendEnabledByTargetKey }),
-            acpCatalogSettingsV1,
+            acpCatalogSnapshot: snapshot.catalog,
             backendEnabledByTargetKey,
         }) : [];
-        return new Map<string, ResolvedBackendCatalogEntry>(entries.map((entry) => [entry.backendTargetKey, entry]));
-    }, [acpCatalogSettingsV1, backendEnabledByTargetKey, catalogAvailable]);
+    }, [snapshot, backendEnabledByTargetKey, ready]);
+    return { entries, ready, scope, snapshot };
+}
+
+export function useRoleEnginePresentation(serverId?: string | null): (engine: RoleEngineV1 | undefined, iconSize?: number) => RoleEnginePresentation {
+    const { entries, ready, scope, snapshot } = useRoleEngineCatalog(serverId);
+    const settled = ready || (serverId !== undefined && scope === null)
+        || snapshot?.catalog.status === 'unavailable' || snapshot?.catalog.status === 'partial';
+    const entriesByTargetKey = React.useMemo(() => new Map<string, ResolvedBackendCatalogEntry>(
+        entries.map((entry) => [entry.backendTargetKey, entry]),
+    ), [entries]);
 
     return React.useCallback((engine, iconSize = 12) => {
         if (!engine) return { label: null, icon: null, unavailable: false };
@@ -38,11 +53,11 @@ export function useRoleEnginePresentation(serverId?: string | null): (engine: Ro
         const parts = [entry?.title ?? null, engine.modelId ?? null, engine.effort ?? null]
             .filter((part): part is string => Boolean(part));
         return {
-            label: parts.length > 0 ? parts.join(' · ') : null,
+            label: parts.length > 0 ? joinHappierFacts(...parts) : null,
             icon: entry ? (
                 <AgentCatalogIdentityIcon entry={entry.agentCatalogEntry} machineId={null} serverId={null} current={false} size={iconSize} />
             ) : null,
-            unavailable: entry === null,
+            unavailable: entry === null && settled,
         };
-    }, [entriesByTargetKey]);
+    }, [entriesByTargetKey, settled]);
 }

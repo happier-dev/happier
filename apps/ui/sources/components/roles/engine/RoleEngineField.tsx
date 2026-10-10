@@ -4,16 +4,20 @@ import { useUnistyles } from 'react-native-unistyles';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import type { RoleEngineV1 } from '@happier-dev/protocol';
 
-import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
-import { getEnabledAgentIds } from '@/agents/catalog/enabled';
+import { useRoleEngineCatalog } from '@/components/roles/catalog/useRoleEnginePresentation';
 import { AgentInputChipPickerPopover } from '@/components/sessions/agentInput/components/AgentInputChipPickerPopover';
 import { buildSessionAgentPickerDetailContent } from '@/components/sessions/agentPicker/buildSessionAgentPickerDetailContent';
 import { buildSessionAgentPickerOptions } from '@/components/sessions/agentPicker/buildSessionAgentPickerOptions';
 import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
 import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
-import { useActiveServerAccountScope, useSetting, useSettings } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScope, useSettings } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { buildRolesRailPickerOption, type RolesRailPickerOptionParams } from '../rail/buildRolesRailPickerOption';
+import { AgentInputSelectionPopover } from '@/components/sessions/agentInput/selection/AgentInputSelectionPopover';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+
+/** The Agent config option a role's `engine.effort` is (the same id `admitAgentStartV1` stamps). */
+const ROLE_EFFORT_CONFIG_OPTION_ID = 'reasoning_effort';
 
 /**
  * A role's engine as a page field: the value ("Claude · opus-5.5") in the field box, opening the same
@@ -37,7 +41,7 @@ export const RoleEngineField = React.memo(function RoleEngineField(props: Readon
     const anchorRef = React.useRef<View>(null);
     const [open, setOpen] = React.useState(false);
     const trigger = renderDropdownItemTriggerRightElement({
-        detail: props.label,
+        detail: props.label ?? t('roles.rail.defaultEngine'),
         open,
         detailColor: theme.colors.text.primary,
         chevronColor: theme.colors.text.secondary,
@@ -80,15 +84,9 @@ function RoleEnginePopover(props: Readonly<{
     onRequestClose: () => void;
 }>) {
     const settings = useSettings();
-    const acpCatalogSettingsV1 = useSetting('acpCatalogSettingsV1');
-    const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
+    const { entries, ready, scope, snapshot } = useRoleEngineCatalog(props.capabilityServerId || undefined);
     const { capabilityServerId } = props;
     const { engine, onChange } = props;
-    const entries = React.useMemo(() => getResolvedBackendCatalogEntries({
-        enabledAgentIds: getEnabledAgentIds({ backendEnabledByTargetKey }),
-        acpCatalogSettingsV1,
-        backendEnabledByTargetKey,
-    }), [acpCatalogSettingsV1, backendEnabledByTargetKey]);
     const options = React.useMemo(() => buildSessionAgentPickerOptions({
         entries,
         leadingOptions: props.roleSelection ? [buildRolesRailPickerOption(props.roleSelection)] : undefined,
@@ -114,19 +112,30 @@ function RoleEnginePopover(props: Readonly<{
                 selection: {
                     modelId: engine?.agentTargetKey === entry.backendTargetKey ? engine.modelId ?? '' : '',
                     sessionModeId: null,
-                    configOverrides: {},
+                    // The role's effort is the Agent's `reasoning_effort` option, the one the picker
+                    // offers beside the models; admission stamps it back the same way (`admitAgentStartV1`).
+                    configOverrides: engine?.agentTargetKey === entry.backendTargetKey && engine.effort
+                        ? { [ROLE_EFFORT_CONFIG_OPTION_ID]: engine.effort } : {},
                 },
                 onSelectionChange: (next) => {
+                    const effort = next.configOverrides[ROLE_EFFORT_CONFIG_OPTION_ID];
                     onChange({
                         agentTargetKey: entry.backendTargetKey,
                         ...(next.modelId ? { modelId: next.modelId } : {}),
-                        ...(engine?.agentTargetKey === entry.backendTargetKey && engine.effort ? { effort: engine.effort } : {}),
+                        ...(effort ? { effort } : {}),
                     });
                 },
             }),
         }),
     }), [capabilityServerId, engine, entries, onChange, props.roleSelection, settings]);
 
+    if (!ready) {
+        const unavailable = scope === null || snapshot?.catalog.status === 'unavailable' || snapshot?.catalog.status === 'partial';
+        return <AgentInputSelectionPopover open anchorRef={props.anchorRef} onRequestClose={props.onRequestClose}>
+            {() => <SurfaceStateCard testID="role-engine-catalog-state" size="line" kind={unavailable ? 'error' : 'loading'}
+                title={t(unavailable ? 'common.unavailable' : 'common.loading')} />}
+        </AgentInputSelectionPopover>;
+    }
     return (
         <AgentInputChipPickerPopover
             open

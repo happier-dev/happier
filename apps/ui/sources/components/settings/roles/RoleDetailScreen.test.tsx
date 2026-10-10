@@ -45,25 +45,6 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ translate: (key: string) => key });
 });
 
-vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
-    const { createStorageModuleMock, createUseSettingMock } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleMock({
-        importOriginal,
-        overrides: {
-            useSetting: createUseSettingMock({
-                fallback: (key: string) => {
-                    if (key === 'profiles') return [];
-                    if (key === 'workDepthLimit') return 4;
-                    if (key === 'rolesV1') return shared.rolesV1;
-                    if (key === 'acpCatalogSettingsV1') return { v: 2, backends: [] };
-                    if (key === 'backendEnabledByTargetKey') return {};
-                    return undefined;
-                },
-            }),
-        },
-    });
-});
-
 const orchestrator = { roleId: 'orchestrator', ...BUILT_IN_ROLES_V1.orchestrator };
 const ownRole = {
     roleId: 'ui-builder',
@@ -78,6 +59,8 @@ const ownRole = {
 const { RoleDetailScreen } = await import('./RoleDetailScreen');
 const { invalidateRoleCatalog } = await import('@/components/roles/catalog/useRoleCatalog');
 const { storage } = await import('@/sync/domains/state/storageStore');
+const { applyPromptLibraryCatalogSnapshot, resetPromptLibraryCatalogSnapshotsForTests } = await import('@/sync/store/settings/promptLibraryCatalogSnapshot');
+const { resetPromptLibraryCatalogEngineForTests } = await import('@/sync/engine/settings/promptLibraryCatalogEngine');
 const { retireActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
 const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
 let previousStorageState = storage.getState();
@@ -160,6 +143,11 @@ describe('Settings › Roles detail', () => {
             { roleId: 'ui-builder', role: ownDocument, revision: { headerVersion: 3, bodyVersion: 7 }, shared: false, viewOnly: false, migratedFromV0_2: false },
         ];
         shared.rolesV1 = { overrides: { orchestrator: { roleId: 'orchestrator', secondOpinion: 'encouraged' } } };
+        storage.getState().applySettingsLocal({ workDepthLimit: 4 });
+        applyPromptLibraryCatalogSnapshot({ serverId: 'server-1', accountId: 'account-1' }, {
+            catalog: { status: 'ready', rows: [{ record: { key: 'role-overrides', value: { v: 1, ...shared.rolesV1 } }, revision: 1 }],
+                tombstones: [], diagnostics: [] }, rawSettings: {}, sourceSettingsVersion: 0,
+        }, true);
         invalidateRoleCatalog();
     }); });
 
@@ -167,6 +155,8 @@ describe('Settings › Roles detail', () => {
         standardCleanup();
         await act(async () => {
         retireActiveServerAccountScopeLifetime();
+        resetPromptLibraryCatalogEngineForTests();
+        resetPromptLibraryCatalogSnapshotsForTests();
         storage.setState(previousStorageState);
         publishAppliedActiveServerSnapshot(previousSnapshot, previousAvailable);
         });
@@ -198,6 +188,33 @@ describe('Settings › Roles detail', () => {
         }]));
     });
 
+    it.each([
+        { roleId: 'plugin:example/scout', sharedRole: false, viewOnly: true },
+        { roleId: 'shared-viewer', sharedRole: true, viewOnly: true },
+        { roleId: 'shared-editor', sharedRole: true, viewOnly: false },
+    ])('edits instructions for $roleId through its permitted writer and preserves Reset', async ({ roleId, sharedRole, viewOnly }) => {
+        const { roleId: _id, ...role } = ownRole;
+        const revision = { headerVersion: 2, bodyVersion: 5 };
+        shared.items.push({ roleId, role, revision, shared: sharedRole, viewOnly, migratedFromV0_2: false });
+        shared.rolesV1.overrides[roleId] = { roleId, secondOpinion: 'encouraged' };
+        await act(async () => { invalidateRoleCatalog(); });
+        const screen = await renderRole(roleId);
+        const input = () => screen.findByTestId('settings.roles.detail.instructions')!;
+        expect(input().props.editable).not.toBe(false);
+        await act(async () => { input().props.onChangeText('Reader instructions'); });
+        await act(async () => { input().props.onBlur(); });
+        await vi.waitFor(() => expect(writes()).toEqual([viewOnly ? {
+            actionId: 'roles.override.set',
+            input: { roleId, secondOpinion: 'encouraged', instructionsOverride: 'Reader instructions' },
+        } : {
+            actionId: 'roles.update',
+            input: { roleId, role: { ...role, secondOpinion: 'encouraged', instructions: 'Reader instructions' }, expectedRevision: revision },
+        }]));
+        // Reset sits with the instructions it restores ("Edited · Reset to default"), not in the ⋯ menu.
+        await screen.pressByTestIdAsync('settings.roles.detail.instructions.reset');
+        await vi.waitFor(() => expect(writes().at(-1)).toEqual({ actionId: 'roles.override.reset', input: { roleId } }));
+    });
+
     it('previews exactly the block the one role renderer dispatches', async () => {
         const screen = await renderRole('orchestrator');
         const preview = screen.findByTestId('settings.roles.detail.preview.block')!;
@@ -217,8 +234,17 @@ describe('Settings › Roles detail', () => {
         return menus[0]?.props.actions ?? [];
     }
 
-    it('offers Share for role Artifacts while keeping Reset and Delete scoped to their existing permissions', async () => {
-        const ids = (screen: Awaited<ReturnType<typeof renderRole>>) => menuActions(screen).map((action) => action.id);
+    /** The visible Share action beside the ⋯ menu (lab `settings-R`). */
+    function shareButton(screen: Awaited<ReturnType<typeof renderRole>>): { props: { onPress: () => unknown } } | undefined {
+        return screen.findAll((node: any) => node.props?.testID === 'settings.roles.detail.share' && typeof node.props.onPress === 'function')[0];
+    }
+
+    it('offers Share for role Artifacts, Duplicate for every role, and keeps Reset and Delete scoped to their permissions', async () => {
+        const ids = (screen: Awaited<ReturnType<typeof renderRole>>) => [
+            ...(shareButton(screen) ? ['share'] : []),
+            ...(screen.findHostByTestId('settings.roles.detail.instructions.reset') ? ['reset'] : []),
+            ...menuActions(screen).map((action) => action.id),
+        ];
         const { roleId: _ownId, ...ownDocument } = ownRole;
         shared.items.push(
             { roleId: 'shared-editor', role: { ...ownDocument, name: 'Shared editor' }, revision: { headerVersion: 1, bodyVersion: 1 }, shared: true, viewOnly: false, migratedFromV0_2: false },
@@ -226,11 +252,11 @@ describe('Settings › Roles detail', () => {
             { roleId: 'plugin:example/scout', role: { ...ownDocument, name: 'Plugin scout' }, shared: false, viewOnly: false, migratedFromV0_2: false },
         );
         invalidateRoleCatalog();
-        expect(ids(await renderRole('orchestrator'))).toEqual(['reset']);
-        expect(ids(await renderRole('ui-builder'))).toEqual(['share', 'delete']);
-        expect(ids(await renderRole('shared-editor'))).toEqual(['share']);
-        expect(ids(await renderRole('shared-viewer'))).toEqual(['share']);
-        expect(ids(await renderRole('plugin:example/scout'))).toEqual([]);
+        expect(ids(await renderRole('orchestrator'))).toEqual(['reset', 'duplicate']);
+        expect(ids(await renderRole('ui-builder'))).toEqual(['share', 'duplicate', 'delete']);
+        expect(ids(await renderRole('shared-editor'))).toEqual(['share', 'duplicate']);
+        expect(ids(await renderRole('shared-viewer'))).toEqual(['share', 'duplicate']);
+        expect(ids(await renderRole('plugin:example/scout'))).toEqual(['duplicate']);
     });
 
     it.each([
@@ -243,9 +269,9 @@ describe('Settings › Roles detail', () => {
         shared.items.push({ roleId, role, shared: true, viewOnly, migratedFromV0_2: false });
         invalidateRoleCatalog();
         const screen = await renderRole(roleId);
-        const share = menuActions(screen).find((action) => action.id === 'share');
+        const share = shareButton(screen);
         expect(share).toBeDefined();
-        await share!.onSelect();
+        await share!.props.onPress();
         expect(shared.shown).toEqual([expect.objectContaining({
             chrome: expect.objectContaining({ testID: 'document-share-modal' }),
             props: expect.objectContaining({
@@ -258,23 +284,24 @@ describe('Settings › Roles detail', () => {
 
     it('shares the reader\'s own role through the one document share sheet, as its role Artifact', async () => {
         const screen = await renderRole('ui-builder');
-        const share = menuActions(screen).find((action) => action.id === 'share');
+        const share = shareButton(screen);
         expect(share).toBeDefined();
-        await share!.onSelect();
+        await share!.props.onPress();
         expect(shared.shown).toHaveLength(1);
         expect(shared.shown[0]).toMatchObject({
-            chrome: { testID: 'document-share-modal', subtitle: 'roles.settings.runsAsSession' },
+            chrome: { testID: 'document-share-modal', subtitle: expect.stringContaining('roles.rail.defaultEngine') },
             props: { kind: 'role.v1', artifactId: 'ui-builder', linkPath: '/settings/roles/ui-builder' },
         });
         const sheet = shared.shown[0] as { chrome: { subtitle: string } };
         expect(sheet.chrome.subtitle).not.toContain('null');
+        expect(sheet.chrome.subtitle).toContain('roles.settings.runsAsSession');
         // Opening the sheet writes nothing; grants change only inside the sheet.
         expect(writes()).toEqual([]);
     });
 
     it('sends a copy of the role as its portable role.v1 document', async () => {
         const screen = await renderRole('ui-builder');
-        await menuActions(screen).find((action) => action.id === 'share')!.onSelect();
+        await shareButton(screen)!.props.onPress();
         const sheet = shared.shown[0] as { props: { onSendCopy?: () => unknown } };
         expect(typeof sheet.props.onSendCopy).toBe('function');
         await sheet.props.onSendCopy!();
@@ -284,5 +311,44 @@ describe('Settings › Roles detail', () => {
         expect(RoleArtifactV1Schema.parse(JSON.parse(shared.savedFiles[0]!.json))).toEqual(document);
         expect(shared.savedFiles[0]!.fileName).toBe('UI-builder.role.json');
         expect(writes()).toEqual([]);
+    });
+    it('duplicates a role as one of the reader\'s own, leaving the original untouched', async () => {
+        const screen = await renderRole('orchestrator');
+        await act(async () => { await menuActions(screen).find((action) => action.id === 'duplicate')!.onSelect(); });
+        const { roleId: _id, ...document } = orchestrator;
+        expect(writes()).toEqual([{ actionId: 'roles.create', input: { role: {
+            ...document, secondOpinion: 'encouraged', name: 'roles.settings.duplicateName',
+        } } }]);
+    });
+
+    it('states that the Orchestrator runs as the session it is turned on in instead of offering a choice', async () => {
+        const orchestratorScreen = await renderRole('orchestrator');
+        expect(orchestratorScreen.findHostByTestId('settings.roles.detail.runsAs.thisSession')).toBeTruthy();
+        expect(orchestratorScreen.findAll((node: any) => node.props?.testIDPrefix === 'settings.roles.detail.runsAs')).toEqual([]);
+
+        const ownScreen = await renderRole('ui-builder');
+        expect(ownScreen.findHostByTestId('settings.roles.detail.runsAs.thisSession')).toBeNull();
+        expect(ownScreen.findAll((node: any) => node.props?.testIDPrefix === 'settings.roles.detail.runsAs')).toHaveLength(1);
+    });
+
+    it('says whether a built-in still follows the platform default or was edited', async () => {
+        const edited = await renderRole('orchestrator');
+        expect(edited.findHostByTestId('settings.roles.detail.instructions.reset')).toBeTruthy();
+        expect(edited.findHostByTestId('settings.roles.detail.instructions.platformDefault')).toBeNull();
+
+        shared.rolesV1 = { overrides: {} };
+        await act(async () => {
+            applyPromptLibraryCatalogSnapshot({ serverId: 'server-1', accountId: 'account-1' }, {
+                catalog: { status: 'ready', rows: [{ record: { key: 'role-overrides', value: { v: 1, overrides: {} } }, revision: 2 }],
+                    tombstones: [], diagnostics: [] }, rawSettings: {}, sourceSettingsVersion: 0,
+            }, true);
+        });
+        const untouched = await renderRole('orchestrator');
+        expect(untouched.findHostByTestId('settings.roles.detail.instructions.platformDefault')).toBeTruthy();
+        expect(untouched.findHostByTestId('settings.roles.detail.instructions.reset')).toBeNull();
+        // The reader's own role is neither: it has no default to follow or return to.
+        const own = await renderRole('ui-builder');
+        expect(own.findHostByTestId('settings.roles.detail.instructions.platformDefault')).toBeNull();
+        expect(own.findHostByTestId('settings.roles.detail.instructions.reset')).toBeNull();
     });
 });

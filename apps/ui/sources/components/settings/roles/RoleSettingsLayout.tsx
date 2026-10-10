@@ -1,6 +1,8 @@
 import * as React from 'react';
 
 import { SettingsCollectionLayout } from '@/components/settings/shell/SettingsCollectionLayout';
+import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
+import { t } from '@/text';
 
 import { RoleCollectionRail } from './RoleCollectionRail';
 import { ROLES_COLLECTION_ROOT, resolveRolesChildRoute } from './roleCollectionRoutes';
@@ -21,6 +23,7 @@ export const RoleSettingsLayout = React.memo(function RoleSettingsLayout() {
             railWidthPx={ROLE_RAIL_WIDTH_PX}
             detailMinWidthPx={ROLE_DETAIL_MIN_WIDTH_PX}
             testID="settings-roles"
+            collectionHeader={<SettingsPageHeader title={t('roles.rail.label')} description={t('roles.settings.description')} />}
         />
     );
 });

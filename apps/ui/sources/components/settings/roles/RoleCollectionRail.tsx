@@ -1,20 +1,28 @@
 import * as React from 'react';
 import { usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { useUnistyles } from 'react-native-unistyles';
 import { HappierCollectionListMark } from '@happier-dev/plugin-ui/presentation';
 
 import { useRoleCatalog } from '@/components/roles/catalog/useRoleCatalog';
-import { useRoleEnginePresentation } from '@/components/roles/catalog/useRoleEnginePresentation';
+import { useRoleMark } from '@/components/roles/catalog/useRoleMark';
+import { useDescribeRoleRow } from '@/components/roles/catalog/rolePresentation';
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
-import { CollectionDraftRow, CollectionList, CollectionListGroupLabel, collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
+import { CollectionDraftRow, CollectionList, CollectionListGroupLabel } from '@/components/ui/lists/collection/CollectionList';
 import type { RoleCatalogEntry } from '@/sync/domains/roles/roleCatalog';
 import { t } from '@/text';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { newRoleRoute, resolveRoleCollectionSelection, roleDraftTitle, roleRoute } from './roleCollectionRoutes';
+import { RoleCollectionRow } from './RoleCollectionRow';
+
+/** The roles migrated from 0.2 sub-agents guidance, named once under the list (lab `settings-R3`). */
+export function readMigratedRoleNames(entries: ReadonlyArray<RoleCatalogEntry>): readonly string[] {
+    return entries.filter((entry) => entry.migratedFromV0_2).map((entry) => entry.role.name);
+}
+
+/** A new role starts as a session role with no engine of its own, and is marked as one. */
+const DRAFT_ROLE_MARK = { runsAs: { kind: 'session' } } as const;
 
 /** The collection offers a search field only once it no longer fits at a glance. */
 const SEARCH_THRESHOLD = 8;
@@ -41,41 +49,27 @@ export function groupRoleCatalog(entries: ReadonlyArray<RoleCatalogEntry>, query
         .filter((group) => group.entries.length > 0);
 }
 
-/** "Opus 5.5 · session" — the engine and how the role runs, the two facts a list row needs. */
-export function useDescribeRoleRow(): (entry: RoleCatalogEntry) => string {
-    const presentEngine = useRoleEnginePresentation();
-    return React.useCallback((entry) => {
-        const engine = presentEngine(entry.role.engine).label ?? t('roles.rail.defaultEngine');
-        const runsAs = entry.role.runsAs.kind === 'session'
-            ? t('roles.settings.runsAsSession')
-            : t('roles.settings.runsAsBackgroundRun');
-        return `${engine} · ${runsAs}`;
-    }, [presentEngine]);
-}
-
 /**
  * The rail beside a role's detail. Selection comes from the route; the draft of a new role sits on
  * top while its editor is open, and a note explains roles migrated from 0.2 sub-agents guidance.
  */
 export const RoleCollectionRail = React.memo(function RoleCollectionRail() {
     const router = useRouter();
-    const { theme } = useUnistyles();
     const pathname = usePathname().replace(/\/+$/, '');
     const selection = resolveRoleCollectionSelection(pathname);
     const catalog = useRoleCatalog();
-    const presentEngine = useRoleEnginePresentation();
+    const roleMark = useRoleMark();
     const describe = useDescribeRoleRow();
     const [query, setQuery] = React.useState('');
     const searchable = catalog.entries.length > SEARCH_THRESHOLD;
     const groups = groupRoleCatalog(catalog.entries, searchable ? query : '');
-    const hasMigrated = catalog.entries.some((entry) => entry.migratedFromV0_2);
+    const migratedNames = readMigratedRoleNames(catalog.entries);
     const selectedRoleId = selection.kind === 'role' ? selection.roleId : null;
 
     return (
         <CollectionList
             testID="settings.roles.rail"
-            title={t('roles.settings.count', { count: catalog.entries.length })}
-            count={catalog.entries.length}
+            count={catalog.status === 'ready' ? catalog.entries.length : undefined}
             headerAction={(
                 <IconButton
                     testID="settings.roles.rail.add"
@@ -100,7 +94,7 @@ export const RoleCollectionRail = React.memo(function RoleCollectionRail() {
                     placeholder={t('roles.settings.newRoleName')}
                     mark={(
                         <HappierCollectionListMark>
-                            <Icon name="person" size={20} color={theme.colors.text.secondary} />
+                            {roleMark(DRAFT_ROLE_MARK, 20)}
                         </HappierCollectionListMark>
                     )}
                 />
@@ -108,7 +102,7 @@ export const RoleCollectionRail = React.memo(function RoleCollectionRail() {
             {groups.length === 0 ? (
                 <Item
                     testID="settings.roles.rail.empty"
-                    title={catalog.status === 'failed'
+                    title={catalog.status === 'loading' ? t('common.loading') : catalog.status === 'failed'
                         ? t('roles.settings.loadFailed')
                         : searchable && query.trim() ? t('common.noMatches') : t('roles.rail.empty')}
                     density="compact"
@@ -122,39 +116,29 @@ export const RoleCollectionRail = React.memo(function RoleCollectionRail() {
                         count={group.entries.length}
                         first={index === 0 && selection.kind !== 'draft'}
                     />
-                    {group.entries.map((entry) => {
-                        const engine = presentEngine(entry.role.engine);
-                        return (
-                            <Item
-                                key={entry.roleId}
-                                testID={`settings.roles.row.${entry.roleId}`}
-                                title={entry.role.name}
-                                titleStyle={entry.role.enabled ? undefined : collectionListStyles.dimmedTitle}
-                                subtitle={entry.override ? `${describe(entry)} · ${t('roles.settings.edited')}` : describe(entry)}
-                                icon={(
-                                    <HappierCollectionListMark dimmed={!entry.role.enabled}>
-                                        {engine.icon ?? <Icon name="person" size={20} color={theme.colors.text.secondary} />}
-                                    </HappierCollectionListMark>
-                                )}
-                                selected={selectedRoleId === entry.roleId}
-                                density="compact"
-                                showChevron={false}
-                                pressableStyle={collectionListStyles.row}
-                                onPress={() => openRoleCollectionHref(
-                                    router,
-                                    roleRoute(entry.roleId),
-                                    selection.kind !== 'none',
-                                    'RoleCollectionRail.open',
-                                )}
-                            />
-                        );
-                    })}
+                    {group.entries.map((entry) => (
+                        <RoleCollectionRow
+                            key={entry.roleId}
+                            testID={`settings.roles.row.${entry.roleId}`}
+                            presentation="rail"
+                            entry={entry}
+                            mark={roleMark(entry.role, 20, entry.roleId)}
+                            facts={describe(entry)}
+                            selected={selectedRoleId === entry.roleId}
+                            onPress={() => openRoleCollectionHref(
+                                router,
+                                roleRoute(entry.roleId),
+                                selection.kind !== 'none',
+                                'RoleCollectionRail.open',
+                            )}
+                        />
+                    ))}
                 </React.Fragment>
             ))}
-            {hasMigrated ? (
+            {migratedNames.length > 0 ? (
                 <Item
                     testID="settings.roles.rail.migratedNote"
-                    title={t('roles.settings.migratedNote')}
+                    title={t('roles.settings.migratedNote', { names: migratedNames })}
                     titleLines={0}
                     density="compact"
                     showChevron={false}

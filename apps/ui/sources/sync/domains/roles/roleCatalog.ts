@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { BUILT_IN_ROLE_IDS_V1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
+import { BUILT_IN_ROLE_IDS_V1, BUILT_IN_ROLES_V1, type BuiltInRoleIdV1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
+import { t } from '@/text';
 import { RoleActionEntryV1Schema } from '@happier-dev/protocol/prompts/roles/roleActionsV1';
 import { resolveRoleSelectionV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -40,6 +41,7 @@ export type RoleCatalogEntry = Readonly<{
     /** Current Artifact revision; viewOnly controls whether it may be written. */
     revision?: Readonly<{ headerVersion: number; bodyVersion: number }>;
     pluginId?: string;
+    pluginDisplayName?: string;
     /** Shared with the reader to use only: the document is read-only; the reader's own overrides still apply. */
     viewOnly: boolean;
     /** Migrated from the reader's 0.2 sub-agents guidance. */
@@ -47,6 +49,21 @@ export type RoleCatalogEntry = Readonly<{
 }>;
 
 const BUILT_IN_ROLE_IDS: ReadonlySet<string> = new Set(BUILT_IN_ROLE_IDS_V1);
+
+function isBuiltInRoleIdV1(roleId: string): roleId is BuiltInRoleIdV1 {
+    return BUILT_IN_ROLE_IDS.has(roleId);
+}
+
+const BUILT_IN_ROLE_PURPOSE_KEYS = {
+    orchestrator: 'roles.builtIn.orchestrator',
+    planner: 'roles.builtIn.planner',
+    builder: 'roles.builtIn.builder',
+    reviewer: 'roles.builtIn.reviewer',
+    judge: 'roles.builtIn.judge',
+    second_opinion: 'roles.builtIn.second_opinion',
+    scout: 'roles.builtIn.scout',
+    approval_reviewer: 'roles.builtIn.approval_reviewer',
+} as const satisfies Record<BuiltInRoleIdV1, string>;
 const PLUGIN_ROLE_ID = /^plugin:([^/]+)\/(.+)$/u;
 
 function classify(item: RolesListItem): Readonly<{ source: RoleSourceKind; pluginId?: string }> {
@@ -99,6 +116,7 @@ export function createRoleCatalogProjection(): (input: RoleCatalogInput) => Read
                 migratedFromV0_2: item.migratedFromV0_2,
                 ...(item.revision ? { revision: item.revision } : {}),
                 ...(pluginId ? { pluginId } : {}),
+                ...(item.pluginDisplayName ? { pluginDisplayName: item.pluginDisplayName } : {}),
             };
             next.set(item.roleId, { item, override, entry });
             return { entry, index };
@@ -117,8 +135,21 @@ export function buildRoleCatalog(input: RoleCatalogInput): ReadonlyArray<RoleCat
     return createRoleCatalogProjection()(input);
 }
 
-/** The first sentence or line of a role's instructions: what the role is for. */
-export function describeRolePurpose(role: Pick<ResolvedRoleV1, 'instructions'>): string {
+/** The executable Artifact body excludes resolver-only identity and diagnostics. */
+export function resolvedRoleToArtifact(role: ResolvedRoleV1): RoleArtifactV1 {
+    const { roleId: _roleId, changedAt: _changedAt, profileUnavailable: _profileUnavailable, ...artifact } = role;
+    return artifact;
+}
+
+/**
+ * What a role is for, in one line. A built-in role whose instructions are still its own says it in
+ * the product's words (its instructions are written for the agent, not the person); any other role
+ * — and a built-in the reader rewrote — is described by the first sentence of its instructions.
+ */
+export function describeRolePurpose(role: Pick<ResolvedRoleV1, 'roleId' | 'instructions'>): string {
+    if (isBuiltInRoleIdV1(role.roleId) && role.instructions === BUILT_IN_ROLES_V1[role.roleId].instructions) {
+        return t(BUILT_IN_ROLE_PURPOSE_KEYS[role.roleId]);
+    }
     const firstLine = role.instructions.trim().split('\n')[0]?.trim() ?? '';
     const sentenceEnd = firstLine.search(/[.!?](\s|$)/u);
     return sentenceEnd >= 0 ? firstLine.slice(0, sentenceEnd + 1) : firstLine;
