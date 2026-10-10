@@ -52,7 +52,6 @@ import type { PersonalizeFlow } from './usePersonalizeFlow';
 
 const GLASS_PRESETS: readonly GlassPreset[] = ['solid', 'auto', 'everywhere'];
 const ATTENTION_CHOICES: readonly AttentionPlacementChoice[] = ['off', 'withinGroups', 'global'];
-const MINIATURE_SCALE = 0.36;
 
 /** A choice's section: its label, where the choice applies, and what it means. */
 function ChoiceSection(props: Readonly<{
@@ -153,13 +152,13 @@ export function LookChoices(props: Readonly<{ flow: Pick<PersonalizeFlow, 'draft
                         preview: <GlassPresetPreview preset={preset} settings={draft.glassSettings} palette={theme} />,
                     }))}
                 />
-                <GlassEffectiveStateLine settings={draft.glass === 'custom' ? draft.glassSettings
+                <GlassEffectiveStateLine inset="none" settings={draft.glass === 'custom' ? draft.glassSettings
                     : { ...draft.glassSettings, ...resolveGlassPresetSettingsDelta(draft.glassSettings, draft.glass) }} />
                 <View style={styles.inlineAction}>
                     <RoundButton
                         testID={`${props.testID}-customize-glass`}
                         size="small"
-                        display="secondary"
+                        display="inverted"
                         title={t('personalize.customizeInAppearance')}
                         onPress={() => router.push(buildSettingHref('/settings/appearance', APPEARANCE_SETTINGS.settings.glassCustomize) as never)}
                     />
@@ -173,12 +172,12 @@ function LookStep(props: Readonly<{ flow: PersonalizeFlow; testID: string }>) {
     return <LookChoices flow={props.flow} testID={props.testID} />;
 }
 
-function StyleStep(props: Readonly<{ flow: PersonalizeFlow; phone: boolean; testID: string }>) {
+/** The one starting-style chooser, placed on the desktop stage or in the phone's scroll. */
+export function PersonalizeStyleChoices(props: Readonly<{ flow: PersonalizeFlow; phone: boolean; testID: string }>) {
     const { flow } = props;
     const current = flow.draft;
     const matched = matchStartingStyle(current);
     const selected = flow.style;
-    const changes = selected === 'keep' ? [] : listStartingStyleChanges(current, selected);
     const options: Array<{ id: StartingStyleId | 'keep'; title: string; badge?: string; choices: PersonalizeChoices }> = [
         { id: 'keep', title: t('personalize.styleKeep'), badge: matched ? personalizeLabels.style(matched) : t('personalize.styleCustomTag'), choices: current },
         ...STARTING_STYLES.map((style) => ({
@@ -189,29 +188,44 @@ function StyleStep(props: Readonly<{ flow: PersonalizeFlow; phone: boolean; test
         })),
     ];
     return (
+        <SelectionTiles<StartingStyleId | 'keep'>
+            variant={props.phone ? 'card' : 'visual'}
+            density={props.phone ? 'compact' : undefined}
+            tileSizing="fill"
+            maximumColumns={props.phone ? 1 : 2}
+            accessibilityLabel={t('personalize.styleTitle')}
+            testIdPrefix={`${props.testID}-style`}
+            value={selected}
+            onChange={(next) => { if (next) flow.setStyle(next); }}
+            options={options.map((option) => ({
+                id: option.id,
+                title: option.title,
+                ...(option.badge ? { badge: option.badge } : {}),
+                subtitle: [
+                    personalizeLabels.transcriptLayout(option.choices.transcriptLayout),
+                    personalizeLabels.toolChrome(option.choices.toolChrome),
+                    personalizeLabels.listDensity(option.choices.listDensity),
+                ].join(' · '),
+                preview: props.phone ? <ToolStylePreview style={option.choices.toolChrome} /> : <StageMiniature choices={option.choices} />,
+            }))}
+        />
+    );
+}
+
+function StyleStep(props: Readonly<{ flow: PersonalizeFlow; phone: boolean; testID: string }>) {
+    const { flow } = props;
+    const selected = flow.style;
+    const matched = matchStartingStyle(flow.draft);
+    const changes = selected === 'keep' ? [] : listStartingStyleChanges(flow.draft, selected);
+    return (
         <>
-            <ItemGroup title={t('personalize.styleTitle')} surface="none">
-                <SelectionTiles<StartingStyleId | 'keep'>
-                    variant="visual"
-                    tileSizing="fill"
-                    maximumColumns={2}
-                    accessibilityLabel={t('personalize.styleTitle')}
-                    testIdPrefix={`${props.testID}-style`}
-                    value={selected}
-                    onChange={(next) => { if (next) flow.setStyle(next); }}
-                    options={options.map((option) => ({
-                        id: option.id,
-                        title: option.title,
-                        ...(option.badge ? { badge: option.badge } : {}),
-                        subtitle: [
-                            personalizeLabels.transcriptLayout(option.choices.transcriptLayout),
-                            personalizeLabels.toolChrome(option.choices.toolChrome),
-                            personalizeLabels.listDensity(option.choices.listDensity),
-                        ].join(' · '),
-                        preview: <StageMiniature choices={option.choices} />,
-                    }))}
-                />
-            </ItemGroup>
+            {props.phone ? (
+                <ItemGroup title={t('personalize.styleTitle')} surface="none">
+                    <PersonalizeStyleChoices {...props} />
+                </ItemGroup>
+            ) : selected === 'keep' ? (
+                <ItemGroup title={t('personalize.styleKeep')} description={matched ? personalizeLabels.style(matched) : t('personalize.styleCustomTag')}>{null}</ItemGroup>
+            ) : null}
             {selected !== 'keep' ? (
                 <ItemGroup
                     title={t('personalize.styleChanges', { style: personalizeLabels.style(selected), count: changes.length })}
@@ -235,9 +249,13 @@ function StyleStep(props: Readonly<{ flow: PersonalizeFlow; phone: boolean; test
 
 /** The stage at a fixed canvas, scaled into a tile: the same composition as the live stage. */
 function StageMiniature(props: Readonly<{ choices: PersonalizeChoices }>) {
+    const [width, setWidth] = React.useState(0);
     return (
-        <View style={styles.miniatureViewport} pointerEvents="none">
-            <View style={styles.miniatureCanvas}>
+        <View style={styles.miniatureViewport} pointerEvents="none" onLayout={(event) => {
+            const measured = event.nativeEvent.layout.width;
+            if (measured > 0) setWidth(measured);
+        }}>
+            <View style={[styles.miniatureCanvas, { transform: [{ scale: width / STAGE_CANVAS.width }] }]}>
                 <PersonalizeStage draft={props.choices} focus="none" presentation="miniature" />
             </View>
         </View>
@@ -508,16 +526,16 @@ function SummaryStep(props: Readonly<{ flow: PersonalizeFlow; testID: string }>)
                         <Item
                             key={step}
                             testID={`${props.testID}-summary-${step}`}
-                            title={now}
+                            title={unsupported ? personalizeStepName(step) : now}
                             titleLines={0}
-                            subtitle={`${personalizeStepName(step)} · ${personalizeStepScope(step)}${!unsupported && now !== was ? ` · ${t('personalize.was', { value: was })}` : ''}`}
+                            subtitle={unsupported ? now : `${personalizeStepName(step)} · ${personalizeStepScope(step)}${now !== was ? ` · ${t('personalize.was', { value: was })}` : ''}`}
                             subtitleLines={0}
                             showChevron={false}
                             rightElement={unsupported ? undefined : (
                                 <RoundButton
                                     testID={`${props.testID}-summary-${step}-change`}
                                     size="small"
-                                    display="secondary"
+                                    display="inverted"
                                     title={t('personalize.summaryChange')}
                                     onPress={() => flow.open(step)}
                                 />
@@ -572,7 +590,6 @@ const styles = StyleSheet.create((theme) => ({
     miniatureCanvas: {
         width: STAGE_CANVAS.width,
         height: STAGE_CANVAS.height,
-        transform: [{ scale: MINIATURE_SCALE }],
         transformOrigin: 'top left',
     },
     listMiniatureViewport: {

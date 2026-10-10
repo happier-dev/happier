@@ -13,6 +13,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useLocalSetting } from '@/sync/store/hooks';
 import { formatAccountServiceHost } from '@/sync/domains/accountDirectory/accountDirectoryEndpoint';
+import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import { t } from '@/text';
 import { PhoneWelcomeDoorway } from '@/components/homes/journeys/phone/PhoneWelcomeDoorway';
 import { useViewportClass } from '@/utils/platform/useViewportClass';
@@ -132,6 +133,10 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
                 ? { kind: 'selected_service', label: serviceName ?? formatAccountServiceHost(accountServiceEntry.endpoint.url) }
                 : { kind: 'none' },
         homeMethods,
+        ...(homeTarget && homeMethods.length > 0 && accountServiceEntry
+            && createServerUrlComparableKey(accountServiceEntry.endpoint.url) === createServerUrlComparableKey(options.serverUrlForCopy)
+            && (!accountServiceEntry.endpoint.serverIdentityId || accountServiceEntry.endpoint.serverIdentityId === options.observedHomeServerIdentityId)
+            ? { observedHomeAtServiceEndpoint: { home: homeTarget, label: options.homeLabel ?? options.serverUrlForCopy } } : {}),
         ...(options.observedHomeServerIdentityId ? { observedHomeServerIdentityId: options.observedHomeServerIdentityId } : {}),
         context: { kind: 'home' },
         allowedNavigation: {
@@ -147,6 +152,7 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
     });
     const phoneDoorway = viewportClass === 'compact'
         && !isReturningUser
+        && !(model.notice?.kind === 'service_unsupported' && model.notice.hasUsableHomeMethods)
         && !options.requestedHomeTarget
         && accountServiceEntry?.endpoint.source !== 'user'
         && props.canCreatePersonalHome !== true;

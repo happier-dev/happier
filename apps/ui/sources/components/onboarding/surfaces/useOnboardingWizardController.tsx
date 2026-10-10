@@ -33,7 +33,6 @@ import { useEndpointReachabilityRemediationController } from '@/components/setti
 import { canHostPersonalHomeHere, resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
 import { isLocalishServerUrl } from '@/sync/domains/server/url/serverUrlClassification';
 import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
-import { readServerReachabilityProbeTimeoutMs } from '@/sync/runtime/connectivity/serverReachabilityTuning';
 import {
     getEndpointReachabilityProvider,
     resolveEndpointReachabilityRemediation,
@@ -45,6 +44,7 @@ import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristi
 import type { RelayHostLocalChecklistRuntimeStatus } from '../checklists/relayHostLocal/types';
 import type { RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
+import type { RelayAccessControlOptions } from '@/components/settings/server/relayAccess/useRelayAccessControl';
 
 import { WebDesktopRelayHostHandoffContent } from '@/components/onboarding/steps/webDesktop/WebDesktopRelayHostHandoffContent';
 import { WebDesktopBackgroundServiceHandoffContent } from '@/components/onboarding/steps/webDesktop/WebDesktopBackgroundServiceHandoffContent';
@@ -200,6 +200,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
     type LocalRelayRuntimeStatus = RelayHostLocalChecklistRuntimeStatus | null;
     const [localRelayRuntimeStatus, setLocalRelayRuntimeStatus] = React.useState<LocalRelayRuntimeStatus>(null);
     const [relayAccessTarget, setRelayAccessTarget] = React.useState<RelayAccessTaskTarget | null>(null);
+    const relayAccessRunnerRef = React.useRef<RelayAccessControlOptions['runWithTarget']>(undefined);
     const [relayAccessShareUrl, setRelayAccessShareUrl] = React.useState<string | null>(null);
     const [accountDirectoryKeyRequest, setAccountDirectoryKeyRequest] = React.useState<WelcomeAuthenticationMethod | null>(null);
     const [accountDirectoryContinuationIntent, setAccountDirectoryContinuationIntent] = React.useState<AccountContinuationIntent | null>(null);
@@ -341,6 +342,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
                     setOnboardingWizardAwaitingAuthResumeIntent(connectedProfile?.serverUrl ?? effect.relayUrl);
                     break;
                 case 'clearRelayAccessDraft':
+                    relayAccessRunnerRef.current = undefined;
                     setRelayAccessTarget(null);
                     setRelayAccessShareUrl(null);
                     break;
@@ -574,7 +576,6 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
             ...(confirmSwitchRelayEndpointForReadiness ? [confirmSwitchRelayEndpointForReadiness] : []),
         ],
         enabled: stepId === 'relay_select' || stepId === 'relay_enter_url' || stepId === 'confirm_switch_relay',
-        timeoutMs: readServerReachabilityProbeTimeoutMs(),
     });
 
     const handleRemoveRelayProfile = React.useCallback(async (profileId: string) => {
@@ -595,6 +596,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
                     if (state.context.relaySelection.relayProfileId !== id) {
                         return;
                     }
+                    relayAccessRunnerRef.current = undefined;
                     setRelayAccessTarget(null);
                     setRelayAccessShareUrl(null);
                     dispatch({
@@ -620,12 +622,14 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
             relayProfileId: null,
             locked: choiceId === 'customUrl' ? state.context.relaySelection.locked : false,
         };
+        relayAccessRunnerRef.current = undefined;
         setRelayAccessTarget(null);
         setRelayAccessShareUrl(null);
         dispatch({ type: 'wizard/setRelaySelection', relaySelection: next });
     }, [canonicalCloudUrl, state.context.relaySelection]);
 
     const selectProfileRelay = React.useCallback((profile: WizardProfileChoice) => {
+        relayAccessRunnerRef.current = undefined;
         setRelayAccessTarget(null);
         setRelayAccessShareUrl(null);
         dispatch({
@@ -729,6 +733,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
             selected,
             disabled: state.context.relaySelection.locked && !selected,
             onPress: () => {
+                relayAccessRunnerRef.current = undefined;
                 setRelayAccessTarget(null);
                 setRelayAccessShareUrl(null);
                 dispatch({
@@ -815,6 +820,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         machineId: string | null;
         relayRuntimeUrl: string | null;
         relayAccessTarget: RelayAccessTaskTarget | null;
+        runWithRelayAccessTarget?: RelayAccessControlOptions['runWithTarget'];
         mode: 'remoteMachine' | 'remoteRelayHost';
     }>) => {
         const relayUrl = typeof payload.relayRuntimeUrl === 'string' ? payload.relayRuntimeUrl.trim() : '';
@@ -823,6 +829,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         }
 
         setRelaySwitchDecision('switch');
+        relayAccessRunnerRef.current = payload.runWithRelayAccessTarget;
         setRelayAccessTarget(payload.relayAccessTarget);
         setRelayAccessShareUrl(null);
         const relayProfile = await upsertServerProfileOnly({
@@ -876,6 +883,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
 
     const handleScan = React.useCallback(async (data: string) => {
         const parsed = parseOnboardingScanPayload(data);
+        relayAccessRunnerRef.current = undefined;
         setRelayAccessTarget(null);
         setRelayAccessShareUrl(null);
         if (parsed.kind === 'legacy_pairing_update_required') {
@@ -1527,6 +1535,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         confirmRelayUrl,
         serverProfileId: state.context.relaySelection.relayProfileId ?? null,
         relayAccessTarget: relayAccessTarget ?? defaultRelayAccessTarget,
+        runWithRelayAccessTarget: relayAccessTarget ? relayAccessRunnerRef.current : undefined,
         lastKnownSnapshotRelayUrl: lastKnownSnapshotRelayUrlRef.current || '',
         reachabilityRemediation: activeReachabilityRemediation,
         reachabilityRemediationTaskSnapshot: tailscaleEnsureReadySnapshot,

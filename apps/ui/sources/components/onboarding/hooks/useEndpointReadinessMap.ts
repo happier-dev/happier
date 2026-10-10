@@ -17,7 +17,6 @@ function isMixedContentBlockedProbeResult(result: EndpointReadinessProbeResult):
 export function useEndpointReadinessMap(params: Readonly<{
     endpoints: readonly string[];
     enabled: boolean;
-    timeoutMs?: number;
 }>): Readonly<{
     readinessByEndpoint: ReadonlyMap<string, EndpointReadinessState>;
     retryEndpoint: (endpoint: string) => void;
@@ -72,7 +71,6 @@ export function useEndpointReadinessMap(params: Readonly<{
             const probe = createEndpointReadinessProbe({
                 endpoint,
                 token: null,
-                timeoutMs: params.timeoutMs,
                 signal: controller.signal,
             });
             const result = await probe();
@@ -102,7 +100,7 @@ export function useEndpointReadinessMap(params: Readonly<{
                 inFlightByEndpointRef.current.delete(endpoint);
             }
         }
-    }, [params.enabled, params.timeoutMs, updateEndpointState]);
+    }, [params.enabled, updateEndpointState]);
 
     React.useEffect(() => {
         if (!params.enabled) return;

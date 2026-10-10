@@ -270,6 +270,14 @@ function describe(event: HomeAdministrationEventV1, viewer: string | null, names
                 area: t('homeGovernance.activity.areaPeople'),
                 changes: [],
             };
+        case 'teams.members.remove':
+            return {
+                verb: event.actor.kind === 'account' && event.actor.accountId === event.target?.id
+                    ? t('teams.leave.auditLeft', { team: event.summary.teamName })
+                    : t('teams.leave.auditRemoved', { team: event.summary.teamName, target: targetName(event, viewer) }),
+                area: t('teams.title'),
+                changes: [],
+            };
         case 'identity_provider.create':
         case 'identity_provider.update':
         case 'identity_provider.secret.replace':

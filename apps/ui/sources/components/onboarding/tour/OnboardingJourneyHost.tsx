@@ -393,6 +393,7 @@ export function OnboardingJourneyHost(props: OnboardingJourneyHostProps): React.
     const { demoSeeded, setDemoSeeded, unmountDemoStage } = useDemoStageUnmountGate();
 
     const dismissPendingSetupIntent = React.useCallback(() => {
+        if (pendingSetupIntent?.branch === 'askHappier') return;
         if (pendingSetupIntent) {
             if (pendingSetupIntent.phase !== 'dismissed') {
                 setPendingSetupIntent({ ...pendingSetupIntent, phase: 'dismissed' });

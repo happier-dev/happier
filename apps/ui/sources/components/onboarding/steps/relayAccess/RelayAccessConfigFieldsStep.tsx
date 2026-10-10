@@ -7,6 +7,7 @@ import { useLocalRelayAccessControl } from '@/components/settings/server/localCo
 import { MachineSetupTextField } from '@/components/ui/forms/MachineSetupTextField';
 import { Text } from '@/components/ui/text/Text';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
+import type { RelayAccessControlOptions } from '@/components/settings/server/relayAccess/useRelayAccessControl';
 
 import { RelayAccessWizardBusyOverlay } from './RelayAccessWizardBusyOverlay';
 import type { RelayAccessConfigStepDefinition, RelayAccessConfigStepDraft } from './relayAccessConfigStepCatalog';
@@ -37,6 +38,7 @@ export type RelayAccessConfigFieldsStepProps = Readonly<{
     upstreamUrl?: string | null;
     serverProfileId?: string | null;
     target?: RelayAccessTaskTarget;
+    runWithTarget?: RelayAccessControlOptions['runWithTarget'];
     onShareUrlChange?: (shareUrl: string | null) => void;
     onWizardPrimaryChange?: (state: RelayAccessWizardPrimaryState | null) => void;
     onRequestAdvance?: () => void;
@@ -58,6 +60,7 @@ export const RelayAccessConfigFieldsStep = React.memo(function RelayAccessConfig
         runner: props.runner,
         upstreamUrl: props.upstreamUrl ?? null,
         target: props.target,
+        runWithTarget: props.runWithTarget,
     });
 
     const configuredDraft = React.useMemo(

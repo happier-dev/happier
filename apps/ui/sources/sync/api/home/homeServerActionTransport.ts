@@ -6,6 +6,7 @@ import {
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { runWithServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 import { classifyHttpMutationRequestFailure } from '@/sync/http/mutationRequestOutcome';
+import type { ServerFetch } from '@/sync/http/client';
 
 /**
  * The Home family's client transport.
@@ -45,7 +46,7 @@ export type HomeDomainFailure<TCode extends string = HomeDomainErrorCode> = Read
     kind: HomeDomainFailureKind;
     /** Whether repeating the same request unchanged could plausibly succeed. */
     retryable: boolean;
-    /** The Home's own typed code when it supplied one; never inferred. */
+    /** The boundary's exact refusal; Action classifiers also retain pre-dispatch refusals, never inferred. */
     code: TCode | null;
     /** The strict, secret-free domain error envelope when the Home supplied one. */
     details?: unknown;
@@ -153,17 +154,13 @@ export async function requestHomeDomain<TValue, TCode extends string = HomeDomai
     /** The row/domain's side-effect class; required so response loss is never guessed. */
     effect: 'read' | 'write';
     signal?: AbortSignal;
+    /** Borrows an already admitted Account lifetime; never captures another authority. */
+    requestAuthority?: Readonly<{ request: ServerFetch; assertCurrent: () => void }>;
 }>): Promise<HomeDomainResult<TValue, TCode | HomeDomainErrorCode>> {
     let issued = false;
     try {
-        return await runWithServerRequestAuthorityForServerAccountScope({
-            scope: params.scope,
-            // A Home-family intent is always explicitly addressed. Falling back
-            // to the focused Home would silently retarget it.
-            activeRequest: async () => {
-                throw new Error('Home domain requests require an explicit Home target');
-            },
-        }, async (authority) => {
+        const carry = async (authority: Readonly<{ request: ServerFetch }>) => {
+            params.requestAuthority?.assertCurrent();
             const response = await authority.request(params.path, {
                 method: params.method ?? 'POST',
                 ...(params.input === undefined ? {} : {
@@ -171,18 +168,23 @@ export async function requestHomeDomain<TValue, TCode extends string = HomeDomai
                     body: JSON.stringify(params.input),
                 }),
                 ...(params.signal ? { signal: params.signal } : {}),
-            }, {
-                onIssued: () => { issued = true; },
-            });
-
-            // Consume the body while the scoped transport lease is still held.
+            }, { onIssued: () => { issued = true; } });
             const body = await readJsonBody(response);
+            params.requestAuthority?.assertCurrent();
             if (!response.ok) return classifyAnswer(response.status, body, params.errorSchema);
-
             const parsed = params.schema.safeParse(body);
             if (!parsed.success) return failure('invalid', false);
             return Object.freeze({ ok: true as const, value: parsed.data });
-        });
+        };
+        if (params.requestAuthority) return await carry(params.requestAuthority);
+        return await runWithServerRequestAuthorityForServerAccountScope({
+            scope: params.scope,
+            // A Home-family intent is always explicitly addressed. Falling back
+            // to the focused Home would silently retarget it.
+            activeRequest: async () => {
+                throw new Error('Home domain requests require an explicit Home target');
+            },
+        }, carry);
     } catch (error) {
         // Cancellation is the caller's own supersession, not a Home failure.
         if (params.signal?.aborted || (error instanceof Error && error.name === 'AbortError')) throw error;

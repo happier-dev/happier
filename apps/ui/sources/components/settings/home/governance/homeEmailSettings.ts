@@ -16,17 +16,17 @@ export const HOME_EMAIL_SETTINGS = defineSettingsPage({
     },
     sections: {
         mailServer: { titleKey: 'homeGovernance.email.mailServer', settings: {
-            host: { titleKey: 'homeGovernance.email.server', keywordKeys: ['homeGovernance.email.mailServer'] },
-            port: { titleKey: 'homeGovernance.email.port', keywordKeys: ['homeGovernance.email.security'] },
-            username: { titleKey: 'homeGovernance.email.username' },
-            password: { titleKey: 'homeGovernance.email.password', descriptionKey: 'homeGovernance.email.passwordDescription', sensitive: true },
+            host: {},
+            port: {},
+            username: {},
+            password: {},
         } },
         sender: { titleKey: 'homeGovernance.email.sender', settings: {
-            fromAddress: { titleKey: 'homeGovernance.email.fromAddress' },
-            fromName: { titleKey: 'homeGovernance.email.fromName' },
+            fromAddress: {},
+            fromName: {},
         } },
         test: { titleKey: 'homeGovernance.email.test', settings: {
-            sendTest: { titleKey: 'homeGovernance.email.test', descriptionKey: 'homeGovernance.email.testDescription' },
+            sendTest: {},
         } },
     },
 });

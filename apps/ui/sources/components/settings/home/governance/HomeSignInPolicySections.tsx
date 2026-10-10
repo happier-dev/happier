@@ -7,18 +7,20 @@ import type {
     HomeAuthenticationPolicyV1,
 } from '@happier-dev/protocol/home/governance';
 
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
-import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
+import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { Modal } from '@/modal';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { setHomeAuthenticationPolicies } from '@/sync/ops/home/homeGovernanceOperations';
 import { t } from '@/text';
 
+import { homeCompanySignInHref, homeSignInPlatformForKeys, homeSignInPlatformHref } from '../signInProviders/homeSignInPlatforms';
 import { HomeDeploymentFixedNote } from './HomeDeploymentFixedNote';
 import type { HomeAdministrationContext } from './homeAdministrationContext';
 import { HOME_AUTHENTICATION_SETTINGS } from './homeAuthenticationSettings';
@@ -259,6 +261,7 @@ export const SignInPolicyEditor = React.memo(function SignInPolicyEditor(
     props: Readonly<{ context: HomeAdministrationContext }>,
 ) {
     const { context } = props;
+    const router = useRouter();
     const options = context.projection.authenticationOptions;
     const committed = draftFromProjection(context);
     const committedKey = committed ? JSON.stringify(committed) : '';
@@ -406,6 +409,10 @@ export const SignInPolicyEditor = React.memo(function SignInPolicyEditor(
         />
     ) : null);
 
+    const companyProviderNames = (context.projection.identityServices?.deploymentOidcProviders ?? [])
+        .map((provider) => provider.displayName)
+        .join(' · ');
+
     return (
         <>
             <SettingAnchor setting={HOME_AUTHENTICATION_SETTINGS.settings.enabledMethodIds}><ItemGroup
@@ -422,6 +429,26 @@ export const SignInPolicyEditor = React.memo(function SignInPolicyEditor(
                     const locked = method.fixedBy !== undefined || method.unavailable !== undefined;
                     const canToggle = interactive && !locked && (!retained || on) && !(on && onIds.length === 1);
                     const missingKeys = method.fixedBy ? [] : method.unavailable?.requires ?? [];
+                    // Keys this Home can set itself lead to the row that sets them (DR-03); only keys
+                    // the deployment alone provides are named, as chips.
+                    const setUp = missingKeys.length > 0 ? homeSignInPlatformForKeys(missingKeys) : null;
+                    if (setUp) {
+                        return (
+                            <React.Fragment key={method.id}>
+                            <Item
+                                testID={`home-policy-auth-method:${method.id}`}
+                                title={method.displayName ?? method.id}
+                                subtitle={setUp === 'github'
+                                    ? t('homeGovernance.signInPolicy.needsGithubApp')
+                                    : t('homeGovernance.signInPolicy.needsWorkos')}
+                                subtitleLines={0}
+                                detail={t('homeGovernance.signInPolicy.setUp')}
+                                onPress={() => router.push(homeSignInPlatformHref(context.scope.serverId, setUp) as never)}
+                            />
+                            {wideningCard(`method:${method.id}`)}
+                            </React.Fragment>
+                        );
+                    }
                     const subtitle = method.fixedBy || missingKeys.length > 0
                         ? undefined
                         : method.unavailable
@@ -477,33 +504,39 @@ export const SignInPolicyEditor = React.memo(function SignInPolicyEditor(
                         showChevron={false}
                     /></SettingAnchor>
                 ) : null}
+                {/* Company sign-in is set up on its own page; here it is one line that leads there
+                    (lab `hcPolicies-R`). The names are the providers this Home's projection already
+                    carries (the deployment's); the Home's own are listed on that page. */}
+                <Item
+                    testID="home-policy-auth-company-sign-in"
+                    title={t('homeGovernance.signInProviders.companySignIn')}
+                    subtitle={companyProviderNames || t('homeGovernance.signInProviders.companySignInDescription')}
+                    subtitleLines={0}
+                    detail={t('homeGovernance.signInProviders.title')}
+                    onPress={() => router.push(homeCompanySignInHref(context.scope.serverId) as never)}
+                />
             </ItemGroup></SettingAnchor>
 
             <ItemGroup
                 title={t('homeGovernance.signInPolicy.admissionTitle')}
                 description={editable ? undefined : readOnlyDescription}
             >
-                <SettingAnchor setting={HOME_AUTHENTICATION_SETTINGS.settings.admission}><Item
+                <SettingAnchor setting={HOME_AUTHENTICATION_SETTINGS.settings.admission}><SegmentedChoiceItem<HomeAdmissionModeV1 | 'inherited'>
                     testID="home-policy-auth-admission"
+                    testIDPrefix="home-policy-auth-admission"
                     title={t('homeGovernance.signInPolicy.newAccounts')}
+                    // An inherited admission matches no segment; the line says what applies.
                     subtitle={admissionDescription(selected.admission)}
-                    accessoryLayout="adaptive"
-                    showChevron={false}
-                    rightElement={(
-                        <SegmentedTabBar<HomeAdmissionModeV1 | 'inherited'>
-                            role="radiogroup"
-                            tabs={ADMISSION_CHOICES.map((admission) => ({ id: admission, label: homeAdmissionModeLabel(admission) }))}
-                            activeTabId={selected.admission ?? 'inherited'}
-                            onSelectTab={(admission) => {
-                                if (admission !== 'inherited') patch({ admission });
-                            }}
-                            slidingThumb
-                            segmentSizing="content"
-                            disabled={!interactive}
-                            accessibilityLabel={t('homeGovernance.signInPolicy.newAccounts')}
-                            testIDPrefix="home-policy-auth-admission"
-                        />
-                    )}
+                    options={ADMISSION_CHOICES.map((admission) => ({
+                        id: admission,
+                        label: homeAdmissionModeLabel(admission),
+                        description: admissionDescription(admission),
+                    }))}
+                    value={selected.admission ?? 'inherited'}
+                    onChange={(admission) => {
+                        if (admission !== 'inherited') patch({ admission });
+                    }}
+                    disabled={!interactive}
                 /></SettingAnchor>
                 {wideningCard('admission')}
                 {anonymous ? (
@@ -537,8 +570,9 @@ export const SignInPolicyEditor = React.memo(function SignInPolicyEditor(
                 description={t('homeGovernance.signInPolicy.encryptionDescription')}
             >
                 {storage && storageSelected ? (
-                    <SettingAnchor setting={HOME_AUTHENTICATION_SETTINGS.settings.storagePolicy}><Item
+                    <SettingAnchor setting={HOME_AUTHENTICATION_SETTINGS.settings.storagePolicy}><SegmentedChoiceItem<StoragePolicy>
                         testID="home-policy-auth-storage"
+                        testIDPrefix="home-policy-auth-storage"
                         title={t('homeGovernance.signInPolicy.storagePolicy')}
                         subtitle={storage.fixedBy
                             ? undefined
@@ -549,21 +583,10 @@ export const SignInPolicyEditor = React.memo(function SignInPolicyEditor(
                             ? <HomeDeploymentFixedNote keys={[storage.fixedBy]} testID="home-policy-auth-storage" />
                             : undefined}
                         subtitleLines={0}
-                        accessoryLayout="adaptive"
-                        showChevron={false}
-                        rightElement={(
-                            <SegmentedTabBar<StoragePolicy>
-                                role="radiogroup"
-                                tabs={STORAGE_CHOICES.map((policy) => ({ id: policy, label: homeStoragePolicyLabel(policy) }))}
-                                activeTabId={storageSelected}
-                                onSelectTab={(storagePolicy) => patch({ storagePolicy })}
-                                slidingThumb
-                                segmentSizing="content"
-                                disabled={!interactive || storage.fixedBy !== null}
-                                accessibilityLabel={t('homeGovernance.signInPolicy.storagePolicy')}
-                                testIDPrefix="home-policy-auth-storage"
-                            />
-                        )}
+                        options={STORAGE_CHOICES.map((policy) => ({ id: policy, label: homeStoragePolicyLabel(policy) }))}
+                        value={storageSelected}
+                        onChange={(storagePolicy) => patch({ storagePolicy })}
+                        disabled={!interactive || storage.fixedBy !== null}
                     /></SettingAnchor>
                 ) : null}
                 {ACCOUNT_MODES.map((mode, index) => {
@@ -592,32 +615,22 @@ export const SignInPolicyEditor = React.memo(function SignInPolicyEditor(
                         ? <SettingAnchor key={mode} setting={HOME_AUTHENTICATION_SETTINGS.settings.permittedAccountModes}>{row}</SettingAnchor>
                         : row;
                 })}
-                <SettingAnchor setting={HOME_AUTHENTICATION_SETTINGS.settings.recommendedProvisioningMode}><Item
+                <SettingAnchor setting={HOME_AUTHENTICATION_SETTINGS.settings.recommendedProvisioningMode}><SegmentedChoiceItem<AccountMode | 'inherited'>
                     testID="home-policy-auth-recommended"
+                    testIDPrefix="home-policy-auth-recommended"
                     title={t('homeGovernance.recommendedMode')}
                     subtitle={t('homeGovernance.recommendedModeDescription')}
                     subtitleLines={0}
-                    accessoryLayout="adaptive"
-                    showChevron={false}
-                    rightElement={(
-                        <SegmentedTabBar<AccountMode | 'inherited'>
-                            role="radiogroup"
-                            tabs={[
-                                { id: 'inherited' as const, label: t('homeGovernance.signInPolicy.recommendedInherited') },
-                                ...modes.map((mode) => ({
-                                    id: mode,
-                                    label: homeAccountModeLabel(mode),
-                                })),
-                            ]}
-                            activeTabId={recommendedTab}
-                            onSelectTab={(mode) => patch({ recommendedProvisioningMode: mode === 'inherited' ? null : mode })}
-                            slidingThumb
-                            segmentSizing="content"
-                            disabled={!interactive}
-                            accessibilityLabel={t('homeGovernance.recommendedMode')}
-                            testIDPrefix="home-policy-auth-recommended"
-                        />
-                    )}
+                    options={[
+                        { id: 'inherited' as const, label: t('homeGovernance.signInPolicy.recommendedInherited') },
+                        ...modes.map((mode) => ({
+                            id: mode,
+                            label: homeAccountModeLabel(mode),
+                        })),
+                    ]}
+                    value={recommendedTab}
+                    onChange={(mode) => patch({ recommendedProvisioningMode: mode === 'inherited' ? null : mode })}
+                    disabled={!interactive}
                 /></SettingAnchor>
                 {wideningCard('encryption')}
             </ItemGroup>

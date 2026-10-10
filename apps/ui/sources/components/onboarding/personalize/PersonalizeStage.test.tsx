@@ -87,8 +87,14 @@ describe('Personalize stage material', () => {
             });
             expect(scope, `material scope for ${glass}`).toBeDefined();
             painted.push(StyleSheet.flatten(scope!.props.style));
-            expect(screen.findHostByTestId('stage-sessions')).not.toBeNull();
-            expect(StyleSheet.flatten(screen.findHostByTestId('stage-sessions')!.props.style).backgroundColor).toContain('--happier-glass-sidebar-opacity');
+            const sessions = screen.findHostByTestId('stage-sessions')!;
+            expect(sessions).not.toBeNull();
+            // Web glass paints below the content so nested floating surfaces keep their backdrop.
+            const materialLayer = sessions.children.find((node) => typeof node !== 'string'
+                && typeof node.type === 'string' && StyleSheet.flatten(node.props.style)?.backgroundColor);
+            expect(materialLayer).toBeDefined();
+            expect(StyleSheet.flatten(typeof materialLayer !== 'string' ? materialLayer?.props.style : undefined)?.backgroundColor)
+                .toContain('--happier-glass-sidebar-opacity');
             standardCleanup();
         }
         expect(painted.map(style => style['--happier-glass-content-opacity'])).toEqual(['100%', '90%', '80%', '0%']);

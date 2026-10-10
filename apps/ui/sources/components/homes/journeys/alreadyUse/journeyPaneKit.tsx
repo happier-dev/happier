@@ -37,7 +37,7 @@ export function PaneHelp(props: Readonly<{ children: React.ReactNode; tone?: 'he
     );
 }
 
-/** A quiet inline link: primary ink, underlined — not a button, not an accent colour. */
+/** A quiet inline action in the journey's identity row. */
 export function PaneLink(props: Readonly<{ label: string; onPress: () => void; testID?: string }>) {
     return (
         <HappierPressable testID={props.testID} accessibilityRole="link" onPress={props.onPress}>
@@ -139,7 +139,6 @@ const styles = StyleSheet.create((theme) => ({
         fontSize: 12.5,
         lineHeight: 17,
         color: theme.colors.text.primary,
-        textDecorationLine: 'underline',
     },
     serviceName: { ...Typography.default('medium'), color: theme.colors.text.primary },
     identity: {

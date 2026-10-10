@@ -18,6 +18,8 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
+import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useHomeEmailSettings } from '@/hooks/home/useHomeEmailSettings';
 import { Modal } from '@/modal';
 import type { HomeDomainFailure } from '@/sync/api/home/homeServerActionTransport';
@@ -536,6 +538,35 @@ const EmailPage = React.memo(function EmailPage(props: Readonly<{ context: HomeA
 
     return (
         <>
+            {mail.failure ? (
+                <SurfaceFreshnessLine
+                    testID="home-email-refresh-error"
+                    tone="warning"
+                    busy={mail.loading}
+                    reason={homeGovernanceFailureNotice(mail.failure, { effect: 'read' }).body}
+                    action={{ label: t('homeGovernance.retry'), onPress: mail.reload }}
+                />
+            ) : null}
+            {mail.readinessFailure && mail.readiness ? (
+                <SurfaceFreshnessLine
+                    testID="home-email-readiness-error"
+                    tone="warning"
+                    busy={mail.readinessLoading}
+                    reason={homeGovernanceFailureNotice(mail.readinessFailure, { effect: 'read' }).body}
+                    action={{ label: t('homeGovernance.retry'), onPress: mail.reload }}
+                />
+            ) : mail.readinessFailure ? (
+                <SurfaceStateCard
+                    testID="home-email-readiness-error"
+                    kind="error"
+                    size="line"
+                    title={t('homeGovernance.email.loadFailed')}
+                    reason={homeGovernanceFailureNotice(mail.readinessFailure, { effect: 'read' }).body}
+                    action={{ testID: 'home-email-readiness-retry', label: t('homeGovernance.retry'), onPress: mail.reload }}
+                />
+            ) : !mail.readiness && mail.readinessLoading ? (
+                <SurfaceStateCard testID="home-email-readiness-loading" kind="loading" size="line" title={t('homeGovernance.loading')} />
+            ) : null}
             {readOnly ? (
                 <AttentionBanner
                     testID="home-email-admin-read-only"

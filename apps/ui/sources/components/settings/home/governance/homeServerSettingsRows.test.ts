@@ -4,9 +4,19 @@ import type { HomeSettingEntryV1 } from '@happier-dev/protocol/home/governance';
 import { homeSettingEntryFixture, homeSettingsProjectionFixture } from '@/dev/testkit/fixtures/homeGovernanceFixtures';
 
 import { filterHomeServerSettings, selectHomeServerSettings } from './homeServerSettingsRows';
+import { homeRegistrySettingDeclaration } from './homeServerSettings';
 
 const entry = (key: string, declaration: NonNullable<HomeSettingEntryV1['declaration']>, overrides?: Partial<HomeSettingEntryV1>) =>
     homeSettingEntryFixture(key, { declaration, ...overrides });
+
+it('resolves registry declarations from their canonical Home storage binding after a setting moves to a bespoke page', () => {
+    expect(homeRegistrySettingDeclaration('HAPPIER_HOME_DISPLAY_NAME')?.declaration.storage).toMatchObject({
+        scope: 'home', kind: 'homeSettings', key: 'HAPPIER_HOME_DISPLAY_NAME',
+    });
+    expect(homeRegistrySettingDeclaration('METRICS_PORT')?.declaration.storage).toMatchObject({
+        scope: 'home', kind: 'homeSettings', key: 'METRICS_PORT',
+    });
+});
 
 describe('selectHomeServerSettings', () => {
     it('takes every key no bespoke page edits, and leaves the rest to their pages', () => {
@@ -18,8 +28,10 @@ describe('selectHomeServerSettings', () => {
                 entry('HAPPIER_API_RATE_LIMITS_GLOBAL_MAX', { type: 'int', section: 'server', family: 'rateLimits' }),
                 entry('GITHUB_CLIENT_ID', { type: 'string', section: 'policies', group: 'github' }),
                 entry('HAPPIER_WEBAPP_OAUTH_RETURN_URL_BASE', { type: 'url', section: 'reach', group: 'addresses' }),
-                // Owned by Policies, Reach, Email, Features and Data.
+                // Registry signup settings are generic; only document-owned policy keys are excluded.
                 entry('AUTH_SIGNUP_PROVIDERS', { type: 'list', section: 'policies', group: 'signup' }),
+                entry('HAPPIER_FEATURE_AUTH_EMAIL_PASSWORD__PROVISION_ENABLED', { type: 'boolean', section: 'policies', family: 'auth.emailPassword' }),
+                entry('AUTH_ANONYMOUS_SIGNUP_ENABLED', { type: 'boolean', section: 'policies', group: 'signup' }),
                 entry('HAPPIER_PUBLIC_SERVER_URL', { type: 'url', section: 'reach', group: 'addresses' }),
                 entry('HAPPIER_AUTH_EMAIL_SMTP_HOST', { type: 'string', section: 'email' }),
                 entry('HAPPIER_FEATURE_VOICE__ENABLED', { type: 'boolean', section: 'features', featureId: 'voice' }),
@@ -33,7 +45,8 @@ describe('selectHomeServerSettings', () => {
         expect(keysOf(layout.more)).toEqual({
             ui: ['HAPPIER_SERVER_UI_DIR'],
             rateLimits: ['HAPPIER_SESSION_MESSAGES_RATE_LIMIT_MAX'],
-            github: ['GITHUB_CLIENT_ID'],
+            signup: ['AUTH_SIGNUP_PROVIDERS'],
+            other: ['HAPPIER_FEATURE_AUTH_EMAIL_PASSWORD__PROVISION_ENABLED'],
             addresses: ['HAPPIER_WEBAPP_OAUTH_RETURN_URL_BASE'],
         });
         expect(layout.readOnly.map((row) => row.key)).toEqual(['HAPPIER_CANONICAL_SERVER_URL']);

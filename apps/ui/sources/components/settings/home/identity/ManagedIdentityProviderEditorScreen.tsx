@@ -20,7 +20,6 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
-import { useActiveUnsavedChangesGuard } from '@/utils/navigation/useActiveUnsavedChangesGuard';
 import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
 import { promptUnsavedChangesAlert } from '@/utils/ui/promptUnsavedChangesAlert';
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
@@ -464,19 +463,8 @@ export const ManagedOidcProviderEditorContent = React.memo(function ManagedOidcP
         requestDecision,
         onSave: save,
         continueOnSave: false,
-        onContinue: (action) => (navigation as { dispatch?: (value: unknown) => void }).dispatch?.(action),
+        onContinue: (action) => { if (action) (navigation as { dispatch?: (value: unknown) => void }).dispatch?.(action); },
         tag: 'ManagedIdentityProviderEditorScreen.beforeRemove',
-    });
-    useActiveUnsavedChangesGuard({
-        navigation,
-        guard: React.useMemo(() => ({
-            isDirtyRef: dirtyRef,
-            ignoreRef,
-            requestDecision,
-            onSave: save,
-            continueOnSave: false,
-            tag: 'ManagedIdentityProviderEditorScreen.shellGuard',
-        }), [requestDecision, save]),
     });
 
     if (props.loading) {

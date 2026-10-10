@@ -104,14 +104,29 @@ describe('failed foreground Home reach episodes', () => {
         expect(readRecentHomeReachFailures('srv_home_a', Date.now())).toBe(0);
     });
 
+    it('records an actual foreground outage without requiring a waiter deadline', async () => {
+        const cancellation = new AbortController();
+        const wait = expect(waitForServerReachable({
+            serverUrl: 'https://home.example.test', token: null, homeIdentityId: 'srv_home_a', signal: cancellation.signal,
+        })).rejects.toMatchObject({ name: 'AbortError' });
+        await vi.advanceTimersByTimeAsync(0);
+        const failuresBeforeCancellation = readRecentHomeReachFailures('srv_home_a', Date.now());
+        cancellation.abort();
+        await wait;
+        expect(failuresBeforeCancellation).toBe(1);
+    });
+
     it('does not count an expired caller wait after supervision intentionally stops', async () => {
+        let finishProbe!: (response: Response) => void;
+        setRuntimeFetch(() => new Promise<Response>((resolve) => { finishProbe = resolve; }));
         const wait = expect(waitForServerReachable({
             serverUrl: 'https://home.example.test', token: null, homeIdentityId: 'srv_home_a', timeoutMs: 1000,
         })).rejects.toMatchObject({ name: 'ServerReachabilityWaitTimeoutError' });
         await vi.advanceTimersByTimeAsync(0);
-        expect(peekServerReachabilityState('https://home.example.test')?.phase).toBe('offline');
+        expect(peekServerReachabilityState('https://home.example.test')?.phase).not.toBe('offline');
         await stopServerReachabilitySupervisors();
         expect(peekServerReachabilityState('https://home.example.test')?.phase).toBe('shutting_down');
+        finishProbe(new Response(null, { status: 200 }));
         await vi.advanceTimersByTimeAsync(1001);
         await wait;
         expect(readRecentHomeReachFailures('srv_home_a', Date.now())).toBe(0);

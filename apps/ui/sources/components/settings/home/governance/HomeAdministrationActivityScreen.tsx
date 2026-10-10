@@ -4,10 +4,10 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
-import { Icon } from '@/components/ui/icons/Icon';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { formatRelativeTimeShort } from '@/components/ui/selectionList/formatRelativeTimeShort';
+import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { useHomePagedList, type HomePageReader } from '@/hooks/home/useHomePagedList';
 import { listHomeAudit } from '@/sync/ops/home/homeGovernanceOperations';
 import { t } from '@/text';
@@ -40,7 +40,7 @@ export const HomeActivityRow = React.memo(function HomeActivityRow(props: Readon
             testID={`home-activity-row:${props.event.id}`}
             leftElement={row.actorAccount
                 ? <Avatar id={row.actorAccount.id} size={ACTOR_MARK_SIZE} imageUrl={row.actorAccount.avatarUrl} />
-                : <Icon name="terminal" size={20} color={theme.colors.text.secondary} />}
+                : <Icon name="terminal" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
             title={`${row.actor} ${row.verb}`}
             titleLines={0}
             subtitle={lines.join('\n')}

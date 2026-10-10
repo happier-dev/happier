@@ -6,23 +6,29 @@ import { t } from '@/text';
 import { Modal } from '@/modal';
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 import type { SshCredentialsDraft } from '@/components/ssh/SshCredentialsFields';
-import { useRemoteSshBootstrapTask } from '@/components/systemTasks/remoteSshBootstrap/useRemoteSshBootstrapTask';
+import { useRemoteSshBootstrapTask, type RemoteSshBootstrapFormState } from '@/components/systemTasks/remoteSshBootstrap/useRemoteSshBootstrapTask';
+import type { SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
 import type { SystemTaskRunState, SystemTaskRunner } from '@/components/systemTasks/types';
 import type { PlanChecklistItem } from '@/components/systemTasks/planChecklist';
 import { usePlanChecklistController } from '@/components/systemTasks/planChecklist';
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { useSetting } from '@/sync/store/hooks';
-import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
+import { useActiveServerAccountScope } from '@/sync/store/hooks';
+import { useRemoteHostCatalogSnapshot } from '@/sync/store/settings/remoteHostCatalogSnapshot';
+import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { withRemoteHostSshConfig, runRemoteHostRelayAccessTask } from '@/sync/ops/remoteHosts/remoteHostOperations';
+import { startAdmittedRemoteHostSystemTask } from '@/components/settings/remoteHosts/remoteHostTaskOperations';
+import { getSystemTasksRunner } from '@/components/systemTasks/systemTasksRuntime';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { parseSshTarget } from '@happier-dev/protocol/ssh/sshTarget';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
-import { readRemoteHosts, type RemoteHost } from '@/sync/domains/remoteHosts/remoteHostModel';
+import type { RemoteHost } from '@/sync/domains/remoteHosts/remoteHostModel';
 import { getRemoteHostLocalOverridesStore } from '@/sync/domains/remoteHosts/remoteHostLocalOverrides';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { applyConfiguredSshHostSuggestionToDraft, createDefaultSshCredentialsDraft, isSshCredentialsDraftReady, parseSshPortNumber } from '@/components/ssh/sshCredentialsDraft';
 import { filterConfiguredSshHostSuggestions, type SshConfiguredHostSuggestion } from '@/components/ssh/filterConfiguredSshHostSuggestions';
 import { useConfiguredSshHostSuggestions } from '@/components/ssh/useConfiguredSshHostSuggestions';
-import type { SecretString } from '@/sync/encryption/secretSettings';
 import { isLoopbackServerUrl } from '@/sync/domains/server/url/serverUrlClassification';
 
 import { buildRemoteSshChecklistItems } from './buildRemoteSshChecklistItems';
@@ -35,10 +41,11 @@ import { RemoteSshChecklistCredentialsPhase } from './RemoteSshChecklistCredenti
 import { RemoteSshChecklistPlanPhase } from './RemoteSshChecklistPlanPhase';
 import { RemoteSshChecklistExecutionPhase } from './RemoteSshChecklistExecutionPhase';
 import { RemoteSshChecklistCompletePhase } from './RemoteSshChecklistCompletePhase';
-import { resolveRemoteSshBootstrapFormState } from './resolveRemoteSshBootstrapFormState';
+import { resolveRemoteSshBootstrapFormState, buildRemoteSshBootstrapFormStateFromSshConfig } from './resolveRemoteSshBootstrapFormState';
 import { persistRemoteHostAfterRemoteSshCompletion } from './persistRemoteHostAfterRemoteSshCompletion';
 
 const SAVED_REMOTE_HOST_NEW_ID = '__new__';
+const EMPTY_REMOTE_HOSTS: readonly RemoteHost[] = [];
 
 function buildRemoteHostDraftFromHost(remoteHost: RemoteHost): SshCredentialsDraft {
     const parsed = parseSshTarget(remoteHost.ssh.target);
@@ -116,6 +123,7 @@ function buildRelayAccessTargetFromResolvedFormState(params: Readonly<{
     sshAuth: 'agent' | 'keyfile' | 'password';
     sshPassword: string;
     identityFilePath: string;
+    addressOnly?: boolean;
 }>): RelayAccessTaskTarget | null {
     const username = params.sshUsername.trim();
     const host = params.sshHost.trim();
@@ -132,7 +140,7 @@ function buildRelayAccessTargetFromResolvedFormState(params: Readonly<{
     if (params.sshAuth === 'keyfile' && !identityFile) {
         return null;
     }
-    if (params.sshAuth === 'password' && !password) {
+    if (params.sshAuth === 'password' && !password && !params.addressOnly) {
         return null;
     }
 
@@ -143,7 +151,7 @@ function buildRelayAccessTargetFromResolvedFormState(params: Readonly<{
             auth: params.sshAuth,
             ...(port !== null ? { port } : {}),
             ...(params.sshAuth === 'keyfile' ? { identityFile } : {}),
-            ...(params.sshAuth === 'password' ? { password } : {}),
+            ...(params.sshAuth === 'password' && !params.addressOnly ? { password } : {}),
         },
     };
 }
@@ -165,6 +173,7 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
         machineId: string | null;
         relayRuntimeUrl: string | null;
         relayAccessTarget: RelayAccessTaskTarget | null;
+        runWithRelayAccessTarget?: <T>(run: (target: RelayAccessTaskTarget, startSpec?: (spec: SystemTaskSpec) => Promise<string>, admittedUpstreamUrl?: string | null) => Promise<T>) => Promise<T>;
         mode: RemoteSshChecklistMode;
     }>) => void;
     onCancel?: () => void;
@@ -179,8 +188,10 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
         ...createDefaultSshCredentialsDraft(props.runner?.mode === 'native' ? 'password' : 'agent'),
         ...(props.initialDraft ?? {}),
     }));
-    const remoteHostsRaw = useSetting('remoteHostsV1');
-    const remoteHostsV1 = React.useMemo(() => readRemoteHosts(remoteHostsRaw), [remoteHostsRaw]);
+    const hostScope = useActiveServerAccountScope();
+    const hostCatalog = useRemoteHostCatalogSnapshot(hostScope);
+    const catalogHosts = hostCatalog?.data ?? EMPTY_REMOTE_HOSTS;
+    const runner = props.runner ?? getSystemTasksRunner();
     const [hostPickerOpen, setHostPickerOpen] = React.useState(false);
     const [selectedSavedRemoteHostId, setSelectedSavedRemoteHostId] = React.useState<string>(SAVED_REMOTE_HOST_NEW_ID);
     const savedDraftRef = React.useRef<SshCredentialsDraft>(draft);
@@ -190,6 +201,10 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
         selectedSavedRemoteHostId: string;
         saveHost: boolean;
         saveSecretMaterial: boolean;
+        scope: ServerAccountScope | null;
+        expectedRevision: number | 'absent' | null;
+        host: RemoteHost | null;
+        lifetime: ReturnType<typeof captureActiveServerAccountScopeLifetime>;
     }> | null>(null);
 
     React.useEffect(() => {
@@ -211,14 +226,14 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
         enabled: canDiscoverConfiguredSshHosts,
     });
 
-    const usableRemoteHostsV1 = React.useMemo(
-        () => (remoteHostsManagementEnabled ? remoteHostsV1 : []),
-        [remoteHostsManagementEnabled, remoteHostsV1],
+    const usableRemoteHosts = React.useMemo(
+        () => (remoteHostsManagementEnabled ? catalogHosts : EMPTY_REMOTE_HOSTS),
+        [remoteHostsManagementEnabled, catalogHosts],
     );
     const filteredConfiguredHostSuggestions = React.useMemo(() => filterConfiguredSshHostSuggestions({
         suggestions: configuredHostSuggestions.suggestions,
-        remoteHosts: usableRemoteHostsV1,
-    }), [configuredHostSuggestions.suggestions, usableRemoteHostsV1]);
+        remoteHosts: usableRemoteHosts,
+    }), [configuredHostSuggestions.suggestions, usableRemoteHosts]);
 
     const [saveHost, setSaveHost] = React.useState(false);
     const saveHostInitializedRef = React.useRef(false);
@@ -244,17 +259,17 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
 
     const remoteHostItems = React.useMemo((): DropdownMenuItem[] => ([
         { id: SAVED_REMOTE_HOST_NEW_ID, title: t('setupOnboarding.remoteHosts.newHostOption') },
-        ...usableRemoteHostsV1.map((host) => ({
+        ...usableRemoteHosts.map((host) => ({
             id: host.id,
             title: host.name,
             subtitle: host.ssh.target,
         })),
-    ]), [usableRemoteHostsV1]);
+    ]), [usableRemoteHosts]);
 
     const selectedSavedHost = React.useMemo(() => {
         if (selectedSavedRemoteHostId === SAVED_REMOTE_HOST_NEW_ID) return null;
-        return usableRemoteHostsV1.find((host) => host.id === selectedSavedRemoteHostId) ?? null;
-    }, [selectedSavedRemoteHostId, usableRemoteHostsV1]);
+        return usableRemoteHosts.find((host) => host.id === selectedSavedRemoteHostId) ?? null;
+    }, [selectedSavedRemoteHostId, usableRemoteHosts]);
     const usingSavedHost = selectedSavedHost != null;
 
     const handleToggleSaveHost = React.useCallback(() => {
@@ -275,7 +290,7 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
             return;
         }
 
-        const selected = usableRemoteHostsV1.find((host) => host.id === itemId) ?? null;
+        const selected = usableRemoteHosts.find((host) => host.id === itemId) ?? null;
         if (!selected) return;
 
         if (selectedSavedRemoteHostId === SAVED_REMOTE_HOST_NEW_ID) {
@@ -284,7 +299,7 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
 
         setSelectedSavedRemoteHostId(itemId);
         setDraft(buildRemoteHostDraftFromHost(selected));
-    }, [draft, selectedSavedRemoteHostId, usableRemoteHostsV1]);
+    }, [draft, selectedSavedRemoteHostId, usableRemoteHosts]);
 
     const handleSelectConfiguredHostSuggestion = React.useCallback((suggestion: SshConfiguredHostSuggestion) => {
         setHostPickerOpen(false);
@@ -317,8 +332,25 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
         intent: props.mode === 'remoteRelayHost' ? 'personalHome.create' : 'machineSetup',
     });
 
-    const resolveRemoteSshFormStateForExecution = React.useCallback(async (installRelayRuntime: boolean) => {
-        return await resolveRemoteSshBootstrapFormState({
+    const runWithRemoteSshFormStateForExecution = React.useCallback(async <T,>(installRelayRuntime: boolean,
+        run: (form: RemoteSshBootstrapFormState, startSpec?: (spec: SystemTaskSpec) => Promise<string>) => Promise<T>): Promise<T> => {
+        if (selectedSavedRemoteHostId !== SAVED_REMOTE_HOST_NEW_ID) {
+            if (!hostScope || !selectedSavedHost || !hostCatalog || hostCatalog.stale || hostCatalog.catalog.status !== 'ready'
+                || hostCatalog.catalog.cleanup === 'pending' || typeof hostCatalog.catalog.revision !== 'number') {
+                throw new Error('remote_host_catalog_unavailable');
+            }
+            const account = await captureLazyActionAccountContext(hostScope.serverId);
+            try {
+                if (account.accountId !== hostScope.accountId) throw new Error('action_account_scope_changed');
+                return await withRemoteHostSshConfig(account, { hostId: selectedSavedHost.id, expectedRevision: hostCatalog.catalog.revision },
+                    async ({ config, assertCurrent }) => {
+                        const form = buildRemoteSshBootstrapFormStateFromSshConfig({ config: config.value, draft, installRelayRuntime });
+                        assertCurrent();
+                        return run(form, async spec => (await startAdmittedRemoteHostSystemTask({ runner, assertCurrent }, spec)).taskId);
+                    });
+            } finally { account.dispose(); }
+        }
+        const form = await resolveRemoteSshBootstrapFormState({
             draft,
             usingSavedHost,
             selectedSavedHost,
@@ -326,19 +358,8 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
             saveSecretMaterial,
             installRelayRuntime,
             remoteHostsSecretMaterialEnabled,
-            decryptSecretValue: (input: SecretString | null | undefined) => {
-                if (input && typeof input === 'object' && !Array.isArray(input)) {
-                    const record = input as unknown as { value?: unknown };
-                    const plaintext = typeof record.value === 'string' ? record.value.trim() : '';
-                    if (plaintext) return plaintext;
-                }
-                try {
-                    return getSyncSingleton().decryptSecretValue(input);
-                } catch {
-                    return null;
-                }
-            },
         });
+        return run(form);
     }, [
         draft,
         privateKeyMaterialDraft,
@@ -346,6 +367,10 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
         saveSecretMaterial,
         selectedSavedHost,
         usingSavedHost,
+        selectedSavedRemoteHostId,
+        hostCatalog,
+        hostScope,
+        runner,
     ]);
 
     const items = React.useMemo(() => buildRemoteSshChecklistItems({
@@ -367,10 +392,11 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
         plan: RemoteSshChecklistExecutionPlan,
         _publishSnapshot: (snapshot: SystemTaskRunState | null) => void,
     ) => {
-        const formState = await resolveRemoteSshFormStateForExecution(plan.installRelayRuntime);
-        completionRelayAccessTargetRef.current = buildRelayAccessTargetFromResolvedFormState(formState);
-        await start(formState);
-    }, [resolveRemoteSshFormStateForExecution, start]);
+        await runWithRemoteSshFormStateForExecution(plan.installRelayRuntime, async (formState, startSpec) => {
+            completionRelayAccessTargetRef.current = buildRelayAccessTargetFromResolvedFormState({ ...formState, addressOnly: true });
+            await start(formState, startSpec);
+        });
+    }, [runWithRemoteSshFormStateForExecution, start]);
 
     const mapExecutionSnapshotToRowState = React.useCallback((
         snapshot: SystemTaskRunState | null,
@@ -432,18 +458,37 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
         }
         if (activeTaskSnapshot?.result?.ok && !completionHandledRef.current) {
             completionHandledRef.current = true;
+            const currentRun = runContextRef.current;
+            let relayRevision = currentRun?.expectedRevision ?? null;
             const completion = {
                 machineId: completedMachineId,
                 relayRuntimeUrl: completionRelayUrl,
                 relayAccessTarget: completionRelayAccessTargetRef.current,
+                runWithRelayAccessTarget: async <T,>(run: (target: RelayAccessTaskTarget,
+                    startSpec?: (spec: SystemTaskSpec) => Promise<string>, admittedUpstreamUrl?: string | null) => Promise<T>): Promise<T> => {
+                    if (currentRun?.host && currentRun.scope && typeof relayRevision === 'number') {
+                        if (!currentRun.lifetime?.isCurrent()) throw new Error('action_account_scope_changed');
+                        return runRemoteHostRelayAccessTask({ scope: currentRun.scope, hostId: currentRun.host.id,
+                            expectedRevision: relayRevision, run: (target, admittedUpstreamUrl, assertCurrent) => run(target,
+                                async spec => (await startAdmittedRemoteHostSystemTask({ runner, assertCurrent }, spec)).taskId,
+                                admittedUpstreamUrl) });
+                    }
+                    return runWithRemoteSshFormStateForExecution(installRelayRuntimeSelected, async form => {
+                        const target = buildRelayAccessTargetFromResolvedFormState(form);
+                        if (!target) throw new Error('relay_access_target_unavailable');
+                        return run(target);
+                    });
+                },
                 mode: props.mode,
             } as const;
 
-            const currentRun = runContextRef.current;
             const persistence = persistRemoteHostAfterRemoteSshCompletion({
                 managementEnabled: remoteHostsManagementEnabled,
                 secretMaterialEnabled: remoteHostsSecretMaterialEnabled,
-                remoteHostsRaw,
+                scope: currentRun?.scope ?? null,
+                expectedRevision: currentRun?.expectedRevision ?? null,
+                host: currentRun?.host ?? undefined,
+                assertCurrent: () => { if (currentRun?.scope && !currentRun.lifetime?.isCurrent()) throw new Error('action_account_scope_changed'); },
                 selectedSavedRemoteHostId,
                 runContext: currentRun,
                 newHostSentinelId: SAVED_REMOTE_HOST_NEW_ID,
@@ -455,9 +500,31 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
                 },
             });
             persistence.then(
-                () => {
+                result => {
+                    if (result.ok && result.localOverrides !== 'retired') relayRevision = result.revision;
+                    if (!result.ok && remoteHostsManagementEnabled && (currentRun?.saveHost || currentRun?.host)) {
+                        setStartErrorMessage(t('errors.operationFailed'));
+                    }
                     setPhase('complete');
-                    props.onCompleted?.(completion);
+                    if (result.ok && result.localOverrides !== 'retired' && currentRun?.scope) {
+                        const scope = currentRun.scope;
+                        const hostId = result.hostId;
+                        const revision = result.revision;
+                        const lifetime = currentRun.lifetime;
+                        const runWithRelayAccessTarget = async <T,>(run: (target: RelayAccessTaskTarget,
+                            startSpec?: (spec: SystemTaskSpec) => Promise<string>, admittedUpstreamUrl?: string | null) => Promise<T>): Promise<T> => {
+                            if (!lifetime?.isCurrent()) throw new Error('action_account_scope_changed');
+                            return runRemoteHostRelayAccessTask({ scope, hostId, expectedRevision: revision,
+                                run: (target, admittedUpstreamUrl, assertCurrent) => run(target,
+                                    async spec => (await startAdmittedRemoteHostSystemTask({ runner, assertCurrent }, spec)).taskId,
+                                    admittedUpstreamUrl) });
+                        };
+                        setDraft(current => ({ ...current, password: '' }));
+                        setPrivateKeyMaterialDraft('');
+                        props.onCompleted?.({ ...completion, runWithRelayAccessTarget });
+                    } else {
+                        props.onCompleted?.(completion);
+                    }
                 },
                 (error: unknown) => {
                     completionHandledRef.current = false;
@@ -479,7 +546,8 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
         completionRelayUrl,
         remoteHostsManagementEnabled,
         remoteHostsSecretMaterialEnabled,
-        remoteHostsRaw,
+        runWithRemoteSshFormStateForExecution,
+        installRelayRuntimeSelected,
         selectedSavedRemoteHostId,
     ]);
 
@@ -491,6 +559,11 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
             selectedSavedRemoteHostId,
             saveHost,
             saveSecretMaterial,
+            scope: hostScope,
+            expectedRevision: hostCatalog && !hostCatalog.stale && hostCatalog.catalog.status === 'ready' && hostCatalog.catalog.cleanup !== 'pending'
+                ? hostCatalog.catalog.revision : null,
+            host: selectedSavedHost,
+            lifetime: captureActiveServerAccountScopeLifetime(),
         };
         setPhase('execution');
         try {
@@ -508,20 +581,22 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
         saveHost,
         saveSecretMaterial,
         selectedSavedRemoteHostId,
+        selectedSavedHost,
+        hostScope,
+        hostCatalog,
     ]);
 
     const handleContinueAfterPrompt = React.useCallback(async () => {
         if (!prompt) return;
         setStartErrorMessage(null);
         try {
-            const formState = await resolveRemoteSshFormStateForExecution(installRelayRuntimeSelected);
-
-            if (prompt.kind === 'ssh.password') {
-                await answerPasswordPrompt(formState);
-                return;
-            }
-
-            await continueAfterPrompt(formState);
+            await runWithRemoteSshFormStateForExecution(installRelayRuntimeSelected, async (formState, startSpec) => {
+                if (prompt.kind === 'ssh.password') {
+                    await answerPasswordPrompt(formState);
+                    return;
+                }
+                await continueAfterPrompt(formState, startSpec);
+            });
         } catch (error) {
             setStartErrorMessage(error instanceof Error ? error.message : t('setupOnboarding.remoteSshChecklist.continueFailed'));
         }
@@ -530,7 +605,7 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
         continueAfterPrompt,
         installRelayRuntimeSelected,
         prompt,
-        resolveRemoteSshFormStateForExecution,
+        runWithRemoteSshFormStateForExecution,
     ]);
 
     const handleCopyDiagnostics = React.useCallback(async (itemId: string): Promise<boolean> => {
@@ -719,7 +794,7 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
             <RemoteSshChecklistCredentialsPhase
                 testID={props.testID}
                 copy={copy}
-                remoteHostsCount={usableRemoteHostsV1.length}
+                remoteHostsCount={usableRemoteHosts.length}
                 hostPickerOpen={hostPickerOpen}
                 onChangeHostPickerOpen={setHostPickerOpen}
                 hostPickerItems={remoteHostItems}

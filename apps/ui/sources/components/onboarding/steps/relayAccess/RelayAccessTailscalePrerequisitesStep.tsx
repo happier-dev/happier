@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
+import type { RelayAccessControlOptions } from '@/components/settings/server/relayAccess/useRelayAccessControl';
 
 import { LocalRelayAccessControlSection } from '@/components/settings/server/localControl/LocalRelayAccessControlSection';
 
@@ -10,6 +11,7 @@ export type RelayAccessTailscalePrerequisitesStepProps = Readonly<{
     upstreamUrl?: string | null;
     serverProfileId?: string | null;
     target?: RelayAccessTaskTarget;
+    runWithTarget?: RelayAccessControlOptions['runWithTarget'];
     onShareUrlChange?: (shareUrl: string | null) => void;
     onWizardPrimaryChange?: (state: Readonly<{
         label: string;
@@ -29,6 +31,7 @@ export const RelayAccessTailscalePrerequisitesStep = React.memo(function RelayAc
             upstreamUrl={props.upstreamUrl}
             serverProfileId={props.serverProfileId}
             target={props.target}
+            runWithTarget={props.runWithTarget}
             onShareUrlChange={props.onShareUrlChange}
             forcedProviderId={props.providerId}
             showProviderChoices={false}

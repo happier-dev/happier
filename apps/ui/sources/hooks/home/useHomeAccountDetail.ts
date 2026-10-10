@@ -10,7 +10,7 @@ import {
 } from '@/sync/runtime/orchestration/homeAccountChange';
 
 export type HomeAccountDetailState = Readonly<{
-    /** The last detail the Home answered; kept on screen through a failed or in-flight re-read. */
+    /** Last detail, retained through transient refresh failures; withdrawn on authoritative denial/missing. */
     detail: HomeAccountDetailV1 | null;
     status: 'loading' | 'ready' | 'error';
     error: HomeDomainFailure | null;
@@ -52,7 +52,14 @@ export function useHomeAccountDetail(
             const outcome = await getHomeAccount({ scope: { serverId, accountId }, accountId: targetAccountId });
             if (current !== generation.current) return;
             setState((previous) => (outcome.kind === 'failed'
-                ? { detail: previous.detail, status: 'error', error: outcome.failure }
+                ? {
+                    detail: outcome.failure.code === 'home_account_not_found'
+                        || outcome.failure.kind === 'forbidden'
+                        || outcome.failure.kind === 'unauthorized'
+                        ? null : previous.detail,
+                    status: 'error',
+                    error: outcome.failure,
+                }
                 : { detail: outcome.value, status: 'ready', error: null }));
         })();
     }, [enabled, serverId, accountId, targetAccountId]);

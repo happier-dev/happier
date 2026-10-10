@@ -160,7 +160,7 @@ describe('Home console shell', () => {
         expect(ofType(ItemGroup)).toHaveLength(0);
     });
 
-    it('offers only what the viewer may open: an admin has no Sign-in providers, and a Home without an owner only Overview', async () => {
+    it('offers admin-readable Sign-in providers, and only Overview on a Home without an owner', async () => {
         const admin = await addHome(homeGovernanceProjectionFixture({
             viewer: { accountId: 'account-ada', homeRole: 'admin', status: 'active' },
             capabilities: {
@@ -171,7 +171,7 @@ describe('Home console shell', () => {
         }));
         const adminColumn = await renderColumn(`/settings/home/${admin}`, admin);
         await waitForHomeGovernance(() => expect(railRows(adminColumn)).toContain('activity'));
-        expect(railRows(adminColumn)).not.toContain('sign-in-providers');
+        expect(railRows(adminColumn)).toContain('sign-in-providers');
         act(() => adminColumn.tree.unmount());
 
         await harness.reset();

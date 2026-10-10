@@ -18,6 +18,8 @@ export type HomeEmailSettings = Readonly<{
     loading: boolean;
     /** The failure of the latest settings read, when it failed. */
     failure: HomeDomainFailure | null;
+    readinessLoading: boolean;
+    readinessFailure: HomeDomainFailure | null;
     reload: () => void;
     /** Adopts the projection a settings write answered with and re-reads readiness. */
     adoptSettings: (settings: HomeSettingsProjectionV1) => void;
@@ -37,6 +39,8 @@ export function useHomeEmailSettings(scope: ServerAccountScope | null, enabled: 
         readiness: reads.companion,
         loading: reads.loading,
         failure: reads.failure,
+        readinessLoading: reads.companionLoading,
+        readinessFailure: reads.companionFailure,
         reload: reads.reload,
         adoptSettings: reads.adoptSettings,
     }), [reads]);

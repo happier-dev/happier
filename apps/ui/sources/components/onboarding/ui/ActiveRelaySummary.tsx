@@ -60,8 +60,6 @@ export function ActiveRelaySummary(props: ActiveRelaySummaryProps) {
                 <Text
                     testID={`${props.idPrefix ?? 'relay-summary'}-line`}
                     style={styles.value}
-                    numberOfLines={1}
-                    ellipsizeMode="middle"
                 >
                     {toServerUrlDisplay(props.relayUrl)}
                 </Text>

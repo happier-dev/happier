@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 import type {
     HomeRetentionDryRunDomainResultV1,
     HomeRetentionDryRunResultV1,
@@ -13,9 +13,8 @@ import { SettingAnchor } from '@/components/settings/shell/SettingRow';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Switch } from '@/components/ui/forms/Switch';
-import { Icon } from '@/components/ui/icons/Icon';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
-import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
+import { ExpandableItem, ExpandableItemCaret } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
@@ -291,7 +290,6 @@ const SystemRecordsDisclosure = React.memo(function SystemRecordsDisclosure(prop
     onWrite: WriteValues;
     showDivider?: boolean;
 }>) {
-    const { theme } = useUnistyles();
     const declared = React.useMemo(() => props.domains.flatMap((domain) => domainSetting(domain.id) ?? []), [props.domains]);
     const [expanded, setExpanded] = React.useState(false);
     React.useEffect(() => {
@@ -312,9 +310,7 @@ const SystemRecordsDisclosure = React.memo(function SystemRecordsDisclosure(prop
                     subtitle={count === 1
                         ? t('homeGovernance.data.systemRecordsSummary_one')
                         : t('homeGovernance.data.systemRecordsSummary_other', { count })}
-                    rightElement={(
-                        <Icon name={state.expanded ? 'caret-down' : 'caret-right'} size={16} color={theme.colors.text.secondary} />
-                    )}
+                    rightElement={<ExpandableItemCaret expanded={state.expanded} />}
                     showChevron={false}
                 />
             )}

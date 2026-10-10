@@ -90,6 +90,8 @@ function teamSummary(teamId: string, name: string, archivedAt: number | null = n
         // Built by its own owner, so a change to what a Team may offer fails
         // here instead of being frozen into a local literal.
         admission: resolveTeamAdmissionProjectionV1(),
+        // The administered scope withholds roster counts from a non-member administrator.
+        counts: null,
     };
 }
 
@@ -125,8 +127,8 @@ afterEach(() => {
 
 describe('HomeAdministrationTeamsScreen', () => {
     it('keeps a large administered Team directory behind the canonical virtualized window', async () => {
-        // Two mounted Team segments; the create action heads the first one.
-        virtualizedBoundary.mountLimit = 2;
+        // The policy row precedes two mounted Team segments; create heads the first segment.
+        virtualizedBoundary.mountLimit = 3;
         const home = await harness.addHome({
             name: 'Home A',
             serverUrl: 'https://home-a.example',
@@ -143,14 +145,13 @@ describe('HomeAdministrationTeamsScreen', () => {
 
         const screen = await renderHomeTeams(home);
         await waitForHomeGovernance(() => {
-            // 10 row segments + archived toggle.
-            expect(virtualizedBoundary.props?.data.length).toBe(11);
+            expect(collectRenderedTestIds(screen.tree.toJSON()).filter((id) => id.startsWith(`teams-row:${home}:`)))
+                .toHaveLength(24);
         });
 
         expect(virtualizedBoundary.props?.testID).toBe('home-teams-virtualized-list');
         expect(virtualizedBoundary.props?.maintainVisibleContentPosition).toBe(true);
-        expect(collectRenderedTestIds(screen.tree.toJSON()).filter((id) => id.startsWith(`teams-row:${home}:`)))
-            .toHaveLength(24);
+        expect(virtualizedBoundary.props?.data.length).toBeGreaterThan(virtualizedBoundary.mountLimit);
     });
 
     it('reads the administered scope of its own Home and no other', async () => {

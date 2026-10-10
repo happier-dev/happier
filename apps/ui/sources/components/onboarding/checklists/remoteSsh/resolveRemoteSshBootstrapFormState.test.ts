@@ -23,7 +23,7 @@ describe('resolveRemoteSshBootstrapFormState', () => {
             saveSecretMaterial: false,
             installRelayRuntime: true,
             remoteHostsSecretMaterialEnabled: false,
-            decryptSecretValue: () => null,
+            readSavedSecretValue: async () => ({ ok: false, reason: 'unavailable' }),
         })).resolves.toEqual(expect.objectContaining({
             sshAuth: 'keyfile',
             identityPrivateKey: expect.stringContaining('BEGIN OPENSSH PRIVATE KEY'),

@@ -1,21 +1,29 @@
 import * as React from 'react';
 import {
     HomeTeamProviderPolicyV1Schema,
-    type HomeIdentityDeploymentServicesV1,
     type HomeIdentityNetworkPolicyV1,
     type HomeTeamProviderPolicyV1,
     type ManagedIdentityProviderKindV1,
 } from '@happier-dev/protocol/home/governance';
 
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
+import { Switch } from '@/components/ui/forms/Switch';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
+import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
+import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Modal } from '@/modal';
 import { setHomeAuthenticationPolicies } from '@/sync/ops/home/homeGovernanceOperations';
 import { t } from '@/text';
 
 import type { HomeAdministrationContext } from '../governance/homeAdministrationContext';
+import { homeAdministrationServerSettingsPath } from '../governance/homeAdministrationRoutes';
+import { HomeDeploymentFixedNote } from '../governance/HomeDeploymentFixedNote';
 import { homeGovernanceFailureNotice } from '../governance/homeGovernanceLabels';
 import { HOME_SIGN_IN_PROVIDERS_SETTINGS } from './homeSignInProvidersSettings';
 
@@ -36,13 +44,11 @@ function teamProviderKindLabel(kind: ManagedIdentityProviderKindV1): string {
     }
 }
 
-export function workosDeploymentLabel(state: HomeIdentityDeploymentServicesV1['workos']): string {
-    switch (state) {
-        case 'configured': return t('homeGovernance.deploymentWorkosConfigured');
-        case 'partially_configured': return t('homeGovernance.deploymentWorkosPartial');
-        case 'not_configured': return t('homeGovernance.deploymentWorkosNotConfigured');
-    }
-}
+/** The one mode choice answers a search for either of its two settings. */
+const NETWORK_MODE_SETTINGS = [
+    HOME_SIGN_IN_PROVIDERS_SETTINGS.settings.publicOnly,
+    HOME_SIGN_IN_PROVIDERS_SETTINGS.settings.privateAllowlist,
+];
 
 /** One list entry per line, so a pasted allowlist survives unchanged. */
 function readLines(value: string): readonly string[] {
@@ -93,9 +99,15 @@ function identityNetworkPolicyFromDraft(draft: IdentityNetworkDraft): HomeIdenti
  * deployment answer the server never gave.
  */
 export const HomePrivateEndpointsSection = React.memo(function HomePrivateEndpointsSection(
-    props: Readonly<{ context: HomeAdministrationContext; ceilingFixed: boolean | null }>,
+    props: Readonly<{
+        context: HomeAdministrationContext;
+        ceilingFixed: boolean | null;
+        /** Where this Home turns private endpoints on (its row on Features), when it can. */
+        ceilingHref?: string | null;
+    }>,
 ) {
     const { context } = props;
+    const router = useRouter();
     const services = context.projection.identityServices;
     const networkRead = context.projection.policy.identityNetwork;
     const committed = networkRead?.status === 'narrowed' ? networkRead.policy : null;
@@ -125,6 +137,12 @@ export const HomePrivateEndpointsSection = React.memo(function HomePrivateEndpoi
         draftRef.current = next;
         setInvalid(false);
         setDraft(next);
+    };
+
+    const discard = () => {
+        draftRef.current = null;
+        setInvalid(false);
+        setDraft(null);
     };
 
     const save = async () => {
@@ -179,44 +197,57 @@ export const HomePrivateEndpointsSection = React.memo(function HomePrivateEndpoi
     return (
         <>
             {!services.privateIdentityNetworkAllowed ? (
-                <ItemGroup title={t('homeGovernance.privateEndpoints')} description={t('homeGovernance.privateEndpointsDescription')}>
-                    <Item
-                        testID="home-sign-in-private-endpoints-unavailable"
-                        title={t('homeGovernance.privateEndpointsPublicOnly')}
-                        subtitle={props.ceilingFixed
-                            ? t('homeGovernance.signInProviders.privateEndpointsFixed', { key: PRIVATE_NETWORK_CEILING_KEY })
-                            : t('homeGovernance.signInProviders.privateEndpointsOff', { key: PRIVATE_NETWORK_CEILING_KEY })}
-                        showChevron={false}
-                    />
+                <ItemGroup title={t('homeGovernance.signInProviders.privateEndpointsTitle')} description={t('homeGovernance.privateEndpointsDescription')}>
+                    {/* Fixed: the shared deployment note. Off on this Home: where it is turned on (DR-03/DR-17). */}
+                    {props.ceilingFixed ? (
+                        <Item
+                            testID="home-sign-in-private-endpoints-unavailable"
+                            title={t('homeGovernance.privateEndpointsPublicOnly')}
+                            subtitleAccessory={<HomeDeploymentFixedNote keys={[PRIVATE_NETWORK_CEILING_KEY]} testID="home-sign-in-private-endpoints-unavailable" />}
+                            mode="info"
+                            showChevron={false}
+                        />
+                    ) : (
+                        <Item
+                            testID="home-sign-in-private-endpoints-unavailable"
+                            title={t('homeGovernance.privateEndpointsPublicOnly')}
+                            subtitle={t('homeGovernance.signInProviders.privateEndpointsOffHere')}
+                            // Its row on Features when the Home reports one; else the page that lists every key.
+                            detail={props.ceilingHref ? t('homeGovernance.features.title') : t('homeSettings.page.title')}
+                            onPress={() => router.push((props.ceilingHref ?? homeAdministrationServerSettingsPath(context.scope.serverId)) as never)}
+                        />
+                    )}
                 </ItemGroup>
             ) : (
                 <ItemGroup
-                    title={t('homeGovernance.privateEndpoints')}
+                    title={t('homeGovernance.signInProviders.privateEndpointsTitle')}
                     description={networkRead?.status === 'unreadable'
                         ? t('homeGovernance.privateEndpointsUnreadable')
                         : invalid
                             ? t('homeGovernance.privateEndpointsInvalid')
                             : t('homeGovernance.privateEndpointsDescription')}
                 >
-                    <SettingAnchor setting={HOME_SIGN_IN_PROVIDERS_SETTINGS.settings.publicOnly}><Item
-                        testID="home-policy-identity-network-mode:public_only"
-                        title={t('homeGovernance.privateEndpointsPublicOnly')}
-                        accessibilityRole="radio"
-                        webRole="radio"
-                        selected={current.mode === 'public_only'}
+                    {/* One decision, both answers visible; the line under it says what the chosen one means (lab `hcSignin-RA`). */}
+                    <SettingAnchor settings={NETWORK_MODE_SETTINGS}><SegmentedChoiceItem<HomeIdentityNetworkPolicyV1['mode']>
+                        testID="home-policy-identity-network-mode"
+                        testIDPrefix="home-policy-identity-network-mode"
+                        title={t('homeGovernance.privateEndpoints')}
+                        subtitleLines={0}
+                        options={[
+                            {
+                                id: 'public_only',
+                                label: t('homeGovernance.signInProviders.privateEndpointsPublicOnlyShort'),
+                                description: t('homeGovernance.signInProviders.privateEndpointsPublicOnlyHint'),
+                            },
+                            {
+                                id: 'private_allowlist',
+                                label: t('homeGovernance.signInProviders.privateEndpointsAllowlistShort'),
+                                description: t('homeGovernance.signInProviders.privateEndpointsAllowlistHint'),
+                            },
+                        ]}
+                        value={current.mode}
+                        onChange={(mode) => patch({ mode })}
                         disabled={!editable || saving}
-                        onPress={editable ? () => patch({ mode: 'public_only' }) : undefined}
-                        showChevron={false}
-                    /></SettingAnchor>
-                    <SettingAnchor setting={HOME_SIGN_IN_PROVIDERS_SETTINGS.settings.privateAllowlist}><Item
-                        testID="home-policy-identity-network-mode:private_allowlist"
-                        title={t('homeGovernance.privateEndpointsAllowlist')}
-                        accessibilityRole="radio"
-                        webRole="radio"
-                        selected={current.mode === 'private_allowlist'}
-                        disabled={!editable || saving}
-                        onPress={editable ? () => patch({ mode: 'private_allowlist' }) : undefined}
-                        showChevron={false}
                     /></SettingAnchor>
                     {current.mode === 'private_allowlist' ? (
                         <>
@@ -226,14 +257,32 @@ export const HomePrivateEndpointsSection = React.memo(function HomePrivateEndpoi
                         </>
                     ) : null}
                     {editable ? (
-                        <SettingAnchor setting={HOME_SIGN_IN_PROVIDERS_SETTINGS.settings.saveNetwork}><Item
-                            testID="home-policy-identity-network-save"
-                            title={t('homeGovernance.privateEndpointsSave')}
-                            loading={saving}
-                            disabled={saving}
-                            onPress={() => void save()}
-                            showChevron={false}
-                        /></SettingAnchor>
+                        <SectionContentRow showDivider={false}>
+                            <SectionButtonRow
+                                trailing={(
+                                    <>
+                                        <RoundButton
+                                            testID="home-policy-identity-network-cancel"
+                                            size="small"
+                                            display="inverted"
+                                            title={t('common.cancel')}
+                                            disabled={draft === null || saving}
+                                            onPress={discard}
+                                        />
+                                        <SettingAnchor setting={HOME_SIGN_IN_PROVIDERS_SETTINGS.settings.saveNetwork}><RoundButton
+                                            testID="home-policy-identity-network-save"
+                                            size="small"
+                                            title={t('common.save')}
+                                            loading={saving}
+                                            disabled={draft === null || saving}
+                                            onPress={() => { void save(); }}
+                                        /></SettingAnchor>
+                                    </>
+                                )}
+                            >
+                                {null}
+                            </SectionButtonRow>
+                        </SectionContentRow>
                     ) : null}
                 </ItemGroup>
             )}
@@ -454,7 +503,7 @@ export const HomeTeamSignInRulesSection = React.memo(function HomeTeamSignInRule
         return (
             <>
                 <ItemGroup title={t('homeGovernance.signInProviders.teamRules')} description={t('homeGovernance.authInheritedDescription')}>
-                    <Item testID="home-policy-team-providers-inherited" title={t('homeGovernance.authInherited')} showChevron={false} />
+                    <SurfaceStateCard testID="home-policy-team-providers-inherited" kind="empty" size="line" title={t('homeGovernance.authInherited')} />
                 </ItemGroup>
             </>
         );
@@ -464,7 +513,7 @@ export const HomeTeamSignInRulesSection = React.memo(function HomeTeamSignInRule
         return (
             <>
                 <ItemGroup title={t('homeGovernance.signInProviders.teamRules')} description={t('homeGovernance.authUnreadableDescription')}>
-                    <Item testID="home-policy-team-providers-unreadable" title={t('homeGovernance.authUnreadable')} showChevron={false} />
+                    <SurfaceStateCard testID="home-policy-team-providers-unreadable" kind="error" size="line" title={t('homeGovernance.authUnreadable')} />
                 </ItemGroup>
             </>
         );
@@ -495,12 +544,17 @@ export const HomeTeamSignInRulesSection = React.memo(function HomeTeamSignInRule
                             key={kind}
                             testID={`home-policy-team-provider:${kind}`}
                             title={teamProviderKindLabel(kind)}
-                            accessibilityRole="checkbox"
-                            webRole="checkbox"
-                            selected={checked}
                             loading={pending === kind}
                             disabled={!editable || pending !== null || !addable}
                             onPress={editable && addable ? () => toggleProvider(kind) : undefined}
+                            rightElement={(
+                                <Switch
+                                    testID={`home-policy-team-provider:${kind}-switch`}
+                                    value={checked}
+                                    disabled={!editable || pending !== null || !addable}
+                                    onValueChange={() => toggleProvider(kind)}
+                                />
+                            )}
                             showChevron={false}
                         />
                     );
@@ -509,12 +563,18 @@ export const HomeTeamSignInRulesSection = React.memo(function HomeTeamSignInRule
                     testID="home-policy-team-jit"
                     title={t('homeGovernance.teamJit')}
                     subtitle={t('homeGovernance.teamJitDescription')}
-                    accessibilityRole="checkbox"
-                    webRole="checkbox"
-                    selected={selected?.teamJitAllowed === true}
+                    subtitleLines={0}
                     loading={pending === 'jit'}
                     disabled={!editable || pending !== null}
                     onPress={editable ? toggleJit : undefined}
+                    rightElement={(
+                        <Switch
+                            testID="home-policy-team-jit-switch"
+                            value={selected?.teamJitAllowed === true}
+                            disabled={!editable || pending !== null}
+                            onValueChange={toggleJit}
+                        />
+                    )}
                     showChevron={false}
                 /></SettingAnchor>
                 <SettingAnchor setting={HOME_SIGN_IN_PROVIDERS_SETTINGS.settings.approvedGitHubEnterpriseOrigins}><Item
@@ -538,16 +598,24 @@ export const HomeTeamSignInRulesSection = React.memo(function HomeTeamSignInRule
                         />
                     )}
                 /></SettingAnchor>
-                <SettingAnchor setting={HOME_SIGN_IN_PROVIDERS_SETTINGS.settings.saveOrigins}><Item
-                    testID="home-policy-team-provider-origins-save"
-                    title={t('common.save')}
-                    loading={pending === 'origins'}
-                    disabled={!editable || pending !== null || originsDraft === null || !originsValid}
-                    onPress={editable && pending === null && originsDraft !== null && originsValid
-                        ? saveOrigins
-                        : undefined}
-                    showChevron={false}
-                /></SettingAnchor>
+                {editable ? (
+                    <SectionContentRow>
+                        <SectionButtonRow
+                            trailing={(
+                                <SettingAnchor setting={HOME_SIGN_IN_PROVIDERS_SETTINGS.settings.saveOrigins}><RoundButton
+                                    testID="home-policy-team-provider-origins-save"
+                                    size="small"
+                                    title={t('common.save')}
+                                    loading={pending === 'origins'}
+                                    disabled={pending !== null || originsDraft === null || !originsValid}
+                                    onPress={saveOrigins}
+                                /></SettingAnchor>
+                            )}
+                        >
+                            {null}
+                        </SectionButtonRow>
+                    </SectionContentRow>
+                ) : null}
                 {approvalPending ? (
                     <Item
                         testID="home-policy-team-provider-approval-pending"

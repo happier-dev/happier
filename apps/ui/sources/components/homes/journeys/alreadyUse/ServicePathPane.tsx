@@ -54,6 +54,7 @@ export function ServicePathPane(props: Readonly<{
                 <SurfaceStateCard
                     testID="already-use-happier.service-unsupported"
                     kind="error"
+                    layout="inline"
                     title={t('welcome.signInServiceUnsupportedTitle')}
                     reason={t('welcome.signInServiceUnsupportedBody')}
                     accessibilitySemantics="alert"
@@ -63,6 +64,7 @@ export function ServicePathPane(props: Readonly<{
                 <SurfaceStateCard
                     testID="already-use-happier.service-unavailable"
                     kind="error"
+                    layout="inline"
                     title={t('welcome.signInServiceUnavailableTitle')}
                     reason={t('settingsAccount.accountServiceDiscoveryUnavailableDescription')}
                     accessibilitySemantics="alert"

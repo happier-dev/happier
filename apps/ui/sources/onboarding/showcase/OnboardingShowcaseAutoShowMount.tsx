@@ -5,6 +5,7 @@ import { getCurrentReleaseId } from '@/changelog/releaseNotes/manifestRuntime';
 import { setLastSeenReleaseId } from '@/changelog/releaseNotes/storage';
 import { OnboardingShowcaseStorySurface } from '@/components/onboarding/showcase';
 import { Modal, useModal } from '@/modal';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { useOnboardingShowcaseState } from './useOnboardingShowcaseState';
 
@@ -52,6 +53,13 @@ export function OnboardingShowcaseAutoShowMount(): null {
                     manifest: showcase.manifest,
                     onComplete: markSeenAndClose,
                     onDismiss: markSeenAndClose,
+                    // Before sign-in this keeps only the explicit authoring intent; the ordinary
+                    // sign-in continuation opens the editable draft afterwards.
+                    onAskHappier: () => {
+                        markSeenAndClose();
+                        fireAndForget(import('@/components/sessions/bots/askHappierEntry')
+                            .then(({ startAskHappier }) => startAskHappier({ lifetime: null })), { tag: 'Showcase.askHappier' });
+                    },
                 },
             });
         }, 250);

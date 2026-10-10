@@ -87,6 +87,22 @@ afterEach(() => {
 });
 
 describe('HomeAdministrationReachScreen', () => {
+    it('shows Retry when the companion read fails after settings succeed, and then renders the recovered reachability', async () => {
+        const home = await addHome();
+        harness.answer(home, SETTINGS_GET, { body: reachSettings() });
+        harness.answer(home, REACH_GET, { status: 503, body: { error: 'temporarily_unavailable' } });
+        const { HomeAdministrationReachScreen } = await import('./HomeAdministrationReachScreen');
+        const { resetHomeGovernanceEngineForTests } = await import('@/sync/engine/home/governance/homeGovernanceEngine');
+        resetHomeGovernanceEngineForTests();
+        const screen = await renderScreen(<HomeAdministrationReachScreen serverId={home} />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('home-reach-retry')).not.toBeNull());
+        expect(screen.findByTestId('home-reach-loading')).toBeNull();
+        harness.answer(home, REACH_GET, { body: homeReachabilityFixture() });
+        await screen.pressByTestIdAsync('home-reach-retry');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('home-reach-iroh')).not.toBeNull());
+        expect(screen.findByTestId('home-reach-retry')).toBeNull();
+    });
+
     it('asks before retiring direct connections and only then turns them off', async () => {
         const home = await addHome();
         harness.answer(home, SETTINGS_GET, { body: reachSettings() });

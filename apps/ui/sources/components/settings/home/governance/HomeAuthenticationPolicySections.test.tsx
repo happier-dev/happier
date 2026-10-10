@@ -90,7 +90,8 @@ function renderedControlIsDisabled(control: { props: Record<string, unknown> } |
 function renderedControlIsChecked(control: { props: Record<string, unknown> } | null): boolean {
     const props = control?.props;
     const accessibilityState = props?.accessibilityState as { checked?: boolean } | undefined;
-    return props?.['aria-checked'] === true || accessibilityState?.checked === true;
+    // A switch states its value; a segment or a radio states its checked state.
+    return props?.value === true || props?.['aria-checked'] === true || accessibilityState?.checked === true;
 }
 beforeEach(async () => {
     await harness.reset();
@@ -178,10 +179,10 @@ describe('HomeAuthenticationPolicySections', () => {
         };
 
         const screen = await renderScreen(<HomeTeamSignInRulesSection context={context} />);
-        expect(renderedControlIsChecked(screen.findByTestId('home-policy-team-provider:oidc'))).toBe(true);
-        expect(renderedControlIsChecked(screen.findByTestId('home-policy-team-provider:github_app_identity'))).toBe(true);
+        expect(renderedControlIsChecked(screen.findByTestId('home-policy-team-provider:oidc-switch'))).toBe(true);
+        expect(renderedControlIsChecked(screen.findByTestId('home-policy-team-provider:github_app_identity-switch'))).toBe(true);
         const workos = screen.findByTestId('home-policy-team-provider:workos_sso');
-        expect(renderedControlIsChecked(workos)).toBe(false);
+        expect(renderedControlIsChecked(screen.findByTestId('home-policy-team-provider:workos_sso-switch'))).toBe(false);
         expect(renderedControlIsDisabled(workos)).toBe(true);
 
         await screen.pressByTestIdAsync('home-policy-team-provider:oidc');
@@ -234,7 +235,7 @@ describe('HomeAuthenticationPolicySections', () => {
         await screen.pressByTestIdAsync('home-policy-team-provider:workos_sso');
         await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/home/policy/set')).toHaveLength(1));
         await waitForHomeGovernance(() => expect(
-            renderedControlIsChecked(screen.findByTestId('home-policy-team-provider:workos_sso')),
+            renderedControlIsChecked(screen.findByTestId('home-policy-team-provider:workos_sso-switch')),
         ).toBe(false));
 
         harness.answer(serverId, '/v1/home/policy/set', {
@@ -284,7 +285,7 @@ describe('HomeAuthenticationPolicySections', () => {
         await screen.pressByTestIdAsync('home-policy-team-jit');
         await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/home/policy/set')).toHaveLength(1));
         await waitForHomeGovernance(() => expect(
-            renderedControlIsChecked(screen.findByTestId('home-policy-team-jit')),
+            renderedControlIsChecked(screen.findByTestId('home-policy-team-jit-switch')),
         ).toBe(false));
     });
 
@@ -323,14 +324,14 @@ describe('HomeAuthenticationPolicySections', () => {
 
         await screen.pressByTestIdAsync('home-policy-team-provider:workos_sso');
         await waitForHomeGovernance(() => expect(requestApproval).toHaveBeenCalledTimes(1));
-        expect(renderedControlIsChecked(screen.findByTestId('home-policy-team-provider:workos_sso'))).toBe(true);
+        expect(renderedControlIsChecked(screen.findByTestId('home-policy-team-provider:workos_sso-switch'))).toBe(true);
 
         await screen.update(<HomeTeamSignInRulesSection context={{ ...context, approvalPending: true }} />);
-        expect(renderedControlIsChecked(screen.findByTestId('home-policy-team-provider:workos_sso'))).toBe(true);
+        expect(renderedControlIsChecked(screen.findByTestId('home-policy-team-provider:workos_sso-switch'))).toBe(true);
 
         await screen.update(<HomeTeamSignInRulesSection context={{ ...context, approvalPending: false }} />);
         await waitForHomeGovernance(() => expect(
-            renderedControlIsChecked(screen.findByTestId('home-policy-team-provider:workos_sso')),
+            renderedControlIsChecked(screen.findByTestId('home-policy-team-provider:workos_sso-switch')),
         ).toBe(false));
     });
 
@@ -390,7 +391,7 @@ describe('HomeAuthenticationPolicySections', () => {
             />,
         );
         await waitForHomeGovernance(() => expect(
-            renderedControlIsChecked(screen.findByTestId('home-policy-team-provider:workos_sso')),
+            renderedControlIsChecked(screen.findByTestId('home-policy-team-provider:workos_sso-switch')),
         ).toBe(true));
     });
 
@@ -591,13 +592,14 @@ describe('HomeAuthenticationPolicySections', () => {
         const screen = await renderScreen(<HomePrivateEndpointsSection context={context} ceilingFixed />);
         expect(screen.findAllByTestId('home-policy-identity-network-mode:private_allowlist')).toHaveLength(0);
         expect(screen.findByTestId('home-sign-in-private-endpoints-unavailable')).not.toBeNull();
-        expect(screen.getTextContent()).toContain(
-            'homeGovernance.signInProviders.privateEndpointsFixed(key=HAPPIER_FEATURE_AUTH_MANAGED_IDENTITY__PRIVATE_NETWORK_ENABLED)',
-        );
-        // Off because the Home left it off reads differently from fixed by the deployment.
+        // Fixed: the shared deployment note, the key as a chip, never prose (DR-17).
+        expect(screen.findByTestId('home-sign-in-private-endpoints-unavailable.fixed-key:0')?.children)
+            .toEqual(['HAPPIER_FEATURE_AUTH_MANAGED_IDENTITY__PRIVATE_NETWORK_ENABLED']);
+        // Off because the Home left it off: no key, and the row leads to where it is turned on.
         await screen.update(<HomePrivateEndpointsSection context={context} ceilingFixed={false} />);
-        expect(screen.getTextContent()).toContain('homeGovernance.signInProviders.privateEndpointsOff');
-        expect(screen.getTextContent()).not.toContain('privateEndpointsFixed');
+        expect(screen.getTextContent()).toContain('homeGovernance.signInProviders.privateEndpointsOffHere');
+        expect(screen.getTextContent()).not.toContain('HAPPIER_FEATURE_AUTH_MANAGED_IDENTITY__PRIVATE_NETWORK_ENABLED');
+        expect(screen.findByTestId('home-sign-in-private-endpoints-unavailable')?.props.onPress).toBeDefined();
     });
 
     it('saves an exact private endpoint allowlist through the Home policy revision owner', async () => {
@@ -723,7 +725,7 @@ describe('HomeAuthenticationPolicySections', () => {
 
 describe('TeamsVisibilityPolicyEditor', () => {
     it('turns "Show Teams to members" off through the Home policy and keeps it until the Home confirms', async () => {
-        const { TeamsVisibilityPolicyEditor } = await import('./HomeAdministrationPoliciesScreen');
+        const { TeamsVisibilityPolicyEditor } = await import('./HomeTeamsPolicySections');
         const serverId = await harness.addHome({ name: 'Home A', serverUrl: 'https://home-a.example', accountId: 'owner' });
         const projection = homeGovernanceProjectionFixture();
         harness.answer(serverId, '/v1/home/policy/set', {
@@ -753,7 +755,7 @@ describe('TeamsVisibilityPolicyEditor', () => {
     });
 
     it('is not offered by a Home that predates the policy', async () => {
-        const { TeamsVisibilityPolicyEditor } = await import('./HomeAdministrationPoliciesScreen');
+        const { TeamsVisibilityPolicyEditor } = await import('./HomeTeamsPolicySections');
         const serverId = await harness.addHome({ name: 'Home A', serverUrl: 'https://home-a.example', accountId: 'owner' });
         const projection = homeGovernanceProjectionFixture();
         const { teamsVisibleToMembers: _absent, ...olderPolicy } = projection.policy;
@@ -773,7 +775,7 @@ describe('TeamsVisibilityPolicyEditor', () => {
 
 describe('TeamCreationPolicyEditor', () => {
     it('leaves "this Home is not answering" to the page banner instead of repeating it on the section', async () => {
-        const { TeamCreationPolicyEditor } = await import('./HomeAdministrationPoliciesScreen');
+        const { TeamCreationPolicyEditor } = await import('./HomeTeamsPolicySections');
         const serverId = await harness.addHome({ name: 'Home A', serverUrl: 'https://home-a.example', accountId: 'owner' });
         const context: HomeAdministrationContext = {
             scope: { serverId, accountId: 'owner' },
@@ -792,7 +794,7 @@ describe('TeamCreationPolicyEditor', () => {
 
 
     it('does not carry a retained draft into the same route on another Home', async () => {
-        const { TeamCreationPolicyEditor } = await import('./HomeAdministrationPoliciesScreen');
+        const { TeamCreationPolicyEditor } = await import('./HomeTeamsPolicySections');
         const serverA = await harness.addHome({ name: 'Home A', serverUrl: 'https://home-a.example', accountId: 'owner-a' });
         const serverB = await harness.addHome({ name: 'Home B', serverUrl: 'https://home-b.example', accountId: 'owner-b' });
         const projectionA = homeGovernanceProjectionFixture();
@@ -829,7 +831,7 @@ describe('TeamCreationPolicyEditor', () => {
     });
 
     it('closes the same-frame duplicate-submit window before the busy state renders', async () => {
-        const { TeamCreationPolicyEditor } = await import('./HomeAdministrationPoliciesScreen');
+        const { TeamCreationPolicyEditor } = await import('./HomeTeamsPolicySections');
         const serverId = await harness.addHome({ name: 'Home A', serverUrl: 'https://home-a.example', accountId: 'owner' });
         const projection = homeGovernanceProjectionFixture();
         let finishSave: (() => void) | null = null;
@@ -862,7 +864,7 @@ describe('TeamCreationPolicyEditor', () => {
     });
 
     it('keeps the requested policy and offers an inline retry after a failed save', async () => {
-        const { TeamCreationPolicyEditor } = await import('./HomeAdministrationPoliciesScreen');
+        const { TeamCreationPolicyEditor } = await import('./HomeTeamsPolicySections');
         const serverId = await harness.addHome({ name: 'Home A', serverUrl: 'https://home-a.example', accountId: 'owner' });
         const projection = homeGovernanceProjectionFixture();
         harness.answer(serverId, '/v1/home/policy/set', {

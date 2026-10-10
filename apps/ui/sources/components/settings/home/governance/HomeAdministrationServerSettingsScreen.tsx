@@ -1,8 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { validateServerConfigText } from '@happier-dev/protocol/serverConfig/serverConfigCodec';
-import type { ServerConfigEntryInput } from '@happier-dev/protocol/serverConfig/serverConfigEntry';
 import type {
     HomeSettingEntryV1,
     HomeSettingSecretWriteV1,
@@ -10,6 +8,7 @@ import type {
 } from '@happier-dev/protocol/home/governance';
 
 import type { SettingRef } from '@/components/settings/catalog/settingDeclarations';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
 import {
     HomeRestartNowBanner,
@@ -17,35 +16,37 @@ import {
 } from '@/components/settings/home/runtime/HomeRuntimeSections';
 import { useHomeRuntimeExecutor } from '@/components/settings/home/runtime/homeRuntimeExecutor';
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
-import { Icon } from '@/components/ui/icons/Icon';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
-import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
+import { ExpandableItem, ExpandableItemCaret } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
-import { StatusPill } from '@/components/ui/status/StatusPill';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SelectionListFilterChip } from '@/components/ui/selectionList/SelectionListFilterChips';
 import type { SelectionListFilter } from '@/components/ui/selectionList/_types';
 import { useHomeSettings } from '@/hooks/home/useHomeSettings';
-import { Modal } from '@/modal';
-import { readHomeSettingsInvalidFailure, setHomeSettings } from '@/sync/ops/home/homeGovernanceOperations';
 import { t } from '@/text';
 
+import { homeSignInPlatformForKeys, homeSignInPlatformHref } from '../signInProviders/homeSignInPlatforms';
 import { HomeAdministrationSection } from './HomeAdministrationSection';
 import type { HomeAdministrationContext } from './homeAdministrationContext';
 import { homeGovernanceFailureNotice } from './homeGovernanceLabels';
 import { HomeSecretSettingRow, KEEP_HOME_SECRET, type HomeSecretDraft } from './HomeSecretSettingRow';
-import { homeSettingRegistryEntry } from './homeSettingDeclaration';
 import { buildHomeSettingWrite, type HomeSettingDraftValue } from './homeSettingDraft';
 import { HomeSettingFieldRow, homeSettingDisplayValue, type HomeSettingStage } from './HomeSettingFieldRow';
 import { HOME_SERVER_SETTINGS } from './homeServerSettings';
 import {
     homeServerSettingGroupTitle,
-    homeServerSettingUnit,
-    homeSettingChoiceLabel,
     homeSettingIgnoredReasonLabel,
-    homeSettingKnownChoiceLabel,
 } from './homeServerSettingLabels';
+import { HomeSettingRowPills, homePendingRestartSummary, homeSettingRunningState, homeSettingValueWords } from './HomeSettingRowState';
+import {
+    homeSettingBoundsLine,
+    homeSettingFieldError,
+    homeSettingTextRefusal,
+    useHomeSettingsWrite,
+} from './useHomeSettingsWrite';
 import { HomeDeploymentFixedNote } from './HomeDeploymentFixedNote';
 import { HomeSettingFactsLine, type HomeSettingFactSegment } from './HomeSettingKeyChip';
 import {
@@ -62,95 +63,28 @@ function declaredSetting(key: string): SettingRef | undefined {
     return (HOME_SERVER_SETTINGS.settings as Readonly<Record<string, SettingRef | undefined>>)[key];
 }
 
-/** A setting's registry bounds as words: "0–65535", "1 or more", "Up to 10". */
-function boundsLine(entry: HomeSettingEntryV1): string | null {
-    const bounds = entry.declaration?.bounds;
-    if (!bounds) return null;
-    const { min, max } = bounds;
-    if (min !== undefined && max !== undefined) return t('homeGovernance.features.rangeBetween', { min, max });
-    if (min !== undefined) return t('homeGovernance.features.rangeAtLeast', { min });
-    if (max !== undefined) return t('homeGovernance.features.rangeAtMost', { max });
-    return null;
-}
-
-/** A value as the page says it: a known choice by its label, a list joined, with its unit. */
-function valueWords(entry: HomeSettingEntryV1, value: unknown): string | null {
-    if (value === null || value === undefined || value === '') return null;
-    if (Array.isArray(value)) return value.join(', ');
-    if (typeof value === 'boolean') return value ? t('homeSettings.choices.enabled') : t('homeSettings.choices.disabled');
-    // Only an enum's values and the few shared words ("default") are labels; anything else is data.
-    if (typeof value === 'string') {
-        return entry.declaration?.type === 'enum' ? homeSettingChoiceLabel(value) : (homeSettingKnownChoiceLabel(value) ?? value);
-    }
-    const unit = homeServerSettingUnit(entry.key, entry.declaration?.type);
-    return unit ? `${String(value)} ${unit}` : String(value);
-}
-
 /**
  * The row's facts on one line: its bounds, the key as a chip and the default. A deployment-fixed
  * key is said by the shared fixed note instead.
  */
 function rowFacts(entry: HomeSettingEntryV1): HomeSettingFactSegment[] {
     const segments: HomeSettingFactSegment[] = [];
-    const bounds = boundsLine(entry);
+    const bounds = homeSettingBoundsLine(entry);
     if (bounds) segments.push(bounds);
     segments.push({ envKey: entry.key });
     if (entry.secretSet !== undefined) {
         segments.push(t('homeSettings.row.storedEncrypted'));
     } else if (entry.source === 'default') {
-        const fallback = valueWords(entry, entry.declaration?.default);
+        const fallback = homeSettingValueWords(entry, entry.declaration?.default);
         if (fallback) segments.push(t('homeSettings.row.defaultValue', { value: fallback }));
     }
     return segments;
-}
-
-/** What the running server does with a restart key, when it differs from the stored value. */
-function rowState(entry: HomeSettingEntryV1): string | undefined {
-    const applied = entry.applied;
-    if (applied?.ignoredReason) {
-        const running = valueWords(entry, applied.value);
-        const ignored = t('homeSettings.row.ignored', { reason: homeSettingIgnoredReasonLabel(applied.ignoredReason) });
-        return running ? `${ignored} · ${t('homeSettings.row.runningOn', { value: running })}` : ignored;
-    }
-    if (applied?.pending) {
-        const running = valueWords(entry, applied.value);
-        return running ? t('homeSettings.row.runningWith', { value: running }) : t('homeSettings.row.runningWithout');
-    }
-    return undefined;
 }
 
 function RowFacts(props: Readonly<{ entry: HomeSettingEntryV1; testID: string }>) {
     const { entry } = props;
     if (entry.fixed) return <HomeDeploymentFixedNote keys={[entry.key]} testID={props.testID} />;
     return <HomeSettingFactsLine segments={rowFacts(entry)} testID={`${props.testID}.facts`} />;
-}
-
-const RowPills = React.memo(function RowPills(props: Readonly<{ entry: HomeSettingEntryV1; testID: string }>) {
-    const { entry } = props;
-    const restart = entry.apply === 'restart' && !entry.fixed;
-    const pending = entry.applied?.pending === true;
-    if (!restart && !pending) return null;
-    return (
-        <View style={styles.pills}>
-            {restart ? <StatusPill variant="neutral" hideDot label={t('homeSettings.row.appliesAfterRestart')} /> : null}
-            {pending ? <StatusPill testID={`${props.testID}.pending`} variant="warning" label={t('homeSettings.row.pending')} /> : null}
-        </View>
-    );
-});
-
-/** Why a typed value was refused, in the field: its bounds when it has them. */
-function fieldError(entry: HomeSettingEntryV1, reason: 'out_of_bounds' | 'invalid'): string {
-    const bounds = boundsLine(entry);
-    return reason === 'out_of_bounds' && bounds ? t('homeSettings.row.outOfBounds', { bounds }) : t('homeSettings.row.invalid');
-}
-
-/** The typed text's own refusal reason from the registry codec, or `null` when it parses. */
-function textRefusal(entry: HomeSettingEntryV1, text: string): 'out_of_bounds' | 'invalid' | null {
-    const registryEntry: ServerConfigEntryInput | null = homeSettingRegistryEntry(entry);
-    if (!registryEntry || !text.trim()) return null;
-    const parsed = validateServerConfigText(registryEntry, text.trim());
-    if (parsed.ok) return null;
-    return parsed.reason === 'out_of_bounds' ? 'out_of_bounds' : 'invalid';
 }
 
 type RowHandlers = Readonly<{
@@ -174,7 +108,7 @@ const ServerSettingRow = React.memo(function ServerSettingRow(props: Readonly<{
     const { entry, handlers } = props;
     const testID = `${ROW_TESTID}:${entry.key}`;
     const title = homeSettingTitle(entry);
-    const pills = <RowPills entry={entry} testID={testID} />;
+    const pills = <HomeSettingRowPills entry={entry} testID={testID} />;
     const onSecretChange = React.useCallback((draft: HomeSecretDraft) => handlers.onSecretChange(entry.key, draft), [entry.key, handlers]);
     const onSecretCommit = React.useCallback(() => handlers.onSecretCommit(entry.key), [entry.key, handlers]);
     const row = entry.secretSet !== undefined ? (
@@ -182,7 +116,7 @@ const ServerSettingRow = React.memo(function ServerSettingRow(props: Readonly<{
             testID={testID}
             entry={entry}
             title={title}
-            subtitle={rowState(entry)}
+            subtitle={homeSettingRunningState(entry)}
             subtitleAccessory={<RowFacts entry={entry} testID={testID} />}
             setWhenEmpty
             titleAccessory={pills}
@@ -199,9 +133,8 @@ const ServerSettingRow = React.memo(function ServerSettingRow(props: Readonly<{
             testID={testID}
             entry={entry}
             title={title}
-            subtitle={rowState(entry)}
+            subtitle={homeSettingRunningState(entry)}
             subtitleAccessory={<RowFacts entry={entry} testID={testID} />}
-            unit={homeServerSettingUnit(entry.key, entry.declaration?.type) ?? undefined}
             titleAccessory={pills}
             staged={props.staged}
             readOnly={props.readOnly}
@@ -276,7 +209,6 @@ const MoreGroupDisclosure = React.memo(function MoreGroupDisclosure(props: Group
     forceOpen: boolean;
     showDivider?: boolean;
 }>) {
-    const { theme } = useUnistyles();
     const { group } = props;
     const declared = React.useMemo(
         () => group.entries.flatMap((entry) => declaredSetting(entry.key) ?? []),
@@ -298,7 +230,7 @@ const MoreGroupDisclosure = React.memo(function MoreGroupDisclosure(props: Group
                     {...state.headerProps}
                     title={homeServerSettingGroupTitle(group.id)}
                     subtitle={changed > 0 ? t('homeSettings.groupSummaryChanged', { count, changed }) : t('homeSettings.groupSummary', { count })}
-                    rightElement={<Icon name={state.expanded ? 'caret-down' : 'caret-right'} size={16} color={theme.colors.text.secondary} />}
+                    rightElement={<ExpandableItemCaret expanded={state.expanded} />}
                     showChevron={false}
                 />
             )}
@@ -321,6 +253,7 @@ const ServerSettingsPage = React.memo(function ServerSettingsPage(props: Readonl
     const canView = capabilities.viewAdministration;
     const readOnly = !capabilities.manageHomeSettings;
     const { theme } = useUnistyles();
+    const router = useRouter();
     const home = useHomeSettings(context.scope, canView);
     const release = useHomeServerRelease(context.scope.serverId, canView);
     const executor = useHomeRuntimeExecutor(context.scope.serverId, release.flavor);
@@ -329,7 +262,6 @@ const ServerSettingsPage = React.memo(function ServerSettingsPage(props: Readonl
     const [drafts, setDrafts] = React.useState<Readonly<Record<string, HomeSettingDraftValue>>>({});
     const [secretDrafts, setSecretDrafts] = React.useState<Readonly<Record<string, HomeSecretDraft>>>({});
     const [errors, setErrors] = React.useState<Readonly<Record<string, string>>>(NO_ERRORS);
-    const [writing, setWriting] = React.useState(false);
     const [discarding, setDiscarding] = React.useState(false);
 
     const settings: HomeSettingsProjectionV1 | null = home.settings;
@@ -345,57 +277,12 @@ const ServerSettingsPage = React.memo(function ServerSettingsPage(props: Readonl
         () => (layout ? filterHomeServerSettings(layout, { query, changedOnly }) : null),
         [layout, query, changedOnly],
     );
-    const disabled = !context.mutationsAvailable || writing;
-
     const setError = React.useCallback((key: string, message: string | null) => {
         setErrors((current) => (message === null ? omitKey(current, key) : { ...current, [key]: message }));
     }, []);
 
-    /** One write against the revision the page read; the Home's answer replaces the page's projection. */
-    const write = React.useCallback(async (params: Readonly<{
-        key: string | null;
-        values: Readonly<Record<string, unknown>>;
-        secrets?: Readonly<Record<string, HomeSettingSecretWriteV1>>;
-        discardPendingRestart?: true;
-    }>): Promise<boolean> => {
-        const current = settingsRef.current;
-        if (!current) return false;
-        setWriting(true);
-        try {
-            const outcome = await setHomeSettings({
-                scope: context.scope,
-                expectedRevision: current.revision,
-                values: params.values,
-                ...(params.secrets ? { secrets: params.secrets } : {}),
-                ...(params.discardPendingRestart ? { discardPendingRestart: true as const } : {}),
-            });
-            if (outcome.kind === 'succeeded') {
-                home.adoptSettings(outcome.value);
-                if (params.key) setError(params.key, null);
-                return true;
-            }
-            if (outcome.kind === 'approval_pending') {
-                context.requestApproval?.(outcome.artifactId);
-                return false;
-            }
-            if (outcome.failure.code === 'home_settings_revision_conflict') {
-                await Modal.alertAsync(t('homeSettings.page.conflictTitle'), t('homeSettings.page.conflictBody'));
-                home.reload();
-                return false;
-            }
-            const invalid = readHomeSettingsInvalidFailure(outcome.failure);
-            if (invalid) {
-                const entry = current.entries.find((candidate) => candidate.key === invalid.key);
-                setError(invalid.key, entry ? fieldError(entry, invalid.reason === 'out_of_bounds' ? 'out_of_bounds' : 'invalid') : t('homeSettings.row.invalid'));
-                return false;
-            }
-            const notice = homeGovernanceFailureNotice(outcome.failure);
-            await Modal.alertAsync(notice.title, notice.body);
-            return false;
-        } finally {
-            setWriting(false);
-        }
-    }, [context, home, setError]);
+    const { writing, write } = useHomeSettingsWrite({ context, home, onFieldError: setError });
+    const disabled = !context.mutationsAvailable || writing;
 
     /** Writes one key's staged edit (a control's value at once, a field's text when it is left). */
     const commitKey = React.useCallback(async (key: string, staged: HomeSettingDraftValue) => {
@@ -403,15 +290,15 @@ const ServerSettingsPage = React.memo(function ServerSettingsPage(props: Readonl
         const entry = current?.entries.find((candidate) => candidate.key === key);
         if (!current || !entry) return;
         if (staged.kind === 'text') {
-            const refusal = textRefusal(entry, staged.text);
+            const refusal = homeSettingTextRefusal(entry, staged.text);
             if (refusal) {
-                setError(key, fieldError(entry, refusal));
+                setError(key, homeSettingFieldError(entry, refusal));
                 return;
             }
         }
         const built = buildHomeSettingWrite(current.entries, { [key]: staged });
         if (!built.ok) {
-            setError(key, fieldError(entry, 'invalid'));
+            setError(key, homeSettingFieldError(entry, 'invalid'));
             return;
         }
         if (!built.changed) {
@@ -441,17 +328,13 @@ const ServerSettingsPage = React.memo(function ServerSettingsPage(props: Readonl
         },
         onSecretChange: (key, draft) => {
             setError(key, null);
-            if (draft.mode === 'clear') {
-                setSecretDrafts((current) => omitKey(current, key));
-                void write({ key, values: {}, secrets: { [key]: { clear: true } } });
-                return;
-            }
             setSecretDrafts((current) => (draft.mode === 'keep' ? omitKey(current, key) : { ...current, [key]: draft }));
         },
         onSecretCommit: (key) => {
             const draft = secretDraftsRef.current[key];
-            if (draft?.mode !== 'replace' || !draft.text) return;
-            void write({ key, values: {}, secrets: { [key]: { replace: draft.text } } }).then((ok) => {
+            if (!draft || draft.mode === 'keep' || (draft.mode === 'replace' && !draft.text)) return;
+            const secret: HomeSettingSecretWriteV1 = draft.mode === 'clear' ? { clear: true } : { replace: draft.text };
+            void write({ key, values: {}, secrets: { [key]: secret } }).then((ok) => {
                 if (ok) setSecretDrafts((current) => omitKey(current, key));
             });
         },
@@ -466,6 +349,12 @@ const ServerSettingsPage = React.memo(function ServerSettingsPage(props: Readonl
         }
     }, [write]);
 
+    // A sign-in platform key lives on Sign-in providers (AM-12); everything else is found here.
+    const fixIgnored = (key: string) => {
+        const platform = homeSignInPlatformForKeys([key]);
+        if (platform) router.push(homeSignInPlatformHref(context.scope.serverId, platform) as never);
+        else setQuery(key);
+    };
     const { reload } = home;
     if (!canView) {
         return (
@@ -477,9 +366,13 @@ const ServerSettingsPage = React.memo(function ServerSettingsPage(props: Readonl
     if (!layout || !shown) {
         if (home.failure) {
             return (
-                <ItemGroup description={t('homeSettings.page.loadFailed')}>
-                    <Item testID="home-server-settings-retry" title={t('homeGovernance.retry')} onPress={reload} showChevron={false} />
-                </ItemGroup>
+                <SurfaceStateCard
+                    testID="home-server-settings-error"
+                    kind="error"
+                    title={t('homeSettings.page.loadFailed')}
+                    reason={homeGovernanceFailureNotice(home.failure, { effect: 'read' }).body}
+                    action={{ testID: 'home-server-settings-retry', label: t('homeGovernance.retry'), onPress: reload }}
+                />
             );
         }
         return (
@@ -489,11 +382,7 @@ const ServerSettingsPage = React.memo(function ServerSettingsPage(props: Readonl
         );
     }
 
-    const pendingNames = layout.pending.slice(0, 3).map(homeSettingTitle);
-    const extra = layout.pending.length - pendingNames.length;
-    const pendingSummary = t('homeSettings.banner.pendingNames', {
-        names: extra > 0 ? [...pendingNames, t('homeSettings.banner.andMore', { count: extra })].join(', ') : pendingNames.join(', '),
-    });
+    const pendingSummary = homePendingRestartSummary(layout.pending);
     const firstIgnored = layout.ignored[0];
     const searching = query.trim().length > 0 || changedOnly;
     const empty = shown.primary.length === 0 && shown.more.length === 0 && shown.readOnly.length === 0;
@@ -503,7 +392,7 @@ const ServerSettingsPage = React.memo(function ServerSettingsPage(props: Readonl
         id: 'changed',
         testID: 'home-server-settings-changed',
         label: t('homeSettings.page.filterLabel'),
-        icon: <Icon name="funnel-simple" size={14} color={theme.colors.text.secondary} />,
+        icon: <Icon name="funnel-simple" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />,
         valueLabel: changedOnly
             ? t('homeSettings.page.filterChanged', { count: layout.changedCount })
             : t('homeSettings.page.filterAll'),
@@ -535,7 +424,7 @@ const ServerSettingsPage = React.memo(function ServerSettingsPage(props: Readonl
                         setting: homeSettingTitle(firstIgnored),
                         reason: homeSettingIgnoredReasonLabel(firstIgnored.applied.ignoredReason),
                     })}
-                    action={{ label: t('homeSettings.banner.fix'), onPress: () => setQuery(firstIgnored.key) }}
+                    action={{ label: t('homeSettings.banner.fix'), onPress: () => fixIgnored(firstIgnored.key) }}
                 />
             ) : null}
             <HomeRestartNowBanner
@@ -631,12 +520,6 @@ export const HomeAdministrationServerSettingsScreen = React.memo(function HomeAd
 });
 
 const styles = StyleSheet.create(() => ({
-    pills: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 6,
-        flexShrink: 1,
-    },
     toolbar: {
         flexDirection: 'row',
         alignItems: 'center',

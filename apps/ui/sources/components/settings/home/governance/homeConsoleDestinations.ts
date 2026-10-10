@@ -59,7 +59,7 @@ export const HOME_CONSOLE_DESTINATION_GROUPS: readonly (readonly HomeConsoleDest
         // Team administration is governance, not content access. A Home with Teams turned off says so on the page.
         { id: 'teams', titleKey: 'homeGovernance.teams', subtitleKey: 'homeGovernance.pages.teams', icon: 'users', path: homeAdministrationTeamsPath, available: (p) => p.capabilities.manageAllTeams },
         { id: 'policies', titleKey: 'homeGovernance.policies', subtitleKey: 'homeGovernance.pages.policies', icon: 'shield-check', path: homeAdministrationPoliciesPath, available: (p) => p.capabilities.manageTeamCreationPolicy || p.capabilities.manageAuthentication },
-        { id: 'sign-in-providers', titleKey: 'homeGovernance.signInProviders.title', subtitleKey: 'homeGovernance.signInProviders.description', icon: 'key', path: homeAdministrationSignInProvidersPath, available: (p) => p.capabilities.manageAuthentication },
+        { id: 'sign-in-providers', titleKey: 'homeGovernance.signInProviders.title', subtitleKey: 'homeGovernance.signInProviders.description', icon: 'key', path: homeAdministrationSignInProvidersPath, available: viewsAdministration },
     ],
     [
         // Owners change these; admins read them.

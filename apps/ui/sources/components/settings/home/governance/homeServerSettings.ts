@@ -3,14 +3,15 @@ import type { HomeSettingEntryV1 } from '@happier-dev/protocol/home/governance';
 
 import {
     defineSettingsPage,
+    builtInSettingsPageSections,
+    builtInSettingUiDeclaration,
     type SettingDeclaration,
     type SettingsSectionDeclaration,
 } from '@/components/settings/catalog/settingDeclarations';
 import { identitySettingHomeId } from '@/components/settings/identity/identitySettingsRoutes';
 
 import { homeAdministrationServerSettingsPath } from './homeAdministrationRoutes';
-import { homeServerSettingGroupTitleKey, homeServerSettingTitleKey } from './homeServerSettingLabels';
-import { homeServerSettingGroupOf, isHomeServerSettingsEntry } from './homeServerSettingsRows';
+import { BUILT_IN_SETTINGS_DECLARATIONS_V1 } from '@happier-dev/protocol/actions/settings/settingsDeclarations';
 
 /**
  * Search declarations for Server settings (plan §3.14 "Console rendering"): one declared row per
@@ -37,34 +38,27 @@ function declarationEntry(key: string): HomeSettingEntryV1 | null {
     };
 }
 
+/**
+ * One registry key as a search declaration: its title, its secrecy and its `home.settings` storage.
+ * Server settings declares the keys it renders; a bespoke page that owns registry rows (Sign-in
+ * providers' platforms) declares its keys through the same builder.
+ */
+export function homeRegistrySettingDeclaration(key: string): Readonly<{
+    entry: HomeSettingEntryV1;
+    declaration: SettingDeclaration;
+}> | null {
+    const entry = declarationEntry(key);
+    const declared = BUILT_IN_SETTINGS_DECLARATIONS_V1.find(candidate => candidate.storage?.scope === 'home'
+        && candidate.storage.kind === 'homeSettings' && candidate.storage.key === key);
+    if (!entry || !declared) return null;
+    return {
+        entry,
+        declaration: builtInSettingUiDeclaration(declared.anchor),
+    };
+}
+
 function buildSections(): Record<string, SettingsSectionDeclaration> {
-    const groups = new Map<string, Record<string, SettingDeclaration>>();
-    const readOnly: Record<string, SettingDeclaration> = {};
-    for (const key of Object.keys(SERVER_CONFIG_REGISTRY_BASE)) {
-        const entry = declarationEntry(key);
-        const titleKey = homeServerSettingTitleKey(key);
-        if (!entry || !titleKey) continue;
-        if (entry.editable === 'bootstrap') {
-            readOnly[key] = { titleKey };
-            continue;
-        }
-        if (!isHomeServerSettingsEntry(entry)) continue;
-        const group = homeServerSettingGroupOf(entry);
-        const settings = groups.get(group) ?? {};
-        settings[key] = { titleKey };
-        groups.set(group, settings);
-    }
-    const sections: Record<string, SettingsSectionDeclaration> = {};
-    for (const [group, settings] of groups) {
-        const titleKey = homeServerSettingGroupTitleKey(group);
-        sections[group] = titleKey ? { titleKey, settings } : { settings };
-    }
-    for (const group of ['rateLimits', 'retentionCaps'] as const) {
-        const titleKey = homeServerSettingGroupTitleKey(group);
-        if (titleKey) sections[group] = { titleKey, settings: { ...sections[group]?.settings, [group]: { titleKey } } };
-    }
-    sections.readOnly = { titleKey: 'homeSettings.page.readOnlyTitle', settings: readOnly };
-    return sections;
+    return builtInSettingsPageSections('homeAdministration.serverSettings');
 }
 
 /** Every registry setting with no page of its own, found by its name in search. */

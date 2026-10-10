@@ -14,7 +14,7 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
 import { PersonalizeStage, resolvePersonalizeStageFocus } from './PersonalizeStage';
-import { PersonalizeStepBody, countPersonalizeChanges } from './PersonalizeStepBody';
+import { PersonalizeStepBody, PersonalizeStyleChoices, countPersonalizeChanges } from './PersonalizeStepBody';
 import { PERSONALIZE_STEPS, isPersonalizeStep, type PersonalizePageId } from './personalizeFlowModel';
 import { personalizeStepName } from './personalizeLabels';
 import { usePersonalizeFlow, type PersonalizeFlow } from './usePersonalizeFlow';
@@ -131,7 +131,11 @@ function PersonalizeDesktopPresentation(props: Readonly<{ flow: PersonalizeFlow;
             testID={testID}
             orientation="narration-left"
             narration={narration}
-            stage={(
+            stage={flow.page === 'style' ? (
+                <View style={styles.styleStage}>
+                    <PersonalizeStyleChoices flow={flow} phone={false} testID={testID} />
+                </View>
+            ) : (
                 <PersonalizeStage
                     testID={`${testID}-stage`}
                     draft={flow.draft}
@@ -230,6 +234,11 @@ const styles = StyleSheet.create((theme) => ({
     body: {
         gap: 20,
         width: '100%',
+    },
+    styleStage: {
+        flex: 1,
+        justifyContent: 'center',
+        padding: 32,
     },
     heading: {
         gap: 8,

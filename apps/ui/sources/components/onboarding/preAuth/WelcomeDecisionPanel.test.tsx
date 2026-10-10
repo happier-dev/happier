@@ -161,6 +161,34 @@ function readyAccountServiceEntry(
 }
 
 describe('WelcomeDecisionPanel', () => {
+    it('offers direct key recovery for the same verified Home mistaken for a sign-in service', async () => {
+        const onAuthenticate = vi.fn();
+        const onRestore = vi.fn();
+        const homeTarget = baseOptions.homeTarget!;
+        const screen = await renderScreen(<WelcomeDecisionPanel
+            authEntryOptions={{ ...baseOptions, requestedHomeTarget: undefined, observedHomeServerIdentityId: 'srv_home_a',
+                authenticationActions: [{ method: { id: 'key_challenge', enabledActions: [{ id: 'login', mode: 'keyed' }] },
+                    action: { id: 'login', mode: 'keyed' }, execution: { kind: 'key_entry' } }] }}
+            accountServiceEntry={{ effectiveSignInService: { kind: 'no_target_default', endpoint: baseOptions.serverUrlForCopy },
+                endpoint: { url: baseOptions.serverUrlForCopy, source: 'user' }, status: 'unsupported', discovery: null, transport: {}, retry: vi.fn() }}
+            onContinueWithHomeAuthentication={onAuthenticate} onOpenRestore={onRestore} onChangeRelay={vi.fn()} onChooseAccountService={vi.fn()} />);
+        await screen.pressByTestIdAsync('welcome-provider-primary');
+        expect(onAuthenticate).toHaveBeenCalledWith(expect.objectContaining({ execution: { kind: 'key_entry' },
+            authority: { purpose: 'home', target: homeTarget }, intendedHome: homeTarget }));
+        await screen.pressByTestIdAsync('welcome-scan-existing-home');
+        expect(onRestore).toHaveBeenCalledOnce();
+    });
+
+    it('does not substitute an unrelated Home when the chosen sign-in service is unsupported', async () => {
+        const { screenPromise } = renderPanel({ requestedHomeTarget: undefined, observedHomeServerIdentityId: 'srv_home_a' }, {
+            effectiveSignInService: { kind: 'no_target_default', endpoint: 'https://other-service.test' },
+            endpoint: { url: 'https://other-service.test', source: 'user' }, status: 'unsupported', discovery: null, transport: {}, retry: vi.fn(),
+        });
+        const screen = await screenPromise;
+        expect(screen.findAllByTestId('welcome-primary-start')).toHaveLength(0);
+        expect(screen.findByTestId('welcome-account-service-choose')).toBeTruthy();
+    });
+
     it('leaves the heading to its authentication parent while keeping sign-in actions usable', async () => {
         const onAuthenticate = vi.fn();
         const screen = await renderScreen(

@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
+import type { RelayAccessControlOptions } from '@/components/settings/server/relayAccess/useRelayAccessControl';
 
 import type { SystemTaskRunner } from '@/components/systemTasks/types';
 
@@ -14,6 +15,7 @@ export type RelayAccessCloudflareNamedTunnelStepProps = Readonly<{
     upstreamUrl?: string | null;
     serverProfileId?: string | null;
     target?: RelayAccessTaskTarget;
+    runWithTarget?: RelayAccessControlOptions['runWithTarget'];
     onShareUrlChange?: (shareUrl: string | null) => void;
     onWizardPrimaryChange?: (state: RelayAccessWizardPrimaryState | null) => void;
     onRequestAdvance?: () => void;

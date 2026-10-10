@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { Icon } from '@/components/ui/icons/Icon';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { SectionLeadingColumnProvider } from '@/components/ui/lists/sectionLeadingColumn';
 
@@ -32,7 +32,7 @@ export const HomeConsequenceNotice = React.memo(function HomeConsequenceNotice(p
                 subtitle={props.lines.join('\n')}
                 subtitleLines={0}
                 subtitleAccessory={props.actions}
-                icon={<Icon name="warning" size={20} color={theme.colors.state.warning.foreground} />}
+                icon={<Icon name="warning" size={ICON_SIZE.md} color={theme.colors.state.warning.foreground} />}
                 accessibilityLiveRegion="polite"
                 mode="info"
                 showChevron={false}

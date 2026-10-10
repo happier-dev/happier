@@ -41,7 +41,6 @@ describe('useEndpointReadinessMap', () => {
             const { readinessByEndpoint } = useEndpointReadinessMap({
                 endpoints: [endpoint],
                 enabled: true,
-                timeoutMs: 250,
             });
             const status = readinessByEndpoint.get(endpoint)?.status ?? 'unknown';
             return <Text testID="probe-status">{status}</Text>;
@@ -73,7 +72,6 @@ describe('useEndpointReadinessMap', () => {
                 const { readinessByEndpoint } = useEndpointReadinessMap({
                     endpoints: [endpoint],
                     enabled: true,
-                    timeoutMs: 250,
                 });
                 const status = readinessByEndpoint.get(endpoint)?.status ?? 'unknown';
                 return <Text testID="probe-status">{status}</Text>;
@@ -102,7 +100,6 @@ describe('useEndpointReadinessMap', () => {
                 const { readinessByEndpoint } = useEndpointReadinessMap({
                     endpoints: [endpoint],
                     enabled: true,
-                    timeoutMs: 250,
                 });
                 const status = readinessByEndpoint.get(endpoint)?.status ?? 'unknown';
                 return <Text testID="probe-status">{status}</Text>;
@@ -118,16 +115,14 @@ describe('useEndpointReadinessMap', () => {
         }
     });
 
-    it('ignores stale probe results when a newer retry supersedes them', async () => {
-        runtimeFetchMock
-            .mockImplementationOnce(async () => {
-                await new Promise<void>((resolve) => setTimeout(resolve, 50));
-                throw new Error('network down');
-            })
-            .mockImplementationOnce(async () => {
-                await new Promise<void>((resolve) => setTimeout(resolve, 5));
-                return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
-            });
+    it('keeps a retry checking until the shared ongoing readiness probe answers', async () => {
+        let resolveProbe: (response: Response) => void = () => {
+            throw new Error('Readiness probe has not started');
+        };
+        const pendingProbe = new Promise<Response>((resolve) => {
+            resolveProbe = resolve;
+        });
+        runtimeFetchMock.mockReturnValue(pendingProbe);
 
         const { useEndpointReadinessMap } = await import('./useEndpointReadinessMap');
 
@@ -137,7 +132,6 @@ describe('useEndpointReadinessMap', () => {
             const { readinessByEndpoint, retryEndpoint } = useEndpointReadinessMap({
                 endpoints: [endpoint],
                 enabled: true,
-                timeoutMs: 250,
             });
             retry = retryEndpoint;
             const status = readinessByEndpoint.get(endpoint)?.status ?? 'unknown';
@@ -154,15 +148,20 @@ describe('useEndpointReadinessMap', () => {
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         await act(async () => {
-            vi.advanceTimersByTime(10);
+            vi.advanceTimersByTime(60_000);
         });
         await flushHookEffects({ cycles: 2, turns: 2 });
-        expect(screen.findByTestId('probe-status')?.props.children).toBe('ready');
+        expect(screen.findByTestId('probe-status')?.props.children).toBe('checking');
+        expect(runtimeFetchMock.mock.calls.map(([url]) => String(url))).toEqual([`${endpoint}/health`]);
 
         await act(async () => {
-            vi.advanceTimersByTime(60);
+            resolveProbe(new Response(JSON.stringify({ ok: true }), {
+                status: 200,
+                headers: { 'content-type': 'application/json' },
+            }));
         });
         await flushHookEffects({ cycles: 2, turns: 2 });
         expect(screen.findByTestId('probe-status')?.props.children).toBe('ready');
+        expect(runtimeFetchMock.mock.calls.map(([url]) => String(url))).toEqual([`${endpoint}/health`]);
     });
 });

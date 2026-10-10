@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import type { RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
+import type { RelayAccessControlOptions } from '@/components/settings/server/relayAccess/useRelayAccessControl';
 
 import { RelayAccessCloudflareNamedTunnelStep } from './RelayAccessCloudflareNamedTunnelStep';
 import { RelayAccessLanUrlStep } from './RelayAccessLanUrlStep';
@@ -14,6 +15,7 @@ export type RelayAccessPrerequisitesStepProps = Readonly<{
     upstreamUrl?: string | null;
     serverProfileId?: string | null;
     target?: RelayAccessTaskTarget;
+    runWithTarget?: RelayAccessControlOptions['runWithTarget'];
     onShareUrlChange?: (shareUrl: string | null) => void;
     onWizardPrimaryChange?: (state: RelayAccessWizardPrimaryState | null) => void;
     onRequestAdvance?: () => void;
@@ -25,6 +27,7 @@ type RelayAccessPrerequisiteStepComponent = React.ComponentType<Readonly<{
     upstreamUrl?: string | null;
     serverProfileId?: string | null;
     target?: RelayAccessTaskTarget;
+    runWithTarget?: RelayAccessControlOptions['runWithTarget'];
     onShareUrlChange?: (shareUrl: string | null) => void;
     onWizardPrimaryChange?: (state: RelayAccessWizardPrimaryState | null) => void;
     onRequestAdvance?: () => void;
@@ -42,6 +45,7 @@ const RelayAccessTailscaleRegistryStep: RelayAccessPrerequisiteStepComponent = R
             upstreamUrl={props.upstreamUrl}
             serverProfileId={props.serverProfileId}
             target={props.target}
+            runWithTarget={props.runWithTarget}
             onShareUrlChange={props.onShareUrlChange}
             onWizardPrimaryChange={props.onWizardPrimaryChange}
             onRequestAdvance={props.onRequestAdvance}
@@ -71,6 +75,7 @@ export const RelayAccessPrerequisitesStep = React.memo(function RelayAccessPrere
             upstreamUrl={props.upstreamUrl}
             serverProfileId={props.serverProfileId}
             target={props.target}
+            runWithTarget={props.runWithTarget}
             onShareUrlChange={props.onShareUrlChange}
             onWizardPrimaryChange={props.onWizardPrimaryChange}
             onRequestAdvance={props.onRequestAdvance}

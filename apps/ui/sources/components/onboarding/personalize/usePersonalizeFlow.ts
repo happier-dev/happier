@@ -100,9 +100,12 @@ export function usePersonalizeFlow(params: Readonly<{ initialPage?: PersonalizeP
         restoreThemePreview();
         onExitRef.current();
     }, [isCurrent, restoreThemePreview, scope]);
-    React.useEffect(() => () => {
-        retired.current = true;
-        restoreThemePreview();
+    React.useEffect(() => {
+        retired.current = false;
+        return () => {
+            retired.current = true;
+            restoreThemePreview();
+        };
     }, [restoreThemePreview]);
 
     const goTo = React.useCallback((next: PersonalizePageId | null, towards: 'forward' | 'backward') => {

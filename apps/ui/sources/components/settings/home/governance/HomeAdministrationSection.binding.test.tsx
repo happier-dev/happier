@@ -70,12 +70,8 @@ installSettingsViewCommonModuleMocks({
         useRouter: () => ({ push: vi.fn() }),
         useNavigation: () => ({ setOptions: vi.fn() }),
     }),
-    // The real client store: the approval writer publishes the settled
-    // Artifact into it and the mounted approval reader observes it there.
-    storage: async (importOriginal) => {
-        const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleMock({ importOriginal, overrides: {} });
-    },
+    // The approval writer and reader use the real store, with no async mock factory.
+    storage: 'real',
 });
 
 const harness = createHomeGovernanceHarness();

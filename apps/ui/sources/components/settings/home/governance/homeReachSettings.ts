@@ -18,13 +18,13 @@ export const HOME_REACH_SETTINGS = defineSettingsPage({
     },
     sections: {
         addresses: { titleKey: 'homeGovernance.reach.addresses', settings: {
-            publicAddress: { titleKey: 'homeGovernance.reach.publicAddress', keywordKeys: ['homeGovernance.reach.methodTailscaleServe'] },
-            webAppAddress: { titleKey: 'homeGovernance.reach.webAppAddress' },
-            accessMethod: { titleKey: 'homeGovernance.reach.accessMethod', keywordKeys: ['homeGovernance.reach.methodCloudflare', 'homeGovernance.reach.methodTailscaleFunnel'] },
+            publicAddress: {},
+            webAppAddress: {},
+            accessMethod: {},
         } },
         directConnections: { titleKey: 'homeGovernance.reach.directConnections', settings: {
-            directConnections: { titleKey: 'homeGovernance.reach.directConnectionsRow' },
-            relay: { titleKey: 'homeGovernance.reach.relay' },
+            directConnections: {},
+            relay: {},
         } },
     },
 });

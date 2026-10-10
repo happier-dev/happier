@@ -119,10 +119,10 @@ export async function runTeamIdentityProviderTestReturn(input: Readonly<{
     purpose: string | null;
     resultHandle: string | null;
     error: string | null;
-    teamId: string;
+    teamId: string | null;
     connectionId: string;
     consume: (value: Readonly<{
-        teamId: string;
+        teamId: string | null;
         connectionId: string;
         resultHandle: string;
     }>) => Promise<Readonly<

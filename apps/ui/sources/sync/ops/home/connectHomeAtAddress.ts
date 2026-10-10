@@ -18,7 +18,6 @@ import {
 import { canonicalizeServerUrl, createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import { isInsecureRemoteHttpServerUrl } from '@/sync/domains/server/url/serverUrlClassification';
 import { createEndpointReadinessProbe } from '@/sync/runtime/connectivity/createEndpointReadinessProbe';
-import { readServerReachabilityProbeTimeoutMs } from '@/sync/runtime/connectivity/serverReachabilityTuning';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 
 export type HomeAddressChangeConfirmation = Readonly<{ previousUrl: string; nextUrl: string }>;
@@ -64,7 +63,6 @@ export async function connectHomeAtAddress(input: ConnectHomeAtAddressInput): Pr
     const readiness = await createEndpointReadinessProbe({
         endpoint: enteredUrl,
         token: null,
-        timeoutMs: readServerReachabilityProbeTimeoutMs(),
         ...(input.signal ? { signal: input.signal } : {}),
     })();
     throwIfAborted(input.signal);

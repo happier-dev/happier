@@ -1,51 +1,21 @@
 import * as React from 'react';
-import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
 import type { HomeSettingEntryV1 } from '@happier-dev/protocol/home/governance';
 
-import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
-import { Switch } from '@/components/ui/forms/Switch';
-import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { Item } from '@/components/ui/lists/Item';
-import { ITEM_SUBTITLE_TEXT_METRICS } from '@/components/ui/lists/itemDensityMetrics';
-import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
-import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
+import { SchemaFieldControl, resolveSchemaFieldKind } from '@/components/settings/schemaFields/SchemaFieldControl';
+import {
+    SCHEMA_FIELD_INPUT_STYLE,
+    SchemaFieldRow,
+    SchemaFieldValueSlot,
+} from '@/components/settings/schemaFields/SchemaFieldRow';
+import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 
 import { HomeDeploymentFixedNote } from './HomeDeploymentFixedNote';
 import { homeSettingText } from './homeEmailSettingsForm';
 import { isHomeSettingWritable } from './homeSettingDeclaration';
 import type { HomeSettingDraftValue } from './homeSettingDraft';
-import { homeSettingChoiceLabel } from './homeServerSettingLabels';
-
-/** Enums with at most this many values are a segmented control; longer ones are a menu (§3.14). */
-const SEGMENTED_ENUM_LIMIT = 4;
+import { homeServerSettingNumberWords, homeServerSettingUnit, homeSettingChoiceLabel } from './homeServerSettingLabels';
 
 export type HomeSettingStage = (key: string, value: HomeSettingDraftValue | null) => void;
-
-type EditableKind = 'switch' | 'segmented' | 'menu' | 'number' | 'text';
-
-function editableKind(entry: HomeSettingEntryV1): EditableKind | null {
-    const declaration = entry.declaration;
-    const values = declaration?.bounds?.values ?? [];
-    switch (declaration?.type) {
-        case 'boolean':
-            return 'switch';
-        case 'enum':
-            if (values.length === 0) return null;
-            return values.length <= SEGMENTED_ENUM_LIMIT ? 'segmented' : 'menu';
-        case 'int':
-        case 'float':
-            return 'number';
-        case 'string':
-        case 'url':
-        case 'email':
-        case 'list':
-            return 'text';
-        default:
-            return null;
-    }
-}
 
 /** A value as the row shows it when it cannot be edited: its text, else the declared default. */
 export function homeSettingDisplayValue(entry: HomeSettingEntryV1): string | undefined {
@@ -88,8 +58,8 @@ export const HomeSettingFieldRow = React.memo(function HomeSettingFieldRow(props
     testID: string;
     /** The facts under the label; replaces the default (the deployment-fixed note when fixed). */
     subtitleAccessory?: React.ReactNode;
-    /** The unit a number is typed in ("ms", "MB"), shown beside its compact field. */
-    unit?: string;
+    /** A status mark before the subtitle (a missing or ignored value). */
+    subtitleLeading?: React.ReactNode;
     /** Labels an enum value; defaults to its translated choice label. */
     choiceLabel?: (value: string) => string;
 }>) {
@@ -105,61 +75,75 @@ export const HomeSettingFieldRow = React.memo(function HomeSettingFieldRow(props
         onStage(entry.key, text.trim() === value ? null : { kind: 'text', text });
     }, [entry.key, onStage, value]);
     const commit = React.useCallback(() => onCommit?.(entry.key), [entry.key, onCommit]);
+    // A number is said in its registry unit wherever this row renders it (DR-15).
+    const unit = homeServerSettingUnit(entry.key, declaration?.type) ?? undefined;
 
-    const kind = !props.readOnly && isHomeSettingWritable(entry) ? editableKind(entry) : null;
+    const kind = !props.readOnly && isHomeSettingWritable(entry)
+        ? resolveSchemaFieldKind({ type: declaration?.type, optionCount: declaration?.bounds?.values?.length })
+        : null;
     // A key the deployment fixed says so through the one shared note, the key as a chip.
     const fixedNote = props.subtitleAccessory
         ?? (entry.fixed ? <HomeDeploymentFixedNote keys={[entry.key]} testID={testID} /> : undefined);
-    const common = {
+    // The shared schema-field row draws the label, the hint and the slot; this adapter picks the control.
+    const row = {
         testID,
         title: props.title,
-        subtitle: props.subtitle,
-        subtitleLines: 0,
-        subtitleAccessory: fixedNote,
+        hint: props.subtitle,
+        hintAccessory: fixedNote,
+        hintLeading: props.subtitleLeading,
         titleAccessory: props.titleAccessory,
-        showChevron: false,
         showDivider: props.showDivider,
     } as const;
 
+    // An enum with one allowed value is not a choice (a reserved capability): nothing is offered.
+    if (declaration?.type === 'enum' && declaration.bounds?.values?.length === 1) return null;
     if (kind === null) {
-        return <Item {...common} detail={homeSettingDisplayValue(entry)} mode="info" />;
+        const shown = homeSettingDisplayValue(entry);
+        const numeric = declaration?.type === 'int' || declaration?.type === 'float';
+        return (
+            <SchemaFieldRow
+                {...row}
+                layout="inline"
+                value={shown !== undefined && numeric ? homeServerSettingNumberWords(entry.key, declaration?.type, shown) : shown}
+            />
+        );
     }
     const stagedValue = staged?.kind === 'value' ? staged.value : undefined;
     const values = declaration?.bounds?.values ?? [];
     switch (kind) {
         case 'switch':
             return (
-                <Item
-                    {...common}
-                    mode="info"
-                    rightElement={(
-                        <Switch
-                            testID={`${testID}.switch`}
-                            accessibilityLabel={props.title}
-                            value={(stagedValue ?? entry.value) === true}
-                            disabled={props.disabled}
-                            onValueChange={stageValue}
-                        />
+                <SchemaFieldRow
+                    {...row}
+                    layout="inline"
+                    control={(
+                        <SchemaFieldControl control="switch" inputProps={{
+                            testID: `${testID}.switch`,
+                            accessibilityLabel: props.title,
+                            value: (stagedValue ?? entry.value) === true,
+                            disabled: props.disabled,
+                            onValueChange: stageValue,
+                        }} />
                     )}
                 />
             );
         case 'segmented':
-        case 'menu': {
+        case 'select': {
             const active = typeof stagedValue === 'string'
                 ? stagedValue
                 : typeof entry.value === 'string' ? entry.value : String(declaration?.default ?? values[0]);
-            if (kind === 'menu') {
+            if (kind === 'select') {
                 return (
-                    <DropdownMenu
-                        open={menuOpen}
-                        onOpenChange={setMenuOpen}
-                        selectedId={active}
-                        items={values.map((id) => ({ id, title: choiceLabel(id) }))}
-                        onSelect={(id) => {
+                    <SchemaFieldControl control="select" inputProps={{
+                        open: menuOpen,
+                        onOpenChange: setMenuOpen,
+                        selectedId: active,
+                        items: values.map((id) => ({ id, title: choiceLabel(id) })),
+                        onSelect: (id) => {
                             stageValue(id);
                             setMenuOpen(false);
-                        }}
-                        itemTrigger={{
+                        },
+                        itemTrigger: {
                             title: props.title,
                             subtitle: props.subtitle,
                             showSelectedSubtitle: false,
@@ -170,28 +154,27 @@ export const HomeSettingFieldRow = React.memo(function HomeSettingFieldRow(props
                                 showDivider: props.showDivider,
                                 disabled: props.disabled,
                             },
-                        }}
-                    />
+                        },
+                    }} />
                 );
             }
+            // Two to four choices are the one segmented-choice row, as everywhere else in settings.
             return (
-                <Item
-                    {...common}
+                <SegmentedChoiceItem<string>
+                    testID={testID}
+                    testIDPrefix={testID}
+                    title={props.title}
+                    titleAccessory={props.titleAccessory}
+                    subtitle={props.subtitle}
+                    subtitleLines={0}
+                    subtitleLeading={props.subtitleLeading}
+                    subtitleAccessory={fixedNote}
                     mode="info"
-                    accessoryLayout="adaptive"
-                    rightElement={(
-                        <SegmentedTabBar<string>
-                            role="radiogroup"
-                            tabs={values.map((id) => ({ id, label: choiceLabel(id) }))}
-                            activeTabId={active}
-                            onSelectTab={stageValue}
-                            slidingThumb
-                            segmentSizing="content"
-                            disabled={props.disabled}
-                            accessibilityLabel={props.title}
-                            testIDPrefix={testID}
-                        />
-                    )}
+                    showDivider={props.showDivider}
+                    options={values.map((id) => ({ id, label: choiceLabel(id) }))}
+                    value={active}
+                    onChange={stageValue}
+                    disabled={props.disabled}
                 />
             );
         }
@@ -200,60 +183,30 @@ export const HomeSettingFieldRow = React.memo(function HomeSettingFieldRow(props
             const numeric = kind === 'number';
             const fallback = declaration?.default;
             return (
-                <Item
-                    {...common}
-                    mode="info"
-                    accessoryLayout="adaptive"
-                    rightElement={(
-                        <View style={numeric ? styles.numberSlot : styles.textSlot}>
-                        <FieldTextInput
-                            testID={`${testID}.input`}
-                            accessibilityLabel={props.title}
-                            value={staged?.kind === 'text' ? staged.text : value}
-                            placeholder={fallback === undefined || fallback === null
-                                ? undefined
-                                : Array.isArray(fallback) ? fallback.join(', ') : String(fallback)}
-                            editable={!props.disabled}
-                            autoCapitalize="none"
-                            keyboardType={numeric ? 'number-pad' : undefined}
-                            error={props.error}
-                            onChangeText={stageText}
-                            {...(onCommit ? { onBlur: commit, onSubmitEditing: commit } : {})}
-                            style={styles.field}
-                        />
-                        {numeric && props.unit ? <Text style={styles.unit}>{props.unit}</Text> : null}
-                        </View>
+                <SchemaFieldRow
+                    {...row}
+                    layout="adaptive"
+                    control={(
+                        <SchemaFieldValueSlot kind={numeric ? 'number' : 'text'} unit={unit}>
+                            <SchemaFieldControl control="text" inputProps={{
+                                testID: `${testID}.input`,
+                                accessibilityLabel: props.title,
+                                value: staged?.kind === 'text' ? staged.text : value,
+                                placeholder: fallback === undefined || fallback === null
+                                    ? undefined
+                                    : Array.isArray(fallback) ? fallback.join(', ') : String(fallback),
+                                editable: !props.disabled,
+                                autoCapitalize: 'none',
+                                keyboardType: numeric ? 'number-pad' : undefined,
+                                error: props.error,
+                                onChangeText: stageText,
+                                ...(onCommit ? { onBlur: commit, onSubmitEditing: commit } : {}),
+                                style: SCHEMA_FIELD_INPUT_STYLE,
+                            }} />
+                        </SchemaFieldValueSlot>
                     )}
                 />
             );
         }
     }
 });
-
-// A number is a compact box with its unit beside it; free text and addresses take the width.
-const styles = StyleSheet.create((theme) => ({
-    numberSlot: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
-        width: 128,
-        justifyContent: 'flex-end',
-    },
-    textSlot: {
-        flexDirection: 'row',
-        flexGrow: 1,
-        flexShrink: 1,
-        minWidth: 200,
-        maxWidth: 360,
-    },
-    field: {
-        flexGrow: 1,
-        flexShrink: 1,
-        minWidth: 0,
-    },
-    unit: {
-        ...Typography.default('regular'),
-        ...ITEM_SUBTITLE_TEXT_METRICS.comfortable,
-        color: theme.colors.text.secondary,
-    },
-}));

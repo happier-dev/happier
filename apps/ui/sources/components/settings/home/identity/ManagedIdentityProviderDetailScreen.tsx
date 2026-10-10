@@ -9,9 +9,13 @@ import { identityAdministrationFailureMessage } from '@/components/settings/iden
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
-import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import {
+    resolveTestedSignInConnectionStatus,
+    signInConnectionStatusLabel,
+} from '@/components/settings/identity/signInConnectionStatus';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
@@ -109,14 +113,24 @@ const DetailContent = React.memo(function DetailContent(props: Readonly<{
     }, [copyFeedback]);
 
     if (state.kind === 'loading') {
-        return <ItemGroup><Item title={t('common.loading')} leftElement={<ActivitySpinner />} showChevron={false} /></ItemGroup>;
+        return <ItemGroup><SurfaceStateCard testID="identity-provider-loading" kind="loading" size="line" title={t('common.loading')} /></ItemGroup>;
     }
     if (state.kind === 'unavailable') {
-        return <ItemGroup><Item testID="identity-provider-unavailable" title={identityAdministrationFailureMessage(state.failure.code)} detail={state.failure.retryable ? t('common.retry') : undefined} onPress={state.failure.retryable ? refresh : undefined} showChevron={false} /></ItemGroup>;
+        return (
+            <ItemGroup>
+                <SurfaceStateCard
+                    testID="identity-provider-unavailable"
+                    kind="error"
+                    size="line"
+                    title={identityAdministrationFailureMessage(state.failure.code)}
+                    action={state.failure.retryable ? { testID: 'identity-provider-retry', label: t('common.retry'), onPress: refresh } : undefined}
+                />
+            </ItemGroup>
+        );
     }
     const provider = state.items.find((item) => item.id === props.providerId);
     if (!provider) {
-        return <ItemGroup><Item title={t('identityAdministration.error')} showChevron={false} /></ItemGroup>;
+        return <ItemGroup><SurfaceStateCard testID="identity-provider-missing" kind="error" size="line" title={t('identityAdministration.error')} /></ItemGroup>;
     }
 
     const runLifecycle = async (actionId: 'identity.providers.enable' | 'identity.providers.disable') => {
@@ -250,12 +264,22 @@ const DetailContent = React.memo(function DetailContent(props: Readonly<{
     const busy = pending !== null || !props.context.mutationsAvailable || !projectionCurrent;
     return (
         <>
-            {state.stale ? <ItemGroup description={t('homeGovernance.offlineNotice')}><Item title={t('common.retry')} onPress={refresh} showChevron={false} /></ItemGroup> : null}
+            {state.stale ? (
+                <ItemGroup>
+                    <SurfaceStateCard
+                        testID="identity-provider-stale"
+                        kind="error"
+                        size="line"
+                        title={t('homeGovernance.offlineNotice')}
+                        action={{ testID: 'identity-provider-retry', label: t('common.retry'), onPress: refresh }}
+                    />
+                </ItemGroup>
+            ) : null}
             <SettingSection
                 section={HOME_IDENTITY_PROVIDER_SETTINGS.sectionRefs.configuration}
                 answersFor={[HOME_IDENTITY_PROVIDER_SETTINGS.sectionRefs.consumers]}
             ><ItemGroup title={provider.displayName}>
-                <Item title={t('identityAdministration.configuration')} detail={provider.enabled ? t('identityAdministration.active') : t('identityAdministration.disabled')} showChevron={false} />
+                <Item title={t('identityAdministration.configuration')} detail={signInConnectionStatusLabel(provider.enabled ? 'active' : 'disabled')} showChevron={false} />
                 {callbackUrl ? (
                     <SettingAnchor setting={HOME_IDENTITY_PROVIDER_SETTINGS.settings.callbackUrl}><Item
                         testID="identity-provider-callback-url"
@@ -298,7 +322,7 @@ const DetailContent = React.memo(function DetailContent(props: Readonly<{
                     />
                 )}
                 {provider.kind === 'oidc' ? (
-                    <Item title={t('identityAdministration.test')} detail={provider.lastSuccessfulTest?.current ? t('identityAdministration.tested') : provider.lastSuccessfulTest ? t('identityAdministration.staleTest') : t('identityAdministration.needsTest')} showChevron={false} />
+                    <Item title={t('identityAdministration.test')} detail={signInConnectionStatusLabel(resolveTestedSignInConnectionStatus({ enabled: true, testable: true, lastSuccessfulTest: provider.lastSuccessfulTest }))} showChevron={false} />
                 ) : null}
             </ItemGroup></SettingSection>
             {provider.teamConsumers.length > 0 ? (
@@ -312,9 +336,7 @@ const DetailContent = React.memo(function DetailContent(props: Readonly<{
                             testID={`identity-provider-team-consumer:${consumer.binding.id}`}
                             title={consumer.team.name}
                             subtitle={t('identityAdministration.githubFacetSignIn')}
-                            detail={consumer.binding.enabled
-                                ? t('identityAdministration.active')
-                                : t('identityAdministration.disabled')}
+                            detail={signInConnectionStatusLabel(consumer.binding.enabled ? 'active' : 'disabled')}
                             showChevron={false}
                         />
                     ))}

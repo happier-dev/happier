@@ -113,16 +113,14 @@ export function HomeAddForm(props: Readonly<{
     const active = addHomePathOfPane(flow.pane.pane);
     const phonePaths = phone && props.layout === 'page' ? (
         <ListPresentationProvider value="page">
-            <View accessibilityRole="radiogroup">
-                <ItemGroup>
-                    {paths.map((path) => (
-                        <Item key={path.id} testID={`${props.testID}.path.${path.id}`} title={path.title}
-                            subtitle={path.subtitle} subtitleLines={0} icon={path.glyph}
-                            accessibilityRole="radio" webRole="radio" selected={active === path.id}
-                            onPress={() => flow.choosePath(path.id)} />
-                    ))}
-                </ItemGroup>
-            </View>
+            <ItemGroup accessibilityRole="radiogroup" accessibilityLabel={t('addFlows.addHome')}>
+                {paths.map((path) => (
+                    <Item key={path.id} testID={`${props.testID}.path.${path.id}`} title={path.title}
+                        subtitle={path.subtitle} subtitleLines={0} icon={path.glyph}
+                        accessibilityRole="radio" webRole="radio" selected={active === path.id}
+                        onPress={() => flow.choosePath(path.id)} />
+                ))}
+            </ItemGroup>
         </ListPresentationProvider>
     ) : null;
 
@@ -209,6 +207,7 @@ export function HomeAddForm(props: Readonly<{
                 accessibilityLabel={t('addFlows.addHome')}
                 density="compact"
                 minimumColumns={2}
+                maximumColumns={2}
                 options={paths.map((path) => ({ id: path.id, title: path.title, subtitle: path.subtitle, mark: path.glyph }))}
                 value={active}
                 onChange={(next) => { if (next) flow.choosePath(next); }}

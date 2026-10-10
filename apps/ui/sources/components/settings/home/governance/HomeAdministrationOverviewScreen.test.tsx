@@ -30,7 +30,10 @@ import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelp
 const route = vi.hoisted(() => ({ pathname: '/settings/home' }));
 const windowState = vi.hoisted(() => ({ width: 1440, height: 1000 }));
 const routerPush = vi.hoisted(() => vi.fn());
-const modal = vi.hoisted(() => ({ show: null as null | ((config: unknown) => string) }));
+const modal = vi.hoisted(() => ({
+    show: null as null | ((config: unknown) => string),
+    prompt: null as null | { mockResolvedValueOnce: (value: string | null) => void },
+}));
 
 vi.mock('@/components/ui/lists/virtualized', () => ({
     VirtualizedList: (props: Record<string, any>) => React.createElement(
@@ -60,6 +63,7 @@ installSettingsViewCommonModuleMocks({
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
         const mock = createModalModuleMock();
         modal.show = mock.spies.show as unknown as (config: unknown) => string;
+        modal.prompt = mock.spies.prompt as unknown as { mockResolvedValueOnce: (value: string | null) => void };
         return mock.module;
     },
 });
@@ -74,6 +78,7 @@ const ACCOUNTS_PATH = '/v1/home/accounts/list';
 const SETTINGS_PATH = '/v1/home/settings/get';
 const MAIL_PATH = '/v1/home/mail-delivery/get';
 const REACH_PATH = '/v1/home/reachability/get';
+const SETTINGS_SET_PATH = '/v1/home/settings/set';
 const TEAMS_LIST_PATH = '/v1/teams/list';
 const TEAM_GET_PATH = '/v1/teams/get';
 const INVITATION_LIST_PATH = '/v1/teams/invitations/list';
@@ -158,6 +163,14 @@ describe('Home console Overview (A)', () => {
                     }),
                     homeSettingEntryFixture('HAPPIER_API_TRUST_PROXY', { source: 'deployment', value: true, fixed: true }),
                     homeSettingEntryFixture('HAPPIER_API_CORS_MAX_AGE_SECONDS', { source: 'deployment', value: 60, fixed: true }),
+                    // WorkOS with only its API key: a sign-in platform half set up is trouble.
+                    homeSettingEntryFixture('WORKOS_API_KEY', {
+                        source: 'home', secretSet: true, apply: 'restart',
+                        declaration: { type: 'string', section: 'policies', group: 'workos' },
+                    }),
+                    homeSettingEntryFixture('WORKOS_CLIENT_ID', {
+                        apply: 'restart', declaration: { type: 'string', section: 'policies', group: 'workos' },
+                    }),
                 ],
             }),
         });
@@ -169,12 +182,27 @@ describe('Home console Overview (A)', () => {
         });
 
         const screen = await renderOverview(home);
-        await waitForHomeGovernance(() => expect(ids(screen)).toContain('home-overview-attention:fixed'));
+        await waitForHomeGovernance(() => expect(ids(screen)).toContain('home-overview-attention:pending'));
 
-        // What needs the owner, most urgent first, each from its owner's answer.
-        expect(inOrder(screen, 'home-overview-attention:')).toEqual(['ignored', 'email', 'address', 'pending', 'fixed']);
-        expect(screen.getTextContent()).toContain('homeGovernance.overviewPage.fixedTitle(count=2)');
+        // What needs the owner, most urgent first, each from its owner's answer (lab `hcOverview-R`):
+        // a value the last start refused, then the restart that applies saved changes, then sign-in
+        // set-up, then the rest. Values the deployment fixes are healthy facts, never attention (DR-14).
+        expect(inOrder(screen, 'home-overview-attention:')).toEqual(['ignored', 'pending', 'platform:workos', 'email', 'address']);
+        expect(screen.getTextContent()).not.toContain('homeGovernance.overviewPage.fixedTitle');
         expect(screen.getTextContent()).toContain('homeGovernance.runtime.pendingRestart(count=1)');
+        // The pending row names what waits, through the restart banner's own summary.
+        expect(screen.getTextContent()).toContain('homeSettings.banner.pendingNames(');
+        expect(screen.getTextContent()).not.toContain('homeGovernance.overviewPage.pendingBody');
+        // A half-set platform says what it needs and what that blocks.
+        expect(screen.getTextContent()).toContain('homeGovernance.overviewPage.workosNeedsClientIdBody');
+        // This device cannot restart this Home's runtime, so the row leads to Runtime, which says where.
+        await act(async () => screen.pressByTestId('home-overview-attention:pending.action'));
+        expect(routerPush).toHaveBeenLastCalledWith(`/settings/home/${home}/runtime`);
+        // A half-set platform leads to its own row, opened.
+        await act(async () => screen.pressByTestId('home-overview-attention:platform:workos.action'));
+        expect(routerPush).toHaveBeenLastCalledWith(`/settings/home/${home}/sign-in-providers?setting=${encodeURIComponent(
+            'homeAdministration.signInProviders.workos',
+        )}`);
         // Who owns it: the two active owners, then the People summary.
         expect(inOrder(screen, 'home-overview-owner:')).toEqual(['account-ada', 'account-bo']);
         expect(screen.getTextContent())
@@ -241,6 +269,26 @@ describe('Home console Overview (A)', () => {
             .toEqual([null, 'page-2']);
         expect(screen.getTextContent())
             .toContain('homeGovernance.overviewPage.peopleSummary(people=3,more=true,owners=2,admins=null)');
+    });
+
+    it('renames the Home where its name is shown, through the one settings writer (DR-08)', async () => {
+        const home = await addHome();
+        const name = (value: string) => homeSettingEntryFixture('HAPPIER_HOME_DISPLAY_NAME', {
+            value, source: 'home', declaration: { type: 'string', section: 'reach', group: 'identity' },
+        });
+        harness.answer(home, SETTINGS_PATH, { body: homeSettingsProjectionFixture({ revision: 3, entries: [name('Acme')] }) });
+        harness.answer(home, SETTINGS_SET_PATH, { body: homeSettingsProjectionFixture({ revision: 4, entries: [name('Studio')] }) });
+
+        const screen = await renderOverview(home);
+        await waitForHomeGovernance(() => expect(ids(screen)).toContain('home-overview-name.rename'));
+        modal.prompt!.mockResolvedValueOnce('Studio');
+        await act(async () => screen.pressByTestId('home-overview-name.rename'));
+
+        await waitForHomeGovernance(() => {
+            expect(harness.requestsFor(SETTINGS_SET_PATH).map((request) => request.input)).toEqual([
+                { expectedRevision: 3, values: { HAPPIER_HOME_DISPLAY_NAME: 'Studio' } },
+            ]);
+        });
     });
 
     it('lists the pages under what needs attention on a phone, where there is no sidebar', async () => {

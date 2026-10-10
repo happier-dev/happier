@@ -40,11 +40,10 @@ installSettingsViewCommonModuleMocks({
         const dimensions = () => ({ width: 390, height: 844, scale: 1, fontScale: 1 });
         return createReactNativeWebMock({ useWindowDimensions: dimensions, Dimensions: { get: dimensions } });
     },
-    router: async () => ({
-        useRouter: () => ({ push: routerPush, back: vi.fn() }),
-        useNavigation: () => ({ setOptions: vi.fn() }),
-        useLocalSearchParams: () => ({}),
-    }),
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({ router: { push: routerPush } }).module;
+    },
 });
 
 // Only the network and the device credential store are replaced. The credential

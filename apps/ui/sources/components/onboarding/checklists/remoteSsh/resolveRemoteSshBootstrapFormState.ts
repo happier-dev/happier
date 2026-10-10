@@ -4,8 +4,26 @@ import type { RemoteSshBootstrapFormState } from '@/components/systemTasks/remot
 import type { SshCredentialsDraft } from '@/components/ssh/SshCredentialsFields';
 import type { RemoteHost } from '@/sync/domains/remoteHosts/remoteHostModel';
 import { getRemoteHostLocalOverridesStore } from '@/sync/domains/remoteHosts/remoteHostLocalOverrides';
-import { resolveRemoteHostEffectiveSshConfig } from '@/sync/domains/remoteHosts/resolveRemoteHostEffectiveSshConfig';
-import type { SecretString } from '@/sync/encryption/secretSettings';
+import { resolveRemoteHostEffectiveSshConfig, type RemoteHostSavedSecretValueReader, type RemoteHostEffectiveSshConfig } from '@/sync/domains/remoteHosts/resolveRemoteHostEffectiveSshConfig';
+
+/** Only a prepared task carries material; the saved host and picker retain references. */
+export function buildRemoteSshBootstrapFormStateFromSshConfig(params: Readonly<{
+    config: RemoteHostEffectiveSshConfig;
+    draft: SshCredentialsDraft;
+    installRelayRuntime: boolean;
+}>): RemoteSshBootstrapFormState {
+    const parsed = parseSshTarget(params.config.sshTarget);
+    return {
+        sshUsername: String(parsed.username ?? params.draft.username).trim(),
+        sshHost: String(parsed.host ?? params.draft.host).trim(),
+        sshPort: params.config.sshPort ? String(params.config.sshPort) : '',
+        sshAuth: params.config.sshAuth,
+        sshPassword: String(params.draft.password ?? '').trim() || params.config.password,
+        identityFilePath: params.config.identityFilePath,
+        identityPrivateKey: params.config.identityPrivateKey,
+        installRelayRuntime: params.installRelayRuntime,
+    };
+}
 
 export async function resolveRemoteSshBootstrapFormState(params: Readonly<{
     draft: SshCredentialsDraft;
@@ -15,7 +33,7 @@ export async function resolveRemoteSshBootstrapFormState(params: Readonly<{
     saveSecretMaterial: boolean;
     installRelayRuntime: boolean;
     remoteHostsSecretMaterialEnabled: boolean;
-    decryptSecretValue: (input: SecretString | null | undefined) => string | null;
+    readSavedSecretValue?: RemoteHostSavedSecretValueReader;
 }>): Promise<RemoteSshBootstrapFormState> {
     if (!params.usingSavedHost || !params.selectedSavedHost) {
         const privateKeyMaterial = params.draft.authMode === 'keyfile'
@@ -33,6 +51,8 @@ export async function resolveRemoteSshBootstrapFormState(params: Readonly<{
         };
     }
 
+    if (!params.readSavedSecretValue) throw new Error('saved_secret_reader_unavailable');
+
     const localOverrides = (() => {
         try {
             return getRemoteHostLocalOverridesStore().get(params.selectedSavedHost.id);
@@ -45,29 +65,13 @@ export async function resolveRemoteSshBootstrapFormState(params: Readonly<{
         remoteHost: params.selectedSavedHost,
         localOverrides,
         secretMaterialAllowed: params.remoteHostsSecretMaterialEnabled,
-        decryptSecretValue: params.decryptSecretValue,
+        readSavedSecretValue: params.readSavedSecretValue,
     });
 
     if (!resolved.ok) {
         throw new Error(resolved.error.message);
     }
 
-    const parsed = parseSshTarget(resolved.value.sshTarget);
-    const sshUsername = String(parsed.username ?? params.draft.username).trim();
-    const sshHost = String(parsed.host ?? params.draft.host).trim();
-    const sshPort = resolved.value.sshPort ? String(resolved.value.sshPort) : '';
-
-    const passwordFromDraft = String(params.draft.password ?? '').trim();
-    const effectivePassword = passwordFromDraft || resolved.value.password;
-
-    return {
-        sshUsername,
-        sshHost,
-        sshPort,
-        sshAuth: resolved.value.sshAuth,
-        sshPassword: effectivePassword,
-        identityFilePath: resolved.value.identityFilePath,
-        identityPrivateKey: resolved.value.identityPrivateKey,
-        installRelayRuntime: params.installRelayRuntime,
-    };
+    return buildRemoteSshBootstrapFormStateFromSshConfig({ config: resolved.value, draft: params.draft,
+        installRelayRuntime: params.installRelayRuntime });
 }

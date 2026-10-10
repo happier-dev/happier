@@ -25,12 +25,22 @@ function facts(overrides: Partial<HomeRuntimeExecutorFacts> = {}): HomeRuntimeEx
         localBridgeAvailable: false,
         locallyHostedServerId: null,
         remoteHosts: [],
+        remoteHostScope: { serverId: 'catalog_home', accountId: 'account' },
+        remoteHostCatalogRevision: 4,
         scopeIdOfProfile: (profileId) => (profileId === 'profile_vps' ? 'srv_home' : null),
         ...overrides,
     };
 }
 
 describe('resolveHomeRuntimeExecutor (one executor rule for Reach, Runtime, Backups and Restart now)', () => {
+    it('does not offer SSH runtime authority without the originating Account catalog revision', () => {
+        const host = remoteHost();
+        const unadmitted = { ...facts({ localBridgeAvailable: true, remoteHosts: [host] }),
+            remoteHostScope: null, remoteHostCatalogRevision: null };
+        const executor = resolveHomeRuntimeExecutor(unadmitted);
+        expect(homeRuntimeExecutorCanAct(executor)).toBe(false);
+    });
+
     it('acts locally only on the desktop that set this Home up as its own, with the system-task bridge', () => {
         expect(resolveHomeRuntimeExecutor(facts({ localBridgeAvailable: true, locallyHostedServerId: 'srv_home' })))
             .toEqual({ kind: 'hosting_desktop' });
@@ -44,7 +54,8 @@ describe('resolveHomeRuntimeExecutor (one executor rule for Reach, Runtime, Back
     it('reaches a Remote host linked to this Home over SSH from a desktop, else through its connected Machine', () => {
         const host = remoteHost();
         expect(resolveHomeRuntimeExecutor(facts({ localBridgeAvailable: true, remoteHosts: [host] })))
-            .toEqual({ kind: 'remote_host', host, hostName: 'Home VPS' });
+            .toEqual({ kind: 'remote_host', host, hostName: 'Home VPS',
+                scope: { serverId: 'catalog_home', accountId: 'account' }, catalogRevision: 4 });
         expect(resolveHomeRuntimeExecutor(facts({ remoteHosts: [host] })))
             .toEqual({ kind: 'connected_machine', machineId: 'machine_vps', hostName: 'Home VPS' });
         expect(resolveHomeRuntimeExecutor(facts({ remoteHosts: [remoteHost({ linkedMachineId: null })] })))

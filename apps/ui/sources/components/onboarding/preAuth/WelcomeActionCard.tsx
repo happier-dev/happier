@@ -1,6 +1,7 @@
 import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { resolveHappierMinimumInteractiveTargetSize } from '@happier-dev/plugin-ui/environment';
 import * as React from 'react';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -20,7 +21,7 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
     subtitle?: string;
     primary?: boolean;
     /** A centred welcome CTA with its glyph before the label, rather than an action card. */
-    presentation?: 'card' | 'button';
+    presentation?: 'card' | 'button' | 'link';
     iconName?: IconName;
     /**
      * A provider's own connect colour, exactly as its Home projected it
@@ -63,7 +64,7 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
     const actionId = props.actionId ?? props.testID;
     const pending = !escape && admission.pendingActionId === actionId;
     const subtitleId = props.subtitle ? `welcome-action-description-${encodeURIComponent(actionId)}` : undefined;
-    const foreground = primary ? theme.colors.button.primary.tint : theme.colors.text.primary;
+    const foreground = primary ? theme.colors.button.primary.tint : props.presentation === 'link' ? theme.colors.text.secondary : theme.colors.text.primary;
     const subtitleColor = primary ? theme.colors.button.primary.tint : theme.colors.text.secondary;
     const pressFeedback = usePressFeedback();
     const accentColor = props.accentColor?.trim();
@@ -71,6 +72,7 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
         ? accentColor
         : null;
     const button = props.presentation === 'button';
+    const link = props.presentation === 'link';
 
     if (props.unavailable) {
         return (
@@ -113,8 +115,11 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
                     style={[
                         styles.card,
                         button ? styles.button : null,
+                        link ? styles.link : null,
                         primary
                             ? { backgroundColor: theme.colors.button.primary.background, borderColor: theme.colors.button.primary.background }
+                            : link
+                                ? { backgroundColor: 'transparent', borderColor: 'transparent' }
                             : button
                                 ? { backgroundColor: hovered ? theme.colors.surface.pressed : theme.colors.surface.elevated, borderColor: 'transparent' }
                                 : { backgroundColor: hovered ? theme.colors.surface.elevated : theme.colors.surface.base, borderColor: theme.colors.border.default },
@@ -129,7 +134,7 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
                         <Text testID={`${props.testID}-title`} style={[styles.title, { color: foreground }]}>{props.title}</Text>
                         {props.subtitle ? <Text nativeID={subtitleId} testID={`${props.testID}-subtitle`} style={[styles.subtitle, { color: subtitleColor }]}>{props.subtitle}</Text> : null}
                     </View>
-                    {!button && pending ? <ActivitySpinner color={foreground} /> : !button && props.iconName ? (
+                    {!button && pending ? <ActivitySpinner color={foreground} /> : !button && !link && props.iconName ? (
                         <View
                             testID={accent ? `${props.testID}-accent` : undefined}
                             accessibilityElementsHidden
@@ -164,6 +169,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     textBlock: { flex: 1, gap: 0 },
     button: { minHeight: 50, justifyContent: 'center', gap: 8 },
+    link: { minHeight: resolveHappierMinimumInteractiveTargetSize(Platform.OS), paddingHorizontal: 0, paddingVertical: 8, borderWidth: 0 },
     buttonText: { gap: 0, alignItems: 'center', flexShrink: 1 },
     // The same frame, quieter: its words still read while its action waits.
     unavailableText: { opacity: 0.6 },

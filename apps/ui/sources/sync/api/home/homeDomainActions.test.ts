@@ -77,6 +77,16 @@ afterEach(() => {
 });
 
 describe('createHomeDomainActionExecutorForScope', () => {
+    it.each([
+        { status: 404, error: 'Session not found or not owned by user', code: 'session_absent' },
+        { status: 409, error: 'Session delete condition was lost', code: 'session_delete_conflict' },
+    ])('retains deletion refusal $code and its exact Home payload', async ({ status, error, code }) => {
+        const { scope } = await scopeForNewHome('https://delete-home.example');
+        runtimeFetchMock.mockResolvedValue(jsonResponse({ error }, status));
+        const result = await createHomeDomainActionExecutorForScope(scope)({ actionId: 'session.delete',
+            input: { sessionId: 'session' }, context: { surface: 'ui', authority: 'present_user' } });
+        expect(result).toEqual({ ok: false, errorCode: code, error: code, details: { error } });
+    });
     it('carries a family intent to the path its Action row declares', async () => {
         const { scope } = await scopeForNewHome('https://home-a.example');
         runtimeFetchMock.mockResolvedValue(jsonResponse(projection(), 200));
@@ -272,6 +282,23 @@ describe('createHomeDomainActionExecutorForScope', () => {
 });
 
 describe('Home domain contributed-family failure decoding', () => {
+    it('preserves validated retained admission details without accepting unrelated error data', () => {
+        const details = { error: 'invalid_request', code: 'target_unavailable', requestId: 'request-a',
+            managedAdmission: { managedId: 'managed-a' } };
+        expect(homeDomainFailureFromActionFailure({ errorCode: 'target_unavailable', details }))
+            .toEqual({ kind: 'unknown', retryable: false, code: 'target_unavailable', details });
+        expect(homeDomainFailureFromActionFailure({ errorCode: 'admission_unavailable', details }))
+            .toEqual({ kind: 'unknown', retryable: false, code: 'admission_unavailable' });
+        expect(homeDomainFailureFromActionFailure({ errorCode: 'target_unavailable', details: { ...details, secret: 'untrusted' } }))
+            .toEqual({ kind: 'unknown', retryable: false, code: 'target_unavailable' });
+    });
+
+    it('preserves a pre-dispatch managed admission refusal without inventing a Home outage', () => {
+        const failure = homeDomainFailureFromActionFailure({ errorCode: 'admission_unavailable' });
+        expect(failure).toEqual({ kind: 'unknown', retryable: false, code: 'admission_unavailable' });
+        expect(homeDomainFailureCode(failure)).toBe('admission_unavailable');
+    });
+
     it.each([
         'identity_connection_conflict',
         'directory_source_permission_lost',

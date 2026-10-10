@@ -24,7 +24,6 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { useActiveUnsavedChangesGuard } from '@/utils/navigation/useActiveUnsavedChangesGuard';
 import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
 import { promptUnsavedChangesAlert } from '@/utils/ui/promptUnsavedChangesAlert';
 import { openExternalUrl } from '@/utils/url/openExternalUrl';
@@ -329,19 +328,8 @@ export const ManagedGitHubAppEditorContent = React.memo(function ManagedGitHubAp
         requestDecision,
         onSave: saveBeforeLeave,
         continueOnSave: false,
-        onContinue: (action) => (navigation as { dispatch?: (value: unknown) => void }).dispatch?.(action),
+        onContinue: (action) => { if (action) (navigation as { dispatch?: (value: unknown) => void }).dispatch?.(action); },
         tag: 'ManagedGitHubAppEditorScreen.beforeRemove',
-    });
-    useActiveUnsavedChangesGuard({
-        navigation,
-        guard: React.useMemo(() => ({
-            isDirtyRef: dirtyRef,
-            ignoreRef,
-            requestDecision,
-            onSave: saveBeforeLeave,
-            continueOnSave: false,
-            tag: 'ManagedGitHubAppEditorScreen.shellGuard',
-        }), [requestDecision, saveBeforeLeave]),
     });
 
     if (props.registrationId && apps.state.kind === 'loading') return <ItemGroup><Item title={t('common.loading')} leftElement={<ActivitySpinner />} showChevron={false} /></ItemGroup>;

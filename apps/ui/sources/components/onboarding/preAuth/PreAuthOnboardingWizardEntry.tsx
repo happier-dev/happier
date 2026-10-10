@@ -193,6 +193,7 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
     const routeGatePendingSetupIntent = usePendingSetupIntent();
     const hasAuthedSetupContinuation =
         auth.isAuthenticated
+        && routeGatePendingSetupIntent?.branch !== 'askHappier'
         && (routeGatePendingSetupIntent?.phase === 'awaiting_auth' || routeGatePendingSetupIntent?.phase === 'post_auth');
     const isLandscape = useIsLandscape();
     const isDesktopShell = React.useMemo(() => isDesktopHost(), []);

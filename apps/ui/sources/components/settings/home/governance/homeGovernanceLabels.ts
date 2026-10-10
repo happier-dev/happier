@@ -29,9 +29,8 @@ type HomeUnresolvedReason = Extract<HomeAdministrationHomeEntry, { state: 'unres
 /**
  * How one Home is named to the person administering it.
  *
- * The app's one Home label owner decides: the name they chose, else "Personal Home" for this
- * device's own Home, else "Home on <host>" (an address is never shown as a name); the opaque id
- * only when this device knows nothing else about it.
+ * The app's one Home label owner decides: the published or chosen name, else "Personal Home"
+ * for this device's own Home, else "This Home". Addresses belong only in distinguishing meta.
  */
 export function homeDisplayName(serverId: string): string {
     return resolveHomeDisplayLabel(getServerProfileById(serverId), serverId);
@@ -117,31 +116,34 @@ export function homeActionUnavailableReasonLabel(reason: HomeAccountActionUnavai
 }
 
 /**
- * What a refused Home-governance mutation is called, in one place.
+ * What a failed Home-governance read or mutation is called, in one place.
  *
  * The Home's own typed code comes first, because it names the actual obstacle.
  * Only when it sent none does the transport's own verdict speak — and the two
  * that matter most are the ones a code can never carry: a request that never
  * left, and a request that left and whose answer was lost.
  *
- * That last one is why this returns a title as well as a body. Every other
- * outcome can be introduced as "the change did not go through"; an unconfirmed
- * one cannot, because the Home may well have applied it. Saying otherwise
+ * Reads use an unavailable notice when no specific cause is known. Mutations
+ * remain the default for existing action callers. A lost mutation answer is why
+ * this returns a title as well as a body: an unconfirmed mutation cannot be
+ * introduced as a change that failed, because the Home may well have applied it. Saying otherwise
  * invites a second press, and a second press is a second non-idempotent
  * governance mutation.
  */
 export function homeGovernanceFailureNotice(
     failure: HomeDomainFailure,
+    context?: Readonly<{ effect: 'read' | 'write' }>,
 ): Readonly<{ title: string; body: string }> {
-    if (failure.code === null && failure.kind === 'outcome_unknown') {
+    const effect = context?.effect ?? 'write';
+    if (effect === 'write' && failure.code === null && failure.kind === 'outcome_unknown') {
         return Object.freeze({
             title: t('homeGovernance.errorOutcomeUnknownTitle'),
             body: t('homeGovernance.errorOutcomeUnknown'),
         });
     }
     return Object.freeze({
-        title: t('homeGovernance.changeFailedTitle'),
-        body: homeGovernanceFailureBody(failure),
+        title: effect === 'read' ? t('homeGovernance.unavailableTitle') : t('homeGovernance.changeFailedTitle'),
+        body: homeGovernanceFailureBody(failure, effect),
     });
 }
 
@@ -173,7 +175,7 @@ export function accountErasureFailureNotice(error: unknown): Readonly<{ title: s
     });
 }
 
-function homeGovernanceFailureBody(failure: HomeDomainFailure): string {
+function homeGovernanceFailureBody(failure: HomeDomainFailure, effect: 'read' | 'write'): string {
     switch (failure.code) {
         case 'home_governance_forbidden':
             return t('homeGovernance.errorForbidden');
@@ -207,7 +209,7 @@ function homeGovernanceFailureBody(failure: HomeDomainFailure): string {
         case 'conflict':
             return t('homeGovernance.errorConflict');
         default:
-            return t('homeGovernance.errorGeneric');
+            return effect === 'read' ? t('homeGovernance.unavailableBody') : t('homeGovernance.errorGeneric');
     }
 }
 

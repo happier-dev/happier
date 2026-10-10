@@ -5,7 +5,9 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { VirtualizedList } from '@/components/ui/lists/virtualized';
 import { TeamRow } from '@/components/settings/teams/TeamRow';
 import { teamDetailPath, teamsCreatePath } from '@/components/settings/teams/teamsRoutes';
@@ -16,6 +18,7 @@ import { HomeAdministrationSection } from './HomeAdministrationSection';
 import { canInvitePeople, presentHomeInvitePeople } from './HomeInvitePeopleDialog';
 import type { HomeAdministrationContext } from './homeAdministrationContext';
 import { segmentHomeAdministrationRows } from './homeAdministrationVirtualizedSegments';
+import { TeamCreationPolicyEditor, TeamsVisibilityPolicyEditor } from './HomeTeamsPolicySections';
 
 type HomeTeamsVirtualizedRow = Readonly<{
     key: string;
@@ -82,6 +85,13 @@ const HomeTeams = React.memo(function HomeTeams(
             ));
             return result;
         }
+        // Who creates Teams, and who sees them, head the Teams page (DR-09, lab `hcTeams-A`).
+        add('policies', () => (
+            <>
+                <TeamCreationPolicyEditor context={context} />
+                <TeamsVisibilityPolicyEditor context={context} />
+            </>
+        ));
         if (!mayGovern) {
             add('forbidden', () => (
                 <ItemGroup description={t('homeGovernance.forbiddenBody')}>
@@ -111,7 +121,7 @@ const HomeTeams = React.memo(function HomeTeams(
         ) {
             add('loading', () => (
                 <ItemGroup title={t('homeGovernance.teams')} action={createAction}>
-                    <Item testID="home-teams-loading" title={t('homeGovernance.loading')} loading showChevron={false} />
+                    <ItemLoadStateRows testID="home-teams-loading" state={{ kind: 'loading' }} rows={3} accessibilityLabel={t('homeGovernance.teams')} />
                 </ItemGroup>
             ));
             return result;
@@ -126,13 +136,14 @@ const HomeTeams = React.memo(function HomeTeams(
                     description={t('homeGovernance.unavailableBody')}
                     action={createAction}
                 >
-                    <Item
-                        testID={directoryRetryable ? 'home-teams-retry' : 'home-teams-unavailable'}
-                        title={directoryRetryable ? t('homeGovernance.retry') : t('homeGovernance.unavailableTitle')}
-                        mode={directoryRetryable ? 'interactive' : 'info'}
-                        onPress={directoryRetryable ? directory.refresh : undefined}
-                        accessibilityLiveRegion="polite"
-                        showChevron={false}
+                    <SurfaceStateCard
+                        testID="home-teams-unavailable"
+                        kind="error"
+                        size="line"
+                        title={t('homeGovernance.unavailableTitle')}
+                        action={directoryRetryable
+                            ? { testID: 'home-teams-retry', label: t('homeGovernance.retry'), onPress: directory.refresh }
+                            : undefined}
                     />
                 </ItemGroup>
             ));
@@ -143,7 +154,7 @@ const HomeTeams = React.memo(function HomeTeams(
                     description={t('homeGovernance.manageTeamsSubtitle')}
                     action={createAction}
                 >
-                    <Item testID="home-teams-empty" title={t('homeGovernance.teamsEmpty')} mode="info" showChevron={false} />
+                    <SurfaceStateCard testID="home-teams-empty" kind="empty" size="line" title={t('homeGovernance.teamsEmpty')} />
                 </ItemGroup>
             ));
         } else {
@@ -230,8 +241,14 @@ const HomeTeams = React.memo(function HomeTeams(
 
         if (directory.partial && directory.rows.length > 0) {
             add('retry', () => (
-                <ItemGroup description={t('homeGovernance.unavailableBody')}>
-                    <Item testID="home-teams-retry" title={t('homeGovernance.retry')} onPress={directory.refresh} showChevron={false} />
+                <ItemGroup>
+                    <SurfaceStateCard
+                        testID="home-teams-partial"
+                        kind="error"
+                        size="line"
+                        title={t('homeGovernance.unavailableBody')}
+                        action={{ testID: 'home-teams-retry', label: t('homeGovernance.retry'), onPress: directory.refresh }}
+                    />
                 </ItemGroup>
             ));
         } else if (directory.hasMore) {
@@ -242,7 +259,7 @@ const HomeTeams = React.memo(function HomeTeams(
             ));
         }
         return result;
-    }, [archived, archivedLoading, archivedRetryable, context.projection.capabilities.createTeam, directory, mayGovern, offerArchived, router, serverId, showArchived, teamsEnabled, theme.colors.text.secondary]);
+    }, [archived, archivedLoading, archivedRetryable, context, directory, mayGovern, offerArchived, router, serverId, showArchived, teamsEnabled, theme.colors.text.secondary]);
 
     const renderRow = React.useCallback(({ item }: Readonly<{ item: HomeTeamsVirtualizedRow }>) => item.render(), []);
 

@@ -19,14 +19,14 @@ export const HOME_AUTHENTICATION_SETTINGS = defineSettingsPage({
     },
     sections: {
         authentication: { titleKey: 'homeGovernance.signInTitle', settings: {
-            enabledMethodIds: { titleKey: 'homeGovernance.signInMethods' },
-            permittedAccountModes: { titleKey: 'homeGovernance.accountModes' },
-            recommendedProvisioningMode: { titleKey: 'homeGovernance.recommendedMode', descriptionKey: 'homeGovernance.recommendedModeDescription' },
-            admission: { titleKey: 'homeGovernance.signInPolicy.newAccounts', keywordKeys: ['homeGovernance.signInPolicy.admissionTitle'] },
-            anonymousSignup: { titleKey: 'homeGovernance.signInPolicy.anonymousSignup', descriptionKey: 'homeGovernance.signInPolicy.anonymousSignupDescription' },
-            storagePolicy: { titleKey: 'homeGovernance.signInPolicy.storagePolicy', keywordKeys: ['homeGovernance.signInPolicy.encryptionTitle'] },
-            signInServiceDisabled: { titleKey: 'homeGovernance.signInPolicy.signInService', descriptionKey: 'homeGovernance.signInPolicy.signInServiceDescription' },
-            saveAuthentication: { titleKey: 'common.save' },
+            enabledMethodIds: {},
+            permittedAccountModes: {},
+            recommendedProvisioningMode: {},
+            admission: {},
+            anonymousSignup: {},
+            storagePolicy: {},
+            signInServiceDisabled: {},
+            saveAuthentication: {},
         } },
     },
 });

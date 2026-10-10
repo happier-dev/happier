@@ -19,7 +19,13 @@ import type { HomeAdministrationContext } from './homeAdministrationContext';
 
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
 
-installSettingsViewCommonModuleMocks();
+const routerPush = vi.hoisted(() => vi.fn());
+installSettingsViewCommonModuleMocks({
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({ router: { push: routerPush } }).module;
+    },
+});
 // The generated bundled-artifact inventory is an unrelated build product absent from remote
 // source mirrors; the empty projection keeps this suite on the real Action path.
 vi.mock('@/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts', () => ({
@@ -222,7 +228,7 @@ describe('SignInPolicyEditor', () => {
         expect(screen.findByTestId('home-policy-auth-method:github-switch')?.props.value).toBe(true);
     });
 
-    it('shows a method the deployment fixes read-only with its key, and one it cannot run with what it lacks', async () => {
+    it('shows a method the deployment fixes read-only with its key, and leads one that needs its sign-in app to where it is set', async () => {
         const { screen } = await renderEditor({
             options: {
                 methods: [
@@ -238,14 +244,41 @@ describe('SignInPolicyEditor', () => {
         expect(screen.findByTestId('home-policy-auth-method:mtls-switch')?.props.value).toBe(false);
         expect(screen.findByTestId('home-policy-auth-method:mtls.fixed-key:0')?.children).toEqual(['HAPPIER_FEATURE_AUTH_MTLS__ENABLED']);
         expect(screen.getTextContent()).not.toMatch(/fixedBy(Deployment)?\(/);
-        expect(screen.findByTestId('home-policy-auth-method:github-switch')?.props.disabled).toBe(true);
-        expect(screen.findByTestId('home-policy-auth-method:github-switch')?.props.value).toBe(false);
-        // What it lacks reads as the console's key chips, one per key, never as prose.
-        expect(screen.findByTestId('home-policy-auth-method:github.unavailable-key:0')?.children).toEqual(['GITHUB_CLIENT_ID']);
-        expect(screen.findByTestId('home-policy-auth-method:github.unavailable-key:1')?.children).toEqual(['GITHUB_CLIENT_SECRET']);
-        expect(screen.getTextContent()).not.toContain('GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET');
-        // Neither row can be toggled: the deployment decides both.
+        // GitHub's credentials are Home-editable: no deployment sentence and no env keys, a link to
+        // the row that sets them instead (DR-03, lab `hcPolicies-R`).
+        expect(screen.findByTestId('home-policy-auth-method:github-switch')).toBeNull();
+        expect(screen.findByTestId('home-policy-auth-method:github.unavailable-key:0')).toBeNull();
+        expect(screen.getTextContent()).not.toContain('GITHUB_CLIENT_ID');
+        expect(screen.getTextContent()).toContain('homeGovernance.signInPolicy.needsGithubApp');
         expect(screen.findByTestId('home-policy-auth-method:mtls')?.props.onPress).toBeUndefined();
+        screen.findByTestId('home-policy-auth-method:github')?.props.onPress();
+        expect(routerPush).toHaveBeenCalledWith(expect.stringMatching(
+            /\/sign-in-providers\?setting=homeAdministration\.signInProviders\.githubSignIn$/,
+        ));
+    });
+
+    it('summarises company sign-in among the methods and leads to where its providers are managed', async () => {
+        const { screen, serverId } = await renderEditor();
+        const row = screen.findByTestId('home-policy-auth-company-sign-in');
+        expect(row).not.toBeNull();
+        row?.props.onPress();
+        expect(routerPush).toHaveBeenLastCalledWith(
+            `/settings/home/${serverId}/sign-in-providers?setting=${encodeURIComponent('homeAdministration.signInProviders.homeConnections')}`,
+        );
+    });
+
+    it('keeps the deployment wording, with its keys, for a method whose keys only the deployment can set', async () => {
+        const { screen } = await renderEditor({
+            options: {
+                methods: [
+                    { id: 'key_challenge', displayName: 'Recovery key', actions: [{ id: 'login', enabled: true, mode: 'keyed' }] },
+                    { id: 'github', displayName: 'GitHub', actions: [], unavailable: { requires: ['DATABASE_URL'] } },
+                ],
+            },
+        });
+
+        expect(screen.findByTestId('home-policy-auth-method:github.unavailable-key:0')?.children).toEqual(['DATABASE_URL']);
+        expect(screen.findByTestId('home-policy-auth-method:github-switch')?.props.disabled).toBe(true);
         expect(screen.findByTestId('home-policy-auth-method:github')?.props.onPress).toBeUndefined();
     });
 

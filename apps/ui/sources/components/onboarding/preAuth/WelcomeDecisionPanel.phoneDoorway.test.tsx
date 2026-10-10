@@ -95,4 +95,25 @@ describe('WelcomeDecisionPanel on a phone (the Homes doorway)', () => {
         expect(screen.findByTestId('welcome-doorway-scan')).toBeFalsy();
         await screen.unmount();
     });
+
+    it('offers direct key recovery on a phone at the same verified Home without account sign-in', async () => {
+        const { WelcomeDecisionPanel } = await import('./WelcomeDecisionPanel');
+        const target = { kind: 'saved_profile' as const, profileRef: 'qa-home' };
+        const url = 'https://qa-home.test';
+        const authenticate = vi.fn();
+        const screen = await renderScreen(<WelcomeDecisionPanel
+            authEntryOptions={{ ...firstRunOptions, homeTarget: target, requestedHomeTarget: undefined, homeLabel: 'QA Home',
+                serverUrlForCopy: url, observedHomeServerIdentityId: 'srv_qa_home', authenticationActions: [{
+                    method: { id: 'key_challenge', enabledActions: [{ id: 'login', mode: 'keyed' }] },
+                    action: { id: 'login', mode: 'keyed' }, execution: { kind: 'key_entry' },
+                }] }}
+            accountServiceEntry={{ effectiveSignInService: { kind: 'no_target_default', endpoint: url }, endpoint: { url, source: 'default' },
+                status: 'unsupported', discovery: null, transport: {}, retry: vi.fn() }}
+            onContinueWithHomeAuthentication={authenticate} onOpenRestore={vi.fn()} onChangeRelay={vi.fn()} />);
+        expect(screen.findByTestId('welcome-doorway-scan')).toBeNull();
+        await screen.pressByTestIdAsync('welcome-provider-primary');
+        expect(authenticate).toHaveBeenCalledWith(expect.objectContaining({ execution: { kind: 'key_entry' },
+            authority: { purpose: 'home', target } }));
+        await screen.unmount();
+    });
 });

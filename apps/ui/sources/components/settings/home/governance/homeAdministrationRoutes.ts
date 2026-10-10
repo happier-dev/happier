@@ -100,6 +100,15 @@ export function homeAdministrationIdentityProviderCreatePath(serverId: string): 
     return `${homeAdministrationSignInProvidersPath(serverId)}/identity/new`;
 }
 
+/** The shared scoped connection detail, separate from managed OIDC provider records. */
+export function homeAdministrationIdentityConnectionPath(serverId: string, connectionId: string): string {
+    return `${homeAdministrationSignInProvidersPath(serverId)}/connections/${encodeURIComponent(connectionId)}`;
+}
+
+export function homeAdministrationWorkosSetupPath(serverId: string): string {
+    return `${homeAdministrationSignInProvidersPath(serverId)}/connections/new`;
+}
+
 export function homeAdministrationIdentityProviderPath(serverId: string, providerId: string): string {
     return `${homeAdministrationSignInProvidersPath(serverId)}/identity/${encodeURIComponent(providerId)}`;
 }

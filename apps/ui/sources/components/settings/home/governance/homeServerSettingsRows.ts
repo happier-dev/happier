@@ -1,5 +1,6 @@
-import type { FeatureId } from '@happier-dev/protocol';
+import { isHomeGovernanceSettingKey, isHomeSignInPlatformSetting, type FeatureId } from '@happier-dev/protocol';
 import type { HomeSettingEntryV1, HomeSettingsProjectionV1 } from '@happier-dev/protocol/home/governance';
+import { SERVER_CONFIG } from '@happier-dev/protocol/serverConfig/registry';
 
 import { homeFeatureTitle } from './homeFeatureLabels';
 import { HOME_REACH_PAGE_SETTING_KEYS } from './homeReachSettings';
@@ -11,8 +12,8 @@ import { homeServerSettingRateLimitRoute, homeServerSettingTitle } from './homeS
  *
  * - every Home-editable key no bespoke page owns — the `server` and `runtime` sections, plus the
  *   `reach` and `policies` keys the Reach and Policies pages do not edit. Features, Data and Email
- *   own their sections; the Policies page owns the sign-in keys it routes to the governance policy
- *   (a `family`, or the `signup` group — the server's own classification); Reach owns its five keys;
+ *   own their sections; the governance document owns its exact shared key partition; Sign-in
+ *   providers owns the platform groups (AM-12); Reach owns its five keys; Overview the Home's name;
  * - grouped into the three open sections of the lab (API and network, Storage and files,
  *   Monitoring) and closed groups under "More", derived from each entry's `group`/`family` so a
  *   group this app does not know yet still renders (humanised, before "Other");
@@ -54,14 +55,16 @@ export function isHomeServerSettingsEntry(entry: HomeSettingEntryV1): boolean {
     if (entry.editable !== 'home') return false;
     const declaration = entry.declaration;
     if (!declaration) return false;
+    if (isHomeSignInPlatformSetting(declaration)) return false;
     switch (declaration.section) {
         case 'server':
         case 'runtime':
             return true;
         case 'reach':
-            return !HOME_REACH_PAGE_SETTING_KEYS.has(entry.key);
+            // Reach edits its addresses; Overview edits the Home's name (DR-08).
+            return !HOME_REACH_PAGE_SETTING_KEYS.has(entry.key) && entry.key !== SERVER_CONFIG.HAPPIER_HOME_DISPLAY_NAME.key;
         case 'policies':
-            return declaration.family === undefined && declaration.group !== 'signup';
+            return !isHomeGovernanceSettingKey(entry.key);
         case 'features':
         case 'data':
         case 'email':

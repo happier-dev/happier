@@ -16,12 +16,13 @@ import { LocalRelayAccessControlSection } from '@/components/settings/server/loc
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Switch } from '@/components/ui/forms/Switch';
-import { Icon } from '@/components/ui/icons/Icon';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
+import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useHomeSettingsWithCompanion } from '@/hooks/home/useHomeSettingsWithCompanion';
@@ -146,7 +147,7 @@ const ReachPathDiagram = React.memo(function ReachPathDiagram(props: Readonly<{
     const { reach } = props;
     const host = reachAddressHost(reach.publicAddress.url);
     const direct = reach.iroh.availability === 'available' && reach.iroh.mode === 'enabled';
-    const arrow = <Icon name="arrow-right" size={14} color={theme.colors.text.secondary} />;
+    const arrow = <Icon name="arrow-right" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />;
     return (
         <ItemGroup title={t('homeGovernance.reach.diagramTitle', { home: props.homeName })}>
             <SectionContentRow>
@@ -413,7 +414,7 @@ const ReachPage = React.memo(function ReachPage(props: Readonly<{ context: HomeA
     }
     const reach = reads.companion;
     if (!reach || !reads.settings) {
-        if (reads.failure) {
+        if (reads.failure || reads.companionFailure) {
             return (
                 <ItemGroup description={t('homeGovernance.reach.loadFailed')}>
                     <Item testID="home-reach-retry" title={t('homeGovernance.retry')} onPress={reads.reload} showChevron={false} />
@@ -441,9 +442,19 @@ const ReachPage = React.memo(function ReachPage(props: Readonly<{ context: HomeA
     const relayPolicy = relayEntry?.value === 'disabled' ? 'disabled' : 'automatic';
     const relayPending = relayEntry?.applied?.pending === true;
     const locallyHosted = executor.kind === 'hosting_desktop' ? findPersonalHomeBootstrapCompletedProfile(listServerProfiles()) : null;
+    const readFailure = reads.failure ?? reads.companionFailure;
 
     return (
         <>
+            {readFailure ? (
+                <SurfaceFreshnessLine
+                    testID="home-reach-refresh-error"
+                    tone="warning"
+                    reason={homeGovernanceFailureNotice(readFailure, { effect: 'read' }).body}
+                    busy={reads.loading || reads.companionLoading}
+                    action={{ label: t('homeGovernance.retry'), onPress: reads.reload }}
+                />
+            ) : null}
             <ExposureBanner exposure={exposure} onOpenPolicies={() => router.push(homeAdministrationPoliciesPath(context.scope.serverId))} />
             <ReachPathDiagram
                 reach={reach}

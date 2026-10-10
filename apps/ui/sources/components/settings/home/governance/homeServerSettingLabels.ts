@@ -2,6 +2,7 @@ import type { HomeSettingIgnoredReasonV1 } from '@happier-dev/protocol/home/gove
 
 import { t, type TranslationKeyNoParams } from '@/text';
 import { en } from '@/text/translations/en';
+import { formatByteCapacity } from '@/utils/files/formatByteSize';
 
 import { humanizeIdentifier } from './homeFeatureLabels';
 
@@ -61,21 +62,38 @@ export function homeSettingChoiceLabel(value: string): string {
 }
 
 const UNIT_SUFFIXES: ReadonlyArray<readonly [RegExp, TranslationKeyNoParams]> = [
-    [/_MS$/, 'homeSettings.units.ms'],
-    [/_SECONDS$/, 'homeSettings.units.seconds'],
-    [/_MINUTES$/, 'homeSettings.units.minutes'],
-    [/_BYTES$/, 'homeSettings.units.bytes'],
-    [/_MB$/, 'homeSettings.units.megabytes'],
+    // A unit may be followed by what it is counted per (`…_BYTES_PER_ACCOUNT`).
+    [/_MS(?:_PER_[A-Z_]+)?$/, 'homeSettings.units.ms'],
+    [/_SECONDS(?:_PER_[A-Z_]+)?$/, 'homeSettings.units.seconds'],
+    [/_MINUTES(?:_PER_[A-Z_]+)?$/, 'homeSettings.units.minutes'],
+    [/_BYTES(?:_PER_[A-Z_]+)?$/, 'homeSettings.units.bytes'],
+    [/_MB(?:_PER_[A-Z_]+)?$/, 'homeSettings.units.megabytes'],
 ];
 
 /**
  * The unit a numeric setting is typed in, read from the registry's own naming convention (`_MS`,
- * `_SECONDS`, `_BYTES`, `_MB`); `null` for a plain count.
+ * `_SECONDS`, `_BYTES`, `_MB`, optionally followed by `_PER_…`); `null` for a plain count.
  */
 export function homeServerSettingUnit(key: string, type: string | undefined): string | null {
     if (type !== 'int' && type !== 'float') return null;
     const match = UNIT_SUFFIXES.find(([pattern]) => pattern.test(key));
     return match ? t(match[1]) : null;
+}
+
+const BYTES_KEY = /_BYTES(?:_PER_[A-Z_]+)?$/;
+
+/**
+ * A numeric setting's value as a person reads it: a byte count as a size ("100 MB", through the
+ * app's one byte formatter), any other number with its unit. A field being typed keeps the registry
+ * unit beside it, since that is what is typed.
+ */
+export function homeServerSettingNumberWords(key: string, type: string | undefined, value: number | string): string {
+    const amount = typeof value === 'number' ? value : Number(value);
+    if ((type === 'int' || type === 'float') && BYTES_KEY.test(key) && Number.isFinite(amount) && String(value).trim() !== '') {
+        return formatByteCapacity(amount);
+    }
+    const unit = homeServerSettingUnit(key, type);
+    return unit ? `${String(value)} ${unit}` : String(value);
 }
 
 /** Why the last start ignored a stored restart value, in words (Server settings and Overview). */

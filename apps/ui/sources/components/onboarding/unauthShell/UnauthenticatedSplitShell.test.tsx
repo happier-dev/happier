@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { Platform, Text } from 'react-native';
+import { Platform, Text, TextInput } from 'react-native';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
@@ -69,6 +70,11 @@ function FakeBody(props: { label: string }) {
     return <Text testID="fake-step-body">{props.label}</Text>;
 }
 
+function RecoveryDraft() {
+    const [value, setValue] = React.useState('');
+    return <TextInput testID="recovery-draft" value={value} onChangeText={setValue} />;
+}
+
 function flattenStyle(style: unknown): Record<string, unknown> {
     if (typeof style === 'function') {
         return flattenStyle((style as (state: { pressed: boolean }) => unknown)({ pressed: false }));
@@ -88,6 +94,31 @@ describe('UnauthenticatedSplitShell', () => {
         deviceState.safeAreaInsets = { top: 0, bottom: 0, left: 0, right: 0 };
     });
     afterEach(() => { standardCleanup(); storage.setState(initialStorageState, true); });
+
+    it('keeps an in-progress recovery draft when resizing between phone and desktop', async () => {
+        setLayoutFixture('mobile-workflow');
+        const content = () => (
+            <UnauthenticatedSplitShell
+                stepId="restore"
+                isWelcomeStep={false}
+                onOpenRelayCustomFlow={() => {}}
+                onBrandHeroGetStarted={() => {}}
+            >
+                <RecoveryDraft />
+            </UnauthenticatedSplitShell>
+        );
+        const screen = await renderScreen(content());
+        await act(async () => {
+            screen.findByTestId('recovery-draft')!.props.onChangeText('in-progress pairing link');
+        });
+        await act(async () => { setLayoutFixture('split'); });
+        await screen.update(content());
+        expect(screen.findByTestId('recovery-draft')!.props.value).toBe('in-progress pairing link');
+        await act(async () => { setLayoutFixture('mobile-workflow'); });
+        await screen.update(content());
+        expect(screen.findByTestId('recovery-draft')!.props.value).toBe('in-progress pairing link');
+        await screen.unmount();
+    });
 
     it('renders brand stage left and workflow right in split layout (R1 order)', async () => {
         setLayoutFixture('split');
@@ -413,9 +444,17 @@ describe('StagePane', () => {
         const brandPane = await renderScreen(<StagePane mode="brand" />);
         const brandPlanet = brandPane.findByTestId('planet-background-desktop');
         const planet = screen.findByTestId('planet-background-desktop');
-        expect(brandPlanet?.props.contentPosition).toBeTruthy();
-        expect(planet?.props.contentFit).toBe(brandPlanet?.props.contentFit);
-        expect(planet?.props.contentPosition).toEqual(brandPlanet?.props.contentPosition);
+        if (Platform.OS === 'web') {
+            const brandFraming = flattenStyle(brandPlanet?.props.style);
+            const stageFraming = flattenStyle(planet?.props.style);
+            expect(brandFraming.backgroundPosition).toBeTruthy();
+            expect(stageFraming.backgroundSize).toEqual(brandFraming.backgroundSize);
+            expect(stageFraming.backgroundPosition).toEqual(brandFraming.backgroundPosition);
+        } else {
+            expect(brandPlanet?.props.contentPosition).toBeTruthy();
+            expect(planet?.props.contentFit).toBe(brandPlanet?.props.contentFit);
+            expect(planet?.props.contentPosition).toEqual(brandPlanet?.props.contentPosition);
+        }
 
         const wallpaperHost = screen.findByTestId('unauth-shell-stage-wallpaper-host');
         const style = flattenStyle(wallpaperHost?.props.style);

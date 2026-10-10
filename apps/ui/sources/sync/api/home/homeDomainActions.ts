@@ -2,6 +2,8 @@ import { bindHomeDomainActionHttpRequestV1, homeDomainActionOutputSchemaV1, read
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import { ExternalActionHttpErrorSchema } from '@happier-dev/protocol/actions/externalActionApi';
+import { SavedSecretResourceActionErrorV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import {
     HomeGovernanceErrorCodeV1Schema,
     homeGovernanceErrorHttpStatusV1,
@@ -83,7 +85,7 @@ const HOME_DOMAIN_FAILURE_KINDS = [
  */
 export function homeDomainFailureFromActionFailure(
     failure: Readonly<{ errorCode?: string | undefined; details?: unknown }>,
-): HomeDomainFailure {
+): HomeDomainFailure<string> {
     const code = failure.errorCode ?? '';
     // The shared Action executor emits this only after its mutation dependency
     // was dispatched and the result could not be confirmed. Preserve that
@@ -93,8 +95,11 @@ export function homeDomainFailureFromActionFailure(
         return Object.freeze({ kind: 'outcome_unknown' as const, retryable: false, code: null });
     }
     const parsedDetails = readHomeDomainActionErrorV1(failure.details);
-    const details = parsedDetails?.code === code ? parsedDetails.details : undefined;
-    const withDetails = (value: HomeDomainFailure): HomeDomainFailure => Object.freeze({
+    const externalDetails = ExternalActionHttpErrorSchema.safeParse(failure.details);
+    const details = parsedDetails?.code === code ? parsedDetails.details
+        : externalDetails.success && 'code' in externalDetails.data && externalDetails.data.code === code
+            ? externalDetails.data : undefined;
+    const withDetails = (value: HomeDomainFailure<string>): HomeDomainFailure<string> => Object.freeze({
         ...value,
         ...(details === undefined ? {} : { details }),
     });
@@ -134,6 +139,12 @@ export function homeDomainFailureFromActionFailure(
             code: parsed.data,
         });
     }
+    const savedSecret = SavedSecretResourceActionErrorV1Schema.safeParse(details);
+    if (savedSecret.success && savedSecret.data.error === code && code === 'settings_conflict') {
+        // Saved Secret promotion's source Settings CAS is a canonical HTTP 409.
+        // Other resource endpoints retain their own refusal/status semantics.
+        return withDetails({ kind: 'conflict', retryable: false, code });
+    }
     if (parsedDetails?.code === code) {
         const retryable = typeof parsedDetails.details === 'object'
             && parsedDetails.details !== null
@@ -147,8 +158,9 @@ export function homeDomainFailureFromActionFailure(
         });
     }
     // An Action refused before the Home was asked — an unknown id, a disabled
-    // surface, a policy denial. None of them is a Home outcome.
-    return Object.freeze({ kind: 'unknown' as const, retryable: false, code: null });
+    // surface, a policy denial. None of them is a Home outcome. Retain its
+    // existing Action code rather than inventing a Home/network refusal.
+    return withDetails({ kind: 'unknown' as const, retryable: false, code: code || null });
 }
 
 /**
@@ -160,7 +172,7 @@ export function homeDomainFailureFromActionFailure(
  * can never collapse into an ordinary `action_failed` result at a managed
  * administration client.
  */
-export function homeDomainFailureCode(failure: HomeDomainFailure): string {
+export function homeDomainFailureCode(failure: HomeDomainFailure<string>): string {
     if (failure.code) return failure.code;
     if (failure.kind === 'outcome_unknown') return 'outcome_unknown';
     if (failure.kind === 'unsupported') return 'unsupported_action';

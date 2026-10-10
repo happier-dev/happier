@@ -97,6 +97,18 @@ describe('HomeAdministrationActivityScreen', () => {
                         target: { kind: 'account', id: 'account-ada', profile: accountDisplayProfileFixture('Ada') },
                         summary: {},
                     }),
+                    homeAdministrationEventFixture({
+                        id: 'evt-left',
+                        action: 'teams.members.remove',
+                        target: { kind: 'account', id: 'account-ada', profile: accountDisplayProfileFixture('Ada') },
+                        summary: { teamId: 'team-internal', membershipId: 'membership-internal', teamName: 'Acme' },
+                    }),
+                    homeAdministrationEventFixture({
+                        id: 'evt-removed',
+                        action: 'teams.members.remove',
+                        target: { kind: 'account', id: 'account-ben', profile: accountDisplayProfileFixture('Ben') },
+                        summary: { teamId: 'team-internal', membershipId: 'membership-internal', teamName: 'Acme' },
+                    }),
                 ],
                 nextCursor: null,
             },
@@ -113,6 +125,11 @@ describe('HomeAdministrationActivityScreen', () => {
         expect(password).toContain('homeGovernance.email.password  homeGovernance.activity.secretUnset → homeGovernance.activity.secretSet');
         expect(textUnder(screen.findByTestId('home-activity-row:evt-role')))
             .toContain('Ada homeGovernance.activity.changedRole(target=Ben)');
+        expect(textUnder(screen.findByTestId('home-activity-row:evt-left')))
+            .toContain('teams.leave.auditLeft(team=Acme)');
+        expect(textUnder(screen.findByTestId('home-activity-row:evt-removed')))
+            .toContain('teams.leave.auditRemoved(team=Acme,target=Ben)');
+        expect(textUnder(screen.findByTestId('home-activity-row:evt-left'))).not.toContain('membership-internal');
         expect(textUnder(screen.findByTestId('home-activity-row:evt-claim')))
             .toContain('homeGovernance.activity.deploymentCommand homeGovernance.activity.madeOwner(target=Ada)');
         // Everything shown is on the page: no further page was offered.

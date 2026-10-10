@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 import type { FeatureDecision, FeatureId } from '@happier-dev/protocol';
 import type {
     HomeSettingEntryV1,
@@ -15,7 +15,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Icon } from '@/components/ui/icons/Icon';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
-import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
+import { ExpandableItem, ExpandableItemCaret } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
@@ -301,7 +301,6 @@ const FeatureFamilyDisclosure = React.memo(function FeatureFamilyDisclosure(prop
     onOpenFeature: (featureId: FeatureId) => void;
     showDivider?: boolean;
 }>) {
-    const { theme } = useUnistyles();
     const { family, draft } = props;
     const declared = React.useMemo(
         () => family.switches.flatMap((row) => featureSetting(row.featureId) ?? []),
@@ -325,13 +324,7 @@ const FeatureFamilyDisclosure = React.memo(function FeatureFamilyDisclosure(prop
                     {...state.headerProps}
                     title={title}
                     subtitle={count === 1 ? t('homeGovernance.features.familyCount_one') : t('homeGovernance.features.familyCount_other', { count })}
-                    rightElement={(
-                        <Icon
-                            name={state.expanded ? 'caret-down' : 'caret-right'}
-                            size={16}
-                            color={theme.colors.text.secondary}
-                        />
-                    )}
+                    rightElement={<ExpandableItemCaret expanded={state.expanded} />}
                     showChevron={false}
                 />
             )}

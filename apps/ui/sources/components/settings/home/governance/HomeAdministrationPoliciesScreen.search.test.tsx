@@ -47,7 +47,9 @@ describe('Home policy settings search', () => {
         routeParams.value = { setting: 'homeAdministration.authenticationPolicy.recommendedProvisioningMode' };
         const screen = await renderScreen(<HomeAdministrationPoliciesScreen serverId={serverId} />);
 
-        await waitForHomeGovernance(() => expect(screen.findByTestId('home-policy-team-creation:managed_only')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('home-policy-auth-method:key_challenge')).not.toBeNull());
+        // Team creation is the Teams page's (DR-09), not a second control here.
+        expect(screen.findByTestId('home-policy-team-creation')).toBeNull();
         await waitForHomeGovernance(() => expect(screen.findByTestId('setting-reveal.homeAdministration.authenticationPolicy.recommendedProvisioningMode')).not.toBeNull());
         // The owner's choices are on the page, read-only: nothing to switch and nothing to save.
         expect(screen.findByTestId('home-policy-auth-method:key_challenge-switch')?.props.disabled).toBe(true);

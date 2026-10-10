@@ -15,7 +15,7 @@ import type { HomeDomainFailure } from '@/sync/api/home/homeServerActionTranspor
 export type HomeActionOutcome =
     | Readonly<{ kind: 'completed'; result: unknown }>
     | Readonly<{ kind: 'approval_pending'; artifactId: string }>
-    | Readonly<{ kind: 'failed'; failure: HomeDomainFailure }>;
+    | Readonly<{ kind: 'failed'; failure: HomeDomainFailure<string> }>;
 
 export function classifyHomeActionOutcome(result: ActionExecuteResult): HomeActionOutcome {
     if (!result.ok) {

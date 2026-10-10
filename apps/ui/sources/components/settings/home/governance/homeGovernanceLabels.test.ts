@@ -36,9 +36,9 @@ describe('homeDisplayName', () => {
         expect(homeDisplayName('home-named')).toBe('Studio');
         // The Personal Home of this device is "Personal Home", not the host it happens to run on.
         expect(homeDisplayName('home-personal')).toBe('personalHome.settings.defaultHomeLabel');
-        // Without any name, the Home is named in a sentence with its host as the qualifier.
-        expect(homeDisplayName('home-unnamed')).toBe('server.homeOnHost');
-        expect(homeDisplayName('home-unknown')).toBe('home-unknown');
+        // Unnamed and unavailable Homes still get a human title, never an address or storage id.
+        expect(homeDisplayName('home-unnamed')).toBe('settingsAccount.thisHomeTitle');
+        expect(homeDisplayName('home-unknown')).toBe('settingsAccount.thisHomeTitle');
     });
 });
 
@@ -77,6 +77,16 @@ describe('accountErasureFailureNotice', () => {
 });
 
 describe('homeGovernanceFailureNotice', () => {
+    it('keeps an unclassified read failure distinct from a refused mutation', () => {
+        const failure = { kind: 'unknown', retryable: true, code: null } as const;
+        expect(homeGovernanceFailureNotice(failure, { effect: 'read' })).toEqual({
+            title: 'homeGovernance.unavailableTitle', body: 'homeGovernance.unavailableBody',
+        });
+        expect(homeGovernanceFailureNotice(failure)).toEqual({
+            title: 'homeGovernance.changeFailedTitle', body: 'homeGovernance.errorGeneric',
+        });
+    });
+
     it('never introduces an unconfirmed mutation as one that did not happen', () => {
         const notice = homeGovernanceFailureNotice({
             kind: 'outcome_unknown',

@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { AskHappierNote } from '@/components/sessions/bots/AskHappierOfferCard';
 import type { OnboardingShowcaseManifest } from '@/onboarding/showcase/types';
 import { t } from '@/text';
 import { StoryDeckSurface, StorySheetFrame } from '@/components/ui/storyDeck';
@@ -28,6 +29,8 @@ export type OnboardingShowcaseStorySurfaceProps = Readonly<{
     manifest: OnboardingShowcaseManifest;
     onComplete: () => void;
     onDismiss: () => void;
+    /** The last card's secondary action: Ask Happier sets things up with the person (never auto-starts). */
+    onAskHappier?: () => void;
     testID?: string;
 }>;
 
@@ -55,6 +58,7 @@ export function OnboardingShowcaseStorySurface(props: OnboardingShowcaseStorySur
                 cards={props.manifest.cards}
                 onComplete={props.onComplete}
                 onDismiss={props.onDismiss}
+                {...(props.onAskHappier ? { onSecondaryAction: props.onAskHappier, secondaryActionLabel: t('bots.guide.offer'), secondaryActionNote: <AskHappierNote testID={`${testID}-ask-happier-note`} /> } : {})}
                 slideAnimation="softBlur"
                 alternateWideMediaPlacement
                 testID={`${testID}-deck`}

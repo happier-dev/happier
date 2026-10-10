@@ -10,6 +10,7 @@ import type {
 import { SERVER_CONFIG } from '@happier-dev/protocol/serverConfig/registry';
 import { useUnistyles } from 'react-native-unistyles';
 
+import { SettingAnchor } from '@/components/settings/shell/SettingRow';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
@@ -18,6 +19,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { useHomeAccountRoster } from '@/hooks/home/useHomeAccountRoster';
+import { Modal } from '@/modal';
 import { useHomeSettingsWithCompanion, type HomeSettingsWithCompanion } from '@/hooks/home/useHomeSettingsWithCompanion';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { resolveAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
@@ -28,7 +30,8 @@ import {
 } from '@/sync/ops/home/homeGovernanceOperations';
 import { t } from '@/text';
 
-import { countPendingRestartChanges, useHomeServerRelease } from '../runtime/HomeRuntimeSections';
+import { HomePendingRestartAttentionRow, useHomeServerRelease } from '../runtime/HomeRuntimeSections';
+import { useHomeRuntimeExecutor } from '../runtime/homeRuntimeExecutor';
 import { HomeAdministrationSection } from './HomeAdministrationSection';
 import { HomeConsoleBackScope, useHomeConsoleNavigation } from './HomeConsoleNavigation';
 import { HomeDeploymentFixedNote } from './HomeDeploymentFixedNote';
@@ -40,13 +43,25 @@ import {
     homeAdministrationPeoplePath,
     homeAdministrationPoliciesPath,
     homeAdministrationReachPath,
+    homeAdministrationRuntimePath,
     homeAdministrationServerSettingsPath,
 } from './homeAdministrationRoutes';
 import { resolveHomeConsoleDestinations } from './homeConsoleDestinations';
 import { homeRoleLabel } from './homeGovernanceLabels';
 import { homeAdmitsStrangers, publicAddressCaption, reachAddressHost } from './homeReachPresentation';
-import { homeSettingIgnoredReasonLabel } from './homeServerSettingLabels';
+import { homeServerSettingTitle, homeSettingIgnoredReasonLabel } from './homeServerSettingLabels';
 import { homeSettingTitle } from './homeServerSettingsRows';
+import { homePendingRestartSummary } from './HomeSettingRowState';
+import { HOME_OVERVIEW_SETTINGS, HOME_NAME_SETTING_KEY } from './homeOverviewSettings';
+import { useHomeSettingsWrite } from './useHomeSettingsWrite';
+import {
+    homeSignInPlatformForKeys,
+    homeSignInPlatformHref,
+    homeSignInPlatformIcon,
+    selectHomeSignInPlatforms,
+    type HomeSignInPlatformId,
+    type HomeSignInPlatformNeed,
+} from '../signInProviders/homeSignInPlatforms';
 
 /** The two reads only their server owners can answer, each kept with its own outcome. */
 type OverviewCompanion = Readonly<{
@@ -108,7 +123,38 @@ export function resolveHomeOverviewAttention(input: Readonly<{
                 reason: homeSettingIgnoredReasonLabel(firstIgnored.applied.ignoredReason),
             }),
             actionLabel: t('homeGovernance.overviewPage.review'),
-            path: homeAdministrationServerSettingsPath(serverId),
+            // A sign-in platform key is fixed on its own row, not on Server settings (AM-12).
+            path: platformPath(serverId, firstIgnored.key) ?? homeAdministrationServerSettingsPath(serverId),
+        });
+    }
+    // Saved values waiting for a restart come next: one action applies them all (lab `hcOverview-R`).
+    // The row itself restarts where this device can, and leads to Runtime elsewhere. Values the
+    // deployment fixes are healthy facts each row states, never attention (DR-14).
+    const pending = settings?.entries.filter((entry) => entry.applied?.pending === true) ?? [];
+    if (pending.length > 0) {
+        items.push({
+            id: 'pending',
+            icon: 'arrow-clockwise',
+            tone: 'warning',
+            title: t('homeGovernance.runtime.pendingRestart', { count: pending.length }),
+            body: homePendingRestartSummary(pending),
+            actionLabel: t('homeGovernance.overviewPage.review'),
+            path: homeAdministrationRuntimePath(serverId),
+        });
+    }
+    // A sign-in platform half set up is trouble: the row it leads to opens with the missing field.
+    for (const platform of settings ? selectHomeSignInPlatforms(settings) : []) {
+        if (platform.state.kind !== 'partly_set') continue;
+        items.push({
+            id: `platform:${platform.id}`,
+            icon: homeSignInPlatformIcon(platform.id),
+            tone: 'warning',
+            title: platform.id === 'github'
+                ? t('homeGovernance.overviewPage.githubPartlySetUp')
+                : t('homeGovernance.overviewPage.workosPartlySetUp'),
+            body: platformNeedBody(platform.id, platform.state.need),
+            actionLabel: t('homeGovernance.overviewPage.finish'),
+            path: homeSignInPlatformHref(serverId, platform.id),
         });
     }
     if (mail && !mail.ready) {
@@ -138,29 +184,24 @@ export function resolveHomeOverviewAttention(input: Readonly<{
             path: homeAdministrationReachPath(serverId),
         });
     }
-    const pending = countPendingRestartChanges(settings);
-    if (pending > 0) {
-        items.push({
-            id: 'pending',
-            icon: 'arrow-clockwise',
-            tone: 'neutral',
-            title: t('homeGovernance.runtime.pendingRestart', { count: pending }),
-            body: t('homeGovernance.overviewPage.pendingBody'),
-            path: homeAdministrationServerSettingsPath(serverId),
-        });
-    }
-    const fixed = settings?.entries.filter((entry) => entry.fixed).length ?? 0;
-    if (fixed > 0) {
-        items.push({
-            id: 'fixed',
-            icon: 'lock',
-            tone: 'neutral',
-            title: t('homeGovernance.overviewPage.fixedTitle', { count: fixed }),
-            body: t('homeGovernance.overviewPage.fixedBody'),
-            path: homeAdministrationServerSettingsPath(serverId),
-        });
-    }
     return items;
+}
+
+/** What a half-set platform needs, and what that blocks (lab `hcOverview-R`). */
+function platformNeedBody(id: HomeSignInPlatformId, need: HomeSignInPlatformNeed): string {
+    if (id === 'workos') {
+        return need === 'apiKey'
+            ? t('homeGovernance.overviewPage.workosNeedsApiKeyBody')
+            : t('homeGovernance.overviewPage.workosNeedsClientIdBody');
+    }
+    return need === 'clientSecret'
+        ? t('homeGovernance.overviewPage.githubNeedsClientSecretBody')
+        : t('homeGovernance.overviewPage.githubNeedsClientIdBody');
+}
+
+function platformPath(serverId: string, key: string): string | null {
+    const platform = homeSignInPlatformForKeys([key]);
+    return platform ? homeSignInPlatformHref(serverId, platform) : null;
 }
 
 /** The Home's name heads the page, with Invite people as its action (lab `hcOverview-A`). */
@@ -230,7 +271,15 @@ const HomeOverviewAttention = React.memo(function HomeOverviewAttention(props: R
         : tone === 'warning' ? theme.colors.state.warning.foreground : theme.colors.text.secondary;
     return (
         <ItemGroup title={t('homeGovernance.overviewPage.attention')}>
-            {items.map((item) => (
+            {items.map((item) => item.id === 'pending' ? (
+                <HomeOverviewPendingRestart
+                    key={item.id}
+                    context={context}
+                    reads={reads}
+                    summary={item.body}
+                    onReview={() => router.push(item.path as never)}
+                />
+            ) : (
                 <Item
                     key={item.id}
                     testID={`home-overview-attention:${item.id}`}
@@ -267,6 +316,30 @@ const HomeOverviewAttention = React.memo(function HomeOverviewAttention(props: R
                 />
             ) : null}
         </ItemGroup>
+    );
+});
+
+/** The pending-restart row with this device's executor for the Home, resolved only while it shows. */
+const HomeOverviewPendingRestart = React.memo(function HomeOverviewPendingRestart(props: Readonly<{
+    context: HomeAdministrationContext;
+    reads: OverviewReads;
+    summary: string;
+    onReview: () => void;
+}>) {
+    const { context, reads } = props;
+    const serverId = context.scope.serverId;
+    const release = useHomeServerRelease(serverId, context.projection.capabilities.viewAdministration);
+    const executor = useHomeRuntimeExecutor(serverId, release.flavor);
+    return (
+        <HomePendingRestartAttentionRow
+            testID="home-overview-attention:pending"
+            context={context}
+            executor={executor}
+            pendingCount={reads.settings?.entries.filter((entry) => entry.applied?.pending === true).length ?? 0}
+            pendingSummary={props.summary}
+            onRestarted={reads.reload}
+            onReview={props.onReview}
+        />
     );
 });
 
@@ -363,6 +436,59 @@ function signInSummary(projection: HomeGovernanceProjectionV1): string {
     return `${methods.join(', ')} · ${admission}`;
 }
 
+/**
+ * The Home's own name, edited where it is shown (DR-08, lab `hcOverview-R`): the same registry key
+ * and `home.settings.set` as every other setting. A name the deployment fixes says so instead.
+ */
+const HomeOverviewNameRow = React.memo(function HomeOverviewNameRow(props: Readonly<{
+    context: HomeAdministrationContext;
+    reads: OverviewReads;
+}>) {
+    const { context, reads } = props;
+    const entry = reads.settings?.entries.find((candidate) => candidate.key === HOME_NAME_SETTING_KEY);
+    // The prompt has closed by the time the Home refuses a name, so the refusal is said in a dialog.
+    const onFieldError = React.useCallback((_key: string, message: string | null) => {
+        if (message) void Modal.alertAsync(t('server.renameServer'), message);
+    }, []);
+    const { writing, write } = useHomeSettingsWrite({ context, home: reads, onFieldError });
+    const current = typeof entry?.value === 'string' && entry.value.trim() ? entry.value : context.homeName;
+    const rename = React.useCallback(async () => {
+        const next = await Modal.prompt(t('server.renameServer'), t('server.renameServerPrompt'), {
+            defaultValue: current,
+            confirmText: t('common.save'),
+        });
+        const trimmed = next?.trim();
+        if (!trimmed || trimmed === current) return;
+        if (await write({ key: HOME_NAME_SETTING_KEY, values: { [HOME_NAME_SETTING_KEY]: trimmed } })) context.refresh();
+    }, [context, current, write]);
+    if (!entry) return null;
+    const canRename = context.projection.capabilities.manageHomeSettings && !entry.fixed && entry.editable === 'home';
+    return (
+        <SettingAnchor setting={HOME_OVERVIEW_SETTINGS.settings.homeName}>
+            <Item
+                testID="home-overview-name"
+                title={homeServerSettingTitle(HOME_NAME_SETTING_KEY)}
+                subtitle={entry.fixed ? undefined : t('homeGovernance.overviewPage.nameDescription')}
+                subtitleAccessory={entry.fixed ? <HomeDeploymentFixedNote keys={[entry.key]} testID="home-overview-name" /> : undefined}
+                detail={current}
+                mode="info"
+                showChevron={false}
+                rightElement={canRename ? (
+                    <RoundButton
+                        testID="home-overview-name.rename"
+                        size="small"
+                        display="inverted"
+                        title={t('common.rename')}
+                        loading={writing}
+                        disabled={!context.mutationsAvailable}
+                        onPress={() => { void rename(); }}
+                    />
+                ) : undefined}
+            />
+        </SettingAnchor>
+    );
+});
+
 /** Version, public address and sign-in: the facts that describe this Home (lab `hcOverview-A` This Home). */
 const HomeOverviewFacts = React.memo(function HomeOverviewFacts(props: Readonly<{
     context: HomeAdministrationContext;
@@ -382,6 +508,7 @@ const HomeOverviewFacts = React.memo(function HomeOverviewFacts(props: Readonly<
         : t('homeGovernance.runtime.versionUnknown');
     return (
         <ItemGroup title={t('homeGovernance.overviewPage.thisHome')}>
+            <HomeOverviewNameRow context={context} reads={reads} />
             <Item
                 testID="home-overview-version"
                 title={t('homeGovernance.overviewPage.version')}

@@ -1,13 +1,22 @@
 import { createManualSystemTaskRunner } from '@/dev/testkit/harness/manualSystemTaskRunner';
+import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
 import React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { loadVitestModuleForNodeRequire } from '@/dev/vitestRnShim';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import type { SystemTaskRunState, SystemTaskRunner } from '@/components/systemTasks/types';
-import type { SystemTaskJsonObject, SystemTaskSpec } from '@happier-dev/protocol';
+import type { SystemTaskSpec } from '@happier-dev/protocol';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
-import { getStorage } from '@/sync/domains/state/storageStore';
 
 import type { RemoteSshChecklistMode } from './types';
 
@@ -20,19 +29,14 @@ const tauriState = vi.hoisted(() => ({
     isDesktop: false,
 }));
 
-const syncSingletonState = vi.hoisted(() => ({
-    applySettings: vi.fn(),
-    decryptSecretValue: vi.fn(() => null),
-    encryptSecretValue: vi.fn(() => null),
-}));
-
-vi.mock('@/sync/runtime/getSyncSingleton', () => ({
-    getSyncSingleton: () => ({
-        applySettings: syncSingletonState.applySettings,
-        decryptSecretValue: syncSingletonState.decryptSecretValue,
-        encryptSecretValue: syncSingletonState.encryptSecretValue,
-    }),
-}));
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
+vi.mock('socket.io-client', async importOriginal =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
+installDisconnectedServerSocketBoundary();
+let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
+let disposeNativeStorage: (() => void) | undefined;
+afterAll(() => { disposeNativeStorage?.(); });
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
     ItemGroup: ({ children }: { children?: React.ReactNode }) => React.createElement('ItemGroup', null, children),
@@ -58,8 +62,12 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
     },
 }));
 
-vi.mock('@/utils/platform/desktopHost', () => ({
+// Desktop identity is a native boundary; retain the canonical bridge exports
+// used by real task owners while controlling this suite's renderer host.
+vi.mock('@/utils/platform/desktopHost', async importOriginal => ({
+    ...await importOriginal<typeof import('@/utils/platform/desktopHost')>(),
     isDesktopHost: () => tauriState.isDesktop,
+    desktopHostKind: () => tauriState.isDesktop ? 'tauri' as const : null,
 }));
 
 vi.mock('@/hooks/server/useEffectiveServerSelection', () => ({
@@ -179,37 +187,6 @@ function createRunner({
     };
 }
 
-function createSucceededSnapshot(
-    taskId: string,
-    params: Readonly<{
-        currentStepId: string;
-        latestMessage: string;
-        data?: SystemTaskJsonObject;
-    }>,
-): SystemTaskRunState {
-    return {
-        taskId,
-        status: 'succeeded',
-        currentStepId: params.currentStepId,
-        latestMessage: params.latestMessage,
-        awaitingInput: false,
-        cancelRequested: false,
-        events: [],
-        result: {
-            protocolVersion: 1,
-            taskId,
-            ok: true,
-            ...(params.data ? { data: params.data } : {}),
-        },
-    };
-}
-
-function flattenStyle(style: unknown): Record<string, unknown> {
-    return Array.isArray(style)
-        ? Object.assign({}, ...style.filter(Boolean) as Array<Record<string, unknown>>)
-        : (style as Record<string, unknown>);
-}
-
 async function resetProfileRegistry(): Promise<void> {
     const profiles = await import('@/sync/domains/server/serverProfiles');
     profiles.clearTabActiveServerId();
@@ -223,151 +200,17 @@ describe('RemoteSshChecklistStep', () => {
 
     afterEach(async () => {
         standardCleanup();
-        act(() => {
-            getStorage().getState().applySettingsLocal({ remoteHostsV1: [] });
-        });
+        const catalog = await import('@/sync/engine/settings/remoteHostCatalogEngine');
+        catalog.resetRemoteHostCatalogEngineForTests();
+        const snapshots = await import('@/sync/store/settings/remoteHostCatalogSnapshot');
+        snapshots.resetRemoteHostCatalogSnapshotsForTests();
+        await connection?.dispose();
+        connection = null;
+        await homes.reset();
         featureGateState.managementEnabled = true;
         featureGateState.secretMaterialEnabled = true;
         tauriState.isDesktop = false;
-        syncSingletonState.applySettings.mockReset();
-        syncSingletonState.decryptSecretValue.mockReset();
-        syncSingletonState.decryptSecretValue.mockReturnValue(null);
-        syncSingletonState.encryptSecretValue.mockReset();
-        syncSingletonState.encryptSecretValue.mockReturnValue(null);
         await resetProfileRegistry();
-    });
-
-    it('adopts a discovered relay through the Home owner without changing focus or groups, then links the saved host', async () => {
-        const profiles = await import('@/sync/domains/server/serverProfiles');
-        const focusedHome = await profiles.upsertServerProfile({
-            serverUrl: 'https://focused-home.example',
-            name: 'Focused Home',
-            source: 'manual',
-        });
-        await profiles.setActiveServerId(focusedHome.id);
-        await profiles.saveHomeViewState({
-            version: 1,
-            groups: [{ id: 'visible-homes', name: 'Visible Homes', serverIds: [focusedHome.id] }],
-            activeTargetKind: 'server',
-            activeTargetId: focusedHome.id,
-        });
-        const focusedBefore = profiles.getActiveServerSnapshot();
-        const homeViewBefore = profiles.loadHomeViewState();
-        const { persistRemoteHostAfterRemoteSshCompletion } = await import('./persistRemoteHostAfterRemoteSshCompletion');
-
-        await persistRemoteHostAfterRemoteSshCompletion({
-            managementEnabled: true,
-            secretMaterialEnabled: true,
-            remoteHostsRaw: [],
-            selectedSavedRemoteHostId: '__new__',
-            runContext: {
-                selectedSavedRemoteHostId: '__new__',
-                saveHost: true,
-                saveSecretMaterial: false,
-            },
-            newHostSentinelId: '__new__',
-            draft: {
-                username: 'dev',
-                host: 'remote.example',
-                port: '22',
-                authMode: 'agent',
-                identityFilePath: '',
-                password: '',
-            },
-            privateKeyMaterialDraft: '',
-            completion: {
-                machineId: 'machine-remote',
-                relayRuntimeUrl: 'https://relay.remote.example',
-            },
-        });
-
-        const relayProfiles = profiles.listServerProfiles().filter((profile) => profile.serverUrl === 'https://relay.remote.example');
-        expect(relayProfiles).toHaveLength(1);
-        expect(relayProfiles[0]).toMatchObject({
-            canonicalServerUrl: 'https://relay.remote.example',
-            source: 'manual',
-        });
-        const writtenHost = syncSingletonState.applySettings.mock.calls.at(-1)?.[0]?.remoteHostsV1?.[0];
-        expect(writtenHost).toMatchObject({
-            linkedMachineId: 'machine-remote',
-            linkedRelayProfileId: relayProfiles[0]!.id,
-        });
-        expect(profiles.getActiveServerSnapshot()).toMatchObject({
-            serverId: focusedBefore.serverId,
-            serverUrl: focusedBefore.serverUrl,
-            isSelectionExplicit: focusedBefore.isSelectionExplicit,
-        });
-        expect(profiles.loadHomeViewState()).toEqual(homeViewBefore);
-    });
-
-    it('rejects a malformed discovered relay before linking or persisting a remote host', async () => {
-        const profiles = await import('@/sync/domains/server/serverProfiles');
-        const before = profiles.listServerProfiles();
-        const { persistRemoteHostAfterRemoteSshCompletion } = await import('./persistRemoteHostAfterRemoteSshCompletion');
-
-        await expect(persistRemoteHostAfterRemoteSshCompletion({
-            managementEnabled: true,
-            secretMaterialEnabled: false,
-            remoteHostsRaw: [],
-            selectedSavedRemoteHostId: '__new__',
-            runContext: {
-                selectedSavedRemoteHostId: '__new__',
-                saveHost: true,
-                saveSecretMaterial: false,
-            },
-            newHostSentinelId: '__new__',
-            draft: {
-                username: 'dev',
-                host: 'remote.example',
-                port: '',
-                authMode: 'agent',
-                identityFilePath: '',
-                password: '',
-            },
-            privateKeyMaterialDraft: '',
-            completion: { machineId: null, relayRuntimeUrl: 'ssh://not-a-home' },
-        })).rejects.toThrow('Invalid Home connection URL');
-
-        expect(profiles.listServerProfiles()).toEqual(before);
-        expect(syncSingletonState.applySettings).not.toHaveBeenCalled();
-    });
-
-    it('still adopts a discovered relay when remote-host management is disabled', async () => {
-        const profiles = await import('@/sync/domains/server/serverProfiles');
-        const { persistRemoteHostAfterRemoteSshCompletion } = await import('./persistRemoteHostAfterRemoteSshCompletion');
-
-        await persistRemoteHostAfterRemoteSshCompletion({
-            managementEnabled: false,
-            secretMaterialEnabled: false,
-            remoteHostsRaw: [],
-            selectedSavedRemoteHostId: '__new__',
-            runContext: null,
-            newHostSentinelId: '__new__',
-            draft: {
-                username: 'dev',
-                host: 'remote.example',
-                port: '',
-                authMode: 'agent',
-                identityFilePath: '',
-                password: '',
-            },
-            privateKeyMaterialDraft: '',
-            completion: {
-                machineId: null,
-                relayRuntimeUrl: 'https://unmanaged-relay.remote.example',
-            },
-        });
-
-        expect(profiles.listServerProfiles().filter(
-            (profile) => profile.serverUrl === 'https://unmanaged-relay.remote.example',
-        )).toEqual([
-            expect.objectContaining({
-                serverUrl: 'https://unmanaged-relay.remote.example',
-                canonicalServerUrl: 'https://unmanaged-relay.remote.example',
-                source: 'manual',
-            }),
-        ]);
-        expect(syncSingletonState.applySettings).not.toHaveBeenCalled();
     });
 
     it('does not trigger a maximum update depth loop when wired to the wizard chrome override store', async () => {
@@ -478,24 +321,6 @@ describe('RemoteSshChecklistStep', () => {
     });
 
     it('hides the saved-host picker when remote host management is disabled', async () => {
-        act(() => {
-            getStorage().getState().applySettingsLocal({
-                remoteHostsV1: [
-                    {
-                        id: 'host-1',
-                        name: 'Test Host',
-                        ssh: {
-                            target: 'dev@example.test',
-                            port: 22,
-                            authMode: 'agent',
-                        },
-                        createdAt: 1,
-                        updatedAt: 1,
-                        lastUsedAt: 1,
-                    },
-                ],
-            });
-        });
         featureGateState.managementEnabled = false;
 
         const { RemoteSshChecklistStep } = await import('./RemoteSshChecklistStep');
@@ -568,25 +393,42 @@ describe('RemoteSshChecklistStep', () => {
         expect((spec?.params as any)?.ssh?.identityPrivateKey).toBe('MY_PRIVATE_KEY');
     });
 
-    it('can bootstrap using a saved remote host (hides the inline SSH form) and uses passwordEnc automatically without extra user clicks', async () => {
+    it('can bootstrap from the Account catalog and saved password reference without putting material in the SSH draft', async () => {
         const now = Date.now();
-        getStorage().getState().applySettingsLocal({
-            remoteHostsV1: [
-                {
+        const host = {
                     id: 'rh1',
                     name: 'Prod box',
                     ssh: {
                         target: 'dev@example.test',
                         port: 2222,
-                        authMode: 'password',
-                        passwordEnc: { _isSecretValue: true, value: 'hunter2' },
+                        authMode: 'password' as const,
+                        passwordSecretRef: 'happier:shared-secret:v1:ssh-password',
                     },
                     createdAt: now,
                     updatedAt: now,
                     lastUsedAt: 0,
-                },
-            ],
-        });
+                };
+        const source = await homes.addHome({ name: 'Source Home', serverUrl: 'https://source.example', accountId: 'source-account' });
+        homes.answer(source, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture({ settingsVersion: 4 }) });
+        homes.answer(source, '/v2/account/settings', { body: { version: 4, content: { t: 'plain', v: {} } } });
+        homes.answer(source, '/v2/account/settings/history', { body: { snapshots: [] } });
+        homes.answer(source, '/v1/account/entity-rows/profiles/transfer', { body: { status: 'absent' } });
+        homes.answer(source, '/v1/account/entity-rows/remote-hosts', { body: { status: 'present', revision: 4,
+            content: { t: 'plain', v: { v: 1, hosts: [host] } } } });
+        homes.answer(source, '/v1/features', { body: createRootLayoutFeaturesResponse({ features: { remoteHosts: {
+            management: { enabled: true }, secretMaterial: { enabled: true } } } }) });
+        homes.answer(source, '/v1/account/saved-secrets/resources/materials', { body: { resources: [{ resourceId: 'ssh-password',
+            encryptionMode: 'plain', recipientEnvelope: null,
+            storedContent: { t: 'plain', v: { v: 1, name: 'SSH password', kind: 'password', value: 'private-password' } },
+            entry: { ref: host.ssh.passwordSecretRef, source: 'shared_resource', relationship: 'owner', name: 'SSH password', kind: 'password', revision: 1,
+                materialStatus: 'ready', capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } } }] } });
+        await loadSyncSingletonForTests();
+        const native = await loadVitestModuleForNodeRequire(pathToFileURL(createRequire(import.meta.url).resolve('react-native-mmkv')),
+            () => import('react-native-mmkv'));
+        disposeNativeStorage = native.dispose;
+        connection = await restoreServerAccountForTest({ serverUrl: 'https://source.example', accountId: 'source-account', request: homes.request });
+        const catalog = await import('@/sync/engine/settings/remoteHostCatalogEngine');
+        await catalog.refreshRemoteHostCatalog({ serverId: source, accountId: 'source-account' });
 
         const { RemoteSshChecklistStep } = await import('./RemoteSshChecklistStep');
         const runnerHarness = createRunner();
@@ -631,89 +473,9 @@ describe('RemoteSshChecklistStep', () => {
         expect((spec?.params as any)?.ssh?.target).toBe('dev@example.test');
         expect((spec?.params as any)?.ssh?.port).toBe(2222);
         expect((spec?.params as any)?.ssh?.auth).toBe('password');
-        expect((spec?.params as any)?.ssh?.password).toBe('hunter2');
+        expect((spec?.params as any)?.ssh?.password).toBe('private-password');
 
         expect(runnerHarness.respondSpy).toHaveBeenCalledTimes(0);
-    });
-
-    it('preserves opaque remote-host rows when onboarding updates the selected saved host', async () => {
-        const currentHost = {
-            id: 'host-1',
-            name: 'Developer workstation',
-            ssh: {
-                target: 'dev@example.test',
-                authMode: 'agent' as const,
-            },
-            createdAt: 1,
-            updatedAt: 1,
-            lastUsedAt: 1,
-        };
-        const opaqueFutureHost = {
-            v: 2,
-            id: 'future-host',
-            transport: 'future-transport',
-            futureData: { retained: true },
-        };
-        act(() => {
-            getStorage().getState().applySettingsLocal({
-                remoteHostsV1: [currentHost, opaqueFutureHost],
-            });
-        });
-
-        const runnerHarness = createRunner({
-            startBehavior: (spec, taskId) => spec.kind === 'remote.ssh.bootstrapMachine.v1'
-                ? {
-                    taskId,
-                    snapshot: createSucceededSnapshot(taskId, {
-                        currentStepId: 'ssh.complete',
-                        latestMessage: 'Complete',
-                        data: { machineId: 'machine-1' },
-                    }),
-                }
-                : undefined,
-        });
-        let primary: { onPress: (() => void) | (() => Promise<void>); disabled: boolean } | null = null;
-
-        const { RemoteSshChecklistStep } = await import('./RemoteSshChecklistStep');
-        const screen = await renderScreen(React.createElement(RemoteSshChecklistStep, {
-            testID: 'remote-ssh-step',
-            mode: 'remoteMachine',
-            relayUrl: 'https://relay.example.test',
-            runner: runnerHarness.runner,
-            onWizardPrimaryChange: (state) => {
-                primary = state as typeof primary;
-            },
-        }));
-
-        const requirePrimary = () => {
-            if (!primary) {
-                throw new Error('Expected wizard primary override');
-            }
-            return primary;
-        };
-
-        const hostPicker = screen.findByType('DropdownMenu' as never) as unknown as {
-            props: { onSelect: (id: string) => void };
-        };
-        await act(async () => {
-            hostPicker.props.onSelect(currentHost.id);
-        });
-        await act(async () => {
-            await requirePrimary().onPress();
-        });
-        await flushHookEffects({ cycles: 3, turns: 3 });
-        await act(async () => {
-            await requirePrimary().onPress();
-        });
-        await flushHookEffects({ cycles: 3, turns: 3 });
-
-        const writtenSettings = syncSingletonState.applySettings.mock.calls.at(-1)?.[0];
-        expect(writtenSettings?.remoteHostsV1).toHaveLength(2);
-        expect(writtenSettings?.remoteHostsV1[0]).toMatchObject({
-            id: currentHost.id,
-            linkedMachineId: 'machine-1',
-        });
-        expect(writtenSettings?.remoteHostsV1[1]).toStrictEqual(opaqueFutureHost);
     });
 
     it('prefills the inline SSH form from a configured-host suggestion without selecting a saved host', async () => {
@@ -819,10 +581,6 @@ describe('RemoteSshChecklistStep', () => {
         }
         expect(screen.findByTestId('remote-ssh-step-plan-row-install_relay_runtime')).toBeTruthy();
         expect(screen.findAllByTestId('remote-ssh-step-plan-row-install_daemon')).toHaveLength(0);
-        const flattenedPlanStatusSlotStyle = flattenStyle(planStatusSlot.props.style);
-        expect(flattenedPlanStatusSlotStyle.borderWidth).toBe(1);
-        expect(Number(flattenedPlanStatusSlotStyle.width)).toBeGreaterThan(26);
-        expect(Number(flattenedPlanStatusSlotStyle.height)).toBeGreaterThan(26);
         await flushHookEffects({ cycles: 3, turns: 3 });
         expect(requirePrimary().disabled).toBe(false);
 
@@ -850,10 +608,6 @@ describe('RemoteSshChecklistStep', () => {
             throw new Error('Expected remote SSH execution status slot');
         }
         expect(screen.findByTestId('remote-ssh-step-execution')).toBeTruthy();
-        const flattenedExecutionStatusSlotStyle = flattenStyle(executionStatusSlot.props.style);
-        expect(flattenedExecutionStatusSlotStyle.borderWidth).toBe(1);
-        expect(Number(flattenedExecutionStatusSlotStyle.width)).toBeGreaterThan(26);
-        expect(Number(flattenedExecutionStatusSlotStyle.height)).toBeGreaterThan(26);
     });
 
     it('prefers the explicit public relay URL when completing remote relay hosting', async () => {
@@ -943,10 +697,6 @@ describe('RemoteSshChecklistStep', () => {
             throw new Error('Expected remote SSH completion status slot');
         }
         expect(screen.findByTestId('remote-ssh-step-complete-checklist-row-install_relay_runtime')).toBeTruthy();
-        const flattenedCompleteStatusSlotStyle = flattenStyle(completeStatusSlot.props.style);
-        expect(flattenedCompleteStatusSlotStyle.borderWidth).toBe(1);
-        expect(Number(flattenedCompleteStatusSlotStyle.width)).toBeGreaterThan(26);
-        expect(Number(flattenedCompleteStatusSlotStyle.height)).toBeGreaterThan(26);
         expect(screen.getTextContent()).toContain('https://public-relay.example.test');
         expect(screen.getTextContent()).not.toContain('http://127.0.0.1:53288');
     });

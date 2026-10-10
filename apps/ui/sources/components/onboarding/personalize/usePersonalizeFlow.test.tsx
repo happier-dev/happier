@@ -37,7 +37,7 @@ afterEach(() => { standardCleanup(); vi.restoreAllMocks(); });
 describe('Personalize mounted visit', () => {
     it('keeps the live visit usable after Strict Mode replays mount effects', async () => {
         const hook = await renderHook(() => usePersonalizeFlow({ initialPage: 'look', onExit: vi.fn() }), {
-            wrapper: ({ children }) => React.createElement(React.StrictMode, null, children),
+            wrapper: React.StrictMode,
         });
         await act(async () => { hook.getCurrent().selectTheme('dark'); });
         expect(hook.getCurrent().draft.theme).toBe('dark');

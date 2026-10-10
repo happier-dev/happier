@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { signInConnectionStatusLabel } from '@/components/settings/identity/signInConnectionStatus';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
@@ -243,9 +244,7 @@ export const ManagedGitHubAppDetailContent = React.memo(function ManagedGitHubAp
                                         ? t('identityAdministration.githubFacetSignIn')
                                         : t('identityAdministration.githubFacetDirectory')}
                                     detail={consumer.binding.kind === 'identity_connection'
-                                        ? consumer.binding.enabled
-                                            ? t('identityAdministration.active')
-                                            : t('identityAdministration.disabled')
+                                        ? signInConnectionStatusLabel(consumer.binding.enabled ? 'active' : 'disabled')
                                         : consumer.binding.state === 'active'
                                             ? t('teams.authentication.directory.state.active')
                                             : consumer.binding.state === 'initializing'

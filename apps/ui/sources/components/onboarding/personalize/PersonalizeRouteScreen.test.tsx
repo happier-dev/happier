@@ -21,7 +21,10 @@ vi.mock('@tauri-apps/plugin-notification', () => ({
 }));
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({ useWindowDimensions: () => ({ width: boundary.width, height: boundary.height, scale: 1, fontScale: 1 }) });
+    return createReactNativeWebMock({
+        useWindowDimensions: () => ({ width: boundary.width, height: boundary.height, scale: 1, fontScale: 1 }),
+        Appearance: { getColorScheme: () => 'light' },
+    });
 });
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
@@ -52,6 +55,9 @@ vi.mock('expo-system-ui', () => ({ setBackgroundColorAsync: vi.fn(async () => {}
 
 const { PersonalizeRouteScreen } = await import('./PersonalizeRouteScreen');
 const { PersonalizeStepBody } = await import('./PersonalizeStepBody');
+const { ToolStylePreview } = await import('@/components/settings/session/SessionSettingPreviews');
+// React.memo's FunctionComponent overload omits the runtime .type field; the renderer uses it.
+const ToolStylePreviewBody = (ToolStylePreview as React.MemoExoticComponent<React.FunctionComponent<React.ComponentProps<typeof ToolStylePreview>>>).type;
 const { usePersonalizeSetupItem } = await import('./usePersonalizeSetupItem');
 const { Modal } = await import('@/modal');
 const { ModalCardFrame } = await import('@/modal/components/card/ModalCardFrame');
@@ -92,6 +98,48 @@ afterEach(() => { standardCleanup(); boundary.width = 1440; boundary.height = 94
     boundary.setTheme.mockClear();
     setReducedMotionPreferenceOverride(null); vi.unstubAllGlobals(); });
 describe('Personalize responsive route', () => {
+    it('puts desktop starting choices on the stage and their exact changes in narration with one selection owner', async () => {
+        storage.setState({ settings: settingsDefaults, localSettings: localSettingsDefaults,
+            settingsScope: { serverId: 'home-a', accountId: 'alice' } });
+        setReducedMotionPreferenceOverride(true);
+        const account = storage.getState().settings;
+        const screen = await renderScreen(route(false));
+        const flow = (): PersonalizeFlow => screen.root.findByType(PersonalizeStepBody).props.flow;
+        await act(async () => { flow().open('style'); });
+        // These are the real frame's two product regions, not a retained component or style flag.
+        const stage = screen.findHostByTestId('personalize-flow-stage-host')!;
+        expect(stage).not.toBeNull();
+        for (const id of ['keep', 'activity', 'conversation', 'detail']) {
+            const matches = stage.findAll(node => typeof node.type === 'string' && node.props.testID === `personalize-flow-style:${id}`);
+            expect(matches).toHaveLength(1);
+            expect(screen.root.findAll(node => typeof node.type === 'string' && node.props.testID === `personalize-flow-style:${id}`)).toHaveLength(1);
+        }
+        const narration = screen.findHostByTestId('personalize-flow-narration-scroll')!;
+        expect(narration.findAll(node => typeof node.type === 'string' && String(node.props.testID).startsWith('personalize-flow-style:'))).toHaveLength(0);
+        await screen.pressByTestIdAsync('personalize-flow-style:detail');
+        expect(flow().style).toBe('detail');
+        expect(narration.findAll(node => typeof node.type === 'string' && String(node.props.testID).startsWith('personalize-flow-style-change-')).length).toBeGreaterThan(0);
+        expect(storage.getState().settings).toBe(account);
+    });
+    it('shows all phone starting styles with real tool previews and chooses without writing Account settings', async () => {
+        boundary.width = 390;
+        storage.setState({ settings: settingsDefaults, localSettings: localSettingsDefaults,
+            settingsScope: { serverId: 'home-a', accountId: 'alice' } });
+        setReducedMotionPreferenceOverride(true);
+        const account = storage.getState().settings;
+        const screen = await renderScreen(route(true));
+        const flow = (): PersonalizeFlow => screen.root.findByType(PersonalizeStepBody).props.flow;
+        await act(async () => { flow().open('style'); });
+        for (const id of ['keep', 'activity', 'conversation', 'detail']) {
+            const tile = screen.findHostByTestId(`personalize-sheet-style:${id}`)!;
+            expect(tile).not.toBeNull();
+            // react-test-renderer exposes a memo component's rendered function, not its wrapper.
+            expect(tile.findAllByType(ToolStylePreviewBody)).toHaveLength(1);
+        }
+        await screen.pressByTestIdAsync('personalize-sheet-style:detail');
+        expect(flow().style).toBe('detail');
+        expect(storage.getState().settings).toBe(account);
+    });
     it.each([false, true])('keeps choice groups flush with their already-inset narrative column (phone=%s)', async (phone) => {
         storage.setState({ settings: settingsDefaults, localSettings: localSettingsDefaults,
             settingsScope: { serverId: 'home-a', accountId: 'alice' } });

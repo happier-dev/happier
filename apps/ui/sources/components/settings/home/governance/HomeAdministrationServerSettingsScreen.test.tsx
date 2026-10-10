@@ -155,6 +155,46 @@ afterEach(() => {
 });
 
 describe('HomeAdministrationServerSettingsScreen', { timeout: 180_000 }, () => {
+    it.each([
+        { status: 500, reason: 'homeGovernance.unavailableBody' },
+        { status: 200, reason: 'homeGovernance.unavailableBody' },
+        { status: 404, reason: 'homeGovernance.unsupportedBody' },
+    ])('presents a $status initial settings read failure without reporting a failed change', async ({ status, reason }) => {
+        const home = await addHome();
+        harness.answer(home, SETTINGS_GET, { status, body: { error: 'unrecognized_response' } });
+        const { HomeAdministrationServerSettingsScreen } = await import('./HomeAdministrationServerSettingsScreen');
+        const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+        const screen = await renderScreen(<HomeAdministrationServerSettingsScreen serverId={home} />);
+        await waitForHomeGovernance(() => {
+            expect(screen.findAllByType(SurfaceStateCard).find((node) => node.props.testID === 'home-server-settings-error')).toBeDefined();
+        });
+        const errorState = screen.findAllByType(SurfaceStateCard).find((node) => node.props.testID === 'home-server-settings-error')!;
+        expect(errorState.props).toMatchObject({ kind: 'error', reason });
+        harness.answer(home, SETTINGS_GET, { body: serverProjection() });
+        await act(async () => { errorState.props.action.onPress(); });
+        await waitForHomeGovernance(() => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('home-server-setting:METRICS_PORT'));
+    });
+
+    it('explains a failed initial read and retries it through one recovery action', async () => {
+        const home = await addHome();
+        harness.answer(home, SETTINGS_GET, { dispatchThenFail: true });
+        const { HomeAdministrationServerSettingsScreen } = await import('./HomeAdministrationServerSettingsScreen');
+        const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+        const screen = await renderScreen(<HomeAdministrationServerSettingsScreen serverId={home} />);
+        await waitForHomeGovernance(() => {
+            expect(screen.findAllByType(SurfaceStateCard).find((node) => node.props.testID === 'home-server-settings-error')?.props)
+                .toMatchObject({ kind: 'error', reason: 'homeGovernance.reasonHomeUnreachable' });
+        });
+        const errorState = screen.findAllByType(SurfaceStateCard).find((node) => node.props.testID === 'home-server-settings-error')!;
+        expect(errorState.props.action).toMatchObject({ testID: 'home-server-settings-retry' });
+        harness.answer(home, SETTINGS_GET, { body: serverProjection() });
+        await act(async () => { errorState.props.action.onPress(); });
+        await waitForHomeGovernance(() => {
+            expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('home-server-setting:METRICS_PORT');
+            expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('home-server-settings-error');
+        });
+    });
+
     it('renders the registry keys no other page owns, and every bootstrap key read-only with its reason', async () => {
         const home = await addHome();
         harness.answer(home, SETTINGS_GET, { body: serverProjection() });
@@ -283,7 +323,7 @@ describe('HomeAdministrationServerSettingsScreen', { timeout: 180_000 }, () => {
         });
     });
 
-    it('replaces a write-only value from its field and never shows it', async () => {
+    it('stages a write-only value through blur and submit until explicit Save, then never shows it', async () => {
         const home = await addHome();
         harness.answer(home, SETTINGS_GET, { body: serverProjection() });
         harness.answer(home, SETTINGS_SET, { body: serverProjection({ revision: 8 }) });
@@ -295,7 +335,19 @@ describe('HomeAdministrationServerSettingsScreen', { timeout: 180_000 }, () => {
         await act(async () => {
             screen.pressByTestId('home-server-setting:REDIS_URL-set');
         });
-        await typeAndLeave(screen, 'home-server-setting:REDIS_URL-input', 'redis://cache:6379');
+        await act(async () => {
+            screen.changeTextByTestId('home-server-setting:REDIS_URL-input', 'redis://cache:6379');
+        });
+        await act(async () => {
+            const input = screen.findByTestId('home-server-setting:REDIS_URL-input');
+            input?.props.onBlur?.();
+            input?.props.onSubmitEditing?.();
+        });
+        expect(harness.requestsFor(SETTINGS_SET)).toHaveLength(0);
+        expect(screen.findByTestId('home-server-setting:REDIS_URL-input')?.props.value).toBe('redis://cache:6379');
+        await act(async () => {
+            screen.pressByTestId('home-server-setting:REDIS_URL-save');
+        });
 
         await waitForHomeGovernance(() => {
             expect(harness.requestsFor(SETTINGS_SET).map((request) => request.input)).toEqual([
@@ -303,6 +355,38 @@ describe('HomeAdministrationServerSettingsScreen', { timeout: 180_000 }, () => {
             ]);
         });
         expect(JSON.stringify(screen.tree.toJSON())).not.toContain('redis://cache:6379');
+    });
+
+    it('stages Clear for a saved secret until explicit Save and can keep it instead', async () => {
+        const home = await addHome();
+        harness.answer(home, SETTINGS_GET, { body: serverProjection({ entries: [metricsPort(), redisUrl({ secretSet: true })] }) });
+        harness.answer(home, SETTINGS_SET, { body: serverProjection({ revision: 8 }) });
+        const screen = await renderServerSettings(home);
+        const { Item } = await import('@/components/ui/lists/Item');
+        await act(async () => {
+            screen.pressByTestId('home-server-settings-more:realtime.header');
+        });
+        await act(async () => {
+            screen.pressByTestId('home-server-setting:REDIS_URL-clear');
+        });
+        expect(harness.requestsFor(SETTINGS_SET)).toHaveLength(0);
+        await act(async () => {
+            screen.pressByTestId('home-server-setting:REDIS_URL-keep');
+        });
+        expect(screen.findByTestId('home-server-setting:REDIS_URL-saved')).not.toBeNull();
+        expect(screen.findAllByType(Item).find((node) => node.props.testID === 'home-server-setting:REDIS_URL')?.props.accessoryLayout)
+            .toBe('adaptive');
+        await act(async () => {
+            screen.pressByTestId('home-server-setting:REDIS_URL-clear');
+        });
+        await act(async () => {
+            screen.pressByTestId('home-server-setting:REDIS_URL-save');
+        });
+        await waitForHomeGovernance(() => {
+            expect(harness.requestsFor(SETTINGS_SET).map((request) => request.input)).toEqual([
+                { expectedRevision: 7, values: {}, secrets: { REDIS_URL: { clear: true } } },
+            ]);
+        });
     });
 
     it('discards pending changes through the Home, and offers no Restart now without an executor', async () => {

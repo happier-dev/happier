@@ -1,6 +1,7 @@
-import { setPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
+import { getPendingSetupIntent, setPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
 
 export function setOnboardingWizardPreAuthResumeIntent(relayUrl: string | null): void {
+    if (getPendingSetupIntent()?.branch === 'askHappier') return;
     setPendingSetupIntent({
         branch: 'thisComputer',
         phase: 'pre_auth',
@@ -9,6 +10,7 @@ export function setOnboardingWizardPreAuthResumeIntent(relayUrl: string | null):
 }
 
 export function setOnboardingWizardAwaitingAuthResumeIntent(relayUrl: string | null): void {
+    if (getPendingSetupIntent()?.branch === 'askHappier') return;
     setPendingSetupIntent({
         branch: 'thisComputer',
         phase: 'awaiting_auth',
@@ -16,6 +18,6 @@ export function setOnboardingWizardAwaitingAuthResumeIntent(relayUrl: string | n
     });
 }
 
-export function resolveWizardAuthReturnToRoute(): string {
+export function resolveWizardAuthReturnToRoute(): '/' {
     return '/';
 }

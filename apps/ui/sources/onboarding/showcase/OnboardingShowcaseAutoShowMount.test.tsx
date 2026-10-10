@@ -7,6 +7,7 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 type ShowcaseModalProps = Readonly<{
     onComplete?: () => void;
     onDismiss?: () => void;
+    onAskHappier?: () => void;
 }>;
 
 type ShowcaseModalConfig = Readonly<{
@@ -101,6 +102,21 @@ describe('OnboardingShowcaseAutoShowMount', () => {
         await screen.update(<OnboardingShowcaseAutoShowMount />);
         await vi.advanceTimersByTimeAsync(300);
         expect(modalState.show).toHaveBeenCalledTimes(1);
+    });
+
+    it('offers Ask Happier on the last card as an explicit choice that closes the tour as seen', async () => {
+        const { ONBOARDING_SHOWCASE_MANIFEST } = await import('./manifest');
+        const { getShowcaseSeenVersion } = await import('./storage');
+        const { OnboardingShowcaseAutoShowMount } = await import('./OnboardingShowcaseAutoShowMount');
+        await renderScreen(<OnboardingShowcaseAutoShowMount />);
+
+        await vi.advanceTimersByTimeAsync(300);
+        expect(modalState.lastConfig?.props?.onAskHappier).toBeTypeOf('function');
+        await act(async () => {
+            modalState.lastConfig?.props?.onAskHappier?.();
+        });
+        expect(modalState.hide).toHaveBeenCalledWith('onboarding-showcase-modal');
+        expect(getShowcaseSeenVersion()).toBe(ONBOARDING_SHOWCASE_MANIFEST.showcaseVersion);
     });
 
     it('records a backdrop or skip dismissal as seen', async () => {

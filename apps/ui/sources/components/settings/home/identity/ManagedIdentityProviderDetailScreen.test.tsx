@@ -106,7 +106,7 @@ import {
     resetPendingIdentityProviderTestsForTests,
 } from './identityProviderTestReturn';
 import { ManagedIdentityProviderDetailScreen } from './ManagedIdentityProviderDetailScreen';
-import { managedIdentityProviderStatus } from './ManagedIdentityProvidersSection';
+import { managedIdentityProviderSignInStatus } from './ManagedIdentityProvidersSection';
 
 beforeEach(() => {
     standardCleanup();
@@ -137,7 +137,7 @@ describe('ManagedIdentityProviderDetailScreen diagnostics', () => {
     });
 
     it('presents an enabled installation-backed GitHub identity consumer as active without an OIDC test', () => {
-        expect(managedIdentityProviderStatus({
+        expect(managedIdentityProviderSignInStatus({
             v: 1,
             owner: { kind: 'home' },
             id: 'provider-1',
@@ -154,7 +154,7 @@ describe('ManagedIdentityProviderDetailScreen diagnostics', () => {
             createdByAccountId: null,
             createdAt: 1,
             updatedAt: 2,
-        })).toBe('identityAdministration.active');
+        })).toBe('active');
     });
 
     it('administers an installation-backed GitHub identity consumer without OIDC-only controls', async () => {

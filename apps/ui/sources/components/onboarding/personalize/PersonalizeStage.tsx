@@ -7,6 +7,7 @@ import { SessionComposerSample, SessionTranscriptSample } from '@/components/set
 import { APP_RAIL_WIDTH_PX, APP_SHELL_TITLE_STRIP_HEIGHT_PX } from '@/components/navigation/shell/appRail/appRailMetrics';
 import { GlassPresetPreview } from '@/components/settings/appearance/GlassAppearanceControls';
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import {
     applySessionListAttentionPlacementWithinGroups,
     buildSessionListAttentionPlacement,
@@ -300,7 +301,7 @@ const styles = StyleSheet.create((theme) => ({
         overflow: 'hidden',
         borderRightWidth: 1,
         borderRightColor: theme.colors.border.default,
-        borderRadius: 12,
+        borderRadius: 0,
         borderCurve: 'continuous',
     },
     sessionsSidebar: { width: SIDEBAR_WIDTH },
@@ -310,7 +311,7 @@ const styles = StyleSheet.create((theme) => ({
         overflow: 'hidden',
         paddingHorizontal: 20,
         paddingBottom: 16,
-        borderRadius: 12,
+        borderRadius: 0,
         borderCurve: 'continuous',
         borderColor: 'transparent',
     },
@@ -363,10 +364,9 @@ const styles = StyleSheet.create((theme) => ({
         lineHeight: 16,
     },
     card: {
-        height: 300,
+        height: 240,
         overflow: 'hidden',
-        padding: 12,
-        borderRadius: 20,
+        borderRadius: PAGE_LIST_METRICS.sheetRadiusPx,
         borderCurve: 'continuous',
         borderWidth: 1,
         borderColor: theme.colors.border.default,

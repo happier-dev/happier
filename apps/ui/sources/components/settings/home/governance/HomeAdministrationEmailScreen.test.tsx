@@ -99,6 +99,25 @@ afterEach(() => {
 });
 
 describe('HomeAdministrationEmailScreen', () => {
+    it('keeps settings editable and shows a readiness error with Retry rather than hiding a failed companion', async () => {
+        const home = await addHome();
+        harness.answer(home, SETTINGS_GET, { body: homeSettingsProjectionFixture() });
+        harness.answer(home, MAIL_GET, { status: 503, body: { error: 'temporarily_unavailable' } });
+        const { HomeAdministrationEmailScreen } = await import('./HomeAdministrationEmailScreen');
+        const { resetHomeGovernanceEngineForTests } = await import('@/sync/engine/home/governance/homeGovernanceEngine');
+        resetHomeGovernanceEngineForTests();
+        const screen = await renderScreen(<HomeAdministrationEmailScreen serverId={home} />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('home-email-readiness-error')).not.toBeNull());
+        expect(screen.findByTestId('home-email-host-input')).not.toBeNull();
+        expect(screen.findByTestId('home-email-status-sending')).toBeNull();
+        await act(async () => screen.changeTextByTestId('home-email-host-input', 'smtp.draft.example'));
+        harness.answer(home, MAIL_GET, { body: homeMailDeliveryReadinessFixture() });
+        await screen.pressByTestIdAsync('home-email-readiness-retry');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('home-email-status-sending')).not.toBeNull());
+        expect(screen.findByTestId('home-email-readiness-error')).toBeNull();
+        expect(screen.findHostByTestId('home-email-host-input')?.props.value).toBe('smtp.draft.example');
+    });
+
     it('saves only what the owner changed, sends the password as a write-only replacement and never shows it back', async () => {
         const home = await addHome();
         harness.answer(home, SETTINGS_GET, { body: homeSettingsProjectionFixture({ revision: 3 }) });

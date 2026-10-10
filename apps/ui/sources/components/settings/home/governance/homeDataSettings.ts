@@ -24,9 +24,9 @@ export const HOME_DATA_SETTINGS = defineSettingsPage({
     },
     sections: {
         deletion: { titleKey: 'homeGovernance.data.deletion', settings: {
-            automaticDeletion: { titleKey: 'homeGovernance.data.deletion' },
-            dryRunMode: { titleKey: 'homeGovernance.data.dryRunMode', descriptionKey: 'homeGovernance.data.dryRunModeDescription' },
-            dryRun: { titleKey: 'homeGovernance.data.tryRules', keywordKeys: ['homeGovernance.data.runDryRun'] },
+            automaticDeletion: {},
+            dryRunMode: {},
+            dryRun: {},
         } },
         records: { titleKey: 'homeGovernance.data.deletion', settings: domainSettings },
     },

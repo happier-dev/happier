@@ -21,6 +21,7 @@ import type {
 } from '@/components/serverReachability/remediation';
 import type { RelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
+import type { RelayAccessControlOptions } from '@/components/settings/server/relayAccess/useRelayAccessControl';
 import { RelayAccessPrerequisitesStep } from '@/components/onboarding/steps/relayAccess/RelayAccessPrerequisitesStep';
 import type { SystemTaskRunState } from '@/components/systemTasks/types';
 
@@ -103,6 +104,7 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
     confirmRelayUrl: string | null;
     serverProfileId: string | null;
     relayAccessTarget: RelayAccessTaskTarget;
+    runWithRelayAccessTarget?: RelayAccessControlOptions['runWithTarget'];
     lastKnownSnapshotRelayUrl: string;
     reachabilityRemediation: EndpointReachabilityRemediation | null;
     reachabilityRemediationTaskSnapshot: SystemTaskRunState | null;
@@ -162,6 +164,7 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
         machineId: string | null;
         relayRuntimeUrl: string | null;
         relayAccessTarget: RelayAccessTaskTarget | null;
+        runWithRelayAccessTarget?: RelayAccessControlOptions['runWithTarget'];
         mode: RemoteSshChecklistMode;
     }>) => void;
 }>): React.ReactNode {
@@ -305,6 +308,7 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
                 upstreamUrl={upstreamUrl}
                 serverProfileId={params.serverProfileId}
                 target={params.relayAccessTarget}
+                runWithTarget={params.runWithRelayAccessTarget}
                 presentation="wizard"
                 onShareUrlChange={params.onRelayAccessShareUrlChange}
                 onWizardPrimaryChange={params.onWizardPrimaryChange}
@@ -325,6 +329,7 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
                 upstreamUrl={upstreamUrl}
                 serverProfileId={params.serverProfileId}
                 target={params.relayAccessTarget}
+                runWithTarget={params.runWithRelayAccessTarget}
                 onWizardPrimaryChange={params.onWizardPrimaryChange}
                 onRequestAdvance={params.onRelayAccessAdvance}
             />

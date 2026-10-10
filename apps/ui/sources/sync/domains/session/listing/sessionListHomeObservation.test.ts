@@ -113,6 +113,21 @@ describe('resolveOrdinarySessionListCoverage', () => {
     });
 });
 
+describe('Bot metadata coverage', () => {
+    it('does not certify an exhausted candidate corpus while authorized marker metadata remains unavailable', () => {
+        const state = { ...queryState('ready', 1), addresses: [
+            { serverId: 'home-a', sessionId: 'marked' }, { serverId: 'home-a', sessionId: 'locked' },
+        ] };
+        const input = { state, requestedQueryKey: 'query', bot: 'bot' as const,
+            rowsBySessionId: { marked: { metadata: { bot: { kind: 'bot' } } }, locked: { metadata: null } } };
+        expect(isSessionListQueryHomeCoverageComplete(input)).toBe(false);
+        expect(isSessionListQueryHomeCoverageComplete({ ...input,
+            rowsBySessionId: { ...input.rowsBySessionId, locked: { metadata: {} } },
+        })).toBe(true);
+        expect(isSessionListQueryHomeCoverageComplete({ state, requestedQueryKey: 'query' })).toBe(true);
+    });
+});
+
 describe('isSessionListQueryHomeCoverageComplete', () => {
     it('keeps exhausted historical metadata omissions incomplete until a clean refresh', () => {
         const state = { ...queryState('ready', 1_000), metadataUpgradeRequiredCount: 1 };

@@ -58,6 +58,8 @@ export type ComposeWelcomeEntryModelInput = Readonly<{
      * identity may be a same-server (`self`) deployment eligible for dedupe.
      */
     observedHomeServerIdentityId?: string;
+    /** An admitted Home catalog observed at the exact selected service endpoint, never a fallback Home. */
+    observedHomeAtServiceEndpoint?: Readonly<{ home: HomeTargetInput; label: string }>;
     context:
         | Readonly<{ kind: 'home' }>
         | Readonly<{ kind: 'team' | 'invitation'; label: string; dominantActionId: string | null }>;
@@ -135,6 +137,13 @@ function withoutSameServerDuplicates(
 }
 
 export function composeWelcomeEntryModel(input: ComposeWelcomeEntryModelInput): WelcomeEntryModel {
+    // A verified Home without account sign-in still offers its own key/recovery
+    // methods. Only same-endpoint evidence can resolve a mistaken service entry;
+    // an unsupported foreign service must never retarget the focused Home.
+    if ((input.target.kind === 'none' || input.target.kind === 'selected_service')
+        && input.serviceCatalogState.kind === 'unsupported' && input.observedHomeAtServiceEndpoint) {
+        input = { ...input, target: { kind: 'selected_home', ...input.observedHomeAtServiceEndpoint } };
+    }
     // A service offer without a chosen Home supersedes the unrelated seeded
     // Home. An explicit service choice does so even on a dual-role endpoint,
     // including while discovery is loading or unavailable.

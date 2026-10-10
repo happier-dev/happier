@@ -106,32 +106,6 @@ export const UnauthenticatedSplitShell = React.memo(function UnauthenticatedSpli
     const layout = useUnauthShellLayout({ allowMobileBrandHero });
     const transitionDirection: StepTransitionDirection = props.transitionDirection ?? 'forward';
 
-    if (layout === 'split') {
-        // R1 reference order (and journey D5): the planet/brand pane sits LEFT
-        // and the workflow column sits RIGHT on desktop.
-        return (
-            <View
-                testID={props.testID ?? 'unauth-shell-split'}
-                style={styles.splitRoot}
-            >
-                <StagePane mode="brand" />
-                <WorkflowPanel
-                    variant="desktop"
-                    isWelcomeStep={props.isWelcomeStep}
-                    showMobileWordmark={props.showMobileWordmark}
-                    retentionDisclosure={props.retentionDisclosure}
-                    onOpenRelayCustomFlow={props.onOpenRelayCustomFlow}
-                    onBack={props.onBack}
-                    transitionKey={props.stepId}
-                    transitionDirection={transitionDirection}
-                    presentation={props.workflowPresentation ?? 'padded'}
-                >
-                    {props.children}
-                </WorkflowPanel>
-            </View>
-        );
-    }
-
     if (layout === 'mobile-hero') {
         return (
             <View
@@ -146,14 +120,17 @@ export const UnauthenticatedSplitShell = React.memo(function UnauthenticatedSpli
         );
     }
 
-    // layout === 'mobile-workflow'
+    const isSplit = layout === 'split';
+    // Keep the workflow in the same child slot across the breakpoint: its
+    // recovery forms and in-progress authentication must not remount.
     return (
         <View
-            testID={props.testID ?? 'unauth-shell-mobile-workflow'}
-            style={styles.mobileOnlyRoot}
+            testID={props.testID ?? (isSplit ? 'unauth-shell-split' : 'unauth-shell-mobile-workflow')}
+            style={isSplit ? styles.splitRoot : styles.mobileOnlyRoot}
         >
+            {isSplit ? <StagePane mode="brand" /> : null}
             <WorkflowPanel
-                variant="mobile"
+                variant={isSplit ? 'desktop' : 'mobile'}
                 isWelcomeStep={props.isWelcomeStep}
                 showMobileWordmark={props.showMobileWordmark}
                 retentionDisclosure={props.retentionDisclosure}

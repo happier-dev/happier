@@ -12,7 +12,7 @@ export type HomeSettingsRead = Readonly<{
     loading: boolean;
     /** The failure of the latest read, when it failed. */
     failure: HomeDomainFailure | null;
-    reload: () => void;
+    reload: () => Promise<void>;
     /** Adopts the projection a settings write answered with. */
     adoptSettings: (settings: HomeSettingsProjectionV1) => void;
 }>;

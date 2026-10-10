@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * the real transports before the Home boundaries are installed.
  */
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
-import { homeSettingsProjectionFixture } from '@/dev/testkit/fixtures/homeGovernanceFixtures';
+import { homeReachabilityFixture, homeSettingsProjectionFixture } from '@/dev/testkit/fixtures/homeGovernanceFixtures';
 import {
     createHomeGovernanceHarness,
     installHomeGovernanceBoundaries,
@@ -49,6 +49,37 @@ afterEach(() => {
 });
 
 describe('useHomeSettingsWithCompanion', () => {
+    it('settles a failed companion independently, retaining the last answer through a failed refresh and recovering on Retry', async () => {
+        const { useHomeSettingsWithCompanion } = await import('./useHomeSettingsWithCompanion');
+        const { getHomeReachability } = await import('@/sync/ops/home/homeGovernanceOperations');
+        const serverId = await harness.addHome({ name: 'Home A', serverUrl: 'https://home-a.example', accountId: 'account-admin' });
+        const scope = { serverId, accountId: 'account-admin' };
+        const path = '/v1/home/reachability/get';
+        const read = (current: typeof scope) => getHomeReachability({ scope: current });
+        harness.answer(serverId, SETTINGS_GET, { body: homeSettingsProjectionFixture({ revision: 3 }) });
+        harness.answer(serverId, path, { status: 503, body: { error: 'temporarily_unavailable' } });
+        const hook = await renderHook(() => useHomeSettingsWithCompanion(scope, true, read));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().settings?.revision).toBe(3));
+        expect(harness.requestsFor(path)).toHaveLength(1);
+        expect(hook.getCurrent().companionFailure?.retryable).toBe(true);
+        expect(hook.getCurrent().settings?.revision).toBe(3);
+        expect(hook.getCurrent().companionLoading).toBe(false);
+        expect(hook.getCurrent().companion).toBeNull();
+
+        harness.answer(serverId, path, { body: homeReachabilityFixture() });
+        await act(async () => hook.getCurrent().reload());
+        await waitForHomeGovernance(() => expect(hook.getCurrent().companion?.iroh.mode).toBe('enabled'));
+        harness.answer(serverId, path, { status: 503, body: { error: 'temporarily_unavailable' } });
+        await act(async () => hook.getCurrent().adoptSettings(homeSettingsProjectionFixture({ revision: 4 })));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().companionFailure?.retryable).toBe(true));
+        expect(hook.getCurrent().companion?.iroh.mode).toBe('enabled');
+        expect(hook.getCurrent().settings?.revision).toBe(4);
+        harness.answer(serverId, path, { body: homeReachabilityFixture() });
+        await act(async () => hook.getCurrent().reload());
+        await waitForHomeGovernance(() => expect(hook.getCurrent().companionFailure).toBeNull());
+        expect(hook.getCurrent().companionLoading).toBe(false);
+    });
+
     it('keeps a settled Home through an enabled flicker and a reload, so a page never falls back to loading', async () => {
         const { useHomeSettingsWithCompanion } = await import('./useHomeSettingsWithCompanion');
         const serverId = await harness.addHome({ name: 'Home A', serverUrl: 'https://home-a.example', accountId: 'account-admin' });
@@ -68,11 +99,21 @@ describe('useHomeSettingsWithCompanion', () => {
         expect(hook.getCurrent().settings?.revision).toBe(3);
 
         // A reload keeps the last answer on screen until the new one lands.
-        harness.answer(serverId, SETTINGS_GET, { body: homeSettingsProjectionFixture({ revision: 4 }) });
+        let releaseRead!: () => void;
+        const readGate = new Promise<void>((resolve) => { releaseRead = resolve; });
+        harness.answer(serverId, SETTINGS_GET, { body: homeSettingsProjectionFixture({ revision: 4 }), respondAfter: readGate });
+        let completed = false;
+        let completion!: Promise<void>;
         await act(async () => {
-            hook.getCurrent().reload();
+            completion = Promise.resolve(hook.getCurrent().reload()).then(() => { completed = true; });
         });
         expect(hook.getCurrent().settings).not.toBeNull();
-        await waitForHomeGovernance(() => expect(hook.getCurrent().settings?.revision).toBe(4));
+        expect(completed).toBe(false);
+        await act(async () => {
+            releaseRead();
+            await completion;
+        });
+        expect(completed).toBe(true);
+        expect(hook.getCurrent().settings?.revision).toBe(4);
     });
 });

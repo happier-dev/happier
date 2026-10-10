@@ -9,7 +9,7 @@ import { TeamSection } from '@/components/settings/teams/TeamSection';
 import { teamsCreatePath } from '@/components/settings/teams/teamsRoutes';
 import { TeamInvitationForm } from '@/components/settings/teams/invitations/TeamInvitationCreateScreen';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { Icon } from '@/components/ui/icons/Icon';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { NavigationHeaderActions } from '@/components/ui/layout/NavigationHeaderActions';
 import { useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/PageHeader';
 import { Item } from '@/components/ui/lists/Item';
@@ -27,7 +27,14 @@ import { t } from '@/text';
 
 import type { HomeAdministrationContext } from './homeAdministrationContext';
 
-export type HomeInvitePeopleDialogProps = CustomModalInjectedProps & Readonly<{ serverId: string }>;
+export type HomeInvitePeopleDialogProps = CustomModalInjectedProps & Readonly<{
+    serverId: string;
+    /**
+     * Opened from one Team's own page (its Overview or Members): that Team is the only one to
+     * invite to, so the dialog renders its invitation form directly instead of asking which Team.
+     */
+    teamId?: string;
+}>;
 
 /**
  * "Invite people" (plan §3.10, R9; lab `hcTeams-I`): the one dialog that Overview, People and Teams
@@ -37,6 +44,24 @@ export type HomeInvitePeopleDialogProps = CustomModalInjectedProps & Readonly<{ 
  * conditions (`TeamSection`, embedded).
  */
 export const HomeInvitePeopleDialog = React.memo(function HomeInvitePeopleDialog(props: HomeInvitePeopleDialogProps) {
+    // The Team is fixed for the dialog's lifetime, so the two compositions never swap in place.
+    return props.teamId
+        ? <TeamInvitePeople serverId={props.serverId} teamId={props.teamId} />
+        : <HomeInvitePeopleChooser {...props} />;
+});
+
+/** The invitation form of one known Team, with that Team's own conditions (embedded `TeamSection`). */
+const TeamInvitePeople = React.memo(function TeamInvitePeople(props: Readonly<{ serverId: string; teamId: string }>) {
+    return (
+        <ItemList presentation="grouped" style={{ paddingTop: 0 }} keyboardShouldPersistTaps="handled" testID="home-invite-people">
+            <TeamSection serverId={props.serverId} teamId={props.teamId} presentation="embedded">
+                {(context) => <TeamInvitationForm context={context} />}
+            </TeamSection>
+        </ItemList>
+    );
+});
+
+const HomeInvitePeopleChooser = React.memo(function HomeInvitePeopleChooser(props: HomeInvitePeopleDialogProps) {
     const serverIds = React.useMemo(() => [props.serverId], [props.serverId]);
     const directory = useTeamsDirectory({ scope: 'administered', serverIds });
     // Only active Teams whose projected capabilities back an invitation are offered.
@@ -180,10 +205,15 @@ function useTeamCreationOffer(
 }
 
 /** Shows the dialog; focus goes back to `focusReturnRef` (the action that opened it) when it closes. */
-export function presentHomeInvitePeople(input: Readonly<{ serverId: string; focusReturnRef?: FocusReturnRef }>): string {
+export function presentHomeInvitePeople(input: Readonly<{
+    serverId: string;
+    /** Invite to this Team (a Team page's own action) rather than choosing among the Home's Teams. */
+    teamId?: string;
+    focusReturnRef?: FocusReturnRef;
+}>): string {
     return Modal.show({
         component: HomeInvitePeopleDialog,
-        props: { serverId: input.serverId },
+        props: { serverId: input.serverId, ...(input.teamId ? { teamId: input.teamId } : {}) },
         ...(input.focusReturnRef ? { focusReturnRef: input.focusReturnRef } : {}),
         closeOnBackdrop: true,
         chrome: {
@@ -224,7 +254,7 @@ export const HomeInvitePeopleButton = React.memo(function HomeInvitePeopleButton
             size="small"
             display="secondary"
             title={t('homeGovernance.invite.action')}
-            leading={<Icon name="plus" size={14} color={theme.colors.text.primary} />}
+            leading={<Icon name="plus" size={ICON_SIZE.xs} color={theme.colors.text.primary} />}
             onPress={open}
         />
     );

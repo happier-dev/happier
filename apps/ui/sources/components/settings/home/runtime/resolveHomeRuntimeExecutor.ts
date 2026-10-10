@@ -1,4 +1,5 @@
 import type { RemoteHost } from '@/sync/domains/remoteHosts/remoteHostModel';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 /**
  * Who can act on the runtime that serves one Home (plan `2026-09-26-home-owner-console` §3.2, §3.7,
@@ -18,7 +19,7 @@ import type { RemoteHost } from '@/sync/domains/remoteHosts/remoteHostModel';
  */
 export type HomeRuntimeExecutor =
     | Readonly<{ kind: 'hosting_desktop' }>
-    | Readonly<{ kind: 'remote_host'; host: RemoteHost; hostName: string }>
+    | Readonly<{ kind: 'remote_host'; host: RemoteHost; hostName: string; scope: ServerAccountScope; catalogRevision: number }>
     | Readonly<{ kind: 'connected_machine'; machineId: string; hostName: string }>
     | Readonly<{ kind: 'elsewhere'; hostName: string | null }>
     | Readonly<{ kind: 'deployment' }>;
@@ -32,6 +33,9 @@ export type HomeRuntimeExecutorFacts = Readonly<{
     /** The Home this device set up as its own Personal Home, by scope id. */
     locallyHostedServerId: string | null;
     remoteHosts: readonly RemoteHost[];
+    remoteHostScope: ServerAccountScope | null;
+    /** Only a complete, current catalog may authorize an SSH operation. */
+    remoteHostCatalogRevision: number | null;
     /** Scope id of a saved Home profile, or `null` when the profile is gone. */
     scopeIdOfProfile: (profileId: string) => string | null;
 }>;
@@ -42,7 +46,11 @@ export function resolveHomeRuntimeExecutor(facts: HomeRuntimeExecutorFacts): Hom
     const linked = facts.remoteHosts.find((host) => (
         host.linkedRelayProfileId ? facts.scopeIdOfProfile(host.linkedRelayProfileId) === facts.serverId : false
     ));
-    if (linked && facts.localBridgeAvailable) return { kind: 'remote_host', host: linked, hostName: linked.name };
+    if (linked && facts.localBridgeAvailable) {
+        if (!facts.remoteHostScope || facts.remoteHostCatalogRevision === null) return { kind: 'elsewhere', hostName: linked.name };
+        return { kind: 'remote_host', host: linked, hostName: linked.name,
+            scope: facts.remoteHostScope, catalogRevision: facts.remoteHostCatalogRevision };
+    }
     if (linked?.linkedMachineId) return { kind: 'connected_machine', machineId: linked.linkedMachineId, hostName: linked.name };
     return { kind: 'elsewhere', hostName: linked?.name ?? null };
 }

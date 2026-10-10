@@ -16,6 +16,8 @@ import {
  */
 export type HomeAccountChangeEvent = Readonly<{
     serverId: string;
+    /** Marks the existing secondary transport's connected wake, rather than a content change. */
+    source?: 'connected';
     /** Exact only for a consumed focused-Home change page; absent wakes remain conservative. */
     entityIds?: readonly string[];
     /**
@@ -25,10 +27,17 @@ export type HomeAccountChangeEvent = Readonly<{
      * corpus the ordinary list can answer is unaffected, a structural filter may move.
      */
     sessionListQueryAffects?: boolean | 'structural';
+    /** Exact focused-page Profile/Artifact/source decision; content-free wakes omit it. */
+    profileCatalogAffects?: boolean;
+    /** An acknowledged local Artifact deletion; no private content or replay guarantee. */
+    deletedArtifactIds?: readonly string[];
 }>;
 
 type HomeAccountChangeDetails = Readonly<{
+    source?: 'connected';
     sessionListQueryAffects?: boolean | 'structural';
+    profileCatalogAffects?: boolean;
+    deletedArtifactIds?: readonly string[];
 }>;
 
 /** Focused changes that can alter Home administration eligibility or rows. */
@@ -94,10 +103,13 @@ export function publishHomeAccountChange(
     if (homeAccountChangeObservers.size === 0) return;
     const event = Object.freeze({
         serverId,
+        ...(details?.source ? { source: details.source } : {}),
         ...(entityIds ? { entityIds: Object.freeze([...new Set(entityIds)]) } : {}),
         ...(details?.sessionListQueryAffects !== undefined
             ? { sessionListQueryAffects: details.sessionListQueryAffects }
             : {}),
+        ...(details?.profileCatalogAffects !== undefined ? { profileCatalogAffects: details.profileCatalogAffects } : {}),
+        ...(details?.deletedArtifactIds ? { deletedArtifactIds: Object.freeze([...new Set(details.deletedArtifactIds)]) } : {}),
     });
     for (const observer of [...homeAccountChangeObservers]) {
         try {

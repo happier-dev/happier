@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { useUnistyles } from 'react-native-unistyles';
 import type { HomeSettingsProjectionV1 } from '@happier-dev/protocol/home/governance';
 
 import type { HomeAdministrationContext } from '@/components/settings/home/governance/homeAdministrationContext';
@@ -14,10 +13,12 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { Modal } from '@/modal';
 import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
+import { useSocketStatus } from '@/sync/domains/state/storage';
+import { getAppliedActiveServerId } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
+import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { t } from '@/text';
 
 import {
@@ -59,12 +60,137 @@ function managedElsewhereCopy(executor: HomeRuntimeExecutor): Readonly<{ title: 
     }
 }
 
+type RestartObservation = {
+    waiting: boolean;
+    connected: boolean;
+    refreshStarted: boolean;
+    finished: boolean;
+    refresh: () => void;
+    reload?: () => void | Promise<void>;
+};
+
+/**
+ * Every restart control consumes the executor and the existing exact-Home connection wake: the
+ * Runtime pair, the restart banner of a settings page, and Overview's attention row.
+ */
+export function useHomeRuntimeRestart(
+    context: HomeAdministrationContext,
+    executor: HomeRuntimeExecutor,
+    onRestarted?: () => void | Promise<void>,
+) {
+    const secretMaterialAllowed = useFeatureEnabled('remoteHosts.secretMaterial');
+    const socket = useSocketStatus();
+    const [restarting, setRestarting] = React.useState(false);
+    const [waitingForHome, setWaitingForHome] = React.useState(false);
+    const current = React.useRef<RestartObservation | null>(null);
+    const previousSocket = React.useRef(socket);
+    const serverId = context.scope.serverId;
+    const accountId = context.scope.accountId;
+
+    React.useEffect(() => {
+        current.current = null;
+        setRestarting(false);
+        setWaitingForHome(false);
+        return () => { current.current = null; };
+    }, [serverId, accountId]);
+
+    const refreshOnce = React.useCallback(async (observation: RestartObservation) => {
+        if (current.current !== observation || observation.refreshStarted) return;
+        observation.refreshStarted = true;
+        try {
+            observation.refresh();
+            await observation.reload?.();
+        } finally {
+            if (current.current === observation) {
+                observation.finished = true;
+                setWaitingForHome(false);
+                setRestarting(false);
+            }
+        }
+    }, []);
+
+    const connected = React.useCallback(() => {
+        const observation = current.current;
+        if (!observation || observation.finished) return;
+        observation.connected = true;
+        if (observation.waiting) void refreshOnce(observation);
+    }, [refreshOnce]);
+
+    React.useEffect(() => {
+        const previous = previousSocket.current;
+        previousSocket.current = socket;
+        if (socket.status === 'connected'
+            && (previous.status !== 'connected' || previous.lastConnectedAt !== socket.lastConnectedAt)
+            && getAppliedActiveServerId() === serverId) connected();
+    }, [socket, serverId, connected]);
+
+    React.useEffect(() => subscribeHomeAccountChange((event) => {
+        if (event.serverId === serverId && event.source === 'connected') connected();
+    }), [serverId, connected]);
+
+    const restart = React.useCallback(async () => {
+        if (current.current && !current.current.finished) return;
+        const observation: RestartObservation = {
+            waiting: false, connected: false, refreshStarted: false, finished: false,
+            refresh: context.refresh, reload: onRestarted,
+        };
+        current.current = observation;
+        setRestarting(true);
+        const waitForHome = () => {
+            if (current.current !== observation || observation.finished) return;
+            observation.waiting = true;
+            setWaitingForHome(true);
+            // The connection may have returned before the initial admission ACK was lost.
+            if (observation.connected) void refreshOnce(observation);
+        };
+        const outcome = await restartHomeRuntime(executor, {
+            serverId, secretMaterialAllowed, onApprovalPending: context.requestApproval,
+            onAdmitted: waitForHome,
+        });
+        if (current.current !== observation) return;
+        if (outcome.kind === 'restarted') {
+            await refreshOnce(observation);
+        } else if (outcome.kind === 'outcome_unknown') {
+            waitForHome();
+        } else {
+            observation.finished = true;
+            setWaitingForHome(false);
+            setRestarting(false);
+            if (outcome.kind === 'failed') {
+                await Modal.alertAsync(t('homeGovernance.runtime.restartFailed'), outcome.message ?? t('errors.operationFailed'));
+            }
+        }
+    }, [serverId, context.refresh, context.requestApproval, executor, onRestarted, secretMaterialAllowed, refreshOnce]);
+
+    return { restart, restarting, waitingForHome };
+}
+
+export type HomeRuntimeRestartState = ReturnType<typeof useHomeRuntimeRestart>;
+
+/**
+ * "Restart now" as every surface offers it: only to an owner whose device has an executor for the
+ * runtime, busy for as long as the one restart operation runs. `null` where this device cannot act.
+ */
+export function restartNowAction(
+    context: HomeAdministrationContext,
+    executor: HomeRuntimeExecutor,
+    state: HomeRuntimeRestartState,
+): Readonly<{ label: string; onPress: () => void; loading: boolean; disabled: boolean }> | null {
+    if (!homeRuntimeExecutorCanAct(executor) || !context.projection.capabilities.manageHomeSettings) return null;
+    return {
+        label: t('homeGovernance.runtime.restartNow'),
+        onPress: () => { void state.restart(); },
+        loading: state.restarting,
+        disabled: state.restarting || !context.mutationsAvailable,
+    };
+}
+
 /**
  * "n changes apply after restart" with Restart now (plan §3.14): offered only when changes are
  * pending AND this device has an executor for the runtime; otherwise the banner says where the
  * restart happens. The one restart path is `restartHomeRuntime`. Server settings mounts it too.
  */
-export const HomeRestartNowBanner = React.memo(function HomeRestartNowBanner(props: Readonly<{
+type HomeRestartNowBannerProps = Readonly<{
     context: HomeAdministrationContext;
     executor: HomeRuntimeExecutor;
     pendingCount: number;
@@ -75,26 +201,20 @@ export const HomeRestartNowBanner = React.memo(function HomeRestartNowBanner(pro
      * cannot restart the runtime. Owners only.
      */
     discard?: Readonly<{ onPress: () => void; loading: boolean }>;
-    onRestarted?: () => void;
+    onRestarted?: () => void | Promise<void>;
+}>;
+
+export const HomeRestartNowBanner = React.memo(function HomeRestartNowBanner(props: HomeRestartNowBannerProps) {
+    const restartState = useHomeRuntimeRestart(props.context, props.executor, props.onRestarted);
+    return <HomeRestartNowBannerContent {...props} restartState={restartState} />;
+});
+
+function HomeRestartNowBannerContent(props: HomeRestartNowBannerProps & Readonly<{
+    restartState: HomeRuntimeRestartState;
 }>) {
-    const { context, executor, pendingCount, onRestarted, discard } = props;
-    const secretMaterialAllowed = useFeatureEnabled('remoteHosts.secretMaterial');
-    const [restarting, setRestarting] = React.useState(false);
-    const restart = React.useCallback(async () => {
-        setRestarting(true);
-        try {
-            const outcome = await restartHomeRuntime(executor, { serverId: context.scope.serverId, secretMaterialAllowed });
-            if (outcome.kind === 'failed') {
-                await Modal.alertAsync(t('homeGovernance.runtime.restartFailed'), outcome.message ?? t('errors.operationFailed'));
-                return;
-            }
-            onRestarted?.();
-        } finally {
-            setRestarting(false);
-        }
-    }, [context.scope.serverId, executor, onRestarted, secretMaterialAllowed]);
-    if (pendingCount === 0) return null;
-    const canRestart = homeRuntimeExecutorCanAct(executor) && context.projection.capabilities.manageHomeSettings;
+    const { context, executor, pendingCount, discard } = props;
+    const { restarting, waitingForHome } = props.restartState;
+    if (pendingCount === 0 && !restarting) return null;
     const where = executor.kind === 'deployment'
         ? t('homeGovernance.runtime.restartFromDeployment')
         : executor.kind === 'hosting_desktop' || executor.kind === 'remote_host' || executor.kind === 'connected_machine'
@@ -109,72 +229,87 @@ export const HomeRestartNowBanner = React.memo(function HomeRestartNowBanner(pro
             testID: 'home-runtime-pending-restart.discard',
             onPress: discard.onPress,
             loading: discard.loading,
-            disabled: !context.mutationsAvailable,
+            disabled: restarting || !context.mutationsAvailable,
         }
         : null;
-    // The banner carries one action. With both, Restart now is the banner's and Discard sits
-    // right under it (AttentionBanner has no second action slot yet; its owner decides that).
-    const bannerAction = canRestart
-        ? { label: t('homeGovernance.runtime.restartNow'), onPress: () => { void restart(); }, loading: restarting }
-        : discardAction;
+    // Restart now is the banner's action with Discard beside it (lab `hcSignin-RS`); a device that
+    // cannot restart the runtime offers Discard alone.
+    const restartAction = restartNowAction(context, executor, props.restartState);
     return (
-        <>
-            <AttentionBanner
-                testID="home-runtime-pending-restart"
-                title={t('homeGovernance.runtime.pendingRestart', { count: pendingCount })}
-                description={props.pendingSummary ? `${props.pendingSummary} ${where}` : where}
-                action={bannerAction}
-            />
-            {canRestart && discardAction ? (
-                <ItemGroup surface="none">
-                    <SectionContentRow showDivider={false}>
-                        <View style={styles.trailingAction}>
-                            <RoundButton
-                                testID={discardAction.testID}
-                                size="small"
-                                display="inverted"
-                                title={discardAction.label}
-                                accessibilityLabel={t('homeSettings.banner.discardA11y')}
-                                loading={discardAction.loading}
-                                disabled={discardAction.disabled}
-                                onPress={discardAction.onPress}
-                            />
-                        </View>
-                    </SectionContentRow>
-                </ItemGroup>
-            ) : null}
-        </>
+        <AttentionBanner
+            testID="home-runtime-pending-restart"
+            title={t('homeGovernance.runtime.pendingRestart', { count: pendingCount })}
+            description={waitingForHome ? t('homeGovernance.runtime.waitingForHome') : props.pendingSummary ? `${props.pendingSummary} ${where}` : where}
+            tone={restarting ? 'neutral' : 'warning'}
+            accessibilityLiveRegion="polite"
+            action={restartAction ?? discardAction}
+            secondaryAction={restartAction ? discardAction : null}
+        />
+    );
+}
+
+/**
+ * Overview's "n changes apply after restart" row (lab `hcOverview-R`): amber, naming what waits, with
+ * Restart now where this device can restart the runtime — the same `useHomeRuntimeRestart` operation
+ * the banner and Runtime run — and the way to Runtime, which says where, everywhere else.
+ */
+export const HomePendingRestartAttentionRow = React.memo(function HomePendingRestartAttentionRow(props: Readonly<{
+    testID: string;
+    context: HomeAdministrationContext;
+    executor: HomeRuntimeExecutor;
+    pendingCount: number;
+    pendingSummary: string;
+    onRestarted?: () => void | Promise<void>;
+    /** Opens Runtime, for a viewer or device that cannot restart from here. */
+    onReview: () => void;
+}>) {
+    const { theme } = useUnistyles();
+    const restartState = useHomeRuntimeRestart(props.context, props.executor, props.onRestarted);
+    const restartAction = restartNowAction(props.context, props.executor, restartState);
+    return (
+        <Item
+            testID={props.testID}
+            icon={<Icon name="arrow-clockwise" color={theme.colors.state.warning.foreground} />}
+            title={t('homeGovernance.runtime.pendingRestart', { count: props.pendingCount })}
+            titleLines={0}
+            subtitle={restartState.waitingForHome ? t('homeGovernance.runtime.waitingForHome') : props.pendingSummary}
+            subtitleLines={0}
+            mode="info"
+            showChevron={false}
+            rightElement={(
+                <RoundButton
+                    testID={`${props.testID}.action`}
+                    size="small"
+                    display="secondary"
+                    title={restartAction?.label ?? t('homeGovernance.overviewPage.review')}
+                    loading={restartAction?.loading}
+                    disabled={restartAction?.disabled}
+                    onPress={restartAction?.onPress ?? props.onReview}
+                />
+            )}
+        />
     );
 });
 
-const styles = StyleSheet.create(() => ({
-    trailingAction: {
-        flexDirection: 'row',
-        justifyContent: 'flex-end',
-    },
-}));
-
 /** The server that runs this Home: its release, and the controls of whoever can act on it. */
-export const HomeRuntimeSection = React.memo(function HomeRuntimeSection(props: Readonly<{
+type HomeRuntimeSectionProps = Readonly<{
     context: HomeAdministrationContext;
     release: HomeServerRelease;
     executor: HomeRuntimeExecutor;
+    onRestarted?: () => void | Promise<void>;
+}>;
+
+export const HomeRuntimeSection = React.memo(function HomeRuntimeSection(props: HomeRuntimeSectionProps) {
+    const restartState = useHomeRuntimeRestart(props.context, props.executor, props.onRestarted);
+    return <HomeRuntimeSectionContent {...props} restartState={restartState} />;
+});
+
+function HomeRuntimeSectionContent(props: HomeRuntimeSectionProps & Readonly<{
+    restartState: HomeRuntimeRestartState;
 }>) {
     const { context, release, executor } = props;
-    const secretMaterialAllowed = useFeatureEnabled('remoteHosts.secretMaterial');
-    const [restarting, setRestarting] = React.useState(false);
+    const { restart, restarting, waitingForHome } = props.restartState;
     const canAct = homeRuntimeExecutorCanAct(executor) && context.projection.capabilities.manageHomeSettings;
-    const restart = React.useCallback(async () => {
-        setRestarting(true);
-        try {
-            const outcome = await restartHomeRuntime(executor, { serverId: context.scope.serverId, secretMaterialAllowed });
-            if (outcome.kind === 'failed') {
-                await Modal.alertAsync(t('homeGovernance.runtime.restartFailed'), outcome.message ?? t('errors.operationFailed'));
-            }
-        } finally {
-            setRestarting(false);
-        }
-    }, [context.scope.serverId, executor, secretMaterialAllowed]);
     const flavorLabel = release.flavor === 'full'
         ? t('homeGovernance.runtime.flavorFull')
         : release.flavor === 'light'
@@ -197,7 +332,7 @@ export const HomeRuntimeSection = React.memo(function HomeRuntimeSection(props: 
                     <Item
                         testID={`home-runtime-managed:${executor.kind}`}
                         title={elsewhere.title}
-                        subtitle={elsewhere.body}
+                        subtitle={waitingForHome ? t('homeGovernance.runtime.waitingForHome') : elsewhere.body}
                         subtitleLines={0}
                         mode={canAct ? undefined : 'info'}
                         showChevron={false}
@@ -208,13 +343,26 @@ export const HomeRuntimeSection = React.memo(function HomeRuntimeSection(props: 
                                 display="inverted"
                                 title={t('homeGovernance.runtime.restart')}
                                 loading={restarting}
-                                disabled={!context.mutationsAvailable}
+                                disabled={restarting || !context.mutationsAvailable}
                                 onPress={() => { void restart(); }}
                             />
                         ) : undefined}
                     />
                 </ItemGroup>
             )}
+        </>
+    );
+}
+
+/** The Runtime page's two controls share one restart operation and reconnect observation. */
+export const HomeRuntimeRestartSections = React.memo(function HomeRuntimeRestartSections(
+    props: HomeRuntimeSectionProps & Readonly<{ pendingCount: number }>,
+) {
+    const restartState = useHomeRuntimeRestart(props.context, props.executor, props.onRestarted);
+    return (
+        <>
+            <HomeRestartNowBannerContent {...props} restartState={restartState} />
+            <HomeRuntimeSectionContent {...props} restartState={restartState} />
         </>
     );
 });

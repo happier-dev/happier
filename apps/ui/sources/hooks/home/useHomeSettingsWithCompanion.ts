@@ -13,7 +13,11 @@ export type HomeSettingsWithCompanion<TCompanion> = Readonly<{
     loading: boolean;
     /** The failure of the latest settings read, when it failed. */
     failure: HomeDomainFailure | null;
-    reload: () => void;
+    companionLoading: boolean;
+    /** Failure of the latest companion read; the last successful answer is retained. */
+    companionFailure: HomeDomainFailure | null;
+    /** Completes after the settings answer has been adopted (or its failure recorded). */
+    reload: () => Promise<void>;
     /** Adopts the projection a settings write answered with and re-reads the companion. */
     adoptSettings: (settings: HomeSettingsProjectionV1) => void;
     /** Adopts a companion answer a mutation returned (for example the new reachability). */
@@ -25,6 +29,8 @@ type State<TCompanion> = Readonly<{
     companion: TCompanion | null;
     loading: boolean;
     failure: HomeDomainFailure | null;
+    companionLoading: boolean;
+    companionFailure: HomeDomainFailure | null;
 }>;
 
 /**
@@ -42,7 +48,7 @@ export function useHomeSettingsWithCompanion<TCompanion>(
 ): HomeSettingsWithCompanion<TCompanion> {
     const serverId = scope?.serverId ?? '';
     const accountId = scope?.accountId ?? '';
-    const [state, setState] = React.useState<State<TCompanion>>(() => ({ settings: null, companion: null, loading: true, failure: null }));
+    const [state, setState] = React.useState<State<TCompanion>>(() => ({ settings: null, companion: null, loading: true, failure: null, companionLoading: readCompanion !== null, companionFailure: null }));
     const generation = React.useRef(0);
     const readCompanionRef = React.useRef(readCompanion);
     readCompanionRef.current = readCompanion;
@@ -50,25 +56,26 @@ export function useHomeSettingsWithCompanion<TCompanion>(
     const refreshCompanion = React.useCallback((currentGeneration: number) => {
         const read = readCompanionRef.current;
         if (!read) return;
+        setState((previous) => ({ ...previous, companionLoading: true }));
         void (async () => {
             const companion = await read({ serverId, accountId });
-            if (currentGeneration !== generation.current || companion.kind !== 'succeeded') return;
-            setState((previous) => ({ ...previous, companion: companion.value }));
+            if (currentGeneration !== generation.current) return;
+            setState((previous) => companion.kind === 'succeeded'
+                ? { ...previous, companion: companion.value, companionLoading: false, companionFailure: null }
+                : { ...previous, companionLoading: false, companionFailure: companion.failure });
         })();
     }, [serverId, accountId]);
 
-    const load = React.useCallback(() => {
+    const load = React.useCallback(async () => {
         if (!enabled || !serverId || !accountId) return;
         const currentGeneration = (generation.current += 1);
         setState((previous) => ({ ...previous, loading: true, failure: null }));
         refreshCompanion(currentGeneration);
-        void (async () => {
-            const settings = await getHomeSettings({ scope: { serverId, accountId } });
-            if (currentGeneration !== generation.current) return;
-            setState((previous) => settings.kind === 'succeeded'
-                ? { ...previous, settings: settings.value, loading: false, failure: null }
-                : { ...previous, loading: false, failure: settings.failure });
-        })();
+        const settings = await getHomeSettings({ scope: { serverId, accountId } });
+        if (currentGeneration !== generation.current) return;
+        setState((previous) => settings.kind === 'succeeded'
+            ? { ...previous, settings: settings.value, loading: false, failure: null }
+            : { ...previous, loading: false, failure: settings.failure });
     }, [enabled, serverId, accountId, refreshCompanion]);
 
     // Only another Home (or another Account on it) starts from nothing. A read that is merely
@@ -76,11 +83,11 @@ export function useHomeSettingsWithCompanion<TCompanion>(
     // edits never fall back to a loading state.
     React.useEffect(() => {
         generation.current += 1;
-        setState({ settings: null, companion: null, loading: true, failure: null });
+        setState({ settings: null, companion: null, loading: true, failure: null, companionLoading: readCompanionRef.current !== null, companionFailure: null });
     }, [serverId, accountId]);
 
     React.useEffect(() => {
-        load();
+        void load();
     }, [load]);
 
     const adoptSettings = React.useCallback((settings: HomeSettingsProjectionV1) => {
@@ -90,7 +97,7 @@ export function useHomeSettingsWithCompanion<TCompanion>(
     }, [refreshCompanion]);
 
     const adoptCompanion = React.useCallback((companion: TCompanion) => {
-        setState((previous) => ({ ...previous, companion }));
+        setState((previous) => ({ ...previous, companion, companionLoading: false, companionFailure: null }));
     }, []);
 
     return React.useMemo(() => Object.freeze({
@@ -98,6 +105,8 @@ export function useHomeSettingsWithCompanion<TCompanion>(
         companion: state.companion,
         loading: state.loading,
         failure: state.failure,
+        companionLoading: state.companionLoading,
+        companionFailure: state.companionFailure,
         reload: load,
         adoptSettings,
         adoptCompanion,

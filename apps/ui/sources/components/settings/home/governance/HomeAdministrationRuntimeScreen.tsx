@@ -8,8 +8,7 @@ import { t } from '@/text';
 
 import { useHomeRuntimeExecutor } from '../runtime/homeRuntimeExecutor';
 import {
-    HomeRestartNowBanner,
-    HomeRuntimeSection,
+    HomeRuntimeRestartSections,
     HostedPersonalHomeRuntimeSection,
     countPendingRestartChanges,
     useHomeServerRelease,
@@ -36,13 +35,13 @@ const RuntimePage = React.memo(function RuntimePage(props: Readonly<{ context: H
     }
     return (
         <>
-            <HomeRestartNowBanner
+            <HomeRuntimeRestartSections
                 context={context}
                 executor={executor}
+                release={release}
                 pendingCount={countPendingRestartChanges(reads.settings)}
                 onRestarted={reads.reload}
             />
-            <HomeRuntimeSection context={context} release={release} executor={executor} />
             {executor.kind === 'hosting_desktop' && context.projection.capabilities.manageHomeSettings ? (
                 <HostedPersonalHomeRuntimeSection />
             ) : null}

@@ -1,11 +1,18 @@
-import { defineSettingsPage } from '@/components/settings/catalog/settingDeclarations';
+import { builtInSettingsPageSections, defineSettingsPage, type SettingDeclaration } from '@/components/settings/catalog/settingDeclarations';
 import { identitySettingHomeId } from '@/components/settings/identity/identitySettingsRoutes';
 
 import { homeAdministrationSignInProvidersPath } from '../governance/homeAdministrationRoutes';
 
+/** Every Home-editable registry key a Sign-in platform row renders (AM-12), found by its own name. */
+function platformKeySettings(): Record<string, SettingDeclaration> {
+    const sections = builtInSettingsPageSections('homeAdministration.signInProviders');
+    return sections.signInPlatforms?.settings ?? {};
+}
+
 /**
- * The Sign-in providers page: the Home's identity providers and GitHub Apps, where managed sign-in
- * may reach, and what Teams may add. Generic fields only, never provider names, hosts or keys.
+ * The Sign-in providers page: the platforms the Home signs in through (GitHub sign-in, WorkOS), its
+ * identity providers and GitHub Apps, where managed sign-in may reach, and what Teams may add.
+ * Titles are generic translations, never a provider's own name or host.
  */
 export const HOME_SIGN_IN_PROVIDERS_SETTINGS = defineSettingsPage({
     pageId: 'homeAdministration',
@@ -18,28 +25,32 @@ export const HOME_SIGN_IN_PROVIDERS_SETTINGS = defineSettingsPage({
         },
     },
     sections: {
+        signInPlatforms: { titleKey: 'homeGovernance.signInProviders.platforms', settings: {
+            githubSignIn: {},
+            workos: {},
+            ...platformKeySettings(),
+        } },
         homeConnections: { titleKey: 'identityAdministration.homeConnections', settings: {
-            homeConnections: { titleKey: 'identityAdministration.homeConnections' },
-            addProvider: { titleKey: 'identityAdministration.add', keywordKeys: ['identityAdministration.homeConnections'] },
-            workos: { titleKey: 'identityAdministration.workos' },
+            homeConnections: {},
+            addProvider: {},
         } },
         githubApps: { titleKey: 'identityAdministration.githubApps', settings: {
-            githubApps: { titleKey: 'identityAdministration.githubApps' },
-            addGitHubApp: { titleKey: 'identityAdministration.githubAppAdd' },
+            githubApps: {},
+            addGitHubApp: {},
         } },
         identityNetwork: { titleKey: 'homeGovernance.privateEndpoints', settings: {
-            publicOnly: { titleKey: 'homeGovernance.privateEndpointsPublicOnly' },
-            privateAllowlist: { titleKey: 'homeGovernance.privateEndpointsAllowlist' },
-            hostnames: { titleKey: 'homeGovernance.privateEndpointsHostnames' },
-            cidrs: { titleKey: 'homeGovernance.privateEndpointsCidrs' },
-            ports: { titleKey: 'homeGovernance.privateEndpointsPorts' },
-            saveNetwork: { titleKey: 'homeGovernance.privateEndpointsSave' },
+            publicOnly: {},
+            privateAllowlist: {},
+            hostnames: {},
+            cidrs: {},
+            ports: {},
+            saveNetwork: {},
         } },
         teamProviders: { titleKey: 'homeGovernance.signInProviders.teamRules', settings: {
-            allowedTeamProviderKinds: { titleKey: 'homeGovernance.manageTeams', keywordKeys: ['identityAdministration.eligibleProviders', 'identityAdministration.providerOidc', 'identityAdministration.providerWorkosSso', 'identityAdministration.providerGitHub'] },
-            teamJitAllowed: { titleKey: 'homeGovernance.teamJit', descriptionKey: 'homeGovernance.teamJitDescription' },
-            approvedGitHubEnterpriseOrigins: { titleKey: 'homeGovernance.githubEnterpriseOrigins', descriptionKey: 'homeGovernance.githubEnterpriseOriginsDescription' },
-            saveOrigins: { titleKey: 'common.save' },
+            allowedTeamProviderKinds: {},
+            teamJitAllowed: {},
+            approvedGitHubEnterpriseOrigins: {},
+            saveOrigins: {},
         } },
     },
 });
