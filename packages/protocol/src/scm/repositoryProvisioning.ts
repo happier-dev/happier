@@ -224,6 +224,7 @@ export type ScmHostingRepositoryDescribePublishTargetsResponse =
 
 export const ScmHostingRepositoryPublishRequestSchema = lazyZodSchema(() => ScmRequestBaseSchema.extend({
   providerId: z.string().trim().min(1).optional(),
+  providerBaseUrl: z.string().trim().min(1).optional(),
   providerKind: ScmHostingProviderKindSchema,
   owner: z.string().min(1),
   ownerKind: ScmHostingRepositoryOwnerKindSchema.optional(),

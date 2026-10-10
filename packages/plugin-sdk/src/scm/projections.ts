@@ -998,6 +998,7 @@ export type ScmHostingRepositoryPublishRequest = {
     backendPreference?: ScmStatusSnapshotRequest['backendPreference'];
     outcomeVersion?: 1;
     providerId?: string;
+    providerBaseUrl?: string;
     providerKind: ScmHostingProviderKind;
     owner: string;
     ownerKind?: 'user' | 'org';
