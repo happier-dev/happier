@@ -15,4 +15,10 @@ export type RoleRailItem = Readonly<{
     engineIcon?: React.ReactNode;
     /** The Agent the role's engine names; a caller compares it with the running one. */
     agentTargetKey?: string;
+    /**
+     * Why the role cannot be chosen as it stands: its engine names an Agent this Account has not
+     * enabled (`engine`: choose an engine), or no layer resolves it any more (`role`: removed, or no
+     * longer shared). The rail keeps such a role in its place and says so instead of dropping it.
+     */
+    unavailable?: 'engine' | 'role';
 }>;
