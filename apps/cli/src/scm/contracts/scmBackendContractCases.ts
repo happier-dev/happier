@@ -2,6 +2,7 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
+import type { ScmBackendCapabilities } from '@happier-dev/protocol';
 import { SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN } from '@happier-dev/protocol/scm/worktrees';
 import { admitScmCommitPolicy } from '@happier-dev/protocol/scm';
 import { expect } from 'vitest';
@@ -494,6 +495,7 @@ async function assertRepositoryInitSupported(input: ScmBackendContractOperationI
         context: createContext(input.backend, workspace, { isRepo: false, rootPath: null, mode: null }),
         request: { cwd: workspace, initialBranch: 'contract-init' },
     });
+    expect(response, `Repository initialization result: ${JSON.stringify(response)}`).toMatchObject({ success: true });
     assertSupportedResult(response);
     expect(response.snapshot?.repo.isRepo).toBe(true);
 }
@@ -538,7 +540,7 @@ async function assertPortableWorkspacePathClassificationSupported(input: ScmBack
     expect(['portable', 'non_portable', 'unknown']).toContain(classification);
 }
 
-export function createScmBackendContractOperations(): readonly ScmBackendContractOperation[] {
+export function createScmBackendContractOperations(capabilities: ScmBackendCapabilities): readonly ScmBackendContractOperation[] {
     return [
         {
             path: { group: 'detection', leaf: 'repository' },
@@ -817,16 +819,16 @@ export function createScmBackendContractOperations(): readonly ScmBackendContrac
                 },
             })),
         },
-        {
+        ...(capabilities.commit.expectedBase === undefined ? [] : [{
             path: { group: 'commit', leaf: 'expectedBase' },
             assertSupported: assertCommitExpectedBaseSupported,
-            assertUnsupported: async (input) => {
+            assertUnsupported: async (input: ScmBackendContractOperationInput) => {
                 const mode = input.context.detection.mode;
                 if (!mode) throw new Error('Expected-base contract requires a detected repository mode');
                 expect(admitScmCommitPolicy({ expectedHeadOid: input.fixture.headCommit }, input.backend.getCapabilities({ mode })))
                     .toMatchObject({ success: false, errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED });
             },
-        },
+        } satisfies ScmBackendContractOperation]),
         {
             path: { group: 'commit', leaf: 'lineSelection' },
             assertSupported: assertCommitLineSelectionSupported,

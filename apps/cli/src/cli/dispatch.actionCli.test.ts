@@ -21,6 +21,9 @@ vi.mock('@/session/actions/createCliActionExecutorFromCredentials', () => ({
 vi.mock('@/integrations/tmux/startHeadlessSession', () => ({ startHappyHeadlessInTmux }));
 
 import { dispatchCli } from './dispatch';
+// Load the real lazy Action root (including its transfer graph) during collection,
+// before cases observe command cancellation or input admission.
+import '@/cli/commands/actions';
 
 describe('dispatchCli compiled Action entrypoint', () => {
   beforeEach(() => {

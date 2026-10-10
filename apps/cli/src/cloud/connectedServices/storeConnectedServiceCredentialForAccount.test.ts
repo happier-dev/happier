@@ -1,608 +1,240 @@
-import { describe, expect, it, vi } from 'vitest';
-
+import axios from 'axios';
+import fastify from 'fastify';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  buildConnectedServiceCredentialRecord,
-  FeaturesResponseSchema,
-  openConnectedServiceCredentialCiphertext,
-  type ConnectedServiceCredentialRecordV1,
+  buildConnectedServiceCredentialRecord, FeaturesResponseSchema,
+  openConnectedServiceCredentialCiphertext, SealedConnectedServiceCredentialV1Schema,
 } from '@happier-dev/protocol';
-
-import type { Credentials } from '@/persistence';
-import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
-import { ConnectedServiceCredentialUnsupportedFormatError } from '@/api/client/connectedServiceCredentialApi';
-import {
-  storeConnectedServiceCredentialForAccount,
-  type ConnectedServiceCredentialStorageApi,
-} from './storeConnectedServiceCredentialForAccount';
+import { ApiClient } from '@/api/api';
+import { normalizeServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { configuration } from '@/configuration';
+import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
+import type { StoredCredentials } from '@/persistence';
+import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
+import { storeConnectedServiceCredentialForAccount } from './storeConnectedServiceCredentialForAccount';
 
 const revision = 'csr_abcdefghijklmnopqrstuv';
-type RegisterSealedCredentialArgs = Parameters<
-  NonNullable<
-    ConnectedServiceCredentialStorageApi[
-      'registerConnectedServiceCredentialSealed'
-    ]
-  >
->[0];
-function readyServerFeatures(payload: unknown): CliServerFeaturesSnapshot {
-  return {
-    status: 'ready',
-    features: FeaturesResponseSchema.parse(payload),
-  };
+const currentFeatures = FeaturesResponseSchema.parse({ features: {}, capabilities: {
+  connectedServices: { qualifiedAccounts: { protocolVersion: 4 }, credentialDelete: { revisionGuard: true } },
+} });
+const releasedFeatures = FeaturesResponseSchema.parse({ features: { sharing: {
+  session: { enabled: true }, public: { enabled: true }, contentKeys: { enabled: true }, pendingQueueV2: { enabled: true },
+} }, capabilities: {} });
+const exactOldContract = { mode: 'released_server_v0_2_1', runtimeActivity: 'legacy', pendingInput: 'released_server_v0_2_1',
+  publisherAuthority: 'indeterminate', sessionConnectionEpoch: 1, socket: { connected: true } } as const;
+const currentContract = { mode: 'session_sync_v2_pending_input_v1', runtimeActivity: 'v2', pendingInput: 'v1',
+  publisherAuthority: 'indeterminate', sessionConnectionEpoch: 2, socket: { connected: true } } as const;
+function record(token = 'secret-token') {
+  return buildConnectedServiceCredentialRecord({ now: 1_000, serviceId: 'github', profileId: 'work', kind: 'token',
+    token: { token, providerAccountId: null, providerEmail: null } });
 }
+function credentials(): StoredCredentials {
+  return { token: 'happy-token', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) } };
+}
+type Options = Readonly<{
+  mode?: 'plain' | 'e2ee'; features?: unknown; featureStatus?: number;
+  credential?: unknown; credentialStatus?: number; mutation?: unknown;
+}>;
+type Write = Readonly<{ path: string; body: unknown }>;
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-const currentServerFeatures = readyServerFeatures({
-  features: {},
-  capabilities: {
-    connectedServices: {
-      credentialDelete: { revisionGuard: true },
-    },
-    session: {
-      runtimeActivity: { protocolVersion: 2 },
-      pendingInput: { protocolVersion: 1 },
-      publisherAuthority: { protocolVersion: 1 },
-    },
-  },
-});
-const releasedServerV021Features = readyServerFeatures({
-  features: {
-    sharing: {
-      session: { enabled: true },
-      public: { enabled: true },
-      contentKeys: { enabled: true },
-      pendingQueueV2: { enabled: true },
-    },
-  },
-  capabilities: {},
-});
-const laterServerFeatures = readyServerFeatures({
-  features: {},
-  capabilities: {
-    connectedServices: {
-      credentialDelete: { revisionGuard: true },
-    },
-    session: {
-      runtimeActivity: { protocolVersion: 3 },
-      pendingInput: { protocolVersion: 2 },
-      publisherAuthority: { protocolVersion: 2 },
-    },
-  },
-});
-const nonmatchingServerFeatures = readyServerFeatures({
-  features: {
-    sharing: {
-      pendingQueueV2: { enabled: true },
-      pendingDeliveryState: { enabled: true },
-    },
-  },
-  capabilities: {},
-});
-const exactV021ServerContract = {
-  mode: 'released_server_v0_2_1',
-  runtimeActivity: 'legacy',
-  pendingInput: 'released_server_v0_2_1',
-  publisherAuthority: 'indeterminate',
-  sessionConnectionEpoch: 1,
-  socket: { connected: true },
-} as const;
-const currentServerContract = {
-  mode: 'session_sync_v2_pending_input_v1',
-  runtimeActivity: 'v2',
-  pendingInput: 'v1',
-  publisherAuthority: 'indeterminate',
-  sessionConnectionEpoch: 2,
-  socket: { connected: true },
-} as const;
-
-function createRecord(token = 'secret-token'): ConnectedServiceCredentialRecordV1 {
-  return buildConnectedServiceCredentialRecord({
-    now: 1_000,
-    serviceId: 'github',
-    profileId: 'work',
-    kind: 'token',
-    token: { token, providerAccountId: null, providerEmail: null },
+/** Actual client codecs and storage admission; only the exact Home HTTP boundary is replaced. */
+async function withHome<T>(options: Options, run: (fixture: Readonly<{
+  api: ApiClient; writes: Write[]; reads: string[];
+  publishFeatures(value: unknown): void; publishCredential(value: unknown): void;
+}>) => Promise<T>, auth: StoredCredentials = credentials()): Promise<T> {
+  resetServerFeaturesClientForTests();
+  const app = fastify();
+  const writes: Write[] = [];
+  const reads: string[] = [];
+  let features = options.features ?? currentFeatures;
+  let stored = options.credential;
+  app.addHook('onRequest', async (request) => {
+    if (!request.url.startsWith('/v1/features')) expect(request.headers.authorization).toBe(`Bearer ${auth.token}`);
+    if (request.method === 'GET') reads.push(request.url);
   });
+  app.get('/v1/account/encryption', async () => ({ mode: options.mode ?? 'e2ee', updatedAt: 1 }));
+  app.get('/v1/features', async (_request, reply) => reply.code(options.featureStatus ?? 200).send(features));
+  // The current server retains guarded scalar bridges alongside qualified V4;
+  // connectRoutes and its real SQLite compatibility suite establish these paths.
+  for (const version of ['v2', 'v3']) {
+    const path = `/${version}/connect/github/profiles/work/credential`;
+    app.get(path, async (_request, reply) => {
+      if (options.credentialStatus) return reply.code(options.credentialStatus).send(stored);
+      return stored === undefined ? reply.code(404).send({ error: 'not-found' }) : stored;
+    });
+    app.post(path, async (request) => {
+      writes.push({ path, body: request.body });
+      return options.mutation ?? { success: true, credentialRevision: revision };
+    });
+  }
+  await app.ready();
+  // Account reads and this ApiClient's feature discovery use the resolved API
+  // destination, whose localhost normalization does not change Home identity.
+  const origin = new URL(normalizeServerHttpBaseUrl(configuration.apiServerUrl)).origin;
+  const restore = installAxiosFastifyAdapter({ app, origin });
+  vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    expect(url.origin).toBe(origin);
+    const response = await app.inject({ method: 'GET', url: `${url.pathname}${url.search}`,
+      headers: Object.fromEntries(new Headers(init?.headers).entries()) });
+    return new Response(response.body, { status: response.statusCode, headers: { 'content-type': 'application/json' } });
+  });
+  try {
+    return await run({ api: await ApiClient.create(auth), writes, reads,
+      publishFeatures(value) { features = value; }, publishCredential(value) { stored = value; } });
+  } finally { restore(); resetServerFeaturesClientForTests(); await app.close(); }
 }
-
-function releasedTokenRecord(
-  record: ConnectedServiceCredentialRecordV1,
-): ConnectedServiceCredentialRecordV1 {
-  if (record.kind !== 'token') throw new Error('Expected token credential');
-  return { ...record, oauth: null };
-}
-
-function createCredentials(): Credentials {
-  return {
-    token: 'happy-token',
-    encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
-  };
-}
-
-function createApi(overrides: Partial<ConnectedServiceCredentialStorageApi>): ConnectedServiceCredentialStorageApi {
-  return {
-    getAccountEncryptionMode: async () => 'e2ee',
-    getConnectedServiceCredentialPlain: async () => null,
-    getConnectedServiceCredentialSealed: async () => null,
-    getServerFeaturesSnapshot: async () => currentServerFeatures,
-    registerConnectedServiceCredentialPlain: async () => ({ success: true, credentialRevision: revision }),
-    registerConnectedServiceCredentialSealed: async () => ({ success: true, credentialRevision: revision }),
-    ...overrides,
-  };
+function sealedBody(write: Write | undefined) {
+  if (!write || !write.body || typeof write.body !== 'object') throw new Error('Expected sealed Home HTTP write');
+  const body = write.body;
+  if (!('sealed' in body) || !('metadata' in body)) throw new Error('Missing sealed credential body');
+  return { sealed: SealedConnectedServiceCredentialV1Schema.parse(body.sealed), metadata: body.metadata };
 }
 
 describe('storeConnectedServiceCredentialForAccount', () => {
   it('does not overwrite an unsupported authoritative plaintext credential', async () => {
-    const unsupported = new ConnectedServiceCredentialUnsupportedFormatError(
-      'github',
-      'work',
-    );
-    const registerPlain = vi.fn(async () => ({
-      success: true as const,
-      credentialRevision: revision,
-    }));
-    const api = createApi({
-      getAccountEncryptionMode: async () => 'plain',
-      getConnectedServiceCredentialPlain: async () => {
-        throw unsupported;
-      },
-      registerConnectedServiceCredentialPlain: registerPlain,
+    await withHome({ mode: 'plain', credentialStatus: 409, credential: { error: 'connect_credential_unsupported_format' } }, async (fixture) => {
+      await expect(storeConnectedServiceCredentialForAccount({ api: fixture.api, credentials: credentials(), record: record('replacement') }))
+        .rejects.toMatchObject({ name: 'ConnectedServiceCredentialUnsupportedFormatError', serviceId: 'github', profileId: 'work' });
+      expect(fixture.writes).toEqual([]);
     });
-
-    await expect(storeConnectedServiceCredentialForAccount({
-      api,
-      credentials: createCredentials(),
-      record: createRecord('replacement-token'),
-    })).rejects.toBe(unsupported);
-    expect(registerPlain).not.toHaveBeenCalled();
   });
-
-  it('refuses a missing plaintext mutation on exact v0.2.1 before the content-only POST', async () => {
-    const record = createRecord();
-    const getServerFeaturesSnapshot = vi.fn(async () => releasedServerV021Features);
-    const registerPlain = vi.fn(async (
-      params: Parameters<ConnectedServiceCredentialStorageApi['registerConnectedServiceCredentialPlain']>[0],
-    ) => {
-      expect(params).toEqual({
-        serviceId: record.serviceId,
-        profileId: record.profileId,
-        content: { t: 'plain', v: releasedTokenRecord(record) },
+  it('refuses a missing plaintext mutation without a qualified credential contract or Account key material', async () => {
+    const auth: StoredCredentials = { token: 'token-only', encryption: null };
+    await withHome({ mode: 'plain', features: releasedFeatures }, async (fixture) => {
+      // A legacy Session contract does not authorize a credential mutation
+      // when this Home has not declared the qualified credential contract.
+      await expect(storeConnectedServiceCredentialForAccount({ api: fixture.api, credentials: auth, record: record(), serverContract: exactOldContract }))
+        .rejects.toThrow('server credential mutation contract is indeterminate');
+      expect(fixture.writes).toEqual([]);
+      expect(fixture.reads).toContain('/v1/features');
+    }, auth);
+  });
+  it('creates missing plaintext through the retained guarded contract without Account key material', async () => {
+    const auth: StoredCredentials = { token: 'token-only', encryption: null };
+    await withHome({ mode: 'plain' }, async (fixture) => {
+      await expect(storeConnectedServiceCredentialForAccount({ api: fixture.api, credentials: auth, record: record() }))
+        .resolves.toEqual({ revisionSemantics: 'revisioned', credentialRevision: revision });
+      expect(fixture.writes).toEqual([{ path: '/v3/connect/github/profiles/work/credential', body: {
+        content: { t: 'plain', v: { ...record(), oauth: null } }, expectedCredentialRevision: null,
+      } }]);
+    }, auth);
+  });
+  it('rejects a mutation response that omits the committed revision', async () => {
+    await withHome({ mode: 'plain', mutation: { success: true } }, async (fixture) => {
+      await expect(storeConnectedServiceCredentialForAccount({ api: fixture.api, credentials: credentials(), record: record() }))
+        .rejects.toMatchObject({ code: 'connected_service_credential_revision_required' });
+      expect(fixture.writes).toHaveLength(1);
+    });
+  });
+  it.each(['current-to-old', 'old-to-current'] as const)('refreshes real feature discovery across a warm %s transition', async (direction) => {
+    await withHome({ mode: 'plain', features: direction === 'current-to-old' ? currentFeatures : releasedFeatures }, async (fixture) => {
+      await fixture.api.getServerFeaturesSnapshot({ refresh: true });
+      fixture.publishFeatures(direction === 'current-to-old' ? releasedFeatures : currentFeatures);
+      const store = storeConnectedServiceCredentialForAccount({ api: fixture.api, credentials: credentials(), record: record(),
+        serverContract: direction === 'current-to-old' ? exactOldContract : currentContract });
+      if (direction === 'current-to-old') {
+        await expect(store).rejects.toThrow('server credential mutation contract is indeterminate');
+        expect(fixture.writes).toEqual([]);
+      } else {
+        await expect(store).resolves.toEqual({ revisionSemantics: 'revisioned', credentialRevision: revision });
+        expect(fixture.writes).toHaveLength(1);
+      }
+    });
+  });
+  it('keeps a higher Session protocol envelope on the current Connected Account write contract', async () => {
+    await withHome({ mode: 'plain', features: FeaturesResponseSchema.parse({ ...currentFeatures, capabilities: {
+      ...currentFeatures.capabilities, session: { runtimeActivity: { protocolVersion: 3 }, pendingInput: { protocolVersion: 2 }, publisherAuthority: { protocolVersion: 2 } },
+    } }) }, async (fixture) => {
+      await storeConnectedServiceCredentialForAccount({ api: fixture.api, credentials: credentials(), record: record() });
+      expect(fixture.writes[0]?.body).toMatchObject({ expectedCredentialRevision: null });
+    });
+  });
+  it.each(['ready-without-qualified-contract', 'discovery-unavailable'] as const)('fails closed before writing for %s', async (condition) => {
+    await withHome({ mode: 'plain', features: releasedFeatures, ...(condition === 'discovery-unavailable' ? { featureStatus: 503 } : {}) }, async (fixture) => {
+      await expect(storeConnectedServiceCredentialForAccount({ api: fixture.api, credentials: credentials(), record: record() }))
+        .rejects.toThrow('server credential mutation contract is indeterminate');
+      expect(fixture.writes).toEqual([]);
+    });
+  });
+  it('reuses identical sealed bytes after an ambiguous unchanged HTTP result', async () => {
+    await withHome({}, async (fixture) => {
+      const post = axios.post.bind(axios);
+      let first = true;
+      vi.spyOn(axios, 'post').mockImplementation(async (...args) => {
+        const response = await post(...args);
+        if (first) { first = false; throw new Error('connection closed after request'); }
+        return response;
       });
-      return { success: true as const };
-    });
-    const api = createApi({
-      getAccountEncryptionMode: async () => 'plain',
-      getConnectedServiceCredentialPlain: async () => null,
-      getServerFeaturesSnapshot,
-      registerConnectedServiceCredentialPlain: registerPlain,
-    });
-
-    await expect(storeConnectedServiceCredentialForAccount({
-      api,
-      credentials: {
-        token: 'token-only',
-        encryption: null,
-      },
-      record,
-      serverContract: exactV021ServerContract,
-    })).rejects.toMatchObject({
-      code: 'connected_service_credential_legacy_unfenced_mutation_unsupported',
-    });
-
-    expect(getServerFeaturesSnapshot).toHaveBeenCalledOnce();
-    expect(getServerFeaturesSnapshot).toHaveBeenCalledWith({ refresh: true });
-    expect(registerPlain).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    'server-v0.2.1-dev.33.1',
-    'server-v0.2.3-dev.35.1',
-    'server-v0.2.4-dev.38.1',
-  ])('refuses incidental content-only mutation for immutable %s with the byte-identical observed contract shape', async (_tag) => {
-    const record = createRecord();
-    const registerPlain = vi.fn(async () => ({ success: true as const }));
-    const api = createApi({
-      getAccountEncryptionMode: async () => 'plain',
-      getConnectedServiceCredentialPlain: async () => null,
-      getServerFeaturesSnapshot: async () => releasedServerV021Features,
-      registerConnectedServiceCredentialPlain: registerPlain,
-    });
-
-    await expect(storeConnectedServiceCredentialForAccount({
-      api,
-      credentials: createCredentials(),
-      record,
-      serverContract: exactV021ServerContract,
-    })).rejects.toMatchObject({
-      code: 'connected_service_credential_legacy_unfenced_mutation_unsupported',
-    });
-    expect(registerPlain).not.toHaveBeenCalled();
-  });
-
-  it('creates missing plaintext through the guarded current contract', async () => {
-    const record = createRecord();
-    const registerPlain = vi.fn(async () => ({ success: true as const, credentialRevision: revision }));
-    const api = createApi({
-      getAccountEncryptionMode: async () => 'plain',
-      getConnectedServiceCredentialPlain: async () => null,
-      getServerFeaturesSnapshot: async () => currentServerFeatures,
-      registerConnectedServiceCredentialPlain: registerPlain,
-    });
-
-    await expect(storeConnectedServiceCredentialForAccount({
-      api,
-      credentials: createCredentials(),
-      record,
-    })).resolves.toEqual({ revisionSemantics: 'revisioned', credentialRevision: revision });
-
-    expect(registerPlain).toHaveBeenCalledWith({
-      serviceId: record.serviceId,
-      profileId: record.profileId,
-      content: { t: 'plain', v: releasedTokenRecord(record) },
-      expectedCredentialRevision: null,
+      await expect(storeConnectedServiceCredentialForAccount({ api: fixture.api, credentials: credentials(), record: record(),
+        randomBytes: (length) => new Uint8Array(length).fill(4) })).resolves.toEqual({ revisionSemantics: 'revisioned', credentialRevision: revision });
+      expect(fixture.writes).toHaveLength(2);
+      expect(fixture.writes[0]).toEqual(fixture.writes[1]);
+      expect(openConnectedServiceCredentialCiphertext({ material: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
+        ciphertext: sealedBody(fixture.writes[0]).sealed.ciphertext })?.value).toMatchObject({ kind: 'token', oauth: null });
     });
   });
-
-  it('rejects a guarded mutation response that omits the committed credential revision', async () => {
-    const registerPlain = vi.fn(async () => ({ success: true as const }));
-    const api = createApi({
-      getAccountEncryptionMode: async () => 'plain',
-      getConnectedServiceCredentialPlain: async () => null,
-      getServerFeaturesSnapshot: async () => currentServerFeatures,
-      registerConnectedServiceCredentialPlain: registerPlain,
-    });
-
-    await expect(storeConnectedServiceCredentialForAccount({
-      api,
-      credentials: createCredentials(),
-      record: createRecord(),
-    })).rejects.toMatchObject({
-      code: 'connected_service_credential_revision_required',
-    });
-    expect(registerPlain).toHaveBeenCalledTimes(1);
-  });
-
-  it.each([
-    [
-      'current cache to exact v0.2.1',
-      currentServerFeatures,
-      releasedServerV021Features,
-      exactV021ServerContract,
-      'legacy_rejected',
-    ],
-    [
-      'exact v0.2.1 cache to current',
-      releasedServerV021Features,
-      currentServerFeatures,
-      currentServerContract,
-      'revisioned',
-    ],
-  ] as const)('forces authoritative feature refresh across a warm %s transition', async (
-    _name,
-    cached,
-    authoritative,
-    serverContract,
-    expectedContract,
-  ) => {
-    const record = createRecord();
-    const getServerFeaturesSnapshot = vi.fn(async (options?: Readonly<{ refresh?: boolean }>) =>
-      options?.refresh === true ? authoritative : cached);
-    const registerPlain = vi.fn(async (
-      _params: Parameters<ConnectedServiceCredentialStorageApi['registerConnectedServiceCredentialPlain']>[0],
-    ) => ({ success: true as const, credentialRevision: revision }));
-    const api = createApi({
-      getAccountEncryptionMode: async () => 'plain',
-      getConnectedServiceCredentialPlain: async () => null,
-      getServerFeaturesSnapshot,
-      registerConnectedServiceCredentialPlain: registerPlain,
-    });
-
-    const store = storeConnectedServiceCredentialForAccount({
-      api,
-      credentials: createCredentials(),
-      record,
-      serverContract,
-    });
-
-    if (expectedContract === 'legacy_rejected') {
-      await expect(store).rejects.toMatchObject({
-        code: 'connected_service_credential_legacy_unfenced_mutation_unsupported',
-      });
-      expect(getServerFeaturesSnapshot).toHaveBeenCalledWith({ refresh: true });
-      expect(registerPlain).not.toHaveBeenCalled();
-      return;
-    }
-    await expect(store).resolves.toEqual({
-      revisionSemantics: 'revisioned',
-      credentialRevision: revision,
-    });
-    expect(getServerFeaturesSnapshot).toHaveBeenCalledWith({ refresh: true });
-    expect(registerPlain).toHaveBeenCalledWith({
-      serviceId: record.serviceId,
-      profileId: record.profileId,
-      content: { t: 'plain', v: releasedTokenRecord(record) },
-      expectedCredentialRevision: null,
-    });
-  });
-
-  it('keeps a higher compatible protocol envelope on the guarded current write shape', async () => {
-    const record = createRecord();
-    const registerPlain = vi.fn(async () => ({ success: true as const, credentialRevision: revision }));
-    const api = createApi({
-      getAccountEncryptionMode: async () => 'plain',
-      getConnectedServiceCredentialPlain: async () => null,
-      getServerFeaturesSnapshot: async () => laterServerFeatures,
-      registerConnectedServiceCredentialPlain: registerPlain,
-    });
-
-    await storeConnectedServiceCredentialForAccount({
-      api,
-      credentials: createCredentials(),
-      record,
-    });
-
-    expect(registerPlain).toHaveBeenCalledWith(expect.objectContaining({
-      expectedCredentialRevision: null,
-    }));
-  });
-
-  it.each([
-    ['nonmatching ready contract', nonmatchingServerFeatures],
-    ['network-indeterminate contract', { status: 'error', reason: 'network' } as const],
-  ])('fails closed before writing missing plaintext for an %s', async (_name, snapshot) => {
-    const registerPlain = vi.fn(async () => ({ success: true as const, credentialRevision: revision }));
-    const api = createApi({
-      getAccountEncryptionMode: async () => 'plain',
-      getConnectedServiceCredentialPlain: async () => null,
-      getServerFeaturesSnapshot: async () => snapshot,
-      registerConnectedServiceCredentialPlain: registerPlain,
-    });
-
-    await expect(storeConnectedServiceCredentialForAccount({
-      api,
-      credentials: createCredentials(),
-      record: createRecord(),
-    })).rejects.toThrow('server credential mutation contract is indeterminate');
-    expect(registerPlain).not.toHaveBeenCalled();
-  });
-
-  it('reuses one sealed ciphertext and makes at most two writes after ambiguous unchanged results', async () => {
-    const getSealed = vi.fn(async () => null);
-    const registerSealed = vi.fn()
-      .mockRejectedValueOnce(new Error('connection closed after request'))
-      .mockResolvedValueOnce({ success: true, credentialRevision: revision });
-    const api = createApi({
-      getConnectedServiceCredentialSealed: getSealed,
-      registerConnectedServiceCredentialSealed: registerSealed,
-    });
-
-    await expect(storeConnectedServiceCredentialForAccount({
-      api,
-      credentials: createCredentials(),
-      record: createRecord(),
-      randomBytes: (length) => new Uint8Array(length).fill(4),
-    })).resolves.toEqual({ revisionSemantics: 'revisioned', credentialRevision: revision });
-
-    expect(registerSealed).toHaveBeenCalledTimes(2);
-    expect(registerSealed.mock.calls[0]?.[0]).toEqual(registerSealed.mock.calls[1]?.[0]);
-    expect(registerSealed.mock.calls[0]?.[0]).toMatchObject({ expectedCredentialRevision: null });
-    const ciphertext = registerSealed.mock.calls[0]?.[0].sealed.ciphertext;
-    expect(openConnectedServiceCredentialCiphertext({
-      material: { type: 'legacy', secret: new Uint8Array(32).fill(9) },
-      ciphertext: ciphertext!,
-    })?.value).toMatchObject({
-      kind: 'token',
-      oauth: null,
-    });
-    expect(getSealed).toHaveBeenCalledTimes(2);
-  });
-
-  it('seals the released token discriminator through data-key account encryption', async () => {
-    const registerSealed = vi.fn(async (
-      _input: RegisterSealedCredentialArgs,
-    ) => ({
-      success: true as const,
-      credentialRevision: revision,
-    }));
+  it('seals the released token discriminator with real data-key Account crypto', async () => {
     const machineKey = new Uint8Array(32).fill(8);
-    const credentials: Credentials = {
-      token: 'happy-token',
-      encryption: {
-        type: 'dataKey',
-        publicKey: new Uint8Array(32).fill(7),
-        machineKey,
-      },
-    };
-    const api = createApi({
-      registerConnectedServiceCredentialSealed: registerSealed,
-    });
-
-    await storeConnectedServiceCredentialForAccount({
-      api,
-      credentials,
-      record: createRecord(),
-      randomBytes: (length) => new Uint8Array(length).fill(4),
-    });
-
-    const ciphertext = registerSealed.mock.calls[0]?.[0].sealed.ciphertext;
-    expect(openConnectedServiceCredentialCiphertext({
-      material: {
-        type: 'dataKey',
-        machineKey,
-      },
-      ciphertext: ciphertext!,
-    })?.value).toMatchObject({
-      kind: 'token',
-      oauth: null,
-    });
+    const auth: StoredCredentials = { token: 'happy-token', encryption: { type: 'dataKey', publicKey: new Uint8Array(32).fill(7), machineKey } };
+    await withHome({}, async (fixture) => {
+      await storeConnectedServiceCredentialForAccount({ api: fixture.api, credentials: auth, record: record(), randomBytes: (length) => new Uint8Array(length).fill(4) });
+      expect(openConnectedServiceCredentialCiphertext({ material: { type: 'dataKey', machineKey }, ciphertext: sealedBody(fixture.writes[0]).sealed.ciphertext })?.value)
+        .toMatchObject({ kind: 'token', oauth: null });
+    }, auth);
   });
-
-  it('preserves the original write error when the authoritative settlement read fails', async () => {
-    const writeError = new Error('connection closed after request');
-    const getSealed = vi.fn()
-      .mockResolvedValueOnce(null)
-      .mockRejectedValueOnce(new Error('settlement read unavailable'));
-    const registerSealed = vi.fn(async () => {
-      throw writeError;
-    });
-    const api = createApi({
-      getConnectedServiceCredentialSealed: getSealed,
-      registerConnectedServiceCredentialSealed: registerSealed,
-    });
-
-    await expect(storeConnectedServiceCredentialForAccount({
-      api,
-      credentials: createCredentials(),
-      record: createRecord(),
-    })).rejects.toBe(writeError);
-    expect(registerSealed).toHaveBeenCalledTimes(1);
-  });
-
-  it('adopts an exact committed sealed write without posting again', async () => {
-    let written: Parameters<ConnectedServiceCredentialStorageApi['registerConnectedServiceCredentialSealed']>[0] | null = null;
-    const getSealed = vi.fn(async () => written === null ? null : ({
-      revisionSemantics: 'revisioned' as const,
-      credentialRevision: revision,
-      sealed: written.sealed,
-      metadata: written.metadata!,
-    }));
-    const registerSealed = vi.fn(async (params: Parameters<ConnectedServiceCredentialStorageApi['registerConnectedServiceCredentialSealed']>[0]) => {
-      written = params;
-      throw new Error('connection closed after commit');
-    });
-    const api = createApi({
-      getConnectedServiceCredentialSealed: getSealed,
-      registerConnectedServiceCredentialSealed: registerSealed,
-    });
-
-    await expect(storeConnectedServiceCredentialForAccount({
-      api,
-      credentials: createCredentials(),
-      record: createRecord(),
-      randomBytes: (length) => new Uint8Array(length).fill(5),
-    })).resolves.toEqual({ revisionSemantics: 'revisioned', credentialRevision: revision });
-    expect(registerSealed).toHaveBeenCalledTimes(1);
-  });
-
-  it('rejects an ambiguous exact stored write when the settlement read omits the committed revision', async () => {
-    let written: Parameters<ConnectedServiceCredentialStorageApi['registerConnectedServiceCredentialSealed']>[0] | null = null;
-    const getSealed = vi.fn(async () => written === null ? null : ({
-      revisionSemantics: 'legacy_unfenced' as const,
-      credentialRevision: null,
-      sealed: written.sealed,
-      metadata: written.metadata!,
-    }));
-    const registerSealed = vi.fn(async (
-      params: Parameters<ConnectedServiceCredentialStorageApi['registerConnectedServiceCredentialSealed']>[0],
-    ) => {
-      written = params;
-      throw new Error('connection closed after commit');
-    });
-    const api = createApi({
-      getConnectedServiceCredentialSealed: getSealed,
-      registerConnectedServiceCredentialSealed: registerSealed,
-    });
-
-    await expect(storeConnectedServiceCredentialForAccount({
-      api,
-      credentials: createCredentials(),
-      record: createRecord(),
-      randomBytes: (length) => new Uint8Array(length).fill(5),
-    })).rejects.toMatchObject({
-      code: 'connected_service_credential_revision_required',
-    });
-    expect(registerSealed).toHaveBeenCalledTimes(1);
-    expect(getSealed).toHaveBeenCalledTimes(2);
-  });
-
-  it('refuses a read-derived legacy_unfenced sealed mutation before POST or ambiguous settlement', async () => {
-    const registerSealed = vi.fn(async (
-      params: Parameters<ConnectedServiceCredentialStorageApi['registerConnectedServiceCredentialSealed']>[0],
-    ) => {
-      expect(params).not.toHaveProperty('expectedCredentialRevision');
-      return { success: true as const };
-    });
-    const api = createApi({
-      getConnectedServiceCredentialSealed: async () => ({
-        revisionSemantics: 'legacy_unfenced',
-        credentialRevision: null,
-        sealed: { format: 'account_scoped_v1', ciphertext: 'old-ciphertext' },
-        metadata: { kind: 'token' },
-      }),
-      registerConnectedServiceCredentialSealed: registerSealed,
-    });
-
-    await expect(storeConnectedServiceCredentialForAccount({
-      api,
-      credentials: createCredentials(),
-      record: createRecord(),
-      randomBytes: (length) => new Uint8Array(length).fill(7),
-    })).rejects.toMatchObject({
-      code: 'connected_service_credential_legacy_unfenced_mutation_unsupported',
-    });
-    expect(registerSealed).not.toHaveBeenCalled();
-  });
-
-  it('refuses an existing plaintext legacy record without probing features or issuing POST', async () => {
-    const record = createRecord();
-    const getServerFeaturesSnapshot = vi.fn(async () => currentServerFeatures);
-    const registerPlain = vi.fn(async (
-      params: Parameters<ConnectedServiceCredentialStorageApi['registerConnectedServiceCredentialPlain']>[0],
-    ) => {
-      expect(params).toEqual({
-        serviceId: record.serviceId,
-        profileId: record.profileId,
-        content: { t: 'plain', v: releasedTokenRecord(record) },
+  it('preserves the mutation failure when its settlement HTTP read also fails', async () => {
+    await withHome({}, async (fixture) => {
+      const get = axios.get.bind(axios);
+      let credentialReads = 0;
+      vi.spyOn(axios, 'get').mockImplementation(async (...args) => {
+        if (String(args[0]).includes('/credential') && ++credentialReads > 1) throw new Error('settlement read unavailable');
+        return await get(...args);
       });
-      return { success: true as const };
+      const post = vi.spyOn(axios, 'post').mockRejectedValue(new Error('connection closed after request'));
+      await expect(storeConnectedServiceCredentialForAccount({ api: fixture.api, credentials: credentials(), record: record() }))
+        .rejects.toThrow('Failed to register connected service credential: connection closed after request');
+      expect(post).toHaveBeenCalledTimes(1);
+      expect(fixture.writes).toEqual([]);
     });
-    const api = createApi({
-      getAccountEncryptionMode: async () => 'plain',
-      getConnectedServiceCredentialPlain: async () => ({
-        revisionSemantics: 'legacy_unfenced',
-        credentialRevision: null,
-        content: { t: 'plain', v: createRecord('previous-token') },
-      }),
-      getServerFeaturesSnapshot,
-      registerConnectedServiceCredentialPlain: registerPlain,
-    });
-
-    await expect(storeConnectedServiceCredentialForAccount({
-      api,
-      credentials: createCredentials(),
-      record,
-    })).rejects.toMatchObject({
-      code: 'connected_service_credential_legacy_unfenced_mutation_unsupported',
-    });
-    expect(getServerFeaturesSnapshot).not.toHaveBeenCalled();
-    expect(registerPlain).not.toHaveBeenCalled();
   });
-
-  it('reports superseded and does not retry when the revision changes during settlement', async () => {
-    const nextRevision = 'csr_bcdefghijklmnopqrstuvw';
-    const getSealed = vi.fn()
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({
-        revisionSemantics: 'revisioned',
-        credentialRevision: nextRevision,
-        sealed: { format: 'account_scoped_v1', ciphertext: 'other' },
-        metadata: { kind: 'token' },
+  it.each([true, false])('settles exact committed sealed bytes with revision present=%s without a second POST', async (hasRevision) => {
+    await withHome({}, async (fixture) => {
+      const post = axios.post.bind(axios);
+      vi.spyOn(axios, 'post').mockImplementation(async (...args) => {
+        await post(...args);
+        fixture.publishCredential({ ...sealedBody(fixture.writes[0]), ...(hasRevision ? { credentialRevision: revision } : {}) });
+        throw new Error('connection closed after commit');
       });
-    const registerSealed = vi.fn(async () => {
-      throw new Error('connection closed while another writer committed');
+      const store = storeConnectedServiceCredentialForAccount({ api: fixture.api, credentials: credentials(), record: record() });
+      if (hasRevision) await expect(store).resolves.toEqual({ revisionSemantics: 'revisioned', credentialRevision: revision });
+      else await expect(store).rejects.toMatchObject({ code: 'connected_service_credential_revision_required' });
+      expect(fixture.writes).toHaveLength(1);
     });
-    const api = createApi({
-      getConnectedServiceCredentialSealed: getSealed,
-      registerConnectedServiceCredentialSealed: registerSealed,
+  });
+  it.each(['plain', 'e2ee'] as const)('refuses an existing unfenced %s credential before feature discovery or mutation', async (mode) => {
+    const stored = mode === 'plain' ? { content: { t: 'plain', v: { ...record('previous'), oauth: null } } }
+      : { sealed: { format: 'account_scoped_v1', ciphertext: 'old-ciphertext' }, metadata: { kind: 'token' } };
+    await withHome({ mode, credential: stored }, async (fixture) => {
+      await expect(storeConnectedServiceCredentialForAccount({ api: fixture.api, credentials: credentials(), record: record() }))
+        .rejects.toMatchObject({ code: 'connected_service_credential_legacy_unfenced_mutation_unsupported' });
+      expect(fixture.writes).toEqual([]);
+      expect(fixture.reads).not.toContain('/v1/features');
     });
-
-    await expect(storeConnectedServiceCredentialForAccount({
-      api,
-      credentials: createCredentials(),
-      record: createRecord(),
-    })).rejects.toMatchObject({
-      name: 'ConnectedServiceCredentialStorageSupersededError',
-      reason: 'revision_mismatch',
-      credentialRevision: nextRevision,
+  });
+  it('reports supersession without retry when a different revision appears during settlement', async () => {
+    await withHome({}, async (fixture) => {
+      const post = axios.post.bind(axios);
+      const nextRevision = 'csr_bcdefghijklmnopqrstuvw';
+      vi.spyOn(axios, 'post').mockImplementation(async (...args) => {
+        await post(...args);
+        fixture.publishCredential({ credentialRevision: nextRevision, sealed: { format: 'account_scoped_v1', ciphertext: 'other' }, metadata: { kind: 'token' } });
+        throw new Error('connection closed while another writer committed');
+      });
+      await expect(storeConnectedServiceCredentialForAccount({ api: fixture.api, credentials: credentials(), record: record() }))
+        .rejects.toMatchObject({ name: 'ConnectedServiceCredentialStorageSupersededError', reason: 'revision_mismatch', credentialRevision: nextRevision });
+      expect(fixture.writes).toHaveLength(1);
     });
-    expect(registerSealed).toHaveBeenCalledTimes(1);
   });
 });

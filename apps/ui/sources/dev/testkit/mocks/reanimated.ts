@@ -1,10 +1,7 @@
 import * as React from 'react';
+import type { SharedValue } from 'react-native-reanimated';
 
-export type ReanimatedSharedValue<T> = {
-    value: T;
-    get(): T;
-    set(value: T): void;
-};
+export type ReanimatedSharedValue<T> = SharedValue<T>;
 
 type ReanimatedEasingFunction = ((t: number) => number) & { __workletHash?: number };
 type ReanimatedEasingFactory = Readonly<{ factory: () => ReanimatedEasingFunction }>;
@@ -148,11 +145,27 @@ export function createReanimatedModuleMock(options: ReanimatedModuleMockOptions 
     } as const;
 
     const createSharedValue = <T,>(initial: T): ReanimatedSharedValue<T> => {
-        const shared = {
-            value: initial,
+        let current = initial;
+        const listeners = new Map<number, (value: T) => void>();
+        const update = (value: T, forceUpdate = false) => {
+            if (current === value && !forceUpdate) return;
+            current = value;
+            for (const listener of listeners.values()) listener(value);
+        };
+        const shared: ReanimatedSharedValue<T> = {
+            get value() { return current; },
+            set value(value: T) { update(value); },
             get: () => shared.value,
-            set: (value: T) => {
-                shared.value = value;
+            set: (value) => {
+                // The installed SDK treats function-valued `set` arguments as updaters.
+                shared.value = typeof value === 'function'
+                    ? (value as (previous: T) => T)(shared.value)
+                    : value;
+            },
+            addListener: (id, listener) => { listeners.set(id, listener); },
+            removeListener: (id) => { listeners.delete(id); },
+            modify: (modifier, forceUpdate = true) => {
+                update(modifier ? modifier(shared.value) : shared.value, forceUpdate);
             },
         };
         return shared;
@@ -281,6 +294,7 @@ export function createReanimatedModuleMock(options: ReanimatedModuleMockOptions 
         useFrameCallback: (callback: (frameInfo: ReanimatedFrameInfo) => void, autostart?: boolean) => {
             const latest = React.useRef(callback);
             latest.current = callback;
+            const mounted = React.useRef(false);
             const ref = React.useRef<ReanimatedFrameCallbackRecord | null>(null);
             if (!ref.current) {
                 const setActiveCalls: boolean[] = [];
@@ -289,20 +303,29 @@ export function createReanimatedModuleMock(options: ReanimatedModuleMockOptions 
                         setActiveCalls.push(active);
                         handle.isActive = active;
                     },
-                    isActive: autostart ?? false,
+                    isActive: autostart ?? true,
                     callbackId: frameCallbackRecords.length,
                 };
                 const record: ReanimatedFrameCallbackRecord = {
                     handle,
                     setActiveCalls,
                     run: (frameInfo) => {
-                        if (!handle.isActive) return;
+                        if (!mounted.current || !handle.isActive) return;
                         latest.current(frameInfo);
                     },
                 };
                 ref.current = record;
                 frameCallbackRecords.push(record);
             }
+            React.useEffect(() => {
+                mounted.current = true;
+                const record = ref.current!;
+                record.handle.callbackId = frameCallbackRecords.indexOf(record);
+                return () => {
+                    mounted.current = false;
+                    record.handle.callbackId = -1;
+                };
+            }, [callback, autostart]);
             return ref.current.handle;
         },
         useDerivedValue,

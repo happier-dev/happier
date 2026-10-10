@@ -20,6 +20,16 @@ import semver from 'semver';
 
 const PACKAGE_NAME_SEGMENT_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/u;
 
+// Bundled copies publish compiled runtime inputs. Authored workspace source
+// conditions belong to the source resolver, never to a partial installed tree.
+export function omitWorkspaceSourceCondition(value) {
+  if (Array.isArray(value)) return value.map(omitWorkspaceSourceCondition);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value)
+    .filter(([condition]) => condition !== 'happier-source')
+    .map(([condition, target]) => [condition, omitWorkspaceSourceCondition(target)]));
+}
+
 export function parsePackageNameSegments(packageName) {
   const normalizedPackageName = String(packageName ?? '').trim();
   const segments = normalizedPackageName.split('/');

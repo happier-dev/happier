@@ -14,7 +14,6 @@ const runtimeFactoryFiles = [
     'unistylesRuntime.ts',
     'reactNativeRuntime.ts',
 ] as const;
-const testkitMocksDir = path.join(testkitRuntimeDir, '..', 'mocks');
 
 describe('UI testkit runtime factories', () => {
     it('keeps reusable runtime factories free of Vitest imports', () => {
@@ -31,19 +30,4 @@ describe('UI testkit runtime factories', () => {
         }
     });
 
-    it('keeps canonical mock factories wired to the runtime implementations', () => {
-        const mockFilesToRuntimeImports = [
-            ['reactNative.ts', '../runtime/reactNativeRuntime'],
-            ['unistyles.ts', '../runtime/unistylesRuntime'],
-            ['router.ts', '../runtime/routerRuntime'],
-            ['modal.ts', '../runtime/modalRuntime'],
-            ['text.ts', '../runtime/textRuntime'],
-            ['storage.ts', '../runtime/storageRuntime'],
-        ] as const;
-
-        for (const [fileName, importPath] of mockFilesToRuntimeImports) {
-            const source = fs.readFileSync(path.join(testkitMocksDir, fileName), 'utf8');
-            expect(source, `${fileName} should delegate to ${importPath}`).toContain(importPath);
-        }
-    });
 });

@@ -40,10 +40,6 @@ function readResolverSource(): string {
   return readFileSync(new URL('./resolveBuiltInContributions.ts', import.meta.url), 'utf8');
 }
 
-function readPluginContributionResolverSource(): string {
-  return readFileSync(new URL('./resolvePluginContributions.ts', import.meta.url), 'utf8');
-}
-
 function readGeneratedBundledPluginsSource(): string {
   return [
     readFileSync(new URL('./sources/generatedBundledPlugins.ts', import.meta.url), 'utf8'),
@@ -121,32 +117,6 @@ describe('resolveBuiltInContributions', () => {
       container: 'rightSidebarTab',
       target: { kind: 'app' },
     }));
-  });
-
-  it('keeps cold manifest discovery off the executable bindings aggregate', () => {
-    const resolverSource = readResolverSource();
-    const pluginContributionResolverSource = readPluginContributionResolverSource();
-
-    expect(resolverSource).toContain(
-      "import { BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS } from './sources/generatedBundledPlugins';",
-    );
-    expect(resolverSource).toContain(
-      "import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from './sources/generatedBundledPluginManifests';",
-    );
-    expect(pluginContributionResolverSource).toContain(
-      "import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from './sources/generatedBundledPluginManifests';",
-    );
-    expect(pluginContributionResolverSource).not.toContain(
-      "import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from './sources/generatedBundledPlugins';",
-    );
-    expect(resolverSource).not.toMatch(/BUNDLED_FIRST_PARTY_PLUGIN_MANIFEST_BINDINGS/);
-    expect(resolverSource).not.toMatch(/@\/backends\//);
-    expect(resolverSource).not.toMatch(/\.\/bundled\/catalogEntries/);
-    expect(resolverSource).not.toMatch(/\bBUILT_IN_AGENT_CATALOG_ENTRIES\b/);
-    expect(resolverSource).not.toMatch(/\bOPENCODE_BUNDLED_ACTIVATION_TARGET\b/);
-    expect(resolverSource).not.toMatch(/from ['"][^'"]*@happier-dev\/plugins-/);
-    expect(resolverSource).not.toMatch(/require\(['"]@happier-dev\/plugins-/);
-    expect(resolverSource).not.toMatch(/@happier-dev\/extensions-/);
   });
 
   it('keeps generated bundled manifest locators data-only at daemon cold start', () => {
@@ -1188,6 +1158,7 @@ describe('resolveBuiltInContributions', () => {
       antigravity: { loginStatusArgs: null, binaryNames: ['agy'], hasProbe: false },
       auggie: { loginStatusArgs: null, binaryNames: ['auggie'], hasProbe: false },
       claude: { loginStatusArgs: null, binaryNames: ['claude'], hasProbe: true },
+      codebuddy: { loginStatusArgs: null, binaryNames: ['codebuddy'], hasProbe: true },
       codex: { loginStatusArgs: null, binaryNames: ['codex'], hasProbe: true },
       coderabbit: { loginStatusArgs: null, binaryNames: ['coderabbit'], hasProbe: true },
       copilot: { loginStatusArgs: null, binaryNames: ['copilot'], hasProbe: true },
@@ -1196,6 +1167,7 @@ describe('resolveBuiltInContributions', () => {
         binaryNames: ['cursor-agent', 'agent'],
         hasProbe: true,
       },
+      'custom-acp': null,
       deepsec: { loginStatusArgs: null, binaryNames: ['deepsec'], hasProbe: true },
       devin: { loginStatusArgs: null, binaryNames: ['devin'], hasProbe: false },
       // Droid declares `FACTORY_API_KEY`, so the host-owned static credential

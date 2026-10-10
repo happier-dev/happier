@@ -9,6 +9,232 @@ import type { ExpoRouterParams } from './router';
 import { createTokenStorageModuleMock } from './tokenStorage';
 
 describe('UI testkit mock factories', () => {
+    it('keeps the real portal target owner above the scoped Test Renderer paint port', async () => {
+        const { installBrowserRuntimeForTests } = await import('../harness/browserRuntimeHarness');
+        const browser = await installBrowserRuntimeForTests({ url: 'https://portal-boundary.test/' });
+        const { Platform } = await import('react-native');
+        const previousOS = Object.getOwnPropertyDescriptor(Platform, 'OS');
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: 'web' });
+        const { requireReactDOM } = await import('@/utils/web/reactDomCjs');
+        const reactDom = requireReactDOM() as typeof import('react-dom');
+        const originalCreatePortal = reactDom.createPortal;
+        const { installReactDomPortalBoundaryForTests } = await import('./reactDom');
+        const boundary = installReactDomPortalBoundaryForTests();
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            const { tryRenderWebPortal } = await import('@/components/ui/popover/portal');
+            const content = React.createElement('View', { testID: 'portal-owner-child' });
+            const portaled = tryRenderWebPortal({ shouldPortalWeb: true, portalTargetOnWeb: 'body',
+                modalPortalTarget: null, getBoundaryDomElement: () => null, content });
+            expect(boundary.createPortal).toHaveBeenCalledWith(content, document.body);
+            await act(async () => { tree = renderer.create(React.createElement(React.Fragment, null, portaled)); });
+            expect(tree?.root.findByProps({ testID: 'portal-owner-child' })).toBeTruthy();
+            reactDom.createPortal(content, document.body, 'captured-key');
+            expect(boundary.createPortal).toHaveBeenLastCalledWith(content, document.body, 'captured-key');
+        } finally {
+            await act(async () => { tree?.unmount(); });
+            boundary.restore();
+            browser.restore();
+            if (previousOS) Object.defineProperty(Platform, 'OS', previousOS);
+            else Reflect.deleteProperty(Platform, 'OS');
+        }
+        expect(reactDom.createPortal).toBe(originalCreatePortal);
+    });
+
+    it('aborts a held external fetch response without a competing timeout', async () => {
+        const { waitForNetworkResponseForTests } = await import('./runtimeFetch');
+        expect(await waitForNetworkResponseForTests(Promise.resolve('published'))).toBe('published');
+        const controller = new AbortController();
+        const reason = new DOMException('Account retired', 'AbortError');
+        const held = waitForNetworkResponseForTests(new Promise<never>(() => undefined), controller.signal);
+        controller.abort(reason);
+        await expect(held).rejects.toBe(reason);
+    });
+    it('delivers removable native keyboard notifications and captures focused-input handlers', async () => {
+        const { createKeyboardControllerModuleMock } = await import('./keyboardController');
+        const boundary = await createKeyboardControllerModuleMock();
+        const listener = vi.fn();
+        const subscription = boundary.KeyboardEvents.addListener('keyboardDidShow', listener);
+        const event = { height: 200, duration: 100, timestamp: 1, target: 2, type: 'default', appearance: 'light' } as const;
+        boundary.emitKeyboardEvent('keyboardDidShow', event);
+        expect(listener).toHaveBeenCalledWith(event);
+        expect(boundary.useReanimatedKeyboardAnimation().height.value).toBe(200);
+        subscription.remove();
+        boundary.emitKeyboardEvent('keyboardDidShow', { ...event, height: 250 });
+        expect(listener).toHaveBeenCalledTimes(1);
+        const handler = { onSelectionChange: vi.fn() };
+        boundary.useFocusedInputHandler(handler, []);
+        expect(boundary.useFocusedInputHandler).toHaveBeenCalledWith(handler, []);
+    });
+    it('updates shared values through the SDK updater and removable listener contract', async () => {
+        const { createReanimatedModuleMock } = await import('./reanimated');
+        const shared = createReanimatedModuleMock().makeMutable(1);
+        const values: number[] = [];
+        shared.addListener(7, (value) => values.push(value));
+        shared.set((previous) => previous + 2);
+        expect(shared.get()).toBe(3);
+        expect(values).toEqual([3]);
+
+        // Installed valueSetter uses ===; modify defaults to a forced publication.
+        shared.value = 3;
+        shared.modify(undefined, false);
+        expect(values).toEqual([3]);
+        shared.modify();
+        expect(values).toEqual([3, 3]);
+        shared.removeListener(7);
+        shared.modify((previous) => previous + 4);
+        expect(shared.value).toBe(7);
+        expect(values).toEqual([3, 3]);
+    });
+
+    it('autostarts frame callbacks by default and stops the native frame port after unmount', async () => {
+        const { createReanimatedModuleMock, readReanimatedFrameCallbacks, resetReanimatedFrameCallbacks } = await import('./reanimated');
+        resetReanimatedFrameCallbacks();
+        const boundary = createReanimatedModuleMock();
+        const callback = vi.fn();
+        function FrameOwner() {
+            boundary.useFrameCallback(callback);
+            return null;
+        }
+        let tree: renderer.ReactTestRenderer | undefined;
+        try {
+            await act(async () => { tree = renderer.create(React.createElement(FrameOwner)); });
+            const frame = readReanimatedFrameCallbacks()[0]!;
+            frame.run({ timestamp: 1, timeSincePreviousFrame: null, timeSinceFirstFrame: 0 });
+            expect(callback).toHaveBeenCalledOnce();
+            await act(async () => { tree?.unmount(); });
+            tree = undefined;
+            frame.run({ timestamp: 2, timeSincePreviousFrame: 1, timeSinceFirstFrame: 1 });
+            expect(callback).toHaveBeenCalledOnce();
+        } finally {
+            await act(async () => { tree?.unmount(); });
+            resetReanimatedFrameCallbacks();
+        }
+    });
+
+    it('keeps the real Expo widget wrapper over the native timeline port', async () => {
+        const { installOptionalNativeModuleForTests, requireNativeModule } = await import('@/dev/expoStub');
+        const fixtureModule = { nativeWidgetPort: true };
+        const restoreNative = installOptionalNativeModuleForTests('ExpoWidgets', fixtureModule);
+        expect(requireNativeModule('ExpoWidgets')).toBe(fixtureModule);
+        restoreNative();
+        const { createWidget, createLiveActivity } = await import('expo-widgets');
+        const widget = createWidget<{ title: string }>('boundary-widget', () => React.createElement('View'));
+        const date = new Date(1_234);
+        widget.updateTimeline([{ date, props: { title: 'captured' } }]);
+        expect(await widget.getTimeline()).toEqual([{ date, props: { title: 'captured' } }]);
+        expect(createLiveActivity('boundary-activity', () => ({ banner: React.createElement('View') })).getInstances()).toEqual([]);
+    });
+    it('keeps released V2 omission distinct from an explicitly unassigned current Session projection', async () => {
+        const { createPlainV2SessionRecordFixture, createPlainSessionCurrentProjectionRecordFixture } = await import('../fixtures/sessionFixtures');
+        const released = createPlainV2SessionRecordFixture({ id: 'session-current' });
+        const current = createPlainSessionCurrentProjectionRecordFixture({ id: 'session-current' });
+        expect(released.responsibleAccountId).toBeUndefined();
+        expect(released.responsibleAccount).toBeUndefined();
+        expect(current).toMatchObject({ id: 'session-current', responsibleAccountId: null, responsibleAccount: null });
+    });
+
+    it('provides real browser nodes and one shared storage/locking port', async () => {
+        const { installBrowserRuntimeForTests } = await import('../harness/browserRuntimeHarness');
+        const navigate = vi.fn();
+        const browser = await installBrowserRuntimeForTests({ url: 'https://browser-boundary.test/', onNavigate: navigate });
+        try {
+            const node = browser.document.createElement('div');
+            node.id = 'browser-owner';
+            browser.document.body.appendChild(node);
+            expect(document.getElementById('browser-owner')).toBe(node);
+            browser.storage.setItem('captured-home', 'home-a');
+            expect(window.localStorage.getItem('captured-home')).toBe('home-a');
+            expect(localStorage.getItem('captured-home')).toBe('home-a');
+            sessionStorage.setItem('tab-home', 'home-b');
+            expect(window.sessionStorage.getItem('tab-home')).toBe('home-b');
+            await navigator.locks.request('browser-owner', () => browser.storage.removeItem('captured-home'));
+            expect(browser.storage.getItem('captured-home')).toBeNull();
+            window.location.assign('/oauth');
+            expect(navigate).toHaveBeenCalledWith('https://browser-boundary.test/oauth');
+            browser.reconfigureUrl('https://second-browser-boundary.test/');
+            expect(window.location.origin).toBe('https://second-browser-boundary.test');
+        } finally {
+            browser.restore();
+        }
+    });
+
+    it('shares MMKV persistence for the same native store identity without crossing stores', async () => {
+        const { MMKV } = await import('react-native-mmkv');
+        const writer = new MMKV({ id: 'mock-factories-shared' });
+        const reader = new MMKV({ id: 'mock-factories-shared' });
+        const other = new MMKV({ id: 'mock-factories-other' });
+        writer.clearAll();
+        other.clearAll();
+        writer.set('pending', 'captured-home');
+        expect(reader.getString('pending')).toBe('captured-home');
+        expect(other.getString('pending')).toBeUndefined();
+        reader.clearAll();
+        expect(writer.getString('pending')).toBeUndefined();
+    });
+
+    it('preserves live native AppState reads across OS transitions', async () => {
+        const { createReactNativeAppStateEmitter, createReactNativeNativeMock } = await import('./reactNative');
+        const emitter = createReactNativeAppStateEmitter('unknown');
+        const native = await createReactNativeNativeMock({ platformOS: 'ios' }, { AppState: emitter.appState });
+        const listener = vi.fn();
+        const subscription = native.AppState.addEventListener('change', listener);
+        expect(native.AppState.currentState).toBe('unknown');
+        emitter.emit('active');
+        expect(native.AppState.currentState).toBe('active');
+        emitter.emit('background');
+        expect(native.AppState.currentState).toBe('background');
+        expect(listener).toHaveBeenLastCalledWith('background');
+        subscription.remove();
+        expect(emitter.getListenerCount()).toBe(0);
+    });
+
+    it('reads native file chunks at the current offset and rejects a retired handle', async () => {
+        const { createExpoFileSystemFileMock } = await import('./expoFileSystem');
+        const boundary = createExpoFileSystemFileMock();
+        const file = new boundary.module.File('file:///upload');
+        file.write(new Uint8Array([1, 2, 3]));
+        const handle = file.open();
+        expect(file.size).toBe(3);
+        expect([...handle.readBytes(2)]).toEqual([1, 2]);
+        expect([...handle.readBytes(2)]).toEqual([3]);
+        handle.offset = 1;
+        handle.writeBytes(new Uint8Array([4]));
+        handle.offset = 0;
+        expect([...handle.readBytes(3)]).toEqual([1, 4, 3]);
+        handle.close();
+        expect(handle.size).toBeNull();
+        expect(() => handle.readBytes(1)).toThrow();
+    });
+
+    it('keeps a TextInput ref usable through focus, native updates and blur', async () => {
+        const { createFocusableTextInputMock } = await import('./reactNative');
+        const focused = vi.fn();
+        const blurred = vi.fn();
+        const nativeUpdates = vi.fn();
+        const TextInput = createFocusableTextInputMock(focused, undefined, { onBlur: blurred, onSetNativeProps: nativeUpdates });
+        const ref = React.createRef<React.ComponentRef<typeof TextInput>>();
+        let tree!: renderer.ReactTestRenderer;
+        await act(async () => { tree = renderer.create(React.createElement(TextInput, { ref })); });
+        ref.current!.focus();
+        expect(ref.current!.isFocused()).toBe(true);
+        ref.current!.setNativeProps({ text: 'draft' });
+        expect(nativeUpdates).toHaveBeenCalledWith({ text: 'draft' });
+        ref.current!.blur();
+        expect(ref.current!.isFocused()).toBe(false);
+        expect(blurred).toHaveBeenCalledOnce();
+        await act(async () => tree.unmount());
+    });
+
+    it('exposes the native Appearance boundary used by real theme readers', async () => {
+        const { createReactNativeWebMock } = await import('./reactNative');
+        const moduleMock = await createReactNativeWebMock();
+        expect(moduleMock.Appearance.getColorScheme()).toBe('light');
+        const subscription = moduleMock.Appearance.addChangeListener(() => undefined);
+        expect(subscription.remove).toEqual(expect.any(Function));
+        subscription.remove();
+    });
+
     it('preserves account-encryption-mode exports while allowing a focused reader override', async () => {
         const fetchAccountEncryptionMode = vi.fn(async () => ({ mode: 'plain' as const, updatedAt: 0 }));
         const moduleMock = await createAccountEncryptionModeModuleMock({
@@ -1010,22 +1236,23 @@ describe('UI testkit mock factories', () => {
         const { createCapturingLegendListMock } = await import('./legendList');
 
         const legendListMock = createCapturingLegendListMock({ renderItems: true });
-        const ref = React.createRef<any>();
-
-        const element = (legendListMock.module.LegendList as any).render({
+        const ref = React.createRef<typeof legendListMock.state.refHandle>();
+        let tree!: renderer.ReactTestRenderer;
+        await act(async () => { tree = renderer.create(React.createElement(legendListMock.module.LegendList, {
             ref,
             data: [{ id: 'row-1' }, { id: 'row-2' }],
             keyExtractor: (item: { id: string }) => item.id,
             renderItem: ({ item }: { item: { id: string } }) => React.createElement('Row', { id: item.id }),
             ListHeaderComponent: React.createElement('Header'),
             ListFooterComponent: React.createElement('Footer'),
-        }, ref);
+        })); });
 
         expect(legendListMock.state.props?.data).toEqual([{ id: 'row-1' }, { id: 'row-2' }]);
         expect(ref.current).toBe(legendListMock.state.refHandle);
-        expect(element.type).toBe('LegendList');
-        expect(Array.isArray(element.props.children)).toBe(true);
-        expect(element.props.children).toHaveLength(4);
+        expect(tree.root.findAllByType('Row').map(row => row.props.id)).toEqual(['row-1', 'row-2']);
+        expect(tree.root.findByType('Header')).toBeTruthy();
+        expect(tree.root.findByType('Footer')).toBeTruthy();
+        await act(async () => tree.unmount());
     });
 
     it('creates a capturing FlatList mock that stores props and renders rows with headers and footers', async () => {

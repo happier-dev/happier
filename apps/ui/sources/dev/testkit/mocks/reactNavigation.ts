@@ -1,5 +1,48 @@
 import * as React from 'react';
-import { getFocusedRouteNameFromRoute } from '@react-navigation/core';
+import { getFocusedRouteNameFromRoute, StackRouter, type ParamListBase } from '@react-navigation/core';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+
+type NavigationPropFixture = NativeStackNavigationProp<ParamListBase>;
+
+/**
+ * Complete installed-SDK navigation port for a header or NavigationContext.
+ * Focus/state reads have concrete defaults; unconfigured commands fail loudly
+ * instead of pretending to perform navigation. Product route owners stay real.
+ */
+export function createNavigationPropMock(
+    overrides: Partial<NavigationPropFixture> = {},
+): NavigationPropFixture {
+    const state = StackRouter({}).getInitialState({
+        routeNames: ['test-route'], routeParamList: {}, routeGetIdList: {},
+    });
+    const unsupported = (): never => {
+        throw new Error('Configure the navigation SDK port used by this test');
+    };
+    return {
+        addListener: () => () => undefined,
+        removeListener: () => undefined,
+        isFocused: () => true,
+        canGoBack: () => false,
+        getId: () => undefined,
+        getState: () => state,
+        getParent: unsupported,
+        dispatch: unsupported,
+        navigate: unsupported,
+        navigateDeprecated: unsupported,
+        preload: unsupported,
+        reset: unsupported,
+        goBack: unsupported,
+        setOptions: unsupported,
+        setParams: unsupported,
+        replaceParams: unsupported,
+        replace: unsupported,
+        push: unsupported,
+        pop: unsupported,
+        popToTop: unsupported,
+        popTo: unsupported,
+        ...overrides,
+    };
+}
 
 export type CreateReactNavigationNativeMockOptions = Readonly<{
     isFocused?: boolean;
