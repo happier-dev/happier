@@ -3364,3 +3364,55 @@ diff --git a/node_modules/react-native-enriched-markdown/ios/renderer/UnderlineR
 +  __weak RendererFactory *_rendererFactory;
    StyleConfig *_config;
  }
+diff --git a/node_modules/react-native-enriched-markdown/lib/module/web/katex.js b/node_modules/react-native-enriched-markdown/lib/module/web/katex.js
+--- a/node_modules/react-native-enriched-markdown/lib/module/web/katex.js
++++ b/node_modules/react-native-enriched-markdown/lib/module/web/katex.js
+@@ -5,17 +5,13 @@ let katexLoadPromise = null;
+ /** Lazily loads KaTeX. Resolves to null if not installed. */
+ export function loadKaTeX() {
+   if (!katexLoadPromise) {
+-    let instance = null;
+-    try {
+-      const mod = require('katex');
++    katexLoadPromise = import('katex').then(mod => {
+       const candidate = mod?.default ?? mod;
+-      if (typeof candidate?.renderToString === 'function') {
+-        instance = candidate;
+-      }
+-    } catch {
++      return typeof candidate?.renderToString === 'function' ? candidate : null;
++    }).catch(() => {
+       // katex not installed — math rendering will be skipped
+-    }
+-    katexLoadPromise = Promise.resolve(instance);
++      return null;
++    });
+   }
+   return katexLoadPromise;
+ }
+diff --git a/node_modules/react-native-enriched-markdown/src/web/katex.ts b/node_modules/react-native-enriched-markdown/src/web/katex.ts
+--- a/node_modules/react-native-enriched-markdown/src/web/katex.ts
++++ b/node_modules/react-native-enriched-markdown/src/web/katex.ts
+@@ -14,17 +14,13 @@ let katexLoadPromise: Promise<KaTeXInstance | null> | null = null;
+ /** Lazily loads KaTeX. Resolves to null if not installed. */
+ export function loadKaTeX(): Promise<KaTeXInstance | null> {
+   if (!katexLoadPromise) {
+-    let instance: KaTeXInstance | null = null;
+-    try {
+-      const mod = require('katex');
++    katexLoadPromise = import('katex').then((mod) => {
+       const candidate = (mod?.default ?? mod) as KaTeXInstance | null;
+-      if (typeof candidate?.renderToString === 'function') {
+-        instance = candidate;
+-      }
+-    } catch {
++      return typeof candidate?.renderToString === 'function' ? candidate : null;
++    }).catch(() => {
+       // katex not installed — math rendering will be skipped
+-    }
+-    katexLoadPromise = Promise.resolve(instance);
++      return null;
++    });
+   }
+   return katexLoadPromise;
+ }

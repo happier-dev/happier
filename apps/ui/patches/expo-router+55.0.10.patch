@@ -576,7 +576,7 @@ index 04cdab6..77362f9 100644
      const isDesktop = (0, utils_1.useIsDesktop)();
      const isSheet = !isDesktop;
      // Resolve snap points logic.
-@@ -136,24 +190,41 @@ function ModalStackRouteDrawer({ routeKey, options, dismissible, renderScreen, o
+@@ -136,24 +190,43 @@ function ModalStackRouteDrawer({ routeKey, options, dismissible, renderScreen, o
              fadeFromIndex,
          }
          : {};
@@ -590,7 +590,10 @@ index 04cdab6..77362f9 100644
 +    // registered after the container had already emitted its state, and linking rewrote a cold-loaded
 +    // `/parent/child` URL to `/parent`. An explicit container renders the screen in the first commit.
 +    const portalContainer = typeof document === 'undefined' ? undefined : document.body;
-     return (<vaul_1.Drawer.Root key={`${routeKey}-${isSheet ? 'sheet' : 'modal'}`} open={open} dismissible={dismissible ?? options.gestureEnabled ?? true} onAnimationEnd={handleOpenChange} shouldScaleBackground autoFocus onOpenChange={setOpen} {...sheetProps}>
++    // HAPPIER PATCH(expo-router-web-modal-responsive-continuity)
++    // Presentation changes must not remount the route screen and discard its local form state.
+-    return (<vaul_1.Drawer.Root key={`${routeKey}-${isSheet ? 'sheet' : 'modal'}`} open={open} dismissible={dismissible ?? options.gestureEnabled ?? true} onAnimationEnd={handleOpenChange} shouldScaleBackground autoFocus onOpenChange={setOpen} {...sheetProps}>
++    return (<vaul_1.Drawer.Root key={routeKey} open={open} dismissible={dismissible ?? options.gestureEnabled ?? true} onAnimationEnd={handleOpenChange} shouldScaleBackground autoFocus onOpenChange={setOpen} {...sheetProps}>
 -      <vaul_1.Drawer.Portal>
 -        <vaul_1.Drawer.Overlay className={modalStyles_1.default.overlay} style={options.webModalStyle?.overlayBackground
 -            ? {

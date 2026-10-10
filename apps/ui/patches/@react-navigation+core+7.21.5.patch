@@ -1,0 +1,33 @@
+diff --git a/node_modules/@react-navigation/core/lib/module/useOnGetState.js b/node_modules/@react-navigation/core/lib/module/useOnGetState.js
+--- a/node_modules/@react-navigation/core/lib/module/useOnGetState.js
++++ b/node_modules/@react-navigation/core/lib/module/useOnGetState.js
+@@ -19,6 +19,13 @@ export function useOnGetState({
+     // Avoid returning new route objects if we don't need to
+     const routes = state.routes.map(route => {
+-      const childState = getStateListeners[route.key]?.();
++      const childGetState = getStateListeners[route.key];
++      // HAPPIER PATCH(initial-child-navigation-state)
++      // A lazy navigator has not admitted its parsed partial state yet.
++      // Real unmounts clear owned state; initialized child state is not retained.
++      if (!childGetState && route.state && route.state.stale !== false) {
++        return route;
++      }
++      const childState = childGetState?.();
+       if (route.state === childState) {
+         return route;
+       }
+diff --git a/node_modules/@react-navigation/core/src/useOnGetState.tsx b/node_modules/@react-navigation/core/src/useOnGetState.tsx
+--- a/node_modules/@react-navigation/core/src/useOnGetState.tsx
++++ b/node_modules/@react-navigation/core/src/useOnGetState.tsx
+@@ -23,3 +23,10 @@ export function useOnGetState({ getState, getStateListeners }: Options) {
+     // Avoid returning new route objects if we don't need to
+     const routes = state.routes.map((route) => {
+-      const childState = getStateListeners[route.key]?.();
++      const childGetState = getStateListeners[route.key];
++      // HAPPIER PATCH(initial-child-navigation-state)
++      // A lazy navigator has not admitted its parsed partial state yet.
++      // Real unmounts clear owned state; initialized child state is not retained.
++      if (!childGetState && route.state && route.state.stale !== false) {
++        return route;
++      }
++      const childState = childGetState?.();

@@ -37,12 +37,14 @@ export const REACT_NATIVE_ENRICHED_MARKDOWN_STREAMING_PATCH_REQUIRED_FILES = Obj
     ...UNUSED_FACTORY_RENDERERS,
     'lib/module/web/EnrichedMarkdownText.js',
     'lib/module/web/parseMarkdown.js',
+    'lib/module/web/katex.js',
     'lib/module/web/streamingReveal.d.ts',
     'lib/module/web/streamingReveal.js',
     'lib/typescript/src/types/MarkdownStyle.d.ts',
     'lib/typescript/src/web/streamingReveal.d.ts',
     'src/web/EnrichedMarkdownText.tsx',
     'src/web/parseMarkdown.ts',
+    'src/web/katex.ts',
     'src/web/streamingReveal.ts',
     'cpp/wasm/build.sh',
     'src/web/wasm/md4c.js',
@@ -52,6 +54,8 @@ export const REACT_NATIVE_ENRICHED_MARKDOWN_STREAMING_PATCH_REQUIRED_FILES = Obj
 ]);
 
 export const REACT_NATIVE_ENRICHED_MARKDOWN_STREAMING_PATCH_REQUIRED_MARKERS = Object.freeze([
+    ['lib/module/web/katex.js', "import('katex')"],
+    ['src/web/katex.ts', "import('katex')"],
     ...WEAK_FACTORY_RENDERERS.map((file) => [file, '__weak RendererFactory *_rendererFactory;']),
     ['lib/module/web/EnrichedMarkdownText.js', 'markStreamingRevealOffsets'],
     ['lib/module/web/EnrichedMarkdownText.js', 'streamingAnimation'],

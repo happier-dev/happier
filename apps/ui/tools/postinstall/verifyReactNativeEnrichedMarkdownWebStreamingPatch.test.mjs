@@ -72,6 +72,20 @@ function createPatchedPackageFixture() {
     return fixtureDir;
 }
 
+test('dependency preflight rejects an installed eager math loader', () => {
+    const fixtureDir = createPatchedPackageFixture();
+    try {
+        const file = 'lib/module/web/katex.js';
+        fs.mkdirSync(path.dirname(path.join(fixtureDir, file)), { recursive: true });
+        fs.writeFileSync(path.join(fixtureDir, file), "export const loadKaTeX = () => Promise.resolve(require('katex'));\n");
+        const result = verifyReactNativeEnrichedMarkdownWebStreamingPatch({ packageDir: fixtureDir });
+        assert.equal(result.status, 'failed');
+        assert.ok(result.missingMarkers.some(([relativePath]) => relativePath === file));
+    } finally {
+        fs.rmSync(fixtureDir, { recursive: true, force: true });
+    }
+});
+
 test('installed app-local enriched-markdown materializes every patch-owned streaming-reveal artifact', () => {
     const missing = STREAMING_REVEAL_ARTIFACTS.filter(
         (relativePath) => !fs.existsSync(path.join(INSTALLED_PACKAGE_DIR, relativePath)),

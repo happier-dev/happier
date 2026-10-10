@@ -96,7 +96,7 @@ if (wants('patch-package')) {
             try {
                 runCommandOrExit({
                     command: process.execPath,
-                    args: [patchPackageCliPath, '--patch-dir', path.relative(repoRootDir, filteredPatchDir)],
+                    args: [patchPackageCliPath, '--error-on-fail', '--patch-dir', path.relative(repoRootDir, filteredPatchDir)],
                     options: { cwd: repoRootDir },
                 });
             } finally {
@@ -113,7 +113,7 @@ if (wants('patch-package')) {
             try {
                 runCommandOrExit({
                     command: process.execPath,
-                    args: [patchPackageCliPath, '--patch-dir', path.relative(expoAppDir, filteredPatchDir)],
+                    args: [patchPackageCliPath, '--error-on-fail', '--patch-dir', path.relative(expoAppDir, filteredPatchDir)],
                     options: { cwd: expoAppDir },
                 });
             } finally {
