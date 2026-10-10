@@ -110,7 +110,7 @@ export function createDocumentShareAdapter(input: Readonly<{
                         ...(choice.loading ? { loading: true } : {}),
                         ...(choice.issue ? { subtitle: choice.issue.message }
                             : choice.service && !hasRepairs ? { subtitle: t('shareSheet.documents.privateChoices.authoredInput', { widget: choice.widget }) } : {}),
-                        ...(hasRepairs ? { onSelect: () => context.onExpand(choice.id), expandedContent: () => <View>
+                        ...(hasRepairs ? { onSelect: () => context.onExpand(choice.id), expandedContentInset: 'row' as const, expandedContent: () => <View>
                             {choice.letViewersPick ? <ShareRowAction label={t('shareSheet.documents.privateChoices.letViewersPick')}
                                 testID={`${context.idPrefix}document-share-private-viewer:${choice.id}`}
                                 onPress={choice.letViewersPick} disabled={!context.editable || input.readOnly || choice.loading} /> : null}

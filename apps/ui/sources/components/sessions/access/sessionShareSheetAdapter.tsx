@@ -1,7 +1,9 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Switch } from '@/components/ui/forms/Switch';
+import { Item } from '@/components/ui/lists/Item';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import type { SelectionListOption, SelectionListSectionDescriptor } from '@/components/ui/selectionList';
 import { Text } from '@/components/ui/text/Text';
 import { ShareRowAction } from '@/components/sharing/ShareGrantRow';
@@ -9,7 +11,7 @@ import type { ShareSheetAdapter, ShareSheetSectionContext } from '@/components/s
 import type { SessionCollaborationHandoff } from '@/components/sessions/collaboration/sessionCollaborationIntent';
 import { t } from '@/text';
 import { projectSessionAccessLevelLabel } from './projectSessionAccessLevelLabel';
-import type { SessionAccessEditorActions, SessionAccessEditorModel, SessionAccessGrantRowModel } from './sessionAccessEditorTypes';
+import type { SessionAccessEditorActions, SessionAccessEditorModel, SessionAccessGrantRowModel, SessionAccessEncryptionRecipientRowModel } from './sessionAccessEditorTypes';
 
 const styles = StyleSheet.create((theme) => ({
     contextActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
@@ -17,6 +19,16 @@ const styles = StyleSheet.create((theme) => ({
     text: { color: theme.colors.text.primary },
     secondary: { color: theme.colors.text.secondary },
 }));
+
+function SessionContextMark(): React.ReactElement {
+    const { theme } = useUnistyles();
+    return <Icon name="house" size={ICON_SIZE.lg} color={theme.colors.text.secondary} />;
+}
+
+function SessionEncryptionMark(props: Readonly<{ people?: boolean }>): React.ReactElement {
+    const { theme } = useUnistyles();
+    return <Icon name={props.people ? 'users' : 'lock'} size={ICON_SIZE.lg} color={theme.colors.text.secondary} />;
+}
 
 /** Runtime-permission delegation: the one session-only control inside an open grant. */
 function SessionAccessDelegationControl(props: Readonly<{
@@ -39,24 +51,37 @@ function SessionAccessDelegationControl(props: Readonly<{
     </View>;
 }
 
-/**
- * The `Encrypted access` section: one aggregate row, one real preparation action, and the
- * explicit `Show all recipients` diagnostic. The diagnostic is always reachable while the Session
- * needs envelopes, but its rows are only requested once the manager opens it.
- */
+function canPrepareThroughGrantRows(model: SessionAccessEditorModel): boolean {
+    const encryption = model.encryption;
+    if (!encryption) return false;
+    const mappedRecipients = new Set(model.grants.flatMap((row) => row.grant.kind === 'account' ? [row.grant.accountId] : []));
+    const recipients = encryption.recipients;
+    // A complete exceptions page proves where every actionable Account is shown. Partial pages
+    // and Team audiences keep the aggregate action: their grant rows are not an Account census.
+    const actionable = recipients?.rows.filter((row) => row.actionLabel) ?? [];
+    return encryption.recipientsView === 'exceptions' && recipients !== undefined
+        && !recipients.hasMore && !recipients.loading && !recipients.error && actionable.length > 0
+        && actionable.every((row) => mappedRecipients.has(row.recipientAccountId));
+}
+
+/** One Home-owned audience summary, with the complete recipient diagnostic available on demand. */
 function buildEncryptionSection(model: SessionAccessEditorModel, actions: SessionAccessEditorActions, idPrefix: string): SelectionListSectionDescriptor | null {
     const encryption = model.encryption;
     if (!encryption) return null;
+    const mappedRecipients = new Set(model.grants.flatMap((row) => row.grant.kind === 'account' ? [row.grant.accountId] : []));
+    const recipients = encryption.recipients;
+    const prepareOnGrants = canPrepareThroughGrantRows(model);
     const options: SelectionListOption[] = [{
         id: 'encryption-summary',
         testID: `${idPrefix}session-access-encryption-summary`,
-        label: encryption.progressLabel ?? encryption.summaryLabel,
-        subtitle: encryption.error?.message,
+        label: t('session.access.encryptedAccess'),
+        subtitle: encryption.error?.message ?? encryption.progressLabel ?? encryption.summaryLabel,
+        icon: () => <SessionEncryptionMark />,
         accessibilityLabel: encryption.accessibilityLabel,
         // Spinner only while this client is observed preparing; an idle pending audience is settled work.
         loading: encryption.progressLabel !== undefined,
         onSelect: encryption.reason ? () => { if (encryption.reason) actions.explain(encryption.reason); } : undefined,
-        ...(encryption.actionLabel ? {
+        ...(encryption.actionLabel && !prepareOnGrants ? {
             rightAccessoryOutsidePressable: true,
             rightAccessory: () => <ShareRowAction label={encryption.actionLabel ?? ''}
                 testID={`${idPrefix}session-access-prepare`} onPress={() => actions.prepareAccess()} />,
@@ -66,42 +91,48 @@ function buildEncryptionSection(model: SessionAccessEditorModel, actions: Sessio
         testID: `${idPrefix}session-access-show-all-recipients`,
         label: encryption.showAllLabel,
         accessibilityLabel: encryption.showAllLabel,
+        icon: () => <SessionEncryptionMark people />,
         onSelect: actions.toggleAllRecipients,
     }];
-    const recipients = encryption.recipients;
     if (recipients) {
-        for (const row of recipients.rows) options.push({
-            id: `encryption-recipient:${row.recipientAccountId}`,
-            testID: `${idPrefix}session-access-recipient-${row.recipientAccountId}`,
-            label: row.label,
-            subtitle: row.stateLabel,
-            accessibilityLabel: row.accessibilityLabel,
-            disabled: true,
-            // The projection already decided which rows a repeated delivery could change.
-            ...(row.actionLabel && model.accessMode === 'editable' && model.content.hasLastAcknowledgedSnapshot ? {
-                rightAccessoryOutsidePressable: true,
-                rightAccessory: () => <ShareRowAction label={row.actionLabel ?? ''}
-                    testID={`${idPrefix}session-access-reprepare-${row.recipientAccountId}`}
-                    disabled={encryption.progressLabel !== undefined}
-                    onPress={() => actions.prepareAccess(row.recipientAccountId)} />,
-            } : {}),
-        });
+        // The complete audience is a diagnostic, not another roster. Keep unmatched Team
+        // recipients behind the explicit census while its preparation/errors remain inline.
+        for (const row of encryption.recipientsView === 'all' ? recipients.rows : []) {
+            const mapped = mappedRecipients.has(row.recipientAccountId);
+            options.push({
+                id: `encryption-recipient:${row.recipientAccountId}`,
+                testID: `${idPrefix}session-access-recipient-${row.recipientAccountId}`,
+                label: row.label,
+                subtitle: row.stateLabel,
+                icon: () => <SessionEncryptionMark people />,
+                accessibilityLabel: row.accessibilityLabel,
+                disabled: true,
+                // The projection already decided which rows a repeated delivery could change.
+                ...(row.actionLabel && !mapped && !encryption.actionLabel && isSessionAccessEditable(model) ? {
+                    rightAccessoryOutsidePressable: true,
+                    rightAccessory: () => <ShareRowAction label={row.actionLabel ?? ''}
+                        testID={`${idPrefix}session-access-reprepare-${row.recipientAccountId}`}
+                        disabled={encryption.progressLabel !== undefined}
+                        onPress={() => actions.prepareAccess(row.recipientAccountId)} />,
+                } : {}),
+            });
+        }
         if (recipients.loading) options.push({ id: 'encryption-recipients-loading', label: t('common.loading'), loading: true, disabled: true });
         if (recipients.error) options.push({ id: 'encryption-recipients-error', label: recipients.error.message,
             rightAccessoryOutsidePressable: true,
             rightAccessory: () => <ShareRowAction label={t('common.retry')}
                 testID={`${idPrefix}session-access-recipients-retry`} onPress={actions.loadMoreRecipients} /> });
-        else if (recipients.hasMore && !recipients.loading) options.push({
+        else if (encryption.recipientsView === 'all' && recipients.hasMore && !recipients.loading) options.push({
             id: 'encryption-recipients-more',
             testID: `${idPrefix}session-access-recipients-more`,
             label: t('session.access.moreRecipients'),
             onSelect: actions.loadMoreRecipients,
         });
-        if (!recipients.loading && !recipients.error && recipients.rows.length === 0) options.push({
+        if (encryption.recipientsView === 'all' && !recipients.loading && !recipients.error && recipients.rows.length === 0) options.push({
             id: 'encryption-recipients-empty', label: t('common.noMatches'), disabled: true,
         });
     }
-    return { kind: 'static', id: 'encryption', title: t('session.access.encryptedAccess'), options };
+    return { kind: 'static', id: 'encryption', options };
 }
 
 /** Whether a manager may change this Session's roster now; a pending approval holds every edit. */
@@ -120,30 +151,48 @@ export function createSessionShareSheetAdapter(input: Readonly<{
     /** The Session's in-app route; absent for a session that doesn't exist yet. */
     linkPath?: string;
     responsibleAccountId?: string | null;
+    publicLink?: ShareSheetAdapter['publicLink'];
     onOpenFullSurface?: (handoff: SessionCollaborationHandoff) => void;
 }>): ShareSheetAdapter<SessionAccessGrantRowModel> {
     const { model, actions } = input;
+    const encryptionForGrant = (row: SessionAccessGrantRowModel): SessionAccessEncryptionRecipientRowModel | undefined => {
+        const grant = row.grant;
+        return grant.kind === 'account'
+            ? model.encryption?.recipients?.rows.find((recipient) => recipient.recipientAccountId === grant.accountId)
+            : undefined;
+    };
     return {
         namespace: 'session-access',
         title: t('session.access.title'),
         levels: {
-            view: { label: projectSessionAccessLevelLabel('view') },
-            edit: { label: projectSessionAccessLevelLabel('edit') },
-            admin: { label: projectSessionAccessLevelLabel('admin') },
+            view: { label: projectSessionAccessLevelLabel('view'), help: t('session.access.levelHelp.view') },
+            edit: { label: projectSessionAccessLevelLabel('edit'), help: t('session.access.levelHelp.edit') },
+            admin: { label: projectSessionAccessLevelLabel('admin'), help: t('session.access.levelHelp.admin') },
         },
-        notes: [t('session.access.help')],
+        notes: [t('session.access.steeringScopeNotice')],
         ...(input.linkPath ? { linkPath: input.linkPath } : {}),
+        ...(input.publicLink ? { publicLink: input.publicLink } : {}),
         principalTags: (principal, row) => {
             // The Session's one responsible person is named where their access is, so the Share
             // panel answers "who is on the hook" without a second list.
             const responsible = principal.ref.kind === 'account' && input.responsibleAccountId != null
                 && principal.ref.accountId === input.responsibleAccountId;
-            return [row?.requiredByTeamPolicy ? t('session.access.required') : undefined,
+            return [row ? encryptionForGrant(row)?.stateLabel : undefined,
+                row?.requiredByTeamPolicy ? t('session.access.required') : undefined,
                 responsible ? t('session.responsibilityRowTitle') : undefined].filter((tag): tag is string => tag !== undefined);
         },
         showsLevelLock: (row) => row.requiredByTeamPolicy,
-        renderGrantDetails: (row, context) => <SessionAccessDelegationControl row={row} actions={actions} context={context} />,
-        sections: ({ idPrefix, editable }) => {
+        renderGrantDetails: (row, context) => {
+            const recipient = encryptionForGrant(row);
+            return <>
+                {recipient?.actionLabel && context.editable && (!model.encryption?.actionLabel || canPrepareThroughGrantRows(model)) ? <ShareRowAction label={recipient.actionLabel}
+                    testID={`${context.idPrefix}session-access-reprepare-${recipient.recipientAccountId}`}
+                    disabled={model.encryption?.progressLabel !== undefined}
+                    onPress={() => actions.prepareAccess(recipient.recipientAccountId)} /> : null}
+                <SessionAccessDelegationControl row={row} actions={actions} context={context} />
+            </>;
+        },
+        sections: ({ idPrefix, editable, onExpand }) => {
             const leading: SelectionListSectionDescriptor[] = model.viewerAccess ? [{
                 kind: 'static', id: 'viewer-access', title: t('session.access.yourAccess'),
                 options: [{ id: 'viewer-access', testID: `${idPrefix}session-access-viewer-access`,
@@ -153,16 +202,24 @@ export function createSessionShareSheetAdapter(input: Readonly<{
             const afterAccess: SelectionListSectionDescriptor[] = [];
             const context = model.context;
             if (context) {
-                afterAccess.push({ kind: 'static', id: 'context', title: t('session.access.teams'), options: context.options.map((option) => ({
-                    id: `context:${option.teamId ?? 'personal'}`,
-                    testID: `${idPrefix}session-access-context-${option.teamId ?? 'personal'}`,
-                    label: option.label,
-                    subtitle: option.teamId === context.primaryTeamId ? t('session.access.team') : option.blockedReason?.message,
-                    loading: context.operation === 'saving'
-                        && option.teamId === (context.confirmation?.teamId ?? context.primaryTeamId),
-                    disabled: !editable || context.operation === 'saving',
-                    onSelect: () => option.blockedReason ? actions.explain(option.blockedReason) : actions.setContext(option.teamId),
-                })) });
+                const current = context.options.find((option) => option.teamId === context.primaryTeamId);
+                afterAccess.push({ kind: 'static', id: 'context', options: [{
+                    id: 'session-context', testID: `${idPrefix}session-access-context`,
+                    label: t('session.access.context'), subtitle: current?.label,
+                    icon: () => <SessionContextMark />, onSelect: () => onExpand('session-context'),
+                    expandedContentInset: 'none',
+                    expandedContent: () => <View>{context.options.map((option) => <Item
+                        key={option.teamId ?? 'personal'}
+                        testID={`${idPrefix}session-access-context-${option.teamId ?? 'personal'}`}
+                        title={option.label} subtitle={option.blockedReason?.message}
+                        selected={option.teamId === context.primaryTeamId}
+                        loading={context.operation === 'saving' && option.teamId === (context.confirmation?.teamId ?? context.primaryTeamId)}
+                        disabled={!editable || context.operation === 'saving'}
+                        onPress={() => option.blockedReason ? actions.explain(option.blockedReason) : actions.setContext(option.teamId)}
+                        showChevron={false}
+                        rightElement={option.teamId === context.primaryTeamId ? <Icon name="check" /> : undefined}
+                    />)}</View>,
+                }] });
                 const confirmation = context.confirmation;
                 if (confirmation) afterAccess.push({ kind: 'static', id: 'context-confirmation', title: confirmation.label, options: [
                     ...confirmation.consequences.map((consequence, index) => ({ id: `context-consequence:${index}`, label: consequence, disabled: true })),

@@ -8,10 +8,10 @@ import { ARTIFACT_UPLOAD_CONTENT_TYPE_V1, ARTIFACT_UPLOAD_PATH_V1, encodeArtifac
     type ArtifactUploadDestinationV1 } from '@happier-dev/transfers';
 import { ArtifactAccessErrorCodeV1Schema, ArtifactAccessGrantsListResponseV1Schema, ArtifactAccessGrantMutationResponseV1Schema, ArtifactAccessRecipientCensusResponseV1Schema, ArtifactRecipientKeyEnvelopeCommitResponseV1Schema, type ArtifactAccessGrantsListInputV1, type ArtifactAccessGrantSetInputV1, type ArtifactAccessGrantRemoveInputV1, type ArtifactRecipientKeyEnvelopeCommitInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { isPlainArtifactDataKeyMarker } from '@happier-dev/protocol/storage/artifactStoredContent';
-import { ArtifactRevisionListResponseV1Schema, ArtifactQuotaExceededV1Schema, ArtifactRevisionV1Schema, ArtifactStorageUsageV1Schema, type ArtifactRevisionV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { ArtifactPublicAudienceV1ReadSchema, ArtifactRevisionListResponseV1Schema, ArtifactQuotaExceededV1Schema, ArtifactRevisionV1Schema, ArtifactStorageUsageV1Schema, type ArtifactRevisionV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { ArtifactBlobReadResponseV1Schema, ArtifactBlobAccountEncryptionStageV1Schema, type ArtifactBlobStoredContentV1, type ArtifactBlobAccountEncryptionStageV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { ArtifactHtmlPreviewResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
-
+import { ArtifactReadBatchInputV1Schema, ArtifactReadBatchResponseV1Schema, type ArtifactReadBatchResponseV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 /** The /v1/artifacts transport cursor; shared by complete sync and Action paging. */
 export function encodeArtifactListCursor(row: Readonly<{ artifactId: string; updatedAt: number }>): string {
     return encodeBase64(new TextEncoder().encode(JSON.stringify({ updatedAt: row.updatedAt, id: row.artifactId })), 'base64url');
@@ -85,7 +85,8 @@ function readArtifactResponse(value: unknown): Artifact {
     if ((projection.data.encryptionMode === 'plain') !== isPlainArtifactDataKeyMarker(Reflect.get(value, 'dataEncryptionKey'))) {
         throw new HappyError('Artifact content does not match its owner Account mode', false, { code: 'artifact_account_mode_mismatch' });
     }
-    return { ...value as Artifact, ...projection.data };
+    return { ...value as Artifact, ...projection.data,
+        publicAudience: ArtifactPublicAudienceV1ReadSchema.parse(Reflect.get(value, 'publicAudience')) };
 }
 
 export type ArtifactApiOptions = Readonly<{
@@ -98,6 +99,43 @@ export type ArtifactApiOptions = Readonly<{
     /** Inventory selection only; the server remains the access authority. */
     ownerAccountId?: string;
 }>;
+
+/** Both HTTP read forms retain the incumbent single-read status classification. */
+async function artifactHttpReadError(response: Response, fallback: string, code?: string): Promise<HappyError> {
+    if (response.status === 404) {
+        return new HappyError('Artifact not found', false, { status: 404, code: code ?? 'not_found' });
+    }
+    if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
+        let message = fallback;
+        const value: unknown = await response.json().catch(() => null);
+        if (value && typeof value === 'object' && 'error' in value && typeof value.error === 'string') message = value.error;
+        return new HappyError(message, false, { status: response.status,
+            ...(code ? { code } : response.status === 401 || response.status === 403 ? { code: 'content_unavailable' } : {}) });
+    }
+    return new HappyError(`${fallback}: ${response.status}`, true, { status: response.status, ...(code ? { code } : {}) });
+}
+
+/** Read only the selected details and their current authorized recipient census. */
+export async function fetchArtifactReadBatch(credentials: AuthCredentials, artifactIds: readonly string[],
+    opts: Pick<ArtifactApiOptions, 'request' | 'signal'> = {}): Promise<ArtifactReadBatchResponseV1['items']> {
+    opts.signal?.throwIfAborted();
+    if (artifactIds.length === 0) return [];
+    const input = ArtifactReadBatchInputV1Schema.parse({ artifactIds });
+    const response = await (opts.request ?? serverFetch)('/v1/artifacts/read', {
+        method: 'POST', headers: { Authorization: `Bearer ${credentials.token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(input), ...(opts.signal ? { signal: opts.signal } : {}),
+    }, { includeAuth: false, retry: 'none' });
+    opts.signal?.throwIfAborted();
+    if (!response.ok) throw await artifactHttpReadError(response, 'Artifact details are unavailable', 'artifact_content_unavailable');
+    const parsed = ArtifactReadBatchResponseV1Schema.safeParse(await response.json());
+    opts.signal?.throwIfAborted();
+    if (!parsed.success || parsed.data.items.length !== artifactIds.length
+        || parsed.data.items.some((item, index) => item.artifactId !== artifactIds[index])) {
+        throw new HappyError('Artifact detail inventory is incomplete', false, { code: 'artifact_content_unavailable' });
+    }
+    for (const item of parsed.data.items) if (item.ok) readArtifactResponse(item.artifact);
+    return parsed.data.items;
+}
 
 /** The Home supplies only the isolated shell location, never opened HTML or a public grant. */
 export async function fetchArtifactHtmlPreviewLocation(credentials: AuthCredentials, artifactId: string,
@@ -309,20 +347,7 @@ export async function fetchArtifact(
         }, { includeAuth: false, retry: opts.retry });
 
         if (!response.ok) {
-            if (response.status === 404) {
-                throw new HappyError('Artifact not found', false, { status: 404, code: 'not_found' });
-            }
-            if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
-                let message = 'Failed to fetch artifact';
-                try {
-                    const error = await response.json();
-                    if (error?.error) message = error.error;
-                } catch {
-                    // ignore
-                }
-                throw new HappyError(message, false, { status: response.status });
-            }
-            throw new HappyError(`Failed to fetch artifact: ${response.status}`, true, { status: response.status });
+            throw await artifactHttpReadError(response, 'Failed to fetch artifact');
         }
 
         return readArtifactResponse(await response.json());
@@ -470,10 +495,7 @@ export async function deleteArtifact(
         }
     };
 
-    if (opts.retry === 'none') {
-        await run();
-        return;
-    }
-
-    await backoff(run);
+    // The Home may have committed before its acknowledgement was lost. Replaying
+    // DELETE would turn that unknown outcome into a misleading not-found result.
+    await run();
 }

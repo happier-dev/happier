@@ -33,6 +33,7 @@ import { presentSessionAccessFailure } from './presentSessionAccessFailure';
 import { useSessionAccessApprovalHold } from './useSessionAccessApprovalHold';
 import { migrateSessionForSharing } from './migrateSessionForSharing';
 import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
+import { useShareViewerProfile } from '@/components/sharing/useShareViewerProfile';
 
 /** Mounted exact-scope grant state; acknowledged server rows remain visible until refreshed. */
 export function useLiveSessionAccessEditorController(input: Readonly<{
@@ -42,6 +43,7 @@ export function useLiveSessionAccessEditorController(input: Readonly<{
     metadataLayoutVersion?: number | null;
 }>): SessionAccessEditorController {
     const availability = useSessionCollaborationAvailability(input.scope.serverId);
+    const viewerProfile = useShareViewerProfile(input.scope);
     const scopeKey = `${serverAccountScopeKeySuffix(input.scope)}:${input.sessionId}:${availability}`;
     const [state, dispatch] = React.useReducer(reduceSessionAccessEditorState,scopeKey,createSessionAccessEditorState);
     const [query,setQuery] = React.useState('');
@@ -422,7 +424,8 @@ export function useLiveSessionAccessEditorController(input: Readonly<{
         });
     }, [approvalHeldRef, client, contextOperation, holdForApproval, input.sessionId, isScopeCurrent, lifetime, refresh, scopeKey]);
     const current=state.scopeKey===scopeKey?state:createSessionAccessEditorState(scopeKey);
-    const projection=current.snapshot?projectSessionAccessEditorSnapshot({snapshot:current.snapshot,operations:current.operations,confirmingRemoval:current.confirmingRemoval}):{
+    const projection=current.snapshot?projectSessionAccessEditorSnapshot({snapshot:current.snapshot,operations:current.operations,
+        confirmingRemoval:current.confirmingRemoval,viewerAccountId:input.scope.accountId,viewerProfile}):{
         owner:null,grants:[],accessMode:'read_only' as const,summary:{label:t('session.access.title'),accessibilityLabel:t('session.access.title'),requiredByTeamPolicy:false},
     };
     // Current grant Teams preserve their admitted display names while the directory

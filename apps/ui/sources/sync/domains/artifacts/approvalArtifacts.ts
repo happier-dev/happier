@@ -49,6 +49,7 @@ function parseApprovalRequestArtifact(artifact: DecryptedArtifact): ApprovalRequ
 }
 
 export function isOpenApprovalInboxArtifact(artifact: DecryptedArtifact): boolean {
+    if (artifact.draft === true) return false;
     const parsed = approvalArtifactBodyMatchesHeaderV1(artifact.header ?? {}, typeof artifact.body === 'string' ? artifact.body : null);
     return parsed?.request.status === 'open';
 }

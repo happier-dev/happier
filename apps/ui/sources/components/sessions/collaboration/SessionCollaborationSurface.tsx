@@ -21,7 +21,7 @@ import { Typography } from '@/constants/Typography';
 import { useSessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
 import { serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
-import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
+import { getServerProfileById, readServerProfileHomeName } from '@/sync/domains/server/serverProfiles';
 import { sessionAddressKey, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { t } from '@/text';
 import { SessionPresenceSection } from './SessionPresenceSection';
@@ -97,7 +97,7 @@ export function SessionCollaborationSurface({ target }: Readonly<{ target: Sessi
 type PaneRefs = Readonly<{
     responsibleAnchor: React.RefObject<React.ElementRef<typeof View> | null>;
     accessAnchor: React.RefObject<React.ElementRef<typeof View> | null>;
-    publicLinkAnchor: React.RefObject<React.ElementRef<typeof View> | null>;
+    publicLinkAnchor: React.RefCallback<React.ElementRef<typeof View>>;
     panelAnchor: React.RefObject<React.ElementRef<typeof View> | null>;
     card: React.RefObject<React.ElementRef<typeof Pressable> | null>;
 }>;
@@ -131,24 +131,38 @@ function SessionCollaborationAccountContent(props: Readonly<{ scope: ServerAccou
     const [shareOpen, setShareOpen] = React.useState(() => initialFocus === 'access' || initialFocus === 'publicLink');
     // The panel is built on first open and then retained, so its search and scroll survive a fold.
     const [shareVisited, setShareVisited] = React.useState(shareOpen);
-    const refs: PaneRefs = {
-        responsibleAnchor: React.useRef<React.ElementRef<typeof View>>(null),
-        accessAnchor: React.useRef<React.ElementRef<typeof View>>(null),
-        publicLinkAnchor: React.useRef<React.ElementRef<typeof View>>(null),
-        panelAnchor: React.useRef<React.ElementRef<typeof View>>(null),
-        card: React.useRef<React.ElementRef<typeof Pressable>>(null),
-    };
+    const [openRowRequest, setOpenRowRequest] = React.useState<Readonly<{ key: string }> | undefined>(
+        () => initialFocus === 'publicLink' ? { key: 'public-link' } : undefined,
+    );
+    const publicLinkAnchor = React.useRef<React.ElementRef<typeof View>>(null);
     const appliedIntentId = React.useRef(0);
     const appliedRouteFocus = React.useRef<SessionCollaborationFocusTarget | null>(null);
     const focusHandle = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+    const pendingFocusAnchor = React.useRef<React.RefObject<React.ElementRef<typeof View> | React.ElementRef<typeof Pressable> | null> | null>(null);
 
     const scheduleFocus = React.useCallback((anchor: React.RefObject<React.ElementRef<typeof View> | React.ElementRef<typeof Pressable> | null>) => {
         if (focusHandle.current !== null) clearTimeout(focusHandle.current);
+        pendingFocusAnchor.current = anchor;
         focusHandle.current = setTimeout(() => {
             focusHandle.current = null;
+            if (!anchor.current) return;
+            pendingFocusAnchor.current = null;
             restoreFocusToBestTarget({ current: anchor.current });
         }, 0);
     }, []);
+    const attachPublicLinkAnchor = React.useCallback((node: React.ElementRef<typeof View> | null) => {
+        publicLinkAnchor.current = node;
+        // Exact-Home hydration can mount this row after the one-shot focus tick.
+        // Resume that same requested move when its target becomes available.
+        if (node && pendingFocusAnchor.current === publicLinkAnchor) scheduleFocus(publicLinkAnchor);
+    }, [scheduleFocus]);
+    const refs: PaneRefs = {
+        responsibleAnchor: React.useRef<React.ElementRef<typeof View>>(null),
+        accessAnchor: React.useRef<React.ElementRef<typeof View>>(null),
+        publicLinkAnchor: attachPublicLinkAnchor,
+        panelAnchor: React.useRef<React.ElementRef<typeof View>>(null),
+        card: React.useRef<React.ElementRef<typeof Pressable>>(null),
+    };
 
     const openShare = React.useCallback(() => {
         setShareVisited(true);
@@ -170,20 +184,23 @@ function SessionCollaborationAccountContent(props: Readonly<{ scope: ServerAccou
         // Public Link request may take focus from the caller.
         if (focusHandle.current !== null) clearTimeout(focusHandle.current);
         focusHandle.current = null;
+        pendingFocusAnchor.current = null;
         if (focusTarget === 'access' || focusTarget === 'publicLink') {
             openShare();
-            scheduleFocus(focusTarget === 'publicLink' ? refs.publicLinkAnchor : refs.accessAnchor);
+            if (focusTarget === 'publicLink') setOpenRowRequest({ key: 'public-link' });
+            scheduleFocus(focusTarget === 'publicLink' ? publicLinkAnchor : refs.accessAnchor);
             return;
         }
         if (focusTarget === 'responsible') {
             setShareOpen(false);
             scheduleFocus(refs.responsibleAnchor);
         }
-    }, [openShare, refs.accessAnchor, refs.publicLinkAnchor, refs.responsibleAnchor, scheduleFocus]);
+    }, [openShare, refs.accessAnchor, refs.responsibleAnchor, scheduleFocus]);
 
     React.useEffect(() => () => {
         if (focusHandle.current !== null) clearTimeout(focusHandle.current);
         focusHandle.current = null;
+        pendingFocusAnchor.current = null;
     }, []);
 
     React.useEffect(() => {
@@ -247,7 +264,8 @@ function SessionCollaborationAccountContent(props: Readonly<{ scope: ServerAccou
         availability: externalAvailability,
         authorityCurrent: snapshot.kind === 'ready',
     });
-    const homeName = getServerProfileById(props.scope.serverId)?.name ?? t('session.access.title');
+    const homeProfile = getServerProfileById(props.scope.serverId);
+    const homeName = (homeProfile ? readServerProfileHomeName(homeProfile) : null) ?? t('common.home');
     const pane = {
         scope: props.scope,
         sessionId: props.sessionId,
@@ -269,6 +287,7 @@ function SessionCollaborationAccountContent(props: Readonly<{ scope: ServerAccou
         homeName,
         handoff,
         responsibleAccountId: responsibilityController.responsibleAccountId ?? null,
+        openRowRequest,
     } as const;
     return (
         <View style={styles.surface}>
@@ -309,6 +328,7 @@ type PaneProps = Readonly<{
     handoff: SessionCollaborationIntent | null;
     /** Tagged on that person's access row in the Share panel. */
     responsibleAccountId: string | null;
+    openRowRequest?: Readonly<{ key: string }>;
 }>;
 
 /**
@@ -422,6 +442,15 @@ function SessionCollaborationPane(props: PaneProps & Readonly<{ access: SessionA
  */
 function SessionCollaborationSharePanel(props: PaneProps & Readonly<{ access: SessionAccessEditorController | null; namedAccess: boolean }>) {
     const { refs, snapshot } = props;
+    const link = props.publicLink;
+    const publicLink = link.enabled && (link.canManage ? props.externalAvailability.sharingPresentation.shareable : snapshot.session !== null) ? {
+        stateLabel: !link.canManage ? t('common.unavailable') : link.publicShare !== null ? t('common.on')
+            : link.hasLoaded ? t('common.off') : t('common.loading'),
+        renderContent: () => <View ref={refs.publicLinkAnchor} tabIndex={-1} testID="session-collaboration-public-link-anchor">
+            <SessionPublicLinkSection link={link} hasSession={snapshot.session !== null}
+                shareable={props.externalAvailability.sharingPresentation.shareable} presentation="inline" />
+        </View>,
+    } : undefined;
     return (
         <View style={styles.panel} ref={refs.panelAnchor} tabIndex={-1} accessibilityLabel={t('session.collaboration.pane.shareTitle')}>
             <View style={styles.panelHeader}>
@@ -447,16 +476,17 @@ function SessionCollaborationSharePanel(props: PaneProps & Readonly<{ access: Se
             {props.access ? (
                 <View ref={refs.accessAnchor} tabIndex={-1} style={styles.accessBody} testID="session-collaboration-access-body">
                     <SessionAccessEditor {...props.access} presentation="full" responsibleAccountId={props.responsibleAccountId}
+                        publicLink={publicLink} openRowRequest={props.openRowRequest}
                         linkPath={buildScopedSessionRouteHref({ sessionId: props.sessionId })} testID="session-access-editor:collaboration" />
                 </View>
             ) : null}
-            <View ref={refs.publicLinkAnchor} tabIndex={-1} style={styles.publicLink} testID="session-collaboration-public-link-anchor">
+            {!props.access ? <View ref={refs.publicLinkAnchor} tabIndex={-1} style={styles.publicLink} testID="session-collaboration-public-link-anchor">
                 <SessionPublicLinkSection
                     link={props.publicLink}
                     hasSession={snapshot.session !== null}
                     shareable={props.externalAvailability.sharingPresentation.shareable}
                 />
-            </View>
+            </View> : null}
             {props.access ? null : <View style={styles.spacer} />}
         </View>
     );

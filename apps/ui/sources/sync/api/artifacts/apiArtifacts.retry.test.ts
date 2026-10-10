@@ -67,6 +67,13 @@ describe('apiArtifacts retry modes', () => {
         await expect(fetchArtifactRevisions({ token: 'captured-token' }, 'artifact-id', { request })).rejects.toThrow();
     });
 
+    it.each([401, 403])('marks denied detail reads (%s) as unavailable content while preserving the HTTP failure', async (status) => {
+        const { fetchArtifact } = await import('./apiArtifacts');
+        const request = vi.fn(async () => Response.json({ error: 'Access denied' }, { status }));
+        await expect(fetchArtifact({ token: 'captured-token' }, 'document', { request, retry: 'none' }))
+            .rejects.toMatchObject({ name: 'HappyError', status, canTryAgain: false, code: 'content_unavailable' });
+    });
+
     it.each([
         { encryptionMode: 'plain', dataEncryptionKey: 'encrypted-envelope' },
         { encryptionMode: 'e2ee', dataEncryptionKey: 'plain' },

@@ -40,7 +40,7 @@ export type SessionPublicLinkControllerInput = Readonly<{
     authorityCurrent?: boolean;
 }>;
 
-export type SessionPublicLinkCreateOptions = Readonly<{ expiresInDays?: number; maxUses?: number; isConsentRequired: boolean }>;
+export type SessionPublicLinkCreateOptions = Readonly<{ expiresInDays?: number; maxUses?: number; isConsentRequired: boolean; networkOff?: boolean }>;
 
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -176,6 +176,7 @@ export function useSessionPublicLinkController(input: SessionPublicLinkControlle
             expiresAt: options.expiresInDays ? Date.now() + options.expiresInDays * MILLISECONDS_PER_DAY : null,
             maxUses: options.maxUses ?? null,
             isConsentRequired: options.isConsentRequired,
+            ...(options.networkOff !== undefined ? { networkOff: options.networkOff } : {}),
         };
         // A historical (layout-0) Session is migrated by its owner before any
         // public projection exists, or the link would open to nothing (PA-L2/L4).
@@ -193,6 +194,7 @@ export function useSessionPublicLinkController(input: SessionPublicLinkControlle
             ...(desired.expiresAt === null ? {} : { expiresAt: desired.expiresAt }),
             ...(desired.maxUses === null ? {} : { maxUses: desired.maxUses }),
             isConsentRequired: desired.isConsentRequired,
+            ...(desired.networkOff !== undefined ? { networkOff: desired.networkOff } : {}),
         };
         const issued: { material: Readonly<{ lookupId: string; secret: string }> | null } = { material: null };
         let created: SessionPublicLinkPublication | null = null;

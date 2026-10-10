@@ -53,13 +53,13 @@ afterEach(async () => {
     navigation.push.mockClear();
 });
 
-async function setup(route: Parameters<typeof serveActionHomes>[0]['route'], beforeOpen?: () => void) {
+async function setup(route: Parameters<typeof serveActionHomes>[0]['route'], beforeOpen?: () => void, initialWidth = 900) {
     const served = await serveActionHomes({ homes: [{ key: 'owner', serverUrl: 'https://history.test', accountId: 'owner' }],
         route: request => route(request) ?? (request.path === '/v1/artifacts/document' ? Response.json(storedHead) : undefined) });
     disposeHome = served.dispose;
     getStorage().getState().addArtifact(artifact);
     beforeOpen?.();
-    let width = 900;
+    let width = initialWidth;
     vi.spyOn(ReactNative, 'useWindowDimensions').mockImplementation(() => ({ width, height: 900, scale: 1, fontScale: 1 }));
     let commits = 0;
     const content = () => <React.Profiler id="history" onRender={() => { commits++; }}><ModalProvider>{null}</ModalProvider></React.Profiler>;
@@ -67,10 +67,46 @@ async function setup(route: Parameters<typeof serveActionHomes>[0]['route'], bef
     await act(async () => { showArtifactHistorySheet({ artifactId: artifact.id, name: 'Notes', canRestore: true }); });
     await flushHookEffects();
     return { served, screen, commits: () => commits,
-        resize: async (nextWidth: number) => { width = nextWidth; await screen.update(content()); } };
+        resize: async (nextWidth: number) => { width = nextWidth; await screen.update(content()); },
+        textScale: async (scale: number) => { await act(async () => getStorage().setState(state => ({
+            localSettings: { ...state.localSettings, uiFontScale: scale },
+        }))); } };
 }
 
 describe('Artifact History continuity', () => {
+    it('requests full-page phone chrome and returns from preview to versions without losing its revision data', async () => {
+        const { screen, served } = await setup(request => request.path.endsWith('/revisions') ? Response.json(revisions) : undefined, undefined, 390);
+        expect(Modal.show).toHaveBeenLastCalledWith(expect.objectContaining({
+            chrome: expect.objectContaining({ phonePresentation: 'fullscreen' }),
+        }));
+        await screen.pressByTestIdAsync('artifact-history:version:1');
+        await screen.pressByTestIdAsync('artifact-history:versions');
+        expect(screen.findByTestId('artifact-history:preview')).toBeNull();
+        expect(screen.findByType(HappierArtifactRevisionList).props.revisions).toHaveLength(2);
+        expect(served.requests.filter(request => request.path.endsWith('/revisions'))).toHaveLength(1);
+        await screen.pressByTestIdAsync('artifact-history:version:1');
+        expect(screen.getTextContent()).toContain('Notes 1');
+    });
+
+    it('uses the body measured during initial loading at 200% text size and retains the selected revision', async () => {
+        const first = createDeferred<Response>();
+        const { screen, textScale } = await setup(request => request.path.endsWith('/revisions') ? first.promise : undefined, undefined, 1440);
+        // The native/web layout boundary reports the mounted body before the HTTP read settles.
+        await act(async () => screen.findHostByTestId('artifact-history')?.props.onLayout?.({
+            nativeEvent: { layout: { x: 0, y: 0, width: 860, height: 700 } },
+        }));
+        first.resolve(Response.json(revisions));
+        await flushHookEffects();
+        await screen.pressByTestIdAsync('artifact-history:version:1');
+        await textScale(2);
+        expect(screen.findByTestId('artifact-history:preview')).not.toBeNull();
+        expect(screen.findAllByType(HappierArtifactRevisionList)).toHaveLength(0);
+        expect(screen.getTextContent()).toContain('Notes 1');
+        expect(screen.findByTestId('artifact-history:restore')).not.toBeNull();
+        await textScale(1);
+        expect(screen.findByType(HappierArtifactRevisionList).props.selectedVersion).toBe(1);
+    });
+
     it('keeps an older selection and its data across the breakpoint without another revision read', async () => {
         const { screen, served, resize, commits } = await setup(request => request.path.endsWith('/revisions') ? Response.json(revisions) : undefined);
         // Selecting a historical version must work even if the server includes the current head.

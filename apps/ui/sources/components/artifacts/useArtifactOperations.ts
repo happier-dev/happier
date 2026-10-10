@@ -10,8 +10,7 @@ import { sync } from '@/sync/sync';
 import { t } from '@/text';
 
 import { useArtifactActionsClient } from './artifactActionsClient';
-import { artifactViewRoute, classifyArtifactBrowserKind } from './artifactBrowserModel';
-import { artifactKindLabel } from './artifactKindPresentation';
+import { artifactViewRoute } from './artifactBrowserModel';
 import { showArtifactHistorySheet } from './ArtifactHistorySheet';
 
 /** The same access, sharing, history and confirmed delete operations for a row, pane and page. */
@@ -31,7 +30,7 @@ export function useArtifactOperations(artifact: DecryptedArtifact, onDeleted: ()
     const share = () => {
         if (!canShare) return;
         showDocumentShareSheet({ artifactId: artifact.id, kind: typeof header.kind === 'string' ? header.kind : null,
-            name, subtitle: artifactKindLabel(classifyArtifactBrowserKind(artifact) ?? 'document'), linkPath: artifactViewRoute(artifact.id) });
+            name, linkPath: artifactViewRoute(artifact.id) });
     };
     const history = () => {
         if (canRead) showArtifactHistorySheet({ artifactId: artifact.id, name, canRestore: canEdit });

@@ -17,7 +17,7 @@ import {
 } from './shareSheetTypes';
 
 const styles = StyleSheet.create((theme) => ({
-    controls: { paddingHorizontal: 16, paddingBottom: 8, gap: 8 },
+    controls: { gap: 8 },
     choices: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
     action: { minHeight: resolveMinimumInteractiveTargetSize(Platform.OS), justifyContent: 'center', paddingHorizontal: 8 },
     text: { color: theme.colors.text.primary },
@@ -60,7 +60,7 @@ export function ShareLevelControl<TRow extends ShareGrantRowModel>(props: Readon
     const { theme } = useUnistyles();
     // Beside the row's own text, so the lock glyph follows the list density like every other glyph.
     const glyphSize = ITEM_ICON_GLYPH_SIZE[useResolvedItemDensity()];
-    const label = props.adapter.levels[row.level.value].label;
+    const label = props.adapter.levels[row.level.value]?.label ?? t('shareSheet.accessLevel');
     return <View style={styles.inline}>
         {props.adapter.showsLevelLock?.(row) ? <SafeIonicons name="lock-closed-outline" size={glyphSize} color={theme.colors.text.secondary} /> : null}
         <ShareRowAction label={label} testID={props.testID}
@@ -79,12 +79,15 @@ export function ShareGrantRow<TRow extends ShareGrantRowModel>(props: Readonly<{
     const { row, actions, adapter, context } = props;
     const { editable } = context;
     const busy = isBusy(row);
+    const removalLabels = adapter.removalLabels?.(row);
     const id = (kind: string) => `${context.idPrefix}${adapter.namespace}-${kind}:${row.principal.key}`;
     return <View style={styles.controls}>
         {row.level.kind === 'locked' ? <Text style={styles.secondary}>{row.level.reason.message}</Text> : null}
         {editable && row.level.kind === 'editable' ? <View style={styles.choices}>
-            {orderShareAccessLevels(row.level.options).map((level) => {
-                const label = adapter.levels[level].label;
+            {orderShareAccessLevels(row.level.options).flatMap((level) => {
+                const presentation = adapter.levels[level];
+                if (!presentation) return [];
+                const label = presentation.label;
                 return <ShareRowAction key={level} label={label}
                     testID={`${id('level')}:${level}`} disabled={busy} selected={row.level.value === level}
                     accessibilityLabel={`${row.principal.accessibilityLabel}, ${label}`}
@@ -96,13 +99,13 @@ export function ShareGrantRow<TRow extends ShareGrantRowModel>(props: Readonly<{
         {editable && row.operation.kind === 'error' && row.operation.error.retryable ? <ShareRowAction
             testID={id('retry')} label={t('common.retry')} accessibilityLabel={`${row.principal.accessibilityLabel}, ${t('common.retry')}`}
             onPress={() => actions.retryMutation(row.grant)} /> : null}
-        {editable && row.removal.kind === 'allowed' ? <ShareRowAction testID={id('remove')} label={t('shareSheet.remove')}
+        {editable && row.removal.kind === 'allowed' ? <ShareRowAction testID={id('remove')} label={removalLabels?.request ?? t('shareSheet.remove')}
             disabled={busy} onPress={() => actions.requestRemove(row.grant)} /> : null}
         {editable && row.removal.kind === 'confirming' ? <>
             {row.removal.consequences.map((consequence) => <Text key={consequence}
                 testID={id('remove-consequence')} accessibilityLiveRegion="polite" style={styles.secondary}>{consequence}</Text>)}
             <View style={styles.choices}>
-                <ShareRowAction testID={id('remove-confirm')} label={t('shareSheet.confirmRemove')}
+                <ShareRowAction testID={id('remove-confirm')} label={removalLabels?.confirm ?? t('shareSheet.confirmRemove')}
                     disabled={busy} onPress={() => actions.confirmRemove(row.grant)} />
                 <ShareRowAction testID={id('remove-cancel')} label={t('common.cancel')}
                     disabled={busy} onPress={() => actions.cancelRemove(row.grant)} />

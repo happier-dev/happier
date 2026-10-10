@@ -1,4 +1,5 @@
 import * as React from 'react';
+import * as ReactNative from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { router } from 'expo-router';
@@ -41,6 +42,8 @@ afterEach(async () => {
 
 describe('Artifact History pending approval', () => {
     it('opens the persisted Restore approval and closes History without executing the restore', async () => {
+        // Model the complete native dimension boundary, including Dynamic Type's scale.
+        vi.spyOn(ReactNative, 'useWindowDimensions').mockReturnValue({ width: 800, height: 600, scale: 1, fontScale: 1 });
         const artifact = { id: 'document', title: 'Notes', isDecrypted: true as const, header: { title: 'Notes' },
             headerVersion: 1, bodyVersion: 2, seq: 1, body: 'Current', createdAt: 1, updatedAt: 2,
             access: 'owner' as const, storageMode: 'plain' as const };

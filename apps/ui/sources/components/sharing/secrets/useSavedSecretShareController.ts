@@ -1,9 +1,10 @@
 import * as React from 'react';
-import type { PrincipalRefV1, SavedSecretCatalogAudienceV1 } from '@happier-dev/protocol';
+import type { AccountDisplayProfileV1, PrincipalRefV1, SavedSecretCatalogAudienceV1 } from '@happier-dev/protocol';
 
 import { sessionAccessSubjectKey } from '@/components/sessions/access/projectSessionAccessEditorSnapshot';
 import { useSessionAccessDirectory } from '@/components/sessions/access/useSessionAccessDirectory';
-import { resolveAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
+import { presentSharePrincipal } from '../sharePrincipalPresentation';
+import { useShareViewerProfile } from '../useShareViewerProfile';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 import type {
@@ -21,36 +22,23 @@ const NO_OPERATIONS: Readonly<Record<string, ShareOperationModel>> = Object.free
 const NO_TEAM_CONTEXTS: readonly [] = [];
 const ALLOWED_REMOVAL = { kind: 'allowed' } as const;
 
-function audiencePresentations(audience: SavedSecretCatalogAudienceV1 | undefined): Readonly<Record<string, SharePrincipalPresentation>> {
+function audiencePresentations(audience: SavedSecretCatalogAudienceV1 | undefined, viewerAccountId: string, viewerProfile: AccountDisplayProfileV1 | null): Readonly<Record<string, SharePrincipalPresentation>> {
     const values: Record<string, SharePrincipalPresentation> = {};
     for (const account of audience?.accounts ?? []) {
         const ref: PrincipalRefV1 = { kind: 'account', accountId: account.accountId };
-        const person = resolveAccountDisplayName({ profile: account, accountId: account.accountId });
-        values[sessionAccessSubjectKey(ref)] = {
-            ref, key: sessionAccessSubjectKey(ref), displayName: person.name,
-            ...(person.hint ? { secondaryLabel: person.hint } : {}),
-            avatar: { id: account.accountId, ...(account.avatarUrl ? { imageUrl: account.avatarUrl } : {}) },
-            accessibilityLabel: person.hint ? `${person.name}, ${person.hint}` : person.name,
-        };
+        values[sessionAccessSubjectKey(ref)] = presentSharePrincipal({ ref,
+            profile: account.accountId === viewerAccountId && viewerProfile ? viewerProfile : account,
+            avatarUrl: account.avatarUrl, viewerAccountId });
     }
     for (const team of audience?.teams ?? []) {
         const ref: PrincipalRefV1 = { kind: 'team', teamId: team.teamId };
-        values[sessionAccessSubjectKey(ref)] = { ref, key: sessionAccessSubjectKey(ref), displayName: team.name, accessibilityLabel: team.name };
+        values[sessionAccessSubjectKey(ref)] = presentSharePrincipal({ ref, name: team.name });
     }
     for (const group of audience?.groups ?? []) {
         const ref: PrincipalRefV1 = { kind: 'group', teamId: group.teamId, groupId: group.groupId };
-        values[sessionAccessSubjectKey(ref)] = {
-            ref, key: sessionAccessSubjectKey(ref), displayName: group.name, secondaryLabel: group.teamName,
-            accessibilityLabel: `${group.name}, ${group.teamName}`,
-        };
+        values[sessionAccessSubjectKey(ref)] = presentSharePrincipal({ ref, name: group.name, teamName: group.teamName });
     }
     return values;
-}
-
-/** A principal whose name this editor never saw is still listed, by kind, rather than by a raw id. */
-function kindPresentation(ref: PrincipalRefV1): SharePrincipalPresentation {
-    const label = ref.kind === 'account' ? t('shareSheet.person') : ref.kind === 'team' ? t('shareSheet.team') : t('shareSheet.group');
-    return { ref, key: sessionAccessSubjectKey(ref), displayName: label, accessibilityLabel: label };
 }
 
 /**
@@ -66,11 +54,12 @@ export function useSavedSecretShareController(input: Readonly<{
     retainedAudience?: SavedSecretCatalogAudienceV1;
 }>): Readonly<{ model: ShareSheetModel; actions: ShareSheetActions; notice?: ShareUiReason }> {
     const { scope, draft, onChange, disabled, retainedAudience } = input;
+    const viewerProfile = useShareViewerProfile(scope);
     const [query, setQuery] = React.useState('');
     const [notice, setNotice] = React.useState<ShareUiReason | undefined>();
     // Names come from the audience the Home returned, then from the candidate row the person chose.
     const [chosenNames, setChosenNames] = React.useState<Readonly<Record<string, SharePrincipalPresentation>>>({});
-    const retainedNames = React.useMemo(() => audiencePresentations(retainedAudience), [retainedAudience]);
+    const retainedNames = React.useMemo(() => audiencePresentations(retainedAudience, scope.accountId, viewerProfile), [retainedAudience, scope.accountId, viewerProfile]);
     // Directory rows are resolved once and cached by the list, so the handlers they captured outlive
     // the draft that produced them. Reading the current draft through a ref keeps every choice additive.
     const draftRef = React.useRef(draft);
@@ -102,14 +91,17 @@ export function useSavedSecretShareController(input: Readonly<{
     const lockReason = React.useMemo<ShareUiReason>(() => ({ code: 'saved_secret_single_level', message: t('shareSheet.secrets.oneLevel') }), []);
     const grants = React.useMemo<readonly ShareGrantRowModel[]>(() => draft.map((ref) => {
         const key = sessionAccessSubjectKey(ref);
+        const known = retainedNames[key] ?? chosenNames[key];
+        const profile = ref.kind === 'account' && ref.accountId === scope.accountId ? viewerProfile : null;
         return {
             grant: ref,
-            principal: retainedNames[key] ?? chosenNames[key] ?? kindPresentation(ref),
+            principal: profile ? presentSharePrincipal({ ref, name: known?.displayName, profile, viewerAccountId: scope.accountId })
+                : known ?? presentSharePrincipal({ ref, viewerAccountId: scope.accountId }),
             level: { kind: 'locked', value: 'view', reason: lockReason },
             removal: ALLOWED_REMOVAL,
             operation: IDLE,
         };
-    }), [chosenNames, draft, lockReason, retainedNames]);
+    }), [chosenNames, draft, lockReason, retainedNames, scope.accountId, viewerProfile]);
 
     const actions = React.useMemo<ShareSheetActions>(() => {
         const remove = (grant: PrincipalRefV1) => {

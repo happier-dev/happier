@@ -8,10 +8,10 @@ import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { PageHeader, type PageHeaderMetaFact } from '@/components/ui/layout/PageHeader';
-import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { formatRelativeTimeShort } from '@/components/ui/selectionList/formatRelativeTimeShort';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
@@ -107,7 +107,9 @@ export function ArtifactView(props: Readonly<{
     return (
         <ItemList testID="artifact:page">
             <ArtifactPageHeader artifact={artifact} onDeleted={props.onDeleted} />
-            <View style={styles.pageBody}>{content}</View>
+            <ItemGroup surface="none">
+                {content}
+            </ItemGroup>
         </ItemList>
     );
 }
@@ -115,8 +117,8 @@ export function ArtifactView(props: Readonly<{
 function ArtifactBody(props: Readonly<{ artifact: DecryptedArtifact; prepared: ArtifactViewRead | null; onRetry: () => void }>) {
     if (isArtifactHtmlHeaderV1(props.artifact.rawHeader ?? props.artifact.header)) return <ArtifactHtmlBody
         artifactId={props.artifact.id} headerVersion={props.artifact.headerVersion} bodyVersion={props.artifact.bodyVersion}
-        body={props.artifact.body} name={props.artifact.title || t('artifacts.untitled')} readPreviewUrl={sync.fetchArtifactHtmlPreview}
-        previewUrl={props.prepared?.htmlPreviewUrl} onRetry={props.onRetry} />;
+        body={props.artifact.body} name={props.artifact.title || t('artifacts.untitled')} readPreview={sync.fetchArtifactHtmlPreview}
+        preview={props.prepared?.htmlPreview} onRetry={props.onRetry} />;
     if (props.artifact.body !== null && typeof props.artifact.body === 'object') return <ArtifactBinaryBody
         artifactId={props.artifact.id} reference={props.artifact.body} name={props.artifact.title || t('artifacts.untitled')} readBytes={sync.fetchArtifactBinary}
         initialBytes={props.prepared?.binaryBytes} onRetry={props.onRetry} />;
@@ -152,18 +154,11 @@ function ArtifactFacts(props: Readonly<{ artifact: DecryptedArtifact }>) {
 }
 
 function ArtifactPageHeader(props: Readonly<{ artifact: DecryptedArtifact; onDeleted?: () => void }>) {
-    const { theme } = useUnistyles();
-    const kind = classifyArtifactBrowserKind(props.artifact) ?? 'document';
     return (
         <PageHeader
             testID="artifact:header"
             title={props.artifact.title || t('artifacts.untitled')}
             alwaysShowTitle
-            leading={(
-                <PageHeaderMarkSlot>
-                    <Icon name={ARTIFACT_KIND_ICONS[kind]} size={24} color={theme.colors.text.secondary} />
-                </PageHeaderMarkSlot>
-            )}
             meta={readFacts(props.artifact)}
             details={(
                 <View style={stylesheet.headerDetails}>
@@ -176,6 +171,7 @@ function ArtifactPageHeader(props: Readonly<{ artifact: DecryptedArtifact; onDel
                 </View>
             )}
             actions={<ArtifactActions artifact={props.artifact} presentation="page" onDeleted={props.onDeleted} />}
+            actionsPlacement="page"
         />
     );
 }
@@ -259,9 +255,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     headerDetails: {
         marginTop: 10,
-    },
-    pageBody: {
-        marginTop: 8,
     },
     bodyPlaceholder: {
         minHeight: 160,

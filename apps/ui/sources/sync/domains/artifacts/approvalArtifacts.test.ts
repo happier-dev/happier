@@ -4,6 +4,7 @@ import { ApprovalRequestV2Schema, buildApprovalRequestArtifactHeaderV1 } from '@
 import type { DecryptedArtifact } from './artifactTypes';
 import {
     collectOpenApprovalSessionReferences,
+    isOpenApprovalInboxArtifact,
     listOpenApprovalArtifactsForSession,
     resolveOpenApprovalSessionKeys,
 } from './approvalArtifacts';
@@ -74,6 +75,12 @@ function durableApprovalBody(sessionId: string) {
 }
 
 describe('listOpenApprovalArtifactsForSession', () => {
+    it('keeps draft requests out of the canonical Inbox approval predicate', () => {
+        const body = approvalBody('s1');
+        const header = { title: 'Approve', v: 1, kind: 'approval_request.v1', approvalStatus: 'open', sessionId: 's1', actionId: 'session.list', approvalSummary: 'List sessions' };
+        expect(isOpenApprovalInboxArtifact(artifact('open', header, body))).toBe(true);
+        expect(isOpenApprovalInboxArtifact(artifact('draft', { ...header, draft: true }, body))).toBe(false);
+    });
     it('rejects bodyless approval indexes until the authoritative body is hydrated', () => {
         const approvals = listOpenApprovalArtifactsForSession([
             artifact('matching-session-id', {

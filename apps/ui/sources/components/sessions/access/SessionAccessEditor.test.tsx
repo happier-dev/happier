@@ -70,7 +70,7 @@ describe('SessionAccessEditor', () => {
         const people = candidate('account');
         const group = candidate('group');
         const directory = { query: 'provider-ranked-query', sections: ([people, group]).map((row) => ({
-            kind: row.principal.ref.kind, title: row.principal.ref.kind, candidates: [], status: 'idle' as const,
+            kind: row.principal.ref.kind, title: row.principal.ref.kind, candidates: [row], status: 'idle' as const,
             cursor: null, hasMore: false, loadingMore: false,
             resolverKey: `home-one:${row.principal.ref.kind}`, resolveCandidates: async () => [row],
         })) };
@@ -78,10 +78,13 @@ describe('SessionAccessEditor', () => {
         await flushHookEffects({ advanceTimersMs: SELECTION_LIST_DEFAULT_DYNAMIC_DEBOUNCE_MS });
         expect(screen.findByTestId('session-access-candidate-account:bob')).not.toBeNull();
         await screen.pressByTestIdAsync('session-access-candidate-account:bob');
+        await screen.pressByTestIdAsync('session-access-browse:group');
+        await flushHookEffects({ advanceTimersMs: SELECTION_LIST_DEFAULT_DYNAMIC_DEBOUNCE_MS });
         await screen.pressByTestIdAsync('session-access-candidate-group:acme:dev');
         expect(intent.addPrincipal).toHaveBeenNthCalledWith(1, people.principal.ref);
         expect(intent.addPrincipal).toHaveBeenNthCalledWith(2, group.principal.ref);
         expect(close).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync('session-access-editor:list:header:leading:back-chip');
         expect(screen.findByTestId('session-access-grant-account:alice')).not.toBeNull();
     });
     it('offers level choices in one order whatever order the Home returned them in', async () => {
@@ -260,6 +263,8 @@ describe('SessionAccessEditor', () => {
                 { teamId: 'design', label: 'Design' },
             ],
         } })} actions={intent} presentation="full" />);
+        expect(screen.findByTestId('session-access-context-personal')).toBeNull();
+        await screen.pressByTestIdAsync('session-access-context');
         await screen.pressByTestIdAsync('session-access-context-personal');
         expect(intent.setContext).not.toHaveBeenCalled();
         expect(intent.explain).toHaveBeenCalledWith(expect.objectContaining({ code: 'session_access_team_policy_required' }));
@@ -297,6 +302,8 @@ describe('SessionAccessEditor', () => {
             },
         } })} actions={intent} presentation="compact" />);
 
+        await screen.pressByTestIdAsync('session-access-context');
+
         expect(screen.findByTestId('session-access-context-acme')?.props.accessibilityState)
             .toEqual(expect.objectContaining({ disabled: true, busy: true }));
         expect(screen.findByTestId('session-access-context-confirm')?.props.accessibilityState)
@@ -333,6 +340,53 @@ describe('SessionAccessEditor', () => {
         await screen.pressByTestIdAsync('session-access-show-all-recipients');
         expect(intent.prepareAccess).toHaveBeenCalledTimes(1);
         expect(intent.toggleAllRecipients).toHaveBeenCalledTimes(1);
+    });
+
+    it('attaches a known direct recipient state to its grant with one preparation control', async () => {
+        const intent = actions();
+        const screen = await renderScreen(<SessionAccessEditor model={model({ encryption: {
+            statusKey: 'needs_attention', summaryLabel: '1 pending', accessibilityLabel: 'Encrypted access: 1 pending',
+            actionLabel: 'Prepare now', showAllLabel: 'Show all people', recipientsView: 'exceptions',
+            recipients: { rows: [{ recipientAccountId: 'alice', state: 'pending', label: 'Alice',
+                stateLabel: 'Encrypted access pending', accessibilityLabel: 'Alice: Encrypted access pending', actionLabel: 'Prepare now' }],
+                hasMore: false, loading: false },
+        } })} actions={intent} presentation="full" />);
+        expect(screen.findByTestId('session-access-recipient-alice')).toBeNull();
+        expect(screen.findByTestId('session-access-prepare')).toBeNull();
+        const grant = screen.findByTestId('session-access-grant-account:alice');
+        expect(grant).not.toBeNull();
+        expect(screen.getTextContent()).toContain('Encrypted access pending');
+        await screen.pressByTestIdAsync('session-access-grant-account:alice');
+        await screen.pressByTestIdAsync('session-access-reprepare-alice');
+        expect(intent.prepareAccess).toHaveBeenCalledWith('alice');
+        await screen.pressByTestIdAsync('session-access-show-all-recipients');
+        expect(intent.toggleAllRecipients).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+        { audience: 'a Team recipient with no direct grant', grants: [team], hasMore: false, directGrant: false },
+        { audience: 'a partial recipient page', grants: [alice], hasMore: true, directGrant: true },
+    ])('keeps audience preparation reachable for $audience while its diagnostic is folded', async ({ grants, hasMore, directGrant }) => {
+        const intent = actions();
+        const accessModel = model({ grants, encryption: {
+            statusKey: 'needs_attention', summaryLabel: '1 pending', accessibilityLabel: 'Encrypted access: 1 pending',
+            actionLabel: 'Prepare now', showAllLabel: 'Show all people', recipientsView: 'exceptions',
+            recipients: { rows: [{ recipientAccountId: 'alice', state: 'pending', label: 'Alice',
+                stateLabel: 'Encrypted access pending', accessibilityLabel: 'Alice: Encrypted access pending', actionLabel: 'Prepare now' }],
+                hasMore, loading: false },
+        } });
+        const screen = await renderScreen(<SessionAccessEditor model={accessModel} actions={intent} presentation="full" />);
+        expect(screen.findByTestId('session-access-recipient-alice')).toBeNull();
+        await screen.pressByTestIdAsync('session-access-prepare');
+        expect(intent.prepareAccess).toHaveBeenCalledWith();
+        expect(screen.findByTestId('session-access-reprepare-alice')).toBeNull();
+        await screen.pressByTestIdAsync('session-access-show-all-recipients');
+        expect(intent.toggleAllRecipients).toHaveBeenCalledTimes(1);
+        await screen.update(<SessionAccessEditor model={{ ...accessModel,
+            encryption: { ...accessModel.encryption!, recipientsView: 'all', showAllLabel: 'Hide people' } }}
+            actions={intent} presentation="full" />);
+        expect(screen.findByTestId('session-access-recipient-alice')).not.toBeNull();
+        expect(screen.findByTestId('session-access-grant-account:alice') !== null).toBe(directGrant);
     });
 
     it('announces the material preparation transitions and stays silent through progress', async () => {
@@ -444,7 +498,7 @@ describe('SessionAccessEditor', () => {
             addition: { kind: 'allowed' }, operation: { kind: 'idle' },
         };
         const directory = { query: '', sections: [{
-            kind: 'group' as const, title: 'Groups', candidates: [], status: 'idle' as const,
+            kind: 'group' as const, title: 'Groups', candidates: [candidate], status: 'idle' as const,
             cursor: null, hasMore: false, loadingMore: false,
             resolverKey: 'home-one:group', resolveCandidates: async () => [candidate],
         }] };
@@ -455,12 +509,15 @@ describe('SessionAccessEditor', () => {
         })} actions={actions()} presentation="full" />);
         await flushHookEffects({ advanceTimersMs: SELECTION_LIST_DEFAULT_DYNAMIC_DEBOUNCE_MS });
 
-        for (const key of ['account:owner', 'account:alice', 'team:acme', 'group:acme:dev']) {
+        for (const key of ['account:owner', 'account:alice', 'team:acme']) {
             const visual = screen.findByTestId(`session-access-principal-visual:${key}`);
             expect(visual).not.toBeNull();
             // The row's own accessibilityLabel stays the single accessible name.
             expect(visual?.props.accessibilityElementsHidden).toBe(true);
         }
+        await screen.pressByTestIdAsync('session-access-browse:group');
+        await flushHookEffects({ advanceTimersMs: SELECTION_LIST_DEFAULT_DYNAMIC_DEBOUNCE_MS });
+        expect(screen.findByTestId('session-access-principal-visual:group:acme:dev')?.props.accessibilityElementsHidden).toBe(true);
     });
 
     it('moves selection off an acknowledged removal and announces it, never on an ordinary row mutation', async () => {

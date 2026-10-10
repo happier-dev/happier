@@ -1,7 +1,7 @@
 import * as React from 'react';
-import { ScrollView, View, useWindowDimensions } from 'react-native';
+import { Platform, ScrollView, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierArtifactRevisionList, type HappierArtifactRevisionListProps } from '@happier-dev/plugin-ui/presentation';
+import { HappierArtifactRevisionList, useHappierTextPresentation, type HappierArtifactRevisionListProps } from '@happier-dev/plugin-ui/presentation';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
@@ -9,13 +9,13 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { formatRelativeTimeShort } from '@/components/ui/selectionList/formatRelativeTimeShort';
+import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { Text } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
 import type { CustomModalInjectedProps } from '@/modal/types';
-import { useActiveServerAccountScope, useArtifact } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScope, useArtifact, useLocalSetting } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
 import { formatByteSize } from '@/utils/files/formatByteSize';
@@ -65,8 +65,15 @@ function ArtifactHistoryContent(props: Readonly<{ artifactId: string; canRestore
     const scope = useActiveServerAccountScope();
     const router = useRouter();
     const artifact = useArtifact(props.artifactId);
-    const { width } = useWindowDimensions();
-    const sideBySide = width >= SIDE_BY_SIDE_MIN_WIDTH_PX;
+    const { width, fontScale } = useWindowDimensions();
+    const [bodyWidth, setBodyWidth] = React.useState<number | null>(null);
+    const measureBody = React.useCallback((event: LayoutChangeEvent) => {
+        setBodyWidth(event.nativeEvent.layout.width);
+    }, []);
+    const uiFontScale = useLocalSetting('uiFontScale');
+    const textPresentation = useHappierTextPresentation({ textScale: uiFontScale });
+    const effectiveTextScale = textPresentation.metricScale * (Platform.OS === 'web' ? 1 : fontScale);
+    const sideBySide = (bodyWidth ?? width) / effectiveTextScale >= SIDE_BY_SIDE_MIN_WIDTH_PX;
     const sideBySideRef = React.useRef(sideBySide);
     sideBySideRef.current = sideBySide;
     const [state, setState] = React.useState<HistoryState | null>(null);
@@ -128,18 +135,24 @@ function ArtifactHistoryContent(props: Readonly<{ artifactId: string; canRestore
 
     if (!history?.data && history?.failed) {
         return (
-            <SurfaceStateCard
-                testID="artifact-history:failed"
-                kind="error"
-                title={t('artifacts.browser.history.loadFailed')}
-                action={{ label: t('common.retry'), onPress: requestRefresh }}
-                accessibilitySemantics="alert"
-            />
+            <View style={styles.root} testID="artifact-history" onLayout={measureBody}>
+                <SurfaceStateCard
+                    testID="artifact-history:failed"
+                    kind="error"
+                    title={t('artifacts.browser.history.loadFailed')}
+                    action={{ label: t('common.retry'), onPress: requestRefresh }}
+                    accessibilitySemantics="alert"
+                />
+            </View>
         );
     }
     if (!history?.data || client === null) {
-        return <View style={styles.placeholder}>
-            <SurfaceStateCard testID="artifact-history:loading" kind="loading" title={t('common.loading')} accessibilitySemantics="status" />
+        // Keep the measured View mounted from loading through content. React Native Web
+        // observes layout on mount; attaching onLayout only after the read misses that subscription.
+        return <View style={styles.root} testID="artifact-history" onLayout={measureBody}>
+            <View style={styles.placeholder}>
+                <SurfaceStateCard testID="artifact-history:loading" kind="loading" title={t('common.loading')} accessibilitySemantics="status" />
+            </View>
         </View>;
     }
 
@@ -173,6 +186,7 @@ function ArtifactHistoryContent(props: Readonly<{ artifactId: string; canRestore
         <View style={sideBySide ? styles.previewColumn : styles.previewStacked} testID="artifact-history:preview">
             {!sideBySide ? (
                 <RoundButton
+                    testID="artifact-history:versions"
                     size="small"
                     display="inverted"
                     title={t('artifacts.browser.history.versionsLabel')}
@@ -193,7 +207,7 @@ function ArtifactHistoryContent(props: Readonly<{ artifactId: string; canRestore
     ) : null;
 
     return (
-        <View style={styles.root} testID="artifact-history">
+        <View style={styles.root} testID="artifact-history" onLayout={measureBody}>
             {history.loading || history.failed ? (
                 <SurfaceFreshnessLine
                     testID={history.loading ? 'artifact-history:refreshing' : 'artifact-history:stale'}
@@ -208,8 +222,8 @@ function ArtifactHistoryContent(props: Readonly<{ artifactId: string; canRestore
                 {preview}
             </View>
             {chosen && props.canRestore ? (
-                <View style={styles.footer}>
-                    <Text style={[styles.note, restoreFailed ? styles.noteFailed : null]}>
+                <View style={[styles.footer, !sideBySide ? styles.footerStacked : null]}>
+                    <Text style={[styles.note, !sideBySide ? styles.noteStacked : null, restoreFailed ? styles.noteFailed : null]}>
                         {restoreFailed ? t('artifacts.browser.history.restoreFailed') : t('artifacts.browser.history.restoreNote')}
                     </Text>
                     <RoundButton
@@ -242,6 +256,7 @@ export function showArtifactHistorySheet(params: Readonly<{ artifactId: string; 
             title: t('artifacts.browser.history.title'),
             subtitle: params.name,
             scrollHost: 'body',
+            phonePresentation: 'fullscreen',
             bodyScroll: 'none',
             dimensions: { width: 860, maxHeightRatio: 0.86, size: 'lg' },
         },
@@ -252,24 +267,31 @@ export function showArtifactHistorySheet(params: Readonly<{ artifactId: string; 
 const stylesheet = StyleSheet.create((theme) => ({
     root: {
         flex: 1,
-        minHeight: 360,
+        minHeight: 0,
+        paddingBottom: 16,
     },
     columns: {
         flex: 1,
+        minHeight: 0,
         flexDirection: 'row',
         gap: 24,
     },
     stack: {
         flex: 1,
+        minHeight: 0,
     },
     previewColumn: {
         flex: 1,
+        minHeight: 0,
         minWidth: 0,
         gap: 6,
+        paddingHorizontal: 16,
     },
     previewStacked: {
         flex: 1,
+        minHeight: 0,
         gap: 10,
+        paddingHorizontal: 16,
     },
     previewScroll: {
         flex: 1,
@@ -281,17 +303,28 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     footer: {
         flexDirection: 'row',
+        flexWrap: 'wrap',
         alignItems: 'center',
         gap: 12,
+        paddingHorizontal: 16,
         paddingTop: 14,
         marginTop: 14,
         borderTopWidth: 1,
         borderTopColor: theme.colors.border.subtle,
     },
+    footerStacked: {
+        flexDirection: 'column',
+        alignItems: 'stretch',
+    },
     note: {
         flex: 1,
         fontSize: 12.5,
         color: theme.colors.text.secondary,
+    },
+    noteStacked: {
+        flexGrow: 0,
+        flexShrink: 0,
+        flexBasis: 'auto',
     },
     noteFailed: {
         color: theme.colors.state.danger.foreground,

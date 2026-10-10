@@ -1,4 +1,5 @@
 import type {
+    AccountDisplayProfileV1,
     PrincipalRefV1,
     SessionAccessGrantsListResponseV1,
     SessionAccessPrincipalSummaryV1,
@@ -6,34 +7,26 @@ import type {
     SessionTeamCredentialBindingConsequenceV1,
 } from '@happier-dev/protocol';
 import { t } from '@/text';
-import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
+import { presentSharePrincipal, sharePrincipalKey } from '@/components/sharing/sharePrincipalPresentation';
 import { projectSessionAccessChipSummary } from './projectSessionAccessChipSummary';
 import { projectSessionAccessLevelLabel } from './projectSessionAccessLevelLabel';
 import type { SessionAccessDelegationControlModel, SessionAccessEditorModel, SessionAccessGrantOperationModel, SessionAccessLevel, SessionAccessPrincipalPresentation, SessionAccessGrantRowModel, SessionAccessUiReason } from './sessionAccessEditorTypes';
 import { presentSessionAccessReason } from './presentSessionAccessFailure';
 
-export function sessionAccessSubjectKey(subject: PrincipalRefV1): string {
-    switch (subject.kind) {
-        case 'account': return `account:${subject.accountId}`;
-        case 'team': return `team:${subject.teamId}`;
-        case 'group': return `group:${subject.teamId}:${subject.groupId}`;
-    }
-}
+export const sessionAccessSubjectKey = sharePrincipalKey;
 
-export function projectSessionAccessPrincipal(principal: SessionAccessPrincipalSummaryV1): SessionAccessPrincipalPresentation {
+export function projectSessionAccessPrincipal(principal: SessionAccessPrincipalSummaryV1, viewer?: Readonly<{
+    accountId?: string | null; profile?: AccountDisplayProfileV1 | null;
+}>): SessionAccessPrincipalPresentation {
     const ref: PrincipalRefV1 = principal.kind === 'account' ? {kind:'account',accountId:principal.accountId}
         : principal.kind === 'team' ? {kind:'team',teamId:principal.teamId}
             : {kind:'group',teamId:principal.teamId,groupId:principal.groupId};
-    const displayName = principal.kind === 'account'
-        ? formatAccountDisplayName(principal) ?? t('session.access.account') : principal.name;
-    const secondaryLabel = principal.kind === 'group' ? principal.teamName
-        : principal.kind === 'account' && principal.username ? `@${principal.username}` : undefined;
-    // The Account's safe display profile already travels with the row. Dropping
-    // its picture here is what forced every principal to render as text alone.
-    const avatar = principal.kind === 'account'
-        ? { id: principal.accountId, ...(principal.avatarUrl ? { imageUrl: principal.avatarUrl } : {}) }
-        : undefined;
-    return {ref,key:sessionAccessSubjectKey(ref),displayName,secondaryLabel,...(avatar ? {avatar} : {}),accessibilityLabel:secondaryLabel ? `${displayName}, ${secondaryLabel}` : displayName};
+    return presentSharePrincipal({ ref, viewerAccountId: viewer?.accountId,
+        ...(principal.kind === 'account' ? {
+            profile: principal,
+            viewerProfile: viewer?.profile,
+            avatarUrl: principal.avatarUrl,
+        } : { name: principal.name, ...(principal.kind === 'group' ? { teamName: principal.teamName } : {}) }) });
 }
 
 /**
@@ -101,6 +94,8 @@ export function projectSessionAccessDelegationControl(input: Readonly<{
 
 export function projectSessionAccessEditorSnapshot(input: Readonly<{
     snapshot: SessionAccessGrantsListResponseV1;
+    viewerAccountId?: string;
+    viewerProfile?: AccountDisplayProfileV1 | null;
     operations?: Readonly<Record<string, SessionAccessGrantOperationModel>>;
     confirmingRemoval?: string | null;
 }>): Pick<SessionAccessEditorModel, 'owner' | 'viewerAccess' | 'grants' | 'accessMode' | 'readOnlyReason' | 'summary'> {
@@ -129,7 +124,7 @@ export function projectSessionAccessEditorSnapshot(input: Readonly<{
         const reason = transitions.reason ? presentSessionAccessReason(transitions.reason) : denied;
         return {
             grant: row.grant.subject,
-            principal: projectSessionAccessPrincipal(row.principal),
+            principal: projectSessionAccessPrincipal(row.principal, { accountId: input.viewerAccountId, profile: input.viewerProfile }),
             level: editable && transitions.accessLevels.length > 0
                 ? {kind:'editable',value:row.grant.accessLevel,options:transitions.accessLevels}
                 : {kind:'locked',value:row.grant.accessLevel,reason},
@@ -155,7 +150,7 @@ export function projectSessionAccessEditorSnapshot(input: Readonly<{
         };
     });
     return {
-        owner:{principal:projectSessionAccessPrincipal(snapshot.owner)},grants,
+        owner:{principal:projectSessionAccessPrincipal(snapshot.owner, { accountId: input.viewerAccountId, profile: input.viewerProfile })},grants,
         ...(viewerAccess ? { viewerAccess } : {}),
         accessMode:editable?'editable':'read_only',
         ...(!editable ? {readOnlyReason:{code:'session_access_read_only',message:t('session.access.readOnly')}} : {}),

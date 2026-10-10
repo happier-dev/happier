@@ -1,4 +1,10 @@
 import type { ArtifactBodyV1, ArtifactBlobWriteV1, ArtifactBodyEnvelopeV1, ArtifactRevisionProvenanceV1 } from '@happier-dev/protocol';
+import type { ArtifactOrganizationHeaderV1 } from '@happier-dev/protocol/artifacts/artifactOrganizationV1';
+import type { ArtifactPublicAudienceV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import type { ArtifactHtmlBundleV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
+
+/** Opened private bytes stay separate from the Home's isolated shell location. */
+export type ArtifactHtmlPreview = Readonly<{ url: string; bundle: ArtifactHtmlBundleV1 }>;
 
 export type ArtifactBodyInput = ArtifactBodyV1 | null | Readonly<{ bytes: Uint8Array; mime: string }>;
 
@@ -11,6 +17,7 @@ export interface Artifact {
     ownerAccountId: string;
     access: 'owner' | 'view' | 'edit' | 'admin';
     encryptionMode: 'plain' | 'e2ee';
+    publicAudience?: ArtifactPublicAudienceV1;
     header: string;  // Base64 encoded encrypted JSON { "title": string | null }
     headerVersion: number;
     body?: string;  // Base64 encoded encrypted JSON { "body": string | null } - only in full fetch
@@ -26,7 +33,7 @@ export interface Artifact {
 /**
  * Decrypted artifact header
  */
-export interface ArtifactHeader {
+export interface ArtifactHeader extends ArtifactOrganizationHeaderV1 {
     /**
      * Optional version for header payloads that include structured metadata.
      * Legacy artifacts may omit this value.
@@ -64,6 +71,8 @@ export interface DecryptedArtifactBase {
     /** HTTP grant projection; content-only socket events do not carry authority. */
     access?: 'owner' | 'view' | 'edit' | 'admin';
     ownerAccountId?: string;
+    /** Authenticated exact-read exposure; missing/socket/list facts never establish privacy. */
+    publicAudience?: ArtifactPublicAudienceV1;
     id: string;
     header?: ArtifactHeader | null;
     /** Exact opened storage metadata; presentation defaults must never be repersisted. */

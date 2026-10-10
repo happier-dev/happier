@@ -7,6 +7,8 @@ import type { SessionAccessUiError, SessionAccessUiReason } from './sessionAcces
 
 function sessionAccessFailureMessage(code: string, status?: number): string {
     switch (code) {
+        case 'public_share_isolation_unavailable':
+            return t('session.collaboration.pane.linkUnavailable');
         case 'session_access_external_sharing_disabled':
             return `${t('teams.settings.externalSharingSection')}: ${t('teams.policy.externalSharingDisabled')}`;
         case 'session_access_external_sharing_requires_team_admin':
@@ -83,6 +85,7 @@ export function presentSessionAccessFailure(
     if (error instanceof SessionAccessApiError) {
         const message = sessionAccessFailureMessage(error.code, error.status);
         const terminal = error.status === 403 || error.status === 404 || error.status === 409
+            || error.code === 'public_share_isolation_unavailable'
             || error.code === 'session_access_subject_ineligible'
             || error.code === 'session_access_owner_grant_invalid'
             || error.code === 'session_access_self_grant_invalid'

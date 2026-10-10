@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionAccessGrantsListResponseV1 } from '@happier-dev/protocol';
 import { projectSessionAccessEditorSnapshot, projectSessionAccessPrincipal } from './projectSessionAccessEditorSnapshot';
+import { presentSharePrincipal } from '@/components/sharing/sharePrincipalPresentation';
 
 const capabilities = {readTranscript:true,submitAgentInput:true,editSessionRecords:true,approveRuntimePermissions:true,manageAccess:true,managePermissionDelegation:true,managePublicLink:true,archiveSession:true,renameSession:true,assignResponsibility:true,stopSession:true,deleteSession:true};
 type CompleteSessionAccessSnapshot = Extract<SessionAccessGrantsListResponseV1, { visibility: 'complete' }>;
@@ -9,6 +10,24 @@ function snapshot(): CompleteSessionAccessSnapshot {
     return {visibility:'complete',owner:{kind:'account',accountId:'owner',firstName:'Owner',lastName:null,username:null,avatarUrl:null},primaryTeamId:null,effectiveAccess:{v:1,level:'owner',sources:[{kind:'owner'}],capabilities},grants:[{grant:{subject:{kind:'team',teamId:'team'},accessLevel:'view',canApprovePermissions:false,requiredByTeamPolicy:true},principal:{kind:'team',teamId:'team',name:'Acme'},allowedTransitions:{accessLevels:[],canChangePermissionDelegation:false,canRemove:false,reason:'session_access_team_policy_required'}}]};
 }
 describe('access editor server projection',()=>{
+    it('uses an acknowledged username as identity without adding an unnamed-account id hint', () => {
+        const principal = presentSharePrincipal({ ref: { kind: 'account', accountId: 'opaque-reader-id' }, username: 'reader' });
+        expect(principal.displayName).toBe('@reader');
+        expect(principal.secondaryLabel).toBeUndefined();
+    });
+    it('names the viewer consistently without repeating the person kind or exposing an unnamed account id', () => {
+        const named = projectSessionAccessEditorSnapshot({ snapshot: snapshot(), viewerAccountId: 'owner' });
+        expect(named.owner?.principal).toMatchObject({ displayName: 'Owner', secondaryLabel: 'You' });
+        const emptyLocalProfile = projectSessionAccessEditorSnapshot({ snapshot: snapshot(), viewerAccountId: 'owner',
+            viewerProfile: { firstName: null, lastName: null, username: null, avatarUrl: null } });
+        expect(emptyLocalProfile.owner?.principal).toMatchObject({ displayName: 'Owner', secondaryLabel: 'You' });
+        const original = snapshot();
+        const unnamed = projectSessionAccessEditorSnapshot({ snapshot: { ...original,
+            owner: { kind: 'account', accountId: 'owner', firstName: null, lastName: null, username: null, avatarUrl: null },
+        }, viewerAccountId: 'owner' });
+        expect(unnamed.owner?.principal.displayName).toBe('Your account');
+        expect(unnamed.owner?.principal.secondaryLabel).toBe('You');
+    });
     it('honors admitted transitions independently from the caller owner level',()=>{
         const result=projectSessionAccessEditorSnapshot({snapshot:snapshot()});
         expect(result.grants[0]?.level.kind).toBe('locked');

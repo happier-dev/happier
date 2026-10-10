@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { AccountDisplayProfileV1 } from '@happier-dev/protocol';
 import { TeamsPageV1Schema, type TeamExternalSharingPolicyV1, type TeamMembershipV1, type TeamSessionCreationPolicyV1, type TeamsPageV1 } from '@happier-dev/protocol/teams';
 
 import type { SessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
@@ -10,6 +11,8 @@ import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
 import { listTeamGroups } from '@/sync/ops/teams/teamGroupOperations';
 import { runTeamAction } from '@/sync/ops/teams/teamActionClient';
 import { t } from '@/text';
+import { presentSharePrincipal } from '@/components/sharing/sharePrincipalPresentation';
+import { useShareViewerProfile } from '@/components/sharing/useShareViewerProfile';
 
 import { projectSessionAccessPrincipal } from './projectSessionAccessEditorSnapshot';
 import type {
@@ -26,8 +29,13 @@ export type SessionAccessDirectoryTeamContext = Readonly<{
     externalSharingPolicy?: TeamExternalSharingPolicyV1;
 }>;
 
+type DirectoryCandidateRow = SessionAccessCandidateRowModel & Readonly<{
+    /** Retain the Home's safe display facts so local viewer-profile changes do not erase them. */
+    accountProfile?: AccountDisplayProfileV1;
+}>;
+
 type Page = Readonly<{
-    rows: readonly SessionAccessCandidateRowModel[];
+    rows: readonly DirectoryCandidateRow[];
     teamContexts?: readonly SessionAccessDirectoryTeamContext[];
     nextCursor: string | null;
     failed: boolean;
@@ -82,7 +90,8 @@ function groupRows(page: GroupDirectoryPage): readonly SessionAccessCandidateRow
  */
 function teamMemberRows(
     memberships: readonly TeamMembershipV1[],
-): readonly SessionAccessCandidateRowModel[] {
+    viewer: Parameters<typeof projectSessionAccessPrincipal>[1],
+): readonly DirectoryCandidateRow[] {
     return memberships
         .filter((membership) => membership.status === 'active')
         .map((membership) => ({
@@ -92,7 +101,8 @@ function teamMemberRows(
                 firstName: membership.account.firstName,
                 lastName: membership.account.lastName,
                 avatarUrl: membership.account.avatarUrl,
-            }),
+            }, viewer),
+            accountProfile: membership.account,
             teamMembership: { teamId: membership.teamId, teamMembershipId: membership.id, accountId: membership.accountId },
             addition: { kind: 'allowed' as const }, operation: IDLE_OPERATION,
         }));
@@ -148,6 +158,9 @@ export function useSessionAccessDirectory(input: Readonly<{
     principalKinds?: readonly SessionAccessDirectoryKind[];
 }>): SessionAccessDirectory {
     const { availability, enabled, operations, revision, scope, sessionId } = input;
+    const viewerProfile = useShareViewerProfile(scope);
+    const viewer = React.useMemo(() => ({ accountId: scope.accountId, profile: viewerProfile }), [scope.accountId, viewerProfile]);
+    const viewerPresentationKey = JSON.stringify(viewerProfile);
     const scopeKey = `${scope.serverId} ${scope.accountId} ${availability} ${sessionId ?? 'draft'}`;
     const contextTeams = input.contextTeams;
     const teamAddress = input.teamAddress ?? null;
@@ -196,17 +209,27 @@ export function useSessionAccessDirectory(input: Readonly<{
      * identity so the list does not rebuild it.
      */
     const applyOperations = React.useCallback((
-        rows: readonly SessionAccessCandidateRowModel[],
+        rows: readonly DirectoryCandidateRow[],
     ): readonly SessionAccessCandidateRowModel[] => {
         let changed = false;
         const next = rows.map((row) => {
             const current = operation(row.principal.key);
-            if (row.operation === current) return row;
+            // A loaded directory page remains its Home's answer. The viewer's own display fields
+            // can refresh locally without querying or borrowing the focused Home's Profile.
+            const principal = row.principal.ref.kind === 'account' && row.principal.ref.accountId === scope.accountId
+                ? presentSharePrincipal({ ref: row.principal.ref, profile: row.accountProfile,
+                    viewerProfile, viewerAccountId: scope.accountId })
+                : row.principal;
+            const samePrincipal = principal.displayName === row.principal.displayName
+                && principal.secondaryLabel === row.principal.secondaryLabel
+                && principal.accessibilityLabel === row.principal.accessibilityLabel
+                && principal.avatar?.imageUrl === row.principal.avatar?.imageUrl;
+            if (row.operation === current && samePrincipal) return row;
             changed = true;
-            return { ...row, operation: current };
+            return { ...row, principal: samePrincipal ? row.principal : principal, operation: current };
         });
         return changed ? next : rows;
-    }, [operation]);
+    }, [operation, scope.accountId, viewerProfile]);
 
     /**
      * Only non-idle operations enter the section resolver keys, so an editor with
@@ -389,7 +412,8 @@ export function useSessionAccessDirectory(input: Readonly<{
             if (currentScope.current !== scopeKey || signal.aborted) return [];
             const next: Page = {
                 rows: page.rows.map((principal) => ({
-                    principal: projectSessionAccessPrincipal(principal),
+                    principal: projectSessionAccessPrincipal(principal, viewer),
+                    accountProfile: principal,
                     addition: { kind: 'allowed' as const },
                     operation: IDLE_OPERATION,
                 })),
@@ -405,7 +429,7 @@ export function useSessionAccessDirectory(input: Readonly<{
             }
             throw error;
         }
-    }, [applyOperations, availability, scope, scopeKey, sessionId]);
+    }, [applyOperations, availability, scope, scopeKey, sessionId, viewer]);
 
     /**
      * Looking a Team member up asks the Home, exactly as the roster screen does,
@@ -478,7 +502,8 @@ export function useSessionAccessDirectory(input: Readonly<{
                         if (previous.query !== existing.query) return current;
                         const seen = new Set(previous.rows.map((row) => row.principal.key));
                         const rows = page.rows.map((principal) => ({
-                            principal: projectSessionAccessPrincipal(principal),
+                            principal: projectSessionAccessPrincipal(principal, viewer),
+                            accountProfile: principal,
                             addition: { kind: 'allowed' as const },
                             operation: IDLE_OPERATION,
                         }));
@@ -534,7 +559,7 @@ export function useSessionAccessDirectory(input: Readonly<{
                 setPages((current) => ({ ...current, team: { ...(current.team ?? EMPTY_PAGE), failed: true, loadingMore: false } }));
             }
         })();
-    }, [advanceGroups, availability, loadTeams, scope, scopeKey, sessionId, teamAddress, teamGroups, teamMembers]);
+    }, [advanceGroups, availability, loadTeams, scope, scopeKey, sessionId, teamAddress, teamGroups, teamMembers, viewer]);
 
     // Context uses the same Team directory page as candidate discovery. Loading
     // it when the editor opens makes eligible Teams visible before a search,
@@ -598,7 +623,7 @@ export function useSessionAccessDirectory(input: Readonly<{
         const accountPage = pages.account ?? EMPTY_PAGE;
         const directoryError = { code: 'session_access_directory_failed', message: t('errors.operationFailed'), retryable: true } as const;
         if (teamAddress) {
-            const accountRows = teamMemberRows(teamMembers.rows);
+            const accountRows = teamMemberRows(teamMembers.rows, viewer);
             const groupCandidateRows: readonly SessionAccessCandidateRowModel[] = teamGroups.rows.map((group) => ({
                 principal: projectSessionAccessPrincipal({
                     kind: 'group', teamId: group.teamId, groupId: group.id, name: group.name,
@@ -613,7 +638,7 @@ export function useSessionAccessDirectory(input: Readonly<{
                 ...(teamMembers.status === 'error' ? { error: directoryError } : {}),
                 cursor: teamMembers.hasMore ? `team-members:${teamMemberQuery}:${teamMembers.rows.length}` : null,
                 hasMore: teamMembers.hasMore, loadingMore: teamMembers.status === 'loading_more',
-                resolverKey: `${scopeKey}:team-members:${revision}:${teamMemberQuery}:${teamMembers.rows.length}:${teamMembers.status}:${operationsKey}`,
+                resolverKey: `${scopeKey}:team-members:${revision}:${teamMemberQuery}:${teamMembers.rows.length}:${teamMembers.status}:${operationsKey}:${viewerPresentationKey}`,
                 resolveCandidates: (query: string) => resolveTeamMember(accountRows, query),
             }, {
                 kind: 'group' as const, title: t('session.access.groups'), candidates: groupCandidateRows,
@@ -635,7 +660,7 @@ export function useSessionAccessDirectory(input: Readonly<{
             cursor: accountPage.nextCursor,
             hasMore: accountPage.nextCursor !== null,
             loadingMore: accountPage.loadingMore ?? false,
-            resolverKey: `${scopeKey}:account:${revision}:${accountPage.query ?? ''}:${accountPage.rows.length}:${accountPage.failed}:${operationsKey}`,
+            resolverKey: `${scopeKey}:account:${revision}:${accountPage.query ?? ''}:${accountPage.rows.length}:${accountPage.failed}:${operationsKey}:${viewerPresentationKey}`,
             resolveCandidates: resolveAccount,
         }];
         // Team and Group grants exist only where the Home shares Sessions.
@@ -644,7 +669,7 @@ export function useSessionAccessDirectory(input: Readonly<{
         built.push({
             kind: 'team',
             title: t('session.access.teams'),
-            candidates: [],
+            candidates: applyOperations(teamPage.rows),
             status: teamPage.failed ? 'error' : teamPage.loadingMore ? 'refreshing' : 'idle',
             ...(teamPage.failed ? { error: directoryError } : {}),
             cursor: teamPage.nextCursor,
@@ -666,7 +691,7 @@ export function useSessionAccessDirectory(input: Readonly<{
         built.push({
             kind: 'group',
             title: t('session.access.groups'),
-            candidates: [],
+            candidates: applyOperations(groupRows(currentGroupPage)),
             status: groupFailed ? 'error' : currentGroupPage.loadingMore ? 'refreshing' : 'idle',
             ...(groupFailed ? { error: directoryError } : {}),
             cursor: groupHasMore ? `${scopeKey}:groups:${currentGroupPage.revision}` : null,
@@ -676,7 +701,7 @@ export function useSessionAccessDirectory(input: Readonly<{
             resolveCandidates: (query) => resolvePaged('group', query),
         });
         return built.filter((section) => principalKinds.includes(section.kind));
-    }, [applyOperations, availability, contextTeamKey, contextTeams, enabled, groupPage, operationsKey, pages, principalKinds, resolveAccount, resolvePaged, resolveTeamMember, revision, scopeKey, teamAddress, teamGroups.hasMore, teamGroups.rows, teamGroups.status, teamMemberQuery, teamMembers.hasMore, teamMembers.rows, teamMembers.status]);
+    }, [applyOperations, availability, contextTeamKey, contextTeams, enabled, groupPage, operationsKey, pages, principalKinds, resolveAccount, resolvePaged, resolveTeamMember, revision, scopeKey, teamAddress, teamGroups.hasMore, teamGroups.rows, teamGroups.status, teamMemberQuery, teamMembers.hasMore, teamMembers.rows, teamMembers.status, viewer, viewerPresentationKey]);
 
     const teamContexts = React.useMemo(() => {
         const discovered = pages.team?.teamContexts ?? [];

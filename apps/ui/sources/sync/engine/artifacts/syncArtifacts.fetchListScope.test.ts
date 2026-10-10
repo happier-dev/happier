@@ -9,6 +9,11 @@ import { sealArtifactPrivateRevisionMetadata } from '@/sync/domains/artifacts/ac
 import { encodeBase64 } from '@/encryption/base64';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { readArtifactProvenance } from '@/components/artifacts/artifactBrowserModel';
+import { ed25519, x25519 } from '@noble/curves/ed25519';
+import { signAccountContentKeyBindingV1, computeContentPublicKeyFingerprint, openEncryptedDataKeyEnvelopeV1,
+    type ArtifactRecipientKeyEnvelopeCommitInputV1 } from '@happier-dev/protocol';
+import { decodeBase64 } from '@/encryption/base64';
+import { shouldRetryError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 
 const runtimeFetch = vi.hoisted(() => vi.fn());
 
@@ -71,10 +76,15 @@ describe('fetchAndApplyArtifactsList', () => {
             actionId: 'session.list', actionArgs: {}, summary: 'List sessions' });
         const head: Artifact = { ...plainHead(2), header: encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(approval)) };
         const detail = createDeferred<Response>();
-        runtimeFetch.mockImplementation(async (url: unknown) => {
+        const detailReads: string[] = [];
+        runtimeFetch.mockImplementation(async (url: unknown, init?: RequestInit) => {
             const target = new URL(String(url));
             if (target.pathname === '/v1/artifacts') return json([head, plainHead(1)]);
-            if (target.pathname === `/v1/artifacts/${head.id}`) return detail.promise;
+            if (target.pathname.startsWith('/v1/artifacts/')) detailReads.push(target.pathname);
+            if (target.pathname === '/v1/artifacts/read') {
+                expect(JSON.parse(String(init?.body))).toEqual({ artifactIds: [head.id] });
+            }
+            if (target.pathname === '/v1/artifacts/read' || target.pathname === `/v1/artifacts/${head.id}`) return detail.promise;
             return json({ ok: true });
         });
         const applied: DecryptedArtifact[][] = [];
@@ -83,13 +93,15 @@ describe('fetchAndApplyArtifactsList', () => {
             applyArtifacts: rows => applied.push(rows) });
         try {
             await vi.waitFor(() => expect(applied.flat().some(row => row.id === plainHead(1).id)).toBe(true));
-            console.info('B08 list publications while detail is pending:', applied.length);
             expect(applied).toHaveLength(1);
             expect(applied.flat().find(row => row.id === head.id)?.body).toBeUndefined();
         } finally {
-            detail.resolve(json({ ...head, body: encodePlainArtifactStoredContent({ body: JSON.stringify(approval) }) }));
+            const artifact = { ...head, publicAudience: 'none', body: encodePlainArtifactStoredContent({ body: JSON.stringify(approval) }) };
+            detail.resolve(json(detailReads.includes('/v1/artifacts/read')
+                ? { items: [{ artifactId: head.id, ok: true, artifact, recipientCensus: null }] } : artifact));
             await sync;
         }
+        expect(detailReads).toEqual(['/v1/artifacts/read']);
         expect(applied.flat().filter(row => row.id === head.id).at(-1)?.body).toBe(JSON.stringify(approval));
         expect(applied).toHaveLength(2);
     });
@@ -106,8 +118,9 @@ describe('fetchAndApplyArtifactsList', () => {
         runtimeFetch.mockImplementation(async (url: unknown) => {
             const target = new URL(String(url));
             if (target.pathname.startsWith('/v1/artifacts')) origins.push(target.origin);
-            return json(target.pathname === '/v1/artifacts' ? [head]
-                : { ...head, body: encodePlainArtifactStoredContent({ body: JSON.stringify(approval) }) });
+            const artifact = { ...head, publicAudience: 'none', body: encodePlainArtifactStoredContent({ body: JSON.stringify(approval) }) };
+            return json(target.pathname === '/v1/artifacts' ? [head] : target.pathname === '/v1/artifacts/read'
+                ? { items: [{ artifactId: head.id, ok: true, recipientCensus: null, artifact }] } : artifact);
         });
         const { fetchAndApplyArtifactsList } = await import('./syncArtifacts');
         const bound = { credentials: { token: 'token' }, encryption: null, artifactDataKeys: new Map(),
@@ -116,6 +129,72 @@ describe('fetchAndApplyArtifactsList', () => {
             signal: new AbortController().signal, applyArtifacts: vi.fn() };
         await fetchAndApplyArtifactsList(bound);
         expect(origins).toEqual(['https://captured-artifact-home.test', 'https://captured-artifact-home.test']);
+    });
+
+    it('batches selected encrypted bodies and rejects a changed caller key before applying details', async () => {
+        const encryption = await Encryption.create(new Uint8Array(32).fill(21));
+        const key = new Uint8Array(32).fill(22);
+        const artifactEncryption = new ArtifactEncryption(key);
+        const dataEncryptionKey = encodeBase64(await encryption.encryptEncryptionKey(key));
+        const changedDataEncryptionKey = encodeBase64(await encryption.encryptEncryptionKey(new Uint8Array(32).fill(23)));
+        const rows: Artifact[] = await Promise.all([1, 2].map(async index => ({ ...plainHead(index),
+            encryptionMode: 'e2ee' as const, dataEncryptionKey,
+            header: await artifactEncryption.encryptHeader({ title: `Profile ${index}`, kind: 'launch-profile.v1' }),
+            body: await artifactEncryption.encryptBody({ body: `Profile body ${index}` }), publicAudience: 'none' as const })));
+        const paths: string[] = [];
+        let changed = false;
+        const signingSecret = new Uint8Array(32).fill(24);
+        const signingPublic = ed25519.getPublicKey(signingSecret);
+        const recipientSecret = new Uint8Array(32).fill(25);
+        const recipientPublic = x25519.getPublicKey(recipientSecret);
+        const recipientFingerprint = computeContentPublicKeyFingerprint(recipientPublic);
+        const signature = signAccountContentKeyBindingV1({ accountSigningSecretKey: new Uint8Array([...signingSecret, ...signingPublic]),
+            contentPublicKey: recipientPublic });
+        const prepared: ArtifactRecipientKeyEnvelopeCommitInputV1[] = [];
+        const census = (artifact: Artifact) => ({ artifactId: artifact.id, ownerAccountId: 'owner', access: 'owner', encryptionMode: 'e2ee',
+            dataEncryptionKey, callerDataEncryptionKey: changed ? changedDataEncryptionKey : dataEncryptionKey,
+            recipients: [{ recipientAccountId: 'recipient', contentKey: { status: 'available',
+                accountSigningPublicKey: Buffer.from(signingPublic).toString('hex'), contentPublicKey: encodeBase64(recipientPublic),
+                contentPublicKeySignature: encodeBase64(signature) }, contentPublicKeyFingerprint: recipientFingerprint,
+                encryptedDataKey: null, recipientContentPublicKeyFingerprint: null }] });
+        const request = vi.fn(async (path: string, init?: RequestInit) => {
+            const target = new URL(path, 'https://captured.test');
+            paths.push(target.pathname);
+            if (target.pathname === '/v1/artifacts') return json(rows.map(({ body: _body, ...head }) => head));
+            if (target.pathname === '/v1/artifacts/read') {
+                expect(JSON.parse(String(init?.body))).toEqual({ artifactIds: [...rows].reverse().map(row => row.id) });
+                return json({ items: [...rows].reverse().map(artifact => ({ artifactId: artifact.id, ok: true, artifact,
+                    recipientCensus: census(artifact) })) });
+            }
+            if (target.pathname.endsWith('/key-envelopes')) {
+                const input = JSON.parse(String(init?.body)) as ArtifactRecipientKeyEnvelopeCommitInputV1;
+                expect(input.expectedDataEncryptionKey).toBe(dataEncryptionKey);
+                expect(input.recipientKeyEnvelopes.map(item => item.recipientAccountId)).toEqual(['recipient']);
+                expect(openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(input.recipientKeyEnvelopes[0]!.encryptedDataKey),
+                    recipientSecretKeyOrSeed: recipientSecret })).toEqual(key);
+                prepared.push(input);
+                return json({ appliedRecipientAccountIds: ['recipient'], skippedRecipientAccountIds: [] });
+            }
+            const artifact = rows.find(row => target.pathname === `/v1/artifacts/${row.id}`
+                || target.pathname === `/v1/artifacts/${row.id}/access/recipients`);
+            if (artifact) return json(target.pathname.endsWith('/recipients') ? census(artifact) : artifact);
+            return json({ error: 'unexpected request' });
+        });
+        const { fetchAndApplyArtifactsList } = await import('./syncArtifacts');
+        const applied: DecryptedArtifact[][] = [];
+        const params = { credentials: { token: 'token' }, encryption, artifactDataKeys: new Map(), request,
+            applyArtifacts: (items: DecryptedArtifact[]) => applied.push(items) };
+        await fetchAndApplyArtifactsList(params);
+        expect(paths.filter(path => !path.endsWith('/key-envelopes'))).toEqual(['/v1/artifacts', '/v1/artifacts/read']);
+        expect(prepared.map(input => input.artifactId).sort()).toEqual(rows.map(row => row.id).sort());
+        expect(applied.at(-1)?.map(row => row.body)).toEqual(['Profile body 2', 'Profile body 1']);
+        changed = true;
+        applied.length = 0;
+        prepared.length = 0;
+        await expect(fetchAndApplyArtifactsList(params)).rejects.toMatchObject({ code: 'artifact_data_key_changed' });
+        expect(prepared).toEqual([]);
+        expect(applied).toHaveLength(1);
+        expect(applied[0]?.every(row => row.body === undefined)).toBe(true);
     });
 
     it('drops fetched artifacts when the captured sync scope is stale before apply', async () => {
@@ -131,6 +210,48 @@ describe('fetchAndApplyArtifactsList', () => {
         });
 
         expect(applyArtifacts).not.toHaveBeenCalled();
+    });
+
+    it('skips disappeared details but rejects refused or incomplete batches after publishing headers', async () => {
+        const head = { ...plainHead(1), header: encodePlainArtifactStoredContent({ title: 'Profile', kind: 'launch-profile.v1' }) };
+        let batch: unknown = { items: [{ artifactId: head.id, ok: false, error: 'artifact_not_found', status: 404, retryable: false }] };
+        const request = async (path: string) => json(path.startsWith('/v1/artifacts?') ? [head] : batch);
+        const { fetchAndApplyArtifactsList } = await import('./syncArtifacts');
+        const applied: DecryptedArtifact[][] = [];
+        const params = { credentials: { token: 'token' }, encryption: null, artifactDataKeys: new Map(), request,
+            applyArtifacts: (rows: DecryptedArtifact[]) => applied.push(rows) };
+        await fetchAndApplyArtifactsList(params);
+        expect(applied).toHaveLength(1);
+        batch = { items: [{ artifactId: head.id, ok: false, error: 'artifact_content_unavailable', status: 409, retryable: false }] };
+        applied.length = 0;
+        const refusal = await fetchAndApplyArtifactsList(params).catch((error: unknown) => error);
+        expect(refusal).toMatchObject({ code: 'artifact_content_unavailable' });
+        expect(shouldRetryError(refusal)).toBe(false);
+        expect(applied).toHaveLength(1);
+        batch = { items: [{ artifactId: head.id, ok: false, error: 'artifact_content_unavailable', status: 500, retryable: true }] };
+        const ownerFailure = await fetchAndApplyArtifactsList(params).catch((error: unknown) => error);
+        expect(ownerFailure).toMatchObject({ code: 'artifact_content_unavailable', status: 500 });
+        expect(shouldRetryError(ownerFailure)).toBe(true);
+        // Census refuses with the existing generic access error, not the exact detail's terminal409.
+        batch = { items: [{ artifactId: head.id, ok: false, error: 'artifact_content_unavailable', status: 409, retryable: true }] };
+        const censusFailure = await fetchAndApplyArtifactsList(params).catch((error: unknown) => error);
+        expect(censusFailure).toMatchObject({ code: 'artifact_content_unavailable', status: 409 });
+        expect(shouldRetryError(censusFailure)).toBe(true);
+        batch = { items: [] };
+        applied.length = 0;
+        await expect(fetchAndApplyArtifactsList(params)).rejects.toMatchObject({ code: 'artifact_content_unavailable' });
+        expect(applied).toHaveLength(1);
+    });
+
+    it('keeps a failed batch HTTP read retryable through the existing retry owner', async () => {
+        const head = { ...plainHead(1), header: encodePlainArtifactStoredContent({ title: 'Profile', kind: 'launch-profile.v1' }) };
+        const request = async (path: string) => path.startsWith('/v1/artifacts?') ? json([head])
+            : Response.json({ error: 'artifact_content_unavailable' }, { status: 500 });
+        const { fetchAndApplyArtifactsList } = await import('./syncArtifacts');
+        const refusal = await fetchAndApplyArtifactsList({ credentials: { token: 'token' }, encryption: null,
+            artifactDataKeys: new Map(), request, applyArtifacts: () => {} }).catch((error: unknown) => error);
+        expect(refusal).toMatchObject({ code: 'artifact_content_unavailable', status: 500 });
+        expect(shouldRetryError(refusal)).toBe(true);
     });
 
     it.each(['plain', 'e2ee'] as const)('retains opened %s private source on cold header-only Browser refresh without loading document bodies', async mode => {

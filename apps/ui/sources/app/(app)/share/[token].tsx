@@ -19,7 +19,7 @@ import {
     type RawMessageNormalizationInput,
 } from "@happier-dev/session-core/raw";
 import { useAuth } from '@/auth/context/AuthContext';
-import { createReducer, reducer, type ReducerState } from "@happier-dev/session-core/reducer";
+import type { ReducerState } from "@happier-dev/session-core/reducer";
 import { TranscriptList } from '@/components/sessions/transcript/TranscriptList';
 import { createReadOnlySessionTranscriptSource } from '@/components/sessions/transcript/source/readOnlySessionTranscriptSource';
 import { SessionTranscriptSourceProvider } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
@@ -29,7 +29,7 @@ import { serverFetch } from '@/sync/http/client';
 import type { TranscriptOlderPageLoadResult } from "@happier-dev/session-core/messages";
 import type { Metadata } from '@happier-dev/session-core/state';
 import type { AgentState } from '@happier-dev/session-core/state';
-import { sortNormalizedMessagesOldestFirst } from '@/utils/sessions/sortNormalizedMessagesOldestFirst';
+import { reducePublicShareTranscript } from '@/components/sessions/sharing/publicShareTranscript';
 import {
     parseDecryptedSessionMetadata,
     parsePlainSessionMetadata,
@@ -232,19 +232,6 @@ function buildPublicShareMessagesPath(params: Readonly<{
     return `/v1/public-share/${params.token}/messages${search ? `?${search}` : ''}`;
 }
 
-function reducePublicShareTranscript(
-    normalized: readonly NormalizedMessage[],
-    agentState: AgentState,
-): Pick<PublicShareDataset, 'messages' | 'reducerState'> {
-    // Reduction is not incremental here: an older page lands BEFORE rows the reducer has
-    // already folded, so the whole accepted set is reduced again from a fresh state.
-    const ordered = [...normalized];
-    sortNormalizedMessagesOldestFirst(ordered);
-    const reducerState = createReducer();
-    const messages = reducer(reducerState, ordered, agentState).messages;
-    return { messages, reducerState };
-}
-
 function mergePublicShareNormalizedPages(
     existing: readonly NormalizedMessage[],
     incoming: readonly NormalizedMessage[],
@@ -440,7 +427,7 @@ export default memo(function PublicShareViewerScreen() {
                 setDataset({
                     share: data,
                     decryptedMetadata: plainMetadata,
-                    ...reducePublicShareTranscript(normalized, plainAgentState),
+                    ...reducePublicShareTranscript(normalized, plainAgentState, messagesData.hasMore === false),
                     normalized,
                     agentState: plainAgentState,
                     sessionEncryption: null,
@@ -503,7 +490,7 @@ export default memo(function PublicShareViewerScreen() {
                 setDataset({
                     share: data,
                     decryptedMetadata: e2eeMetadata,
-                    ...reducePublicShareTranscript(normalized, e2eePresentationAgentState),
+                    ...reducePublicShareTranscript(normalized, e2eePresentationAgentState, messagesData.hasMore === false),
                     normalized,
                     agentState: e2eePresentationAgentState,
                     sessionEncryption,
@@ -596,7 +583,7 @@ export default memo(function PublicShareViewerScreen() {
             const loaded = mergedNormalized.length - current.normalized.length;
             setDataset({
                 ...current,
-                ...reducePublicShareTranscript(mergedNormalized, current.agentState),
+                ...reducePublicShareTranscript(mergedNormalized, current.agentState, page.hasMore === false),
                 normalized: mergedNormalized,
                 hasMore,
                 nextBeforeSeq,

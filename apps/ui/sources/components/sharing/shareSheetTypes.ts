@@ -5,8 +5,8 @@ import type { SelectionListSectionDescriptor } from '@/components/ui/selectionLi
 
 /**
  * The one share sheet's vocabulary. Every shareable thing (a session, a workflow, a role, a
- * launch profile) grants the same three levels to the same principals; what a level *means* is the
- * adapter's, so the sheet carries level values and asks its adapter for words.
+ * launch profile) uses the same level vocabulary and principals. The adapter declares its supported
+ * subset and what each level means; the sheet carries values and asks its adapter for words.
  */
 export type ShareAccessLevel = 'view' | 'edit' | 'admin';
 /** The one level order every sheet shows, whatever order an owner or a server returns. */
@@ -100,6 +100,7 @@ export type ShareSheetSectionContext = Readonly<{
     /** Prefix for every testID this sheet renders (empty for the default host). */
     idPrefix: string;
     editable: boolean;
+    directoryKind?: ShareDirectoryKind;
     onExpand(key: string): void;
 }>;
 export type ShareSheetAdapterSections = Readonly<{
@@ -121,11 +122,18 @@ export type ShareSheetAdapter<TRow extends ShareGrantRowModel = ShareGrantRowMod
     namespace: string;
     /** The list's accessible name. */
     title: string;
-    levels: Readonly<Record<ShareAccessLevel, ShareLevelPresentation>>;
+    /** Only levels the domain actually accepts. The sheet never invents missing levels. */
+    levels: Readonly<Partial<Record<ShareAccessLevel, ShareLevelPresentation>>>;
     /** The domain's sharing rules, one sentence each. */
     notes?: readonly string[];
     /** The in-app route Copy link copies; absent when the thing has no link yet. */
     linkPath?: string;
+    /** The common public-link row; each domain supplies its current state and its existing editor. */
+    publicLink?: Readonly<{
+        stateLabel: string;
+        onOpen?: () => void;
+        renderContent?: (context: ShareSheetSectionContext) => ReactNode;
+    }>;
     /** Hands the person a copy instead of access. */
     sendCopy?: () => void;
     /** Extra subtitle words for a principal (for example "Responsible"). */
@@ -134,7 +142,11 @@ export type ShareSheetAdapter<TRow extends ShareGrantRowModel = ShareGrantRowMod
     showsLevelLock?: (row: TRow) => boolean;
     /** Domain controls inside an expanded grant row. */
     renderGrantDetails?: (row: TRow, context: ShareSheetSectionContext) => ReactNode;
+    /** Domain words for the same two-step row removal (for example leaving one's own share). */
+    removalLabels?: (row: TRow) => Readonly<{ request: string; confirm: string }> | undefined;
     sections?: (context: ShareSheetSectionContext) => ShareSheetAdapterSections;
+    /** Safety disclosure needed before adding from a pushed directory, not only the root roster. */
+    showLeadingOnDirectorySteps?: boolean;
 }>;
 
 /**

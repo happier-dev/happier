@@ -205,6 +205,21 @@ describe('SessionPublicLinkSection', () => {
         expect(screen.findByTestId('session-public-link-qr-code')).not.toBeNull();
     });
 
+    it('lets the user confirm a public Session link with visual network access off', async () => {
+        publication.getPublicLink.mockResolvedValue(null);
+        publication.createPublicLink.mockResolvedValue({ id: 'p1', expiresAt: null, useCount: 0, maxUses: null,
+            isConsentRequired: true, networkOff: true, updatedAt: 1 });
+        const screen = await renderScreen(<PublicLink />);
+        await vi.waitFor(() => expect(status(screen)).toBe('Off'));
+        await screen.pressByTestIdAsync('session-public-link-create');
+        const network = screen.findByTestId('session-public-link-network-off');
+        expect(network).not.toBeNull();
+        await act(async () => { network!.props.onValueChange(true); });
+        await screen.pressByTestIdAsync('session-public-link-options-create');
+        expect(publication.createPublicLink).toHaveBeenCalledWith(expect.objectContaining({ networkOff: true }));
+        expect(status(screen)).toBe('On');
+    });
+
     it('admits one publication request while a create is in flight', async () => {
         const deferred = createDeferred<Record<string, unknown>>();
         publication.getPublicLink.mockResolvedValue(null);
@@ -266,7 +281,7 @@ describe('SessionPublicLinkSection', () => {
         // The physical executor owns one exact replay. If it still reports an
         // unknown outcome, this controller never guesses from mutable settings.
         await makeLink(screen);
-        await vi.waitFor(() => expect(modal.alert).toHaveBeenCalled());
+        await vi.waitFor(() => expect(screen.findByTestId('session-public-link-mutation-error')).not.toBeNull());
         // The options stay open after a failure so the person can try again; closing them shows the link.
         await screen.pressByTestIdAsync('session-public-link-options-cancel');
         expect(publication.issuedTokens).toHaveLength(2);
@@ -294,7 +309,7 @@ describe('SessionPublicLinkSection', () => {
         await vi.waitFor(() => expect(shownUrl(screen)).toBeDefined());
 
         await makeLink(screen);
-        await vi.waitFor(() => expect(modal.alert).toHaveBeenCalled());
+        await vi.waitFor(() => expect(screen.findByTestId('session-public-link-mutation-error')).not.toBeNull());
         expect(publication.getPublicLink).toHaveBeenCalledTimes(1);
     });
 
@@ -412,10 +427,26 @@ describe('SessionPublicLinkSection', () => {
         const screen = await renderScreen(<PublicLink />);
         await vi.waitFor(() => expect(status(screen)).toBe('Off'));
         await makeLink(screen);
-        await vi.waitFor(() => expect(modal.alert).toHaveBeenCalled());
+        await vi.waitFor(() => expect(screen.findByTestId('session-public-link-mutation-error')).not.toBeNull());
 
         expect(publication.createPublicLink).toHaveBeenCalledTimes(1);
         expect(publication.getPublicLink).toHaveBeenCalledTimes(1);
+    });
+
+    it('clears the card mutation refusal when its Home and Account scope changes', async () => {
+        publication.getPublicLink.mockResolvedValue(null);
+        publication.createPublicLink.mockRejectedValue(new SessionAccessApiError('public_share_isolation_unavailable', 503));
+        const screen = await renderScreen(<PublicLink />);
+        await vi.waitFor(() => expect(status(screen)).toBe('Off'));
+        await makeLink(screen);
+        await vi.waitFor(() => expect(screen.findByTestId('session-public-link-mutation-error')).not.toBeNull());
+        expect(modal.alert).not.toHaveBeenCalled();
+        const otherScope = { serverId: 'home-two', accountId: 'other-account' };
+        primePublicLinkFeature(otherScope.serverId, true);
+        await act(async () => { screen.tree.update(<PublicLink scope={otherScope} />); });
+        await vi.waitFor(() => expect(status(screen)).toBe('Off'));
+        expect(screen.findByTestId('session-public-link-mutation-error')).toBeNull();
+        expect(screen.findByTestId('session-public-link-options-create')).toBeNull();
     });
 
     it('refreshes every mounted owner controller for the exact Home and Session only', async () => {

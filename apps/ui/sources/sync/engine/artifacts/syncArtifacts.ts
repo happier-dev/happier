@@ -10,6 +10,7 @@ import {
     createArtifactAccessApi,
     fetchArtifact as fetchArtifactApi,
     fetchArtifacts as fetchArtifactsApi,
+    fetchArtifactReadBatch,
     encodeArtifactListCursor,
     updateArtifact as updateArtifactApi,
     fetchArtifactRevisions,
@@ -26,6 +27,7 @@ import type {
     ArtifactBodyInput,
     ArtifactCreateRequest,
     ArtifactLockedReason,
+    ArtifactHtmlPreview,
     ArtifactUpdateRequest,
     DecryptedArtifact,
 } from '@/sync/domains/artifacts/artifactTypes';
@@ -37,11 +39,13 @@ import { runArtifactRecipientKeyPreparationV1, prepareArtifactRecipientKeyEnvelo
 import { withArtifactExcerptV1 } from '@happier-dev/protocol/artifacts/artifactExcerptV1';
 import { canShareArtifactWriteContentV1, prepareArtifactHeaderForRevisionV1, prepareArtifactHeaderForBodyV1 } from '@happier-dev/protocol/artifacts/artifactHeaderRestorationV1';
 import { ArtifactPublicAudienceV1ReadSchema, type ArtifactRevisionV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
-import { isArtifactHtmlHeaderV1, artifactHtmlBundleFromBodyV1, buildArtifactHtmlPreviewUrlV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
+import { isArtifactHtmlHeaderV1, artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import { listArtifactHeadersV1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
+import { readUsageNoticeArtifactHeaderV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { hashArtifactBinaryContent, openArtifactBinaryContent, sealArtifactBinaryContent } from '@/sync/domains/artifacts/artifactBinaryContent';
 import { openArtifactPrivateRevisionMetadata, sealArtifactPrivateRevisionMetadata } from '@/sync/domains/artifacts/accountArtifactEnvelope';
 import type { ArtifactRevisionProvenanceV1 } from '@happier-dev/protocol';
+import type { ArtifactAccessRecipientCensusResponseV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 
 function prepareArtifactBody(input: ArtifactBodyInput): ArtifactBodyV1 | null {
     if (input !== null && typeof input === 'object' && 'bytes' in input) return ArtifactBlobReferenceV1Schema.parse({
@@ -650,12 +654,25 @@ export async function fetchAndApplyArtifactsList(params: {
             const isActionableApprovalStatus = header?.approvalStatus === 'open'
                 || header?.approvalStatus === 'approved'
                 || header?.approvalStatus === 'executing';
-            return decrypted.isDecrypted && (header?.kind === 'launch-profile.v1' || (isApprovalIndex && isActionableApprovalStatus));
+            const isOpenUsageNotice = readUsageNoticeArtifactHeaderV1(decrypted.rawHeader ?? header)?.status === 'open';
+            return decrypted.isDecrypted && (header?.kind === 'launch-profile.v1'
+                || (isApprovalIndex && isActionableApprovalStatus) || isOpenUsageNotice);
         });
-        const details = await Promise.all(detailHeads.map(async artifact => {
-            if (!shouldContinue()) return null;
-            return fetchArtifactWithBodyFromApi({ credentials, artifactId: artifact.id, encryption, artifactDataKeys,
-                request: params.request, signal: params.signal });
+        if (detailHeads.length === 0) return;
+        const detailReads = await fetchArtifactReadBatch(credentials, detailHeads.map(artifact => artifact.id), params);
+        if (!shouldContinue()) return;
+        const artifacts: Artifact[] = [];
+        for (const item of detailReads) {
+            if (item.ok) artifacts.push(item.artifact);
+            else if (item.error !== 'artifact_not_found') throw new HappyError(item.error, item.retryable,
+                { code: item.error, status: item.status });
+        }
+        await resolveArtifactDataKeys({ artifacts, encryption, artifactDataKeys });
+        if (!shouldContinue()) return;
+        const details = await Promise.all(detailReads.map(async item => {
+            if (!item.ok || !shouldContinue()) return null;
+            return openArtifactWithRecipientKeyPreparation({ ...params, credentials, artifact: item.artifact,
+                recipientCensus: item.recipientCensus });
         }));
         if (!shouldContinue()) return;
         const hydrated = details.filter((artifact): artifact is DecryptedArtifact => artifact !== null);
@@ -677,36 +694,41 @@ export async function fetchArtifactWithBodyFromApi(params: {
     artifactDataKeys: ArtifactDataKeyCache;
     signal?: AbortSignal;
 }): Promise<DecryptedArtifact | null> {
-    const { credentials, artifactId, encryption, artifactDataKeys } = params;
-
     try {
         params.signal?.throwIfAborted();
-        const artifact = await fetchArtifactApi(credentials, artifactId, { request: params.request, signal: params.signal });
-        const opened = await decryptArtifactWithBody({
-            artifact,
-            encryption,
-            artifactDataKeys,
-        });
-        params.signal?.throwIfAborted();
-        // Every current HTTP E2EE open performs the named key-holder preparation pass.
-        if (opened?.isDecrypted && opened.storageMode === 'e2ee') {
-            const key = artifactDataKeys.get(artifactId);
-            if (!key || key.envelope !== artifact.dataEncryptionKey) {
-                throw Object.assign(new Error('artifact_content_unavailable'), { code: 'artifact_content_unavailable' });
-            }
-            const accessApi = createArtifactAccessApi(credentials, { request: params.request });
-            await runArtifactRecipientKeyPreparationV1({ artifactId, dataKey: key.dataKey,
-                provenanceDataKey: key.provenanceDataKey, openedProvenanceDataEncryptionKey: key.provenanceEnvelope,
-                openedDataEncryptionKey: key.envelope, randomBytes: getRandomBytes, signal: params.signal,
-                readCensus: () => accessApi.readRecipients(artifactId, params.signal),
-                commit: (input) => accessApi.commitKeyEnvelopes(input, params.signal),
-            });
-        }
-        return opened;
+        const artifact = await fetchArtifactApi(params.credentials, params.artifactId, { request: params.request, signal: params.signal });
+        return await openArtifactWithRecipientKeyPreparation({ ...params, artifact });
     } catch (error) {
         if (error instanceof HappyError && error.status === 404) return null;
         throw error;
     }
+}
+
+/** Both authenticated read forms open content and prepare keys through the same owner. */
+async function openArtifactWithRecipientKeyPreparation(params: Readonly<{
+    credentials: AuthCredentials; request?: ArtifactApiOptions['request']; signal?: AbortSignal;
+    artifact: Artifact; encryption: Encryption | null; artifactDataKeys: ArtifactDataKeyCache;
+    recipientCensus?: ArtifactAccessRecipientCensusResponseV1 | null;
+}>): Promise<DecryptedArtifact | null> {
+    const { artifact, encryption, artifactDataKeys } = params;
+    params.signal?.throwIfAborted();
+    const opened = await decryptArtifactWithBody({ artifact, encryption, artifactDataKeys });
+    params.signal?.throwIfAborted();
+    if (opened?.isDecrypted && opened.storageMode === 'e2ee') {
+        const key = artifactDataKeys.get(artifact.id);
+        if (!key || key.envelope !== artifact.dataEncryptionKey) {
+            throw Object.assign(new Error('artifact_content_unavailable'), { code: 'artifact_content_unavailable' });
+        }
+        const accessApi = createArtifactAccessApi(params.credentials, { request: params.request });
+        await runArtifactRecipientKeyPreparationV1({ artifactId: artifact.id, dataKey: key.dataKey,
+            provenanceDataKey: key.provenanceDataKey, openedProvenanceDataEncryptionKey: key.provenanceEnvelope,
+            openedDataEncryptionKey: key.envelope, randomBytes: getRandomBytes, signal: params.signal,
+            readCensus: () => params.recipientCensus ? Promise.resolve(params.recipientCensus)
+                : accessApi.readRecipients(artifact.id, params.signal),
+            commit: input => accessApi.commitKeyEnvelopes(input, params.signal),
+        });
+    }
+    return opened;
 }
 
 export async function fetchArtifactBinaryFromApi(params: Readonly<{
@@ -746,7 +768,7 @@ export async function fetchArtifactHtmlPreviewFromApi(params: Readonly<{
     forbiddenOrigins?: readonly string[];
     /** A row already opened by the same captured keyholding operation. */
     artifact?: DecryptedArtifact;
-}>): Promise<string> {
+}>): Promise<ArtifactHtmlPreview> {
     const artifact = params.artifact ?? await fetchArtifactWithBodyFromApi(params);
     if (!artifact?.isDecrypted || !artifact.storageMode || !isArtifactHtmlHeaderV1(artifact.rawHeader ?? artifact.header)
         || artifact.body === null || artifact.body === undefined)
@@ -755,13 +777,16 @@ export async function fetchArtifactHtmlPreviewFromApi(params: Readonly<{
         : await openFetchedArtifactBinary({ ...params, reference: artifact.body }, artifact.storageMode);
     const bundle = artifactHtmlBundleFromBodyV1(body, typeof artifact.body === 'string' ? undefined : artifact.body.mime);
     const url = await fetchArtifactHtmlPreviewLocation(params.credentials, params.artifactId, params);
-    return buildArtifactHtmlPreviewUrlV1({ url, bundle, forbiddenOrigins: params.forbiddenOrigins });
+    if (params.forbiddenOrigins?.some(origin => new URL(origin).origin === new URL(url).origin)) {
+        throw new HappyError('HTML preview must use an isolated origin', false, { code: 'artifact_html_preview_unavailable' });
+    }
+    return Object.freeze({ url, bundle });
 }
 
 export type ArtifactViewRead = Readonly<{
     artifact: DecryptedArtifact;
     binaryBytes?: Uint8Array;
-    htmlPreviewUrl?: string;
+    htmlPreview?: ArtifactHtmlPreview;
 }>;
 
 /** Open the head and its preview within one finite captured Account operation. */
@@ -774,7 +799,7 @@ export async function fetchArtifactForViewFromApi(params: Readonly<{
     if (!artifact) return null;
     if (!artifact.isDecrypted) return { artifact };
     if (isArtifactHtmlHeaderV1(artifact.rawHeader ?? artifact.header)) {
-        return { artifact, htmlPreviewUrl: await fetchArtifactHtmlPreviewFromApi({ ...params, artifact }) };
+        return { artifact, htmlPreview: await fetchArtifactHtmlPreviewFromApi({ ...params, artifact }) };
     }
     const reference = artifact.body;
     if (reference !== null && reference !== undefined && typeof reference === 'object'
@@ -1018,58 +1043,6 @@ export async function createArtifactWithHeaderViaApi(params: {
         return artifactId;
     } catch (error) {
         console.error('Failed to create artifact:', error);
-        throw error;
-    }
-}
-
-export async function updateArtifactViaApi(params: {
-    credentials: AuthCredentials;
-    request?: ArtifactApiOptions['request'];
-    serverId?: string;
-    artifactId: string;
-    title: string | null;
-    body: ArtifactBodyInput;
-    sessions?: string[];
-    draft?: boolean;
-    encryption: Encryption | null;
-    artifactDataKeys: ArtifactDataKeyCache;
-    getArtifact: (artifactId: string) => DecryptedArtifact | undefined;
-    updateArtifact: (artifact: DecryptedArtifact) => void;
-}): Promise<void> {
-    const { credentials, artifactId, title, body, sessions, draft, encryption, artifactDataKeys, getArtifact, updateArtifact } =
-        params;
-
-    try {
-        // Get current artifact from storage
-        const currentArtifact = getArtifact(artifactId);
-        if (!currentArtifact) {
-            throw new Error(`Artifact ${artifactId} not found`);
-        }
-        if (!currentArtifact.isDecrypted || !currentArtifact.rawHeader) {
-            throw Object.assign(new Error('Artifact content is unavailable. Please refresh and try again.'), { code: 'content_unavailable' });
-        }
-
-        const header: ArtifactHeader = {
-            ...currentArtifact.rawHeader,
-            title,
-            ...(sessions ? { sessions } : {}),
-            ...(typeof draft === 'boolean' ? { draft } : {}),
-        };
-
-        await updateArtifactWithHeaderViaApi({
-            credentials,
-            request: params.request,
-            serverId: params.serverId,
-            artifactId,
-            header,
-            body,
-            encryption,
-            artifactDataKeys,
-            getArtifact,
-            updateArtifact,
-        });
-    } catch (error) {
-        console.error('Failed to update artifact:', error);
         throw error;
     }
 }

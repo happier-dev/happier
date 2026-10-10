@@ -98,6 +98,47 @@ function createPublicExternalSessionOperationPresentation() {
 }
 
 describe('PublicShareViewerScreen (e2ee)', () => {
+    it('retains completed shared questions in an encrypted complete empty history', async () => {
+        transcriptListSpy.mockClear();
+        serverFetchSpy.mockReset();
+        decryptDataKeyFromPublicShareSpy.mockReset();
+        const dataKey = new Uint8Array(32).fill(5);
+        decryptDataKeyFromPublicShareSpy.mockResolvedValue(dataKey);
+        const encryptor = new AES256Encryption(dataKey);
+        const [metadataBytes] = await encryptor.encrypt([{ v: 1, publicAgentState: { completedRequests: {
+            'old-question': {
+                tool: 'AskUserQuestion', createdAt: 1,
+                completedAt: 2, status: 'approved',
+            },
+        } } }]);
+        serverFetchSpy
+            .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({
+                session: {
+                    id: 's1', seq: 0, encryptionMode: 'e2ee', createdAt: 1, updatedAt: 2,
+                    active: false, activeAt: 2, metadataVersion: 1, metadataLayoutVersion: 1,
+                    metadata: encodeBase64(metadataBytes, 'base64'),
+                },
+                owner: { id: 'u1', username: 'alice', firstName: null, lastName: null, avatar: null },
+                accessLevel: 'view', encryptedDataKey: 'encrypted-data-key-placeholder', isConsentRequired: false,
+            }) })
+            .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({
+                messages: [], hasMore: false, nextBeforeSeq: null,
+            }) });
+        const { default: PublicShareViewerScreen } = await import('@/app/(app)/share/[token]');
+        const screen = await renderScreen(<PublicShareViewerScreen />);
+        try {
+            await flushHookEffects({ cycles: 1, turns: 2 });
+            const rows: import('@happier-dev/session-core/messages').Message[] =
+                transcriptListSpy.mock.calls.at(-1)?.[0].messages ?? [];
+            expect(rows).toEqual([expect.objectContaining({ tool: expect.objectContaining({
+                permission: expect.objectContaining({ id: 'old-question' }),
+                state: 'completed', result: 'Approved',
+            }) })]);
+        } finally {
+            await screen.unmount();
+        }
+    });
+
     it('fails closed when an encrypted share message cannot be decrypted instead of silently skipping it', async () => {
         transcriptListSpy.mockClear();
         serverFetchSpy.mockReset();

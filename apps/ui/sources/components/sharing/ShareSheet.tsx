@@ -28,6 +28,10 @@ const styles = StyleSheet.create(theme => ({
         flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: PAGE_LIST_METRICS.groupHeadingGapPx },
     handoffs: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', flexShrink: 1, gap: PAGE_LIST_METRICS.groupHeadingGapPx },
     action: { flexGrow: 0 },
+    phoneFooter: { flexDirection: 'column', alignItems: 'stretch' },
+    phoneHandoffs: { alignSelf: 'stretch', justifyContent: 'space-between', flexWrap: 'nowrap' },
+    phoneAction: { flex: 1, minWidth: 0 },
+    phoneDone: { alignSelf: 'stretch' },
 }));
 const noop = () => {};
 
@@ -49,7 +53,7 @@ export type ShareSheetProps<TRow extends ShareGrantRowModel> = Readonly<{
  */
 export function ShareSheet<TRow extends ShareGrantRowModel>(props: ShareSheetProps<TRow>): React.ReactElement {
     const { model, actions, adapter, presentation, onRequestClose, testID } = props;
-    const footerButtonSize = useDeviceType() === 'phone' ? 'normal' : 'small';
+    const phone = useDeviceType() === 'phone';
     const [expanded, setExpanded] = React.useState<string | null>(props.openRowRequest?.key ?? null);
     React.useEffect(() => {
         if (props.openRowRequest) setExpanded(props.openRowRequest.key);
@@ -104,6 +108,7 @@ export function ShareSheet<TRow extends ShareGrantRowModel>(props: ShareSheetPro
             inputValue={model.directory.query} onChangeInputValue={actions.setQuery}
             selectedOptionId={expanded} onSelect={noop} onRequestClose={onRequestClose ?? noop}
             optionsHostInlineControls dynamicSectionCache={dynamicSectionCache}
+            selectionMark="none"
             listAccessibilityLabel={adapter.title} testID={`${testID}:list`}
             inputTestID={idPrefix ? `${testID}:${adapter.namespace}-search` : `${adapter.namespace}-search`}
             autoFocusInputOnWeb={presentation === 'compact'} autoFocusInputOnNative={false}
@@ -114,17 +119,17 @@ export function ShareSheet<TRow extends ShareGrantRowModel>(props: ShareSheetPro
                 error: source.error?.message, onEndReached: () => actions.loadMore(source.kind), onRetry: () => actions.retryDirectory(source.kind),
                 loadingLabel: t('common.loading'), moreLabel: t('shareSheet.browseAll'), retryLabel: t('common.retry'),
                 endReachedLabel: t('shareSheet.allLoaded') } : undefined} />
-        {presentation === 'full' && (copyLink || adapter.sendCopy || onRequestClose) ? <View style={styles.footer}>
-            <View style={styles.handoffs}>
-                {copyLink ? <RoundButton size={footerButtonSize} display="inverted" style={styles.action}
+        {presentation === 'full' && (copyLink || adapter.sendCopy || onRequestClose) ? <View style={[styles.footer, phone ? styles.phoneFooter : null]}>
+            <View style={[styles.handoffs, phone ? styles.phoneHandoffs : null]}>
+                {copyLink ? <RoundButton size="small" display="inverted" style={phone ? styles.phoneAction : styles.action} titleNumberOfLines="complete"
                     testID={`${idPrefix}${adapter.namespace}-copy-link`}
                     title={t(copyLink.copied ? 'shareSheet.linkCopied' : 'shareSheet.copyLink')}
                     leading={<ShareHandoffIcon name="link" />} onPress={copyLink.onCopy} /> : null}
-                {adapter.sendCopy ? <RoundButton size={footerButtonSize} display="inverted" style={styles.action}
+                {adapter.sendCopy ? <RoundButton size="small" display="inverted" style={phone ? styles.phoneAction : styles.action} titleNumberOfLines="complete"
                     testID={`${idPrefix}${adapter.namespace}-send-copy`} title={t('shareSheet.sendCopy')}
                     leading={<ShareHandoffIcon name="copy" />} onPress={adapter.sendCopy} /> : null}
             </View>
-            {onRequestClose ? <RoundButton size={footerButtonSize} style={styles.action} testID={`${idPrefix}${adapter.namespace}-done`}
+            {onRequestClose ? <RoundButton size="small" style={phone ? styles.phoneDone : styles.action} testID={`${idPrefix}${adapter.namespace}-done`}
                 title={t('common.done')} onPress={onRequestClose} /> : null}
         </View> : null}
     </View>;

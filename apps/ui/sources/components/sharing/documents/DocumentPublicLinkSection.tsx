@@ -9,6 +9,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import type { useDocumentPublicLinkController } from './useDocumentPublicLinkController';
+import type { DocumentShareKind } from './documentShareAdapter';
 
 const styles = StyleSheet.create(theme => ({
     audit: { marginHorizontal: 12, marginBottom: 12, gap: 8 },
@@ -17,7 +18,7 @@ const styles = StyleSheet.create(theme => ({
 
 /** Presentation only: bearer custody survives this row collapsing in the sheet's controller. */
 export function DocumentPublicLinkSection(props: Readonly<{
-    link: ReturnType<typeof useDocumentPublicLinkController>; idPrefix: string;
+    link: ReturnType<typeof useDocumentPublicLinkController>; idPrefix: string; kind?: DocumentShareKind;
 }>): React.ReactElement {
     const { link, idPrefix } = props;
     type AccessLog = Awaited<ReturnType<typeof link.listAccessLog>>['accessLog'];
@@ -38,8 +39,10 @@ export function DocumentPublicLinkSection(props: Readonly<{
     };
     return <View testID={`${idPrefix}document-share-public-link-controls`}>
         <SessionPublicLinkCard testID={`${idPrefix}document-share-public-link-card`}
+            presentation="inline"
             publicShare={link.publication} shareUrl={link.shareUrl} serverUrl={null}
-            description={t('shareSheet.publicLink.description')} grantsLabel={t('shareSheet.publicLink.grants')}
+            description={t(props.kind === 'workflow-definition.v1' ? 'shareSheet.publicLink.workflowDescription' : 'shareSheet.publicLink.description')}
+            grantsLabel={t(props.kind === 'workflow-definition.v1' ? 'shareSheet.publicLink.workflowGrants' : 'shareSheet.publicLink.grants')}
             loading={link.loading} loaded={link.loaded} failed={link.error} readOnly={link.readOnly}
             pendingApproval={link.pendingApproval} onRetry={link.reload} onOpenPendingApproval={link.openPendingApproval}
             onCreate={link.create} onDelete={link.remove} />

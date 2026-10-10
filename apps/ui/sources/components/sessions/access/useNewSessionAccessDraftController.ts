@@ -4,6 +4,7 @@ import type { PrincipalRefV1, SessionAccessCreationDecisionV1, SessionInitialAcc
 import type { SessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
+import { useShareViewerProfile } from '@/components/sharing/useShareViewerProfile';
 
 import { projectSessionAccessChipSummary } from './projectSessionAccessChipSummary';
 import { projectSessionAccessPrincipal } from './projectSessionAccessEditorSnapshot';
@@ -71,6 +72,7 @@ export function useNewSessionAccessDraftController(input: Readonly<{
     onPrimaryTeamIdChange: (next: string | null) => void;
 }>): SessionAccessEditorController {
     const { access, availability, demanded, onChange, onPrimaryTeamIdChange, primaryTeamId, scope } = input;
+    const viewerProfile = useShareViewerProfile(scope);
     const [query, setQuery] = React.useState('');
     const [revision, setRevision] = React.useState(0);
     const [pendingContextTeamId, setPendingContextTeamId] = React.useState<string | null | undefined>(undefined);
@@ -183,14 +185,14 @@ export function useNewSessionAccessDraftController(input: Readonly<{
                 const base = current.scopeKey === scopeKey ? current.values : {};
                 const next = { ...base };
                 for (const principal of principals) {
-                    const projected = projectSessionAccessPrincipal(principal);
+                    const projected = projectSessionAccessPrincipal(principal, { accountId: scope.accountId, profile: viewerProfile });
                     next[projected.key] = projected;
                 }
                 return { scopeKey, values: next };
             });
         }).catch(() => {});
         return () => { active = false; };
-    }, [availability, demanded, editable, grants, scope.accountId, scope.serverId, scopeKey, selectedSubjectsKey]);
+    }, [availability, demanded, editable, grants, scope.accountId, scope.serverId, scopeKey, selectedSubjectsKey, viewerProfile]);
     const directoryTeamsRef = React.useRef(directory.teamContexts);
     directoryTeamsRef.current = directory.teamContexts;
     const primaryTeamDecisionPolicy = creationDecision === undefined || creationDecision === null

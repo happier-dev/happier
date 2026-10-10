@@ -77,7 +77,7 @@ describe('Artifact HTML private preview', () => {
         const bodyOpens = vi.spyOn(ArtifactEncryption.prototype, 'decryptBody');
         const params = { artifactId, credentials: { token: 'captured-token' }, request, encryption, artifactDataKeys };
         const view = await fetchArtifactForViewFromApi({ ...params, includePdfPreview: true });
-        const result = view?.htmlPreviewUrl;
+        const result = view?.htmlPreview;
         if (!result) throw new Error('Missing opened HTML preview');
         console.info('HTML Artifact composed read measurement', { mode,
             heads: paths.filter(path => path === `/v1/artifacts/${artifactId}`).length,
@@ -89,11 +89,11 @@ describe('Artifact HTML private preview', () => {
         expect(bodyOpens).toHaveBeenCalledTimes(mode === 'e2ee' ? 1 : 0);
         headerOpens.mockRestore();
         bodyOpens.mockRestore();
-        const url = new URL(result);
+        const url = new URL(result.url);
         expect(url.origin).toBe(`https://${artifactId}.preview.test`);
         expect(url.search).toBe('');
-        const bundle: unknown = JSON.parse(Buffer.from(url.hash.slice(3), 'base64url').toString('utf8'));
-        expect(bundle).toMatchObject({ v: 1, entrypoint: 'index.html', files: { 'index.html': { mime: 'text/html',
+        expect(url.hash).toBe('');
+        expect(result.bundle).toMatchObject({ v: 1, entrypoint: 'index.html', files: { 'index.html': { mime: 'text/html',
             contentBase64: Buffer.from(bytes).toString('base64') } } });
         expect(paths.some(path => path.includes('public'))).toBe(false);
         if (mode === 'plain') expect(artifactDataKeys.size).toBe(0);

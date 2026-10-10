@@ -1,10 +1,5 @@
 import * as React from 'react';
 import { getArtifactKindPolicyV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
-import { View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
-import { Text } from '@/components/ui/text/Text';
-import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
@@ -29,14 +24,8 @@ export type DocumentShareSheetProps = Readonly<{
 }>;
 
 const DEFAULT_TEST_ID = 'document-share-editor';
-const styles = StyleSheet.create(theme => ({
-    publicLinkState: { flexDirection: 'row', alignItems: 'center', gap: PAGE_LIST_METRICS.groupHeadingGapPx },
-    secondary: { color: theme.colors.text.secondary },
-}));
-
 function ScopedDocumentShareSheet(props: DocumentShareSheetProps & Readonly<{ scope: ServerAccountScope }>): React.ReactElement {
-    const controller = useDocumentShareController({ artifactId: props.artifactId, scope: props.scope });
-    const { theme } = useUnistyles();
+    const controller = useDocumentShareController({ artifactId: props.artifactId, kind: props.kind, scope: props.scope });
     const publicLinkEnabled = useFeatureEnabled('sharing.public', { scopeKind: 'spawn', serverId: props.scope.serverId });
     const canManagePublicLink = publicLinkEnabled && getArtifactKindPolicyV1(props.kind).publicLinkAllowed && controller.model.owner !== null
         && controller.model.editable && !controller.loading && !controller.issue && !controller.model.stale;
@@ -48,6 +37,7 @@ function ScopedDocumentShareSheet(props: DocumentShareSheetProps & Readonly<{ sc
         artifactId: props.artifactId,
         kind: props.kind,
         grants: controller.grants,
+        privateChoices: controller.privateChoices,
         ...(props.linkPath ? { linkPath: props.linkPath } : {}),
         ...(props.onSendCopy ? { sendCopy: props.onSendCopy } : {}),
         loading: controller.loading,
@@ -58,21 +48,12 @@ function ScopedDocumentShareSheet(props: DocumentShareSheetProps & Readonly<{ sc
     });
     const adapter = {
         ...baseAdapter,
-        sections: (context: Parameters<NonNullable<typeof baseAdapter.sections>>[0]) => ({
-            ...baseAdapter.sections?.(context),
-            ...(canManagePublicLink ? { afterAccess: [{ kind: 'static' as const, id: 'public-link', options: [{
-                id: 'public-link', testID: `${context.idPrefix}document-share-public-link`, label: t('session.sharing.publicLink'),
-                accessibilityLabel: `${t('session.sharing.publicLink')}, ${publicLinkState}`,
-                rightAccessory: () => <View style={styles.publicLinkState}>
-                    <Text style={styles.secondary}>{publicLinkState}</Text>
-                    <Icon name="caret-right" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />
-                </View>,
-                onSelect: () => context.onExpand('public-link'),
-                expandedContent: () => <DocumentPublicLinkSection
+        ...(canManagePublicLink ? { publicLink: {
+            stateLabel: publicLinkState,
+            renderContent: (context: Parameters<NonNullable<typeof baseAdapter.sections>>[0]) => <DocumentPublicLinkSection
                     key={`${publicLink.publication?.id ?? 'off'}:${publicLink.publication?.updatedAt ?? ''}`}
-                    link={publicLink} idPrefix={context.idPrefix} />,
-            }] }] } : {}),
-        }),
+                    link={publicLink} idPrefix={context.idPrefix} kind={props.kind} />,
+        } } : {}),
     };
     return <ShareSheet model={controller.model} actions={controller.actions} adapter={adapter}
         presentation={props.presentation ?? 'full'} onRequestClose={props.onRequestClose} testID={props.testID ?? DEFAULT_TEST_ID} />;

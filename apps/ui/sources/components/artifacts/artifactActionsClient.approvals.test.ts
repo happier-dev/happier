@@ -10,8 +10,10 @@ import { createArtifactActionsClient } from './artifactActionsClient';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 
 describe('Artifact surface pending approvals', () => {
-    it.each(['restore', 'delete'] as const)('recognizes a durable %s approval before parsing the final acknowledgement', async (operation) => {
+    it.each(['create', 'update', 'restore', 'delete'] as const)('recognizes a durable %s approval before parsing the final acknowledgement', async (operation) => {
         const settings = normalizeActionsSettingsV1({ v: 1, actions: {
+            'artifact.create': { approvalRequiredSurfaces: ['ui'] },
+            'artifact.update': { approvalRequiredSurfaces: ['ui'] },
             'artifact.revisions.restore': { approvalRequiredSurfaces: ['ui'] },
             'artifact.delete': { approvalRequiredSurfaces: ['ui'] },
         } });
@@ -30,12 +32,16 @@ describe('Artifact surface pending approvals', () => {
                 runtimeAccountId: 'owner-1', actionRequestId: 'request-1',
             }));
         const input = { artifactId: 'document-1', expectedRevision: { headerVersion: 2, bodyVersion: 3 } };
-        const outcome = operation === 'restore'
+        const draft = { header: { kind: 'artifact.legacy', title: 'Draft' }, body: 'Draft body' };
+        const outcome = operation === 'create' ? await client.createArtifact(draft)
+            : operation === 'update' ? await client.updateArtifact({ ...input, ...draft })
+            : operation === 'restore'
             ? await client.restoreRevision({ ...input, bodyVersion: 1 })
             : await client.deleteArtifact(input);
         expect(persisted).toMatchObject([{ status: 'open',
-            actionId: operation === 'restore' ? 'artifact.revisions.restore' : 'artifact.delete',
-            actionArgs: operation === 'restore' ? { ...input, bodyVersion: 1 } : input }]);
+            actionId: operation === 'restore' ? 'artifact.revisions.restore' : `artifact.${operation}`,
+            actionArgs: operation === 'create' ? draft : operation === 'update' ? { ...input, ...draft }
+                : operation === 'restore' ? { ...input, bodyVersion: 1 } : input }]);
         expect(outcome).toEqual({ approvalId: 'pending-artifact-approval' });
     });
 });

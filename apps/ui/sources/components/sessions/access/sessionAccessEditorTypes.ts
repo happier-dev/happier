@@ -5,6 +5,7 @@ import type {
     ShareAvatarPresentation, ShareCandidateRowModel, ShareDirectoryKind, ShareDirectorySectionModel, ShareGrantRowModel,
     ShareLevelControlModel, ShareOperationModel, ShareOwnerRowModel, SharePrincipalPresentation, ShareRemovalModel,
     ShareUiError, ShareUiReason,
+    ShareSheetAdapter,
 } from '@/components/sharing/shareSheetTypes';
 
 export type SessionAccessPrincipalRef = PrincipalRefV1;
@@ -214,6 +215,10 @@ export type SessionAccessEditorProps = Readonly<{
     onOpenFullSurface?: (handoff: SessionCollaborationHandoff) => void;
     /** The Session's in-app route for Copy link; absent before the Session exists. */
     linkPath?: string;
+    /** Publication state and controls supplied by the Collaboration pane's one controller. */
+    publicLink?: ShareSheetAdapter['publicLink'];
+    /** A consumed host intent to open a row in the sheet's own expansion owner. */
+    openRowRequest?: Readonly<{ key: string }>;
     /** The Session's responsible Account, tagged where its access is listed (Share panel). */
     responsibleAccountId?: string | null;
     testID?: string;

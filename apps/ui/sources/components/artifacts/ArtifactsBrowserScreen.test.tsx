@@ -1,4 +1,5 @@
 import * as React from 'react';
+import * as ReactNative from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushHookEffects, invokeTestInstanceHandler, pressTestInstanceAsync, renderHook, renderScreen } from '@/dev/testkit';
@@ -32,6 +33,7 @@ vi.mock('@/text', async () => {
 });
 
 import { ArtifactsBrowser } from './ArtifactsBrowserScreen';
+import { NavigationTitleChromeProvider } from '@/components/ui/layout/navigationTitleChrome';
 
 const initialState = getStorage().getState();
 let disposeHome: (() => void) | undefined;
@@ -80,6 +82,30 @@ function rowMenu(screen: Awaited<ReturnType<typeof renderRows>>, id: string): Re
     return row!;
 }
 
+describe('Artifacts browser folders view', () => {
+    it('shows the same library as one tree and keeps the row operations of the list', async () => {
+        const document = artifactFixture('document');
+        const board = artifactFixture('board', { title: 'Launch', header: { v: 1, kind: 'work-board.v1', title: 'Launch',
+            pinnedInSessions: false, readsNeedsYou: false }, body: undefined, bodyVersion: undefined });
+        const screen = await renderRows([document, board]);
+        expect(screen.findByTestId('artifacts:folders:row:artifact:document')).toBeNull();
+        await screen.pressByTestIdAsync('artifacts:view:folders');
+        expect(screen.findByTestId('artifacts:folders:row:artifact:document')).not.toBeNull();
+        expect(screen.findByTestId('artifacts:folders:row:artifact:board')).not.toBeNull();
+        // The Collection's cards and rows are replaced, never drawn beside the tree.
+        expect(screen.findAll(node => node.props.testID === 'artifacts:row:document' && Array.isArray(node.props.secondaryActions))).toHaveLength(0);
+        const menu = screen.findAll(node => node.props.testID === 'artifacts:folders:menu:artifact:board' && typeof node.props.onSelect === 'function').at(0);
+        expect(menu?.props.items.map((item: { id: string }) => item.id)).toEqual(expect.arrayContaining(['open', 'history']));
+        // Opening a kind with its own destination leaves the browser for it.
+        vi.mocked(router.push).mockClear();
+        await act(async () => { menu?.props.onSelect('open'); });
+        expect(router.push).toHaveBeenCalledTimes(1);
+        // Without an admitted folder catalog nothing can be filed: no New folder, no Move.
+        expect(screen.findByTestId('artifacts:folders:new')?.props.disabled).toBe(true);
+        expect(menu?.props.items.some((item: { id: string }) => item.id === 'move')).toBe(false);
+    });
+});
+
 describe('Artifacts browser row operations', () => {
     it.each(['work-board.v1', 'prompt_doc.v2'])('opens Share from a cold owner %s row without opening its body', async kind => {
         const served = await serveActionHomes({
@@ -120,8 +146,17 @@ describe('Artifacts browser row operations', () => {
     it('opens the shared Share and History owners and confirms revision-qualified deletion', async () => {
         const artifact = artifactFixture('document');
         const served = await serveActionHomes({ homes: [{ key: 'owner', serverUrl: 'https://artifact-row.test', accountId: 'owner' }],
-            route: request => request.path === '/v1/artifacts/document/revision/1/2' && request.method === 'DELETE'
-                ? Response.json({ success: true }) : undefined });
+            route: request => {
+                // Generic mutations admit the actual current document through artifact.get first.
+                if (request.path === '/v1/artifacts/document' && request.method === 'GET')
+                    return Response.json({ ...artifact, ownerAccountId: 'owner', encryptionMode: 'plain',
+                        dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+                        header: encodePlainArtifactStoredContent(artifact.header),
+                        body: encodePlainArtifactStoredContent({ body: artifact.body }) });
+                if (request.path === '/v1/artifacts/document/revision/1/2' && request.method === 'DELETE')
+                    return Response.json({ success: true });
+                return undefined;
+            } });
         disposeHome = served.dispose;
         getStorage().getState().addArtifact(artifact);
         getStorage().setState(state => ({ localSettings: { ...state.localSettings, uiMultiPanePanelsEnabled: false } }));
@@ -194,6 +229,36 @@ describe('Artifacts browser row operations', () => {
 });
 
 describe('Artifacts browser recovery', () => {
+    it('shows wide list headings for the actual anatomy and retains row operations when narrowed', async () => {
+        const screen = await renderRows([artifactFixture('document')]);
+        await screen.pressByTestIdAsync('artifacts:view:list');
+        expect(screen.getTextContent()).toContain('artifacts.browser.kindLabel');
+        expect(screen.getTextContent()).toContain('artifacts.browser.sourceLabel');
+        await act(async () => { invokeTestInstanceHandler(screen.findHostByTestId('artifacts:collection:stage'), 'onLayout', {
+            nativeEvent: { layout: { x: 0, y: 0, width: 390, height: 800 } },
+        }); });
+        expect(rowMenu(screen, 'document').props.secondaryActions.map((item: { id: string }) => item.id))
+            .toEqual(['open', 'share', 'history', 'delete']);
+    });
+
+    it('keeps phone search, choices and count while omitting the redundant introduction', async () => {
+        vi.spyOn(ReactNative, 'useWindowDimensions').mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });
+        const screen = await renderRows([artifactFixture('document')]);
+        expect(screen.getTextContent()).not.toContain('artifacts.browser.description');
+        expect(screen.findByTestId('artifacts:search')).not.toBeNull();
+        expect(screen.findByTestId('artifacts:kind')).not.toBeNull();
+        expect(screen.findByTestId('artifacts:present')).not.toBeNull();
+    });
+
+    it('keeps the page identity visible beneath phone navigation chrome', async () => {
+        const screen = await renderScreen(<NavigationTitleChromeProvider showsTitle>
+            <RecoveryBrowser loadFailed={false} onRetry={() => {}} />
+        </NavigationTitleChromeProvider>);
+        const heading = screen.findAll(node => typeof node.type === 'string'
+            && node.props.accessibilityRole === 'header'
+            && node.children.includes('artifacts.title'));
+        expect(heading).toHaveLength(1);
+    });
     it('replaces an already-loaded empty welcome with failure and a working Retry', async () => {
         const retry = vi.fn();
         const screen = await renderScreen(<RecoveryBrowser loadFailed={false} onRetry={retry} />);
@@ -229,6 +294,12 @@ describe('Artifacts browser recovery', () => {
         expect(screen.findHostByTestId('artifacts:row:retained')).not.toBeNull();
         expect(screen.findHostByTestId('artifacts:empty')).toBeNull();
         expect(screen.findHostByTestId('artifacts:failed')).toBeNull();
+        expect(screen.findHostByTestId('artifacts:stale')).not.toBeNull();
+        await screen.pressByTestIdAsync('artifacts:stale-action');
+        expect(retry).toHaveBeenCalledOnce();
+        await screen.update(<RecoveryBrowser artifacts={[artifact]} loadFailed={false} onRetry={retry} />);
+        expect(screen.findHostByTestId('artifacts:stale')).toBeNull();
+        expect(screen.findHostByTestId('artifacts:row:retained')).not.toBeNull();
     });
 
     it('clears the full-budget banner after quota refusal then deletion without remounting', async () => {

@@ -1,8 +1,16 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
+
+import { Typography } from '@/constants/Typography';
 import { Tree, type TreeItem } from '@happier-dev/plugin-ui';
+import {
+  createHappierCollectionDraftTitleStore,
+  type HappierCollectionDraftTitleStore,
+} from '@happier-dev/plugin-ui/presentation';
 import { isArtifactFolderActionIdV1 } from '@happier-dev/protocol/prompts/library/artifactFolderActionIdsV1';
+import { isRecord } from '@happier-dev/protocol/common/records';
 import type { PromptFolderEntryV1 } from '@happier-dev/protocol/prompts/library/promptFoldersV1';
 import type {
   EntityDragScopeV1,
@@ -11,12 +19,14 @@ import type {
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { FieldItem } from '@/components/ui/forms/FieldItem';
+import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import {
   DropdownMenu,
   type DropdownMenuItem,
 } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon } from '@/components/ui/icons/Icon';
-import { formatRelativeTimeShort } from '@/components/ui/selectionList/formatRelativeTimeShort';
+import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { Text } from '@/components/ui/text/Text';
 import {
@@ -42,7 +52,10 @@ import { randomUUID } from '@/platform/randomUUID';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { useArtifacts } from '@/sync/domains/state/storage';
 import { refreshPromptLibraryCatalog } from '@/sync/engine/settings/promptLibraryCatalogEngine';
-import { findPromptFolderByName, normalizePromptFolderName } from '@/sync/ops/promptLibrary/promptFolders';
+import {
+  findPromptFolderByName,
+  normalizePromptFolderName,
+} from '@/sync/ops/promptLibrary/promptFolders';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
@@ -92,12 +105,16 @@ function refusalMessage(code: string): string {
 
 /**
  * The folder operations of the one personal Artifact tree: each is one `artifact.folders.*` Action at the reviewed
- * catalog revision (`useArtifactFolderActions`), named through one prompt. A refusal says so; nothing is retried.
+ * catalog revision (`useArtifactFolderActions`). Editors retain drafts and render refusals; delete confirms.
  */
 export function useArtifactFolderCommands(): Readonly<{
   canWrite: boolean;
-  create: (parentId: string | null) => Promise<string | null>;
-  rename: (folder: PromptFolderEntryV1) => Promise<void>;
+  create: (input: Readonly<{
+    id: string;
+    parentId: string | null;
+    name: string;
+  }>) => Promise<string>;
+  rename: (folder: PromptFolderEntryV1, rawName: string) => Promise<void>;
   remove: (folder: PromptFolderEntryV1) => Promise<void>;
   execute: FolderActions['execute'];
   catalog: FolderActions['catalog'];
@@ -119,47 +136,23 @@ export function useArtifactFolderCommands(): Readonly<{
     [],
   );
   const create = React.useCallback(
-    async (parentId: string | null) => {
-      const raw = await Modal.prompt(
-        t('artifacts.browser.folders.newFolder'),
-        t('artifacts.browser.folders.nameHelp'),
-        {
-          placeholder: t('artifacts.browser.folders.namePlaceholder'),
-          confirmText: t('artifacts.browser.folders.create'),
-        },
-      );
-      const name = normalizePromptFolderName(raw ?? '');
-      if (!name) return null;
+    async (input: Readonly<{ id: string; parentId: string | null; name: string }>) => {
+      const name = normalizePromptFolderName(input.name);
       // A name that already exists is that folder; asking twice never makes a second one.
       const existing = findPromptFolderByName(catalog.value, name);
       if (existing) return existing.id;
-      const id = randomUUID();
-      return (await settle(() =>
-        execute('artifact.folders.create', { id, name, parentId }),
-      ))
-        ? id
-        : null;
+      await execute('artifact.folders.create', { ...input, name });
+      return input.id;
     },
-    [catalog.value, execute, settle],
+    [catalog.value, execute],
   );
   const rename = React.useCallback(
-    async (folder: PromptFolderEntryV1) => {
-      const raw = await Modal.prompt(
-        t('artifacts.browser.folders.rename'),
-        undefined,
-        {
-          placeholder: t('artifacts.browser.folders.namePlaceholder'),
-          defaultValue: folder.name,
-          confirmText: t('common.save'),
-        },
-      );
-      const name = normalizePromptFolderName(raw ?? '');
+    async (folder: PromptFolderEntryV1, rawName: string) => {
+      const name = normalizePromptFolderName(rawName);
       if (!name || name === folder.name) return;
-      await settle(() =>
-        execute('artifact.folders.rename', { folderId: folder.id, name }),
-      );
+      await execute('artifact.folders.rename', { folderId: folder.id, name });
     },
-    [execute, settle],
+    [execute],
   );
   const remove = React.useCallback(
     async (folder: PromptFolderEntryV1) => {
@@ -181,6 +174,18 @@ export function useArtifactFolderCommands(): Readonly<{
   );
 }
 
+type FolderEdit = Readonly<{
+  scopeKey: string;
+  titles: HappierCollectionDraftTitleStore;
+}> & (
+  | Readonly<{ kind: 'create'; id: string; parentId: string | null }>
+  | Readonly<{ kind: 'rename'; folder: PromptFolderEntryV1 }>
+);
+
+export type ArtifactFolderTreeHandle = Readonly<{
+  createFolder: (parentId: string | null) => void;
+}>;
+
 type TreeContextValue = Readonly<{
   runtime: EntityDragDropRuntime;
   targetId: string;
@@ -197,7 +202,8 @@ type TreeContextValue = Readonly<{
   registerRow: (key: string, node: unknown) => void;
   onOpenArtifact: (artifactId: string) => void;
   onArtifactDeleted: (artifactId: string) => void;
-  onFolderCreated: (folderId: string) => void;
+  createFolder: (parentId: string | null) => void;
+  renameFolder: (folder: PromptFolderEntryV1) => void;
 }>;
 const TreeContext = React.createContext<TreeContextValue | null>(null);
 const RowRevealContext = React.createContext(false);
@@ -217,7 +223,7 @@ function useTreeContext(): TreeContextValue {
  * Library passes the prompt kind. Filing is personal: no operation here touches an Artifact, its grants or what
  * other people see.
  */
-export function ArtifactFolderTree(
+export const ArtifactFolderTree = React.forwardRef(function ArtifactFolderTree(
   props: Readonly<{
     testID: string;
     accessibilityLabel: string;
@@ -228,6 +234,7 @@ export function ArtifactFolderTree(
     onOpenArtifact: (artifactId: string) => void;
     onArtifactDeleted?: (artifactId: string) => void;
   }>,
+  ref: React.ForwardedRef<ArtifactFolderTreeHandle>,
 ): React.ReactElement {
   const styles = stylesheet;
   const wide = useDeviceType() !== 'phone';
@@ -252,6 +259,64 @@ export function ArtifactFolderTree(
   );
   const commands = useArtifactFolderCommands();
   const folders = catalog.value;
+  const scopeKey = JSON.stringify([
+    settingsScope?.serverId,
+    settingsScope?.accountId,
+  ]);
+  const [edit, setEdit] = React.useState<FolderEdit | null>(null);
+  const currentEdit =
+    edit?.scopeKey === scopeKey &&
+    (edit.kind === 'create'
+      ? edit.parentId === null || folders?.folders.some(folder => folder.id === edit.parentId)
+      : folders?.folders.some(folder => folder.id === edit.folder.id))
+      ? edit
+      : null;
+  React.useEffect(() => {
+    if (edit && !currentEdit && catalog.status !== 'loading') setEdit(null);
+  }, [catalog.status, currentEdit, edit]);
+  const revealFolder = React.useCallback((folderId: string | null) => {
+    if (folderId === null) return;
+    setCollapsed(current => {
+      const next = new Set(current);
+      const seen = new Set<string>();
+      let id: string | null = folderId;
+      while (id && !seen.has(id)) {
+        seen.add(id);
+        next.delete(id);
+        id = folders?.folders.find(folder => folder.id === id)?.parentId ?? null;
+      }
+      return next;
+    });
+  }, [folders]);
+  const createFolder = React.useCallback((parentId: string | null) => {
+    if (!commands.canWrite) return;
+    revealFolder(parentId);
+    setEdit(current =>
+      current?.scopeKey === scopeKey && current.kind === 'create' && current.parentId === parentId
+        ? current
+        : {
+            kind: 'create',
+            id: randomUUID(),
+            parentId,
+            scopeKey,
+            titles: createHappierCollectionDraftTitleStore(),
+          },
+    );
+  }, [commands.canWrite, revealFolder, scopeKey]);
+  const renameFolder = React.useCallback((folder: PromptFolderEntryV1) => {
+    if (!commands.canWrite) return;
+    revealFolder(folder.parentId ?? null);
+    setEdit(current => {
+      if (current?.scopeKey === scopeKey && current.kind === 'rename' && current.folder.id === folder.id) return current;
+      const titles = createHappierCollectionDraftTitleStore();
+      titles.publish(folder.name);
+      return { kind: 'rename', folder, scopeKey, titles };
+    });
+  }, [commands.canWrite, revealFolder, scopeKey]);
+  React.useImperativeHandle(ref, () => ({ createFolder }), [createFolder]);
+  const finishEdit = React.useCallback((finished: FolderEdit) => {
+    setEdit(current => current === finished ? null : current);
+  }, []);
 
   const orderedFolders = React.useMemo(() => {
     const children = new Map<string | null, PromptFolderEntryV1[]>();
@@ -359,9 +424,7 @@ export function ArtifactFolderTree(
       const input = effect.input;
       if (
         !isArtifactFolderActionIdV1(effect.actionId) ||
-        !input ||
-        typeof input !== 'object' ||
-        Array.isArray(input)
+        !isRecord(input)
       ) {
         return {
           status: 'refused',
@@ -394,14 +457,6 @@ export function ArtifactFolderTree(
   );
 
   const { onOpenArtifact, onArtifactDeleted } = props;
-  const onFolderCreated = React.useCallback((folderId: string) => {
-    setCollapsed((current) => {
-      if (!current.has(folderId)) return current;
-      const next = new Set(current);
-      next.delete(folderId);
-      return next;
-    });
-  }, []);
   const context = React.useMemo<TreeContextValue>(
     () => ({
       runtime,
@@ -416,14 +471,16 @@ export function ArtifactFolderTree(
       registerRow,
       onOpenArtifact,
       onArtifactDeleted: onArtifactDeleted ?? noop,
-      onFolderCreated,
+      createFolder,
+      renameFolder,
     }),
     [
       canWrite,
       commands,
       counts,
       onArtifactDeleted,
-      onFolderCreated,
+      createFolder,
+      renameFolder,
       onOpenArtifact,
       orderedFolders,
       props.testID,
@@ -454,6 +511,40 @@ export function ArtifactFolderTree(
         mark: <NodeMark node={node} />,
       })),
     [tree],
+  );
+  const editKey = currentEdit
+    ? currentEdit.kind === 'rename'
+      ? `folder:${currentEdit.folder.id}`
+      : `draft:${currentEdit.id}`
+    : null;
+  const editingItems = React.useMemo(() => {
+    if (currentEdit?.kind !== 'create') return items;
+    const parentKey = currentEdit.parentId === null ? null : `folder:${currentEdit.parentId}`;
+    const parentIndex = items.findIndex(item => item.key === parentKey);
+    const parent = items[parentIndex];
+    const draft: TreeItem = {
+      key: `draft:${currentEdit.id}`,
+      parentKey,
+      depth: parent ? parent.depth + 1 : 0,
+      kind: 'leaf',
+      expanded: false,
+      title: t('artifacts.browser.folders.newFolder'),
+      mark: <Icon name="folder" />,
+    };
+    return [...items.slice(0, parentIndex + 1), draft, ...items.slice(parentIndex + 1)];
+  }, [currentEdit, items]);
+  const renderInlineEdit = React.useCallback(
+    (item: TreeItem) => currentEdit && item.key === editKey ? (
+      <FolderInlineEditor
+        key={`${scopeKey}:${editKey}`}
+        edit={currentEdit}
+        commands={commands}
+        canWrite={context.canWrite}
+        testID={props.testID}
+        onFinish={finishEdit}
+      />
+    ) : null,
+    [commands, context.canWrite, currentEdit, editKey, finishEdit, props.testID, scopeKey],
   );
 
   const onExpandedChange = React.useCallback(
@@ -538,7 +629,7 @@ export function ArtifactFolderTree(
         <Tree
           testID={props.testID}
           accessibilityLabel={props.accessibilityLabel}
-          items={items}
+          items={editingItems}
           presentation="table"
           selectedKey={
             props.selectedArtifactId
@@ -554,11 +645,12 @@ export function ArtifactFolderTree(
             t('artifacts.browser.folders.collapse', { name: item.title })
           }
           renderTrailing={renderTrailing}
+          renderInlineEdit={renderInlineEdit}
           wrapRow={wrapRow}
         />
         <RootDropZone nodeRef={rootZoneNode} />
       </View>
-      {noFolders ? (
+      {noFolders && !currentEdit ? (
         <View style={styles.invite} testID={`${props.testID}:invite`}>
           <Text style={styles.inviteText}>
             {t('artifacts.browser.folders.emptyInvite')}
@@ -568,15 +660,99 @@ export function ArtifactFolderTree(
             size="small"
             display="secondary"
             title={t('artifacts.browser.folders.newFolder')}
-            onPress={() => {
-              fireAndForget(commands.create(null), {
-                tag: 'ArtifactFolderTree.create',
-              });
-            }}
+            onPress={() => createFolder(null)}
           />
         </View>
       ) : null}
     </TreeContext.Provider>
+  );
+});
+
+/** Only the editing row subscribes to draft keystrokes; the draft survives a hidden/collapsed row. */
+function FolderInlineEditor(props: Readonly<{
+  edit: FolderEdit;
+  commands: ReturnType<typeof useArtifactFolderCommands>;
+  canWrite: boolean;
+  testID: string;
+  onFinish: (edit: FolderEdit) => void;
+}>) {
+  const name = props.edit.titles.useTitle();
+  const [error, setError] = React.useState<string | null>(null);
+  const [saving, setSaving] = React.useState(false);
+  const inFlight = React.useRef(false);
+  const save = async () => {
+    if (inFlight.current || !props.canWrite || !normalizePromptFolderName(name)) return;
+    inFlight.current = true;
+    setSaving(true);
+    setError(null);
+    try {
+      if (props.edit.kind === 'create') {
+        await props.commands.create({
+          id: props.edit.id,
+          parentId: props.edit.parentId,
+          name,
+        });
+      } else {
+        await props.commands.rename(props.edit.folder, name);
+      }
+      props.onFinish(props.edit);
+    } catch {
+      setError(t('artifacts.browser.folders.saveFailed'));
+    } finally {
+      inFlight.current = false;
+      setSaving(false);
+    }
+  };
+  const submit = () => {
+    fireAndForget(save(), { tag: 'ArtifactFolderTree.save' });
+  };
+  const label = t('artifacts.browser.folders.columnName');
+  return (
+    <View style={stylesheet.editor}>
+      <FieldItem label={label} labelNativeID={`${props.testID}:edit:label`}>
+        <FieldTextInput
+          testID={`${props.testID}:edit:name`}
+          accessibilityLabel={label}
+          accessibilityLabelledBy={`${props.testID}:edit:label`}
+          value={name}
+          onChangeText={props.edit.titles.publish}
+          error={error}
+          autoFocus
+          selectTextOnFocus
+          editable={!saving}
+          placeholder={t('artifacts.browser.folders.namePlaceholder')}
+          returnKeyType="done"
+          onSubmitEditing={submit}
+          onKeyPress={event => {
+            if (event.nativeEvent.key === 'Escape' && !saving) props.onFinish(props.edit);
+          }}
+        />
+      </FieldItem>
+      {props.edit.kind === 'create' ? (
+        // Said where a folder is made: a folder is personal filing, never sharing (lab `c-art TN`).
+        <Text style={stylesheet.editorHelp} testID={`${props.testID}:edit:help`}>
+          {t('artifacts.browser.folders.nameHelp')}
+        </Text>
+      ) : null}
+      <View style={stylesheet.editorActions}>
+        <RoundButton
+          testID={`${props.testID}:edit:save`}
+          title={props.edit.kind === 'create' ? t('artifacts.browser.folders.create') : t('common.save')}
+          size="small"
+          disabled={!props.canWrite || !normalizePromptFolderName(name)}
+          loading={saving}
+          onPress={submit}
+        />
+        <RoundButton
+          testID={`${props.testID}:edit:cancel`}
+          title={t('common.cancel')}
+          size="small"
+          display="secondary"
+          disabled={saving}
+          onPress={() => props.onFinish(props.edit)}
+        />
+      </View>
+    </View>
   );
 }
 
@@ -609,7 +785,7 @@ function useAdmittedDropFolder(
   )
     return undefined;
   const input = snapshot.admission.effect.input;
-  if (!input || typeof input !== 'object' || Array.isArray(input))
+  if (!isRecord(input))
     return undefined;
   const place =
     snapshot.item?.kind === 'artifact-folder' ? input.parentId : input.folderId;
@@ -751,6 +927,7 @@ function RowTrailing(props: Readonly<{ node: Node; title: string }>) {
 }
 
 const MOVE_PREFIX = 'move:';
+const MOVE_NEW_FOLDER_ID = `${MOVE_PREFIX}new`;
 
 /**
  * "Move to folder…": the places of the shared entity chooser (`runtime.getDestinations`), in tree order. The
@@ -760,6 +937,7 @@ const MOVE_PREFIX = 'move:';
 function useMoveMenu(
   node: Node,
   open: boolean,
+  title: string,
 ): Readonly<{
   item: DropdownMenuItem | null;
   select: (id: string) => boolean;
@@ -778,9 +956,7 @@ function useMoveMenu(
     for (const destination of available) {
       const place = destination.destination;
       if (
-        place &&
-        typeof place === 'object' &&
-        !Array.isArray(place) &&
+        isRecord(place) &&
         (typeof place.folderId === 'string' || place.folderId === null)
       ) {
         byFolder.set(place.folderId, destination);
@@ -808,6 +984,7 @@ function useMoveMenu(
       ),
     [tree.orderedFolders],
   );
+  const chooserTitle = t('artifacts.browser.folders.moveItemTo', { name: title });
   const item = React.useMemo(
     (): DropdownMenuItem | null =>
       !tree.canWrite
@@ -824,13 +1001,12 @@ function useMoveMenu(
               />
             ),
             submenu: {
-              items: destinations.map(
+              showCategoryTitles: true,
+              items: [...destinations.map(
                 (destination, index): DropdownMenuItem => {
                   const place = destination.destination;
                   const folderId =
-                    place &&
-                    typeof place === 'object' &&
-                    !Array.isArray(place) &&
+                    isRecord(place) &&
                     typeof place.folderId === 'string'
                       ? place.folderId
                       : null;
@@ -841,6 +1017,8 @@ function useMoveMenu(
                       : null;
                   return {
                     id: `${MOVE_PREFIX}${index}`,
+                    // The chooser's title: what is being moved (lab `c-art TA`).
+                    category: chooserTitle,
                     title:
                       destination.label ??
                       t('artifacts.browser.folders.topLevel'),
@@ -862,10 +1040,24 @@ function useMoveMenu(
                     },
                   };
                 },
-              ),
+              ), {
+                // At the foot: a place that does not exist yet. It opens the tree's own name editor.
+                id: MOVE_NEW_FOLDER_ID,
+                testID: `${tree.testID}:menu:${node.key}:move:new`,
+                category: '',
+                title: t('artifacts.browser.folders.newFolderEllipsis'),
+                icon: (
+                  <Icon
+                    name="folder-plus"
+                    size={16}
+                    color={theme.colors.text.secondary}
+                  />
+                ),
+              }],
             },
           },
     [
+      chooserTitle,
       current,
       depths,
       destinations,
@@ -878,6 +1070,10 @@ function useMoveMenu(
   const select = React.useCallback(
     (id: string): boolean => {
       if (!id.startsWith(MOVE_PREFIX)) return false;
+      if (id === MOVE_NEW_FOLDER_ID) {
+        tree.createFolder(null);
+        return true;
+      }
       const destination = destinations[Number(id.slice(MOVE_PREFIX.length))];
       if (!destination) return true;
       fireAndForget(
@@ -895,7 +1091,7 @@ function useMoveMenu(
       );
       return true;
     },
-    [destinations, sourceId, tree.runtime],
+    [destinations, sourceId, tree.createFolder, tree.runtime],
   );
   return { item, select };
 }
@@ -946,9 +1142,9 @@ function FolderRowMenu(
   const { theme } = useUnistyles();
   const tree = useTreeContext();
   const [open, setOpen] = React.useState(false);
-  const move = useMoveMenu(props.node, open);
+  const move = useMoveMenu(props.node, open, props.title);
   const folder = props.node.folder;
-  const { commands, onFolderCreated } = tree;
+  const { commands, createFolder, renameFolder } = tree;
   const items = React.useMemo(
     (): DropdownMenuItem[] =>
       !tree.canWrite
@@ -1000,16 +1196,9 @@ function FolderRowMenu(
   const onSelect = (id: string) => {
     if (move.select(id)) return;
     if (id === 'newInside') {
-      fireAndForget(
-        commands.create(folder.id).then((created) => {
-          if (created) onFolderCreated(folder.id);
-        }),
-        { tag: 'ArtifactFolderTree.createInside' },
-      );
+      createFolder(folder.id);
     } else if (id === 'rename')
-      fireAndForget(commands.rename(folder), {
-        tag: 'ArtifactFolderTree.rename',
-      });
+      renameFolder(folder);
     else if (id === 'delete')
       fireAndForget(commands.remove(folder), {
         tag: 'ArtifactFolderTree.delete',
@@ -1033,7 +1222,7 @@ function ArtifactRowMenu(
   const { theme } = useUnistyles();
   const tree = useTreeContext();
   const [open, setOpen] = React.useState(false);
-  const move = useMoveMenu(props.node, open);
+  const move = useMoveMenu(props.node, open, props.title);
   const artifactId = props.node.row.key;
   const { onArtifactDeleted, onOpenArtifact } = tree;
   const operations = useArtifactOperations(props.node.row.artifact, () =>
@@ -1104,6 +1293,13 @@ function ArtifactRowMenu(
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
+  editor: { minWidth: 0, paddingVertical: 8, gap: 8 },
+  editorActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  editorHelp: {
+    ...Typography.default(),
+    ...happierPageTextMetrics('meta'),
+    color: theme.colors.text.secondary,
+  },
   freshness: {
     marginBottom: 12,
   },
@@ -1125,8 +1321,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     borderBottomColor: theme.colors.border.default,
   },
   columnTitle: {
-    fontSize: 12,
-    lineHeight: 16,
+    ...Typography.default(),
+    ...happierPageTextMetrics('meta'),
     color: theme.colors.text.tertiary,
   },
   columnName: {
@@ -1163,13 +1359,13 @@ const stylesheet = StyleSheet.create((theme) => ({
     justifyContent: 'center',
   },
   kind: {
-    fontSize: 12.5,
-    lineHeight: 17,
+    ...Typography.default(),
+    ...happierPageTextMetrics('meta'),
     color: theme.colors.text.secondary,
   },
   age: {
-    fontSize: 12.5,
-    lineHeight: 17,
+    ...Typography.default(),
+    ...happierPageTextMetrics('meta'),
     color: theme.colors.text.tertiary,
     fontVariant: ['tabular-nums'],
   },
@@ -1195,8 +1391,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.state.active.background,
   },
   rootZoneText: {
-    fontSize: 12.5,
-    lineHeight: 17,
+    ...Typography.default(),
+    ...happierPageTextMetrics('meta'),
     color: theme.colors.text.tertiary,
   },
   invite: {
@@ -1210,8 +1406,8 @@ const stylesheet = StyleSheet.create((theme) => ({
   inviteText: {
     flex: 1,
     minWidth: 200,
-    fontSize: 13,
-    lineHeight: 18,
+    ...Typography.default(),
+    ...happierPageTextMetrics('meta'),
     color: theme.colors.text.secondary,
   },
 }));

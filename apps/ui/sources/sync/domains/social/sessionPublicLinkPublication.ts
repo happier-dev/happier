@@ -43,6 +43,7 @@ export function mergeSessionPublicLinkWithCachedBearer(params: Readonly<{
         && previous.maxUses === refreshed.maxUses
         && previous.useCount === refreshed.useCount
         && previous.isConsentRequired === refreshed.isConsentRequired
+        && (previous.networkOff ?? false) === (refreshed.networkOff ?? false)
         && previous.keyDerivation === refreshed.keyDerivation
         && previous.isolatedOrigin === refreshed.isolatedOrigin
         && previous.updatedAt === refreshed.updatedAt;

@@ -667,6 +667,63 @@ describe('PublicShareViewerScreen (plaintext)', () => {
         expect(finalProps.datasetKey).not.toContain('token-b-secret');
     });
 
+    it.each([true, false, undefined])('uses explicit paging coverage for completed shared questions (initial hasMore=%s)', async (hasMore) => {
+        serverFetchSpy
+            .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({
+                session: {
+                    id: 's1', seq: 3, encryptionMode: 'plain', createdAt: 1, updatedAt: 1000,
+                    active: false, activeAt: 1000, metadataVersion: 1, metadataLayoutVersion: 1,
+                    metadata: JSON.stringify({ v: 1, publicAgentState: { completedRequests: {
+                        'old-question': {
+                            tool: 'AskUserQuestion', createdAt: 1,
+                            completedAt: 2, status: 'approved',
+                        },
+                    } } }),
+                },
+                owner: { id: 'u1', username: 'alice', firstName: null, lastName: null, avatar: null },
+                accessLevel: 'view', encryptedDataKey: null, isConsentRequired: false,
+            }) })
+            .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({
+                messages: [{
+                    id: 'recent-row', seq: 3, localId: null, createdAt: 1000, updatedAt: 1000,
+                    content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Recent transcript' } } },
+                }], hasMore, nextBeforeSeq: hasMore ? 3 : null,
+            }) })
+            .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({
+                messages: [], hasMore: false, nextBeforeSeq: null,
+            }) });
+
+        const screen = await renderScreen(<PublicShareViewerScreen />);
+        try {
+            await flushHookEffects({ cycles: 1, turns: 1 });
+            const source: SessionTranscriptSource = screen.findByType(SessionTranscriptSourceProvider).props.source;
+            const latestRows = (): import('@happier-dev/session-core/messages').Message[] =>
+                transcriptListSpy.mock.calls.at(-1)?.[0].messages ?? [];
+            expect(latestRows().filter((message) => message.kind === 'user-text').map((message) => message.text))
+                .toEqual(['Recent transcript']);
+            if (hasMore === undefined) {
+                expect(latestRows().filter((message) => message.kind === 'tool-call')).toEqual([]);
+                return;
+            }
+            if (hasMore) {
+                expect(latestRows().filter((message) => message.kind === 'tool-call')).toEqual([]);
+                let result: unknown;
+                await act(async () => { result = await source.history.loadOlder!(); });
+                await flushHookEffects({ cycles: 1, turns: 1 });
+                expect(result).toEqual({ loaded: 0, hasMore: false, status: 'no_more' });
+            }
+            expect(latestRows().filter((message) => message.kind === 'tool-call')).toEqual([
+                expect.objectContaining({ tool: expect.objectContaining({
+                    permission: expect.objectContaining({ id: 'old-question' }),
+                    state: 'completed', result: 'Approved',
+                }) }),
+            ]);
+            expect(screen.findByType(SessionTranscriptSourceProvider).props.source).toBe(source);
+        } finally {
+            await screen.unmount();
+        }
+    });
+
     it('walks older public share pages from the served cursor on the already-authorized grant', async () => {
         // A share longer than one page must not begin mid-conversation: the viewer follows
         // `nextBeforeSeq` and merges the older page UNDER the rows already on screen.

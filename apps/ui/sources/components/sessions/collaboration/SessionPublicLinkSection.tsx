@@ -7,6 +7,7 @@ import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { useTemporaryCopyFeedback } from '@/components/ui/copy/useTemporaryCopyFeedback';
 import { Switch } from '@/components/ui/forms/Switch';
+import { Item } from '@/components/ui/lists/Item';
 import { Icon } from '@/components/ui/icons/Icon';
 import { ITEM_SUBTITLE_TEXT_METRICS, ITEM_TITLE_TEXT_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
@@ -42,11 +43,12 @@ const styles = StyleSheet.create({
 type Expiry = '7' | '30' | 'never';
 type Uses = 'unlimited' | '10' | '50';
 
-function readOptions(expiry: Expiry, uses: Uses, isConsentRequired: boolean): SessionPublicLinkCreateOptions {
+function readOptions(expiry: Expiry, uses: Uses, isConsentRequired: boolean, networkOff: boolean): SessionPublicLinkCreateOptions {
     return {
         ...(expiry === 'never' ? {} : { expiresInDays: Number(expiry) }),
         ...(uses === 'unlimited' ? {} : { maxUses: Number(uses) }),
         isConsentRequired,
+        ...(networkOff ? { networkOff: true } : {}),
     };
 }
 
@@ -59,7 +61,7 @@ function presentFailure(error: unknown): void {
 
 /** What the link grants, in plain words, then its limits: "Expires Oct 6 · 3 of 10 uses · asks for consent". */
 export type PublicLinkCardPublication = Pick<SessionPublicLinkPublication, 'id' | 'expiresAt' | 'maxUses' | 'useCount' | 'isConsentRequired'>
-    & Readonly<{ token?: string | null; publicUrl?: string | null }>;
+    & Readonly<{ token?: string | null; publicUrl?: string | null; networkOff?: boolean }>;
 
 export function describeSessionPublicLink(publicShare: PublicLinkCardPublication, grantsLabel = t('session.collaboration.pane.linkGrants')): string {
     const limits = [
@@ -129,6 +131,7 @@ export function SessionPublicLinkSection(props: Readonly<{
     /** The Session's storage can be published at all (hosted, or materialized). */
     shareable: boolean;
     testID?: string;
+    presentation?: 'card' | 'inline';
 }>): React.ReactElement | null {
     const { link } = props;
     if (!link.enabled) return null;
@@ -149,6 +152,7 @@ export function SessionPublicLinkSection(props: Readonly<{
     if (!props.shareable) return null;
     return (
         <SessionPublicLinkCard
+            presentation={props.presentation}
             testID={props.testID ?? 'session-public-link-card'}
             publicShare={link.publicShare}
             serverUrl={link.shareableServerUrl}
@@ -172,6 +176,7 @@ export function SessionPublicLinkSection(props: Readonly<{
  */
 export function SessionPublicLinkCard(props: Readonly<{
     testID: string;
+    presentation?: 'card' | 'inline';
     publicShare: PublicLinkCardPublication | null;
     /** Local bearer URL supplied by the creating client, never a transport projection. */
     shareUrl?: string | null;
@@ -197,6 +202,7 @@ export function SessionPublicLinkCard(props: Readonly<{
     const [expiry, setExpiry] = React.useState<Expiry>('7');
     const [uses, setUses] = React.useState<Uses>('unlimited');
     const [consent, setConsent] = React.useState(true);
+    const [networkOff, setNetworkOff] = React.useState(false);
     const [creating, setCreating] = React.useState(false);
     const [revoking, setRevoking] = React.useState(false);
     const copyFeedback = useTemporaryCopyFeedback();
@@ -221,7 +227,7 @@ export function SessionPublicLinkCard(props: Readonly<{
         inFlight.current = true;
         setCreating(true);
         try {
-            await props.onCreate(readOptions(expiry, uses, consent));
+            await props.onCreate(readOptions(expiry, uses, consent, networkOff));
             if (mounted.current) setConfiguring(false);
         } catch (error) {
             if (mounted.current) presentFailure(error);
@@ -263,6 +269,7 @@ export function SessionPublicLinkCard(props: Readonly<{
     const on = publicShare !== null;
     return (
         <HappierPublicLinkCard
+            presentation={props.presentation}
             testID={props.testID}
             published={on}
             loaded={props.loaded}
@@ -288,7 +295,14 @@ export function SessionPublicLinkCard(props: Readonly<{
             Text={Text}
             linkMark={<Icon name="link" size={15} color={theme.colors.text.secondary} />}
             statusMark={<StatusDot color={theme.colors.state.success.foreground} size={6} />}
-            notices={<>{props.failed ? (
+            notices={<>{configuring ? <Item
+                title={t('session.collaboration.pane.linkNetworkOff')}
+                subtitle={t('session.collaboration.pane.linkNetworkConsequence')}
+                accessoryLayout="adaptive"
+                rightElement={<Switch testID="session-public-link-network-off"
+                    accessibilityLabel={t('session.collaboration.pane.linkNetworkOff')}
+                    value={networkOff} onValueChange={setNetworkOff} disabled={busy} />}
+            /> : null}{props.failed ? (
                 <SurfaceStateCard
                     testID="session-public-link-retry"
                     size="line"
@@ -334,7 +348,7 @@ export function SessionPublicLinkCard(props: Readonly<{
                 label={t('session.collaboration.pane.newLink')}
                 icon={<Icon name="arrow-clockwise" size={14} color={theme.colors.text.secondary} />}
                 disabled={mutationsDisabled}
-                onPress={() => setConfiguring(true)}
+                onPress={() => { setNetworkOff(publicShare?.networkOff ?? false); setConfiguring(true); }}
             />}
             turnOffControl={<ToolbarButton
                 testID="session-public-link-turn-off"
@@ -347,9 +361,9 @@ export function SessionPublicLinkCard(props: Readonly<{
             createControl={<ToolbarButton
                 testID="session-public-link-create"
                 label={t('session.sharing.createPublicLink')}
-                tone="primary"
+                tone={props.presentation === 'inline' ? 'default' : 'primary'}
                 disabled={mutationsDisabled}
-                onPress={() => setConfiguring(true)}
+                onPress={() => { setNetworkOff(publicShare?.networkOff ?? false); setConfiguring(true); }}
             />}
             expiryControl={<SegmentedTabBar<Expiry>
                 role="radiogroup"
@@ -393,7 +407,7 @@ export function SessionPublicLinkCard(props: Readonly<{
             submitControl={<ToolbarButton
                 testID="session-public-link-options-create"
                 label={on ? t('session.sharing.regeneratePublicLink') : t('session.sharing.createPublicLink')}
-                tone="primary"
+                tone={props.presentation === 'inline' ? 'default' : 'primary'}
                 disabled={mutationsDisabled}
                 busy={creating}
                 onPress={() => { void create(); }}

@@ -4,14 +4,9 @@ import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
 
 import { decryptArtifactListItems, fetchAndApplyArtifactsList, type ArtifactDataKeyCache } from './syncArtifacts';
 
-const fetchArtifactsMock = vi.hoisted(() => vi.fn());
-
-vi.mock('@/sync/api/artifacts/apiArtifacts', () => ({
-    createArtifact: vi.fn(),
-    fetchArtifact: vi.fn(),
-    fetchArtifacts: (...args: unknown[]) => fetchArtifactsMock(...args),
-    updateArtifact: vi.fn(),
-}));
+const fetchArtifactsMock = vi.fn();
+// Only HTTP is substituted; list selection, its cursor and response admission stay real.
+const request = async () => Response.json(await fetchArtifactsMock());
 
 vi.mock('@/log', () => ({
     log: { log: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -98,7 +93,7 @@ describe('fetchAndApplyArtifactsList artifact data-key unwrapping', () => {
         const artifactDataKeys: ArtifactDataKeyCache = new Map();
         const applyArtifacts = vi.fn();
 
-        await fetchAndApplyArtifactsList({ credentials: { token: 't', secret: 's' } as never, encryption, artifactDataKeys, applyArtifacts });
+        await fetchAndApplyArtifactsList({ credentials: { token: 't', secret: 's' } as never, request, encryption, artifactDataKeys, applyArtifacts });
 
         expect(decryptEncryptionKeys).toHaveBeenCalledTimes(1);
         expect(decryptEncryptionKeys.mock.calls[0]![0]).toEqual(['env-a', 'env-b', 'env-c']);
@@ -119,7 +114,7 @@ describe('fetchAndApplyArtifactsList artifact data-key unwrapping', () => {
         ]));
         const artifactDataKeys: ArtifactDataKeyCache = new Map();
         const applyArtifacts = vi.fn();
-        const params = { credentials: { token: 't', secret: 's' } as never, encryption, artifactDataKeys, applyArtifacts };
+        const params = { credentials: { token: 't', secret: 's' } as never, request, encryption, artifactDataKeys, applyArtifacts };
 
         await fetchAndApplyArtifactsList(params);
         await fetchAndApplyArtifactsList(params);
@@ -141,7 +136,7 @@ describe('fetchAndApplyArtifactsList artifact data-key unwrapping', () => {
         ]));
         const artifactDataKeys: ArtifactDataKeyCache = new Map();
         const applyArtifacts = vi.fn();
-        const params = { credentials: { token: 't', secret: 's' } as never, encryption, artifactDataKeys, applyArtifacts };
+        const params = { credentials: { token: 't', secret: 's' } as never, request, encryption, artifactDataKeys, applyArtifacts };
 
         fetchArtifactsMock.mockResolvedValue([
             await buildArtifact('a', 'env-a', keyA),
@@ -167,7 +162,7 @@ describe('fetchAndApplyArtifactsList artifact data-key unwrapping', () => {
         const { encryption, decryptEncryptionKeys } = createEncryptionHarness(new Map([['env-a', keyA]]));
         const artifactDataKeys: ArtifactDataKeyCache = new Map();
         const applyArtifacts = vi.fn();
-        const params = { credentials: { token: 't', secret: 's' } as never, encryption, artifactDataKeys, applyArtifacts };
+        const params = { credentials: { token: 't', secret: 's' } as never, request, encryption, artifactDataKeys, applyArtifacts };
 
         fetchArtifactsMock.mockResolvedValue([await buildArtifact('a', 'env-a', keyA)]);
         await fetchAndApplyArtifactsList(params);

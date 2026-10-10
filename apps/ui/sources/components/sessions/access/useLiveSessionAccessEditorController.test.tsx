@@ -717,8 +717,27 @@ describe('useLiveSessionAccessEditorController encrypted-access preparation', ()
         // reading must not be rebuilt under the pointer.
         expect(controller().model.directory.query).toBe('ada');
 
+        const operationBeforeAdd = controller().model.grants[0]?.operation;
         await act(async () => { controller().actions.addPrincipal({ kind: 'account', accountId: RECIPIENT_ID }); });
-        await vi.waitFor(() => expect(controller().model.directory.query).toBe(''));
+        try {
+            await vi.waitFor(() => expect(controller().model.directory.query).toBe(''));
+        } catch {
+            const { runWithServerRequestAuthorityForServerAccountScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope');
+            const { readSessionSnapshotForAuthority, SessionSnapshotReadError } = await import('@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority');
+            const { serverFetch } = await import('@/sync/http/client');
+            const snapshotProbe = await runWithServerRequestAuthorityForServerAccountScope({
+                scope: { serverId: home.profile.id, accountId: MANAGER.accountId }, activeRequest: serverFetch,
+            }, (authority) => readSessionSnapshotForAuthority({ authority, sessionId: SESSION_ID })).then(
+                (snapshot) => ({ ok: true, sessionId: snapshot.session.id }),
+                (error: unknown) => ({ ok: false, errorClass: error instanceof Error ? error.name : typeof error,
+                    ...(error instanceof SessionSnapshotReadError ? { errorCode: error.errorCode, httpStatus: error.httpStatus }
+                        : error instanceof Error ? { message: error.message } : {}) }),
+            );
+            expect(controller().model.directory.query, JSON.stringify({
+                operationBeforeAdd, snapshotProbe, grants: controller().model.grants,
+                issue: controller().model.content.issue, paths: home.paths,
+            })).toBe('');
+        }
     });
 
     it('settles a lost set response when the authoritative inspection proves the exact mutation committed', async () => {
@@ -993,7 +1012,8 @@ describe('useLiveSessionAccessEditorController deferred approval', () => {
         expect(approvalIds(home)).toEqual([approvalId]);
 
         // The Inbox approves: its replay is the one grant write on the Home.
-        await expect(decideApprovalAsInbox(home.profile.id, approvalId, 'approve')).resolves.toMatchObject({
+        const decision = await decideApprovalAsInbox(home.profile.id, approvalId, 'approve');
+        expect(decision, JSON.stringify(decision)).toMatchObject({
             ok: true, result: { status: 'executed' },
         });
         await vi.waitFor(() => expect(controller().model.grants).toHaveLength(1));
@@ -1012,7 +1032,8 @@ describe('useLiveSessionAccessEditorController deferred approval', () => {
         const approvalId = approvalIds(home)[0]!;
         await vi.waitFor(() => expect(controller().model.pendingApproval?.artifactId).toBe(approvalId));
 
-        await expect(decideApprovalAsInbox(home.profile.id, approvalId, 'reject')).resolves.toMatchObject({ ok: true });
+        const decision = await decideApprovalAsInbox(home.profile.id, approvalId, 'reject');
+        expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true });
         await vi.waitFor(() => expect(controller().model.pendingApproval).toBeUndefined());
         expect(controller().model.grants).toHaveLength(0);
         expect(controller().model.content.issue).toBeUndefined();

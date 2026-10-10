@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { SessionAccessApiError } from '@/sync/api/session/sessionAccessApi';
+import { createSessionAccessApiErrorFromResponse, SessionAccessApiError } from '@/sync/api/session/sessionAccessApi';
 
 import { presentSessionAccessFailure, presentSessionAccessReason } from './presentSessionAccessFailure';
 
@@ -70,6 +70,15 @@ describe('session access failure presentation', () => {
     it('treats a generic 409 conflict as terminal without blind retry', () => {
         const conflict = presentSessionAccessFailure(new SessionAccessApiError('session_access_request_failed', 409));
         expect(conflict).toMatchObject({ code: 'session_access_request_failed', retryable: false });
+    });
+
+    it('treats missing public-link isolation as a Home prerequisite rather than a transient 503', () => {
+        const unavailable = presentSessionAccessFailure(createSessionAccessApiErrorFromResponse({ error: 'public_share_isolation_unavailable' }, 503));
+        expect(unavailable).toMatchObject({ code: 'public_share_isolation_unavailable', retryable: false });
+        expect(unavailable.message).not.toBe(
+            presentSessionAccessFailure(new SessionAccessApiError('session_access_request_failed', 503)).message,
+        );
+        expect(presentSessionAccessFailure(new SessionAccessApiError('session_access_request_failed', 503)).retryable).toBe(true);
     });
 
     it('keeps a typed 403 capability denial as permission failure rather than login', () => {

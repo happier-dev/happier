@@ -1,6 +1,7 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { SELECTION_LIST_DEFAULT_DYNAMIC_DEBOUNCE_MS } from '@/components/ui/selectionList/_constants';
 import { ShareSheet } from './ShareSheet';
 import { createDocumentShareAdapter } from './documents/documentShareAdapter';
 import { buildShareSheetSelectionStep } from './buildShareSheetSelectionStep';
@@ -28,7 +29,26 @@ const model: ShareSheetModel = {
 const adapter = createDocumentShareAdapter({ artifactId: 'wf-1', kind: 'workflow-definition.v1',
     grants: [], loading: false, readOnly: false, retryContent: noop });
 
+afterEach(() => vi.useRealTimers());
+
 describe('ShareSheet full presentation', () => {
+    it('offers adding suggestions separately from granted access, without implying a selected grant', async () => {
+        vi.useFakeTimers();
+        const add = vi.fn();
+        const candidates: ShareSheetModel = { ...model, directory: { query: '', sections: [{
+            kind: 'account', title: 'People', status: 'idle', cursor: null, hasMore: false, loadingMore: false,
+            candidates: [{ principal: { ref: { kind: 'account', accountId: 'maya' }, key: 'account:maya',
+                displayName: 'Maya', accessibilityLabel: 'Maya' }, addition: { kind: 'allowed' }, operation: { kind: 'idle' } }],
+        }] } };
+        const screen = await renderScreen(<ShareSheet model={candidates} actions={{ ...actions, addPrincipal: add }}
+            adapter={adapter} presentation="full" testID="document-share-editor" />);
+        await flushHookEffects({ advanceTimersMs: SELECTION_LIST_DEFAULT_DYNAMIC_DEBOUNCE_MS });
+        await screen.pressByTestIdAsync('document-share-add:account:maya');
+        expect(add).toHaveBeenCalledWith({ kind: 'account', accountId: 'maya' });
+        expect(screen.findByTestId('document-share-grant-account:maya')).toBeNull();
+        expect(screen.findAll(node => typeof node.props.testID === 'string'
+            && node.props.testID.includes('option-selected-mark'))).toEqual([]);
+    });
     it('announces adapter readiness and responsibility as part of the principal row', () => {
         const roster: ShareSheetModel = { ...model, grants: [{
             grant: { kind: 'account', accountId: 'bob' },

@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Artifact, ArtifactCreateRequest, DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import type { ArtifactDataKeyCache } from './syncArtifacts';
+import type { ServerFetch } from '@/sync/http/client';
 import { HappyError } from '@/utils/errors/errors';
+import { createUsageNoticeArtifactFixture } from '@/dev/testkit/fixtures/usageNoticeFixtures';
 import {
     ARTIFACT_PLAIN_DATA_KEY_MARKER,
     decodePlainArtifactStoredContent,
@@ -18,16 +20,30 @@ const mocks = vi.hoisted(() => ({
     updateArtifact: vi.fn(),
 }));
 
-vi.mock('@/sync/api/account/apiAccountEncryptionMode', () => ({
-    fetchAccountEncryptionMode: mocks.fetchAccountEncryptionMode,
-}));
-
-vi.mock('@/sync/api/artifacts/apiArtifacts', () => ({
-    createArtifact: mocks.createArtifact,
-    fetchArtifact: mocks.fetchArtifact,
-    fetchArtifacts: mocks.fetchArtifacts,
-    updateArtifact: mocks.updateArtifact,
-}));
+// Substitute HTTP responses only; mode admission, list selection and content codecs stay real.
+const httpRequest: ServerFetch = async (path, init) => {
+    const target = new URL(path, 'https://artifact-mode.test');
+    const credentials = { token: new Headers(init?.headers).get('Authorization')?.replace(/^Bearer /, '') ?? '' };
+    try {
+        let value: unknown;
+        if (target.pathname === '/v1/account/encryption') value = await mocks.fetchAccountEncryptionMode();
+        else if (target.pathname === '/v1/artifacts/read') {
+            const input = JSON.parse(String(init?.body)) as { artifactIds: string[] };
+            value = { items: await Promise.all(input.artifactIds.map(async artifactId => ({ artifactId, ok: true,
+                artifact: { ...await mocks.fetchArtifact(credentials, artifactId), publicAudience: 'none' }, recipientCensus: null }))) };
+        } else if (target.pathname === '/v1/artifacts') value = init?.method === 'POST'
+            ? await mocks.createArtifact(credentials, JSON.parse(String(init.body))) : await mocks.fetchArtifacts(credentials);
+        else {
+            const artifactId = decodeURIComponent(target.pathname.slice('/v1/artifacts/'.length));
+            value = init?.method === 'POST' ? await mocks.updateArtifact(credentials, artifactId, JSON.parse(String(init.body)))
+                : await mocks.fetchArtifact(credentials, artifactId);
+        }
+        return Response.json(value);
+    } catch (error) {
+        if (error instanceof HappyError && error.status) return Response.json({ error: error.message }, { status: error.status });
+        throw error;
+    }
+};
 
 vi.mock('@/platform/randomUUID', () => ({
     randomUUID: mocks.randomUUID,
@@ -82,6 +98,7 @@ describe('syncArtifacts plaintext account storage', () => {
         const added: DecryptedArtifact[] = [];
 
         const id = await createArtifactWithHeaderViaApi({
+            request: httpRequest,
             credentials: { token: 'token-only' },
             header: {
                 v: 1,
@@ -139,7 +156,7 @@ describe('syncArtifacts plaintext account storage', () => {
         expect(artifactDataKeys.size).toBe(0);
     });
 
-    it('hydrates approval bodies before publishing an actionable approval list row', async () => {
+    it('hydrates actionable plain approval bodies after publishing headers', async () => {
         const request = {
             v: 1,
             status: 'open',
@@ -169,13 +186,13 @@ describe('syncArtifacts plaintext account storage', () => {
         const applyArtifacts = vi.fn();
 
         await fetchAndApplyArtifactsList({
+            request: httpRequest,
             credentials: { token: 'token-only' },
             encryption: null,
             artifactDataKeys: new Map(),
             applyArtifacts,
         });
 
-        expect(mocks.fetchArtifact).toHaveBeenCalledWith({ token: 'token-only' }, full.id, { request: undefined });
         expect(applyArtifacts).toHaveBeenCalledWith([
             expect.objectContaining({ id: full.id, body: JSON.stringify(request) }),
         ]);
@@ -190,9 +207,27 @@ describe('syncArtifacts plaintext account storage', () => {
         mocks.fetchArtifacts.mockResolvedValueOnce([listRow]);
         mocks.fetchArtifact.mockResolvedValueOnce(full);
         const applied: DecryptedArtifact[][] = [];
-        await fetchAndApplyArtifactsList({ credentials: { token: 'token-only' }, encryption: null,
+        await fetchAndApplyArtifactsList({ credentials: { token: 'token-only' }, request: httpRequest, encryption: null,
             artifactDataKeys: new Map(), applyArtifacts: (rows) => applied.push(rows) });
-        expect(applied[0]?.[0]).toMatchObject({ id: full.id, isDecrypted: true, body: '{"kind":"launch-profile.v1"}' });
+        expect(applied.at(-1)?.[0]).toMatchObject({ id: full.id, isDecrypted: true, body: '{"kind":"launch-profile.v1"}' });
+    });
+
+    it('enriches open usage notice headers with exact-read privacy and body before Inbox admission', async () => {
+        const notice = createUsageNoticeArtifactFixture({ ownerAccountId: 'owner' });
+        const full: Artifact = { ...buildPlainArtifact(), id: notice.id,
+            header: encodePlainArtifactStoredContent(notice.header),
+            body: encodePlainArtifactStoredContent({ body: notice.body }),
+        };
+        const { body: _body, ...listRow } = full;
+        mocks.fetchArtifacts.mockResolvedValueOnce([listRow]);
+        mocks.fetchArtifact.mockResolvedValueOnce(full);
+        const applied: DecryptedArtifact[][] = [];
+
+        await fetchAndApplyArtifactsList({ credentials: { token: 'token-only' }, request: httpRequest,
+            encryption: null, artifactDataKeys: new Map(), applyArtifacts: rows => applied.push(rows) });
+
+        expect(applied[0]?.[0]).toMatchObject({ id: notice.id, publicAudience: 'unknown' });
+        expect(applied.at(-1)?.[0]).toMatchObject({ id: notice.id, publicAudience: 'none', body: notice.body });
     });
 
     it('surfaces retained malformed plain Artifact reads and socket updates as locked instead of throwing', async () => {
@@ -308,6 +343,7 @@ describe('syncArtifacts plaintext account storage', () => {
         const updated: DecryptedArtifact[] = [];
 
         await updateArtifactWithHeaderViaApi({
+            request: httpRequest,
             credentials: { token: 'token-only' },
             artifactId: current.id,
             header: {
@@ -368,6 +404,7 @@ describe('syncArtifacts retained encrypted content', () => {
         mocks.fetchArtifacts.mockResolvedValueOnce([artifact]);
 
         await fetchAndApplyArtifactsList({
+            request: httpRequest,
             credentials: { token: 'token-only' },
             encryption: null,
             artifactDataKeys: new Map(),
@@ -396,6 +433,7 @@ describe('syncArtifacts retained encrypted content', () => {
         mocks.fetchArtifact.mockResolvedValueOnce(artifact);
 
         const locked = await fetchArtifactWithBodyFromApi({
+            request: httpRequest,
             credentials: { token: 'token-only' },
             artifactId: artifact.id,
             encryption: null,
@@ -413,6 +451,7 @@ describe('syncArtifacts retained encrypted content', () => {
 
         mocks.fetchArtifact.mockRejectedValueOnce(new HappyError('Artifact not found', false, { status: 404 }));
         await expect(fetchArtifactWithBodyFromApi({
+            request: httpRequest,
             credentials: { token: 'token-only' },
             artifactId: 'missing-artifact',
             encryption: null,

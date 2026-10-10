@@ -12,6 +12,8 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { t } from '@/text';
 import { HappyError } from '@/utils/errors/errors';
+import { SessionAccessApiError } from '@/sync/api/session/sessionAccessApi';
+import { presentSessionAccessFailure } from '@/components/sessions/access/presentSessionAccessFailure';
 
 type PublicLinkAction = 'artifact.public_link.create' | 'artifact.public_link.list' | 'artifact.public_link.revoke' | 'artifact.public_link.audit';
 type State = Readonly<{ publication: StoredContentPublicShareV1 | null; loaded: boolean; loading: boolean; error: boolean }>;
@@ -58,7 +60,13 @@ export function useDocumentPublicLinkController(input: Readonly<{
         const result = await execute(actionId, payload, { surface: 'ui', authority: 'present_user',
             serverId: scope.serverId, expectedAccountId: scope.accountId, actionRequestId: randomUUID() });
         if (!isCurrent()) return null;
-        if (!result.ok) throw new HappyError(t('session.collaboration.pane.linkLoadFailed'), true, { code: result.errorCode });
+        if (!result.ok) {
+            if (result.errorCode !== 'public_share_isolation_unavailable') {
+                throw new HappyError(t('session.collaboration.pane.linkLoadFailed'), true, { code: result.errorCode });
+            }
+            const issue = presentSessionAccessFailure(new SessionAccessApiError(result.errorCode));
+            throw new HappyError(issue.message, issue.retryable, { code: issue.code });
+        }
         const pending = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
         if (pending.success) {
             approval.requestApproval(createActionApprovalContinuation<unknown, PublicLinkAction>({

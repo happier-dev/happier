@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Collection, useHappierCollection, type CollectionAnatomy, type CollectionRowActions } from '@happier-dev/plugin-ui';
-import type { ArtifactStorageUsageV1 } from '@happier-dev/protocol';
+import type { ArtifactStorageUsageV1, PromptFoldersV1 } from '@happier-dev/protocol';
 
 import { DetailsPaneHost } from '@/components/appShell/panes/details/DetailsPaneHost';
 import { useDetailsPaneAvailable } from '@/components/appShell/panes/details/detailsPaneAvailability';
@@ -17,15 +17,19 @@ import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
-import { formatRelativeTimeShort } from '@/components/ui/selectionList/formatRelativeTimeShort';
+import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { Text } from '@/components/ui/text/Text';
+import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { useArtifacts, useArtifactsLoaded, useLocalSettingMutable } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
+import { usePromptLibraryCatalogValue } from '@/sync/store/usePromptLibraryCatalog';
 import { t } from '@/text';
 import { formatByteSize } from '@/utils/files/formatByteSize';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { useArtifactStorageUsage } from './artifactActionsClient';
 import {
@@ -42,6 +46,7 @@ import {
     type ArtifactBrowserSort,
 } from './artifactBrowserModel';
 import { ArtifactCardPreview } from './ArtifactCardPreview';
+import { ArtifactFolderTree, useArtifactFolderCommands, type ArtifactFolderTreeHandle } from './ArtifactFolderTree';
 import { ARTIFACT_KIND_ICONS, artifactKindFilterLabel, artifactKindLabel } from './artifactKindPresentation';
 import { ArtifactProvenanceLabel } from './ArtifactProvenance';
 import { ArtifactView } from './ArtifactView';
@@ -54,6 +59,9 @@ const CARD_MIN_WIDTH_PX = 260;
 const LIST_MIN_WIDTH_PX = 320;
 /** Below this the page is too narrow to keep the grid beside an open artifact. */
 const PAGE_MIN_WIDTH_PX = 560;
+
+/** Cards, a list, or the personal folder tree (EC D49): three presentations of the same library. */
+type BrowserPresentation = 'grid' | 'list' | 'folders';
 
 function sortLabel(sort: ArtifactBrowserSort): string {
     switch (sort) {
@@ -76,26 +84,29 @@ function countSavedToday(artifacts: readonly DecryptedArtifact[], nowMs: number)
 
 /**
  * The Artifacts destination (RU2 §9.6, lab `app-surfaces/artifacts` A1–A8): every ordinary Account
- * Artifact as one Collection — search, kind, sort, Grid | List — whose cards show the thing itself.
- * Opening a document shows it in the app's details pane beside the grid (a phone pushes its page);
- * every other kind opens in its own destination.
+ * Artifact as one Collection — search, kind, sort, Grid | List | Folders — whose cards show the thing itself.
+ * Folders (EC D49, lab `lane12-final/c-art`) is the same library as one personal folder tree. Opening a
+ * document shows it in the app's details pane beside the grid (a phone pushes its page); every other kind
+ * opens in its own destination.
  */
 export function ArtifactsBrowserScreen(): React.ReactElement {
     const artifacts = useArtifacts();
     const loaded = useArtifactsLoaded();
     const usage = useArtifactStorageUsage();
+    const { value: folders } = usePromptLibraryCatalogValue('folders');
     const [loadFailed, setLoadFailed] = React.useState(false);
     const refresh = React.useCallback(() => {
         void sync.fetchArtifactsList().then(() => setLoadFailed(false), () => setLoadFailed(true));
     }, []);
     // The browser opening is the intent to read the list; the sync owner keeps it fresh after that.
     React.useEffect(refresh, [refresh]);
-    return <ArtifactsBrowser artifacts={artifacts} loaded={loaded} loadFailed={loadFailed} onRetry={refresh} usage={usage} />;
+    return <ArtifactsBrowser artifacts={artifacts} folders={folders} loaded={loaded} loadFailed={loadFailed} onRetry={refresh} usage={usage} />;
 }
 
 /** The browser itself, over the artifacts and budget it is given (the screen binds the store; `/dev/artifacts` binds fixtures). */
 export function ArtifactsBrowser(props: Readonly<{
     artifacts: readonly DecryptedArtifact[];
+    folders?: PromptFoldersV1 | null;
     loaded: boolean;
     loadFailed: boolean;
     onRetry: () => void;
@@ -111,10 +122,13 @@ export function ArtifactsBrowser(props: Readonly<{
     const [view, setView] = useLocalSettingMutable('artifactsBrowserViewV1');
     const deviceType = useDeviceType();
     // A phone lists by default (one card per screen hides the collection); wider screens show cards.
-    const presentation = view?.presentation ?? (deviceType === 'phone' ? 'list' : 'grid');
-    const setPresentation = React.useCallback((next: 'grid' | 'list') => setView({ presentation: next }), [setView]);
+    const presentation: BrowserPresentation = view?.presentation ?? (deviceType === 'phone' ? 'list' : 'grid');
+    const setPresentation = React.useCallback((next: BrowserPresentation) => setView({ presentation: next }), [setView]);
+    const filter = React.useMemo(() => ({ query, kind, sort }), [query, kind, sort]);
+    const folderTree = React.useRef<ArtifactFolderTreeHandle>(null);
 
-    const rows = React.useMemo(() => projectArtifactBrowserRows(artifacts, { query, kind, sort }), [artifacts, query, kind, sort]);
+    const rows = React.useMemo(() => projectArtifactBrowserRows(artifacts, filter, { folders: props.folders }),
+        [artifacts, filter, props.folders]);
     const counts = React.useMemo(() => countArtifactBrowserKinds(artifacts), [artifacts]);
     const total = React.useMemo(() => [...counts.values()].reduce((sum, count) => sum + count, 0), [counts]);
     const savedToday = React.useMemo(() => countSavedToday(artifacts, Date.now()), [artifacts]);
@@ -138,31 +152,41 @@ export function ArtifactsBrowser(props: Readonly<{
         openKey: paneOpen ? openId : null,
         onOpenChange: openArtifact,
     });
-    const anatomy = useBrowserAnatomy(presentation);
+    const collectionPresentation = presentation === 'grid' ? 'grid' : 'table';
+    const anatomy = useBrowserAnatomy(presentation === 'grid' ? 'grid' : 'list');
     const newDocument = React.useCallback(() => router.push('/artifacts/new' as never), [router]);
 
     const firstVisit = loaded && total === 0 && !loadFailed;
     const header = (
-        <BrowserHeader
-            total={total}
-            savedToday={savedToday}
-            usage={usage}
-            showPresent={!firstVisit}
-            onNewDocument={newDocument}
-            toolbar={firstVisit ? null : (
-                <BrowserToolbar
-                    query={query}
-                    onQueryChange={setQuery}
-                    kind={kind}
-                    onKindChange={setKind}
-                    counts={counts}
-                    sort={sort}
-                    onSortChange={setSort}
-                    presentation={presentation}
-                    onPresentationChange={setPresentation}
-                />
-            )}
-        />
+        <>
+            <BrowserHeader
+                total={total}
+                savedToday={savedToday}
+                usage={usage}
+                showPresent={!firstVisit}
+                onNewDocument={newDocument}
+                toolbar={firstVisit ? null : (
+                    <BrowserToolbar
+                        query={query}
+                        onQueryChange={setQuery}
+                        kind={kind}
+                        onKindChange={setKind}
+                        counts={counts}
+                        sort={sort}
+                        onSortChange={setSort}
+                        presentation={presentation}
+                        onPresentationChange={setPresentation}
+                        onNewFolder={() => folderTree.current?.createFolder(null)}
+                    />
+                )}
+            />
+            {loadFailed && total > 0 ? <SurfaceFreshnessLine
+                testID="artifacts:stale"
+                tone="warning"
+                reason={t('artifacts.browser.retainedBody')}
+                action={{ label: t('common.retry'), onPress: props.onRetry }}
+            /> : null}
+        </>
     );
 
     const empty = firstVisit ? (
@@ -189,7 +213,26 @@ export function ArtifactsBrowser(props: Readonly<{
     );
 
     const rowCommands = React.useMemo(() => ({ open: openArtifact, deleted: (id: string) => setOpenId(current => current === id ? null : current) }), [openArtifact]);
-    const main = (
+    // An empty or unread library keeps the Collection's own first-visit, failure and loading states.
+    const main = presentation === 'folders' && total > 0 ? (
+        <CoreCollectionScope>
+            <ItemList pageColumn="wide">
+                <BrowserPageColumn>
+                    {header}
+                    <ArtifactFolderTree
+                        ref={folderTree}
+                        testID="artifacts:folders"
+                        accessibilityLabel={t('artifacts.title')}
+                        artifacts={artifacts}
+                        filter={filter}
+                        selectedArtifactId={paneOpen ? openId : null}
+                        onOpenArtifact={openArtifact}
+                        onArtifactDeleted={rowCommands.deleted}
+                    />
+                </BrowserPageColumn>
+            </ItemList>
+        </CoreCollectionScope>
+    ) : (
         <ArtifactRowCommandsContext.Provider value={rowCommands}>
             <CoreCollectionScope renderPageScroller={renderBrowserPageScroller}>
                 <Collection<ArtifactBrowserRow>
@@ -198,7 +241,7 @@ export function ArtifactsBrowser(props: Readonly<{
                     anatomy={anatomy}
                     useRowActions={useArtifactRowActions}
                     accessibilityLabel={t('artifacts.title')}
-                    presentation={presentation}
+                    presentation={collectionPresentation}
                     detail="none"
                     scroll="page"
                     minListWidth={LIST_MIN_WIDTH_PX}
@@ -251,7 +294,7 @@ function useArtifactRowActions(row: ArtifactBrowserRow): CollectionRowActions {
             { id: 'open', label: t('common.open') },
             ...(operations.canShare ? [{ id: 'share', label: t('artifacts.browser.actions.share') }] : []),
             { id: 'history', label: t('artifacts.browser.actions.history') },
-            ...(operations.canManage ? [{ id: 'delete', label: t('artifacts.delete'), disabled: operations.deleting }] : []),
+            ...(operations.canManage ? [{ id: 'delete', label: t('artifacts.delete'), destructive: true, disabled: operations.deleting }] : []),
         ],
         onSecondaryAction: id => {
             if (id === 'open') commands?.open(row.key);
@@ -291,23 +334,26 @@ function BrowserHeader(props: Readonly<{
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const limit = props.usage?.limitBytes ?? null;
+    const phone = useDeviceType() === 'phone';
+    const present = props.showPresent ? (
+        <View style={[styles.present, phone ? styles.phonePresent : null]} testID="artifacts:present">
+            <Text style={styles.presentText}>
+                {props.total === 1 ? t('artifacts.countSingular') : t('artifacts.countPlural', { count: props.total })}
+            </Text>
+            {props.savedToday > 0 ? (
+                <Text style={styles.presentText}>{`· ${t('artifacts.browser.savedToday', { count: props.savedToday })}`}</Text>
+            ) : null}
+            {props.usage !== null && limit !== null ? <StorageMeter usedBytes={props.usage.usedBytes} limitBytes={limit} /> : null}
+        </View>
+    ) : undefined;
     return (
         <View>
             <PageHeader
                 testID="artifacts:header"
                 title={t('artifacts.title')}
-                description={t('artifacts.browser.description')}
-                details={props.showPresent ? (
-                    <View style={styles.present} testID="artifacts:present">
-                        <Text style={styles.presentText}>
-                            {props.total === 1 ? t('artifacts.countSingular') : t('artifacts.countPlural', { count: props.total })}
-                        </Text>
-                        {props.savedToday > 0 ? (
-                            <Text style={styles.presentText}>{`· ${t('artifacts.browser.savedToday', { count: props.savedToday })}`}</Text>
-                        ) : null}
-                        {props.usage !== null && limit !== null ? <StorageMeter usedBytes={props.usage.usedBytes} limitBytes={limit} /> : null}
-                    </View>
-                ) : undefined}
+                alwaysShowTitle
+                description={phone && props.showPresent ? undefined : t('artifacts.browser.description')}
+                details={phone ? undefined : present}
                 actions={(
                     <RoundButton
                         testID="artifacts:new"
@@ -322,6 +368,7 @@ function BrowserHeader(props: Readonly<{
                 <QuotaBanner usedBytes={props.usage.usedBytes} limitBytes={limit} />
             ) : null}
             {props.toolbar}
+            {phone ? present : null}
         </View>
     );
 }
@@ -376,11 +423,14 @@ function BrowserToolbar(props: Readonly<{
     counts: ReadonlyMap<ArtifactBrowserKind, number>;
     sort: ArtifactBrowserSort;
     onSortChange: (sort: ArtifactBrowserSort) => void;
-    presentation: 'grid' | 'list';
-    onPresentationChange: (presentation: 'grid' | 'list') => void;
+    presentation: BrowserPresentation;
+    onPresentationChange: (presentation: BrowserPresentation) => void;
+    onNewFolder: () => void;
 }>) {
     const { theme } = useUnistyles();
+    const phone = useDeviceType() === 'phone';
     const styles = stylesheet;
+    const folders = useArtifactFolderCommands();
     // Only kinds that hold something are offered; a kind that empties keeps its choice until changed.
     const kindItems = React.useMemo(() => [
         { id: 'all', title: artifactKindFilterLabel('all') },
@@ -395,6 +445,7 @@ function BrowserToolbar(props: Readonly<{
     const viewTabs = React.useMemo(() => [
         { id: 'grid' as const, label: t('artifacts.browser.view.grid'), icon: <Icon name="squares-four" size={16} color={theme.colors.text.secondary} /> },
         { id: 'list' as const, label: t('artifacts.browser.view.list'), icon: <Icon name="list" size={16} color={theme.colors.text.secondary} /> },
+        { id: 'folders' as const, label: t('artifacts.browser.view.folders'), icon: <Icon name="folder" size={16} color={theme.colors.text.secondary} /> },
     ], [theme.colors.text.secondary]);
     return (
         <View style={styles.toolbar} testID="artifacts:toolbar">
@@ -403,33 +454,48 @@ function BrowserToolbar(props: Readonly<{
                 value={props.query}
                 onChangeText={props.onQueryChange}
                 placeholder={t('artifacts.browser.searchPlaceholder')}
-                style={styles.search}
+                style={[styles.search, phone ? styles.phoneSearch : null]}
             />
-            <ToolbarSelect
-                testID="artifacts:kind"
-                label={t('artifacts.browser.kindLabel')}
-                items={kindItems}
-                selectedId={props.kind}
-                onSelect={(id) => props.onKindChange(id === 'all' ? 'all' : ARTIFACT_BROWSER_KINDS.find((candidate) => candidate === id) ?? 'all')}
-            />
-            <ToolbarSelect
-                testID="artifacts:sort"
-                label={t('artifacts.browser.sort.label')}
-                items={sortItems}
-                selectedId={props.sort}
-                onSelect={(id) => props.onSortChange(SORTS.find((candidate) => candidate === id) ?? 'updated_desc')}
-            />
-            <View style={styles.grow} />
-            <SegmentedTabBar
-                tabs={viewTabs}
-                activeTabId={props.presentation}
-                onSelectTab={props.onPresentationChange}
-                testIDPrefix="artifacts:view"
-                accessibilityLabel={t('artifacts.browser.view.label')}
-                segmentSizing="content"
-                slidingThumb
-                targetSize="platform"
-            />
+            <View style={styles.toolbarChoices}>
+                <ToolbarSelect
+                    testID="artifacts:kind"
+                    label={t('artifacts.browser.kindLabel')}
+                    items={kindItems}
+                    selectedId={props.kind}
+                    compact={phone}
+                    onSelect={(id) => props.onKindChange(id === 'all' ? 'all' : ARTIFACT_BROWSER_KINDS.find((candidate) => candidate === id) ?? 'all')}
+                />
+                <ToolbarSelect
+                    testID="artifacts:sort"
+                    label={t('artifacts.browser.sort.label')}
+                    items={sortItems}
+                    selectedId={props.sort}
+                    compact={phone}
+                    onSelect={(id) => props.onSortChange(SORTS.find((candidate) => candidate === id) ?? 'updated_desc')}
+                />
+                <View style={styles.grow} />
+                {props.presentation === 'folders' ? (
+                    <RoundButton
+                        testID="artifacts:folders:new"
+                        size="small"
+                        display="secondary"
+                        title={t('artifacts.browser.folders.newFolder')}
+                        leading={<Icon name="folder-plus" size={14} color={theme.colors.text.secondary} />}
+                        disabled={!folders.canWrite}
+                        onPress={props.onNewFolder}
+                    />
+                ) : null}
+                <SegmentedTabBar
+                    tabs={viewTabs}
+                    activeTabId={props.presentation}
+                    onSelectTab={props.onPresentationChange}
+                    testIDPrefix="artifacts:view"
+                    accessibilityLabel={t('artifacts.browser.view.label')}
+                    segmentSizing="content"
+                    slidingThumb
+                    targetSize="platform"
+                />
+            </View>
         </View>
     );
 }
@@ -464,7 +530,12 @@ function useBrowserAnatomy(presentation: 'grid' | 'list'): CollectionAnatomy<Art
         } : {}),
         accessibilityLabel: (row) => `${rowTitle(row)}, ${artifactKindLabel(row.kind)}`,
         testID: (row) => `artifacts:row:${row.key}`,
-        columnTitles: { title: t('artifacts.title'), where: t('artifacts.browser.kindLabel'), age: t('artifacts.browser.sort.updated_desc') },
+        columnTitles: {
+            title: t('artifacts.browser.folders.columnName'),
+            reason: t('artifacts.browser.kindLabel'),
+            where: t('artifacts.browser.sourceLabel'),
+            age: t('artifacts.browser.folders.columnEdited'),
+        },
     }), [presentation, theme.colors.text.secondary]);
 }
 
@@ -479,6 +550,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexWrap: 'wrap',
         gap: 6,
         marginTop: 8,
+    },
+    phonePresent: {
+        paddingHorizontal: PAGE_LIST_METRICS.sheetInsetPx,
+        marginBottom: 12,
     },
     presentText: {
         fontSize: 12.5,
@@ -540,10 +615,29 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: 8,
         marginTop: 20,
         marginBottom: 14,
+        marginHorizontal: PAGE_LIST_METRICS.sheetInsetPx,
     },
+    // The row breaks only when the choices no longer fit beside a narrowed search; until then
+    // the search gives up width first (lab A1: search · kind · sort … view on one row).
     search: {
-        width: 280,
+        flexGrow: 1,
+        flexShrink: 1,
+        flexBasis: 160,
+        maxWidth: 280,
+    },
+    phoneSearch: {
+        flexBasis: '100%',
         maxWidth: '100%',
+    },
+    toolbarChoices: {
+        flexGrow: 1,
+        flexShrink: 1,
+        flexBasis: 'auto',
+        minWidth: 0,
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        gap: 8,
     },
     grow: {
         flex: 1,

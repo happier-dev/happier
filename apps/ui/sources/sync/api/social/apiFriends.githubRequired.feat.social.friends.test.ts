@@ -2,44 +2,30 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { HappyError } from '@/utils/errors/errors';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { resetServerReachabilitySupervisors } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
 import { getFriendsList, sendFriendRequest } from './apiFriends';
 
-vi.mock('@/utils/timing/time', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/utils/timing/time')>();
-    const immediate = async <T,>(callback: () => Promise<T>): Promise<T> => await callback();
-    return {
-        ...actual,
-        backoff: immediate,
-        backoffForever: immediate,
-    };
-});
-
-afterEach(() => {
+afterEach(async () => {
+    await resetServerReachabilitySupervisors();
+    resetRuntimeFetch();
+    vi.useRealTimers();
     vi.unstubAllGlobals();
 });
 
 const credentials: AuthCredentials = { token: 't', secret: 's' };
 
 function mockError(status: number, payload: unknown) {
-    vi.stubGlobal(
-        'fetch',
-        vi.fn(async (input: RequestInfo | URL) => {
-            const url = String(input);
-            if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) {
-                return {
-                    ok: true,
-                    status: 200,
-                    json: async () => ({}),
-                } as unknown as Response;
-            }
-
-            return {
-                ok: false,
-                status,
-                json: async () => payload,
-            } as unknown as Response;
-        }) as unknown as typeof fetch,
-    );
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) {
+            return Response.json({});
+        }
+        // Keep status, Headers and body consumption real at the HTTP transport boundary.
+        return Response.json(payload, { status });
+    });
+    setRuntimeFetch(fetch);
+    return fetch;
 }
 
 describe('sendFriendRequest', () => {
@@ -72,27 +58,14 @@ describe('sendFriendRequest', () => {
     });
 
     it('falls back to default HappyError message when 400 payload is not JSON', async () => {
-        const invalidJsonError = new Error('invalid json');
-        vi.stubGlobal(
-            'fetch',
+        setRuntimeFetch(
             vi.fn(async (input: RequestInfo | URL) => {
                 const url = String(input);
                 if (url.endsWith('/health') || url.endsWith('/v1/auth/ping')) {
-                    return {
-                        ok: true,
-                        status: 200,
-                        json: async () => ({}),
-                    } as unknown as Response;
+                    return Response.json({});
                 }
-
-                return {
-                    ok: false,
-                    status: 400,
-                    json: async () => {
-                        throw invalidJsonError;
-                    },
-                } as unknown as Response;
-            }) as unknown as typeof fetch,
+                return new Response('not-json', { status: 400 });
+            }),
         );
 
         await expect(sendFriendRequest(credentials, 'u2')).rejects.toMatchObject({
@@ -102,9 +75,17 @@ describe('sendFriendRequest', () => {
     });
 
     it('throws a generic Error on server-side 5xx failures', async () => {
-        mockError(503, { error: 'temporarily_unavailable' });
+        // Advance the clock boundary, not the real HTTP readiness or finite backoff owners.
+        vi.useFakeTimers();
+        const fetch = mockError(503, { error: 'temporarily_unavailable' });
 
-        await expect(sendFriendRequest(credentials, 'u2')).rejects.toThrow('Failed to add friend: 503');
+        const outcome = sendFriendRequest(credentials, 'u2').then(value => value, (error: unknown) => error);
+        await vi.runAllTimersAsync();
+        expect(fetch.mock.calls.filter(([input]) => String(input).endsWith('/v1/friends/add'))).toHaveLength(8);
+        const error = await outcome;
+        expect(error).toBeInstanceOf(Error);
+        expect(error).not.toBeInstanceOf(HappyError);
+        expect(error).toHaveProperty('message', 'Failed to add friend: 503');
     });
 });
 

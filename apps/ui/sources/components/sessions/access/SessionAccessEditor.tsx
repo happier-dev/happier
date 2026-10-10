@@ -24,6 +24,7 @@ export function SessionAccessEditor(props: SessionAccessEditorProps): React.Reac
         model, actions,
         ...(props.linkPath ? { linkPath: props.linkPath } : {}),
         responsibleAccountId: props.responsibleAccountId,
+        publicLink: props.publicLink,
         ...(props.onOpenFullSurface ? { onOpenFullSurface: props.onOpenFullSurface } : {}),
     });
     const sheetModel = {
@@ -35,5 +36,5 @@ export function SessionAccessEditor(props: SessionAccessEditorProps): React.Reac
         directory: model.directory,
     };
     return <ShareSheet model={sheetModel} actions={actions} adapter={adapter} presentation={presentation}
-        onRequestClose={onRequestClose} testID={testID} />;
+        onRequestClose={onRequestClose} openRowRequest={props.openRowRequest} testID={testID} />;
 }
