@@ -315,6 +315,9 @@ export const managedMachinesEn = {
             madeFromPreset: ({ preset }: { preset: string }) => `Made from the ${preset} preset.`,
             createdOn: ({ provider }: { provider: string }) => `Created by Happier on ${provider}.`,
             kindFact: ({ provider, kind }: { provider: string; kind: string }) => `${provider} ${kind.toLocaleLowerCase('en')}`,
+            /** The provider's own id after its kind ("Hetzner server 58213904"). */
+            kindFactWithId: ({ fact, id }: { fact: string; id: string }) => `${fact} ${id}`,
+            runningFor: ({ duration }: { duration: string }) => `Running ${duration}`,
             power: { running: "Running", stopped: "Stopped", suspended: "Suspended" },
         },
         picker: {

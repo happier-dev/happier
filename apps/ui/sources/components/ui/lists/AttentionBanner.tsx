@@ -13,6 +13,29 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
+/**
+ * One check or step under the banner's title: plain text with any literal command set apart as `code`
+ * (drawn in the mono type role). Build it with {@link attentionBannerPoint}.
+ */
+export type AttentionBannerPoint = readonly (string | Readonly<{ code: string }>)[];
+
+/** Splits a translated line around the literal commands it names (they are never translated). */
+export function attentionBannerPoint(text: string, commands: readonly string[]): AttentionBannerPoint {
+    const segments: (string | Readonly<{ code: string }>)[] = [];
+    let rest = text;
+    while (rest) {
+        const next = commands
+            .map((command) => ({ command, at: command ? rest.indexOf(command) : -1 }))
+            .filter((match) => match.at >= 0)
+            .sort((left, right) => left.at - right.at || right.command.length - left.command.length)[0];
+        if (!next) { segments.push(rest); break; }
+        if (next.at > 0) segments.push(rest.slice(0, next.at));
+        segments.push({ code: next.command });
+        rest = rest.slice(next.at + next.command.length);
+    }
+    return segments;
+}
+
 export type AttentionBannerAction = Readonly<{
     label: string;
     onPress: () => void;
@@ -36,6 +59,11 @@ export const AttentionBanner = React.memo(function AttentionBanner(props: Readon
     testID: string;
     title: string;
     description?: string;
+    /**
+     * Checks or steps the reader can take, beneath the description: one hanging line each, so a long
+     * point wraps under its own text rather than under the bullet.
+     */
+    points?: readonly AttentionBannerPoint[];
     tone?: 'warning' | 'neutral' | 'danger';
     /** A containing pane can own its gutter; page sections retain the shared section insets. */
     placement?: 'page-section' | 'inline';
@@ -93,7 +121,25 @@ export const AttentionBanner = React.memo(function AttentionBanner(props: Readon
                 accessibilityLiveRegion={props.accessibilityLiveRegion}
                 icon={props.icon ?? <Icon name={iconName} size={ICON_SIZE.md} color={palette.foreground} />}
                 titleContent={<Text style={styles.title}>{props.title}</Text>}
-                descriptionContent={props.description ? <Text style={styles.description}>{props.description}</Text> : undefined}
+                descriptionContent={props.description || props.points?.length ? <>
+                    {props.description ? <Text style={styles.description}>{props.description}</Text> : null}
+                    {props.points?.length ? (
+                        <View style={styles.points}>
+                            {props.points.map((point, index) => (
+                                <View key={index} testID={`${props.testID}.point.${index}`} style={styles.point}>
+                                    <Text style={[styles.description, styles.pointBullet]} aria-hidden>{'\u2022'}</Text>
+                                    <Text style={[styles.description, styles.pointText]}>
+                                        {point.map((segment, segmentIndex) => typeof segment === 'string' ? segment : (
+                                            <Text key={segmentIndex} testID={`${props.testID}.point.${index}.code.${point.slice(0, segmentIndex).filter((part) => typeof part !== 'string').length}`}
+                                                // A command never breaks inside itself; the line wraps around it.
+                                                style={styles.code}>{segment.code.replace(/ /g, '\u00a0')}</Text>
+                                        ))}
+                                    </Text>
+                                </View>
+                            ))}
+                        </View>
+                    ) : null}
+                </> : undefined}
                 action={actions}
                 compactActionPlacement={props.compactActionPlacement}
                 onLayout={(event) => { const width = event.nativeEvent.layout.width; if (width > 0) setCompact(width < PAGE_LIST_METRICS.rowStackBelowWidthPx); }}
@@ -166,6 +212,26 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         flexWrap: 'wrap',
         gap: 6,
+    },
+    points: {
+        marginTop: 2,
+    },
+    point: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+    },
+    pointBullet: {
+        width: 14,
+        marginTop: 0,
+    },
+    pointText: {
+        flex: 1,
+        minWidth: 0,
+        marginTop: 0,
+    },
+    code: {
+        ...Typography.mono(),
+        color: theme.colors.text.primary,
     },
     detailsToggle: {
         flexDirection: 'row',

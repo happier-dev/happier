@@ -30,7 +30,7 @@ function configurationLabel(id: keyof typeof MODAL_CONFIGURATION_LABELS.en) {
 export const MODAL_MACHINE_PROVISIONER = {
   title: 'Modal', icon: 'cloud', resourceKind: 'modal-sandbox', schemaVersion: 1,
   kindTitle: machinePresentationLabel('kind'), description: machinePresentationLabel('description'),
-  launchSchema: ModalLaunchV1Schema.jsonSchema, resourceSchema: ModalResourceV1Schema.jsonSchema,
+  launchSchema: ModalLaunchV1Schema.jsonSchema, resourceSchema: ModalResourceV1Schema.jsonSchema, resourceIdPath: 'sandboxId',
   platforms: ['darwin', 'linux', 'win32'], prerequisites: [],
   billing: MODAL_BILLING, retention: { supportedIntents: ['delete'], finiteOnly: true },
   actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', destroy: 'destroy' },

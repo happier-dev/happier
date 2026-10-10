@@ -78,6 +78,8 @@ type SelectionTilesBaseProps<T extends string> = {
     minimumTileWidth?: number;
     /** Card variant: description lines before it ellipsizes (default 4); the tile announces all of it. */
     subtitleLines?: number;
+    /** Card variant: `sheet` draws the options as cells of the section sheet they sit on, not as separate tiles. */
+    surface?: 'tiles' | 'sheet';
     renderOptionFooter?: SelectionTileFooterRenderer<T>;
 };
 
@@ -130,6 +132,8 @@ export function SelectionTiles<T extends string>(props: SelectionTilesProps<T>) 
         previewBackground: theme.colors.background.canvas,
         actionBackground: theme.colors.surface.sectionTint,
         actionBorderHovered: theme.colors.border.strong,
+        // The page rows' own divider, so a sheet of choice cells reads like the rows around it.
+        divider: theme.colors.border.subtle,
     }), [theme]);
 
     const renderText = React.useCallback<HappierSelectionTilesTextRenderer>(({ role, text, selected, compact, numberOfLines, alignment }) => (

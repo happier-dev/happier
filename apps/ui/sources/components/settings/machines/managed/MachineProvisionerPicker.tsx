@@ -22,7 +22,7 @@ import { useManagedProvisioners } from './useManagedProvisioners';
 import { useManagedProvisionerPresentation } from './useManagedProvisionerPresentation';
 import { MachineProvisionerSections } from './MachineProvisionerSections';
 import type { ManagedProvisionerCard } from './managedMachineDisplay';
-import { useManagedControllerScope } from './useManagedControllerScope';
+import { useManagedControllerScope, type ManagedControllerScope } from './useManagedControllerScope';
 
 export type ManagedProvisionerSelection = Readonly<{ serverId: string; provisioner: string; controller: ManagedControllerV1 }>;
 type MachineProvisionerPickerProps = Readonly<{
@@ -31,6 +31,11 @@ type MachineProvisionerPickerProps = Readonly<{
     onSetUpThisComputer?: () => void;
     /** Local presentation handoff to the same configurator, without navigation or acquisition. */
     onSelectProvisioner?: (selection: ManagedProvisionerSelection) => void;
+    /**
+     * The "Managed from" scope of a page that shows its chip in its own header (the Add page). The
+     * picker then reads that controller and draws no chip of its own; without it, the picker owns one.
+     */
+    scope?: ManagedControllerScope;
 }>;
 
 export function MachineProvisionerPicker(props: MachineProvisionerPickerProps) {
@@ -39,16 +44,24 @@ export function MachineProvisionerPicker(props: MachineProvisionerPickerProps) {
     if (!selectedHome) return <View testID="managed-picker"><ItemGroup title={t('managedMachines.receipt.joins')}>
         {listServerProfiles().map(home => <Item key={home.id} testID={`managed-picker.home:${home.id}`} title={home.name} onPress={() => setSelectedHome(home.id)} />)}
     </ItemGroup></View>;
-    return <MachineProvisionerCatalog key={selectedHome} serverId={selectedHome} presetOnly={props.presetOnly} onSelectProvisioner={props.onSelectProvisioner}
-        onSetUpThisComputer={props.onSetUpThisComputer} />;
+    const shared = { serverId: selectedHome, presetOnly: props.presetOnly, onSelectProvisioner: props.onSelectProvisioner,
+        onSetUpThisComputer: props.onSetUpThisComputer };
+    // A page's scope speaks only for the Home it was made for.
+    return props.scope && selectedHome === props.serverId
+        ? <MachineProvisionerCatalog key={selectedHome} {...shared} scope={props.scope} pageOwnsChip />
+        : <MachineProvisionerOwnScopeCatalog key={selectedHome} {...shared} />;
 }
 
-function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
+function MachineProvisionerOwnScopeCatalog(props: Omit<MachineProvisionerPickerProps, 'scope'>) {
+    const scope = useManagedControllerScope({ serverId: props.serverId, testIDPrefix: 'managed-picker.controller' });
+    return <MachineProvisionerCatalog {...props} scope={scope} pageOwnsChip={false} />;
+}
+
+function MachineProvisionerCatalog(props: Omit<MachineProvisionerPickerProps, 'scope'> & Readonly<{ scope: ManagedControllerScope; pageOwnsChip: boolean }>) {
     const handler = React.useRef<(registration: ActionApprovalRegistration) => void>(() => {});
     const onApprovalPending = React.useCallback((registration: ActionApprovalRegistration) => handler.current(registration), []);
     const [checks, setChecks] = React.useState<Readonly<Record<string, MachineProvisionerCheckResultV1>>>({});
-    const scope = useManagedControllerScope({ serverId: props.serverId, testIDPrefix: 'managed-picker.controller',
-        onSelect: React.useCallback(() => setChecks({}), []) });
+    const scope = props.scope;
     const controller = scope.controller;
     const catalog = useManagedProvisioners(props.serverId, onApprovalPending, controller);
     const approval = useActionApprovalContinuation({ serverId: props.serverId, scopeKey: JSON.stringify([props.serverId, catalog.binding?.accountId]), onExecuted: () => {} });
@@ -138,8 +151,11 @@ function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
     // section header actions, so the same chip leads the picker as its own "Managed from" row.
     // On a phone the chip is wider than a header action may be, so it also leads as its own row there.
     const pageSections = useListPresentation() === 'page' && !compact;
-    const scopeRow = !pageSections && scope.chip ? <ItemGroup>
-        <Item testID="managed-picker.scope" title={t('managedMachines.config.managedFrom')} mode="info" showChevron={false} rightElement={scope.chip} />
+    const chip = props.pageOwnsChip ? null : scope.chip;
+    const scopeRow = !pageSections && chip ? <ItemGroup>
+        {/* The chip is wider than a short value beside a label, so it sits beneath "Managed from". */}
+        <Item testID="managed-picker.scope" title={t('managedMachines.config.managedFrom')} mode="info" showChevron={false} rightElement={chip}
+            accessoryLayout="stacked" />
     </ItemGroup> : null;
     const setUpThisComputer = props.onSetUpThisComputer ?? (() => router.push('/settings/machines/add?path=thisComputer' as never));
     return <View testID="managed-picker">
@@ -153,9 +169,9 @@ function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
             : cards.length > 0 ? <>
                 {scopeRow}
                 {scopeState}
-                <MachineProvisionerSections cards={cards} compact={compact} testID="managed-picker.provisioners" scope={pageSections ? scope.chip : undefined}
+                <MachineProvisionerSections cards={cards} compact={compact} testID="managed-picker.provisioners" scope={pageSections && chip ? chip : undefined}
                     localTitle={t('managedMachines.add.onThisComputer')} localDescription={localDescription} />
-            </> : pageSections ? <ItemGroup title={t('managedMachines.config.managedFrom')} action={scope.chip} surface="none">{scopeState}</ItemGroup>
+            </> : pageSections ? <ItemGroup title={chip ? t('managedMachines.config.managedFrom') : undefined} action={chip ?? undefined} surface="none">{scopeState}</ItemGroup>
             : <>{scopeRow}{scopeState}</>}
     </View>;
 }

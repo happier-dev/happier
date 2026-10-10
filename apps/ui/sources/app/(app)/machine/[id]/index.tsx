@@ -96,7 +96,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { PageHeader, type PageHeaderMetaFact } from '@/components/ui/layout/PageHeader';
 import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
-import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
+import { AttentionBanner, attentionBannerPoint } from '@/components/ui/lists/AttentionBanner';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
@@ -132,6 +132,17 @@ const styles = StyleSheet.create((theme) => ({
         marginHorizontal: 2,
     },
 }));
+
+/** The CLI commands the offline checks name; commands are never translated, so they are matched literally. */
+const OFFLINE_HELP_COMMANDS = ['happier daemon status', 'happier self update'] as const;
+
+/** The offline checks, one point per line of the translated help, with each command in the mono role. */
+function offlineHelpPoints() {
+    return t('machine.offlineHelp').split('\n')
+        .map((line) => line.replace(/^\s*•\s*/, '').trim())
+        .filter(Boolean)
+        .map((line) => attentionBannerPoint(line, OFFLINE_HELP_COMMANDS));
+}
 
 function resolveMachineServerIdFromList(params: Readonly<{
     activeServerId: string;
@@ -813,7 +824,9 @@ export default function MachineDetailScreen() {
     // A machine Happier created reads as what it is: its provider's mark, where it came from, and its
     // observed power and kind. The same read feeds the managed sections below.
     const managedEnrolled = useManagedEnrolledMachine({ enrolledMachineId: machineId || undefined, serverId: machineServerId });
-    const managedIdentity = useManagedMachineHeaderIdentity(managedEnrolled.machine, managedEnrolled.serverId);
+    // A connected daemon's start is when this machine's Happier came up: the header's "Running 3 h".
+    const daemonStartedAt = machineIsOnline && typeof machine?.daemonState?.startedAt === 'number' ? machine.daemonState.startedAt : undefined;
+    const managedIdentity = useManagedMachineHeaderIdentity(managedEnrolled.machine, managedEnrolled.serverId, { runningSince: daemonStartedAt });
     const managedMeta = managedIdentity?.meta;
 
     const headerMeta = React.useMemo((): PageHeaderMetaFact[] => {
@@ -1003,7 +1016,7 @@ export default function MachineDetailScreen() {
                     <AttentionBanner
                         testID="machine-detail-unavailable"
                         title={t('machineDetailPage.unavailableTitle')}
-                        description={t('machine.offlineHelp')}
+                        points={offlineHelpPoints()}
                         action={{
                             label: t('common.retry'),
                             onPress: () => void handleRetryAvailability(),
@@ -1456,10 +1469,10 @@ export default function MachineDetailScreen() {
                                         showChevron={false}
                                     />
                                 )}
-                                {machine.daemonState.startTime && (
+                                {typeof machine.daemonState.startedAt === 'number' && (
                                     <Item
                                         title={t('machine.startedAt')}
-                                        detail={new Date(machine.daemonState.startTime).toLocaleString()}
+                                        detail={new Date(machine.daemonState.startedAt).toLocaleString()}
                                         mode="info"
                                         showChevron={false}
                                     />

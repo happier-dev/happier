@@ -312,6 +312,8 @@ export const managedMachines: ManagedMachinesTranslations = {
             madeFromPreset: ({ preset }: { preset: string }) => `Creada a partir de la configuració predefinida ${preset}.`,
             createdOn: ({ provider }: { provider: string }) => `Creada per Happier a ${provider}.`,
             kindFact: ({ provider, kind }: { provider: string; kind: string }) => `${kind} de ${provider}`,
+            kindFactWithId: ({ fact, id }: { fact: string; id: string }) => `${fact} ${id}`,
+            runningFor: ({ duration }: { duration: string }) => `En execució fa ${duration}`,
             power: { running: "En execució", stopped: "Aturada", suspended: "Suspesa" },
         },
         picker: {

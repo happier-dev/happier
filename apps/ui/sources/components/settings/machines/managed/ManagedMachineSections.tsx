@@ -4,6 +4,7 @@ import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/ma
 import { ManagedMachineActionOutputSchemasV1, type ManagedMachineActionIdV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { MachineRetentionPolicyV1 } from '@happier-dev/protocol/account/settings/machineRetentionDefaultsV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { readInputPath } from '@happier-dev/protocol/inputs';
 
 import { Icon } from '@/components/ui/icons/Icon';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
@@ -44,7 +45,7 @@ import { ManagedCreationProgress } from './ManagedCreationProgress';
 import { ManagedMachineControllerSection, ManagedMachinePolicySection, ManagedMachineRecipeSection, ManagedControllerMoveList } from './ManagedMachineDetailSections';
 import { buildManagedConfigurationReceipt, managedCredentialReceiptTargets, managedSizeDimensions } from './managedConfigurationPresentation';
 import { useQualifiedConnectedAccountTargetPresentations } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountTargetPresentations';
-import { describeRetention, describeRetentionConsequence } from './managedRetentionPresentation';
+import { describeRetention, describeRetentionConsequence, formatRetentionDuration } from './managedRetentionPresentation';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { canRetryManagedInstallation, describeManagedCreation, managedCreationSetup, type ManagedCreationContext } from './managedCreationPresentation';
 import { useManagedMachineActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
@@ -347,7 +348,7 @@ export function ManagedMachineSections(props: SectionProps) {
         }), { tag: 'ManagedMachineSections.dependencies' });
     };
     const changePolicy = async (next: MachineRetentionPolicyV1) => {
-        if (!canMutate) return false;
+        if (!canMutate || !policyParent) return false;
         if (sameStrictJsonValue(next, { retention: machine.retention, wakeOnAcceptedMessage: machine.wakeOnAcceptedMessage })) {
             submittedPolicyRef.current = null;
             setProposedPolicy(null);
@@ -442,12 +443,13 @@ export function ManagedMachineSections(props: SectionProps) {
         ...(controller && controllerPresence ? { controller: { name: controllerName, online: controllerPresence.online } } : {}) };
     const keep: ManagedKeepProps = { policy, inherited: false, defaultPolicy: policyParent?.policy,
         finiteOnly: policyParent?.capabilities.finiteOnly,
+        capabilitiesAvailable: policyParent !== null,
         nativeExpiry: nativeExpiryDescription,
         effects: supportedIntents.filter((intent): intent is 'stop' | 'delete' => intent === 'stop' || intent === 'delete'),
         canWake: supportedIntents.includes('start') || supportedIntents.includes('resume'),
         // A live machine is where an explicit, reviewed deadline is set (plan 52); the Action still asks first.
         deadline: true,
-        consequence, disabled: !canMutate, onChange: changePolicy,
+        consequence, disabled: !canMutate || !policyParent, onChange: changePolicy,
         onCancel: () => { submittedPolicyRef.current = null; setProposedPolicy(null); },
         onReset: resetPolicy };
     const keepChannel = useLiveValueChannel(keep);
@@ -493,7 +495,7 @@ export function ManagedMachineSections(props: SectionProps) {
                 reinstall: () => fireAndForget(run('machines.managed.bootstrap.retry', { ...target,
                     expectedIntentRevision: machine.intentRevision }), { tag: 'ManagedMachineSections.retryInstall' }),
             } : {}) }} />
-        <ManagedCreationScopeRuleSection machine={machine} serverId={props.serverId} />
+        <ManagedCreationScopeRuleSection machine={machine} serverId={props.serverId} binding={props.binding} />
         <ManagedMachinePolicySection testID="managed-machine.policy" description={policyDescription} keep={keep}
             compactSummary={compact ? { summary: describeRetention(policy.retention),
                 onPress: () => {
@@ -616,24 +618,63 @@ export type ManagedMachineHeaderIdentity = Readonly<{
     meta: readonly PageHeaderMetaFact[];
 }>;
 
+const MINUTE_MS = 60_000;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
+
+/** How long it has been up, in its largest whole unit ("3 h", "2 d", "20 min"). */
+function formatUptime(ms: number): string {
+    const unit = ms >= DAY_MS ? DAY_MS : ms >= HOUR_MS ? HOUR_MS : MINUTE_MS;
+    return formatRetentionDuration(Math.max(1, Math.floor(ms / unit)) * unit);
+}
+
+/**
+ * A created machine's header facts (lab `m-detail`: "Running 3 h" · "Hetzner server 58213904"), from
+ * real facts only: power from the provider's own observation, how long it has been running only when
+ * the caller knows when it came up, and the provider's id only where its declaration names the field
+ * in the resource value. Anything unknown is left out rather than guessed.
+ */
+export function managedMachineHeaderMeta(input: Readonly<{
+    machine: Readonly<{ observation?: ManagedMachineV1['observation']; resource?: Readonly<{ value: unknown }> }>;
+    provider: string | null; kindTitle: string | null;
+    /** The declared path of the provider's own id in the resource value. */
+    resourceIdPath?: string;
+    /** When the machine's Happier came up (its connected daemon's start), for a running machine's uptime. */
+    runningSince?: number;
+    now: number;
+}>): PageHeaderMetaFact[] {
+    const meta: PageHeaderMetaFact[] = [];
+    const power = input.machine.observation?.availability === 'present' ? input.machine.observation.power : undefined;
+    if (power === 'running' || power === 'stopped' || power === 'suspended') {
+        const uptime = power === 'running' && input.runningSince !== undefined && input.runningSince <= input.now
+            ? formatUptime(input.now - input.runningSince) : null;
+        meta.push({ key: 'managed-power', testID: 'machine-detail-managed-power',
+            text: uptime ? t('managedMachines.detail.runningFor', { duration: uptime }) : t(`managedMachines.detail.power.${power}`) });
+    }
+    if (input.provider) {
+        const kind = input.kindTitle ? t('managedMachines.detail.kindFact', { provider: input.provider, kind: input.kindTitle }) : input.provider;
+        const value = input.resourceIdPath ? readInputPath(input.machine.resource?.value, input.resourceIdPath) : undefined;
+        const nativeId = typeof value === 'number' || (typeof value === 'string' && value.length > 0) ? String(value) : null;
+        meta.push({ key: 'managed-kind', text: nativeId ? t('managedMachines.detail.kindFactWithId', { fact: kind, id: nativeId }) : kind });
+    }
+    return meta;
+}
+
 /**
  * Who a created machine is, for its page header (lab `m-detail`): the provider's mark, where it came
- * from ("Made from the Build box preset."), and its observed power and kind beside the ordinary facts.
- * Identity comes from the installed provisioner declaration, so the header asks no machine anything.
+ * from ("Made from the Build box preset."), and its observed power, uptime, kind and native id beside the
+ * ordinary facts. Identity comes from the installed provisioner declaration, so the header asks no
+ * machine anything.
  */
-export function useManagedMachineHeaderIdentity(machine: ManagedMachineV1 | undefined, serverId: string): ManagedMachineHeaderIdentity | null {
+export function useManagedMachineHeaderIdentity(machine: ManagedMachineV1 | undefined, serverId: string,
+    live?: Readonly<{ runningSince?: number }>): ManagedMachineHeaderIdentity | null {
     const presentation = useManagedProvisionerPresentation({ serverId, controller: machine?.controller,
         provider: machine?.launch.provider, schemaVersion: machine?.launch.schemaVersion });
     if (!machine) return null;
     const provider = presentation.title;
     const presetName = machine.reviewedFacts?.preset?.name;
-    const power = machine.observation?.availability === 'present' ? machine.observation.power : undefined;
-    const meta: PageHeaderMetaFact[] = [];
-    if (power === 'running' || power === 'stopped' || power === 'suspended') {
-        meta.push({ key: 'managed-power', text: t(`managedMachines.detail.power.${power}`), testID: 'machine-detail-managed-power' });
-    }
-    if (provider) meta.push({ key: 'managed-kind', text: presentation.kindTitle
-        ? t('managedMachines.detail.kindFact', { provider, kind: presentation.kindTitle }) : provider });
+    const meta = managedMachineHeaderMeta({ machine, provider, kindTitle: presentation.kindTitle,
+        resourceIdPath: presentation.resourceIdPath ?? undefined, runningSince: live?.runningSince, now: Date.now() });
     return { mark: presentation.mark,
         description: presetName ? t('managedMachines.detail.madeFromPreset', { preset: presetName })
             : provider ? t('managedMachines.detail.createdOn', { provider }) : null,

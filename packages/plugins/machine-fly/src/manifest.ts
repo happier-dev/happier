@@ -59,7 +59,7 @@ function bytes(value: string) {
 export const MACHINE_PROVISIONER = {
   title: 'Fly Machines', icon: 'hard-drives', resourceKind: 'fly-machine', schemaVersion: 1,
   kindTitle: machinePresentationLabel('kind'), description: machinePresentationLabel('description'),
-  launchSchema: FlyLaunchV1Schema.jsonSchema, resourceSchema: FlyResourceV1Schema.jsonSchema,
+  launchSchema: FlyLaunchV1Schema.jsonSchema, resourceSchema: FlyResourceV1Schema.jsonSchema, resourceIdPath: 'machineId',
   platforms: ['darwin', 'linux', 'win32'], prerequisites: [],
   billing, retention: { supportedIntents: ['start', 'stop', 'resume', 'suspend', 'delete'] },
   actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },

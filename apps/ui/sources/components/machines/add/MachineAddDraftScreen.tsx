@@ -22,6 +22,7 @@ import type { MachineAddPathId } from './machineAddPaths';
 import { discardMachineAdd, useMachineAddDraftRow } from './useMachineAddFlow';
 import { useMachineAddFlowDraftSelector } from './machineAddFlowStore';
 import { useManagedMachineAccountSettings } from '@/components/settings/machines/managed/useManagedMachineAccountSettings';
+import { useManagedControllerScope } from '@/components/settings/machines/managed/useManagedControllerScope';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 
 const PATH_IDS: readonly MachineAddPathId[] = ['thisComputer', 'ssh', 'anotherComputer'];
@@ -48,6 +49,10 @@ export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen()
     // One read of the Account's opt-out serves the header's promise and the form's Create one.
     const accountScope = useServerCredentialAccountScopeBinding(serverId);
     const canCreate = useManagedMachineAccountSettings(accountScope.binding ?? undefined).settings?.managedMachineCreationEnabled === true;
+    // Create one's "Managed from" is a page-level scope (lab m-add): its chip sits in this header while
+    // Create one is open, and the catalog below reads the machine it names.
+    const creating = useMachineAddFlowDraftSelector((draft) => draft.creating) && canCreate;
+    const managedScope = useManagedControllerScope({ serverId, testIDPrefix: 'managed-picker.controller' });
     const navigate = React.useCallback((href: unknown, tag: string, replace: boolean) => {
         const result = runGuardedNavigation(() => (replace ? router.replace(href as never) : router.push(href as never)));
         if (result !== true) fireAndForget(result, { tag });
@@ -79,13 +84,16 @@ export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen()
                 description={canCreate ? t('managedMachines.add.pageDescription') : t('addFlows.addMachineDescription')}
                 meta={[{ key: 'home', icon: 'house', text: homeName ? t('addFlows.machineJoinsHome', { home: homeName }) : t('managedMachines.add.joinsThisHome') }]}
                 actions={(
-                    <RoundButton
-                        testID="settings.machines.draft.discard"
-                        size="small"
-                        display="inverted"
-                        title={t('addFlows.discard')}
-                        onPress={discard}
-                    />
+                    <>
+                        {creating ? managedScope.chip : null}
+                        <RoundButton
+                            testID="settings.machines.draft.discard"
+                            size="small"
+                            display="inverted"
+                            title={t('addFlows.discard')}
+                            onPress={discard}
+                        />
+                    </>
                 )}
             />
             <SettingAnchor setting={MACHINES_ADD_SETTINGS.settings.setupNewMachineAction}>
@@ -94,6 +102,7 @@ export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen()
                         testID="settings.machines.draft.form"
                         initialPath={readPath(params.path)}
                         canCreate={canCreate}
+                        managedScope={creating ? managedScope : undefined}
                         onClose={discard}
                         onStartSession={startSession}
                     />

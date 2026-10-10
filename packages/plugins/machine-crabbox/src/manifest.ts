@@ -39,7 +39,7 @@ async function directProvider(context: PluginInvocationContext) {
 export const CRABBOX_MACHINE_PROVISIONER = {
   title: 'Crabbox', icon: 'hard-drives', resourceKind: 'crabbox-lease', schemaVersion: 1,
   kindTitle: machinePresentationLabel('kind'), description: machinePresentationLabel('description'),
-  launchSchema: CrabboxLaunchV1Schema.jsonSchema, resourceSchema: CrabboxResourceV1Schema.jsonSchema,
+  launchSchema: CrabboxLaunchV1Schema.jsonSchema, resourceSchema: CrabboxResourceV1Schema.jsonSchema, resourceIdPath: 'leaseId',
   platforms: ['darwin', 'linux', 'win32'], prerequisites: [],
   billing: { location: 'cloud', stoppedBilling: 'unknown' }, retention: { supportedIntents: ['delete'] },
   credentialPurposeRequirements: [{ purpose: CRABBOX_CONNECTION_PURPOSE, optionalWhen: { op: 'and', all: [

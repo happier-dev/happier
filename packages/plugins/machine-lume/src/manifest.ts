@@ -61,7 +61,7 @@ async function runtime(context: PluginInvocationContext) {
 export const LUME_MACHINE_PROVISIONER = {
   title: 'Lume', icon: 'desktop', resourceKind: 'lume-vm', schemaVersion: 1,
   kindTitle: machinePresentationLabel('kind'), description: machinePresentationLabel('description'),
-  launchSchema: LumeLaunchV1Schema.jsonSchema, resourceSchema: LumeResourceV1Schema.jsonSchema,
+  launchSchema: LumeLaunchV1Schema.jsonSchema, resourceSchema: LumeResourceV1Schema.jsonSchema, resourceIdPath: 'vmName',
   platforms: ['darwin'], prerequisites: [{ kind: 'managedDependency', id: LUME_DEPENDENCY_ID }, { kind: 'systemTool', id: 'ssh-keyscan' }],
   billing: LUME_BILLING, retention: { supportedIntents: ['start', 'stop', 'delete'] },
   actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },

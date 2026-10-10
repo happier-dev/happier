@@ -37,7 +37,7 @@ function privateBytes(value: string) {
 export const DOCKER_SANDBOXES_MACHINE_PROVISIONER = {
   title: 'Docker Sandboxes', icon: 'cube', resourceKind: 'docker-sandbox', schemaVersion: 1,
   kindTitle: machinePresentationLabel('kind'), description: machinePresentationLabel('description'),
-  launchSchema: DockerSandboxesLaunchV1Schema.jsonSchema, resourceSchema: DockerSandboxesResourceV1Schema.jsonSchema,
+  launchSchema: DockerSandboxesLaunchV1Schema.jsonSchema, resourceSchema: DockerSandboxesResourceV1Schema.jsonSchema, resourceIdPath: 'sandboxName',
   platforms: ['darwin', 'linux', 'win32'], prerequisites: [{ kind: 'managedDependency', id: DOCKER_SANDBOXES_DEPENDENCY_ID }],
   billing: { location: 'local', stoppedBilling: 'not-billed' }, retention: { supportedIntents: ['start', 'stop', 'delete'] },
   actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },

@@ -5,6 +5,7 @@ import type { HappierPageTextStep } from '../layout/pageText.js';
 
 import { useOptionalHappierUiLocalization } from '../../environment/context.js';
 import { HAPPIER_PRESS_FEEDBACK_V1 } from '../interaction/pressFeedback.js';
+import { HAPPIER_PAGE_METRICS } from '../layout/pageMetrics.js';
 import { resolveHappierTabKeySelection } from '../navigation/Tabs.js';
 import { HAPPIER_FIELD_BOX_METRICS } from './FieldBox.js';
 
@@ -62,6 +63,8 @@ export type HappierSelectionTilesColors = Readonly<{
   /** An action tile's paper and its hovered outline. */
   actionBackground: string;
   actionBorderHovered: string;
+  /** The hairline between the cells of a `surface="sheet"` group; the tile outline colour when absent. */
+  divider?: string;
 }>;
 
 export type HappierSelectionTileTextRole =
@@ -162,6 +165,13 @@ type HappierChoiceTilesBaseProps<T extends string, I extends string> = HappierSe
    * is always announced with its whole description.
    */
   subtitleLines?: number;
+  /**
+   * Card variant. `tiles` (default): each option is its own outlined tile, with a gap between them.
+   * `sheet`: the options are cells of the one sheet they sit on (the caller's section sheet), divided
+   * by hairlines between columns and rows, at the row inset, with no outline or gap of their own; the
+   * chosen cell shows its filled radio. The same column algorithm decides how many share a row.
+   */
+  surface?: 'tiles' | 'sheet';
   renderOptionFooter?: HappierSelectionTileFooterRenderer<T, I>;
 }>;
 
@@ -491,7 +501,8 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
   const fallbackViewportWidth = webViewportWidth ?? windowWidth;
   const selectionAccessibilityRole = props.selectionMode === 'multiple' ? 'checkbox' : 'radio';
   const tileKeyboardProps = useChoiceTilesKeyboard(props);
-  const gap = CARD_GAP_PX;
+  const sheet = props.surface === 'sheet';
+  const gap = sheet ? 0 : CARD_GAP_PX;
   const density = props.density ?? 'regular';
   const compact = density === 'compact';
   const minimumColumns = useMemo(
@@ -550,9 +561,12 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
   const fallbackTileWidthStyle = useMemo((): ViewStyle | null => {
     if (width > 0) return null;
     if (fittedColumns <= 1) return { width: '100%' };
+    // Sheet cells have no gap to leave room for, so the shares are exact.
+    if (sheet) return { width: `${100 / fittedColumns}%`, maxWidth: `${100 / fittedColumns}%`, flexGrow: 0, flexShrink: 0 };
     if (fittedColumns === 2) return { width: '48%', maxWidth: '48%', flexGrow: 0, flexShrink: 0 };
     return { width: '31%', maxWidth: '31%', flexGrow: 0, flexShrink: 0 };
-  }, [fittedColumns, width]);
+  }, [fittedColumns, sheet, width]);
+  const dividerColor = props.colors.divider ?? props.colors.tileBorder;
 
   return (
     <View
@@ -579,7 +593,13 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
         return (
           <View
             key={option.id}
-            style={[
+            style={sheet ? [
+              styles.sheetCell,
+              tileWidth ? { width: tileWidth } : fallbackTileWidthStyle,
+              // Hairlines only between cells: before every cell but a row's first, above every row but the first.
+              index % fittedColumns !== 0 ? { borderLeftWidth: StyleSheet.hairlineWidth, borderColor: dividerColor } : null,
+              index >= fittedColumns ? { borderTopWidth: StyleSheet.hairlineWidth, borderColor: dividerColor } : null,
+            ] : [
               styles.tile,
               compact ? styles.tileFrameCompact : null,
               tileWidth ? { width: tileWidth } : fallbackTileWidthStyle,
@@ -606,15 +626,16 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
                 styles.tilePressable,
                 compact ? styles.tileCompact : null,
                 compact && !hasSubtitle ? styles.tileCompactWithoutSubtitle : null,
+                sheet ? styles.sheetCellPressable : null,
                 // The frame above owns the column's share before measurement; the press target fills it
                 // (a second percentage here would take a share of the share).
                 tileWidth ? { width: tileWidth } : FILL_TILE_FRAME,
                 { opacity: pressOpacity(disabled, pressed) },
               ]}
             >
-              <View style={[styles.headerRow, compact && (!hasSubtitle || hasPreview) ? styles.headerRowCentered : null]}>
+              <View style={[styles.headerRow, sheet || compact && (!hasSubtitle || hasPreview) ? styles.headerRowCentered : null]}>
                 {hasPreview ? <View style={styles.cardPreview} pointerEvents="none" aria-hidden>{option.preview}</View> : null}
-                <View style={[styles.titleRow, compact && (!hasSubtitle || hasPreview) ? styles.titleRowCentered : null]}>
+                <View style={[styles.titleRow, sheet || compact && (!hasSubtitle || hasPreview) ? styles.titleRowCentered : null]}>
                   {option.mark || glyph ? <View style={[styles.iconSlot, compact ? styles.iconSlotCompact : null]}>
                     {option.mark ?? (glyph ? props.renderGlyph({ glyph, size: glyphSize, color: glyphColor }) : null)}
                   </View> : null}
@@ -776,6 +797,18 @@ function createTileStyles(colors: HappierSelectionTilesColors) {
       borderRadius: 12,
       borderWidth: 1,
       overflow: 'hidden',
+    },
+    // A cell of the sheet it sits on: the sheet owns the ground, the edge and the corners.
+    sheetCell: {
+      borderWidth: 0,
+      borderRadius: 0,
+    },
+    // At the sheet's row inset and row height, so the cells line up with the rows of the page.
+    sheetCellPressable: {
+      paddingHorizontal: HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx,
+      paddingVertical: HAPPIER_PAGE_METRICS.compactRowPaddingVerticalPx,
+      minHeight: HAPPIER_PAGE_METRICS.rowMinHeightPx,
+      justifyContent: 'center',
     },
     // Compact cards share the field box's shape (radius, one-pixel outline), so a dense grid reads
     // like the controls around it; the chosen tile keeps the selection colour on that outline.

@@ -31,7 +31,7 @@ function priceLabel(id: keyof typeof HETZNER_PRICE_LABELS.en) {
 export const MACHINE_PROVISIONER = {
   title: 'Hetzner', icon: 'hard-drives', resourceKind: 'hetzner-server', schemaVersion: 1,
   kindTitle: machinePresentationLabel('kind'), description: machinePresentationLabel('description'),
-  launchSchema: HetznerLaunchV1Schema.jsonSchema, resourceSchema: HetznerResourceV1Schema.jsonSchema,
+  launchSchema: HetznerLaunchV1Schema.jsonSchema, resourceSchema: HetznerResourceV1Schema.jsonSchema, resourceIdPath: 'serverId',
   platforms: ['darwin', 'linux', 'win32'], prerequisites: [{ kind: 'systemTool', id: 'ssh-keyscan' }],
   billing, retention: { supportedIntents: ['start', 'stop', 'delete'] },
   actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },

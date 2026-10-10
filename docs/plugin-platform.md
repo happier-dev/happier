@@ -44,6 +44,8 @@ In the same development source, an absolute Stop/Delete deadline is a reviewed, 
 
 The same development declaration can bind `nativeDurationInput:{path,unit}` to one ordinary numeric field in its existing options Action. Units are milliseconds or seconds; the field's schema and editor remain owned by that Action. Canonical manifest admission requires the field in every input arm with one identical numeric schema and exactly one numeric hint. This lets the shared Ends owner use that real field without guessing native names or adding a second lifetime input. The binding is not an observed expiry timestamp. Modal declares `timeoutMs` in milliseconds; loaded single-editor UI behavior remains subject to the shared configurator's integration check.
 
+A provisioner may also declare `resourceIdPath`, the path of the provider's own id inside its resource value (the id its console shows). Admission requires that path to name a text or number field in every resource arm. It is display-only, never an identity or a lookup key: a created machine's header shows it after the kind ("Hetzner server 58213904"), and an undeclared or absent value shows nothing. The first-party leaves declare Hetzner `serverId`, DigitalOcean `dropletId`, Fly `machineId`, Modal and Cua `sandboxId`, Lume `vmName`, Lima `instance`, Docker Sandboxes `sandboxName` and Crabbox `leaseId`.
+
 Fly's development options query accepts known inactive app/volume draft fields retained by the generic form. Its schema-owned candidate codec selects only the active fields and validates the complete result through the unchanged closed executable launch schema. Unknown draft fields remain rejected; an incomplete active branch supplies discovery choices, not an executable launch. Neither the form nor the options role rewrites the saved recipe or grants acquisition before revalidation.
 
 Private native exec carries the containing task's `timeoutMs` unchanged; `null` means no timeout, not a leaf-selected fallback. The host supplies that budget under current retained-row custody. Modal forwards a finite budget to its native exec API and omits the native timeout for `null`.
@@ -181,7 +183,9 @@ capability), including explicit null intents for removed or machine-only ids.
 The server delegates each projection to the same exact-read owner; bootstrap
 does not issue one HTTP request per plugin or maintain another freshness cache.
 Individual unreadable projections appear in `failedPluginIds`. The reader follows
-`nextCursor` before treating the census as complete. A failed or non-advancing
+`nextCursor` before treating the census as complete and sends only the current
+page's known-id window plus one lookahead, using the same server page-size owner.
+A failed or non-advancing
 page preserves admitted materializations and successful reads and publishes
 `intentCensusIncomplete` through the existing retry owner. This includes failure
 of the first intent page after a successful materialization read. Retained rows
@@ -1551,9 +1555,17 @@ does not cancel another reader.
 Remote and npm acquisition no longer impose implicit download/socket deadlines
 or shorten an explicit enclosing deadline. Their acquisition signal covers DNS,
 redirect assessment and body consumption. Destination, credential, signature
-and digest checks remain independent of plugin trust. Remote acquisition detects
-repeated redirect URLs instead of rejecting a finite chain after five hops;
-the npm redirect policy and archive extraction budget remain separately owned.
+and digest checks remain independent of plugin trust. Both acquisition owners
+detect repeated redirect URLs instead of rejecting a finite chain after five
+hops. Streamed archives and extraction have no implicit payload, file-count,
+depth, compression-ratio or wall-clock ceiling; explicit caller/operator quotas
+remain enforceable. Extraction joins its owned file writes before cleanup,
+preserves executable modes and retains path containment, portable segment and
+collision checks, integrity verification and the bounded parser metadata buffer.
+Buffered catalog, npm metadata, key and attestation reads follow explicit
+caller/operator byte budgets without separate implicit defaults or clamps.
+These JSON reads still materialize their values in memory; this policy is not a
+streaming JSON or hostile-input memory-isolation guarantee.
 Accepted daemon installation changes retain their existing drain/status recovery
 contract; ending a caller's observation does not cancel an accepted effect.
 
@@ -1571,6 +1583,13 @@ restart. Marketplace diagnostics and installation review retain their complete
 evidence; item pagination stays with the canonical query owner. A dated,
 request-matched successful marketplace cache remains available after a failed
 refresh, with freshness and current install revalidation kept separate.
+Listing, configuration and review text and arrays have no guessed presentation
+ceilings. Review JSON uses the existing iterative finite/cycle-checking plugin
+JSON owner rather than a local depth/count policy. The canonical 100-item
+Marketplace processing page retains total/cursor continuation; it is not a
+maximum catalog size or an inferred npm service quota. Existing unique finite
+review sets retain their enum cardinality, as do real npm naming, digest,
+storage-identity and numeric representation contracts.
 
 Resource descriptors retain size/digest metadata, not aggregate payload bytes;
 their former 512-entry/context and 64 MiB descriptor-accounting caps are removed.

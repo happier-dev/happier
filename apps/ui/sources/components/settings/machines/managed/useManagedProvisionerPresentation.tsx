@@ -53,6 +53,7 @@ export function useManagedProvisionerPresentation(input: Readonly<{
     return { localized, title: provisioner ? localized(provisioner.contribution.pluginId, provisioner.descriptor.title) : null,
         kindTitle: provisioner?.descriptor.kindTitle ? localized(provisioner.contribution.pluginId, provisioner.descriptor.kindTitle) : null,
         description: provisioner?.descriptor.description ? localized(provisioner.contribution.pluginId, provisioner.descriptor.description) : null,
+        resourceIdPath: provisioner?.descriptor.resourceIdPath ?? null,
         mark: provisionerMark(provisioner), markFor: provisionerMark,
         projection: uiProjection, projectionReady: projection.phase === 'ready', repair };
 }

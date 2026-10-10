@@ -131,7 +131,7 @@ function provisioner(id: CuaLocalProvisionerId): MachineProvisionerAuthorDefinit
         resourceKind: id === 'local-space' ? 'cua-local-space' : 'cua-local-sandbox', schemaVersion: 1,
         kindTitle: machinePresentationLabel(id === 'local-space' ? 'spaceKind' : 'kind'),
         description: machinePresentationLabel(id === 'local-space' ? 'spaceDescription' : 'description'),
-        launchSchema: CuaLocalLaunchV1Schema.jsonSchema, resourceSchema: CuaLocalResourceV1Schema.jsonSchema,
+        launchSchema: CuaLocalLaunchV1Schema.jsonSchema, resourceSchema: CuaLocalResourceV1Schema.jsonSchema, resourceIdPath: 'sandboxId',
         platforms: ['darwin', 'linux', 'win32'], prerequisites: [{ kind: 'managedDependency', id: dependencyId }],
         billing: { location: 'local', stoppedBilling: 'not-billed' },
         retention: { supportedIntents: ['start', 'suspend', 'resume', 'delete'] },

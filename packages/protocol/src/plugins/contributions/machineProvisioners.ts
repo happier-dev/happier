@@ -64,6 +64,9 @@ export const MachineProvisionerContributionV1Schema = lazyZodSchema(() => z.obje
   // References the existing options Action editor, not a second duration
   // schema or an observed resource expiry. The unit belongs to that raw input.
   nativeDurationInput: z.object({ path: InputPathSchema, unit: z.enum(['milliseconds', 'seconds']) }).strict().optional(),
+  // Where the provider's own id for a created resource lives in its resource value (the id its console
+  // shows), so a host can name it without guessing native field names. Display only, never an identity.
+  resourceIdPath: InputPathSchema.optional(),
   bootstrapTransport: z.object({ kind: z.literal('native'), exec: local(), putFile: local() }).strict().optional(),
   bootstrapCredential: z.object({ kind: z.enum(['ssh', 'native-token']) }).strict().optional(),
   // Waive only a positively qualified native launch variant. Omission keeps
@@ -80,6 +83,10 @@ export const MachineProvisionerContributionV1Schema = lazyZodSchema(() => z.obje
     }
     purposes.add(requirement.purpose);
   });
+  if (descriptor.resourceIdPath !== undefined && !resolveDeclaredInputLeaves(descriptor.resourceSchema, descriptor.resourceIdPath)
+    ?.every(leaf => leaf.type === 'string' || leaf.type === 'integer' || leaf.type === 'number')) {
+    context.addIssue({ code: 'custom', path: ['resourceIdPath'], message: 'A native resource id path must name a text or number field of every resource arm.' });
+  }
   if (descriptor.bootstrapCredential?.kind === 'native-token' && !descriptor.bootstrapTransport) {
     context.addIssue({ code: 'custom', path: ['bootstrapTransport'], message: 'Native bootstrap tokens require native exec and file transport.' });
   }

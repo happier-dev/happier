@@ -27,6 +27,8 @@ export type MachineProvisionerContributionV1 = Readonly<{
   actions: Readonly<{ check: string; options?: string; acquire: string; bootstrap: string; inspect: string; power?: string; destroy: string; rebuild?: string }>;
   /** Existing options Action field and its raw native input unit; not actual expiry. */
   nativeDurationInput?: Readonly<{ path: string; unit: 'milliseconds' | 'seconds' }>;
+  /** Where the provider's own id lives in the resource value (the id its console shows); display only. */
+  resourceIdPath?: string;
   bootstrapTransport?: Readonly<{ kind: 'native'; exec: string; putFile: string }>;
   bootstrapCredential?: Readonly<{ kind: 'ssh' | 'native-token' }>;
   /** Qualified native launch variants that do not require a declared purpose. */
@@ -53,9 +55,9 @@ export type DevcontainerEffectReviewV1 = Readonly<{
   }>[];
 }>;
 /** A named output keeps inferred author Action contracts portable during declaration emission. */
-export interface MachineProvisionerOptionsResultV1 {
-  readonly choices: readonly Readonly<{ id: string; title: PluginLocalizedStringV2; launch?: ProtocolJsonValue; available?: boolean; prices?: readonly MachineProvisionerPriceV1[]; nativeFacts?: MachineProvisionerNativeOptionFactsV1; effectReview?: DevcontainerEffectReviewV1 }>[];
-}
+export type MachineProvisionerOptionsResultV1 = Readonly<{
+  readonly choices: readonly Readonly<{ id: string; title: PluginLocalizedStringV2; launch?: ProtocolJsonValue; available?: boolean; prices?: readonly MachineProvisionerPriceV1[]; retention?: MachineProvisionerContributionV1['retention']; nativeFacts?: MachineProvisionerNativeOptionFactsV1; effectReview?: DevcontainerEffectReviewV1 }>[];
+}>;
 export type DevcontainerNativeObservationV1 = Readonly<{
   nativeResourceId: string; user: string; workspaceFolder: string;
   storage: Readonly<{ kind: 'bind'; hostPath: string; childPath: string }> | Readonly<{ kind: 'child'; childPath: string }>;

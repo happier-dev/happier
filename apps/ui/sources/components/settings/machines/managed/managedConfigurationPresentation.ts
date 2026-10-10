@@ -113,6 +113,19 @@ export function buildManagedConfigurationReceipt(input: ManagedConfigurationRece
                 : { kind: 'unpriced', provider: input.providerTitle } };
 }
 
+/**
+ * The phone's summary bar (lab `m-config` Ap): the chosen size, then the place for a cloud machine or
+ * the system for a local one (the receipt's own lead fact), then what Keep it does. It reads the same
+ * reviewed facts as the receipt; without any native dimension it says nothing of its own.
+ */
+export function describeManagedConfigurationSummary(facts: ManagedConfigurationFactsV1,
+    localized: (value: PluginLocalizedStringV2) => string = value => typeof value === 'string' ? value : value.fallback): string | null {
+    const native = facts.nativeFacts;
+    const lead = facts.billing.location === 'local' ? native?.image : native?.location;
+    const dimensions = [native?.size, lead].flatMap(fact => fact ? [localized(fact.title)] : []);
+    return dimensions.length ? [...dimensions, describeRetention(facts.retention)].join(' · ') : null;
+}
+
 type NativeSizeFact = NonNullable<NonNullable<ManagedConfigurationFactsV1['nativeFacts']>['size']>;
 
 /** The labelled native dimensions a size declares, as the receipt says them: "4 cores", "8 GB", "80 GB". */

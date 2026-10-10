@@ -43,7 +43,7 @@ import { isAuthoritativeScopedSnapshotRefusal } from '@/sync/domains/scope/scope
 import { ManagedMachineConfigurator } from './ManagedMachineConfigurator';
 import { ManagedCreationDisabledBanner } from './ManagedMachineStateRow';
 import { useManagedControllerScope } from './useManagedControllerScope';
-import { buildManagedConfigurationReceipt, describeLocalHeadroom, managedCredentialReceiptTargets } from './managedConfigurationPresentation';
+import { buildManagedConfigurationReceipt, describeLocalHeadroom, describeManagedConfigurationSummary, managedCredentialReceiptTargets } from './managedConfigurationPresentation';
 import { MachineEnvironmentSection } from './MachineEnvironmentSection';
 import { ManagedFieldRow } from './MachinePresetDetail';
 import { useQualifiedConnectedAccountTargetPresentations } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountTargetPresentations';
@@ -69,11 +69,13 @@ const OTHER_LIMIT = '__other-limit';
 
 export type ManagedMachineConfigurationViewProps = Readonly<{
     serverId: string; provisioner: string; presetId?: string; presetOnly?: boolean; initialController?: ManagedControllerV1;
+    /** Exact caller-supplied native query; never inferred from the viewing device's filesystem. */
+    initialOptionsSelectors?: Readonly<Record<string, unknown>>;
     /** Composer review commits local intent; only its explicit Send admits an acquisition. */
     onUse?: (draft: ManagedMachineSelectionDraft) => void;
 }>;
 export function ManagedMachineConfigurationView(props: ManagedMachineConfigurationViewProps) {
-    return <ManagedMachineConfigurationViewBody key={JSON.stringify([props.serverId, props.provisioner, props.presetId])} {...props} />;
+    return <ManagedMachineConfigurationViewBody key={JSON.stringify([props.serverId, props.provisioner, props.presetId, props.initialOptionsSelectors])} {...props} />;
 }
 function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationViewProps) {
     const approvalHandler = React.useRef<(registration: ActionApprovalRegistration) => void>(() => {});
@@ -183,8 +185,9 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         if (!catalogController || props.presetId || !provisioner) return;
         const initial = catalogController;
         if (!machines.some(machine => machine.id === initial.machineId && machine.installationId === initial.installationId)) return;
-        setDraft(current => current ?? createManagedConfiguratorDraft({ provisioner, controller: initial, name: title }));
-    }, [catalogController, props.presetId, provisioner, machines, title]);
+        setDraft(current => current ?? createManagedConfiguratorDraft({ provisioner, controller: initial, name: title,
+            optionsSelectors: props.initialOptionsSelectors }));
+    }, [catalogController, props.presetId, props.initialOptionsSelectors, provisioner, machines, title]);
     React.useEffect(() => {
         if (!preset || !provisioner || teamDenied) return;
         setDraft(current => current ?? { ...createManagedConfiguratorDraft({ provisioner, controller: catalogController ?? preset.controller, name: preset.recipe.name,
@@ -428,6 +431,10 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const summaryPrice = receipt.cost.kind === 'price' ? receipt.cost.prices[0] : undefined;
     const selectedTitle = draft?.selected ? localized(provisioner?.contribution.pluginId ?? '', draft.selected.title) : title;
     const summaryLabel = summaryPrice?.label ? localized(provisioner?.contribution.pluginId ?? '', summaryPrice.label) : null;
+    // The bar names the rate it shows, then the same size, place and Keep facts as the receipt.
+    const summaryFacts = receiptFacts ? describeManagedConfigurationSummary(receiptFacts,
+        value => localized(receiptFacts.launch.provider.pluginId, value)) : null;
+    const summarySpec = [summaryLabel, summaryFacts ?? selectedTitle].filter(Boolean).join(' · ');
     if (props.presetId && (teamDenied || presetQuery.state.error && isMachinePresetAccessLost(presetQuery.state.error)))
         return <SurfaceStateCard kind="denied" title={t('machinePresets.accessLost')} testID="managed-config.error"
             action={{ label: t('managedMachines.actions.tryAgain'), onPress: retry }} />;
@@ -458,7 +465,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     return <ManagedMachineConfigurator title={pageTitle} description={props.presetOnly ? t('machinePresets.futureOnly') : compact ? undefined : t('managedMachines.config.description')} mark={mark}
         actions={scope.chip}
         compact={compact} testID="managed-config" receipt={receipt} summary={{ value: summaryValue,
-            unit: summaryPrice ? formatPriceUnit(summaryPrice.unit) : '', spec: summaryLabel ? `${summaryLabel} · ${selectedTitle}` : selectedTitle }}>
+            unit: summaryPrice ? formatPriceUnit(summaryPrice.unit) : '', spec: summarySpec }}>
         {approval.approvalId ? <AttentionBanner title={t('approvals.title')} description={t('approvals.status.open')}
             action={{ label: t('approvals.details'), onPress: () => router.push(`/inbox/approvals/${encodeURIComponent(approval.approvalId!)}?serverId=${encodeURIComponent(props.serverId)}` as never) }} /> : null}
         {creationDisabledNotice}

@@ -1,15 +1,33 @@
 import { describe, expect, it } from 'vitest';
-import { buildManagedConfigurationReceipt } from './managedConfigurationPresentation';
+import { buildManagedConfigurationReceipt, describeManagedConfigurationSummary } from './managedConfigurationPresentation';
 import { ValidatedLaunchSnapshotV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { presentQualifiedConnectedAccountTarget } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
 import { t } from '@/text';
 import { formatProviderAmount, formatPriceUnit } from './managedMachineDisplay';
+import { describeRetention } from './managedRetentionPresentation';
 
 const launch = { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Original guest', choices: { cpu: 2 } };
 const reviewedFacts = { launch: { ...launch, name: 'Unrelated later name' }, controller: { machineId: 'original-host', installationId: 'installation' },
     optionStatus: 'current' as const, prerequisites: [], billing: { location: 'cloud' as const, stoppedBilling: 'billed' as const },
     retentionCapabilities: { supportedIntents: ['delete' as const] }, retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false,
     prices: [{ amount: '0.0119', currency: 'EUR', unit: 'hour', source: 'native', observedAt: 10 }] };
+describe('the phone summary of a configuration', () => {
+    const nativeFacts = { size: { id: 'cx32', title: 'CX32', cpuCores: 4 }, image: { id: 'ubuntu', title: 'Ubuntu 24.04' },
+        location: { id: 'fsn1', title: 'Falkenstein', countryCode: 'DE' } };
+    it('says the size, the place and what Keep it does, from the same facts as the receipt (lab m-config Ap)', () => {
+        expect(describeManagedConfigurationSummary({ ...reviewedFacts, nativeFacts })).toBe(
+            ['CX32', 'Falkenstein', t('managedRetention.untilDelete')].join(' · '));
+    });
+    it('names the system instead of the place for a local machine, and the Keep rule the person chose', () => {
+        const retention = { kind: 'unused' as const, afterMs: 3_600_000, effect: 'stop' as const };
+        const summary = describeManagedConfigurationSummary({ ...reviewedFacts, nativeFacts, retention,
+            billing: { location: 'local' as const, stoppedBilling: 'not-billed' as const } });
+        expect(summary).toBe(['CX32', 'Ubuntu 24.04', describeRetention(retention)].join(' · '));
+    });
+    it('says nothing of its own when the provider returned no native dimensions', () => {
+        expect(describeManagedConfigurationSummary(reviewedFacts)).toBeNull();
+    });
+});
 describe('one managed configuration receipt projection', () => {
     it('formats stopped compute and attachment charges through the same native price presenter', () => {
         const charges = [reviewedFacts.prices[0]!, { amount: '0.04', currency: 'USD', unit: 'GiB-month', source: 'volume', observedAt: 20 }];

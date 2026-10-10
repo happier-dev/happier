@@ -129,7 +129,8 @@ function SummaryBar(
             <Text style={styles.barUnit}>{props.summary.unit}</Text>
             <Icon name="caret-up" size={12} color={theme.colors.text.secondary} />
           </View>
-          <Text style={styles.barSpec} numberOfLines={1}>
+          {/* Size, place and Keep it all stay readable beside Create: two lines before it ellipsizes. */}
+          <Text style={styles.barSpec} numberOfLines={2}>
             {props.summary.spec}
           </Text>
         </HappierPressable>

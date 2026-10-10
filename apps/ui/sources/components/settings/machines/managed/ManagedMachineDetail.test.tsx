@@ -10,7 +10,7 @@ import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } 
 import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { storage } from '@/sync/domains/state/storage';
-import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { createDeferred, flushHookEffects, renderScreen } from '@/dev/testkit';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { resolveServerProfileScopeIdForIdentifier, setServerProfileIdentityForUrl } from '@/sync/domains/server/serverProfiles';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -54,6 +54,7 @@ import { ManagedMachineStateRow } from './ManagedMachineStateRow';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { Item } from '@/components/ui/lists/Item';
 import { MachineProvisionersListResultV1Schema, MachineProvisionerOptionsResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { AutomationDefinitionDetailSchema, AutomationDefinitionListItemSchema } from '@happier-dev/protocol/automations/automationApiV3';
 
 const operationRpcBoundary = vi.hoisted(() => ({ answer: null as unknown, registryAnswer: null as unknown, schemaAnswer: null as unknown,
     requests: [] as Array<Readonly<{ serverId?: string | null; accountId?: string | null; machineId: string; method: string }>> }));
@@ -106,6 +107,27 @@ afterEach(() => {
     operationRpcBoundary.requests = []; actionOperationStore.reset();
 });
 
+/** Native HTTP boundary for tests whose current provisioner declares static capabilities. */
+function staticRetentionQualification(machine: ManagedMachineV1, url: URL, init?: RequestInit): Response | null {
+    const actionId = url.pathname === '/v1/actions/machines.provisioners.list' ? 'machines.provisioners.list'
+        : url.pathname === '/v1/actions/machines.provisioners.check' ? 'machines.provisioners.check' : null;
+    if (!actionId) return null;
+    const request = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
+    const result = actionId === 'machines.provisioners.list' ? MachineProvisionersListResultV1Schema.parse({
+        provisioners: [{ contribution: machine.launch.provider, occurrenceId: 'static-native-occurrence', descriptor: {
+            id: machine.launch.provider.localId, title: 'Static native resource', icon: 'server',
+            resourceKind: 'static-native-resource', schemaVersion: machine.launch.schemaVersion,
+            launchSchema: { type: 'object', additionalProperties: true },
+            resourceSchema: { type: 'object', additionalProperties: true }, platforms: ['linux'], prerequisites: [],
+            billing: machine.reviewedFacts?.billing ?? { location: 'cloud', stoppedBilling: 'billed' },
+            retention: { supportedIntents: ['start', 'stop', 'delete'] },
+            actions: { check: 'check', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
+        } }],
+    }) : { available: true };
+    return Response.json(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, requestId: request.requestId, actionId,
+        execution: { ok: true, result } }));
+}
+
 describe('managed Machine detail', () => {
     it.each(['provider', 'credential'] as const)('offers the canonical %s recovery from current native facts without installation retry', async removed => {
         const target = await upsertAndActivateServer({ serverUrl: `https://managed-missing-${removed}.test`, scope: 'tab' });
@@ -149,7 +171,7 @@ describe('managed Machine detail', () => {
             params: expect.objectContaining({ serverId, machineId: machine.controller.machineId }) }));
         await screen.unmount();
     });
-    it.each(['owned', 'shared', 'moved', 'different-home', 'fin-read-failed'] as const)('shows a birth-provenance archive rule only from known FIN facts in the exact Account/Home (%s)', async ownership => {
+    it.each(['owned', 'shared', 'moved', 'different-home', 'fin-read-failed', 'other-focused-home', 'other-focused-bound'] as const)('shows a birth-provenance archive rule only from known FIN facts in the exact Account/Home (%s)', async ownership => {
         const target = await upsertAndActivateServer({ serverUrl: `https://managed-birth-${ownership}.test`, scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, `srv_managed_birth_${ownership}`);
         vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
@@ -170,10 +192,27 @@ describe('managed Machine detail', () => {
                     managedCreation: { homeId: ownership === 'different-home' ? 'unrelated-home' : machine.homeId,
                         managedId: machine.id, controller: { machineId: 'controller', installationId: 'installation' } } } } } });
         let triggerReads = 0;
+        const boundRule = ownership === 'other-focused-bound' ? AutomationDefinitionDetailSchema.parse({
+            id: 'birth-archive-rule', name: 'Archive rule', description: null, enabled: true, workflowDefinitionId: null,
+            scopeSessionId: null, targetType: null, existingSessionId: null, templateVersion: 1, lastRunAt: null,
+            createdAt: 1, updatedAt: 1, assignments: [{ machineId: machine.controller.machineId, enabled: true, priority: 0, updatedAt: 1 }],
+            executionRecipe: { v: 2, templateVersion: 1, triggerEvidence: null, workflow: { t: 'plain', v: {
+                workspace: { directory: '~' }, executionTarget: { kind: 'detached_run' }, inlineDefinition: {
+                    version: 1, defaults: {}, inputs: [], blocks: [{ kind: 'action', id: 'managed-scope-end',
+                        actionId: 'machines.managed.power.set', input: { homeId: { kind: 'literal', value: machine.homeId },
+                            managedId: { kind: 'literal', value: machine.id }, when: { kind: 'literal', value: 'after-idle' },
+                            intent: { kind: 'literal', value: 'stop' } } }],
+                },
+            } } },
+            triggers: [{ id: 'birth-trigger', revision: 1, enabled: true, createdAt: 1, updatedAt: 1, kind: 'sessionLifecycle',
+                sourceSessionId: source.id, events: ['sessionArchived'], policy: { kind: 'everyMatch' },
+                remainingOccurrences: null, status: { state: 'waiting', runId: null }, triggerDefinitionEnvelope: null }],
+        }) : null;
         const finRequests: string[] = [];
         const request: Parameters<typeof setRuntimeFetch>[0] = async input => {
             const url = new URL(String(input));
             finRequests.push(url.pathname);
+            if (url.pathname === '/v1/machines/managed/actions/list') return Response.json({ machines: [machine] });
             if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
             if (url.pathname === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
@@ -181,9 +220,14 @@ describe('managed Machine detail', () => {
             if (url.pathname === '/v1/features' || url.pathname === '/v1/features/authenticated')
                 return Response.json(createRootLayoutFeaturesResponse({ features: { workflows: { enabled: true } } }));
             if (url.pathname === '/v3/automations') {
+                expect(url.origin).toBe(target.serverUrl);
                 triggerReads += 1;
                 return ownership === 'fin-read-failed' ? Response.json({ error: 'temporarily_unavailable' }, { status: 503 })
-                    : Response.json({ automations: [], nextCursor: null });
+                    : Response.json({ automations: boundRule ? [AutomationDefinitionListItemSchema.parse((({ executionRecipe: _recipe, ...row }) => row)(boundRule))] : [], nextCursor: null });
+            }
+            if (url.pathname === '/v3/automations/birth-archive-rule') {
+                expect(url.origin).toBe(target.serverUrl);
+                return Response.json(boundRule);
             }
             return Response.json({ error: 'not_found' }, { status: 404 });
         };
@@ -193,25 +237,32 @@ describe('managed Machine detail', () => {
             sessionLocalStateScope: { serverId: target.id, accountId: 'owner' },
             sessions: { [source.id]: source, earlier: createSessionFixture({ id: 'earlier', serverId: target.id, createdAt: 0,
                 metadata: { path: '/repo', host: 'guest', machineId: 'guest' } }) } });
+        if (ownership === 'other-focused-home' || ownership === 'other-focused-bound') {
+            const focused = await upsertAndActivateServer({ serverUrl: 'https://managed-birth-ambient.test', scope: 'tab' });
+            storage.setState({ profileScope: { serverId: focused.id, accountId: 'ambient-owner' } });
+        }
         let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
         try {
             screen = await renderScreen(<InjectedAuthProvider credentials={{ token: createAccountTokenForTests('owner', { currentAccount: true }) }}>
-                <ManagedCreationScopeRuleSection machine={machine} serverId={target.id} /></InjectedAuthProvider>);
+                <ManagedEnrolledMachineSections enrolledMachineId="guest" serverId={target.id}
+                    executeAction={createDefaultActionExecutor().execute} /></InjectedAuthProvider>);
             await flushHookEffects({ cycles: 30 });
             const rows = screen.tree.findAllByType(ManagedScopeRuleRow);
             if (ownership === 'different-home') expect(rows).toHaveLength(0);
             else {
                 expect(rows).toHaveLength(1);
                 expect(triggerReads, JSON.stringify(finRequests)).toBeGreaterThan(0);
-                expect(rows[0]!.props.rule.summary).toBe(ownership === 'fin-read-failed'
-                    ? t('managedMachines.options.unavailable') : t('common.keep'));
+                expect(rows[0]!.props.rule.summary, JSON.stringify(finRequests)).toBe(ownership === 'fin-read-failed'
+                    ? t('managedMachines.options.unavailable') : ownership === 'other-focused-bound'
+                        ? t('managedRetention.scopeRuleChosen', { rule: t('managedRetention.scopeRuleStopIdle', { name: machine.launch.name }), name: machine.launch.name })
+                        : t('common.keep'));
                 expect(screen.getTextContent()).toContain('Original source Session');
                 expect(typeof rows[0]!.props.rule.onOpen).toBe(ownership === 'shared' || ownership === 'fin-read-failed' ? 'undefined' : 'function');
                 if (ownership !== 'shared' && ownership !== 'fin-read-failed') {
                     const router = (await import('expo-router')).router;
                     await act(async () => rows[0]!.props.rule.onOpen());
                     expect(router.push).toHaveBeenCalledWith(expect.objectContaining({ pathname: '/session/[id]/triggers',
-                        params: expect.objectContaining({ id: source.id, serverId: target.id }) }));
+                        params: expect.objectContaining({ id: source.id, serverId: resolveServerProfileScopeIdForIdentifier(target.id) }) }));
                 }
             }
         } finally {
@@ -279,6 +330,8 @@ describe('managed Machine detail', () => {
         const requests: unknown[] = [];
         setRuntimeFetch(async (input, init) => {
             const url = new URL(String(input));
+            const qualification = staticRetentionQualification(machine, url, init);
+            if (qualification) return qualification;
             if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
             if (url.pathname === '/v1/machines') return Response.json([controllerRow]);
@@ -329,6 +382,10 @@ describe('managed Machine detail', () => {
         await screen.pressByTestIdAsync('managed-machine.policy-sheet.keep:deadline:effect:delete');
         expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.policy-sheet.keep:deadline-date-input'
             && typeof node.props.onChangeText === 'function')[0]?.props.value).toBe('2099-01-02');
+        await screen.pressByTestIdAsync('managed-machine.refresh');
+        await flushHookEffects({ cycles: 25 });
+        expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.policy-sheet.keep:deadline-date-input'
+            && typeof node.props.onChangeText === 'function')[0]?.props.value).toBe('2099-01-02');
         await act(async () => { Modal.show({ component: () => <Text testID="unrelated-dialog">Other flow</Text> }); });
         await act(async () => screen.tree.update(<ModalProvider />));
         expect(screen.findByTestId('managed-machine.policy-sheet.keep:choice:until-delete') === null).toBe(true);
@@ -364,6 +421,8 @@ describe('managed Machine detail', () => {
         let artifactId: string | undefined;
         setRuntimeFetch(async (input, init) => {
             const url = new URL(String(input));
+            const qualification = staticRetentionQualification(machine, url, init);
+            if (qualification) return qualification;
             const artifactResponse = artifacts.handle(url.pathname, init);
             if (artifactResponse) return artifactResponse;
             if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
@@ -789,7 +848,7 @@ describe('managed Machine detail', () => {
         expect(screen.tree.findByType(ManagedMachinePolicySection).props.keep.policy).toMatchObject({ intentRevision: 3 });
         expect(screen.tree.findByType(ManagedMachinePolicySection).props.keep.defaultPolicy).toBeDefined();
     });
-    it.each(['modal', 'aws', 'gcp', 'descriptor-fallback', 'unavailable', 'different-launch'] as const)(
+    it.each(['modal', 'aws', 'gcp', 'descriptor-fallback', 'unavailable', 'different-launch', 'refresh-unavailable'] as const)(
         'qualifies live BYOC retention from the current exact native variant, not the creation receipt (%s)', async variant => {
         const target = await upsertAndActivateServer({ serverUrl: `https://managed-live-variant-${variant}.test`, scope: 'tab' });
         const homeId = `srv_managed_live_variant_${variant}`;
@@ -798,7 +857,7 @@ describe('managed Machine detail', () => {
         const controller = { machineId: 'variant-controller', installationId: 'variant-installation' };
         const serverId = resolveServerProfileScopeIdForIdentifier(target.id) || target.id;
         storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: controller.machineId, installationId: controller.installationId })] } });
-        const finite = variant === 'modal';
+        const finite = variant === 'modal' || variant === 'unavailable' || variant === 'different-launch' || variant === 'refresh-unavailable';
         const cloud = variant === 'aws' || variant === 'gcp' ? variant : 'modal';
         const provider = { pluginId: 'happier.machine.cua', localId: 'byoc' };
         const choices = {
@@ -814,7 +873,8 @@ describe('managed Machine detail', () => {
             observation: { observedAt: 1_790_001_000_000, availability: 'present', nativeExpiry: 1_790_008_200_000 },
             // Deliberately opposite to today's native variant: historical review is not live capability authority.
             reviewedFacts: { launch, controller, optionStatus: 'current', billing: { location: 'cloud', stoppedBilling: 'billed' },
-                prerequisites: [], retentionCapabilities: finite ? { supportedIntents: ['start', 'stop', 'delete'] }
+                prerequisites: [], retentionCapabilities: variant === 'unavailable' || variant === 'different-launch' || variant === 'refresh-unavailable'
+                    ? { supportedIntents: ['delete'], finiteOnly: true } : finite ? { supportedIntents: ['start', 'stop', 'delete'] }
                     : { supportedIntents: ['delete'], finiteOnly: true }, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
                 ...(cloud === 'modal' ? { nativeFacts: { duration: { id: '7200', title: '7200 s', afterMs: 7_200_000 } } } : {}) } };
         ManagedMachineV1Schema.parse(machine);
@@ -831,6 +891,9 @@ describe('managed Machine detail', () => {
         operationRpcBoundary.schemaAnswer = { ok: true, inputSchema: { type: 'object', properties: {
             cloud: { type: 'string', enum: ['aws', 'gcp', 'modal'] } }, required: ['cloud'], additionalProperties: false } };
         const optionInputs: unknown[] = [];
+        const policyWrites: unknown[] = [];
+        let refreshFailed = false;
+        const initialOptions = variant === 'unavailable' || variant === 'different-launch' ? createDeferred<void>() : null;
         setRuntimeFetch(async (input, init) => {
             const url = new URL(String(input));
             if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
@@ -841,11 +904,15 @@ describe('managed Machine detail', () => {
             if (url.pathname.startsWith('/v1/actions/')) {
                 const actionId = url.pathname.slice('/v1/actions/'.length);
                 const request = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
-                if (actionId === 'machines.provisioners.options') optionInputs.push(request.input);
+                if (actionId === 'machines.provisioners.options') {
+                    optionInputs.push(request.input);
+                    await initialOptions?.promise;
+                }
+                if (actionId === 'machines.managed.retention.update') policyWrites.push(request.input);
                 const result = actionId === 'machines.provisioners.list' ? { provisioners: [provisioner] }
                     : actionId === 'machines.provisioners.options' ? MachineProvisionerOptionsResultV1Schema.parse({ choices: [{ id: 'native-variant', title: 'Native variant',
                         launch: variant === 'different-launch' ? { ...choices, nativeSizeId: 'other-native-size' } : launch.choices,
-                        available: variant !== 'unavailable', ...(variant === 'descriptor-fallback' ? {} : {
+                        available: variant !== 'unavailable' && !refreshFailed, ...(variant === 'descriptor-fallback' ? {} : {
                             retention: finite ? { supportedIntents: ['delete'], finiteOnly: true } : { supportedIntents: ['start', 'stop', 'delete'], finiteOnly: false },
                         }) }] }) : { available: true };
                 return Response.json(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, requestId: request.requestId, actionId,
@@ -856,9 +923,35 @@ describe('managed Machine detail', () => {
         const screen = await renderScreen(<ModalProvider><ManagedMachineDetail managedId={machine.id} serverId={target.id}
             executeAction={createDefaultActionExecutor().execute} /></ModalProvider>);
         await flushHookEffects({ cycles: 35 });
+        if (initialOptions) {
+            const loadingSection = screen.tree.findByType(ManagedMachinePolicySection);
+            expect(loadingSection.props.keep.disabled).toBe(true);
+            if (loadingSection.props.compactSummary) await act(async () => loadingSection.props.compactSummary.onPress());
+            expect(screen.findByTestId('managed-machine.policy.keep:choice:until-delete')).toBeNull();
+            expect(screen.findByTestId('managed-machine.policy-sheet.keep:choice:deadline')).toBeNull();
+            await act(async () => initialOptions.resolve());
+            await flushHookEffects({ cycles: 35 });
+        }
+        if (variant === 'refresh-unavailable') {
+            expect(screen.tree.findByType(ManagedMachinePolicySection).props.keep.defaultPolicy).toBeDefined();
+            refreshFailed = true;
+            await screen.pressByTestIdAsync('managed-machine.refresh');
+            await flushHookEffects({ cycles: 35 });
+        }
         const keep = screen.tree.findByType(ManagedMachinePolicySection).props.keep;
-        if (variant === 'unavailable' || variant === 'different-launch') {
+        if (variant === 'unavailable' || variant === 'different-launch' || variant === 'refresh-unavailable') {
             expect(keep.defaultPolicy).toBeUndefined();
+            expect(keep.disabled).toBe(true);
+            const section = screen.tree.findByType(ManagedMachinePolicySection);
+            if (section.props.compactSummary) await act(async () => section.props.compactSummary.onPress());
+            for (const choice of ['until-delete', 'deadline']) {
+                expect(screen.findByTestId(`managed-machine.policy.keep:choice:${choice}`)).toBeNull();
+                expect(screen.findByTestId(`managed-machine.policy-sheet.keep:choice:${choice}`)).toBeNull();
+            }
+            await act(async () => keep.onChange({ retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true }));
+            expect(policyWrites).toEqual([]);
+            expect(screen.tree.findByType(MachineConfigurationReceipt).props.model.name).toBe('Retained BYOC');
+            expect(screen.findByTestId('managed-machine.observation-check')).not.toBeNull();
         } else {
             expect(keep.defaultPolicy).toBeDefined();
             expect(keep.finiteOnly === true).toBe(finite);
@@ -1491,9 +1584,14 @@ describe('managed Machine detail', () => {
             desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
         const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'owner', encryptionMode: 'plain' });
         const nativeRequests: unknown[] = [];
+        storage.setState({ machineListByServerId: { [resolveServerProfileScopeIdForIdentifier(target.id)]: [
+            createMachineFixture({ id: machine.controller.machineId, installationId: machine.controller.installationId }),
+        ] } });
         setRuntimeFetch(async (input, init) => {
             const url = new URL(String(input));
             expect(url.origin).toBe('https://managed-policy-approval.test');
+            const qualification = staticRetentionQualification(machine, url, init);
+            if (qualification) return qualification;
             const artifact = artifacts.handle(url.pathname, init);
             if (artifact) return artifact;
             if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {
@@ -1550,9 +1648,11 @@ describe('managed Machine detail', () => {
             metadata: { ...createMachineFixture().metadata!, displayName: 'Original controller computer' } });
         storage.getState().applyMachines([receiptController], true, { sourceServerId: resolveServerProfileScopeIdForIdentifier(target.id) });
         let denied = false;
-        setRuntimeFetch(async input => {
+        setRuntimeFetch(async (input, init) => {
             const url = new URL(String(input));
             expect(url.origin).toBe('https://enrolled-managed-detail.test');
+            const qualification = staticRetentionQualification(machine, url, init);
+            if (qualification) return qualification;
             if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
             if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             expect(url.pathname).toBe('/v1/machines/managed/actions/list');
@@ -1636,6 +1736,28 @@ describe('managed Machine detail', () => {
         expect(seen.at(-1)?.meta.some(fact => fact.key === 'managed-power')).toBe(false);
         await screen.update(<Probe />);
         expect(seen.at(-1)).toBeNull();
+    });
+    it('reads uptime and the provider\'s own id into the header only from real facts (lab m-detail)', async () => {
+        const { managedMachineHeaderMeta } = await import('./ManagedMachineSections');
+        const machine = { observation: { availability: 'present' as const, observedAt: 1, power: 'running' as const },
+            resource: { value: { serverId: 58213904, owned: { volumeIds: [] } } } };
+        const now = 10 * 3_600_000;
+        const meta = managedMachineHeaderMeta({ machine, provider: 'Hetzner', kindTitle: 'Server', resourceIdPath: 'serverId',
+            runningSince: now - 3.4 * 3_600_000, now });
+        expect(meta.find(fact => fact.key === 'managed-power')?.text)
+            .toBe(t('managedMachines.detail.runningFor', { duration: t('managedRetention.hours', { count: 3 }) }));
+        expect(meta.find(fact => fact.key === 'managed-kind')?.text)
+            .toBe(t('managedMachines.detail.kindFactWithId', { fact: t('managedMachines.detail.kindFact', { provider: 'Hetzner', kind: 'Server' }), id: '58213904' }));
+        // No start time, a stopped machine, or an undeclared id path: the header says only what it knows.
+        const bare = managedMachineHeaderMeta({ machine, provider: 'Hetzner', kindTitle: 'Server', now });
+        expect(bare.find(fact => fact.key === 'managed-power')?.text).toBe(t('managedMachines.detail.power.running'));
+        expect(bare.find(fact => fact.key === 'managed-kind')?.text).toBe(t('managedMachines.detail.kindFact', { provider: 'Hetzner', kind: 'Server' }));
+        const stopped = managedMachineHeaderMeta({ machine: { ...machine, observation: { ...machine.observation, power: 'stopped' as const } },
+            provider: 'Hetzner', kindTitle: 'Server', runningSince: now - 3_600_000, now });
+        expect(stopped.find(fact => fact.key === 'managed-power')?.text).toBe(t('managedMachines.detail.power.stopped'));
+        const missing = managedMachineHeaderMeta({ machine: { ...machine, resource: { value: { owned: {} } } }, provider: 'Hetzner',
+            kindTitle: 'Server', resourceIdPath: 'serverId', now });
+        expect(missing.find(fact => fact.key === 'managed-kind')?.text).toBe(t('managedMachines.detail.kindFact', { provider: 'Hetzner', kind: 'Server' }));
     });
     it('does not imply continuing billing after confirmed absence, even with a retained cleanup marker', async () => {
         const screen = await renderScreen(<ManagedCreationProgress machine={{ id: 'absent', homeId: 'home', custodianAccountId: 'owner',

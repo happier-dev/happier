@@ -27,7 +27,7 @@ function unavailable() { return { observedAt: 0, availability: 'unavailable' as 
 export const MACHINE_PROVISIONER = {
   title: 'DigitalOcean', icon: 'hard-drives', resourceKind: 'digitalocean-droplet', schemaVersion: 1,
   kindTitle: machinePresentationLabel('kind'), description: machinePresentationLabel('description'),
-  launchSchema: dropletLaunchSchema.jsonSchema, resourceSchema: dropletResourceSchema.jsonSchema,
+  launchSchema: dropletLaunchSchema.jsonSchema, resourceSchema: dropletResourceSchema.jsonSchema, resourceIdPath: 'dropletId',
   platforms: ['darwin', 'linux', 'win32'], prerequisites: [{ kind: 'systemTool', id: 'ssh-keyscan' }],
   billing, retention: { supportedIntents: ['start', 'stop', 'delete'] },
   actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },

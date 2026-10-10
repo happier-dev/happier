@@ -237,8 +237,8 @@ export const ManagedImageTiles = React.memo(function ManagedImageTiles(
 });
 
 /**
- * Named regions as one radio group on the shared choice-tile grid: flag, city, country, two across where
- * there is room and one per line on a phone (lab `m-config` location grid).
+ * Named regions as one radio group drawn as cells of the section's one sheet: flag, city, country, two
+ * across where there is room and one per line on a phone (lab `m-config` location grid).
  */
 export const ManagedLocationGroup = React.memo(function ManagedLocationGroup(
   props: Readonly<{
@@ -270,8 +270,9 @@ export const ManagedLocationGroup = React.memo(function ManagedLocationGroup(
     [props.locations, theme.colors.text.secondary],
   );
   return (
-    <ItemGroup title={props.title} description={props.description} surface="none">
+    <ItemGroup title={props.title} description={props.description}>
       <SelectionTiles<string>
+        surface="sheet"
         density="compact"
         maximumColumns={2}
         minimumTileWidth={LOCATION_TILE_MIN_WIDTH_PX}

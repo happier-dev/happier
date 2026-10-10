@@ -37,6 +37,7 @@ import { machineCollectionHref } from '@/components/settings/machines/collection
 import { useMachine } from '@/sync/domains/state/storage';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { MachineProvisionerPicker } from '@/components/settings/machines/managed/MachineProvisionerPicker';
+import type { ManagedControllerScope } from '@/components/settings/machines/managed/useManagedControllerScope';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 
 export type MachineAddFormLayout = 'page' | 'panel';
@@ -84,6 +85,8 @@ export function MachineAddForm(props: Readonly<{
     onNewPool?: (() => void) | null;
     /** `page` only: this Home's Account allows Create one (the page reads it once, for its header too). */
     canCreate?: boolean;
+    /** `page` only: the "Managed from" scope whose chip the page shows in its header while Create one is open. */
+    managedScope?: ManagedControllerScope;
     /** Once, when a machine joins (first-run onboarding advances on it). */
     onArrived?: (machine: Readonly<{ machineId: string; serverId: string }>) => void;
 }>) {
@@ -126,7 +129,8 @@ export function MachineAddForm(props: Readonly<{
     }
 
     const pane = showCreate || active === null
-        ? <MachineProvisionerPicker serverId={flow.serverId} onSetUpThisComputer={setUpThisComputer} />
+        ? <MachineProvisionerPicker serverId={flow.serverId} onSetUpThisComputer={setUpThisComputer}
+            scope={creating ? props.managedScope : undefined} />
         : <MachineAddPane flow={flow} pathId={active} testID={`${props.testID}.pane`} onStartSession={props.onStartSession} />;
     const poolFoot = props.onNewPool ? (
         <Text style={styles.foot}>

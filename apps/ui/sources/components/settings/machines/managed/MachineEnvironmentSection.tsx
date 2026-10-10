@@ -352,7 +352,8 @@ export const MachineEnvironmentSection = React.memo(
                         field: resolveFieldBoxColors(theme),
                         placeholder: t('machinePresets.environment.secretPick'),
                         placeholderColor: theme.colors.input.placeholder,
-                        fieldSpan: 'content',
+                        // Stacked under its label beside the name field: the select spans the row like the field does.
+                        fieldSpan: 'row',
                       })}
                     </Pressable>
                   )}
