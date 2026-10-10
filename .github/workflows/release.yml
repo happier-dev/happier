@@ -354,6 +354,7 @@ jobs:
       eligible: ${{ steps.snapshot.outputs.eligible }}
       source_issues_json: ${{ steps.snapshot.outputs.source_issues_json }}
       dev_issues_json: ${{ steps.snapshot.outputs.dev_issues_json }}
+      preview_issues_json: ${{ steps.snapshot.outputs.preview_issues_json }}
     steps:
       - name: Checkout trusted combined-release control
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -368,6 +369,7 @@ jobs:
         env:
           DRY_RUN: ${{ inputs.dry_run }}
           GITHUB_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ needs.release_preflight.outputs.source_sha }}
         run: |
           set -euo pipefail
           if [ "$DRY_RUN" = true ]; then
@@ -375,14 +377,17 @@ jobs:
               echo 'eligible=false'
               echo 'source_issues_json=[]'
               echo 'dev_issues_json=[]'
+              echo 'preview_issues_json=[]'
             } >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          source_issues_json="$(node scripts/pipeline/github/reconcile-issue-stage.mjs snapshot --repo "$GITHUB_REPOSITORY" --from-stage 'stage:source')"
-          dev_issues_json="$(node scripts/pipeline/github/reconcile-issue-stage.mjs snapshot --repo "$GITHUB_REPOSITORY" --from-stage 'stage:dev')"
+          source_issues_json="$(node scripts/pipeline/github/reconcile-issue-stage.mjs snapshot --repo "$GITHUB_REPOSITORY" --from-stage 'stage:source' --candidate-sha "$CANDIDATE_SHA")"
+          dev_issues_json="$(node scripts/pipeline/github/reconcile-issue-stage.mjs snapshot --repo "$GITHUB_REPOSITORY" --from-stage 'stage:dev' --candidate-sha "$CANDIDATE_SHA")"
+          preview_issues_json="$(node scripts/pipeline/github/reconcile-issue-stage.mjs snapshot --repo "$GITHUB_REPOSITORY" --from-stage 'stage:preview' --candidate-sha "$CANDIDATE_SHA")"
           {
             echo "source_issues_json=$source_issues_json"
             echo "dev_issues_json=$dev_issues_json"
+            echo "preview_issues_json=$preview_issues_json"
             echo 'eligible=true'
           } >> "$GITHUB_OUTPUT"
     needs:
@@ -563,8 +568,8 @@ jobs:
       candidate_source_sha: ""
     if: ${{ always() && inputs.environment == 'preview-and-production' && needs.source_validation.result == 'success' && needs.resolve_validation_profile.result == 'success' }}
   advance_release_issues:
-    name: Advance jointly released issues to stable
-    if: ${{ always() && inputs.environment == 'preview-and-production' && inputs.dry_run != true && needs.snapshot_release_issues.outputs.eligible == 'true' && needs.release_preview.result == 'success' && needs.release_production.result == 'success' && needs.release_preview.outputs.release_verified == 'true' && needs.release_production.outputs.release_verified == 'true' }}
+    name: Advance issues to the highest completed channel
+    if: ${{ always() && inputs.environment == 'preview-and-production' && inputs.dry_run != true && needs.snapshot_release_issues.outputs.eligible == 'true' && (needs.release_preview.outputs.release_complete == 'true' || needs.release_production.outputs.release_complete == 'true') }}
     needs:
       - snapshot_release_issues
       - release_preview
@@ -584,20 +589,29 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.x
-      - name: Advance the initially eligible issues directly to stable
+      - name: Advance the initially eligible issues to the completed channel
         env:
           DEV_ISSUES_JSON: ${{ needs.snapshot_release_issues.outputs.dev_issues_json }}
           GITHUB_TOKEN: ${{ github.token }}
           SOURCE_ISSUES_JSON: ${{ needs.snapshot_release_issues.outputs.source_issues_json }}
+          PREVIEW_ISSUES_JSON: ${{ needs.snapshot_release_issues.outputs.preview_issues_json }}
+          TO_STAGE: ${{ needs.release_production.outputs.release_complete == 'true' && 'stage:stable' || 'stage:preview' }}
         run: |
           set -euo pipefail
           node scripts/pipeline/github/reconcile-issue-stage.mjs advance \
             --repo "$GITHUB_REPOSITORY" \
             --issues-json "$SOURCE_ISSUES_JSON" \
             --from-stage "stage:source" \
-            --to-stage "stage:stable"
+            --to-stage "$TO_STAGE"
           node scripts/pipeline/github/reconcile-issue-stage.mjs advance \
             --repo "$GITHUB_REPOSITORY" \
             --issues-json "$DEV_ISSUES_JSON" \
             --from-stage "stage:dev" \
-            --to-stage "stage:stable"
+            --to-stage "$TO_STAGE"
+          if [ "$TO_STAGE" = "stage:stable" ]; then
+            node scripts/pipeline/github/reconcile-issue-stage.mjs advance \
+              --repo "$GITHUB_REPOSITORY" \
+              --issues-json "$PREVIEW_ISSUES_JSON" \
+              --from-stage "stage:preview" \
+              --to-stage "$TO_STAGE"
+          fi

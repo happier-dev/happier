@@ -97,7 +97,15 @@ test('issue-stage bookkeeping is best effort and never gates product publication
   const snapshot = workflow.jobs.snapshot_release_issues;
   const advance = workflow.jobs.advance_release_issues;
 
-  assert.deepEqual(snapshot.needs, ['release_actor_guard']);
+  assert.deepEqual(snapshot.needs, ['release_actor_guard', 'release_preflight']);
+  const snapshotStep = snapshot.steps.find((step) => step.id === 'snapshot');
+  assert.equal(snapshotStep.env.CANDIDATE_SHA, '${{ inputs.authorized_promotion_source_sha }}');
+  const dispatchAdmission = workflow.jobs.release_preflight.steps.find((step) => step.id === 'dispatch');
+  assert.equal(dispatchAdmission.env.AUTHORIZED_PROMOTION_SOURCE_SHA, snapshotStep.env.CANDIDATE_SHA);
+  assert.match(dispatchAdmission.run, /validate-release-dispatch\.mjs/);
+  for (const line of snapshotStep.run.split('\n').filter((line) => line.includes('reconcile-issue-stage.mjs snapshot'))) {
+    assert.match(line, /--candidate-sha "\$CANDIDATE_SHA"/);
+  }
   assert.equal(snapshot.permissions.issues, 'read');
   assert.match(JSON.stringify(snapshot.steps), /reconcile-issue-stage\.mjs snapshot/);
   assert.match(JSON.stringify(snapshot.steps), /stage:source/);
@@ -119,7 +127,15 @@ test('issue-stage bookkeeping is best effort and never gates product publication
   assert.equal(snapshot['continue-on-error'], true);
   assert.match(snapshot.if, /inputs\.combined_preview_production != true/);
 
-  assert.deepEqual(advance.needs, ['snapshot_release_issues', 'release_verify']);
+  assert.deepEqual(advance.needs, ['snapshot_release_issues', 'release_verify', 'release_status']);
+  assert.match(String(advance.if), /always\(\)/);
+  assert.match(String(advance.if), /needs\.release_status\.result == 'success'/);
+  assert.ok(!workflow.jobs.release_status.needs.includes('advance_release_issues'));
+  assert.equal(workflow.on.workflow_call.outputs.release_complete.value, '${{ jobs.release_status.outputs.release_complete }}');
+  assert.equal(workflow.jobs.release_status.outputs.release_complete, '${{ steps.admit.outputs.release_complete }}');
+  const terminalAdmission = workflow.jobs.release_status.steps.find((step) => step.id === 'admit');
+  assert.match(String(terminalAdmission?.run), /status\.terminal !== "complete" && status\.terminal !== "published"/);
+  assert.match(String(terminalAdmission?.run), /release_complete=true/);
   assert.equal(advance.permissions.issues, 'write');
   assert.match(String(advance.if), /needs\.release_verify\.result == 'success'/);
   assert.equal(advance['continue-on-error'], true);
@@ -132,8 +148,7 @@ test('issue-stage bookkeeping is best effort and never gates product publication
   assert.match(JSON.stringify(advance.steps), /inputs\.environment == 'production' && 'stage:stable' \|\| 'stage:preview'/);
   const root = YAML.parse(await readFile(join(repoRoot, '.github', 'workflows', 'release.yml'), 'utf8'));
   for (const name of ['release_preview', 'release_production']) {
-    assert.ok(root.jobs.advance_release_issues.if.includes('needs.' + name + ".result == 'success'"));
-    assert.ok(root.jobs.advance_release_issues.if.includes('needs.' + name + ".outputs.release_verified == 'true'"));
+    assert.ok(root.jobs.advance_release_issues.if.includes('needs.' + name + ".outputs.release_complete == 'true'"));
   }
 });
 
