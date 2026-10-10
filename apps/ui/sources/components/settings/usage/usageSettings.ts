@@ -17,5 +17,11 @@ export const USAGE_SETTINGS = defineSettingsPage({
                 coachPreferences: ACCOUNT_SETTING_DECLARATIONS_V1.usageCoachPreferences,
             },
         },
+        costs: {
+            titleKey: 'usage.cost',
+            settings: {
+                modelPrices: ACCOUNT_SETTING_DECLARATIONS_V1.usageModelPrices,
+            },
+        },
     },
 });
