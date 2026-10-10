@@ -2,14 +2,21 @@ import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import { removeTransferredProfileSourcesV1 } from '../../profiles/read.js';
 import { SavedSecretSchema } from '../../profiles/backendProfileSchema.js';
 import { readSavedSecretTransferSourceV1 } from './savedSecretMutationOwner.js';
-import type { AccountSettingsHistorySavedSecretTransferV1, AccountSettingsHistoryLegacyRoleArtifactTransferV1 } from './accountSettingsApiV2.js';
+import type { AccountSettingsHistorySavedSecretTransferV1, AccountSettingsHistoryLegacyRoleArtifactTransferV1,
+  AccountSettingsHistoryPrivateCatalogRevisionsV1 } from './accountSettingsApiV2.js';
 import { LEGACY_ROLE_GUIDANCE_SETTINGS_ROOTS_V1 } from './rolesV1Migration.js';
 import type { PromptLibraryCatalogKeyV1 } from '../../prompts/library/promptLibraryRowsV1.js';
 import { removeTransferredPromptLibrarySourcesV1 } from '../../prompts/library/promptLibraryCatalogV1.js';
+import { removeTransferredProviderConnectionsSourceV1 } from '../../providers/connections/providerConnectionsCatalogV1.js';
+import { isCompleteLegacyNotificationChannelSourceV1, readLegacyNotificationChannelInventoryV1 } from './notificationChannelRecordV1.js';
+import { hasConfiguredSecretStringValue } from './notificationChannels.js';
+import { isCompleteRetainedRemoteHostCatalogV1, readRetainedRemoteHostCatalogV1 } from '../../remoteHosts/remoteHostRecordV1.js';
+import { extractRetainedMcpServerCatalogPolicyV1 } from '../../mcp/servers/serverCatalogV1.js';
 import {
   ACCOUNT_SETTING_DEFINITIONS,
   ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION,
   isRetiredAccountSettingsRootKey,
+  parseRetainedAccountSettingsEntitySourceV1,
   UNSAFE_ACCOUNT_SETTINGS_ROOT_KEYS,
   type AccountSettingKey,
   type AccountSettingsPersistedObject,
@@ -52,6 +59,8 @@ export type AccountSettingsHistoryDestinationAuthorityV1 = Readonly<{
   savedSecretTransfers?: readonly AccountSettingsHistorySavedSecretTransferV1[];
   /** Complete current source retention, not a historical Role import inventory. */
   legacyRoleArtifactTransfers?: readonly AccountSettingsHistoryLegacyRoleArtifactTransferV1[];
+  /** Opened private domain rows or retained tombstones at these exact revisions. */
+  activePrivateCatalogRevisions?: AccountSettingsHistoryPrivateCatalogRevisionsV1;
 }>;
 
 export const LEGACY_ROLE_GUIDANCE_HISTORY_ROOTS_V1 = LEGACY_ROLE_GUIDANCE_SETTINGS_ROOTS_V1;
@@ -87,10 +96,47 @@ export function normalizeTransferredAccountSettingsHistoryV1(
   if (recordedRaw === null || typeof recordedRaw !== 'object' || Array.isArray(recordedRaw)) {
     return invalid('contentUnreadable');
   }
-  const recorded = recordedRaw as Readonly<Record<string, unknown>>;
+  let recorded = recordedRaw as Readonly<Record<string, unknown>>;
   // SavedSecret migration is per source identity: other personal material can
   // still share this root, so a transferred-root claim never deletes it whole.
   const activeRoots = activeHistoryRoots(authority);
+  if (activeRoots.has('providerSettingsV1')) {
+    const contraction = removeTransferredProviderConnectionsSourceV1(recorded);
+    if (contraction.status !== 'ready') return invalid('invalidValue');
+    recorded = contraction.raw;
+  }
+  if (activeRoots.has('mcpServersSettingsV1') && Object.hasOwn(recorded, 'mcpServersSettingsV1')) {
+    const policy = extractRetainedMcpServerCatalogPolicyV1(recorded);
+    if (policy.status === 'unavailable') return invalid('invalidValue');
+    recorded = policy.raw;
+  }
+  // Destination authority suppresses restoration, but is not proof that every
+  // historical credential has a usable destination. Unknown source bytes must
+  // stay recorded until the source owner can characterize and admit them.
+  let retainedNotificationSource = false;
+  if (activeRoots.has('notificationChannelsV1') && Object.hasOwn(recorded, 'notificationChannelsV1')) {
+    const inventory = readLegacyNotificationChannelInventoryV1(recorded);
+    const provedSigningSources = new Set(authority.savedSecretTransfers?.flatMap(transfer => 'source' in transfer
+      && transfer.source.kind === 'notification-channel-signing-secret' ? [transfer.source.channelId] : []) ?? []);
+    const completeSource = inventory.status === 'ready' && isCompleteLegacyNotificationChannelSourceV1(recorded)
+      && inventory.channels.every(channel => channel.kind !== 'webhook' || !hasConfiguredSecretStringValue(channel.signingSecret)
+        || provedSigningSources.has(channel.id));
+    if (!completeSource) {
+      activeRoots.delete('notificationChannelsV1');
+      retainedNotificationSource = true;
+    }
+  }
+  let retainedRemoteHostSource = false;
+  if (activeRoots.has('remoteHostsV1') && Object.hasOwn(recorded, 'remoteHostsV1')) {
+    const inventory = readRetainedRemoteHostCatalogV1(recorded.remoteHostsV1);
+    const provedSlots = new Set(authority.savedSecretTransfers?.flatMap(transfer => 'source' in transfer
+      && transfer.source.kind === 'remote-host-ssh-credential' ? [JSON.stringify([transfer.source.hostId, transfer.source.slot])] : []) ?? []);
+    const complete = inventory.status === 'ready' && isCompleteRetainedRemoteHostCatalogV1(recorded.remoteHostsV1)
+      && inventory.hosts.every(host => (['password', 'identityPrivateKey'] as const).every(slot =>
+        host.ssh[slot === 'password' ? 'passwordEnc' : 'identityPrivateKeyEnc'] == null
+        || provedSlots.has(JSON.stringify([host.id, slot]))));
+    if (!complete) { activeRoots.delete('remoteHostsV1'); retainedRemoteHostSource = true; }
+  }
   const stripped = Object.fromEntries(Object.entries(recorded).filter(([key]) => !activeRoots.has(key)));
   const profilesRemoved = authority.activeTransferredProfileIds === undefined ? stripped
     : removeTransferredProfileSourcesV1(stripped, authority.activeTransferredProfileIds);
@@ -111,9 +157,9 @@ export function normalizeTransferredAccountSettingsHistoryV1(
   // An unknown raw credential shape is never covered by a characterized source proof.
   const retainedInferenceCredential = next.inferenceOpenAIKey != null && next.inferenceOpenAIKey !== '';
   return Object.freeze({
-    status: sameStrictJsonValue(recorded, next) ? 'unchanged' : 'applied',
+    status: sameStrictJsonValue(recordedRaw, next) ? 'unchanged' : 'applied',
     raw: Object.freeze(next) as AccountSettingsPersistedObject,
-    ...(retainedSecrets || retainedInferenceCredential ? { cleanupPending: true as const } : {}),
+    ...(retainedSecrets || retainedInferenceCredential || retainedNotificationSource || retainedRemoteHostSource ? { cleanupPending: true as const } : {}),
   });
 }
 
@@ -142,7 +188,14 @@ export function applyAccountSettingsHistoryRestoreV1(
   if (historicalRaw === null || typeof historicalRaw !== 'object' || Array.isArray(historicalRaw)) {
     return invalid('contentUnreadable');
   }
-  const historical = historicalRaw as Readonly<Record<string, unknown>>;
+  let historical = historicalRaw as Readonly<Record<string, unknown>>;
+  if (authority) {
+    // Extract each recorded genuine policy before entity contraction removes
+    // its old container; never substitute the latest document's preference.
+    const prepared = normalizeTransferredAccountSettingsHistoryV1(historical, authority);
+    if (prepared.status === 'invalid') return prepared;
+    historical = prepared.raw;
+  }
   const activeRoots = authority ? activeHistoryRoots(authority) : new Set<string>();
 
   const next: Record<string, unknown> = {};
@@ -199,6 +252,11 @@ export function applyAccountSettingsHistoryRestoreV1(
   // typed before any write instead of persisting a document the writer would
   // reject.
   for (const [key, value] of Object.entries(next)) {
+    const retainedSource = parseRetainedAccountSettingsEntitySourceV1(key, value);
+    if (retainedSource) {
+      if (!retainedSource.success) return invalid(retainedSource.reason);
+      continue;
+    }
     const definition = accountSettingDefinition(key);
     if (!definition) continue;
     if (definition.structuralBoundsOwner !== 'domainOwned') {

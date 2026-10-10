@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { accountSettingsParse } from './accountSettings.js';
+import { QualifiedConnectedAccountPurposeBindingsV1RecordSchema, QualifiedConnectedAccountPurposeBindingsV1Schema } from '../../connect/connectedAccountPurposeBindings.js';
 import {
   projectAgentConnectedAccountPurposeDefaultsToSessionBindings,
   resolveAgentConnectedAccountPurposeDefaults,
@@ -81,13 +82,85 @@ const EARLIER_0_3_TEAM_PURPOSE_TARGET = {
 } as const;
 
 describe('Agent default authentication (one store)', () => {
+  it('does not resurrect either retained predecessor carrier after an explicit empty purpose catalog is admitted', () => {
+    const consumer = { pluginId: 'happier.agent.antigravity', localId: 'antigravity' };
+    const service = { pluginId: 'happier.agent.antigravity', localId: 'antigravity-account' };
+    const declarations = [{ purpose: 'model_upstream', service }];
+    const settings = accountSettingsParse({
+      connectedServicesDefaultAuthByAgentIdV1: RELEASED_0_2_DEFAULT_AUTH,
+      connectedServicesAdditionalDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {
+        agy: { v: 1, bindingsByServiceId: { antigravity: { source: 'connected', selection: 'profile', profileId: 'retired-default' } } },
+      } },
+    });
+    const readers = [
+      { settings, agentId: 'codex', consumer: codex, declarations: codexDeclarations },
+      { settings, agentId: 'antigravity', consumer, declarations },
+    ];
+    // The source-absent compatibility seam can still interpret real 0.2 data.
+    expect(readers.map(input => resolveAgentConnectedAccountPurposeDefaults(input)[0]?.target)).toEqual([
+      { kind: 'group', service: codexService, groupId: 'codex-main' },
+      { kind: 'account', account: { service, accountId: 'retired-default' } },
+    ]);
+    const purposeBindings = QualifiedConnectedAccountPurposeBindingsV1RecordSchema.parse({ v: 1, bindings: [] });
+    expect(readers.map(input => resolveAgentConnectedAccountPurposeDefaults({ ...input, purposeBindings })[0]?.target)).toEqual([null, null]);
+    expect(settings.connectedServicesDefaultAuthByAgentIdV1.bindingsByAgentId.codex).toBeDefined();
+    expect(settings.connectedServicesAdditionalDefaultAuthByAgentIdV1.bindingsByAgentId.antigravity).toBeDefined();
+  });
+
+  it('refuses malformed additional default intent instead of recovering to native', () => {
+    expect(() => accountSettingsParse({
+      connectedServicesAdditionalDefaultAuthByAgentIdV1: {
+        v: 1,
+        bindingsByAgentId: {
+          antigravity: { v: 1, bindingsByServiceId: {
+            'happier.agent.antigravity/antigravity-account': { source: 'connected', selection: 'profile' },
+          } },
+        },
+      },
+    })).toThrow();
+  });
+
+  it.each(['profile', 'group'] as const)('migrates the disjoint 0.2 additional %s default through the qualified purpose owner and retires it on edit', (selection) => {
+    const consumer = { pluginId: 'happier.agent.antigravity', localId: 'antigravity' };
+    const service = { pluginId: 'happier.agent.antigravity', localId: 'antigravity-account' };
+    const declarations = [{ purpose: 'model_upstream', service }];
+    const target = selection === 'profile'
+      ? { kind: 'account' as const, account: { service, accountId: 'google-work' } }
+      : { kind: 'group' as const, service, groupId: 'google-pool' };
+    const additional = { v: 1, bindingsByAgentId: {
+      agy: { v: 1, bindingsByServiceId: { antigravity: selection === 'profile'
+        ? { source: 'connected', selection, profileId: 'google-work' }
+        : { source: 'connected', selection, groupId: 'google-pool' } } },
+      'another-agy': { v: 1, bindingsByServiceId: { antigravity: { source: 'connected', selection: 'profile', profileId: 'other' } } },
+    } };
+    const settings = accountSettingsParse({
+      connectedServicesDefaultAuthByAgentIdV1: RELEASED_0_2_DEFAULT_AUTH,
+      connectedServicesAdditionalDefaultAuthByAgentIdV1: additional,
+    });
+    const input = { settings, agentId: 'antigravity', consumer, declarations };
+    expect(resolveAgentConnectedAccountPurposeDefaults(input)[0]?.target).toEqual(target);
+    const written = writeAgentConnectedAccountPurposeDefault({ ...input, purpose: 'model_upstream', target: null });
+    expect(written).toMatchObject({ connectedServicesAdditionalDefaultAuthByAgentIdV1: {
+      v: 1, bindingsByAgentId: { 'another-agy': settings.connectedServicesAdditionalDefaultAuthByAgentIdV1.bindingsByAgentId['another-agy'] },
+    } });
+    const edited = accountSettingsParse({ ...settings, ...written });
+    expect(resolveAgentConnectedAccountPurposeDefaults({ ...input, settings: edited })[0]?.target).toBeNull();
+    expect(resolveAgentConnectedAccountPurposeDefaults({ settings: edited, agentId: 'codex', consumer: codex, declarations: codexDeclarations })[0]?.target)
+      .toEqual({ kind: 'group', service: codexService, groupId: 'codex-main' });
+    const deleted = removeAgentConnectedAccountDefaultsForDeletedTarget({ settings, target });
+    expect(deleted).not.toBeNull();
+    const afterDeletion = accountSettingsParse({ ...settings, ...deleted });
+    expect(resolveAgentConnectedAccountPurposeDefaults({ ...input, settings: afterDeletion })[0]?.target).toBeNull();
+    expect(resolveAgentConnectedAccountPurposeDefaults({ ...input, settings: afterDeletion, agentId: 'another-agy' })[0]?.target)
+      .toEqual({ kind: 'account', account: { service, accountId: 'other' } });
+  });
+
   it.each(['group', 'account'] as const)('removes only a successfully deleted %s target from durable and released defaults', (kind) => {
     const target = kind === 'group'
       ? { kind, service: codexService, groupId: 'codex-main' }
       : { kind, account: { service: codexService, accountId: 'work' } };
     const otherTarget = { kind: 'group' as const, service: claudeService, groupId: 'codex-main' };
-    const settings = accountSettingsParse({
-      connectedAccountPurposeBindingsV1: {
+    const purposeBindings = QualifiedConnectedAccountPurposeBindingsV1RecordSchema.parse({
         v: 1,
         bindings: [
           { purpose: { consumer: codex, purpose: 'model-openai' }, target },
@@ -98,7 +171,8 @@ describe('Agent default authentication (one store)', () => {
         ],
         teamResourceSelections: [{ purpose: { consumer: codex, purpose: 'team' }, teamId: 'team-a',
           selection: { source: 'team_resource', resourceId: 'resource-a', deliveryMode: 'brokered' } }],
-      },
+      });
+    const settings = accountSettingsParse({
       connectedServicesDefaultAuthByAgentIdV1: {
         ...RELEASED_0_2_DEFAULT_AUTH,
         bindingsByAgentId: {
@@ -111,17 +185,17 @@ describe('Agent default authentication (one store)', () => {
         },
       },
     });
-    const written = removeAgentConnectedAccountDefaultsForDeletedTarget({ settings, target });
+    const written = removeAgentConnectedAccountDefaultsForDeletedTarget({ settings, purposeBindings, target })!;
     expect(written).not.toBeNull();
     const next = accountSettingsParse(JSON.parse(JSON.stringify({ ...settings, ...written })));
-    expect(next.connectedAccountPurposeBindingsV1.bindings).toEqual(settings.connectedAccountPurposeBindingsV1.bindings.slice(2));
-    expect(next.connectedAccountPurposeBindingsV1.teamResourceSelections).toEqual(settings.connectedAccountPurposeBindingsV1.teamResourceSelections);
+    expect(written.connectedAccountPurposeBindingsV1.bindings).toEqual(purposeBindings.bindings.slice(2));
+    expect(written.connectedAccountPurposeBindingsV1.teamResourceSelections).toEqual(purposeBindings.teamResourceSelections);
     expect(next.connectedServicesDefaultAuthByAgentIdV1.bindingsByAgentId).not.toHaveProperty('codex');
     expect(next.connectedServicesDefaultAuthByAgentIdV1.bindingsByAgentId.claude).toEqual(settings.connectedServicesDefaultAuthByAgentIdV1.bindingsByAgentId.claude);
-    const defaults = resolveAgentConnectedAccountPurposeDefaults({ settings: next, agentId: 'codex', consumer: codex, declarations: codexDeclarations });
+    const defaults = resolveAgentConnectedAccountPurposeDefaults({ settings: next, purposeBindings: written.connectedAccountPurposeBindingsV1, agentId: 'codex', consumer: codex, declarations: codexDeclarations });
     expect(defaults[0]?.target).toBeNull();
     expect(projectAgentConnectedAccountPurposeDefaultsToSessionBindings(defaults)).toBeNull();
-    expect(removeAgentConnectedAccountDefaultsForDeletedTarget({ settings: next, target })).toBeNull();
+    expect(removeAgentConnectedAccountDefaultsForDeletedTarget({ settings: next, purposeBindings: written.connectedAccountPurposeBindingsV1, target })).toBeNull();
   });
 
   it('keeps an explicit unavailable default until that exact target is deleted', () => {
@@ -180,10 +254,11 @@ describe('Agent default authentication (one store)', () => {
 
   it('reads an earlier 0.3 Team purpose target forward and leaves the stored value untouched', () => {
     const stored = JSON.parse(JSON.stringify(EARLIER_0_3_TEAM_PURPOSE_TARGET));
-    const settings = accountSettingsParse({ connectedAccountPurposeBindingsV1: stored });
+    const purposeBindings = QualifiedConnectedAccountPurposeBindingsV1Schema.parse(stored);
+    const settings = accountSettingsParse({});
 
     const [entry] = resolveAgentConnectedAccountPurposeDefaults({
-      settings, agentId: 'codex', consumer: codex, declarations: codexDeclarations,
+      settings, purposeBindings, agentId: 'codex', consumer: codex, declarations: codexDeclarations,
     });
     expect(entry?.target).toBeNull();
     expect(entry?.teamResource).toEqual({
@@ -218,32 +293,26 @@ describe('Agent default authentication (one store)', () => {
     expect(next.connectedServicesDefaultAuthByAgentIdV1.bindingsByAgentId).not.toHaveProperty('codex');
     expect(next.connectedServicesDefaultAuthByAgentIdV1.bindingsByAgentId).toHaveProperty('claude');
     expect(resolveAgentConnectedAccountPurposeDefaults({
-      settings: next, agentId: 'codex', consumer: codex, declarations: codexDeclarations,
+      settings: next, purposeBindings: written.connectedAccountPurposeBindingsV1, agentId: 'codex', consumer: codex, declarations: codexDeclarations,
     })[0]).toMatchObject({ target: null, teamResource });
 
     // A personal choice replaces the Team default: one purpose, one default.
-    const personal = accountSettingsParse({
-      ...next,
-      ...writeAgentConnectedAccountPurposeDefault({
-        settings: next, agentId: 'codex', consumer: codex, declarations: codexDeclarations,
+    const personal = writeAgentConnectedAccountPurposeDefault({
+        settings: next, purposeBindings: written.connectedAccountPurposeBindingsV1, agentId: 'codex', consumer: codex, declarations: codexDeclarations,
         purpose: 'model-openai', target: { kind: 'group', service: codexService, groupId: 'codex-main' },
-      }),
     });
     expect(personal.connectedAccountPurposeBindingsV1.teamResourceSelections ?? []).toEqual([]);
     expect(resolveAgentConnectedAccountPurposeDefaults({
-      settings: personal, agentId: 'codex', consumer: codex, declarations: codexDeclarations,
+      settings: personal, purposeBindings: personal.connectedAccountPurposeBindingsV1, agentId: 'codex', consumer: codex, declarations: codexDeclarations,
     })[0]).toMatchObject({ target: { kind: 'group', groupId: 'codex-main' }, teamResource: null });
 
     // Clearing the purpose cannot resurrect the retired service-keyed value.
-    const cleared = accountSettingsParse({
-      ...personal,
-      ...writeAgentConnectedAccountPurposeDefault({
-        settings: personal, agentId: 'codex', consumer: codex, declarations: codexDeclarations,
+    const cleared = writeAgentConnectedAccountPurposeDefault({
+        settings: personal, purposeBindings: personal.connectedAccountPurposeBindingsV1, agentId: 'codex', consumer: codex, declarations: codexDeclarations,
         purpose: 'model-openai', target: null,
-      }),
     });
     expect(resolveAgentConnectedAccountPurposeDefaults({
-      settings: cleared, agentId: 'codex', consumer: codex, declarations: codexDeclarations,
+      settings: cleared, purposeBindings: cleared.connectedAccountPurposeBindingsV1, agentId: 'codex', consumer: codex, declarations: codexDeclarations,
     })[0]).toMatchObject({ target: null, teamResource: null });
   });
 
@@ -258,19 +327,16 @@ describe('Agent default authentication (one store)', () => {
     const written = writeAgentConnectedServiceDefault({
       settings, agentId: 'codex', consumer: codex, declarations: codexDeclarations,
       serviceKey: 'happier.agent.codex/openai-codex', selection, teamId: 'team-acme',
-    });
+    })!;
     const next = accountSettingsParse({ ...settings, ...written });
     expect(resolveAgentConnectedAccountPurposeDefaults({
-      settings: next, agentId: 'codex', consumer: codex, declarations: codexDeclarations,
+      settings: next, purposeBindings: written.connectedAccountPurposeBindingsV1, agentId: 'codex', consumer: codex, declarations: codexDeclarations,
     })[0]?.teamResource).toEqual({ teamId: 'team-acme', selection });
 
-    const native = accountSettingsParse({
-      ...next,
-      ...writeAgentConnectedServiceDefault({
-        settings: next, agentId: 'codex', consumer: codex, declarations: codexDeclarations,
+    const native = writeAgentConnectedServiceDefault({
+        settings: next, purposeBindings: written.connectedAccountPurposeBindingsV1, agentId: 'codex', consumer: codex, declarations: codexDeclarations,
         serviceKey: 'happier.agent.codex/openai-codex', selection: { source: 'native' },
-      }),
-    });
+    })!;
     expect(native.connectedAccountPurposeBindingsV1.bindings).toEqual([]);
     expect(native.connectedAccountPurposeBindingsV1.teamResourceSelections ?? []).toEqual([]);
   });

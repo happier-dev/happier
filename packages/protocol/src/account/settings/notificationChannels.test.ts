@@ -1,13 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  accountSettingsParse,
-  BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID,
-  resolveNotificationChannelsV1FromAccountSettings,
-} from './accountSettings.js';
-import { hasConfiguredSecretStringValue } from './notificationChannels.js';
+import { BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID, hasConfiguredSecretStringValue } from './notificationChannels.js';
+import { readLegacyNotificationChannelInventoryV1 } from './notificationChannelRecordV1.js';
 
-describe('notificationChannelsV1', () => {
+describe('notificationChannelsV1 retained source', () => {
   it('treats a whitespace-only opaque secret as configured', () => {
     expect(hasConfiguredSecretStringValue({
       _isSecretValue: true,
@@ -16,7 +12,7 @@ describe('notificationChannelsV1', () => {
   });
 
   it('derives the builtin expo push channel from legacy notification settings when explicit channels are missing', () => {
-    const parsed = accountSettingsParse({
+    const parsed = readLegacyNotificationChannelInventoryV1({
       notificationsSettingsV1: {
         v: 1,
         pushEnabled: true,
@@ -29,7 +25,7 @@ describe('notificationChannelsV1', () => {
       },
     });
 
-    expect(resolveNotificationChannelsV1FromAccountSettings(parsed)).toEqual([
+    expect(parsed).toEqual({ status: 'ready', channels: [
       {
         v: 1,
         id: BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID,
@@ -42,15 +38,16 @@ describe('notificationChannelsV1', () => {
           connectedServiceAccountSwitch: true,
           connectedServiceQuotaBlocked: true,
           connectedServiceQuotaRecovered: true,
+          connectedServiceUsage: false,
         },
         readyIncludeMessageText: false,
         requestIncludeMessageText: true,
       },
-    ]);
+    ] });
   });
 
   it('prefers explicit notification channels over legacy notification settings', () => {
-    const parsed = accountSettingsParse({
+    const parsed = readLegacyNotificationChannelInventoryV1({
       notificationsSettingsV1: {
         v: 1,
         pushEnabled: true,
@@ -86,7 +83,7 @@ describe('notificationChannelsV1', () => {
       ],
     });
 
-    expect(resolveNotificationChannelsV1FromAccountSettings(parsed)).toEqual([
+    expect(parsed).toEqual({ status: 'ready', channels: [
       {
         v: 1,
         id: 'webhook-primary',
@@ -97,22 +94,23 @@ describe('notificationChannelsV1', () => {
           _isSecretValue: true,
           value: 'webhook-secret',
         },
-          topics: {
-            ready: true,
-            permissionRequest: false,
-            userActionRequest: true,
-            connectedServiceAccountSwitch: false,
-            connectedServiceQuotaBlocked: false,
-            connectedServiceQuotaRecovered: true,
-          },
+        topics: {
+          ready: true,
+          permissionRequest: false,
+          userActionRequest: true,
+          connectedServiceAccountSwitch: false,
+          connectedServiceQuotaBlocked: false,
+          connectedServiceQuotaRecovered: true,
+          connectedServiceUsage: false,
+        },
         readyIncludeMessageText: false,
         requestIncludeMessageText: true,
       },
-    ]);
+    ] });
   });
 
   it('treats an explicit empty notification channel list as authoritative', () => {
-    const parsed = accountSettingsParse({
+    const parsed = readLegacyNotificationChannelInventoryV1({
       notificationsSettingsV1: {
         v: 1,
         pushEnabled: true,
@@ -126,11 +124,11 @@ describe('notificationChannelsV1', () => {
       notificationChannelsV1: [],
     });
 
-    expect(resolveNotificationChannelsV1FromAccountSettings(parsed)).toEqual([]);
+    expect(parsed).toEqual({ status: 'ready', channels: [] });
   });
 
-  it('falls back to the derived builtin expo channel when explicit notification channels are malformed', () => {
-    const parsed = accountSettingsParse({
+  it('refuses malformed retained channels without deriving a replacement builtin', () => {
+    const parsed = readLegacyNotificationChannelInventoryV1({
       notificationsSettingsV1: {
         v: 1,
         pushEnabled: true,
@@ -151,28 +149,11 @@ describe('notificationChannelsV1', () => {
       ],
     });
 
-    expect(resolveNotificationChannelsV1FromAccountSettings(parsed)).toEqual([
-      {
-        v: 1,
-        id: BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID,
-        kind: 'expo_push',
-        enabled: true,
-        topics: {
-          ready: false,
-          permissionRequest: true,
-          userActionRequest: true,
-          connectedServiceAccountSwitch: true,
-          connectedServiceQuotaBlocked: true,
-          connectedServiceQuotaRecovered: true,
-        },
-        readyIncludeMessageText: false,
-        requestIncludeMessageText: true,
-      },
-    ]);
+    expect(parsed).toEqual({ status: 'unavailable', reason: 'invalid-stored-content' });
   });
 
-  it('rejects non-http webhook URLs and falls back to the derived builtin expo channel', () => {
-    const parsed = accountSettingsParse({
+  it('refuses non-http retained webhook URLs without deriving a replacement builtin', () => {
+    const parsed = readLegacyNotificationChannelInventoryV1({
       notificationsSettingsV1: {
         v: 1,
         pushEnabled: true,
@@ -193,28 +174,11 @@ describe('notificationChannelsV1', () => {
       ],
     });
 
-    expect(resolveNotificationChannelsV1FromAccountSettings(parsed)).toEqual([
-      {
-        v: 1,
-        id: BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID,
-        kind: 'expo_push',
-        enabled: true,
-        topics: {
-          ready: true,
-          permissionRequest: true,
-          userActionRequest: true,
-          connectedServiceAccountSwitch: true,
-          connectedServiceQuotaBlocked: true,
-          connectedServiceQuotaRecovered: true,
-        },
-        readyIncludeMessageText: true,
-        requestIncludeMessageText: true,
-      },
-    ]);
+    expect(parsed).toEqual({ status: 'unavailable', reason: 'invalid-stored-content' });
   });
 
   it('defaults quota recovered channel topics from quota blocked channel topics', () => {
-    const parsed = accountSettingsParse({
+    const parsed = readLegacyNotificationChannelInventoryV1({
       notificationChannelsV1: [
         {
           v: 1,
@@ -232,13 +196,16 @@ describe('notificationChannelsV1', () => {
       ],
     });
 
-    expect(resolveNotificationChannelsV1FromAccountSettings(parsed)[0]?.topics).toEqual({
+    expect(parsed.status).toBe('ready');
+    if (parsed.status !== 'ready') throw new Error('Expected the valid retained channel inventory');
+    expect(parsed.channels[0]?.topics).toEqual({
       ready: true,
       permissionRequest: true,
       userActionRequest: true,
       connectedServiceAccountSwitch: true,
       connectedServiceQuotaBlocked: false,
       connectedServiceQuotaRecovered: false,
+      connectedServiceUsage: false,
     });
   });
 });

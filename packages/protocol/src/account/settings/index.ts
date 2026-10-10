@@ -5,6 +5,9 @@ export {
   type AttentionDeliveryEventId,
   type RemoteAlertAttentionDeliveryEventId,
 } from './attentionDeliveryPolicy.js';
+export { UsagePacingTargetsV1Schema, UsageQuotaNotificationsV1Schema, DEFAULT_USAGE_QUOTA_NOTIFICATIONS_V1,
+  UsageQuotaNotificationKindV1Schema, isUsageQuotaNotificationEnabled,
+  type UsagePacingTargetsV1, type UsageQuotaNotificationsV1, type UsageQuotaNotificationKindV1 } from './usagePacingPreferencesV1.js';
 export {
   SessionReminderPresetRuleSchema,
   SessionReminderPresetV1Schema,
@@ -14,7 +17,7 @@ export {
 } from './sessionReminderPresetsV1.js';
 export { resolveAttentionDeliveryPreviewBehavior, shouldMuteMobileAlertsForComputerFocus } from './attentionDeliveryPolicyDecision.js';
 export { RolesV1Schema, type RolesV1 } from './rolesV1.js';
-export { readLegacyRolesV1, saveRolesV1WithLegacyMigration, type LegacyRoleArtifactV1 } from './rolesV1Migration.js';
+export { LEGACY_ROLE_GUIDANCE_SETTINGS_ROOTS_V1, readLegacyRoleInventoryV1, readLegacyRolesV1, retainLegacyRolesV1, LegacyRolesInventoryIncompleteError, type LegacyRoleArtifactV1, type LegacyRoleInventoryV1, type LegacyRoleInventoryDiagnosticV1 } from './rolesV1Migration.js';
 export {
   admitAgentStartV1,
   AGENT_START_REFUSAL_CODES_V1,
@@ -174,6 +177,9 @@ export {
   AccountSettingsV2HistoryContentKindV1Schema,
   AccountSettingsV2HistoryListResponseSchema,
   AccountSettingsV2HistoryDetailResponseSchema,
+  AccountSettingsHistorySavedSecretTransferV1Schema,
+  AccountSettingsV2HistoryMutationRequestSchema,
+  AccountSettingsV2HistoryMutationResponseSchema,
   AccountSettingsV2HistoryRestoreClientUpdateRequiredResponseSchema,
   type AccountSettingsV2GetResponse,
   type AccountSettingsV2UpdateRequest,
@@ -181,6 +187,9 @@ export {
   type AccountSettingsV2HistoryContentKindV1,
   type AccountSettingsV2HistoryListResponse,
   type AccountSettingsV2HistoryDetailResponse,
+  type AccountSettingsHistorySavedSecretTransferV1,
+  type AccountSettingsV2HistoryMutationRequest,
+  type AccountSettingsV2HistoryMutationResponse,
   type AccountSettingsV2HistoryRestoreClientUpdateRequiredResponse,
 } from './accountSettingsApiV2.js';
 
@@ -195,6 +204,8 @@ export {
 
 export {
   applyAccountSettingsHistoryRestoreV1,
+  normalizeTransferredAccountSettingsHistoryV1,
+  type AccountSettingsHistoryDestinationAuthorityV1,
   type AccountSettingsHistoryRestoreApplicationV1,
   type AccountSettingsHistoryRestoreInvalidReasonV1,
 } from './accountSettingsHistoryRestoreV1.js';

@@ -23,6 +23,9 @@ export const SharedSavedSecretActionIdV1Schema = lazyZodSchema(() => z.enum(SHAR
 
 const ResourceIdSchema = lazyZodSchema(() => z.string().min(1).max(128));
 const GrantIdSchema = lazyZodSchema(() => z.string().min(1));
+const SharedResourceReferenceSchema = lazyZodSchema(() => z.string().refine(value => {
+  try { return parseSavedSecretRefV1(value).kind === 'shared_resource'; } catch { return false; }
+}, 'Expected a shared Saved Secret resource reference'));
 
 export const SavedSecretCatalogRevisionsV1Schema = lazyZodSchema(() => z.object({
   mcp: ProfileReferenceGuardRevisionV1Schema,
@@ -35,13 +38,11 @@ export type SavedSecretCatalogRevisionsV1 = z.infer<typeof SavedSecretCatalogRev
 
 const SavedSecretRemoteHostReferenceCensusV1Schema = lazyZodSchema(() => z.object({
   revision: ProfileReferenceGuardRevisionV1Schema,
-  resourceRefs: z.array(z.string().min(1)),
+  resourceRefs: z.array(SharedResourceReferenceSchema),
 }).strict());
 const SavedSecretNotificationChannelReferenceCensusV1Schema = lazyZodSchema(() => z.object({
   revision: ProfileReferenceGuardRevisionV1Schema,
-  resourceRefs: z.array(z.string().min(1).refine(value => {
-    try { return parseSavedSecretRefV1(value).kind === 'shared_resource'; } catch { return false; }
-  }, 'Expected a shared Saved Secret resource reference')),
+  resourceRefs: z.array(SharedResourceReferenceSchema),
 }).strict());
 
 /** Complete opened Profile inventory; the guard covers concurrent new identities. */
@@ -137,9 +138,9 @@ export type SharedSavedSecretCreateInputV1 = z.infer<typeof SharedSavedSecretCre
 
 /** Source identities for equivalent reference rewrites owned by the promotion transaction. */
 export const SavedSecretPersonalPromotionsV1Schema = lazyZodSchema(() => z.array(z.object({
-  personalSecretId: z.string().min(1).refine(value => {
-    try { return parseSavedSecretRefV1(value).kind === 'personal'; } catch { return false; }
-  }, 'Expected a personal Saved Secret identity'),
+  // Retained SavedSecret.id is opaque, including a same-spelling Resource ref.
+  // The source owner proves provenance; the transaction validates source custody.
+  personalSecretId: z.string().min(1),
   resourceId: ResourceIdSchema,
 }).strict()).superRefine((promotions, context) => {
   const sources = new Set<string>();

@@ -1,0 +1,257 @@
+import type { VoiceSettings } from './voiceSettings.js';
+import { VoiceProviderSettingsJsonValueV1Schema, type VoiceProviderSettingsJsonValueV1 } from '../realtime/providerSettings.js';
+import type { VoiceReadinessRole } from '../realtime/capabilities.js';
+
+import {
+  isVoiceProviderSettingsProjectionCurrent,
+  projectVoiceProviderSettings,
+  type VoiceSettingsRegistry,
+  type VoiceSettingsRegistryEntry,
+  type VoiceProviderSettingsProjection,
+} from './providerRegistry.js';
+
+export type VoiceProviderSelectionRow<TEntry extends VoiceSettingsRegistryEntry = VoiceSettingsRegistryEntry> = Readonly<{
+  providerId: string;
+  optionId: string;
+  modeId: string | null;
+  order: number;
+  titleKey: string;
+  subtitleKey: string;
+  selected: boolean;
+  envelope: Readonly<{ schemaVersion: number; config: unknown }>;
+  entry: TEntry;
+}>;
+
+export type SelectedUnavailableVoiceProvider<TEntry extends VoiceSettingsRegistryEntry = VoiceSettingsRegistryEntry> = Readonly<{
+  providerId: string;
+  titleKey: string;
+  subtitleKey: string | null;
+  modeId: string | null;
+  entry: TEntry | null;
+  settingsProjection: VoiceProviderSettingsProjection | null;
+}>;
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isVoiceProviderSettingsJsonObject(
+  value: VoiceProviderSettingsJsonValueV1 | null | undefined,
+): value is Readonly<{ [key: string]: VoiceProviderSettingsJsonValueV1 }> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * Selection writes create a declaration-validated envelope only when one is
+ * absent. Existing envelopes stay opaque here so invalid and future versions
+ * retain their migration/readiness owner rather than being silently repaired.
+ */
+function seedVoiceProviderSettingsDefault(
+  settings: VoiceSettings,
+  entry: VoiceSettingsRegistryEntry,
+): VoiceSettings | null {
+  if (settings.providers[entry.providerId]) return settings;
+  const owner = entry.providerSettings;
+  if (!owner) return settings;
+  let config: VoiceProviderSettingsJsonValueV1 | null = null;
+  try {
+    config = owner.parseConfig(owner.defaultConfig);
+  } catch {
+    return null;
+  }
+  if (!isVoiceProviderSettingsJsonObject(config)) return null;
+  return {
+    ...settings,
+    providers: {
+      ...settings.providers,
+      [entry.providerId]: {
+        schemaVersion: owner.schemaVersion,
+        config,
+      },
+    },
+  };
+}
+
+/**
+ * Selects an eligible speech provider while creating its declaration-owned
+ * default settings envelope if it has never been persisted.
+ */
+export function selectVoiceSpeechProvider(
+  settings: VoiceSettings,
+  registry: VoiceSettingsRegistry,
+  providerId: string,
+  role: VoiceReadinessRole,
+): VoiceSettings | null {
+  const entry = registry.get(providerId);
+  if (!entry || entry.kind !== 'voice.speech-engine.v1' || !entry.roles.includes(role)) return null;
+  return seedVoiceProviderSettingsDefault(settings, entry);
+}
+
+/** Dictation's engine selector also owns its explicit-versus-linked binding. */
+export function applyVoiceDictationEngineChoice(
+  settings: VoiceSettings,
+  registry: VoiceSettingsRegistry,
+  choice: string,
+): VoiceSettings | null {
+  if (choice === 'same_as_local') return {
+    ...settings, dictation: { ...settings.dictation, sttBinding: 'same_as_local' },
+  };
+  const selected = selectVoiceSpeechProvider(settings, registry, choice, 'dictation_stt');
+  if (!selected) return null;
+  return {
+    ...selected,
+    dictation: {
+      ...settings.dictation, sttBinding: 'explicit',
+      stt: { ...settings.dictation.stt, provider: choice },
+    },
+  };
+}
+
+export function projectVoiceProviderSelectionRows<TEntry extends VoiceSettingsRegistryEntry>(
+  settings: Pick<VoiceSettings, 'providerId' | 'providers'>,
+  registry: Readonly<{ get(providerId: string): TEntry | null; list(): readonly TEntry[] }>,
+): readonly VoiceProviderSelectionRow<TEntry>[] {
+  const rows = registry.list().flatMap((entry) => {
+    if (entry.kind !== 'voice.conversation-provider.v1' || !entry.selectionOptions?.length) return [];
+    const currentEnvelope = settings.providers[entry.providerId] ?? null;
+    const projection = projectVoiceProviderSettings(entry, currentEnvelope);
+    return entry.selectionOptions.map((option): VoiceProviderSelectionRow<TEntry> => {
+      const currentConfig = currentEnvelope && isRecord(currentEnvelope.config)
+        ? currentEnvelope.config
+        : entry.providerSettings?.defaultConfig ?? {};
+      const envelope = Object.freeze({
+        schemaVersion:
+          currentEnvelope?.schemaVersion
+          ?? entry.providerSettings?.schemaVersion
+          ?? 1,
+        config: Object.freeze({
+          ...currentConfig,
+          ...(option.configPatch ?? {}),
+        }),
+      });
+      return Object.freeze({
+        providerId: entry.providerId,
+        optionId: option.id,
+        modeId: option.modeId,
+        order: option.order,
+        titleKey: option.titleKey,
+        subtitleKey: option.subtitleKey,
+        selected: settings.providerId === entry.providerId
+          && isVoiceProviderSettingsProjectionCurrent(projection)
+          && projection.modeId === option.modeId,
+        envelope,
+        entry,
+      });
+    });
+  });
+  return Object.freeze(rows.sort((left, right) =>
+    left.order - right.order
+    || left.providerId.localeCompare(right.providerId)
+    || left.optionId.localeCompare(right.optionId)));
+}
+
+/**
+ * Projects only persisted selections that cannot be represented by a normal
+ * selectable row. The saved provider envelope remains opaque and untouched.
+ */
+export function projectSelectedUnavailableVoiceProvider<TEntry extends VoiceSettingsRegistryEntry>(
+  settings: Pick<VoiceSettings, 'providerId' | 'providers'>,
+  registry: Readonly<{ get(providerId: string): TEntry | null; list(): readonly TEntry[] }>,
+): SelectedUnavailableVoiceProvider<TEntry> | null {
+  const providerId = settings.providerId;
+  if (!providerId) return null;
+  const envelope = settings.providers[providerId] ?? null;
+  const entry = registry.get(providerId);
+  if (!entry) {
+    return Object.freeze({
+      providerId,
+      titleKey: providerId,
+      subtitleKey: null,
+      modeId: null,
+      entry: null,
+      settingsProjection: null,
+    });
+  }
+  if (entry.kind !== 'voice.conversation-provider.v1') return null;
+  const settingsProjection = projectVoiceProviderSettings(entry, envelope);
+  if (settingsProjection?.status !== 'unsupported_version') return null;
+  const displayOption = entry.selectionOptions?.find(
+    (option) => option.modeId === settingsProjection.modeId,
+  ) ?? (entry.selectionOptions?.length === 1 ? entry.selectionOptions[0] : null);
+  return Object.freeze({
+    providerId,
+    titleKey: displayOption?.titleKey ?? providerId,
+    subtitleKey: displayOption?.subtitleKey ?? null,
+    modeId: settingsProjection.modeId,
+    entry,
+    settingsProjection,
+  });
+}
+
+/** Returns the selected ready provider's descriptor-owned display key. */
+export function resolveSelectedVoiceProviderTitleKey(
+  settings: Pick<VoiceSettings, 'providerId' | 'providers'>,
+  registry: VoiceSettingsRegistry,
+): string | null {
+  if (!settings.providerId) return null;
+  return projectVoiceProviderSelectionRows(settings, registry)
+    .find((row) => row.selected)?.titleKey ?? null;
+}
+
+export function selectVoiceProviderOption(
+  settings: VoiceSettings,
+  registry: VoiceSettingsRegistry,
+  providerId: string,
+  optionId: string,
+): VoiceSettings | null {
+  const entry = registry.get(providerId);
+  if (!entry || entry.kind !== 'voice.conversation-provider.v1' || !entry.projectSettings) return null;
+  const option = entry.selectionOptions?.find((candidate) => candidate.id === optionId);
+  if (!option) return null;
+  const seededSettings = seedVoiceProviderSettingsDefault(settings, entry);
+  if (!seededSettings) return null;
+  const previousEnvelope = seededSettings.providers[providerId] ?? null;
+  let schemaVersion = previousEnvelope?.schemaVersion ?? entry.providerSettings?.schemaVersion ?? 1;
+  let previousConfig: Readonly<{ [key: string]: VoiceProviderSettingsJsonValueV1 }>;
+  if (entry.providerSettings) {
+    if (previousEnvelope && previousEnvelope.schemaVersion !== entry.providerSettings.schemaVersion) {
+      return null;
+    }
+    let parsedPreviousConfig: VoiceProviderSettingsJsonValueV1 | null = null;
+    try {
+      parsedPreviousConfig = previousEnvelope
+        ? entry.providerSettings.parseConfig(previousEnvelope.config)
+        : null;
+    } catch {
+      parsedPreviousConfig = null;
+    }
+    schemaVersion = entry.providerSettings.schemaVersion;
+    previousConfig = isVoiceProviderSettingsJsonObject(parsedPreviousConfig)
+      ? parsedPreviousConfig
+      : entry.providerSettings.defaultConfig;
+  } else {
+    previousConfig = previousEnvelope && isVoiceProviderSettingsJsonObject(previousEnvelope.config)
+      ? previousEnvelope.config
+      : {};
+  }
+  const nextConfig = VoiceProviderSettingsJsonValueV1Schema.safeParse({
+    ...previousConfig,
+    ...(option.configPatch ?? {}),
+  });
+  if (!nextConfig.success || !isVoiceProviderSettingsJsonObject(nextConfig.data)) return null;
+  const nextEnvelope = {
+    schemaVersion,
+    config: nextConfig.data,
+  };
+  const projection = projectVoiceProviderSettings(entry, nextEnvelope);
+  if (!isVoiceProviderSettingsProjectionCurrent(projection)
+    || projection.modeId !== option.modeId) return null;
+  return {
+    ...seededSettings,
+    providerId,
+    providers: {
+      ...seededSettings.providers,
+      [providerId]: nextEnvelope,
+    },
+  };
+}

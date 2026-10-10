@@ -144,6 +144,9 @@ export const AccountSettingsHistorySavedSecretTransferV1Schema = lazyZodSchema((
   return z.union([
     destination.extend({ savedSecretId: z.string().min(1) }).strict(),
     destination.extend({ source: z.object({ kind: z.literal('legacy-inference-openai-key') }).strict() }).strict(),
+    destination.extend({ source: z.object({ kind: z.literal('notification-channel-signing-secret'), channelId: z.string().min(1) }).strict() }).strict(),
+    destination.extend({ source: z.object({ kind: z.literal('remote-host-ssh-credential'), hostId: z.string().min(1),
+      slot: z.enum(['password', 'identityPrivateKey']) }).strict() }).strict(),
   ]);
 });
 export type AccountSettingsHistorySavedSecretTransferV1 = z.infer<typeof AccountSettingsHistorySavedSecretTransferV1Schema>;
@@ -152,6 +155,19 @@ export const AccountSettingsHistoryLegacyRoleArtifactTransferV1Schema = lazyZodS
   artifactId: z.string().uuid(), expectedRevision: WorkflowArtifactRevisionV1Schema,
 }).strict());
 export type AccountSettingsHistoryLegacyRoleArtifactTransferV1 = RoleArtifactRetentionReceiptV1;
+/** Exact admitted private catalog rows, never caller-supplied source-root authority. */
+export const AccountSettingsHistoryPrivateCatalogRevisionsV1Schema = lazyZodSchema(() => z.object({
+  providerConnections: z.number().int().nonnegative().safe().optional(),
+  connectedConfigurations: z.number().int().nonnegative().safe().optional(),
+  connectedPurposes: z.number().int().nonnegative().safe().optional(),
+  connectedPresentation: z.number().int().nonnegative().safe().optional(),
+  connectedAcknowledgements: z.number().int().nonnegative().safe().optional(),
+  notificationChannels: z.number().int().nonnegative().safe().optional(),
+  mcp: z.number().int().nonnegative().safe().optional(),
+  acp: z.number().int().nonnegative().safe().optional(),
+  remoteHosts: z.number().int().nonnegative().safe().optional(),
+}).strict());
+export type AccountSettingsHistoryPrivateCatalogRevisionsV1 = z.infer<typeof AccountSettingsHistoryPrivateCatalogRevisionsV1Schema>;
 export const AccountSettingsV2HistoryMutationRequestSchema = lazyZodSchema(() => {
   const captured = z.object({
     expectedSettingsVersion: z.number().int().nonnegative().safe(),
@@ -167,6 +183,7 @@ export const AccountSettingsV2HistoryMutationRequestSchema = lazyZodSchema(() =>
         transferredPromptLibraryKeys: z.array(PromptLibraryCatalogKeyV1Schema).optional(),
         savedSecretTransfers: z.array(AccountSettingsHistorySavedSecretTransferV1Schema).optional(),
         legacyRoleArtifactTransfers: z.array(AccountSettingsHistoryLegacyRoleArtifactTransferV1Schema).optional(),
+        transferredPrivateCatalogRevisions: AccountSettingsHistoryPrivateCatalogRevisionsV1Schema.optional(),
         content: AccountSettingsStoredContentEnvelopeWriteSchema.nullable() }).strict() }).strict(),
     // Purge addresses the immutable retained version, including unreadable at-rest
     // data. No opening or echo of its credential bytes is needed for this intent.

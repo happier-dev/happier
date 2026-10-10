@@ -51,7 +51,7 @@ function eventIdFromChannelTopic(topic: string): AttentionDeliveryEventId | null
 
 export function deriveAttentionDeliveryPolicyFromLegacySettings(params: {
   notificationsSettings: Readonly<LegacyNotificationsSettings>;
-  notificationChannels: Readonly<NotificationChannelsV1>;
+  notificationChannels?: Readonly<NotificationChannelsV1>;
 }): AttentionDeliveryPolicyV1 {
   const notificationsSettings = params.notificationsSettings;
   const policy = AttentionDeliveryPolicyV1Schema.parse({
@@ -99,6 +99,12 @@ export function deriveAttentionDeliveryPolicyFromLegacySettings(params: {
       },
     },
   };
+
+  // Current preferences describe global intent, not endpoint membership. Only
+  // explicit retained-source callers aggregate the predecessor's channel list.
+  if (params.notificationChannels === undefined) {
+    return AttentionDeliveryPolicyV1Schema.parse({ ...policy, events, channels });
+  }
 
   const expoPushChannels = params.notificationChannels.filter((channel) => channel.kind === 'expo_push');
   if (expoPushChannels.length === 0) {

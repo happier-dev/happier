@@ -1,9 +1,25 @@
-import { lazyZodSchema } from '../lazyZodSchema.js';
+import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
+import { AccountEncryptionMigrateConnectedConfigurationsDirectiveV1Schema, AccountEncryptionMigrateConnectedPurposesDirectiveV1Schema,
+  AccountEncryptionMigrateConnectedConfigurationsResultV1Schema, AccountEncryptionMigrateConnectedPurposesResultV1Schema,
+  type AccountEncryptionMigrateConnectedConfigurationsDirectiveV1, type AccountEncryptionMigrateConnectedPurposesDirectiveV1,
+} from '../connect/connectedAccountCatalogSchemasV1.js';
 import { z } from 'zod';
 import { ArtifactBlobAccountEncryptionStageV1Schema } from '../artifacts/artifactBinaryV1.js';
 import { classifyAccountJsonKvKey } from './accountJsonKv.js';
 import { AuthoringMemoryContentV1Schema, AuthoringMemoryKeyV1Schema, AuthoringMemoryRowV1Schema, assertAuthoringMemoryValueForKeyV1 } from './authoringMemory.js';
 import { AccountEncryptionMigratePromptLibraryDirectiveV1Schema, AccountEncryptionMigratePromptLibraryResultV1Schema, type AccountEncryptionMigratePromptLibraryDirectiveV1 } from '../prompts/library/promptLibraryRowsV1.js';
+import { AccountEncryptionMigrateRemoteHostsDirectiveV1Schema, AccountEncryptionMigrateRemoteHostsResultV1Schema,
+  type AccountEncryptionMigrateRemoteHostsDirectiveV1 } from '../remoteHosts/remoteHostSchemasV1.js';
+import { AccountEncryptionMigrateNotificationChannelsDirectiveV1Schema, AccountEncryptionMigrateNotificationChannelsResultV1Schema,
+  type AccountEncryptionMigrateNotificationChannelsDirectiveV1 } from './settings/notificationChannelRecordV1.js';
+import { AccountEncryptionMigrateConnectedPresentationDirectiveV1Schema, AccountEncryptionMigrateConnectedPresentationResultV1Schema,
+  AccountEncryptionMigrateConnectedAcknowledgementsDirectiveV1Schema, AccountEncryptionMigrateConnectedAcknowledgementsResultV1Schema,
+  type AccountEncryptionMigrateConnectedPresentationDirectiveV1, type AccountEncryptionMigrateConnectedAcknowledgementsDirectiveV1,
+} from '../connect/connectedAccountPresentationSchemasV1.js';
+import { ProviderConnectionsMigrationContentV1Schema } from '../providers/connections/catalogSchemasV1.js';
+import { AccountEncryptionMigrateMcpServerCatalogDirectiveV1Schema, AccountEncryptionMigrateMcpServerCatalogResultV1Schema,
+  type AccountEncryptionMigrateMcpServerCatalogDirectiveV1 } from '../mcp/servers/catalogSchemasV1.js';
+import { AccountEncryptionMigrateAcpCatalogDirectiveV1Schema, AccountEncryptionMigrateAcpCatalogResultV1Schema, type AccountEncryptionMigrateAcpCatalogDirectiveV1 } from '../acp/catalog/catalogSchemasV1.js';
 import { WorkspaceExecutionConfigContentV1Schema, WorkspaceExecutionConfigRowIdV1Schema, WorkspaceExecutionConfigRowV1Schema } from '../workspaces/workspaceExecutionConfigRowV1.js';
 import { ProjectAccountRowContentV1Schema, ProjectAccountRowKeyV1Schema, ProjectAccountRowV1Schema, buildProjectAccountRowPhysicalKeyV1 } from '../projects/projectAccountRowsV1.js';
 import { AccountEncryptionMigrateProfileRowsDirectiveSchema, AccountEncryptionMigrateProfileRowsResultSchema } from '../profiles/profileRecordSchemaV1.js';
@@ -85,6 +101,7 @@ import { AccountSettingsStoredContentEnvelopeSchema } from './settings/accountSe
 import { decodeBase64, encodeBase64 } from '../crypto/base64.js';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
+import { createProtocolComposableSchema, ProtocolValidationError } from '../plugins/actions/protocolComposableSchema.js';
 import {
   SessionDraftRecordV1Schema,
   SessionDraftStoredContentEnvelopeV1Schema,
@@ -103,6 +120,35 @@ export {
 
 const NonNegativeSafeIntegerSchema =
   lazyZodSchema(() => z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER));
+
+/** Project the incumbent catalog parser through the existing neutral composition seam. */
+function accountEncryptionCatalogProtocolSchema<TSchema extends z.core.$ZodType>(
+  schema: TSchema & { safeParse(value: unknown): z.core.util.SafeParseResult<z.output<TSchema>> },
+) {
+  return lazyDefinition(() => createProtocolComposableSchema<z.input<TSchema>, z.output<TSchema>>(
+    { ...z.toJSONSchema(schema, { io: 'input', target: 'draft-7' }) },
+    input => {
+      const parsed = schema.safeParse(input);
+      return parsed.success ? { success: true, data: parsed.data } : {
+        success: false,
+        error: new ProtocolValidationError(parsed.error.issues.map(issue => ({
+          code: issue.code, message: issue.message,
+          path: issue.path.filter(part => typeof part === 'string' || typeof part === 'number'),
+        }))),
+      };
+    },
+  ));
+}
+
+export const AccountEncryptionMigrateProviderConnectionsDirectiveV1Schema = lazyZodSchema(() => z.object({
+  expectedRevision: NonNegativeSafeIntegerSchema,
+  content: ProviderConnectionsMigrationContentV1Schema.nullable(),
+}).strict());
+export type AccountEncryptionMigrateProviderConnectionsDirectiveV1 = z.infer<typeof AccountEncryptionMigrateProviderConnectionsDirectiveV1Schema>;
+export const AccountEncryptionMigrateProviderConnectionsResultV1Schema = lazyZodSchema(() => z.object({
+  row: z.object({ revision: NonNegativeSafeIntegerSchema, content: ProviderConnectionsMigrationContentV1Schema.nullable() }).strict().nullable(),
+}).strict());
+export type AccountEncryptionMigrateProviderConnectionsResultV1 = z.infer<typeof AccountEncryptionMigrateProviderConnectionsResultV1Schema>;
 
 export const AccountEncryptionMigrateToModeSchema = AccountEncryptionModeSchema;
 export type AccountEncryptionMigrateToMode = z.infer<
@@ -681,6 +727,15 @@ function refineAccountEncryptionMigrateRequest(
       items?: Array<{ blobs: Array<{ content: { t: string } }> }>;
     };
     promptLibrary?: AccountEncryptionMigratePromptLibraryDirectiveV1;
+    remoteHosts?: AccountEncryptionMigrateRemoteHostsDirectiveV1;
+    notificationChannels?: AccountEncryptionMigrateNotificationChannelsDirectiveV1;
+    connectedPresentation?: AccountEncryptionMigrateConnectedPresentationDirectiveV1;
+    connectedAcknowledgements?: AccountEncryptionMigrateConnectedAcknowledgementsDirectiveV1;
+    providerConnections?: AccountEncryptionMigrateProviderConnectionsDirectiveV1;
+    mcpServerCatalog?: AccountEncryptionMigrateMcpServerCatalogDirectiveV1;
+    acpCatalog?: AccountEncryptionMigrateAcpCatalogDirectiveV1;
+    connectedConfigurations?: AccountEncryptionMigrateConnectedConfigurationsDirectiveV1;
+    connectedPurposes?: AccountEncryptionMigrateConnectedPurposesDirectiveV1;
     reviewComments?: {
       action: string;
       items?: Array<{
@@ -743,6 +798,27 @@ function refineAccountEncryptionMigrateRequest(
     }
     const targetEnvelopeKind =
       request.toMode === 'plain' ? 'plain' : 'encrypted';
+    for (const key of ['remoteHosts', 'notificationChannels', 'connectedPresentation', 'connectedAcknowledgements'] as const) {
+      const content = request[key]?.content;
+      if (content && content.t !== targetEnvelopeKind) context.addIssue({ code: 'custom',
+        path: [key, 'content'], message: 'Catalog replacement must match the target Account mode' });
+    }
+    if (request.providerConnections?.content && request.providerConnections.content.t !== targetEnvelopeKind) {
+      context.addIssue({ code: 'custom', path: ['providerConnections', 'content'], message: 'Provider catalog replacement must match the target Account mode' });
+    }
+    if (request.mcpServerCatalog?.content && request.mcpServerCatalog.content.t !== targetEnvelopeKind) {
+      context.addIssue({ code: 'custom', path: ['mcpServerCatalog', 'content'],
+        message: 'MCP catalog replacement must match the target Account mode' });
+    }
+    if (request.acpCatalog?.content && request.acpCatalog.content.t !== targetEnvelopeKind) {
+      context.addIssue({ code: 'custom', path: ['acpCatalog', 'content'],
+        message: 'ACP catalog replacement must match the target Account mode' });
+    }
+    for (const key of ['connectedConfigurations', 'connectedPurposes'] as const) {
+      const content = request[key]?.content;
+      if (content && content.t !== targetEnvelopeKind) context.addIssue({ code: 'custom',
+        path: [key, 'content'], message: 'Connected catalog replacement must match the target Account mode' });
+    }
     request.promptLibrary?.items.forEach((item, index) => {
       if (item.content.t !== targetEnvelopeKind) context.addIssue({ code: 'custom',
         path: ['promptLibrary', 'items', index, 'content'], message: 'Prompt catalog replacement must match the target Account mode' });
@@ -1615,6 +1691,15 @@ const AccountEncryptionMigrateCurrentRequestShape = {
   sessionDrafts: AccountEncryptionMigrateSessionDraftsDirectiveSchema.optional(),
   authoringMemory: AccountEncryptionMigrateAuthoringMemoryDirectiveSchema.optional(),
   promptLibrary: AccountEncryptionMigratePromptLibraryDirectiveV1Schema.optional(),
+  remoteHosts: z.optional(asProtocolZod(accountEncryptionCatalogProtocolSchema(AccountEncryptionMigrateRemoteHostsDirectiveV1Schema))),
+  notificationChannels: z.optional(asProtocolZod(accountEncryptionCatalogProtocolSchema(AccountEncryptionMigrateNotificationChannelsDirectiveV1Schema))),
+  connectedPresentation: z.optional(asProtocolZod(accountEncryptionCatalogProtocolSchema(AccountEncryptionMigrateConnectedPresentationDirectiveV1Schema))),
+  connectedAcknowledgements: z.optional(asProtocolZod(accountEncryptionCatalogProtocolSchema(AccountEncryptionMigrateConnectedAcknowledgementsDirectiveV1Schema))),
+  providerConnections: AccountEncryptionMigrateProviderConnectionsDirectiveV1Schema.optional(),
+  mcpServerCatalog: AccountEncryptionMigrateMcpServerCatalogDirectiveV1Schema.optional(),
+  acpCatalog: AccountEncryptionMigrateAcpCatalogDirectiveV1Schema.optional(),
+  connectedConfigurations: AccountEncryptionMigrateConnectedConfigurationsDirectiveV1Schema.optional(),
+  connectedPurposes: AccountEncryptionMigrateConnectedPurposesDirectiveV1Schema.optional(),
   profileRows: AccountEncryptionMigrateProfileRowsDirectiveSchema.optional(),
   workspaceExecutionConfig: AccountEncryptionMigrateWorkspaceExecutionConfigDirectiveSchema.optional(),
   projectRows: AccountEncryptionMigrateProjectRowsDirectiveSchema.optional(),
@@ -1998,6 +2083,15 @@ export const AccountEncryptionMigrateSuccessResponseSchema = lazyZodSchema(() =>
     settingsVersion: NonNegativeSafeIntegerSchema,
     authoringMemory: z.object({ rows: z.array(AuthoringMemoryRowV1Schema) }).strict().optional(),
     promptLibrary: AccountEncryptionMigratePromptLibraryResultV1Schema.optional(),
+    remoteHosts: z.optional(asProtocolZod(accountEncryptionCatalogProtocolSchema(AccountEncryptionMigrateRemoteHostsResultV1Schema))),
+    notificationChannels: z.optional(asProtocolZod(accountEncryptionCatalogProtocolSchema(AccountEncryptionMigrateNotificationChannelsResultV1Schema))),
+    connectedPresentation: z.optional(asProtocolZod(accountEncryptionCatalogProtocolSchema(AccountEncryptionMigrateConnectedPresentationResultV1Schema))),
+    connectedAcknowledgements: z.optional(asProtocolZod(accountEncryptionCatalogProtocolSchema(AccountEncryptionMigrateConnectedAcknowledgementsResultV1Schema))),
+    providerConnections: AccountEncryptionMigrateProviderConnectionsResultV1Schema.optional(),
+    mcpServerCatalog: AccountEncryptionMigrateMcpServerCatalogResultV1Schema.optional(),
+    acpCatalog: AccountEncryptionMigrateAcpCatalogResultV1Schema.optional(),
+    connectedConfigurations: AccountEncryptionMigrateConnectedConfigurationsResultV1Schema.optional(),
+    connectedPurposes: AccountEncryptionMigrateConnectedPurposesResultV1Schema.optional(),
     profileRows: AccountEncryptionMigrateProfileRowsResultSchema.optional(),
     workspaceExecutionConfig: z.object({ rows: z.array(WorkspaceExecutionConfigRowV1Schema) }).strict().optional(),
     projectRows: z.object({ rows: z.array(ProjectAccountRowV1Schema) }).strict().optional(),

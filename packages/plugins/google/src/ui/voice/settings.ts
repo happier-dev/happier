@@ -2,7 +2,7 @@ export const GOOGLE_GEMINI_SETTINGS = Object.freeze({
   titleKey: 'settingsVoice.local.googleGeminiStt.provider.title',
   subtitleKey: 'settingsVoice.local.googleGeminiStt.provider.subtitle',
   detailKey: 'settingsVoice.local.googleGeminiStt.provider.detail',
-  iconName: 'logo-google' as const,
+  iconName: 'google-logo' as const,
   credential: Object.freeze({
     titleKey: 'settingsVoice.local.googleGeminiStt.apiKey.title',
     promptTitleKey: 'settingsVoice.local.googleGeminiStt.apiKey.promptTitle',
@@ -30,7 +30,7 @@ export const GOOGLE_CLOUD_SETTINGS = Object.freeze({
   titleKey: 'settingsVoice.local.googleCloudTts.provider.title',
   subtitleKey: 'settingsVoice.local.googleCloudTts.provider.subtitle',
   detailKey: 'settingsVoice.local.googleCloudTts.provider.detail',
-  iconName: 'logo-google' as const,
+  iconName: 'google-logo' as const,
   credential: Object.freeze({
     titleKey: 'settingsVoice.local.googleCloudTts.apiKey.title',
     promptTitleKey: 'settingsVoice.local.googleCloudTts.apiKey.promptTitle',

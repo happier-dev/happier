@@ -1,9 +1,11 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import {
   ACCOUNT_SETTING_DEFINITIONS,
   clearRetainedMachineTerminalHostAliases,
+  parseRetainedAccountSettingsEntitySourceV1,
   type AccountSettingKey,
   type AccountSettings,
   type AccountSettingsPersistedObject,
@@ -14,12 +16,11 @@ import {
   inspectAccountSettingValueBounds,
 } from './catalog/accountSettingBounds.js';
 
-export type AccountSettingsMutationInvalidReason =
-  | 'unknownKey'
-  | 'invalidValue'
-  | 'duplicateKey'
-  | 'tooLarge'
-  | 'tooDeep';
+export const AccountSettingsMutationInvalidResultSchema = lazyZodSchema(() => z.object({
+  status: z.literal('invalid'),
+  reason: z.enum(['unknownKey', 'invalidValue', 'duplicateKey', 'tooLarge', 'tooDeep']),
+}).strict());
+export type AccountSettingsMutationInvalidReason = z.infer<typeof AccountSettingsMutationInvalidResultSchema>['reason'];
 
 export type AccountSettingsMutationResult =
   | Readonly<{ status: 'applied'; version: number; settings: AccountSettings }>
@@ -45,7 +46,7 @@ export type AccountSettingsMutationResult =
     reason?: string;
   }>;
 
-const AccountSettingMutationOperationInputV1Schema = z.discriminatedUnion('op', [
+const AccountSettingMutationOperationInputV1Schema = lazyZodSchema(() => z.discriminatedUnion('op', [
   z.object({
     op: z.literal('set'),
     key: z.string().min(1),
@@ -55,22 +56,22 @@ const AccountSettingMutationOperationInputV1Schema = z.discriminatedUnion('op', 
     op: z.literal('reset'),
     key: z.string().min(1),
   }).strict(),
-]);
+]));
 
-const AccountSettingMutationInputV1Schema = z.object({
+const AccountSettingMutationInputV1Schema = lazyZodSchema(() => z.object({
   operations: z.array(AccountSettingMutationOperationInputV1Schema).min(1).max(64),
-}).strict();
+}).strict());
 
 function isAccountSettingKey(value: string): value is AccountSettingKey {
   return Object.hasOwn(ACCOUNT_SETTING_DEFINITIONS, value);
 }
 
-const AccountSettingKeySchema = z.custom<AccountSettingKey>(
+const AccountSettingKeySchema = lazyZodSchema(() => z.custom<AccountSettingKey>(
   (value) => typeof value === 'string' && isAccountSettingKey(value),
   'Unknown Account Setting key',
-);
+));
 
-const AccountSettingMutationOperationV1Schema = z.discriminatedUnion('op', [
+const AccountSettingMutationOperationV1Schema = lazyZodSchema(() => z.discriminatedUnion('op', [
   z.object({
     op: z.literal('set'),
     key: AccountSettingKeySchema,
@@ -80,9 +81,9 @@ const AccountSettingMutationOperationV1Schema = z.discriminatedUnion('op', [
     op: z.literal('reset'),
     key: AccountSettingKeySchema,
   }).strict(),
-]);
+]));
 
-export const AccountSettingMutationV1Schema = z.object({
+export const AccountSettingMutationV1Schema = lazyZodSchema(() => z.object({
   operations: z.array(AccountSettingMutationOperationV1Schema).min(1).max(64),
 }).strict().superRefine(
   (mutation, context) => {
@@ -109,7 +110,7 @@ export const AccountSettingMutationV1Schema = z.object({
       }
     }
   },
-);
+));
 
 export type AccountSettingMutationV1 = z.infer<typeof AccountSettingMutationV1Schema>;
 
@@ -166,13 +167,18 @@ function inspectResultingRoots(
   raw: Readonly<Record<string, unknown>>,
 ): AccountSettingsMutationInvalidReason | null {
   for (const [key, value] of Object.entries(raw)) {
+    const retainedSource = parseRetainedAccountSettingsEntitySourceV1(key, value);
+    if (retainedSource) {
+      if (!retainedSource.success) return retainedSource.reason;
+      continue;
+    }
     const definition = isAccountSettingKey(key) ? ACCOUNT_SETTING_DEFINITIONS[key] : null;
     if (definition?.structuralBoundsOwner !== 'domainOwned') {
       const structuralIssue = inspectAccountSettingJsonStructuralBounds(value);
       if (structuralIssue) return structuralIssue.reason;
     }
     if (definition) {
-      const parsed = definition.parseMutationValue(value);
+      const parsed = definition.parseStoredValue(value);
       if (!parsed.success) return parsed.reason;
     }
   }
@@ -194,6 +200,14 @@ export function applyAccountSettingMutationV1(
 
   const seen = new Set<string>();
   const next: Record<string, unknown> = { ...raw };
+  // These creation defaults have an explicit tolerant stored-read contract.
+  // Repair only retained malformed values; incoming writes below remain strict.
+  for (const key of ['memoryUseInNewSessions', 'memoryUseInNewBots'] as const) {
+    const definition = ACCOUNT_SETTING_DEFINITIONS[key];
+    if (Object.hasOwn(next, key) && !definition.parseMutationValue(next[key]).success) {
+      next[key] = definition.default;
+    }
+  }
   for (const operation of mutation.data.operations) {
     if (!isAccountSettingKey(operation.key)) return invalid('unknownKey');
     if (seen.has(operation.key)) return invalid('duplicateKey');
@@ -205,8 +219,8 @@ export function applyAccountSettingMutationV1(
       continue;
     }
 
-    if (Object.hasOwn(raw, operation.key)) {
-      const current = ACCOUNT_SETTING_DEFINITIONS[operation.key].parseMutationValue(raw[operation.key]);
+    if (Object.hasOwn(next, operation.key)) {
+      const current = ACCOUNT_SETTING_DEFINITIONS[operation.key].parseStoredValue(next[operation.key]);
       if (!current.success) {
         return invalid(current.reason);
       }

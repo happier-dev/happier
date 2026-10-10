@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 import { buildBackendTargetKeyV2, parseBackendTargetKeyV2, type PersistedBackendTargetRefV2 } from '../../backends/targets/backendTargetRefV2.js';
 import { assertNonEscalatingPermissionMode } from '../../actions/permissionPrivilege.js';
@@ -56,8 +57,10 @@ type AgentStartConfigurationV1 = Readonly<{
 
 type AgentStartClearFieldV1 = 'modelSelection' | 'agentModeId' | 'configOptions' | 'profileId' | 'connectedServices' | 'mcpSelection';
 export type AgentStartFactsV1 = Readonly<{
-  machineId?: string | Unresolved;
-  directory?: string | Unresolved;
+  /** New compute is a known cross-Machine placement before enrollment assigns an id. */
+  machineId?: string | Unresolved | Readonly<{ kind: 'new_machine' }>;
+  /** Managed is a complete target-owned allocation intent, not an unknown path. */
+  directory?: string | Unresolved | Extract<SessionSpawnNewInputV2['directory'], Readonly<{ kind: 'managed' }>>;
   /** Presence of explicit launch overrides; no environment values enter admission facts. */
   hasEnvironmentVariables?: boolean | Unresolved;
 }> & { readonly [Key in keyof AgentStartConfigurationV1]?: AgentStartConfigurationV1[Key] | Unresolved
@@ -96,12 +99,12 @@ export type AgentStartRequestV1 =
   // Role writes consume check 1 only; keeping them here avoids a second subtree policy owner.
   | Readonly<{ kind: 'session_target'; targetSessionId: string }>;
 
-export const AgentStartSessionCallerV1Schema = z.object({
+export const AgentStartSessionCallerV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('session'),
   sessionId: asProtocolZod(SessionIdSchema),
   starterDepth: z.number().int().nonnegative().safe(),
   turnDepth: z.number().int().nonnegative().safe(),
-}).strict();
+}).strict());
 export type AgentStartSessionCallerV1 = Readonly<z.infer<typeof AgentStartSessionCallerV1Schema>>;
 
 export type AgentStartCallerV1 =
@@ -145,13 +148,13 @@ export type AgentStartRefusalV1 = Readonly<{
   blockId?: string;
   cause?: AgentStartRefusalV1;
 }>;
-export const AgentStartRefusalV1Schema: z.ZodType<AgentStartRefusalV1> = z.object({
+export const AgentStartRefusalV1Schema: z.ZodType<AgentStartRefusalV1> = lazyZodSchema(() => z.object({
   code: z.enum(AGENT_START_REFUSAL_CODES_V1),
   field: z.string().min(1).optional(),
   roleId: z.string().min(1).optional(),
   blockId: z.string().min(1).optional(),
   cause: z.lazy(() => AgentStartRefusalV1Schema).optional(),
-}).strict();
+}).strict());
 export type AgentStartAdmissionV1 = Readonly<{ ok: true; stamped: StampedStartV1 }> | Readonly<{ ok: false; refusal: AgentStartRefusalV1 }>;
 
 function isUnresolved(value: unknown): value is Unresolved {

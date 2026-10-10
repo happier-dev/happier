@@ -53,13 +53,3 @@ export const BoundedLegacyJsonValueSchema = defineStoredReadProjection(
   // contract rather than exposing StrictJsonValueSchema's frozen snapshot.
   () => StrictJsonValueSchema.pipe(z.json()),
 );
-
-/**
- * Provider settings are carried through Account Settings verbatim. The Provider
- * schemas own this subtree's cardinality and nesting, so the carrier only has to
- * preserve strict JSON data exactly; the Account byte ceiling is applied by the
- * catalog definition. Reusing the Protocol's one strict JSON value keeps the
- * prototype, accessor, dense-array, finite-number and cycle guarantees without a
- * second JSON walker.
- */
-export const ProviderSettingsLegacySubtreeV1Schema = StrictJsonValueSchema.optional();

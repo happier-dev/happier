@@ -1,4 +1,3 @@
-import { Conversation } from '@elevenlabs/client';
 import {
   VoiceRealtimeToolCallV1Schema,
   VoiceRealtimeToolResultV1Schema,
@@ -203,6 +202,8 @@ export function createElevenLabsConversationHandle(params: Readonly<{
                 await endConversationQuietly(previousConversation);
             }
 
+            const { Conversation } = await import('@elevenlabs/client');
+            if (!isCurrentStartSequence(startSequence)) return null;
             const conversation = await Conversation.startSession({
                 ...readRecord(config),
                 ...buildCallbackOptions(startSequence),

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import * as protocol from '../../index.js';
 import { accountSettingsParse } from './accountSettings.js';
+import { applyAccountSettingMutationV1 } from './accountSettingMutationV1.js';
 
 type ParseableSchema = Readonly<{
   parse(value: unknown): unknown;
@@ -83,6 +84,8 @@ describe('WorkspaceFileViewerPreferencesV1', () => {
       Array.from({ length: 129 }, (_, index) => [extensionSelectorKey(index), { kind: 'builtin' }]),
     );
     expect(schema.safeParse({ v: 1, selections: tooManySelections }).success).toBe(false);
+    expect(applyAccountSettingMutationV1({}, { operations: [{ op: 'set', key: 'workspaceFileViewerPreferencesV1',
+      value: { v: 1, selections: tooManySelections } }] })).toEqual({ status: 'invalid', reason: 'invalidValue' });
 
     const oversizedViewer = {
       kind: 'plugin',
@@ -92,6 +95,13 @@ describe('WorkspaceFileViewerPreferencesV1', () => {
     const oversizedSelections = Object.fromEntries(
       Array.from({ length: 128 }, (_, index) => [extensionSelectorKey(index), oversizedViewer]),
     );
+    expect(new TextEncoder().encode(JSON.stringify({ v: 1, selections: oversizedSelections })).byteLength)
+      .toBeGreaterThan(64 * 1024);
     expect(schema.safeParse({ v: 1, selections: oversizedSelections }).success).toBe(false);
+    expect(applyAccountSettingMutationV1({}, { operations: [{ op: 'set', key: 'workspaceFileViewerPreferencesV1',
+      value: { v: 1, selections: oversizedSelections } }] })).toEqual({ status: 'invalid', reason: 'tooLarge' });
+    expect(applyAccountSettingMutationV1({}, { operations: [{ op: 'set', key: 'workspaceFileViewerPreferencesV1',
+      value: { v: 1, selections: { 'mime:TEXT/MARKDOWN': pluginViewer } } }] }))
+      .toEqual({ status: 'invalid', reason: 'invalidValue' });
   });
 });

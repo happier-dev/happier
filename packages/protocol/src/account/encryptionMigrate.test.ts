@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { zodSchemaToJsonSchemaObject } from '../actions/actionInputJsonSchema.js';
 
 import { encodeBase64 } from '../crypto/base64.js';
+import { sealAccountScopedBlobCiphertext } from '../crypto/accountScopedCipher.js';
 import { computeContentPublicKeyFingerprint } from '../machines/identity/installationIdentity.js';
 import {
   sealSessionOwnerMetadataEnvelopeV1,
@@ -12,6 +13,7 @@ import {
   buildReviewCommentEventRequestBindingV1,
 } from '../reviews/comments/content.js';
 import * as migrationContract from './encryptionMigrate.js';
+import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 } from '../providers/connections/connectionRowsV1.js';
 import {
   AccountEncryptionMigrateBadRequestResponseSchema,
   AccountEncryptionMigrateAutomationDirectiveSchema,
@@ -47,6 +49,105 @@ import {
 } from './encryptionMigrate.js';
 
 describe('account/encryptionMigrate', () => {
+  it('binds all five D9 catalog revisions and content into the signed Account conversion', () => {
+    const domains = [
+      ['providerConnections', 'account_provider_connections'],
+      ['connectedConfigurations', 'account_connected_configuration'],
+      ['connectedPurposes', 'account_connected_purposes'],
+      ['mcpServerCatalog', 'account_mcp_catalog'],
+      ['acpCatalog', 'account_acp_catalog'],
+    ] as const;
+    const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(15) };
+    const seal = (kind: typeof domains[number][1], marker: string) => ({
+      t: 'encrypted' as const,
+      c: sealAccountScopedBlobCiphertext({ kind, material, payload: { privateMarker: marker },
+        randomBytes: length => new Uint8Array(length).fill(23) }),
+    });
+    const directives = Object.fromEntries(domains.map(([field, kind]) => [field, {
+      expectedRevision: 7, content: seal(kind, field),
+    }]));
+    const request = AccountEncryptionMigrateUnsignedRequestSchema.parse({ ...createUnsignedE2eeRequest(), ...directives });
+    const binding = { accountId: 'account', sourceMode: 'plain' as const };
+    const digest = createAccountEncryptionMigrateRequestBindingDigestV1({ request, ...binding });
+    for (const [field, kind] of domains) {
+      for (const replacement of [
+        { expectedRevision: 8, content: seal(kind, field) },
+        { expectedRevision: 7, content: seal(kind, `${field}-changed`) },
+      ]) {
+        const changed = AccountEncryptionMigrateUnsignedRequestSchema.parse({ ...request, [field]: replacement });
+        expect(createAccountEncryptionMigrateRequestBindingDigestV1({ request: changed, ...binding }), field).not.toBe(digest);
+      }
+      const omitted = { ...request };
+      Reflect.deleteProperty(omitted, field);
+      expect(createAccountEncryptionMigrateRequestBindingDigestV1({ request: omitted, ...binding }), field).not.toBe(digest);
+    }
+    expect(AccountEncryptionMigrateUnsignedRequestSchema.safeParse({ ...request,
+      ...Object.fromEntries(domains.map(([field]) => [field, { expectedRevision: 7, content: null }])),
+    }).success).toBe(true);
+  });
+  it.each([
+    ['remoteHosts', { v: 1, hosts: [] }],
+    ['notificationChannels', { v: 1, channels: [] }],
+    ['connectedPresentation', { v: 1, entries: [] }],
+    ['connectedAcknowledgements', { v: 1, entries: [] }],
+  ] as const)('binds exact %s singleton content and revision into Account conversion', (field, record) => {
+    const directive = { expectedRevision: 3, content: { t: 'plain' as const, v: record } };
+    const request = AccountEncryptionMigrateRequestSchema.parse({ ...createPlainRequest(), [field]: directive });
+    const binding = { accountId: 'account', sourceMode: 'e2ee' as const };
+    const digest = createAccountEncryptionMigrateRequestBindingDigestV1({ request, ...binding });
+    expect(createAccountEncryptionMigrateRequestBindingDigestV1({ request: { ...request,
+      [field]: { ...directive, expectedRevision: 4 } }, ...binding })).not.toBe(digest);
+    expect(AccountEncryptionMigrateRequestSchema.safeParse({ ...request,
+      [field]: { ...directive, content: { t: 'encrypted', c: 'cipher' } } }).success).toBe(false);
+    expect(AccountEncryptionMigrateRequestSchema.safeParse({ ...request,
+      [field]: { expectedRevision: 4, content: null } }).success).toBe(true);
+    expect(AccountEncryptionMigrateSuccessResponseSchema.parse({ success: true, mode: 'plain', accountVersion: 1, settingsVersion: 1,
+      [field]: { revision: 4, content: directive.content },
+    })).toHaveProperty(field, { revision: 4, content: directive.content });
+    expect(AccountEncryptionMigrateSuccessResponseSchema.parse({ success: true, mode: 'plain', accountVersion: 1, settingsVersion: 1,
+      [field]: { revision: 3, content: null },
+    })).toHaveProperty(field, { revision: 3, content: null });
+    expect(AccountEncryptionMigrateRequestSchema.safeParse({ ...request,
+      [field]: { ...directive, root: 'arbitrary' } }).success).toBe(false);
+  });
+  it.each(['remoteHosts', 'notificationChannels', 'connectedPresentation', 'connectedAcknowledgements'] as const)(
+    'projects the canonical optional %s conversion arms without losing nullable content', (field) => {
+      for (const [schema, revisionKey] of [
+        [AccountEncryptionMigrateRequestSchema.shape[field], 'expectedRevision'],
+        [AccountEncryptionMigrateSuccessResponseSchema.shape[field], 'revision'],
+      ] as const) {
+        expect(schema.parse(undefined)).toBeUndefined();
+        expect(schema.nullable().parse(null)).toBeNull();
+        for (const target of ['draft-7', 'draft-2020-12'] as const) {
+          const projected = zodSchemaToJsonSchemaObject(z.object({ catalog: schema }).strict(), { target });
+          expect(projected).toMatchObject({ type: 'object', additionalProperties: false, properties: {
+            catalog: { type: 'object', additionalProperties: false, required: [revisionKey, 'content'],
+              properties: { [revisionKey]: { type: 'integer', minimum: 0 }, content: {
+                anyOf: expect.arrayContaining([{ type: 'null' }]),
+              } },
+            },
+          } });
+          expect(projected.required).toBeUndefined();
+        }
+      }
+    },
+  );
+  it('binds Provider catalog content and revision into strict Account conversion and accepts unchanged tombstones', () => {
+    const providerConnections = { expectedRevision: 3, content: { t: 'plain' as const, v: DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 } };
+    const request = AccountEncryptionMigrateRequestSchema.parse({ ...createPlainRequest(), providerConnections });
+    const binding = { accountId: 'account', sourceMode: 'e2ee' as const };
+    const digest = createAccountEncryptionMigrateRequestBindingDigestV1({ request, ...binding });
+    expect(createAccountEncryptionMigrateRequestBindingDigestV1({ request: { ...request,
+      providerConnections: { ...providerConnections, expectedRevision: 4 } }, ...binding })).not.toBe(digest);
+    expect(AccountEncryptionMigrateRequestSchema.safeParse({ ...request,
+      providerConnections: { ...providerConnections, content: { t: 'encrypted', c: 'cipher' } } }).success).toBe(false);
+    expect(AccountEncryptionMigrateRequestSchema.safeParse({ ...request, providerConnections: { expectedRevision: 4, content: null } }).success).toBe(true);
+    expect(AccountEncryptionMigrateSuccessResponseSchema.parse({ success: true, mode: 'plain', accountVersion: 1, settingsVersion: 1,
+      providerConnections: { row: { revision: 4, content: providerConnections.content } },
+    })).toHaveProperty('providerConnections');
+    expect(AccountEncryptionMigrateRequestSchema.safeParse({ ...request,
+      providerConnections: { ...providerConnections, root: 'arbitrary' } }).success).toBe(false);
+  });
   it('binds prompt catalog resealing into the existing all-domain conversion', () => {
     const promptLibrary = { items: [{ key: 'role-overrides' as const, expectedRevision: 3,
       content: { t: 'plain' as const, v: { key: 'role-overrides' as const, value: { v: 1 as const,

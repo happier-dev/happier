@@ -86,12 +86,12 @@ describe('shared Saved Secret complete audience inputs', () => {
     }).success).toBe(false);
   });
 
-  it('binds personal promotion sources only to the resources in that composite request', () => {
+  it.each(['personal-primary', 'happier:shared-secret:v1:existing-resource'])('binds opaque personal source %s only to the resources in that composite request', personalSecretId => {
     const resource = { resourceId: 'promotion-primary', displayName: 'Token', kind: 'token', encryptionMode: 'plain',
       storedContent: { t: 'plain', v: { v: 1, name: 'Token', kind: 'token', value: 'private' } } };
     const request = { ...resource, expectedSettingsVersion: 0, nextSettings: { t: 'plain', v: {} },
       referenceCensus: { accountMode: 'plain', profiles: { referenceGuardRevision: 'absent', rows: [] } },
-      personalSecretPromotions: [{ personalSecretId: 'personal-primary', resourceId: resource.resourceId },
+      personalSecretPromotions: [{ personalSecretId, resourceId: resource.resourceId },
         { personalSecretId: 'personal-secondary', resourceId: 'promotion-secondary' }],
       additionalSavedSecretResources: [{ ...resource, resourceId: 'promotion-secondary' }] };
     const parsed = SharedSavedSecretPromoteInputV1Schema.safeParse(request);
@@ -117,6 +117,11 @@ describe('shared Saved Secret complete audience inputs', () => {
     expect(SharedSavedSecretDeleteInputV1Schema.safeParse({ resourceId: resource.resourceId,
       expectedRevision: 1, expectedSettingsVersion: 7, referenceCensus,
     }).success).toBe(true);
+    expect(SharedSavedSecretDeleteInputV1Schema.safeParse({ resourceId: resource.resourceId,
+      expectedRevision: 1, expectedSettingsVersion: 7, referenceCensus: {
+        ...referenceCensus, remoteHosts: { ...remoteHosts, resourceRefs: ['personal-not-a-resource'] },
+      },
+    }).success).toBe(false);
     const mutation = { expectedRevision: 3, content: { t: 'plain', v: { v: 1, hosts: [{
       id: 'host', name: 'Host', createdAt: 1, updatedAt: 2, lastUsedAt: null,
       ssh: { target: 'user@example.test', authMode: 'password', passwordSecretRef: reference },

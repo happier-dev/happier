@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -23,18 +24,25 @@ function normalizeNotificationChannelTopicsV1Input(raw: unknown): unknown {
   return raw;
 }
 
-export const NotificationChannelTopicsV1Schema = z
+const NotificationChannelTopicsFieldsV1Schema = lazyZodSchema(() => z.object({
+  ready: z.boolean().default(true),
+  permissionRequest: z.boolean().default(true),
+  userActionRequest: z.boolean().default(true),
+  connectedServiceAccountSwitch: z.boolean().default(true),
+  connectedServiceQuotaBlocked: z.boolean().default(true),
+  connectedServiceQuotaRecovered: z.boolean().default(true),
+  connectedServiceUsage: z.boolean().default(false),
+}));
+
+export const NotificationChannelTopicsStrictV1Schema = lazyZodSchema(() => z
   .preprocess(
     normalizeNotificationChannelTopicsV1Input,
-    z.object({
-      ready: z.boolean().default(true),
-      permissionRequest: z.boolean().default(true),
-      userActionRequest: z.boolean().default(true),
-      connectedServiceAccountSwitch: z.boolean().default(true),
-      connectedServiceQuotaBlocked: z.boolean().default(true),
-      connectedServiceQuotaRecovered: z.boolean().default(true),
-    }),
-  )
+    NotificationChannelTopicsFieldsV1Schema.strict(),
+  ));
+
+export const NotificationChannelTopicsV1Schema = lazyZodSchema(() => z.preprocess(
+  normalizeNotificationChannelTopicsV1Input, NotificationChannelTopicsFieldsV1Schema,
+)
   .catch({
     ready: true,
     permissionRequest: true,
@@ -42,29 +50,30 @@ export const NotificationChannelTopicsV1Schema = z
     connectedServiceAccountSwitch: true,
     connectedServiceQuotaBlocked: true,
     connectedServiceQuotaRecovered: true,
-  });
+    connectedServiceUsage: false,
+  }));
 
 export type NotificationChannelTopicsV1 = z.infer<typeof NotificationChannelTopicsV1Schema>;
 
 export const DEFAULT_NOTIFICATION_CHANNEL_TOPICS_V1: NotificationChannelTopicsV1 =
   NotificationChannelTopicsV1Schema.parse({});
 
-const NotificationChannelBaseV1Schema = z.object({
+const NotificationChannelBaseV1Schema = lazyZodSchema(() => z.object({
   v: z.literal(1).default(1),
   id: z.string().trim().min(1),
   enabled: z.boolean().default(true),
   topics: NotificationChannelTopicsV1Schema.default(DEFAULT_NOTIFICATION_CHANNEL_TOPICS_V1),
   readyIncludeMessageText: z.boolean().default(true),
   requestIncludeMessageText: z.boolean().default(true),
-});
+}));
 
-export const ExpoPushNotificationChannelV1Schema = NotificationChannelBaseV1Schema.extend({
+export const ExpoPushNotificationChannelV1Schema = lazyZodSchema(() => NotificationChannelBaseV1Schema.extend({
   kind: z.literal('expo_push'),
-});
+}));
 
 export type ExpoPushNotificationChannelV1 = z.infer<typeof ExpoPushNotificationChannelV1Schema>;
 
-const WebhookUrlSchema = z.url().refine((value) => {
+const WebhookUrlSchema = lazyZodSchema(() => z.url().refine((value) => {
   try {
     const protocol = new URL(value).protocol;
     return protocol === 'http:' || protocol === 'https:';
@@ -73,13 +82,13 @@ const WebhookUrlSchema = z.url().refine((value) => {
   }
 }, {
   message: 'Webhook notification channels must use http or https URLs',
-});
+}));
 
-export const WebhookNotificationChannelV1Schema = NotificationChannelBaseV1Schema.extend({
+export const WebhookNotificationChannelV1Schema = lazyZodSchema(() => NotificationChannelBaseV1Schema.extend({
   kind: z.literal('webhook'),
   url: WebhookUrlSchema,
   signingSecret: SecretStringV1Schema.nullable().default(null),
-});
+}));
 
 export type WebhookNotificationChannelV1 = z.infer<typeof WebhookNotificationChannelV1Schema>;
 
@@ -89,14 +98,14 @@ export function hasConfiguredSecretStringValue(secret: SecretStringV1 | null | u
   return secret.encryptedValue !== undefined;
 }
 
-export const NotificationChannelV1Schema = z.discriminatedUnion('kind', [
+export const NotificationChannelV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   ExpoPushNotificationChannelV1Schema,
   WebhookNotificationChannelV1Schema,
-]);
+]));
 
 export type NotificationChannelV1 = z.infer<typeof NotificationChannelV1Schema>;
 
-export const NotificationChannelsV1Schema = z.array(NotificationChannelV1Schema).default([]);
+export const NotificationChannelsV1Schema = lazyZodSchema(() => z.array(NotificationChannelV1Schema).default([]));
 
 export type NotificationChannelsV1 = z.infer<typeof NotificationChannelsV1Schema>;
 

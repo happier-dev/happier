@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import {
@@ -15,6 +16,7 @@ import {
 } from '../../connect/connectedServiceBindings.js';
 import {
   QualifiedConnectedAccountPurposeBindingsV1Schema,
+  QualifiedConnectedAccountPurposeBindingsV1RecordSchema,
   qualifiedPurposeKey,
   type QualifiedConnectedAccountPurposeBindingTargetV1,
   type QualifiedConnectedAccountPurposeBindingV1,
@@ -23,10 +25,11 @@ import {
 } from '../../connect/connectedAccountPurposeBindings.js';
 import type { QualifiedConnectedAccountPurposeV1 } from '../../connect/connectedAccountPurposeIdentity.js';
 import { buildQualifiedPluginContributionKey } from '../../plugins/contributionIdentity.js';
+import { resolveGeneratedSessionPresentationAgentIdV1 } from '../../agents/generated/sessionPresentationCompatV1.js';
 import { sameQualifiedConnectedAccountRef } from '../../connect/qualifiedConnectedAccountPersistence.js';
 import { sameQualifiedConnectedAccountGroupRef } from '../../connect/qualifiedConnectedAccountsV4.js';
 
-const AgentIdSettingsKeySchema = z.string().trim().min(1);
+const AgentIdSettingsKeySchema = lazyZodSchema(() => z.string().trim().min(1));
 
 const ConnectedServicesDefaultAuthTeamResourceQualifierV2Shape = {
   serverId: z.string().trim().min(1),
@@ -35,19 +38,19 @@ const ConnectedServicesDefaultAuthTeamResourceQualifierV2Shape = {
   expectedResourceRevision: z.number().int().nonnegative(),
 } as const;
 
-export const ConnectedServicesDefaultAuthTeamResourceBindingV2Schema = z.union([
+export const ConnectedServicesDefaultAuthTeamResourceBindingV2Schema = lazyZodSchema(() => z.union([
   TeamResourceBrokeredConnectedServiceSelectionV2Schema.extend(
     ConnectedServicesDefaultAuthTeamResourceQualifierV2Shape,
   ),
   TeamResourceDirectConnectedServiceSelectionV2Schema.extend(
     ConnectedServicesDefaultAuthTeamResourceQualifierV2Shape,
   ),
-]);
+]));
 export type ConnectedServicesDefaultAuthTeamResourceBindingV2 = z.infer<
   typeof ConnectedServicesDefaultAuthTeamResourceBindingV2Schema
 >;
 
-const ConnectedServicesDefaultAuthBindingsByServiceIdV2Schema = z.record(
+const ConnectedServicesDefaultAuthBindingsByServiceIdV2Schema = lazyZodSchema(() => z.record(
   z.string(),
   z.union([
     ConnectedServiceBindingSelectionV1Schema,
@@ -62,30 +65,30 @@ const ConnectedServicesDefaultAuthBindingsByServiceIdV2Schema = z.record(
       path: [serviceId],
     });
   }
-});
+}));
 
-export const ConnectedServicesDefaultAuthBindingsV2Schema = z.object({
+export const ConnectedServicesDefaultAuthBindingsV2Schema = lazyZodSchema(() => z.object({
   v: z.literal(2),
   bindingsByServiceId: ConnectedServicesDefaultAuthBindingsByServiceIdV2Schema.default({}),
-}).strict();
+}).strict());
 export type ConnectedServicesDefaultAuthBindingsV2 = z.infer<
   typeof ConnectedServicesDefaultAuthBindingsV2Schema
 >;
 
-const ConnectedServicesDefaultAuthBindingsIngressSchema = z.union([
+const ConnectedServicesDefaultAuthBindingsIngressSchema = lazyZodSchema(() => z.union([
   ConnectedServicesDefaultAuthBindingsV2Schema,
   ConnectedServiceBindingsV1Schema,
-]);
+]));
 
-export const ConnectedServicesDefaultAuthByAgentIdV1Schema = z
+export const ConnectedServicesDefaultAuthByAgentIdV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1).default(1),
     bindingsByAgentId: z.record(AgentIdSettingsKeySchema, ConnectedServicesDefaultAuthBindingsIngressSchema).default({}),
   })
-  .strict();
+  .strict());
 
 /** Released bundled account settings used scalar service ids before qualified service identity. */
-const BuiltInLegacyConnectedServicesDefaultAuthByAgentIdV1Schema = z
+const BuiltInLegacyConnectedServicesDefaultAuthByAgentIdV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1).default(1),
     bindingsByAgentId: z.record(
@@ -94,14 +97,33 @@ const BuiltInLegacyConnectedServicesDefaultAuthByAgentIdV1Schema = z
     ).default({}),
   })
   .strict()
-  .transform((value) => ConnectedServicesDefaultAuthByAgentIdV1Schema.parse(value));
+  .transform((value) => ConnectedServicesDefaultAuthByAgentIdV1Schema.parse(value)));
 
-export const BuiltInLegacyConnectedServicesDefaultAuthByAgentIdV1IngressSchema = z
+const ConnectedServicesDefaultAuthByAgentIdV1SourceSchema = lazyZodSchema(() => z
   .union([
     ConnectedServicesDefaultAuthByAgentIdV1Schema,
     BuiltInLegacyConnectedServicesDefaultAuthByAgentIdV1Schema,
-  ])
-  .catch({ v: 1 as const, bindingsByAgentId: {} });
+  ]));
+
+export const BuiltInLegacyConnectedServicesDefaultAuthByAgentIdV1IngressSchema = lazyZodSchema(() =>
+  ConnectedServicesDefaultAuthByAgentIdV1SourceSchema
+  .catch({ v: 1 as const, bindingsByAgentId: {} }));
+
+/**
+ * Prospective 0.2 G2 ingress: the carrier is disjoint from released scalar
+ * services and survives released UI writers. Read it through the same generated
+ * service and Agent identities; current defaults are authored only as purposes.
+ * Remove once predecessor-created additional defaults have all migrated.
+ */
+export const BuiltInLegacyAdditionalConnectedServicesDefaultAuthByAgentIdV1IngressSchema = lazyZodSchema(() =>
+  ConnectedServicesDefaultAuthByAgentIdV1SourceSchema.transform((value) => ({
+    v: value.v,
+    bindingsByAgentId: Object.fromEntries(Object.entries(value.bindingsByAgentId).map(([agentId, bindings]) => [
+      resolveGeneratedSessionPresentationAgentIdV1({ flavor: agentId }) ?? agentId,
+      bindings,
+    ])),
+  })),
+);
 
 export type ConnectedServicesDefaultAuthByAgentIdV1 = z.infer<
   typeof ConnectedServicesDefaultAuthByAgentIdV1Schema
@@ -181,20 +203,38 @@ function teamResourceDefaultForService(
   };
 }
 
-type AgentConnectedAccountDefaultSettings = Readonly<{
-  connectedAccountPurposeBindingsV1?: unknown;
+export type AgentConnectedAccountDefaultSettings = Readonly<{
   connectedServicesDefaultAuthByAgentIdV1?: unknown;
+  connectedServicesAdditionalDefaultAuthByAgentIdV1?: unknown;
 }>;
-
-function readDurablePurposeBindings(value: unknown): QualifiedConnectedAccountPurposeBindingsV1 {
-  const parsed = QualifiedConnectedAccountPurposeBindingsV1Schema.safeParse(value);
-  return parsed.success ? parsed.data : DEFAULT_CONNECTED_ACCOUNT_PURPOSE_BINDINGS_V1;
-}
 
 function readLegacyDefaultAuth(value: unknown): ConnectedServicesDefaultAuthByAgentIdV1 {
   return value === undefined
     ? DEFAULT_CONNECTED_SERVICES_DEFAULT_AUTH_BY_AGENT_ID_V1
     : BuiltInLegacyConnectedServicesDefaultAuthByAgentIdV1IngressSchema.parse(value);
+}
+
+function readAdditionalLegacyDefaultAuth(value: unknown): ConnectedServicesDefaultAuthByAgentIdV1 {
+  return value === undefined
+    ? DEFAULT_CONNECTED_SERVICES_DEFAULT_AUTH_BY_AGENT_ID_V1
+    : BuiltInLegacyAdditionalConnectedServicesDefaultAuthByAgentIdV1IngressSchema.parse(value);
+}
+
+function readLegacyDefaultAuthSettings(settings: AgentConnectedAccountDefaultSettings): ConnectedServicesDefaultAuthByAgentIdV1 {
+  const legacy = readLegacyDefaultAuth(settings.connectedServicesDefaultAuthByAgentIdV1);
+  const additional = readAdditionalLegacyDefaultAuth(settings.connectedServicesAdditionalDefaultAuthByAgentIdV1);
+  const bindingsByAgentId = { ...legacy.bindingsByAgentId };
+  for (const [agentId, binding] of Object.entries(additional.bindingsByAgentId)) {
+    const previous = bindingsByAgentId[agentId];
+    if (Object.keys(binding.bindingsByServiceId).some((key) => previous && key in previous.bindingsByServiceId)) {
+      throw new Error('Overlapping legacy Connected Account default carriers');
+    }
+    bindingsByAgentId[agentId] = ConnectedServicesDefaultAuthBindingsIngressSchema.parse({
+      v: previous?.v ?? binding.v,
+      bindingsByServiceId: { ...previous?.bindingsByServiceId, ...binding.bindingsByServiceId },
+    });
+  }
+  return { v: 1, bindingsByAgentId };
 }
 
 /**
@@ -238,22 +278,105 @@ function migrateLegacyDefaultAuthBinding(
   };
 }
 
+/** The existing Agent catalog projection needed only before purpose authority is activated. */
+export type AgentConnectedAccountPurposeMigrationDescriptor = Readonly<{
+  agentId: string;
+  identity: QualifiedConnectedAccountPurposeV1['consumer'] | null;
+  connectedAccounts: readonly AgentConnectedAccountPurposeDeclaration[];
+}>;
+
 /**
- * THE Agent default-authentication reader. `connectedAccountPurposeBindingsV1`
- * is the one store: an entry for the exact qualified purpose wins. A purpose
- * with no entry reads the released service-keyed default that has not been
- * rewritten yet, migrated forward in memory; nothing else supplies a default.
+ * Fold genuine predecessor service defaults into an absent purpose row. Once a
+ * row exists its contents, including an empty row, are the sole default authority.
+ * This source-only seam neither rewrites Settings nor invents Agent identities.
+ */
+export function migrateLegacyAgentConnectedAccountPurposeDefaultsForActivation(input: Readonly<{
+  settings: AgentConnectedAccountDefaultSettings;
+  purposeBindings: QualifiedConnectedAccountPurposeBindingsV1;
+  agents: readonly AgentConnectedAccountPurposeMigrationDescriptor[] | null;
+}>): Readonly<{ status: 'ready'; purposeBindings: QualifiedConnectedAccountPurposeBindingsV1 }>
+  | Readonly<{ status: 'unavailable'; reason: 'invalid-stored-content' | 'authority-not-confirmed' }> {
+  let legacy: ConnectedServicesDefaultAuthByAgentIdV1;
+  try {
+    // Unlike the released forgiving reader, activation cannot erase malformed
+    // retained intent by accepting its catch-to-empty projection.
+    legacy = readLegacyDefaultAuthSettings({
+      ...input.settings,
+      connectedServicesDefaultAuthByAgentIdV1: input.settings.connectedServicesDefaultAuthByAgentIdV1 === undefined
+        ? undefined
+        : ConnectedServicesDefaultAuthByAgentIdV1SourceSchema.parse(input.settings.connectedServicesDefaultAuthByAgentIdV1),
+    });
+  } catch {
+    return { status: 'unavailable', reason: 'invalid-stored-content' };
+  }
+  const bindings = [...input.purposeBindings.bindings];
+  const teamResourceSelections = [...(input.purposeBindings.teamResourceSelections ?? [])];
+  const retainedKeys = new Set([
+    ...bindings.map(binding => qualifiedPurposeKey(binding.purpose)),
+    ...teamResourceSelections.map(entry => qualifiedPurposeKey(entry.purpose)),
+  ]);
+  for (const [agentId, defaults] of Object.entries(legacy.bindingsByAgentId)) {
+    for (const [serviceKey, binding] of Object.entries(defaults.bindingsByServiceId)) {
+      if (binding.source === 'native') continue;
+      const descriptors = input.agents?.filter(agent => agent.agentId === agentId) ?? [];
+      const descriptor = descriptors.length === 1 ? descriptors[0] : undefined;
+      if (!descriptor?.identity) return { status: 'unavailable', reason: 'authority-not-confirmed' };
+      try {
+        const declarations = descriptor.connectedAccounts.filter(declaration => (
+          buildQualifiedPluginContributionKey(declaration.service) === serviceKey
+        ));
+        if (declarations.length === 0) return { status: 'unavailable', reason: 'authority-not-confirmed' };
+        const servicesByPurpose = new Map<string, string>();
+        for (const declaration of descriptor.connectedAccounts) {
+          const key = qualifiedPurposeKey({ consumer: descriptor.identity, purpose: declaration.purpose });
+          const declaredServiceKey = buildQualifiedPluginContributionKey(declaration.service);
+          const previous = servicesByPurpose.get(key);
+          if (previous && previous !== declaredServiceKey) {
+            return { status: 'unavailable', reason: 'authority-not-confirmed' };
+          }
+          servicesByPurpose.set(key, declaredServiceKey);
+        }
+        for (const declaration of declarations) {
+          const purpose = { consumer: descriptor.identity, purpose: declaration.purpose };
+          const key = qualifiedPurposeKey(purpose);
+          if (retainedKeys.has(key)) continue;
+          const migrated = migrateLegacyDefaultAuthBinding(binding, declaration.service);
+          if (migrated.target) bindings.push({ purpose, target: migrated.target });
+          else if (migrated.teamResource) teamResourceSelections.push({ purpose, ...migrated.teamResource });
+          else return { status: 'unavailable', reason: 'authority-not-confirmed' };
+          retainedKeys.add(key);
+        }
+      } catch {
+        return { status: 'unavailable', reason: 'authority-not-confirmed' };
+      }
+    }
+  }
+  const parsed = QualifiedConnectedAccountPurposeBindingsV1RecordSchema.safeParse({
+    ...input.purposeBindings,
+    bindings,
+    ...(teamResourceSelections.length > 0 ? { teamResourceSelections } : {}),
+  });
+  return parsed.success
+    ? { status: 'ready', purposeBindings: parsed.data }
+    : { status: 'unavailable', reason: 'invalid-stored-content' };
+}
+
+/**
+ * THE Agent default-authentication reader. An admitted purpose catalog is the
+ * sole authority, including when empty. Only callers at the genuine predecessor
+ * migration seam omit the catalog and read retained service-keyed defaults.
  */
 export function resolveAgentConnectedAccountPurposeDefaults(input: Readonly<{
   settings: AgentConnectedAccountDefaultSettings;
+  purposeBindings?: QualifiedConnectedAccountPurposeBindingsV1;
   agentId: string;
   consumer: Readonly<{ pluginId: string; localId: string }>;
   declarations: readonly AgentConnectedAccountPurposeDeclaration[];
 }>): readonly AgentConnectedAccountPurposeDefault[] {
-  const durable = readDurablePurposeBindings(input.settings.connectedAccountPurposeBindingsV1);
-  const legacy = readLegacyDefaultAuth(input.settings.connectedServicesDefaultAuthByAgentIdV1)
+  const durable = input.purposeBindings ?? DEFAULT_CONNECTED_ACCOUNT_PURPOSE_BINDINGS_V1;
+  const legacy = input.purposeBindings === undefined ? readLegacyDefaultAuthSettings(input.settings)
     .bindingsByAgentId[input.agentId.trim()]
-    ?.bindingsByServiceId as Readonly<Record<string, unknown>> | undefined;
+    ?.bindingsByServiceId : undefined;
   const durableByPurposeKey = new Map<string, AgentConnectedAccountPurposeDefaultValue | 'team'>([
     ...durable.bindings.map((binding) => [
       qualifiedPurposeKey(binding.purpose),
@@ -293,12 +416,13 @@ export function resolveAgentConnectedAccountPurposeDefaults(input: Readonly<{
 
 /**
  * THE Agent default-authentication writer. It sets (or clears) one purpose in
- * the purpose-binding store and, in the same settings write, folds that
+ * the purpose-binding catalog and, in the same operation, folds that
  * Agent's released service-keyed entry into purpose entries and deletes it,
  * so a cleared purpose can never be resurrected from the retired store.
  */
 export function writeAgentConnectedAccountPurposeDefault(input: Readonly<{
   settings: AgentConnectedAccountDefaultSettings;
+  purposeBindings?: QualifiedConnectedAccountPurposeBindingsV1;
   agentId: string;
   consumer: Readonly<{ pluginId: string; localId: string }>;
   declarations: readonly AgentConnectedAccountPurposeDeclaration[];
@@ -309,8 +433,9 @@ export function writeAgentConnectedAccountPurposeDefault(input: Readonly<{
 }>): Readonly<{
   connectedAccountPurposeBindingsV1: QualifiedConnectedAccountPurposeBindingsV1;
   connectedServicesDefaultAuthByAgentIdV1: ConnectedServicesDefaultAuthByAgentIdV1;
+  connectedServicesAdditionalDefaultAuthByAgentIdV1: ConnectedServicesDefaultAuthByAgentIdV1;
 }> {
-  return writeConnectedAccountPurposeDefault({ settings: input.settings,
+  return writeConnectedAccountPurposeDefault({ settings: input.settings, purposeBindings: input.purposeBindings,
     purpose: { consumer: input.consumer, purpose: input.purpose }, target: input.target,
     teamResource: input.teamResource, legacyAgent: { agentId: input.agentId, declarations: input.declarations } });
 }
@@ -318,6 +443,7 @@ export function writeAgentConnectedAccountPurposeDefault(input: Readonly<{
 /** One purpose-default writer for Resources, Providers and Agents; no parallel selection store. */
 export function writeConnectedAccountPurposeDefault(input: Readonly<{
   settings: AgentConnectedAccountDefaultSettings;
+  purposeBindings?: QualifiedConnectedAccountPurposeBindingsV1;
   purpose: QualifiedConnectedAccountPurposeV1;
   target: QualifiedConnectedAccountPurposeBindingTargetV1 | null;
   teamResource?: AgentConnectedAccountPurposeTeamResourceDefault | null;
@@ -326,6 +452,7 @@ export function writeConnectedAccountPurposeDefault(input: Readonly<{
 }>): Readonly<{
   connectedAccountPurposeBindingsV1: QualifiedConnectedAccountPurposeBindingsV1;
   connectedServicesDefaultAuthByAgentIdV1: ConnectedServicesDefaultAuthByAgentIdV1;
+  connectedServicesAdditionalDefaultAuthByAgentIdV1: ConnectedServicesDefaultAuthByAgentIdV1;
 }> {
   if (input.target && input.teamResource) {
     throw new Error('A purpose default is either a personal target or a Team resource');
@@ -335,11 +462,11 @@ export function writeConnectedAccountPurposeDefault(input: Readonly<{
     teamResource: input.teamResource ?? null,
   };
   const agentId = input.legacyAgent?.agentId.trim();
-  const current = input.legacyAgent ? resolveAgentConnectedAccountPurposeDefaults({ settings: input.settings,
+  const current = input.legacyAgent ? resolveAgentConnectedAccountPurposeDefaults({ settings: input.settings, purposeBindings: input.purposeBindings,
     consumer: input.purpose.consumer, ...input.legacyAgent }) : [];
   const declaredKeys = new Set(current.map((entry) => qualifiedPurposeKey(entry.purpose)));
   const changedKey = qualifiedPurposeKey(input.purpose);
-  const durable = readDurablePurposeBindings(input.settings.connectedAccountPurposeBindingsV1);
+  const durable = input.purposeBindings ?? DEFAULT_CONNECTED_ACCOUNT_PURPOSE_BINDINGS_V1;
   const retainedKey = (purpose: QualifiedConnectedAccountPurposeV1) => (
     !declaredKeys.has(qualifiedPurposeKey(purpose)) && qualifiedPurposeKey(purpose) !== changedKey
   );
@@ -361,16 +488,21 @@ export function writeConnectedAccountPurposeDefault(input: Readonly<{
     push(input.purpose, changedValue);
   }
   const legacy = readLegacyDefaultAuth(input.settings.connectedServicesDefaultAuthByAgentIdV1);
+  const additional = readAdditionalLegacyDefaultAuth(input.settings.connectedServicesAdditionalDefaultAuthByAgentIdV1);
+  const remainingAdditionalAgents = Object.fromEntries(
+    Object.entries(additional.bindingsByAgentId).filter(([legacyAgentId]) => legacyAgentId !== agentId),
+  );
   const remainingLegacyAgents = Object.fromEntries(
     Object.entries(legacy.bindingsByAgentId).filter(([legacyAgentId]) => legacyAgentId !== agentId),
   );
   return {
-    connectedAccountPurposeBindingsV1: QualifiedConnectedAccountPurposeBindingsV1Schema.parse({
+    connectedAccountPurposeBindingsV1: QualifiedConnectedAccountPurposeBindingsV1RecordSchema.parse({
       v: 1,
       bindings: next,
       ...(nextTeamSelections.length > 0 ? { teamResourceSelections: nextTeamSelections } : {}),
     }),
     connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: remainingLegacyAgents },
+    connectedServicesAdditionalDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: remainingAdditionalAgents },
   };
 }
 
@@ -383,6 +515,7 @@ export function writeConnectedAccountPurposeDefault(input: Readonly<{
  */
 export function removeAgentConnectedAccountDefaultsForDeletedTarget(input: Readonly<{
   settings: AgentConnectedAccountDefaultSettings;
+  purposeBindings?: QualifiedConnectedAccountPurposeBindingsV1;
   target: QualifiedConnectedAccountPurposeBindingTargetV1;
 }>): ReturnType<typeof writeAgentConnectedAccountPurposeDefault> | null {
   const { target } = input;
@@ -393,29 +526,36 @@ export function removeAgentConnectedAccountDefaultsForDeletedTarget(input: Reado
       : candidate.kind === 'group' && target.kind === 'group'
         && sameQualifiedConnectedAccountGroupRef(candidate, target)
   );
-  const durable = readDurablePurposeBindings(input.settings.connectedAccountPurposeBindingsV1);
+  const durable = input.purposeBindings ?? DEFAULT_CONNECTED_ACCOUNT_PURPOSE_BINDINGS_V1;
   const bindings = durable.bindings.filter((binding) => !matches(binding.target));
   let changed = bindings.length !== durable.bindings.length;
   const legacy = readLegacyDefaultAuth(input.settings.connectedServicesDefaultAuthByAgentIdV1);
+  const additional = readAdditionalLegacyDefaultAuth(input.settings.connectedServicesAdditionalDefaultAuthByAgentIdV1);
   const serviceKey = buildQualifiedPluginContributionKey(service);
-  const bindingsByAgentId = { ...legacy.bindingsByAgentId };
-  for (const [agentId, agentBindings] of Object.entries(legacy.bindingsByAgentId)) {
-    const retained = agentBindings.bindingsByServiceId;
-    const legacyTarget = migrateLegacyDefaultAuthBinding(retained[serviceKey], service).target;
-    if (!legacyTarget || !matches(legacyTarget)) continue;
-    changed = true;
-    const bindingsByServiceId = { ...retained };
-    delete bindingsByServiceId[serviceKey];
-    if (Object.keys(bindingsByServiceId).length === 0) delete bindingsByAgentId[agentId];
-    else bindingsByAgentId[agentId] = ConnectedServicesDefaultAuthBindingsIngressSchema.parse({
-      ...agentBindings,
-      bindingsByServiceId,
-    });
-  }
+  const removeFromCarrier = (carrier: ConnectedServicesDefaultAuthByAgentIdV1): ConnectedServicesDefaultAuthByAgentIdV1 => {
+    const bindingsByAgentId = { ...carrier.bindingsByAgentId };
+    for (const [agentId, agentBindings] of Object.entries(carrier.bindingsByAgentId)) {
+      const retained = agentBindings.bindingsByServiceId;
+      const legacyTarget = migrateLegacyDefaultAuthBinding(retained[serviceKey], service).target;
+      if (!legacyTarget || !matches(legacyTarget)) continue;
+      changed = true;
+      const bindingsByServiceId = { ...retained };
+      delete bindingsByServiceId[serviceKey];
+      if (Object.keys(bindingsByServiceId).length === 0) delete bindingsByAgentId[agentId];
+      else bindingsByAgentId[agentId] = ConnectedServicesDefaultAuthBindingsIngressSchema.parse({
+        ...agentBindings,
+        bindingsByServiceId,
+      });
+    }
+    return { ...carrier, bindingsByAgentId };
+  };
+  const remainingLegacy = removeFromCarrier(legacy);
+  const remainingAdditional = removeFromCarrier(additional);
   if (!changed) return null;
   return {
     connectedAccountPurposeBindingsV1: { ...durable, bindings },
-    connectedServicesDefaultAuthByAgentIdV1: { ...legacy, bindingsByAgentId },
+    connectedServicesDefaultAuthByAgentIdV1: remainingLegacy,
+    connectedServicesAdditionalDefaultAuthByAgentIdV1: remainingAdditional,
   };
 }
 
@@ -428,20 +568,25 @@ export function removeAgentConnectedAccountDefaultsForDeletedTarget(input: Reado
  */
 export function writeAgentConnectedServiceDefault(input: Readonly<{
   settings: AgentConnectedAccountDefaultSettings;
+  purposeBindings?: QualifiedConnectedAccountPurposeBindingsV1;
   agentId: string;
   consumer: Readonly<{ pluginId: string; localId: string }>;
   declarations: readonly AgentConnectedAccountPurposeDeclaration[];
   serviceKey: string;
+  purpose?: string;
   selection: ConnectedServiceBindingSelectionV2;
   teamId?: string;
 }>): Readonly<{
   connectedAccountPurposeBindingsV1: QualifiedConnectedAccountPurposeBindingsV1;
   connectedServicesDefaultAuthByAgentIdV1: ConnectedServicesDefaultAuthByAgentIdV1;
+  connectedServicesAdditionalDefaultAuthByAgentIdV1: ConnectedServicesDefaultAuthByAgentIdV1;
 }> | null {
   let settings: AgentConnectedAccountDefaultSettings = input.settings;
+  let purposeBindings = input.purposeBindings;
   let written: ReturnType<typeof writeAgentConnectedAccountPurposeDefault> | null = null;
   for (const declaration of input.declarations) {
     if (buildQualifiedPluginContributionKey(declaration.service) !== input.serviceKey) continue;
+    if (input.purpose !== undefined && declaration.purpose !== input.purpose) continue;
     const service = { pluginId: declaration.service.pluginId, localId: declaration.service.localId };
     const selection = input.selection;
     let target: QualifiedConnectedAccountPurposeBindingTargetV1 | null = null;
@@ -459,6 +604,7 @@ export function writeAgentConnectedServiceDefault(input: Readonly<{
     }
     written = writeAgentConnectedAccountPurposeDefault({
       settings,
+      purposeBindings,
       agentId: input.agentId,
       consumer: input.consumer,
       declarations: input.declarations,
@@ -467,6 +613,7 @@ export function writeAgentConnectedServiceDefault(input: Readonly<{
       teamResource,
     });
     settings = written;
+    purposeBindings = written.connectedAccountPurposeBindingsV1;
   }
   return written;
 }
@@ -497,26 +644,26 @@ export function projectAgentConnectedAccountPurposeDefaultsToSessionBindings(
     : null;
 }
 
-export const ConnectedServicesProviderConfigSharingModeV1Schema = z.enum([
+export const ConnectedServicesProviderConfigSharingModeV1Schema = lazyZodSchema(() => z.enum([
   'linked',
   'copied',
   'isolated',
-]);
+]));
 
 export type ConnectedServicesProviderConfigSharingModeV1 = z.infer<
   typeof ConnectedServicesProviderConfigSharingModeV1Schema
 >;
 
-export const ConnectedServicesProviderStateSharingModeV1Schema = z.enum([
+export const ConnectedServicesProviderStateSharingModeV1Schema = lazyZodSchema(() => z.enum([
   'isolated',
   'shared',
-]);
+]));
 
 export type ConnectedServicesProviderStateSharingModeV1 = z.infer<
   typeof ConnectedServicesProviderStateSharingModeV1Schema
 >;
 
-export const ConnectedServicesProviderStateSharingPolicyV1Schema = z
+export const ConnectedServicesProviderStateSharingPolicyV1Schema = lazyZodSchema(() => z
   .object({
     configMode: ConnectedServicesProviderConfigSharingModeV1Schema.default('linked'),
     // Default to shared session state: most users connect multiple accounts for
@@ -526,27 +673,27 @@ export const ConnectedServicesProviderStateSharingPolicyV1Schema = z
     // `state.supported: false` ignore `shared` and stay isolated.
     stateMode: ConnectedServicesProviderStateSharingModeV1Schema.default('shared'),
   })
-  .strict();
+  .strict());
 
 export type ConnectedServicesProviderStateSharingPolicyV1 = z.infer<
   typeof ConnectedServicesProviderStateSharingPolicyV1Schema
 >;
 
-const ConnectedServicesProviderStateSharingOverrideV1Schema = z
+const ConnectedServicesProviderStateSharingOverrideV1Schema = lazyZodSchema(() => z
   .object({
     configMode: ConnectedServicesProviderConfigSharingModeV1Schema.optional(),
     stateMode: ConnectedServicesProviderStateSharingModeV1Schema.optional(),
   })
-  .strict();
+  .strict());
 
-const ConnectedServicesProviderStateSharingRiskAcknowledgementV1Schema = z
+const ConnectedServicesProviderStateSharingRiskAcknowledgementV1Schema = lazyZodSchema(() => z
   .object({
     sharedStatePrivacy: z.boolean().optional(),
     symlinkUnavailable: z.boolean().optional(),
   })
-  .strict();
+  .strict());
 
-export const ConnectedServicesProviderStateSharingSettingsV1Schema = z
+export const ConnectedServicesProviderStateSharingSettingsV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1).default(1),
     defaults: ConnectedServicesProviderStateSharingPolicyV1Schema.default({
@@ -569,7 +716,7 @@ export const ConnectedServicesProviderStateSharingSettingsV1Schema = z
     },
     byAgentId: {},
     acknowledgedRisksByAgentId: {},
-  });
+  }));
 
 export type ConnectedServicesProviderStateSharingSettingsV1 = z.infer<
   typeof ConnectedServicesProviderStateSharingSettingsV1Schema

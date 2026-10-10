@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { PUSH_NOTIFICATION_SOUND_IDS } from '../../push/pushNotificationActions.js';
@@ -17,6 +18,7 @@ const ATTENTION_DELIVERY_EVENT_DEFINITIONS = [
   { id: 'connected_service_account_switch', remoteAlert: false },
   { id: 'connected_service_quota_blocked', remoteAlert: false },
   { id: 'connected_service_quota_recovered', remoteAlert: false },
+  { id: 'connected_service_usage', remoteAlert: false },
 ] as const;
 
 type AttentionDeliveryEventDefinition = (typeof ATTENTION_DELIVERY_EVENT_DEFINITIONS)[number];
@@ -30,7 +32,7 @@ type AttentionDeliveryEventIdTuple = {
 const ATTENTION_DELIVERY_EVENT_IDS = ATTENTION_DELIVERY_EVENT_DEFINITIONS
   .map(({ id }) => id) as unknown as AttentionDeliveryEventIdTuple;
 
-export const AttentionDeliveryEventIdSchema = z.enum(ATTENTION_DELIVERY_EVENT_IDS);
+export const AttentionDeliveryEventIdSchema = lazyZodSchema(() => z.enum(ATTENTION_DELIVERY_EVENT_IDS));
 export type AttentionDeliveryEventId = z.infer<typeof AttentionDeliveryEventIdSchema>;
 
 /**
@@ -47,7 +49,7 @@ export const REMOTE_ALERT_ATTENTION_DELIVERY_EVENT_IDS = ATTENTION_DELIVERY_EVEN
   )
   .map(({ id }) => id);
 
-export const AttentionDeliveryChannelIdSchema = z.enum([
+export const AttentionDeliveryChannelIdSchema = lazyZodSchema(() => z.enum([
   'expo_push',
   'webhook',
   'plugin',
@@ -56,22 +58,22 @@ export const AttentionDeliveryChannelIdSchema = z.enum([
   'desktop_overlay',
   'live_activity',
   'home_widget',
-]);
+]));
 export type AttentionDeliveryChannelId = z.infer<typeof AttentionDeliveryChannelIdSchema>;
 
-export const AttentionPreviewBehaviorSchema = z.enum(['status_only', 'title_only', 'include_preview']);
+export const AttentionPreviewBehaviorSchema = lazyZodSchema(() => z.enum(['status_only', 'title_only', 'include_preview']));
 export type AttentionPreviewBehavior = z.infer<typeof AttentionPreviewBehaviorSchema>;
 
-export const AttentionQuietHoursBehaviorSchema = z.enum(['deliver', 'silent', 'suppress']);
+export const AttentionQuietHoursBehaviorSchema = lazyZodSchema(() => z.enum(['deliver', 'silent', 'suppress']));
 export type AttentionQuietHoursBehavior = z.infer<typeof AttentionQuietHoursBehaviorSchema>;
 
-export const LiveActivityRemoteUpdateModeSchema = z.enum([
+export const LiveActivityRemoteUpdateModeSchema = lazyZodSchema(() => z.enum([
   'disabled',
   'local_only',
   'hosted_happier_relay',
   'direct_apns',
   'background_wake_best_effort',
-]);
+]));
 export type LiveActivityRemoteUpdateMode = z.infer<typeof LiveActivityRemoteUpdateModeSchema>;
 
 const CANONICAL_EVENT_IDS = AttentionDeliveryEventIdSchema.options;
@@ -108,7 +110,7 @@ function rekeyEventRecord(raw: unknown): Record<string, unknown> {
   return result;
 }
 
-export const AttentionDeliveryEventConfigSchema = z
+export const AttentionDeliveryEventConfigSchema = lazyZodSchema(() => z
   .object({
     enabled: z.boolean().default(true),
     quietHoursBehavior: AttentionQuietHoursBehaviorSchema.optional().catch(undefined),
@@ -116,11 +118,11 @@ export const AttentionDeliveryEventConfigSchema = z
     soundId: z.string().trim().min(1).optional().catch(undefined),
   })
   .passthrough()
-  .catch({ enabled: true });
+  .catch({ enabled: true }));
 
 export type AttentionDeliveryEventConfig = z.infer<typeof AttentionDeliveryEventConfigSchema>;
 
-const EventMapSchema = z
+const EventMapSchema = lazyZodSchema(() => z
   .preprocess(
     rekeyEventRecord,
     z.record(z.string(), AttentionDeliveryEventConfigSchema).catch({}),
@@ -131,9 +133,9 @@ const EventMapSchema = z
       withDefaults[id] = AttentionDeliveryEventConfigSchema.parse(withDefaults[id]);
     }
     return withDefaults;
-  });
+  }));
 
-export const AttentionDeliveryChannelConfigSchema = z
+export const AttentionDeliveryChannelConfigSchema = lazyZodSchema(() => z
   .object({
     enabled: z.boolean().default(true),
     events: EventMapSchema.default({}),
@@ -145,7 +147,7 @@ export const AttentionDeliveryChannelConfigSchema = z
   .catch({
     enabled: true,
     events: EventMapSchema.parse({}),
-  });
+  }));
 
 export type AttentionDeliveryChannelConfig = z.infer<typeof AttentionDeliveryChannelConfigSchema>;
 
@@ -161,7 +163,7 @@ export const ATTENTION_DELIVERY_CHANNEL_DEFAULT_QUIET_HOURS_BEHAVIOR = {
   home_widget: 'silent',
 } as const satisfies Record<AttentionDeliveryChannelId, AttentionQuietHoursBehavior>;
 
-const ChannelMapSchema = z
+const ChannelMapSchema = lazyZodSchema(() => z
   .preprocess(
     (raw) => (isRecord(raw) ? raw : {}),
     z.record(z.string(), AttentionDeliveryChannelConfigSchema).catch({}),
@@ -177,19 +179,19 @@ const ChannelMapSchema = z
       };
     }
     return withDefaults;
-  });
+  }));
 
-const LocalTimeSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
+const LocalTimeSchema = lazyZodSchema(() => z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/));
 
-const QuietHoursWindowSchema = z
+const QuietHoursWindowSchema = lazyZodSchema(() => z
   .object({
     startLocalTime: LocalTimeSchema,
     endLocalTime: LocalTimeSchema,
     days: z.array(z.enum(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'])).optional().catch(undefined),
   })
-  .passthrough();
+  .passthrough());
 
-const QuietHoursSchema = z
+const QuietHoursSchema = lazyZodSchema(() => z
   .object({
     enabled: z.boolean().default(false),
     timezone: z.string().trim().min(1).default('UTC'),
@@ -200,9 +202,9 @@ const QuietHoursSchema = z
     enabled: false,
     timezone: 'UTC',
     windows: [],
-  });
+  }));
 
-const SoundsSchema = z
+const SoundsSchema = lazyZodSchema(() => z
   .object({
     defaultSoundId: z.string().trim().min(1).default(PUSH_NOTIFICATION_SOUND_IDS.soft),
     eventSoundIds: z.preprocess(
@@ -216,9 +218,9 @@ const SoundsSchema = z
     defaultSoundId: PUSH_NOTIFICATION_SOUND_IDS.soft,
     eventSoundIds: {},
     volume: 1,
-  });
+  }));
 
-const PrivacySchema = z
+const PrivacySchema = lazyZodSchema(() => z
   .object({
     defaultPreviewBehavior: AttentionPreviewBehaviorSchema.default('include_preview'),
     surfaces: z.record(z.string(), AttentionPreviewBehaviorSchema).default({}).catch({}),
@@ -227,9 +229,9 @@ const PrivacySchema = z
   .catch({
     defaultPreviewBehavior: 'include_preview',
     surfaces: {},
-  });
+  }));
 
-const LiveActivityRemoteUpdatesSchema = z
+const LiveActivityRemoteUpdatesSchema = lazyZodSchema(() => z
   .object({
     enabled: z.boolean().default(true),
     preferredMode: LiveActivityRemoteUpdateModeSchema.default('local_only'),
@@ -244,9 +246,9 @@ const LiveActivityRemoteUpdatesSchema = z
     allowBackgroundWakeFallback: false,
     defaultStaleAfterSeconds: 1800,
     quietHoursBehavior: 'silent',
-  });
+  }));
 
-export const AttentionDeliveryPolicyV1Schema = z
+export const AttentionDeliveryPolicyV1Schema = lazyZodSchema(() => z
   .object({
     v: z.literal(1).default(1),
     events: EventMapSchema.default(EventMapSchema.parse({})),
@@ -258,7 +260,7 @@ export const AttentionDeliveryPolicyV1Schema = z
     sounds: SoundsSchema.default(SoundsSchema.parse({})),
     liveActivityRemoteUpdates: LiveActivityRemoteUpdatesSchema.default(LiveActivityRemoteUpdatesSchema.parse({})),
   })
-  .passthrough();
+  .passthrough());
 
 export type AttentionDeliveryPolicyV1 = z.infer<typeof AttentionDeliveryPolicyV1Schema>;
 

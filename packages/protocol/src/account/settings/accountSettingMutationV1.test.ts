@@ -10,6 +10,8 @@ import {
   applyAccountSettingMutationV1,
   type AccountSettingsMutationResult,
 } from './accountSettingMutationV1.js';
+import { readSavedSecretTransferSourceV1 } from './savedSecretMutationOwner.js';
+import { normalizeTransferredAccountSettingsHistoryV1 } from './accountSettingsHistoryRestoreV1.js';
 
 function connectedAccountServiceConfigurationsV1Entry(
   overrides: Readonly<Record<string, unknown>> = {},
@@ -25,6 +27,137 @@ function connectedAccountServiceConfigurationsV1Entry(
 }
 
 describe('AccountSettingMutationV1', () => {
+  it('keeps transferred entity carriers read-only while preserving their raw provenance during preference mutation', () => {
+    const sources = { profiles: [], secretBindingsByProfileId: {}, promptStacksV1: { v: 1, surfaces: {
+      coding: [], voice: [], profilesById: {} } }, rolesV1: { overrides: {} }, promptFoldersV1: { v: 1, folders: [] },
+      promptInvocationsV1: { v: 1, entries: [] }, promptExternalLinksV1: { v: 1, links: [] },
+      promptRegistrySourcesV1: { v: 1, sources: [] }, contextSelectionsV1: { v: 1, selectionsByKey: {} },
+      executionRunsGuidanceEntries: [] };
+    for (const [key, value] of Object.entries(sources)) {
+      expect(applyAccountSettingMutationV1({}, { operations: [{ op: 'set', key, value }] }))
+        .toEqual({ status: 'invalid', reason: 'unknownKey' });
+      expect(accountSettingsParse(sources)).not.toHaveProperty(key);
+    }
+    expect(applyAccountSettingMutationV1(sources, { operations: [{ op: 'set', key: 'showLineNumbers', value: false }] }))
+      .toEqual({ status: 'applied', raw: { ...sources, showLineNumbers: false } });
+  });
+  it('rejects retired preference and inference writers without discarding an untransferred credential carrier', () => {
+    const aliases = { viewInline: true, expandTodos: false, usePickerSearch: true,
+      compactSessionView: false, compactSessionViewMinimal: false, reviewPromptAnswered: true,
+      reviewPromptLikedApp: true, lastUsedPermissionMode: 'yolo', lastUsedModelMode: 'default',
+      inferenceOpenAIKey: '  exact inference fixture\n' };
+    for (const [key, value] of Object.entries(aliases)) {
+      expect(applyAccountSettingMutationV1({}, { operations: [{ op: 'set', key, value }] }))
+        .toEqual({ status: 'invalid', reason: 'unknownKey' });
+      expect(accountSettingsParse(aliases)).not.toHaveProperty(key);
+    }
+    const changed = applyAccountSettingMutationV1(aliases, {
+      operations: [{ op: 'set', key: 'showLineNumbers', value: false }],
+    });
+    expect(changed).toEqual({ status: 'applied', raw: { ...aliases, showLineNumbers: false } });
+    if (changed.status !== 'applied') throw new Error('expected admitted preference');
+    expect(readSavedSecretTransferSourceV1(changed.raw).inferenceCredential?.value)
+      .toBe(aliases.inferenceOpenAIKey);
+  });
+  it('imports an exact 0.2 inference string above newer catalog field limits without making it writable', () => {
+    // 0.2 accountLegacySettingDefinitions uses a nullish string with no field cap.
+    const value = `  ${'retained-inference-fixture'.repeat(3000)}\n`;
+    expect(new TextEncoder().encode(value).byteLength).toBeGreaterThan(64 * 1024);
+    const raw = { inferenceOpenAIKey: value };
+    expect(readSavedSecretTransferSourceV1(raw).inferenceCredential?.value).toBe(value);
+    expect(normalizeTransferredAccountSettingsHistoryV1(raw, { activeTransferredRoots: [] }))
+      .toEqual({ status: 'unchanged', cleanupPending: true, raw });
+  });
+  it('projects retained Settings fields for validation while keeping sparse writes and new inputs strict', () => {
+    const selections = { v: 1, pluginExecutionOriginsByPluginId: {},
+      targetsByKey: { agents: { serverIdentityId: 'srv_home', machineId: 'machine-1' } } };
+    const raw = { machineAdministrationSelectionsV1: selections, neighbor: { keep: true } };
+    expect(accountSettingsParse(raw).machineAdministrationSelectionsV1)
+      .toEqual({ v: 1, pluginExecutionOriginsByPluginId: {} });
+    expect(applyAccountSettingMutationV1(raw, {
+      operations: [{ op: 'set', key: 'workDepthLimit', value: 4 }],
+    })).toEqual({ status: 'applied', raw: { ...raw, workDepthLimit: 4 } });
+    expect(applyAccountSettingMutationV1({}, {
+      operations: [{ op: 'set', key: 'machineAdministrationSelectionsV1', value: selections }],
+    })).toEqual({ status: 'invalid', reason: 'invalidValue' });
+    expect(applyAccountSettingMutationV1({ ...raw, machineAdministrationSelectionsV1: {
+      ...selections, pluginExecutionOriginsByPluginId: { 'acme.plugin': { serverIdentityId: 'local-profile' } },
+    } }, { operations: [{ op: 'set', key: 'workDepthLimit', value: 4 }] }))
+      .toEqual({ status: 'invalid', reason: 'invalidValue' });
+  });
+  it('keeps MCP strict enforcement as a boolean preference separate from catalog entities', () => {
+    expect(accountSettingsParse({})).toMatchObject({ mcpServersStrictMode: false });
+    expect(applyAccountSettingMutationV1({ unrelated: { preserve: true } }, {
+      operations: [{ op: 'set', key: 'mcpServersStrictMode', value: true }],
+    })).toEqual({ status: 'applied', raw: { unrelated: { preserve: true }, mcpServersStrictMode: true } });
+    expect(applyAccountSettingMutationV1({}, {
+      operations: [{ op: 'set', key: 'mcpServersStrictMode', value: 'true' }],
+    })).toEqual({ status: 'invalid', reason: 'invalidValue' });
+  });
+  it('refuses draft Project settings writes while retaining opaque raw data and predecessor organization', () => {
+    const raw = {
+      workspaceRefsV1: [{ id: 'repairable-retained-ref' }],
+      sessionFoldersV1: { v: 1, folders: [] },
+      workspaceLabelsV1: { '/repo': 'Repository' },
+      pinnedSessionKeysV1: ['home:session'],
+    };
+    for (const key of ['workspaceRefsV1', 'workspaceSyncRelationshipsV1', 'pinnedWorkspaceRefIdsV1']) {
+      expect(applyAccountSettingMutationV1(raw, { operations: [{ op: 'set', key, value: [] }] }))
+        .toEqual({ status: 'invalid', reason: 'unknownKey' });
+      expect(accountSettingsParse({})).not.toHaveProperty(key);
+    }
+    const changed = applyAccountSettingMutationV1(raw, { operations: [{ op: 'set', key: 'showLineNumbers', value: false }] });
+    expect(changed).toMatchObject({ status: 'applied', raw: { ...raw, showLineNumbers: false } });
+  });
+
+  it('retains independent new-session and new-bot memory preferences with strict boolean mutations', () => {
+    const defaults = accountSettingsParse({});
+    expect(defaults).toMatchObject({ memoryUseInNewSessions: false, memoryUseInNewBots: true });
+    const changed = applyAccountSettingMutationV1({ unrelatedFuturePreference: { enabled: true } }, {
+      operations: [
+        { op: 'set', key: 'memoryUseInNewSessions', value: true },
+        { op: 'set', key: 'memoryUseInNewBots', value: false },
+      ],
+    });
+    expect(changed).toEqual({ status: 'applied', raw: {
+      unrelatedFuturePreference: { enabled: true }, memoryUseInNewSessions: true, memoryUseInNewBots: false,
+    } });
+    if (changed.status !== 'applied') throw new Error('Expected admitted preferences');
+    expect(accountSettingsParse(changed.raw)).toMatchObject({ memoryUseInNewSessions: true, memoryUseInNewBots: false });
+    expect(accountSettingsParse({ memoryUseInNewSessions: 'invalid', memoryUseInNewBots: 'invalid' }))
+      .toMatchObject({ memoryUseInNewSessions: false, memoryUseInNewBots: true });
+    for (const key of ['memoryUseInNewSessions', 'memoryUseInNewBots']) {
+      expect(applyAccountSettingMutationV1({}, { operations: [{ op: 'set', key, value: 'true' }] }))
+        .toEqual({ status: 'invalid', reason: 'invalidValue' });
+    }
+    expect(applyAccountSettingMutationV1({ memoryUseInNewSessions: 'invalid', memoryUseInNewBots: false,
+      unrelatedFuturePreference: { enabled: true } }, { operations: [{ op: 'set', key: 'memoryUseInNewSessions', value: true }] }))
+      .toEqual({ status: 'applied', raw: { memoryUseInNewSessions: true, memoryUseInNewBots: false,
+        unrelatedFuturePreference: { enabled: true } } });
+    expect(applyAccountSettingMutationV1({ memoryUseInNewSessions: true, memoryUseInNewBots: 'invalid' }, {
+      operations: [{ op: 'set', key: 'memoryUseInNewSessions', value: false }],
+    })).toEqual({ status: 'applied', raw: { memoryUseInNewSessions: false, memoryUseInNewBots: true } });
+    expect(applyAccountSettingMutationV1({ showLineNumbers: 'invalid', memoryUseInNewSessions: 'invalid' }, {
+      operations: [{ op: 'set', key: 'memoryUseInNewSessions', value: true }],
+    })).toEqual({ status: 'invalid', reason: 'invalidValue' });
+  });
+
+  it('preserves predecessor Profile favorite identities and complete collections through the canonical preference mutation', () => {
+    // The inspected 0.2 favorite writer accepts exact strings and an unbounded
+    // array; both the long identity and the 257th neighbor are retained inputs.
+    const favoriteProfiles = [` legacy-${'x'.repeat(33 * 1024)} `,
+      ...Array.from({ length: 256 }, (_, index) => `profile-${index}`)];
+    const raw = { favoriteProfiles, futurePreference: { keep: true } };
+    expect(accountSettingsParse(raw).favoriteProfiles).toEqual(favoriteProfiles);
+    const nextFavorites = ['new', ...favoriteProfiles];
+    expect(applyAccountSettingMutationV1(raw, {
+      operations: [{ op: 'set', key: 'favoriteProfiles', value: nextFavorites }],
+    })).toEqual({ status: 'applied', raw: { ...raw, favoriteProfiles: nextFavorites } });
+    expect(applyAccountSettingMutationV1(raw, {
+      operations: [{ op: 'set', key: 'favoriteProfiles', value: ['valid', 7] }],
+    })).toEqual({ status: 'invalid', reason: 'invalidValue' });
+  });
+
   it('admits the bounded legacy Connected Account service-configuration root through the sole catalog', () => {
     const definition = ACCOUNT_SETTING_DEFINITIONS.connectedAccountServiceConfigurationsV1;
     expect(ACCOUNT_SETTING_KEYS).toContain('connectedAccountServiceConfigurationsV1');

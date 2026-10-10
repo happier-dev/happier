@@ -6,7 +6,9 @@ import {
 type SpeechVoiceProviderDeclaration = Omit<Extract<VoiceProviderContribution, { kind: 'speech' }>, 'id'>;
 const GOOGLE_API_KEY_VOICE_CREDENTIAL_SLOT_ID = VoiceCredentialSlotIdSchema.parse('api_key');
 
-export const GOOGLE_GEMINI_STT_VOICE_PROVIDER_DECLARATION = {
+export const GOOGLE_GEMINI_STT_VOICE_PROVIDER_DECLARATION: SpeechVoiceProviderDeclaration & {
+  limits: { transcribe: { maxInputBytes: number } };
+} = {
   title: 'Google Gemini Speech-to-Text',
   kind: 'speech',
   roles: ['dictation_stt', 'conversation_stt'],
@@ -62,9 +64,11 @@ export const GOOGLE_GEMINI_STT_VOICE_PROVIDER_DECLARATION = {
   },
   catalogs: [{ kind: 'models', settingFieldId: 'model', allowCustom: true }],
   limits: { transcribe: { maxInputBytes: 8_388_608 } },
-} satisfies SpeechVoiceProviderDeclaration;
+};
 
-export const GOOGLE_CLOUD_TTS_VOICE_PROVIDER_DECLARATION = {
+export const GOOGLE_CLOUD_TTS_VOICE_PROVIDER_DECLARATION: SpeechVoiceProviderDeclaration & {
+  limits: { synthesize: { maxInputUtf8Bytes: number; maxOutputBytes: number } };
+} = {
   title: 'Google Cloud Text-to-Speech',
   kind: 'speech',
   roles: ['conversation_tts'],
@@ -153,7 +157,7 @@ export const GOOGLE_CLOUD_TTS_VOICE_PROVIDER_DECLARATION = {
       maxOutputBytes: 3_000_000,
     },
   },
-} satisfies SpeechVoiceProviderDeclaration;
+};
 
 export const GOOGLE_VOICE_UI = {
   translations: [

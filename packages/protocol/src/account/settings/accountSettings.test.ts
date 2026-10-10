@@ -9,7 +9,8 @@ import {
   ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION,
   accountCatalogDefinition,
   accountSettingsParse,
-  assertAccountWorkspaceSettingsTransition,
+  parseRetainedAccountSettingsEntitySourceV1,
+  isRetiredAccountSettingsRootKey,
   DEFAULT_SESSION_HANDOFF_DEFAULTS_V1,
   isExpoPushNotificationChannelEnabled,
   readAccountSettingValueForBackendTarget,
@@ -22,8 +23,10 @@ import {
   type ActionsSettingsV1,
 } from '../../actions/actionSettings.js';
 import type { ActionId } from '../../actions/actionIds.js';
-import { computeWorkspaceSyncPolicyDigest } from '../../sessions/control/handoff/workspaceSyncSchemas.js';
 import { MAX_PLUGIN_IDENTIFIER_BYTES } from '../../plugins/pluginId.js';
+import { AccountSettingsPersistedObjectSchema } from './accountSettingsPersistedObject.js';
+import { readRetainedConnectedAccountCatalogRecordV1 } from '../../connect/connectedAccountCatalogV1.js';
+import { readAcpCatalogTransferSourceV2 } from '../../acp/catalog/transferAcpCatalogV2.js';
 
 type ActionSurface = NonNullable<ActionEnablementContext['surface']>;
 
@@ -36,7 +39,172 @@ function expectActionSurfaceEnabled(
   expect(isActionEnabledByActionsSettings(actionId, settings, { surface })).toBe(expected);
 }
 
+function readRetainedEntitySources(raw: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(raw).map(([key, value]) => {
+    const parsed = parseRetainedAccountSettingsEntitySourceV1(key, value);
+    if (!parsed?.success) throw new Error(`invalid retained source: ${key}`);
+    return [key, parsed.data];
+  }));
+}
+
 describe('accountSettings', () => {
+  it('retains only explicitly chosen night hours and rejects an empty or invalid window', () => {
+    expect(accountSettingsParse({}).usageNightHoursV1).toBeNull();
+    const window = { startHour: 23, endHour: 7 };
+    expect(accountSettingsParse({ usageNightHoursV1: window }).usageNightHoursV1).toEqual(window);
+    expect(ACCOUNT_SETTING_DEFINITIONS.usageNightHoursV1.parseMutationValue(window).success).toBe(true);
+    expect(ACCOUNT_SETTING_DEFINITIONS.usageNightHoursV1.parseMutationValue({ startHour: 7, endHour: 7 }).success).toBe(false);
+    expect(ACCOUNT_SETTING_DEFINITIONS.usageNightHoursV1.parseMutationValue({ startHour: 24, endHour: 7 }).success).toBe(false);
+    expect(ACCOUNT_SETTING_DEFINITIONS.usageNightHoursV1.parseMutationValue(null).success).toBe(true);
+  });
+  it('retains a valid viewer preference map above 16 KiB in the catalog and persisted reload', () => {
+    const value = { v: 1, selections: Object.fromEntries(Array.from({ length: 96 }, (_, index) => [
+      `extension:.${'x'.repeat(250)}${index}`,
+      { kind: 'plugin', pluginId: 'uninstalled.viewer', contributionLocalId: 'reader' },
+    ])) };
+    expect(new TextEncoder().encode(JSON.stringify(value)).byteLength).toBeGreaterThan(16 * 1024);
+    expect(ACCOUNT_SETTING_DEFINITIONS.workspaceFileViewerPreferencesV1.parseMutationValue(value).success).toBe(true);
+    const raw = AccountSettingsPersistedObjectSchema.parse(JSON.parse(JSON.stringify({ workspaceFileViewerPreferencesV1: value })));
+    expect(accountSettingsParse(raw).workspaceFileViewerPreferencesV1).toEqual(value);
+  });
+
+  it('round-trips evidence-scoped Coach suppression without a competing Automation schedule preference', () => {
+    const preferences = { v: 1, suppressions: [
+      { evidenceKey: 'coach:evidence-a', kind: 'dismissed' },
+      { evidenceKey: 'coach:evidence-b', kind: 'snoozed', untilMs: 900 },
+    ] };
+    expect(accountSettingsParse({ usageCoachPreferencesV1: preferences }).usageCoachPreferencesV1).toEqual(preferences);
+    expect(accountSettingsParse({ usageCoachPreferencesV1: { ...preferences, digestCadence: 'weekly' } }).usageCoachPreferencesV1).toEqual(preferences);
+    expect(accountSettingsParse({}).usageCoachPreferencesV1).toEqual({ v: 1, suppressions: [] });
+    expect(ACCOUNT_SETTING_DEFINITIONS.usageCoachPreferencesV1.parseMutationValue({ ...preferences, digestCadence: 'weekly' }).success).toBe(false);
+  });
+  it('keeps quota advice opt-in and round-trips authored personal and qualified pool targets without changing recovery policy', () => {
+    const defaults = accountSettingsParse({});
+    expect(defaults.usageQuotaNotificationsV1).toEqual({ v: 1, pace: false, depletion: false, reset: false, unused: false,
+      almostOutRemainingFraction: null, endingBeforeMs: null, creditExpiryBeforeMs: null });
+    expect(defaults.usagePacingTargetsV1).toEqual([]);
+    const targets = [{ id: 'personal', scope: { kind: 'personal' }, utilizationFraction: 1.2 },
+      { id: 'pool', scope: { kind: 'pool', group: { service: { pluginId: 'acme.accounts', localId: 'api' }, groupId: 'work' } },
+        meterId: 'weekly', utilizationFraction: 0.6 }];
+    const parsed = accountSettingsParse({ usagePacingTargetsV1: targets,
+      usageQuotaNotificationsV1: { pace: true, reset: true, endingBeforeMs: 3600000, creditExpiryBeforeMs: 86400000 } });
+    expect(parsed.usagePacingTargetsV1).toEqual(targets);
+    expect(parsed.usageQuotaNotificationsV1).toMatchObject({ pace: true, reset: true, endingBeforeMs: 3600000 });
+    expect(parsed.usageLimitRecoverySettingsV1).toEqual(defaults.usageLimitRecoverySettingsV1);
+    expect(ACCOUNT_SETTING_DEFINITIONS.usagePacingTargetsV1.parseMutationValue(targets).success).toBe(true);
+    expect(ACCOUNT_SETTING_DEFINITIONS.usageQuotaNotificationsV1.parseMutationValue({ v: 1, endingBeforeMs: -1 }).success).toBe(false);
+  });
+  it.each([
+    'remoteHostsV1', 'notificationChannelsV1', 'connectedServicesProfileLabelByKey',
+    'connectedServicesCollapsedItemKeysV1', 'connectedServicesDefaultAuthPoolAdoptionDismissedByKey', 'dismissedCLIWarnings',
+  ])('keeps retained private catalog source %s out of the current preference facade', (root) => {
+    const raw = { [root]: { legacy: 'retained-import-only' },
+      notificationsSettingsV1: { pushEnabled: false },
+      connectedServicesQuotaPinnedMeterIdsByKey: { 'service/account': ['quota'] } };
+    const persisted = AccountSettingsPersistedObjectSchema.parse(raw);
+    const parsed = accountSettingsParse(persisted);
+    // Raw transfer/history cleanup needs its own proven destination authority;
+    // a generic retired-root classification would discard untransferred data.
+    expect(isRetiredAccountSettingsRootKey(root)).toBe(false);
+    expect(Object.hasOwn(parsed, root)).toBe(false);
+    expect(Object.hasOwn(ACCOUNT_SETTING_DEFINITIONS, root)).toBe(false);
+    expect(persisted).toEqual(raw);
+    expect(parsed.notificationsSettingsV1.pushEnabled).toBe(false);
+    expect(parsed.connectedServicesQuotaPinnedMeterIdsByKey).toEqual({ 'service/account': ['quota'] });
+  });
+
+  it('keeps MCP source entities out of the current facade while retaining genuine strict policy', () => {
+    const parsed = accountSettingsParse({ mcpServersSettingsV1: { v: 1, strictMode: false, servers: [], bindings: [] },
+      mcpServersStrictMode: true });
+    expect(Object.hasOwn(parsed, 'mcpServersSettingsV1')).toBe(false);
+    expect(Object.hasOwn(ACCOUNT_SETTING_DEFINITIONS, 'mcpServersSettingsV1')).toBe(false);
+    expect(parsed.mcpServersStrictMode).toBe(true);
+  });
+
+  it('keeps configured ACP definitions out of preferences without destroying the complete predecessor import source', () => {
+    // Genuine predecessor v2 fields: 0.2 c03f1e9625ec924bfadde207eacd1b28530a8af0,
+    // packages/protocol/src/acpCatalog/settingsV1.ts.
+    const raw = { acpCatalogSettingsV1: { v: 2, backends: [{
+      id: 'review-bot', name: 'review-bot', title: 'Review Bot', command: 'review-bot',
+      env: { TOKEN: { t: 'savedSecret', secretId: 'personal-token' } }, createdAt: 1, updatedAt: 2,
+    }] }, notificationsSettingsV1: { pushEnabled: false } };
+    const persisted = AccountSettingsPersistedObjectSchema.parse(raw);
+    const parsed = accountSettingsParse(persisted);
+
+    expect(Object.hasOwn(parsed, 'acpCatalogSettingsV1')).toBe(false);
+    expect(Object.hasOwn(accountSettingsParse({}), 'acpCatalogSettingsV1')).toBe(false);
+    expect(Object.hasOwn(ACCOUNT_SETTING_DEFINITIONS, 'acpCatalogSettingsV1')).toBe(false);
+    expect(isRetiredAccountSettingsRootKey('acpCatalogSettingsV1')).toBe(false);
+    expect(parsed.notificationsSettingsV1.pushEnabled).toBe(false);
+    expect(persisted).toEqual(raw);
+    expect(readAcpCatalogTransferSourceV2({ rawSettings: persisted, sourceSettingsVersion: 7 }))
+      .toMatchObject({ status: 'ready', sourceSettingsVersion: 7,
+        definitions: [expect.objectContaining({ id: 'review-bot', command: 'review-bot' })],
+        references: [{ path: 'backends[0].env.TOKEN', secretId: 'personal-token' }] });
+    expect(persisted).toEqual(raw);
+  });
+
+  it('keeps qualified Connected entities out of the facade without destroying inactive raw sources or genuine default preferences', () => {
+    const service = { pluginId: 'acme.connected', localId: 'cloud' };
+    const consumer = { pluginId: 'acme.agent', localId: 'coding' };
+    const configurations = { v: 1, entries: [{ service, modeId: 'api', revision: 'revision-1',
+      values: { region: 'eu' }, secretRefs: {} }], futureMetadata: { retained: true } };
+    const purposes = { v: 1, bindings: [{ purpose: { consumer, purpose: 'model-api' },
+      target: { kind: 'group', service, groupId: 'work' } }], futureMetadata: { retained: true } };
+    // Genuine 0.2 carriers remain preferences; they are not the qualified entity roots.
+    const ordinaryDefaults = { v: 1, bindingsByAgentId: { codex: { v: 1, bindingsByServiceId: {
+      'openai-codex': { source: 'connected', selection: 'group', groupId: 'codex-main' },
+    } } } };
+    const additionalDefaults = { v: 1, bindingsByAgentId: { agy: { v: 1, bindingsByServiceId: {
+      antigravity: { source: 'connected', selection: 'profile', profileId: 'google-work' },
+    } } } };
+    const raw = { connectedAccountServiceConfigurationsV1: configurations,
+      connectedAccountPurposeBindingsV1: purposes, connectedServicesDefaultAuthByAgentIdV1: ordinaryDefaults,
+      connectedServicesAdditionalDefaultAuthByAgentIdV1: additionalDefaults };
+    const persisted = AccountSettingsPersistedObjectSchema.parse(raw);
+    expect(persisted).toEqual(raw);
+    expect(readRetainedConnectedAccountCatalogRecordV1(persisted, 'configurations')).toMatchObject({
+      status: 'ready', record: { key: 'configurations', value: { v: 1, entries: configurations.entries } },
+    });
+    expect(readRetainedConnectedAccountCatalogRecordV1(persisted, 'purposes')).toMatchObject({
+      status: 'ready', record: { key: 'purposes', value: { v: 1, bindings: purposes.bindings } },
+    });
+    const parsed = accountSettingsParse(persisted);
+    for (const root of ['connectedAccountServiceConfigurationsV1', 'connectedAccountPurposeBindingsV1']) {
+      expect(Object.hasOwn(parsed, root)).toBe(false);
+      expect(Object.hasOwn(accountSettingsParse({}), root)).toBe(false);
+      expect(Object.hasOwn(ACCOUNT_SETTING_DEFINITIONS, root)).toBe(false);
+      expect(isRetiredAccountSettingsRootKey(root)).toBe(false);
+    }
+    expect(parsed.connectedServicesDefaultAuthByAgentIdV1).toEqual({
+      v: 1, bindingsByAgentId: { codex: { v: 1, bindingsByServiceId: {
+        'happier.agent.codex/openai-codex': ordinaryDefaults.bindingsByAgentId.codex.bindingsByServiceId['openai-codex'],
+      } } },
+    });
+    expect(parsed.connectedServicesAdditionalDefaultAuthByAgentIdV1).toEqual({
+      v: 1, bindingsByAgentId: { antigravity: { v: 1, bindingsByServiceId: {
+        'happier.agent.antigravity/antigravity-account': additionalDefaults.bindingsByAgentId.agy.bindingsByServiceId.antigravity,
+      } } },
+    });
+    expect(persisted).toEqual(raw);
+  });
+
+  it('recovers each memory creation default independently and requires boolean mutations', () => {
+    expect(accountSettingsParse({})).toMatchObject({ memoryUseInNewSessions: false, memoryUseInNewBots: true, memoryUpkeepInNewBots: true });
+    expect(accountSettingsParse({ memoryUseInNewSessions: true, memoryUseInNewBots: 'invalid', memoryUpkeepInNewBots: false }))
+      .toMatchObject({ memoryUseInNewSessions: true, memoryUseInNewBots: true, memoryUpkeepInNewBots: false });
+    expect(accountSettingsParse({ memoryUseInNewSessions: 'invalid', memoryUseInNewBots: false, memoryUpkeepInNewBots: 'invalid' }))
+      .toMatchObject({ memoryUseInNewSessions: false, memoryUseInNewBots: false, memoryUpkeepInNewBots: true });
+    for (const key of ['memoryUseInNewSessions', 'memoryUseInNewBots', 'memoryUpkeepInNewBots'] as const) {
+      expect(ACCOUNT_SETTING_DEFINITIONS[key].parseMutationValue('true').success).toBe(false);
+      expect(ACCOUNT_SETTING_DEFINITIONS[key].parseMutationValue(false).success).toBe(true);
+    }
+  });
+  it('shows transcript tool calls by default and preserves a saved opt-out', () => {
+    expect(accountSettingsParse({}).transcriptShowToolCalls).toBe(true);
+    expect(accountSettingsParse({ transcriptShowToolCalls: false }).transcriptShowToolCalls).toBe(false);
+    expect(accountSettingsParse({ transcriptShowToolCalls: 'invalid' }).transcriptShowToolCalls).toBe(true);
+  });
   it('reads predecessor profile and secret collections beyond current write budgets without loss', () => {
     // 0.2 at 682f9f1222bc55fcfa8640d2b796b1acab1c1ac1: accountProfilesSettingDefinitions
     // uses unbounded arrays of AIBackendProfileSchema and SavedSecretSchema. These are
@@ -56,12 +224,12 @@ describe('accountSettings', () => {
     const raw = { profiles, secrets };
     expect(JSON.stringify(secrets).length).toBeGreaterThan(128 * 1024);
     const parsed = accountSettingsParse(raw);
-    expect(parsed.profiles).toEqual(profiles);
+    expect(parsed).not.toHaveProperty('profiles');
+    expect(readRetainedEntitySources({ profiles }).profiles).toEqual(profiles);
     expect(parsed.secrets).toEqual(secrets);
-    expect(accountSettingsParse(JSON.parse(JSON.stringify(parsed))).profiles).toEqual(profiles);
+    expect(readRetainedEntitySources(JSON.parse(JSON.stringify({ profiles }))).profiles).toEqual(profiles);
     expect(accountSettingsParse(JSON.parse(JSON.stringify(parsed))).secrets).toEqual(secrets);
-    expect(ACCOUNT_SETTING_DEFINITIONS.profiles.parseMutationValue(profiles))
-      .toMatchObject({ success: false, reason: 'tooLarge' });
+    expect(ACCOUNT_SETTING_DEFINITIONS).not.toHaveProperty('profiles');
     expect(ACCOUNT_SETTING_DEFINITIONS.secrets.parseMutationValue(secrets))
       .toMatchObject({ success: false, reason: 'tooLarge' });
   });
@@ -293,6 +461,16 @@ describe('accountSettings', () => {
     expect(definition.default).toBe(2);
     expect(definition.schema.parse(undefined)).toBe(2);
     expect(definition.schema.parse('invalid')).toBe(2);
+  });
+
+  it('projects stored additive fields without letting recovery defaults admit malformed retained values', () => {
+    const definition = accountCatalogDefinition(z.object({ enabled: z.boolean() }).strict().catch({ enabled: false }),
+      { enabled: false }, { semanticDomain: 'test retained validation', classification: 'preference',
+        maximumSerializedValueBytes: 1024 });
+    expect(definition.parseStoredValue({ enabled: true, future: true }))
+      .toEqual({ success: true, data: { enabled: true } });
+    expect(definition.parseMutationValue({ enabled: true, future: true })).toMatchObject({ success: false });
+    expect(definition.parseStoredValue({ enabled: 'true', future: true })).toMatchObject({ success: false });
   });
 
   it('defaults sparse new-session wizard presentation overrides and retains only supported values', () => {
@@ -1380,246 +1558,9 @@ describe('accountSettings', () => {
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });
 
-  it('defaults workspace references and projects known fields while preserving unknown Account roots', () => {
-    const empty = accountSettingsParse({});
-    expect(empty.workspaceRefsV1).toEqual([]);
 
-    const parsed = accountSettingsParse({
-      workspaceRefsV1: [
-        {
-          id: 'workspace_1',
-          serverId: 'server_1',
-          machineId: 'machine_1',
-          rootPath: '/repo',
-          label: null,
-          createdAtMs: 1,
-          lastOpenedAtMs: 2,
-          futureWorkspaceField: { keep: true },
-        },
-      ],
-      futureAccountField: true,
-    });
-
-    expect(parsed.workspaceRefsV1).toEqual([
-      expect.objectContaining({
-        id: 'workspace_1',
-        serverId: 'server_1',
-        machineId: 'machine_1',
-        rootPath: '/repo',
-      }),
-    ]);
-    expect(parsed.workspaceRefsV1[0]).not.toHaveProperty('futureWorkspaceField');
-    expect(parsed.futureAccountField).toBe(true);
-  });
-
-  it('fails closed for malformed workspace refs instead of silently dropping them', () => {
-    expect(() => accountSettingsParse({
-      workspaceRefsV1: [{ id: 'workspace_missing_scope' }],
-    })).toThrow();
-    expect(() => accountSettingsParse({
-      workspaceRefsV1: [
-        { id: 'one', serverId: 'server', machineId: 'machine', rootPath: '/repo', createdAtMs: 1 },
-        { id: 'two', serverId: 'server', machineId: 'machine', rootPath: '/repo/', createdAtMs: 1 },
-      ],
-    })).toThrow();
-  });
-
-  it('rejects rebinding retained workspace and relationship identities in place', () => {
-    const policyFields = {
-      v: 1 as const,
-      selection: 'git_worktree' as const,
-      extraIgnorePatterns: [],
-      extraIncludePatterns: [],
-    };
-    const base = {
-      workspaceRefsV1: [
-        { id: 'alpha', serverId: 'server', machineId: 'machine-a', rootPath: '/a', createdAtMs: 1 },
-        { id: 'beta', serverId: 'server', machineId: 'machine-b', rootPath: '/b', createdAtMs: 1 },
-      ],
-      workspaceSyncRelationshipsV1: [{
-        v: 1 as const,
-        relationshipId: 'relationship',
-        controllerMachineId: 'machine-a',
-        alphaWorkspaceRefId: 'alpha',
-        betaWorkspaceRefId: 'beta',
-        mode: 'keep_synced' as const,
-        contentPolicy: {
-          ...policyFields,
-          policyDigest: computeWorkspaceSyncPolicyDigest(policyFields),
-        },
-        enabled: true,
-        createdAtMs: 1,
-        updatedAtMs: 1,
-      }],
-    };
-
-    expect(() => assertAccountWorkspaceSettingsTransition(base, {
-      ...base,
-      workspaceRefsV1: base.workspaceRefsV1.map((ref) => ref.id === 'alpha' ? { ...ref, rootPath: '/moved' } : ref),
-    })).toThrow(expect.objectContaining({ code: 'workspace_ref_in_use' }));
-    const unreferenced = {
-      ...base,
-      workspaceRefsV1: [...base.workspaceRefsV1, {
-        id: 'spare', serverId: 'server-1', machineId: 'machine-c', rootPath: '/spare',
-        createdAtMs: 1,
-      }],
-    };
-    expect(() => assertAccountWorkspaceSettingsTransition(unreferenced, {
-      ...unreferenced,
-      workspaceRefsV1: unreferenced.workspaceRefsV1.map((ref) => (
-        ref.id === 'spare' ? { ...ref, rootPath: '/rebound' } : ref
-      )),
-    })).toThrow(expect.objectContaining({ code: 'workspace_ref_in_use' }));
-    expect(() => assertAccountWorkspaceSettingsTransition(base, {
-      ...base,
-      workspaceSyncRelationshipsV1: base.workspaceSyncRelationshipsV1.map((relationship) => ({
-        ...relationship,
-        mode: 'mirror_exactly' as const,
-      })),
-    })).toThrow(expect.objectContaining({ code: 'relationship_definition_conflict' }));
-    expect(() => assertAccountWorkspaceSettingsTransition(base, {
-      ...base,
-      workspaceSyncRelationshipsV1: base.workspaceSyncRelationshipsV1.map((relationship) => ({
-        ...relationship,
-        enabled: false,
-        updatedAtMs: 2,
-      })),
-    })).not.toThrow();
-  });
-
-  it('preserves more than 32 valid relationships and rejects malformed relationship authority', () => {
-    const policyFields = {
-      v: 1 as const,
-      selection: 'git_worktree' as const,
-      extraIgnorePatterns: [],
-      extraIncludePatterns: [],
-    };
-    const contentPolicy = {
-      ...policyFields,
-      policyDigest: computeWorkspaceSyncPolicyDigest(policyFields),
-    };
-    const relationships = Array.from({ length: 33 }, (_, index) => ({
-      v: 1 as const,
-      relationshipId: `relationship-${index}`,
-      controllerMachineId: 'machine-controller',
-      alphaWorkspaceRefId: `alpha-${index}`,
-      betaWorkspaceRefId: `beta-${index}`,
-      mode: 'keep_synced' as const,
-      contentPolicy,
-      enabled: true,
-      createdAtMs: index,
-      updatedAtMs: index,
-    }));
-    const workspaceRefsV1 = relationships.flatMap((relationship, index) => [
-      { id: relationship.alphaWorkspaceRefId, serverId: 'server', machineId: 'machine-controller', rootPath: `/alpha-${index}`, createdAtMs: index },
-      { id: relationship.betaWorkspaceRefId, serverId: 'server', machineId: `machine-beta-${index}`, rootPath: `/beta-${index}`, createdAtMs: index },
-    ]);
-
-    expect(accountSettingsParse({ workspaceRefsV1, workspaceSyncRelationshipsV1: relationships }).workspaceSyncRelationshipsV1)
-      .toHaveLength(33);
-    expect(() => accountSettingsParse({
-      workspaceSyncRelationshipsV1: [{ relationshipId: 'malformed' }],
-    })).toThrow();
-  });
-
-  it('validates workspace identity, scope, relationship references, and endpoint-pair ownership together', () => {
-    const refs = [
-      { id: 'alpha', serverId: 'server', machineId: 'machine-a', rootPath: '/alpha', createdAtMs: 1 },
-      { id: 'beta', serverId: 'server', machineId: 'machine-b', rootPath: '/beta', createdAtMs: 1 },
-    ];
-    const policyFields = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
-    const contentPolicy = { ...policyFields, policyDigest: computeWorkspaceSyncPolicyDigest(policyFields) };
-    const relationship = {
-      v: 1 as const, relationshipId: 'relationship-1', controllerMachineId: 'machine-a',
-      alphaWorkspaceRefId: 'alpha', betaWorkspaceRefId: 'beta', mode: 'keep_synced' as const,
-      contentPolicy, enabled: true, createdAtMs: 1, updatedAtMs: 1,
-    };
-
-    expect(accountSettingsParse({ workspaceRefsV1: refs, workspaceSyncRelationshipsV1: [relationship] }))
-      .toMatchObject({ workspaceRefsV1: refs, workspaceSyncRelationshipsV1: [relationship] });
-    expect(() => accountSettingsParse({ workspaceRefsV1: [...refs, { ...refs[1], id: 'beta-2' }] })).toThrow(/scope/i);
-    expect(() => accountSettingsParse({ workspaceRefsV1: [...refs, { ...refs[1], rootPath: '/other' }] })).toThrow(/id/i);
-    expect(() => accountSettingsParse({ workspaceRefsV1: refs, workspaceSyncRelationshipsV1: [{ ...relationship, betaWorkspaceRefId: 'missing' }] })).toThrow(/reference/i);
-    expect(accountSettingsParse({
-      workspaceRefsV1: refs,
-      workspaceSyncRelationshipsV1: [relationship, { ...relationship, relationshipId: 'relationship-2' }],
-    }).workspaceSyncRelationshipsV1).toHaveLength(2);
-    expect(accountSettingsParse({ workspaceRefsV1: refs, workspaceSyncRelationshipsV1: [{ ...relationship, controllerMachineId: 'machine-b' }] })
-      .workspaceSyncRelationshipsV1).toHaveLength(1);
-    expect(() => assertAccountWorkspaceSettingsTransition(
-      { workspaceRefsV1: refs, workspaceSyncRelationshipsV1: [] },
-      { workspaceRefsV1: refs, workspaceSyncRelationshipsV1: [{ ...relationship, controllerMachineId: 'machine-b' }] },
-    )).toThrow(expect.objectContaining({ code: 'workspace_sync_topology_invalid' }));
-  });
-
-  it('admits only supported workspace-sync components while keeping saved invalid topology readable and removable', () => {
-    const policyFields = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
-    const contentPolicy = { ...policyFields, policyDigest: computeWorkspaceSyncPolicyDigest(policyFields) };
-    const refs = [
-      { id: 'a', serverId: 'server', machineId: 'machine-a', rootPath: '/a', createdAtMs: 1 },
-      { id: 'b', serverId: 'server', machineId: 'machine-b', rootPath: '/b', createdAtMs: 1 },
-      { id: 'c', serverId: 'server', machineId: 'machine-c', rootPath: '/c', createdAtMs: 1 },
-      { id: 'd', serverId: 'server', machineId: 'machine-d', rootPath: '/d', createdAtMs: 1 },
-      { id: 'e', serverId: 'server', machineId: 'machine-e', rootPath: '/e', createdAtMs: 1 },
-    ];
-    const relationship = (
-      relationshipId: string,
-      alphaWorkspaceRefId: string,
-      betaWorkspaceRefId: string,
-      controllerMachineId: string,
-      enabled = true,
-    ) => ({
-      v: 1 as const,
-      relationshipId,
-      controllerMachineId,
-      alphaWorkspaceRefId,
-      betaWorkspaceRefId,
-      mode: 'keep_both_in_sync' as const,
-      contentPolicy,
-      enabled,
-      createdAtMs: 1,
-      updatedAtMs: 1,
-    });
-    const ab = relationship('ab', 'a', 'b', 'machine-a');
-    const ac = relationship('ac', 'a', 'c', 'machine-a');
-    const bc = relationship('bc', 'b', 'c', 'machine-b');
-    const unrelated = relationship('de', 'd', 'e', 'machine-d');
-
-    expect(() => assertAccountWorkspaceSettingsTransition(
-      { workspaceRefsV1: refs, workspaceSyncRelationshipsV1: [ab] },
-      { workspaceRefsV1: refs, workspaceSyncRelationshipsV1: [ab, ac] },
-    )).not.toThrow();
-
-    expect(() => assertAccountWorkspaceSettingsTransition(
-      { workspaceRefsV1: refs, workspaceSyncRelationshipsV1: [ab, ac] },
-      { workspaceRefsV1: refs, workspaceSyncRelationshipsV1: [ab, ac, bc] },
-    )).toThrow(expect.objectContaining({ code: 'workspace_sync_topology_invalid' }));
-
-    const savedInvalid = { workspaceRefsV1: refs, workspaceSyncRelationshipsV1: [ab, ac, bc] };
-    expect(accountSettingsParse(savedInvalid).workspaceSyncRelationshipsV1).toHaveLength(3);
-    expect(() => assertAccountWorkspaceSettingsTransition(savedInvalid, {
-      ...savedInvalid,
-      workspaceSyncRelationshipsV1: [ab, ac],
-    })).not.toThrow();
-
-    const disabledReuse = relationship('bc-disabled', 'b', 'c', 'machine-b', false);
-    const withDisabledReuse = { workspaceRefsV1: refs, workspaceSyncRelationshipsV1: [ab, ac, disabledReuse] };
-    expect(accountSettingsParse(withDisabledReuse).workspaceSyncRelationshipsV1).toHaveLength(3);
-    expect(() => assertAccountWorkspaceSettingsTransition(withDisabledReuse, {
-      ...withDisabledReuse,
-      workspaceSyncRelationshipsV1: [ab, ac, { ...disabledReuse, enabled: true, updatedAtMs: 2 }],
-    })).toThrow(expect.objectContaining({ code: 'workspace_sync_topology_invalid' }));
-
-    // An unrelated change does not make an already-saved invalid component a
-    // global parse/write poison pill.
-    expect(() => assertAccountWorkspaceSettingsTransition(withDisabledReuse, {
-      ...withDisabledReuse,
-      workspaceSyncRelationshipsV1: [...withDisabledReuse.workspaceSyncRelationshipsV1, unrelated],
-    })).not.toThrow();
-  });
-
-  it('fills sparse prompt-library Account roots through their shared Protocol schemas', () => {
-    const parsed = accountSettingsParse({
+  it('reads sparse prompt-library provenance through the read-only Protocol source seam', () => {
+    const parsed = readRetainedEntitySources({
       promptStacksV1: {},
       promptFoldersV1: { v: 1 },
       promptInvocationsV1: {},
@@ -1639,29 +1580,23 @@ describe('accountSettings', () => {
     expect(parsed.contextSelectionsV1).toEqual({ v: 1, selectionsByKey: {} });
   });
 
-  it('recovers malformed prompt-library Account roots at the canonical catalog boundary', () => {
-    const parsed = accountSettingsParse({
+  it('rejects malformed prompt-library provenance rather than substituting an empty source', () => {
+    const raw = {
       promptStacksV1: { v: 2, surfaces: { coding: [], voice: [], profilesById: {} } },
       promptFoldersV1: { v: 2, folders: [] },
       promptInvocationsV1: { v: 2, entries: [] },
       promptExternalLinksV1: { v: 2, links: [] },
       promptRegistrySourcesV1: { v: 2, sources: [] },
       contextSelectionsV1: { v: 2, selectionsByKey: {} },
-    });
-
-    expect(parsed.promptStacksV1).toEqual({
-      v: 1,
-      surfaces: { coding: [], voice: [], profilesById: {} },
-    });
-    expect(parsed.promptFoldersV1).toEqual({ v: 1, folders: [] });
-    expect(parsed.promptInvocationsV1).toEqual({ v: 1, entries: [] });
-    expect(parsed.promptExternalLinksV1).toEqual({ v: 1, links: [] });
-    expect(parsed.promptRegistrySourcesV1).toEqual({ v: 1, sources: [] });
-    expect(parsed.contextSelectionsV1).toEqual({ v: 1, selectionsByKey: {} });
+    };
+    for (const [key, value] of Object.entries(raw)) {
+      expect(parseRetainedAccountSettingsEntitySourceV1(key, value)).toMatchObject({ success: false, reason: 'invalidValue' });
+      expect(accountSettingsParse(raw)).not.toHaveProperty(key);
+    }
   });
 
-  it('preserves valid prompt-library Account content while applying owned defaults', () => {
-    const parsed = accountSettingsParse({
+  it('preserves valid prompt-library provenance while applying its owned read defaults', () => {
+    const parsed = readRetainedEntitySources({
       promptStacksV1: {
         surfaces: {
           coding: [{ id: 'stack-1', ref: { kind: 'doc', artifactId: 'artifact-1' } }],
@@ -1712,7 +1647,6 @@ describe('accountSettings', () => {
           ref: { kind: 'doc', artifactId: 'artifact-1' },
           enabled: true,
           placement: 'system_append',
-          editPolicy: 'user_only',
         }],
         voice: [],
         profilesById: {},
@@ -1841,7 +1775,7 @@ it('keeps Classic validation errors at root and generated definition boundaries'
   expect(result.success).toBe(false);
   if(!result.success)expect(result.error).toBeInstanceOf(z.ZodError);
  }
- expect(()=>accountSettingsParse({workspaceRefsV1:[{}]})).toThrow(z.ZodError);
+ expect(()=>accountSettingsParse({sessionAgentSpawnPolicyV1:{v:99}})).toThrow(z.ZodError);
 });
 it('keeps preference bounds distinct from size-tolerant legacy reads', () => {
  const read=createStoredReadSchema(AccountSettingsSchema);

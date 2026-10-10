@@ -22,24 +22,35 @@
   },
   "exports": {
     ".": {
+      "happier-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
     "./manifest": {
+      "happier-source": "./src/manifest.ts",
       "types": "./dist/manifest.d.ts",
       "default": "./dist/manifest.js"
     },
     "./protocol/voice": {
+      "happier-source": "./src/protocol/voice/index.ts",
       "types": "./dist/protocol/voice/index.d.ts",
       "default": "./dist/protocol/voice/index.js"
     },
     "./ui/voice": {
+      "happier-source": "./src/ui/voice/index.ts",
       "types": "./dist/ui/voice/index.d.ts",
-      "react-native": "./dist/ui/voice/index.native.js",
+      "react-native": {
+        "happier-source": "./src/ui/voice/index.native.ts",
+        "default": "./dist/ui/voice/index.native.js"
+      },
       "default": "./dist/ui/voice/index.js"
     },
     "./happier-plugin-ui/voice-runtime": {
-      "react-native": "./dist/ui/voice/index.native.js",
+      "happier-source": "./src/ui/voice/index.ts",
+      "react-native": {
+        "happier-source": "./src/ui/voice/index.native.ts",
+        "default": "./dist/ui/voice/index.native.js"
+      },
       "default": "./dist/ui/voice/index.js"
     }
   },

@@ -5,8 +5,8 @@ import {
   BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID,
   getNotificationsSettingsV1FromAccountSettings,
   resolveAttentionDeliveryPolicyDecision,
-  resolveNotificationChannelsV1FromAccountSettings,
 } from '@happier-dev/protocol';
+import { readLegacyNotificationChannelInventoryV1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
@@ -133,7 +133,7 @@ describe('core e2e: account settings notifications roundtrip', () => {
       expectedVersion: settingsVersion,
     })).resolves.toBe(settingsVersion + 1);
 
-    const { settings: parsed, settingsVersion: nextSettingsVersion } = await readAccountSettingsV1({
+    const { settings: parsed, settingsVersion: nextSettingsVersion, rawSettings } = await readAccountSettingsV1({
       baseUrl: server.baseUrl,
       token: auth.token,
     });
@@ -143,7 +143,11 @@ describe('core e2e: account settings notifications roundtrip', () => {
     expect(notifications.pushEnabled).toBe(true);
     expect(notifications.ready).toBe(true);
     expect(notifications.permissionRequest).toBe(false);
-    expect(resolveNotificationChannelsV1FromAccountSettings(parsed)).toEqual([
+    expect(Object.hasOwn(parsed, 'notificationChannelsV1')).toBe(false);
+    // The transport preserves a genuine predecessor carrier until destination
+    // transfer, but it is never current preference/runtime channel authority.
+    const retainedRaw: unknown = JSON.parse(rawSettings);
+    expect(readLegacyNotificationChannelInventoryV1(retainedRaw)).toMatchObject({ status: 'ready', channels: [
       {
         v: 1,
         id: BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID,
@@ -156,7 +160,7 @@ describe('core e2e: account settings notifications roundtrip', () => {
         },
         readyIncludeMessageText: false,
       },
-    ]);
+    ] });
 
     expect(parsed.attentionDeliveryPolicyV1.events.permission_request.enabled).toBe(false);
     expect(parsed.attentionDeliveryPolicyV1.channels.expo_push.previewBehavior).toBe('status_only');

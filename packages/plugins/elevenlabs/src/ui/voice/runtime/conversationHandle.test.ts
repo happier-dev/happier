@@ -269,6 +269,7 @@ describe('createElevenLabsConversationHandle event surface', () => {
     const events: unknown[] = [];
     handle.subscribe((event) => events.push(event));
     const oldStart = handle.startSession({ id: 'old' });
+    await vi.waitFor(() => expect(startSession).toHaveBeenCalledTimes(1));
     const newStart = handle.startSession({ id: 'new' });
 
     resolveSecond(second);
@@ -296,6 +297,7 @@ describe('createElevenLabsConversationHandle event surface', () => {
     startSession.mockImplementationOnce(async () => await pendingStart);
     const handle = createHandle();
     const started = handle.startSession({});
+    await vi.waitFor(() => expect(startSession).toHaveBeenCalledTimes(1));
     handle.dispose();
     resolveStart(conversation);
 
