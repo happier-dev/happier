@@ -196,7 +196,7 @@ describe('public Project author Actions through the real CLI host', () => {
             if (method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_START) return start;
             if (method === RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_STOP_MANAGED) return { v: 1, requestId: 'author-stop_managed', action: 'stop_managed', status: 'failed', reasonCode: 'termination_incomplete', auditEvents: [] };
             if (method === RPC_METHODS.DAEMON_LOCAL_SERVICES_ACTIONS_RESTART_MANAGED) return { v: 1, requestId: 'author-restart_managed', action: 'restart_managed', status: 'denied', reasonCode: 'native_control_unsupported', auditEvents: [] };
-            if (method === RPC_METHODS.DAEMON_LOCAL_SERVICES_PUBLIC_PREVIEW_SNAPSHOT) return { protocolVersion: 1, snapshot: publicSnapshot };
+            if (method === RPC_METHODS.DAEMON_LOCAL_SERVICES_PUBLIC_PREVIEW_STATUS) return { protocolVersion: 1, snapshot: publicSnapshot };
             if (method === RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_OPEN_OR_CREATE) return { ok: false, errorCode: 'outcome_unknown', error: 'Preview outcome unknown' };
             throw new Error(`Unexpected Machine method ${method}`);
         });

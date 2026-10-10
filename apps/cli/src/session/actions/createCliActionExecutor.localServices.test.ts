@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { FeaturesResponseSchema, type ActionExecutorContext, type ActionId } from '@happier-dev/protocol';
+import { FeaturesResponseSchema, REDACTED_LOCAL_SERVICE_PUBLIC_PREVIEW_URL, type ActionExecutorContext, type ActionId } from '@happier-dev/protocol';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { DaemonLocalServiceLauncherStartResponseV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import { createLocalServiceActionConfirmationNonceV1, LocalServiceActionRequestV1Schema,
@@ -120,7 +120,7 @@ describe('credentialed CLI Local Services runtime dispatch', () => {
         const { executor, requests, context } = receivingMachineBoundary({ protocolVersion: 1, snapshot }, 'localServices.publicPreview.status', false, surface);
         const result = await executor.execute('localServices.publicPreview.status', { machineId: 'machine-a', sessionId: 'session-a', previewId: 'preview-a' }, context);
         expect(result).toMatchObject({ ok: true, result: { exposures: [{ exposureId: 'exposure-a', state: 'active', expiresAt: 60001,
-            publicUrl: surface === 'cli' ? exposure.publicUrl : 'https://redacted.local-services.invalid/' }] } });
+            publicUrl: surface === 'agent' ? REDACTED_LOCAL_SERVICE_PUBLIC_PREVIEW_URL : exposure.publicUrl }] } });
         expect(requests).toHaveLength(1);
     });
 
