@@ -80,7 +80,7 @@ type SectionProps = Readonly<{
 /**
  * One mounted detail consumer for pre-enrollment and ordinary enrolled Machine pages (lab `m-detail`):
  * what blocks use, the creation scope rule, the live Keep it, the controller and the recipe on the
- * left, the immutable receipt beside them with Stop and Delete at its foot. A phone reads the same
+ * left, the immutable receipt beside them with native controls at its foot. A phone reads the same
  * sections with Keep it as a summary row, then the receipt.
  */
 export function ManagedMachineSections(props: SectionProps) {
