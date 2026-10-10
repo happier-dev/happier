@@ -63,11 +63,10 @@ test('gate selection includes changed workspace consumers, including peer consum
   const selectedPackages = JSON.parse(unitLines.split('\n').find((line) => line.startsWith('packages=')).slice('packages='.length));
   assert.deepEqual(selectedPackages, ['cli', 'plugins', 'protocol', 'server', 'ui']);
   assert.match(unitLines, /^server_db_contract=true$/m);
-  const automaticJobs = include.length + 3 + 1; // selection/compiler, artifacts, Gate, and the selected DB contract
+  const automaticJobs = include.length + 4 + 1; // selection, compiler, artifacts, Gate, and the selected DB contract
   assert.ok(automaticJobs <= 10, `the automatic v0.3 gate must use at most 10 jobs, received ${automaticJobs}`);
   assert.deepEqual(include.filter((row) => row.package !== 'ui'), [
-    { package: 'cli', packages: ['cli'], part: 1, parts: 1 },
-    { package: 'group', packages: ['plugins', 'protocol', 'server'], part: 1, parts: 1 },
+    { package: 'group', packages: ['cli', 'plugins', 'protocol', 'server'], part: 1, parts: 1 },
   ]);
   assert.deepEqual([...new Set(include.flatMap((row) => row.packages))].sort(), selectedPackages,
     'partitioning must retain every selected package suite');
