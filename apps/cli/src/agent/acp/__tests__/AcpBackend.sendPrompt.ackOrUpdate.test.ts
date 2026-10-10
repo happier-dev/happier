@@ -17,12 +17,14 @@ function delay(ms: number): Promise<void> {
 function writeFakeAcpAgentScript(params: {
   dir: string;
   promptAckDelayMs: number;
-  promptAckMode?: 'ok' | 'gemini_late_empty_response_error';
+  promptAckMode?: 'ok' | 'gemini_late_empty_response_error' | 'rejected_after_update_same_batch';
   emitUpdate?: boolean;
+  updateKind?: 'agent_message_chunk' | 'current_mode_update';
 }): string {
   const ackDelayMs = Number.isFinite(params.promptAckDelayMs) ? params.promptAckDelayMs : 0;
   const ackMode = params.promptAckMode ?? 'ok';
   const emitUpdate = params.emitUpdate ?? true;
+  const updateKind = params.updateKind ?? 'agent_message_chunk';
   const src = `
     const decoder = new TextDecoder();
     let buf = '';
@@ -65,6 +67,17 @@ function writeFakeAcpAgentScript(params: {
         }
 
         if (method === 'session/prompt') {
+          if (${JSON.stringify(ackMode)} === 'rejected_after_update_same_batch') {
+            // One transport write keeps output and rejection in the same dispatch batch.
+            process.stdout.write([
+              { jsonrpc: '2.0', method: 'session/update', params: {
+                sessionId: 'test-session',
+                update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'hello' } },
+              } },
+              { jsonrpc: '2.0', id, error: { code: -32603, message: 'rejected after output' } },
+            ].map(JSON.stringify).join('\\n') + '\\n');
+            continue;
+          }
           if (${JSON.stringify(emitUpdate)}) {
             // Emit a session/update quickly, but delay the request-scoped result.
             setTimeout(() => {
@@ -73,10 +86,9 @@ function writeFakeAcpAgentScript(params: {
                 method: 'session/update',
                 params: {
                   sessionId: 'test-session',
-                  update: {
-                    sessionUpdate: 'agent_message_chunk',
-                    content: { type: 'text', text: 'hello' },
-                  },
+                  update: ${JSON.stringify(updateKind === 'current_mode_update'
+                    ? { sessionUpdate: 'current_mode_update', currentModeId: 'plan' }
+                    : { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'hello' } })},
                 },
               });
             }, 10);
@@ -226,6 +238,58 @@ describe('AcpBackend.sendPrompt (prompt ACK vs first session/update)', () => {
         expect(errorStatuses).toHaveLength(1);
       } finally {
         await backendForCleanup?.dispose().catch(() => {});
+      }
+    });
+  }, 20_000);
+
+  it('preserves observed provider effect when output and prompt rejection share a transport batch', async () => {
+    await withTempDir('happier-acp-sendprompt-same-batch-rejection-', async (dir) => {
+      const scriptPath = writeFakeAcpAgentScript({
+        dir,
+        promptAckDelayMs: 0,
+        promptAckMode: 'rejected_after_update_same_batch',
+      });
+      const backend = new AcpBackend({
+        agentName: 'test',
+        cwd: dir,
+        command: process.execPath,
+        args: [scriptPath],
+        transportHandler: createAcpTestTransportHandler({ idleTimeoutMs: 1 }),
+      });
+      try {
+        const started = await backend.startSession();
+        const submitted = await backend.sendPrompt(started.sessionId, 'hi');
+        const settled = submitted.kind === 'submitted_to_transport' ? await submitted.settlement : submitted;
+        expect(settled).toEqual({ kind: 'effect_observed_without_prompt_response' });
+        await expect(backend.waitForResponseComplete()).rejects.toThrow('rejected after output');
+      } finally {
+        await backend.dispose();
+      }
+    });
+  }, 20_000);
+
+  it('does not treat catalog-only traffic as provider effect before prompt rejection', async () => {
+    await withTempDir('happier-acp-sendprompt-catalog-rejection-', async (dir) => {
+      const scriptPath = writeFakeAcpAgentScript({
+        dir,
+        promptAckDelayMs: 50,
+        promptAckMode: 'gemini_late_empty_response_error',
+        updateKind: 'current_mode_update',
+      });
+      const backend = new AcpBackend({
+        agentName: 'test',
+        cwd: dir,
+        command: process.execPath,
+        args: [scriptPath],
+        transportHandler: createAcpTestTransportHandler({ idleTimeoutMs: 1 }),
+      });
+      try {
+        const started = await backend.startSession();
+        const submitted = await backend.sendPrompt(started.sessionId, 'hi');
+        const settled = submitted.kind === 'submitted_to_transport' ? await submitted.settlement : submitted;
+        expect(settled).toEqual({ kind: 'rejected_before_effect', error: expect.any(Error) });
+      } finally {
+        await backend.dispose();
       }
     });
   }, 20_000);

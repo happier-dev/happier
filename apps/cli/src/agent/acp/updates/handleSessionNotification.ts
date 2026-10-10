@@ -37,10 +37,29 @@ import {
   buildStructuredAgentMessageChunkMirrorSet,
   shouldSkipLegacyMessageChunkMirror,
 } from './legacyMessageChunkMirrorDedup';
+import { extractThinkingText, resolvePlanEntries } from './events';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
+}
+
+export function isPromptTurnSessionUpdate(value: unknown): boolean {
+  const update = asRecord(value);
+  if (!update) return false;
+  const type = update.sessionUpdate;
+  if (
+    type === 'user_message_chunk'
+    || type === 'agent_message_chunk'
+    || type === 'agent_thought_chunk'
+    || type === 'tool_call'
+    || type === 'tool_call_update'
+    || type === 'plan'
+  ) return true;
+  const legacyText = asRecord(update.messageChunk)?.textDelta;
+  return (typeof legacyText === 'string' && legacyText.length > 0)
+    || resolvePlanEntries(update) !== null
+    || extractThinkingText(update.thinking) !== null;
 }
 
 export async function handleAcpSessionNotification(params: Readonly<{
@@ -50,7 +69,7 @@ export async function handleAcpSessionNotification(params: Readonly<{
   replayCapture: AcpReplayCapture | null;
   sessionUpdateShapeLogger?: Readonly<{ log?: (shape: string, payload: unknown) => void }> | null;
   waitingForResponse: boolean;
-  onResponseTrafficObserved: () => void;
+  onResponseTrafficObserved: (observedPromptTurnEffect: boolean) => void;
   onAssistantMessageObserved: () => void;
   prepareToolUpdate?: (
     update: SessionUpdate,
@@ -127,7 +146,7 @@ export async function handleAcpSessionNotification(params: Readonly<{
   }
 
   if (params.waitingForResponse) {
-    params.onResponseTrafficObserved();
+    params.onResponseTrafficObserved(updateCandidates.some(isPromptTurnSessionUpdate));
   }
 
   const handleOneUpdate = (rawUpdate: SessionUpdate): void => {

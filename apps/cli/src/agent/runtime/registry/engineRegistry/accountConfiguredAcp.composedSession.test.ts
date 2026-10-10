@@ -66,6 +66,7 @@ function writeConfiguredAcpAgentScript(dir: string, fileName = 'configured-acp-a
       let buffer = '';
       const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
       const ok = (id, result) => send({ jsonrpc: '2.0', id, result });
+      let cancellablePromptId = null;
 
       process.stdin.on('data', (chunk) => {
         buffer += decoder.decode(chunk, { stream: true });
@@ -101,7 +102,16 @@ function writeConfiguredAcpAgentScript(dir: string, fileName = 'configured-acp-a
                 },
               },
             });
-            ok(request.id, { stopReason: 'end_turn' });
+            if (request.params.prompt.some((block) => block.type === 'text' && block.text === 'wait for cancellation')) {
+              cancellablePromptId = request.id;
+            } else {
+              ok(request.id, { stopReason: 'end_turn' });
+            }
+          } else if (request.method === 'session/cancel') {
+            if (cancellablePromptId !== null) {
+              ok(cancellablePromptId, { stopReason: 'cancelled' });
+              cancellablePromptId = null;
+            }
           } else if (request.id !== undefined && request.id !== null) {
             ok(request.id, {});
           }
@@ -324,20 +334,20 @@ describe('Account-configured ACP composed Session journey', () => {
           () => events.some((event) => event.kind === 'turn-complete'),
           { timeoutMs: 15_000, intervalMs: 10, label: 'configured ACP turn-complete' },
         );
+        await expect(runtime.deliverInput(runtimeId, { text: 'hello configured backend' }, {
+          localId: 'configured-input-1',
+        })).rejects.toBeInstanceOf(Error);
 
         const observed = readObserved(dir);
+        expect(observed.methods.filter((method) => method === 'session/prompt')).toHaveLength(1);
         expect(observed.env.CONFIGURED_ACP_LITERAL).toBe('from-account-declaration');
         expect(observed.env.CONFIGURED_ACP_SECRET).toBe('plain-runtime-secret');
         expect(observed.methods).toContain('session/new');
         expect(observed.methods).not.toContain('session/load');
 
-        const terminals = events.filter((event) => (
-          event.kind === 'turn-complete'
-          || event.kind === 'turn-failed'
-          || event.kind === 'turn-cancelled'
-        ));
-        expect(terminals).toHaveLength(1);
         expect(events.filter((event) => event.kind === 'turn-start')).toHaveLength(1);
+        expect(events).toContainEqual(expect.objectContaining({ kind: 'turn-start', startedBy: 'provider' }));
+        expect(events.some((event) => event.kind === 'input-accepted')).toBe(false);
         expect(
           events.filter((event) => event.kind === 'provider-session-id'),
         ).toEqual([expect.objectContaining({ providerSessionId: PROVIDER_SESSION_ID })]);
@@ -350,9 +360,12 @@ describe('Account-configured ACP composed Session journey', () => {
             .join(''),
         ).toContain('configured reply');
       } finally {
-        unsubscribe?.();
         await runtime.dispose();
+        unsubscribe?.();
       }
+      expect(events.filter((event) => ['turn-complete', 'turn-failed', 'turn-cancelled'].includes(event.kind))).toEqual([
+        expect.objectContaining({ kind: 'turn-complete' }),
+      ]);
       await expectAcpChildExited(readObserved(dir).pid);
     });
   }, 40_000);
@@ -380,14 +393,53 @@ describe('Account-configured ACP composed Session journey', () => {
       setConfiguredAcpAccountSettings(writeConfiguredAcpAgentScript(dir));
 
       const runtime = createComposedRuntime(await resolveAccountConfiguredAcpBackend(BACKEND_ID), dir);
+      const events: AgentSessionRuntimeEvent[] = [];
+      const unsubscribe = runtime.subscribeRuntimeEvents?.((event) => { events.push(event); });
       try {
-        await runtime.provisionRuntime({ resumeRuntimeId: PROVIDER_SESSION_ID });
+        const { runtimeId } = await runtime.provisionRuntime({ resumeRuntimeId: PROVIDER_SESSION_ID });
+        await runtime.deliverInput(runtimeId, { text: 'hello resumed backend' }, { localId: 'resumed-input' });
+        await waitForCondition(() => events.some((event) => event.kind === 'turn-complete'), {
+          timeoutMs: 15_000, intervalMs: 10, label: 'resumed configured ACP turn-complete',
+        });
         const observed = readObserved(dir);
         expect(observed.loadedSessionIds).toEqual([PROVIDER_SESSION_ID]);
         expect(observed.methods).not.toContain('session/new');
       } finally {
         await runtime.dispose();
+        unsubscribe?.();
       }
+      expect(events.filter((event) => ['turn-complete', 'turn-failed', 'turn-cancelled'].includes(event.kind))).toEqual([
+        expect.objectContaining({ kind: 'turn-complete' }),
+      ]);
+      await expectAcpChildExited(readObserved(dir).pid);
+    });
+  }, 40_000);
+
+  it('cancels one provider-observed configured ACP turn without accepting uncertain input', async () => {
+    await withTempDir('happier-configured-acp-composed-cancel-', async (dir) => {
+      setConfiguredAcpAccountSettings(writeConfiguredAcpAgentScript(dir));
+      const runtime = createComposedRuntime(await resolveAccountConfiguredAcpBackend(BACKEND_ID), dir);
+      const events: AgentSessionRuntimeEvent[] = [];
+      const unsubscribe = runtime.subscribeRuntimeEvents?.((event) => { events.push(event); });
+      try {
+        const { runtimeId } = await runtime.provisionRuntime();
+        await runtime.deliverInput(runtimeId, { text: 'wait for cancellation' }, { localId: 'cancelled-input' });
+        await waitForCondition(() => events.some((event) => event.kind === 'message-delta'), {
+          timeoutMs: 15_000, intervalMs: 10, label: 'configured ACP output before cancel',
+        });
+        await runtime.cancel(runtimeId);
+        await waitForCondition(() => events.some((event) => event.kind === 'turn-cancelled'), {
+          timeoutMs: 15_000, intervalMs: 10, label: 'configured ACP turn-cancelled',
+        });
+        expect(events.some((event) => event.kind === 'input-accepted')).toBe(false);
+        expect(readObserved(dir).methods.filter((method) => method === 'session/prompt')).toHaveLength(1);
+      } finally {
+        await runtime.dispose();
+        unsubscribe?.();
+      }
+      expect(events.filter((event) => ['turn-complete', 'turn-failed', 'turn-cancelled'].includes(event.kind))).toEqual([
+        expect.objectContaining({ kind: 'turn-cancelled', cause: 'user' }),
+      ]);
       await expectAcpChildExited(readObserved(dir).pid);
     });
   }, 40_000);

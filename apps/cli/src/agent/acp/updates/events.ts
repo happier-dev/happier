@@ -1,6 +1,6 @@
 import type { HandlerContext, HandlerResult, SessionUpdate } from './types';
 
-function extractThinkingText(payload: unknown): string | null {
+export function extractThinkingText(payload: unknown): string | null {
   if (typeof payload === 'string') {
     return payload.trim().length > 0 ? payload : null;
   }
@@ -61,7 +61,11 @@ function normalizePlanEntryStatus(value: unknown): AcpPlanTodo['status'] {
   return 'pending';
 }
 
-function resolvePlanEntries(update: SessionUpdate): unknown[] | null {
+export function resolvePlanEntries(update: Readonly<{
+  sessionUpdate?: unknown;
+  entries?: unknown;
+  plan?: unknown;
+}>): unknown[] | null {
   if (update.sessionUpdate === 'plan' && Array.isArray(update.entries)) return update.entries;
   const plan = update.plan;
   if (Array.isArray(plan)) return plan;
