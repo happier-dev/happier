@@ -39,7 +39,8 @@ import { detectSwiftbarPluginInstalled } from './utils/menubar/swiftbar.mjs';
 import { expandHome } from './utils/paths/canonical_home.mjs';
 import { inspectStackRuntimeSelection } from './runtime/launch/inspectActiveRuntimeSnapshot.mjs';
 import { resolveStackRuntimeMode } from './runtime/shared/runtime_mode.mjs';
-import { isBorrowedExpoConsumer, resolveBorrowedExpoRuntime } from './runtime/shared/borrowed_expo.mjs';
+import { isBorrowedExpoConsumer, resolveBorrowedExpoRuntime, resolveSourceQaUiMode } from './runtime/shared/borrowed_expo.mjs';
+import { resolveRuntimeRemoteServiceObservation } from './utils/tui/runtime_placement_summary.mjs';
 import { readExecutionHostProfile } from './utils/execution_host/config.mjs';
 import { GHOPS_BROKER_FIX_COMMAND, inspectExecutionHostGhopsBroker } from './utils/execution_host/recovery.mjs';
 import { loadDevTargetsConfig } from './utils/dev_targets/config.mjs';
@@ -125,12 +126,26 @@ async function main() {
   const stackMode = stackCtx.stackMode;
   const stackName = (process.env.HAPPIER_STACK_STACK ?? '').toString().trim() || getStackName(process.env);
   const { baseDir: stackBaseDir } = resolveStackBaseDir(stackName, process.env);
-  const runtimeMode = resolveStackRuntimeMode({ argv, env: process.env });
-  const runtimeInspection = await inspectStackRuntimeSelection({ stackName, stackBaseDir });
+  const runtimeStatePath = process.env.HAPPIER_STACK_RUNTIME_STATE_PATH?.trim() || getStackRuntimeStatePath(stackName);
+  const runtimeState = await readStackRuntimeStateFile(runtimeStatePath).catch(() => null);
+  const runtimeMode = resolveStackRuntimeMode({ argv, env: process.env, activeRuntimeState: runtimeState });
+  const sourceSnapshot = runtimeMode.mode === 'source-snapshot';
+  const runtimeInspection = sourceSnapshot
+    ? { snapshot: null, activeSnapshotId: null, snapshotPath: null, sourceFingerprint: null, valid: true, errors: [] }
+    : await inspectStackRuntimeSelection({ stackName, stackBaseDir });
   const runtimeSnapshot = runtimeMode.mode === 'source' ? null : runtimeInspection.snapshot;
   const runtimeSnapshotRequired = runtimeMode.mode === 'require' && !runtimeInspection.valid;
   const borrowedExpoProducerStackName = String(process.env.HAPPIER_STACK_EXPO_SOURCE_STACK ?? '').trim();
-  const borrowedExpo = isBorrowedExpoConsumer({
+  const sourceUi = sourceSnapshot ? resolveSourceQaUiMode({
+    uiMode: runtimeState?.sourceUi === 'disabled' ? undefined : runtimeState?.sourceUi ?? undefined,
+    noUi: runtimeState?.sourceUi === 'disabled' || (runtimeState?.sourceUi == null
+      && (runtimeState?.serveUi === false || process.env.HAPPIER_STACK_SERVE_UI === '0')),
+    consumerStackName: stackName, producerStackName: borrowedExpoProducerStackName,
+  }) : null;
+  const remoteServer = resolveRuntimeRemoteServiceObservation(runtimeState, 'server');
+  const sourceUiLaunch = sourceUi === 'export'
+    ? runtimeState?.sourceUiLaunch ?? runtimeState?.remoteTargets?.[remoteServer.target]?.sourceUiLaunch ?? null : null;
+  const borrowedExpo = (!sourceSnapshot || sourceUi === 'borrowed') && isBorrowedExpoConsumer({
     consumerStackName: stackName,
     producerStackName: borrowedExpoProducerStackName,
   })
@@ -141,8 +156,6 @@ async function main() {
       })
     : null;
 
-  const runtimeStatePath = process.env.HAPPIER_STACK_RUNTIME_STATE_PATH?.trim() || getStackRuntimeStatePath(stackName);
-  const runtimeState = await readStackRuntimeStateFile(runtimeStatePath).catch(() => null);
   const resolvedUrls = await resolveServerUrls({ allowEnable: false });
   const serverPort = resolvedUrls.serverPort;
   const internalServerUrl = resolvedUrls.internalServerUrl;
@@ -152,13 +165,13 @@ async function main() {
     ? expandHome(process.env.HAPPIER_STACK_CLI_HOME_DIR.trim())
     : join(autostart.baseDir, 'cli');
 
-  const serveUi = (process.env.HAPPIER_STACK_SERVE_UI ?? '1') !== '0';
+  const serveUi = sourceSnapshot ? sourceUi === 'export' : (process.env.HAPPIER_STACK_SERVE_UI ?? '1') !== '0';
   const sourceUiBuildDir = process.env.HAPPIER_STACK_UI_BUILD_DIR?.trim()
     ? process.env.HAPPIER_STACK_UI_BUILD_DIR.trim()
     : join(autostart.baseDir, 'ui');
   const uiBuildDir = runtimeSnapshot
     ? join(runtimeSnapshot.launchPath ?? runtimeSnapshot.snapshotPath, 'ui')
-    : runtimeSnapshotRequired
+    : sourceSnapshot ? sourceUiLaunch?.uiDir ?? null : runtimeSnapshotRequired
       ? null
       : sourceUiBuildDir;
 
@@ -195,6 +208,8 @@ async function main() {
       componentSnapshotIds: Object.fromEntries(Object.entries(runtimeInspection.componentSnapshots ?? {}).map(([component, snapshot]) => [component, snapshot.snapshotId])),
       componentTargets: runtimeInspection.componentTargets ?? null,
       borrowedExpo,
+      sourceUi,
+      sourceUiLaunch,
     },
     env: {
       homeEnv: join(homeDir, '.env'),
@@ -324,7 +339,21 @@ async function main() {
   }
 
   // UI build dir check
-  if (serveUi && !runtimeSnapshotRequired) {
+  if (sourceSnapshot && sourceUi === 'export') {
+    const url = `${internalServerUrl.replace(/\/$/, '')}/`;
+    let ok = false;
+    try {
+      const response = await fetch(url);
+      ok = response.ok && /<html(?:\s|>)/i.test(await response.text());
+    } catch {}
+    report.checks.uiServing = { ok, mode: 'export', url, remoteTarget: remoteServer.target, path: sourceUiLaunch?.uiDir ?? null };
+    if (!json) {
+      console.log(`${ok ? green('✓') : red('x')} source UI export: ${ok ? 'reachable' : 'unreachable'} (${url}${remoteServer.target ? ` via ${remoteServer.target}` : ''})`);
+      if (!ok) console.log(`${dim('↪ recovery:')} reload this source stack to rebuild its UI export: ${cmd(`hstack stack reload ${stackName} --runtime=source`)}`);
+    }
+  } else if (sourceSnapshot && sourceUi === 'borrowed') {
+    report.checks.uiServing = { ok: borrowedExpo?.running === true, mode: 'borrowed', producerStackName: borrowedExpo?.producerStackName ?? null };
+  } else if (serveUi && !runtimeSnapshotRequired) {
     if (await pathExists(uiBuildDir)) {
       const indexPath = join(uiBuildDir, 'index.html');
       if (await pathExists(indexPath)) {
@@ -341,8 +370,9 @@ async function main() {
       if (!json) console.log(`${red('x')} ui build dir missing (${uiBuildDir}) → run: ${cmd('hstack build')}`);
     }
   } else if (!serveUi) {
-    report.checks.uiServing = { ok: false, reason: 'disabled (HAPPIER_STACK_SERVE_UI=0)' };
-    if (!json) console.log(`${dim('ℹ')} ui serving disabled (HAPPIER_STACK_SERVE_UI=0)`);
+    const reason = sourceSnapshot ? 'disabled (--no-ui)' : 'disabled (HAPPIER_STACK_SERVE_UI=0)';
+    report.checks.uiServing = { ok: false, ...(sourceSnapshot ? { mode: 'disabled' } : {}), reason };
+    if (!json) console.log(`${dim('ℹ')} ui serving ${reason}`);
   }
 
   // Daemon status

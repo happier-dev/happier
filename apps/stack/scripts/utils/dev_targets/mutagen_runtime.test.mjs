@@ -1,6 +1,20 @@
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import test from 'node:test';
+import { resolveMutagenSessionName } from './mutagen_project.mjs';
+
+test('routed repositories and QA consumers share one daemon while repository sessions stay distinct', () => {
+  const env = { HAPPIER_STACK_STORAGE_DIR: '/state/stacks' };
+  const producer = resolveDevTargetMutagenRuntime({ stackBaseDir: '/state/stacks/repo-dev', sourceDir: '/workspace/0.3', env });
+  const sibling = resolveDevTargetMutagenRuntime({ stackBaseDir: '/state/stacks/repo-dev/commands-0.2', sourceDir: '/workspace/0.2', env });
+  const consumer = resolveDevTargetMutagenRuntime({ stackBaseDir: '/state/stacks/agent-qa-test', sourceDir: '/workspace/0.3', env });
+  assert.equal(producer.dataDir, sibling.dataDir);
+  assert.equal(producer.dataDir, consumer.dataDir);
+  assert.equal(producer.projectFile, consumer.projectFile);
+  assert.notEqual(producer.projectFile, sibling.projectFile);
+  assert.notEqual(resolveMutagenSessionName('worker', '/workspace/0.3'), resolveMutagenSessionName('worker', '/workspace/0.2'));
+  assert.notEqual(resolveMutagenSessionName('worker', '/workspace/0.3'), resolveMutagenSessionName('worker', '/other/0.3'));
+});
 
 import {
   assertDevTargetMutagenRuntimeIsolation,
@@ -22,21 +36,22 @@ test('dev target Mutagen runtime declares its owner and rejects managed workspac
   }), /isolat|overlap|managed/i);
 });
 
-test('dev target Mutagen runtime resolves the same stack-scoped daemon state as the supervisor', () => {
+test('dev target Mutagen runtime uses the routing producer rather than a caller-owned directory', () => {
   const stackBaseDir = '/tmp/happier/stacks/repo-test';
   const runtime = resolveDevTargetMutagenRuntime({
     stackBaseDir,
-    env: { PATH: '/test/bin', MUTAGEN_SSH_CONNECT_TIMEOUT: '17' },
-    pathExists: (path) => path === join(stackBaseDir, 'mutagen', 'openssh'),
+    env: { PATH: '/test/bin', HAPPIER_STACK_STORAGE_DIR: '/tmp/happier/stacks', MUTAGEN_SSH_CONNECT_TIMEOUT: '17' },
+    pathExists: () => true,
   });
 
-  assert.equal(runtime.projectFile, join(stackBaseDir, 'mutagen', 'mutagen.yml'));
+  assert.notEqual(runtime.ownerBaseDir, stackBaseDir);
+  assert.equal(runtime.projectFile, join(runtime.mutagenDir, 'mutagen.yml'));
   assert.equal(
     runtime.syncServiceStateFile,
-    join(stackBaseDir, 'mutagen', 'sync-service-state.v1.json'),
+    join(runtime.mutagenDir, 'sync-service-state.v1.json'),
   );
-  assert.equal(runtime.env.MUTAGEN_DATA_DIRECTORY, join(stackBaseDir, 'mutagen', 'data'));
-  assert.equal(runtime.env.MUTAGEN_SSH_PATH, join(stackBaseDir, 'mutagen', 'openssh'));
+  assert.equal(runtime.env.MUTAGEN_DATA_DIRECTORY, join(runtime.mutagenDir, 'data'));
+  assert.equal(runtime.env.MUTAGEN_SSH_PATH, join(runtime.mutagenDir, 'openssh'));
   assert.equal(runtime.env.MUTAGEN_SSH_CONNECT_TIMEOUT, '17');
 });
 

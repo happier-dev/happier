@@ -9,6 +9,36 @@ This document describes how to deploy the Happier backend (`apps/server`) and th
 - **Object storage:** S3-compatible storage for user-uploaded assets (MinIO works).
 - **Metrics:** Optional Prometheus `/metrics` server on a separate port.
 
+## SQLite read snapshots (0.3 development)
+
+Plugin Data contract/get/query/UI-query reads, Session query/list/detail reads,
+signed-credential Account currentness and login-status reads, request/job Home
+configuration overlays, Account Settings
+and encryption GETs, Artifact GET authorization/data reads, and the Account
+changes feed use `inTx(..., { readOnly: true })`. The storage client owner in
+`apps/server/sources/storage/prisma.ts` keeps one lazy, single-connection reader
+beside the write pool and serializes deferred read transactions through the
+existing `AsyncLock`. SQLite's `query_only` pragma rejects accidental writes;
+rollback ends each snapshot, and database shutdown drains and disconnects the reader.
+This preserves row/cursor and access snapshots without Prisma's SQLite
+`BEGIN IMMEDIATE` writer lock. Other database providers retain their existing
+transaction path. Write transactions continue to use `inTx` and `afterTx`.
+
+Use this existing owner for genuine reads rather than the primary Prisma client:
+a pending writer on that client can queue unrelated reads behind SQLite's busy
+wait even while WAL readers could proceed. Keep snapshots limited to database
+work; Artifact blob IO and upstream login eligibility checks remain outside.
+The changes feed's post-page retention-floor recheck uses a separate fresh
+snapshot, and signed credentials still recheck current Account revocation/status
+after cryptographic verification. PAT last-use updates and all mutation paths
+remain writable transactions.
+
+The existing SQLite busy-timeout owner supplies transaction acquisition and
+execution defaults (30 seconds by default, with the existing one-second
+transaction minimum). The retry budget permits two complete attempts plus the
+first backoff. Explicit transaction environment overrides still take priority.
+No database schema, migration, content format or client wire contract changes.
+
 ## Managed Home owner provisioning boundary (0.3 development)
 
 The current repository has no managed-host producer that creates a Home's first Account.

@@ -48,6 +48,7 @@ import { printDelegatedStackHelpIfAvailable } from './stack/stack_delegated_help
 import { resolveRequestedRepoCheckoutDir } from './stack/repo_checkout_resolution.mjs';
 import { resolveTransientRepoOverrides } from './stack/transient_repo_overrides.mjs';
 import { hasExplicitStackRuntimeModeArg } from './runtime/shared/runtime_mode.mjs';
+import { DEFAULT_QA_TARGET_NAMES } from './utils/dev_targets/service_placement.mjs';
 import { ensureEnvFileMutated, ensureEnvFilePruned, ensureEnvFileUpdated } from './utils/env/env_file.mjs';
 import { listAllStackNames, stackExistsSync } from './utils/stack/stacks.mjs';
 import { writeDevAuthKey } from './utils/auth/dev_key.mjs';
@@ -197,7 +198,7 @@ async function cmdNew({ rootDir, argv, emit = true }) {
     throw new Error(
       '[stack] usage: hstack stack new <name> [--port=NNN] [--server=happier-server|happier-server-light] ' +
         '[--repo=<owner/...>|<path>|default] [--remote=<name>] [--db-provider=pglite|sqlite|postgres|mysql] [--database-url=<url>] ' +
-        '[--copy-auth-from=<stack>] [--link-auth] [--no-copy-auth] [--if-missing] [--interactive] [--non-interactive] [--force-port]'
+        '[--copy-auth-from=<stack>] [--link-auth] [--no-copy-auth] [--qa] [--if-missing] [--interactive] [--non-interactive] [--force-port]'
     );
   }
   const normalizedName = normalizeStackNameOrNull(stackName);
@@ -314,6 +315,12 @@ async function cmdNew({ rootDir, argv, emit = true }) {
     // one-time create behavior. Without this, a later non-interactive start would
     // fall back to auto-seeding credentials from main.
     stackEnv.HAPPIER_STACK_AUTO_AUTH_SEED = '0';
+  }
+  if (flags.has('--qa') || stackName.startsWith('agent-qa-')) {
+    // Initial candidates only. The placement owner persists one explicit
+    // Machine host before runtime selection; subsequent starts use that pin.
+    stackEnv.HAPPIER_STACK_QA_DAEMON_TARGETS = DEFAULT_QA_TARGET_NAMES.join(',');
+    stackEnv.HAPPIER_STACK_RUNTIME_MODE = 'source-snapshot';
   }
   // Persist DB provider explicitly so existing behavior is stable even if defaults evolve later.
   stackEnv.HAPPIER_DB_PROVIDER = effectiveDbProvider;

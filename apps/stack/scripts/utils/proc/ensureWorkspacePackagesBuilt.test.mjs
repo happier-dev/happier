@@ -231,13 +231,19 @@ async function createQuietWorkspaceBuildFailureFixture(t, { packageManager }) {
     HAPPIER_STACK_BINARY_MODE: packageManager === 'npm' ? '1' : '0',
     HAPPIER_STACK_ENV_FILE: '',
     HAPPIER_STACK_WORKSPACE_TEST_SECRET: 'must-not-escape',
+    npm_execpath: '',
+    npm_node_execpath: '',
   };
   if (packageManager === 'npm') {
+    // Isolate sibling package-manager discovery without inventing a missing
+    // executable: the synthetic runtime directory still contains real Node.
     const originalExecPath = process.execPath;
-    process.execPath = join(root, 'fake-node-bin', process.platform === 'win32' ? 'node.exe' : 'node');
-    t.after(() => {
-      process.execPath = originalExecPath;
-    });
+    const fixtureExecPath = join(root, 'fixture-node-bin', process.platform === 'win32' ? 'node.exe' : 'node');
+    await mkdir(join(fixtureExecPath, '..'), { recursive: true });
+    if (process.platform === 'win32') await cp(originalExecPath, fixtureExecPath);
+    else await symlink(originalExecPath, fixtureExecPath);
+    process.execPath = fixtureExecPath;
+    t.after(() => { process.execPath = originalExecPath; });
   }
 
   return { root, env };
@@ -333,12 +339,11 @@ test('ensureWorkspacePackagesBuiltForComponent builds internal dist-based worksp
   const preservedOutputTime = new Date(Date.now() - 60_000);
   await utimes(join(protocolDir, 'dist', 'index.d.ts'), preservedOutputTime, preservedOutputTime);
 
-  // An externally aged output invalidates currentness, so the canonical owner
-  // rebuilds instead of admitting a stale declaration solely because it exists.
+  // Currentness is content-based: aging unchanged bytes does not rebuild them.
   await ensureWorkspacePackagesBuiltForComponent(join(root, 'apps', 'ui'), { quiet: true, env: process.env });
   const out2 = await readFile(outputPath, 'utf-8');
   const occurrences = out2.split('\n').filter((l) => l.includes('/packages/protocol :: -s build')).length;
-  assert.equal(occurrences, 2);
+  assert.equal(occurrences, 1);
 
   // Source freshness is part of output validity, not an adapter concern.
   await new Promise((resolve) => setTimeout(resolve, 20));
@@ -347,7 +352,7 @@ test('ensureWorkspacePackagesBuiltForComponent builds internal dist-based worksp
   await ensureWorkspacePackagesBuiltForComponent(join(root, 'apps', 'ui'), { quiet: true, env: process.env });
   const out3 = await readFile(outputPath, 'utf-8');
   const occurrencesAfterSourceChange = out3.split('\n').filter((l) => l.includes('/packages/protocol :: -s build')).length;
-  assert.equal(occurrencesAfterSourceChange, 3);
+  assert.equal(occurrencesAfterSourceChange, 2);
 
   await new Promise((resolve) => setTimeout(resolve, 20));
   const protocolPackage = JSON.parse(await readFile(join(protocolDir, 'package.json'), 'utf-8'));
@@ -363,7 +368,7 @@ test('ensureWorkspacePackagesBuiltForComponent builds internal dist-based worksp
   await ensureWorkspacePackagesBuiltForComponent(join(root, 'apps', 'ui'), { quiet: true, env: process.env });
   const finalOut = await readFile(outputPath, 'utf-8');
   const finalOccurrences = finalOut.split('\n').filter((l) => l.includes('/packages/protocol :: -s build')).length;
-  assert.equal(finalOccurrences, 5, 'stale output and source/config/package changes rebuild, while test-only source does not');
+  assert.equal(finalOccurrences, 4, 'source/config/package changes rebuild, while unchanged output timestamps and test-only source do not');
 });
 
 test('ensureWorkspacePackagesBuiltForComponent builds unscoped internal workspace dependencies', async (t) => {
@@ -1161,76 +1166,6 @@ test('ensureWorkspacePackagesBuiltForComponent rebuilds prior outputs without a 
   assert.equal(await readFile(join(protocolDir, 'dist', 'index.js'), 'utf-8'), 'export const current = true;\n');
 });
 
-test('ensureWorkspacePackagesBuiltForComponent tolerates transient missing local imports while another local build finishes', async (t) => {
-  const root = await mkdtemp(join(tmpdir(), 'hs-ensure-workspaces-built-'));
-  t.after(async () => {
-    await rm(root, { recursive: true, force: true });
-  });
-
-  await mkdir(join(root, 'apps', 'ui'), { recursive: true });
-  await mkdir(join(root, 'apps', 'cli'), { recursive: true });
-  await mkdir(join(root, 'apps', 'server'), { recursive: true });
-  await writeJson(join(root, 'apps', 'ui', 'package.json'), {
-    name: '@happier-dev/app',
-    private: true,
-    dependencies: {
-      '@happier-dev/protocol': '0.0.0',
-    },
-  });
-  await writeJson(join(root, 'apps', 'cli', 'package.json'), { name: '@happier-dev/cli', private: true });
-  await writeJson(join(root, 'apps', 'server', 'package.json'), { name: '@happier-dev/server', private: true });
-
-  const protocolDir = join(root, 'packages', 'protocol');
-  await mkdir(join(protocolDir, 'dist'), { recursive: true });
-  await writeJson(join(protocolDir, 'package.json'), {
-    name: '@happier-dev/protocol',
-    version: '0.0.0',
-    type: 'module',
-    main: './dist/index.js',
-    types: './dist/index.d.ts',
-    exports: {
-      '.': { default: './dist/index.js', types: './dist/index.d.ts' },
-    },
-    scripts: { build: 'tsc -p tsconfig.json' },
-  });
-  await writeJson(join(protocolDir, 'tsconfig.json'), { compilerOptions: { outDir: 'dist' } });
-  await writeFile(
-    join(protocolDir, 'dist', 'index.js'),
-    "export * from './machineTransfer/transferStream.js';\n",
-    'utf-8',
-  );
-  await writeFile(join(protocolDir, 'dist', 'index.d.ts'), "export declare const ok: boolean;\n", 'utf-8');
-
-  const binDir = join(root, 'bin');
-  const outputPath = join(root, 'argv.txt');
-  await writeYarnWorkspaceBuildStub({ binDir, outputPath });
-
-  const stderrChunks = captureStderr(t);
-  applyEnvOverrides(t, {
-    PATH: `${binDir}:/usr/bin:/bin`,
-    OUTPUT_PATH: outputPath,
-    HAPPIER_STACK_ENV_FILE: null,
-    HAPPIER_WORKSPACE_DIST_IMPORT_VALIDATION_RETRY_ATTEMPTS: '8',
-    HAPPIER_WORKSPACE_DIST_IMPORT_VALIDATION_RETRY_DELAY_MS: '25',
-    HAPPIER_WORKSPACE_BUILD_NOTICE_AFTER_MS: '0',
-    HAPPIER_WORKSPACE_BUILD_NOTICE_EVERY_MS: '999999',
-  });
-
-  const transientBuild = setTimeout(async () => {
-    await mkdir(join(protocolDir, 'dist', 'machineTransfer'), { recursive: true });
-    await writeFile(join(protocolDir, 'dist', 'machineTransfer', 'transferStream.js'), 'export const ok = true;\n', 'utf-8');
-  }, 40);
-  t.after(() => clearTimeout(transientBuild));
-
-  await ensureWorkspacePackagesBuiltForComponent(join(root, 'apps', 'ui'), { quiet: true, env: process.env });
-
-  const out = await readFile(outputPath, 'utf-8');
-  assert.doesNotMatch(out, /packages\/protocol :: -s build/);
-  assert.equal(Boolean(await readFile(join(protocolDir, 'dist', 'machineTransfer', 'transferStream.js'), 'utf-8')), true);
-  if (stderrChunks.length > 0) {
-    assert.match(stderrChunks.join(''), /waiting for @happier-dev\/protocol dist build local imports to settle/);
-  }
-});
 
 test('ensureWorkspacePackagesBuiltForComponent keeps previous dist readable while rebuilding a workspace package', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'hs-ensure-workspaces-built-live-dist-'));

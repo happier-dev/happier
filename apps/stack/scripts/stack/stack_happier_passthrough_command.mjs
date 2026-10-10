@@ -6,6 +6,10 @@ import { getInvokedCwd } from '../utils/cli/cwd_scope.mjs';
 import { applyStackActiveServerScopeEnv } from '../utils/auth/stable_scope_id.mjs';
 import { resolveStackEnvPath } from '../utils/paths/paths.mjs';
 import { parseCliIdentityOrThrow, resolveCliHomeDirForIdentity } from '../utils/stack/cli_identities.mjs';
+import { loadDevTargetsConfig } from '../utils/dev_targets/config.mjs';
+import { buildRemoteStackHappierCommand, buildSshWorkerArgs } from '../utils/dev_targets/remote_commands.mjs';
+import { resolveDevTargetSshConfigFile } from '../utils/dev_targets/mutagen_runtime.mjs';
+import { resolveStackRuntimeMode } from '../runtime/shared/runtime_mode.mjs';
 
 import { withStackEnv } from './stack_environment.mjs';
 import { ensureStackDaemonPreflight, requiresStackDaemonPreflight } from './stack_happier_daemon_preflight.mjs';
@@ -71,7 +75,32 @@ export async function runStackHappierPassthroughCommand({ rootDir, stackName, pa
 
   await withStackEnv({
     stackName,
-    fn: async ({ env }) => {
+    fn: async ({ env, runtimeState }) => {
+      if (env.HAPPIER_DEV_TARGET_EXECUTION !== '1') {
+        const { config } = await loadDevTargetsConfig({ stackName, env });
+        // Observed placement wins over the configured preference: lifecycle
+        // may have selected a local fallback before this generation started.
+        const daemonPlacement = runtimeState?.placement?.daemon
+          ?? (config.runtimePlacement?.daemon?.mode === 'prefer-target' ? config.runtimePlacement.daemon.target : 'local');
+        if (!['local', 'disabled'].includes(daemonPlacement)) {
+          const target = config.targets.find(candidate => candidate.name === daemonPlacement);
+          if (!target) throw new Error(`[stack happier] daemon target ${daemonPlacement} is not configured for ${stackName}.`);
+          const mode = resolveStackRuntimeMode({ env, activeRuntimeState: runtimeState }).mode;
+          const runtimeMode = runtimeState?.remoteTargets?.[daemonPlacement]?.runtimeMode
+            ?? (mode === 'source-snapshot' ? mode : mode === 'require' ? 'controlled' : 'source');
+          const remoteCommand = buildRemoteStackHappierCommand(target, { stackName, runtimeMode, passthrough });
+          const sshConfigFile = resolveDevTargetSshConfigFile(target, { stackBaseDir: resolveStackEnvPath(stackName).baseDir, env });
+          const child = spawn('ssh', buildSshWorkerArgs(target, {
+            remoteCommand, tty: Boolean(process.stdin.isTTY && process.stdout.isTTY),
+            sshArgs: sshConfigFile ? ['-F', sshConfigFile] : [],
+          }), { env, stdio: 'inherit', shell: false });
+          const exitCode = await new Promise(resolvePromise => {
+            child.on('error', error => { console.error(`[stack happier] ${error.message}`); resolvePromise(1); });
+            child.on('exit', code => resolvePromise(code ?? 1));
+          });
+          process.exit(exitCode);
+        }
+      }
       const baseCliHomeDir = (env.HAPPIER_STACK_CLI_HOME_DIR ?? join(resolveStackEnvPath(stackName).baseDir, 'cli')).toString();
       const cliHomeDirForIdentity = identity
         ? resolveCliHomeDirForIdentity({ cliHomeDir: baseCliHomeDir, identity })

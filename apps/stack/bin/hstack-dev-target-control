@@ -29,7 +29,11 @@ usage() {
 sync_control_state_dir() {
   # Startup, explicit sync and dispatch address the same daemon/session. A
   # caller-selected directory would split their lock and causal flight record.
-  printf '%s\n' "${MUTAGEN_DATA_DIRECTORY%/data}/hstack-control"
+  # Sandboxes bind the host /tmp; TMPDIR and stack storage may be caller-private
+  # or read-only, so neither can own this shared state.
+  # Separate daemons can use identical session names (e.g. sibling checkouts).
+  # Retain the daemon's existing namespace beneath the shared per-uid root.
+  printf '/tmp/happier-sync-control-%s%s/hstack-control\n' "$(id -u)" "${MUTAGEN_DATA_DIRECTORY%/data}"
 }
 
 run_control_command() {
@@ -49,13 +53,8 @@ run_control_command() {
     if [ "$(cat "$critical_dir/memory.low" 2>/dev/null)" = 4294967296 ]; then
       critical_ready=1
     elif command -v systemctl >/dev/null 2>&1; then
-      if command -v timeout >/dev/null 2>&1; then
-        critical_properties=$(timeout 1 systemctl --user show happier-critical.slice \
-          --property=LoadState --property=MemoryLow 2>/dev/null || true)
-      else
-        critical_properties=$(systemctl --user show happier-critical.slice \
-          --property=LoadState --property=MemoryLow 2>/dev/null || true)
-      fi
+      critical_properties=$(systemctl --user show happier-critical.slice \
+        --property=LoadState --property=MemoryLow 2>/dev/null || true)
       case "$critical_properties" in
         *'LoadState=loaded'*'MemoryLow=4294967296'*|*'MemoryLow=4294967296'*'LoadState=loaded'*)
           critical_ready=1
@@ -280,7 +279,7 @@ case "${1-}" in
       exit 64
     }
     lock_dir=$(sync_control_state_dir)
-    mkdir -p -- "$lock_dir" || exit 1
+    mkdir -p -m 700 -- "$lock_dir" || exit 1
     if command -v flock >/dev/null 2>&1; then
       flight_path="$lock_dir/$session_name.flight"
       read_sync_flight || exit 1

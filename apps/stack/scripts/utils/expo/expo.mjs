@@ -113,7 +113,8 @@ export async function waitForExpoMetroRunning(
     return { ok: false, reason: 'invalid_port', probes: 0 };
   }
   const resolvedTimeoutMs =
-    Number.isFinite(Number(timeoutMs)) && Number(timeoutMs) > 0
+    timeoutMs === Infinity ? Infinity
+    : Number.isFinite(Number(timeoutMs)) && Number(timeoutMs) > 0
       ? Number(timeoutMs)
       : resolveMetroWaitTimeoutMsFromEnv(env);
   const resolvedIntervalMs =

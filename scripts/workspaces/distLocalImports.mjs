@@ -36,31 +36,25 @@ export function hasMissingLocalImportsSync({ distDir, entryPaths }) {
 
     for (const spec of extractLocalImportSpecifiersFromJs(contents)) {
       const resolvedImport = resolve(dirname(current), spec);
-      try {
-        readFileSync(resolvedImport);
-      } catch {
-        return true;
-      }
-      if (
-        (resolvedImport === root || resolvedImport.startsWith(root + sep))
-        && !visited.has(resolvedImport)
-      ) {
-        queue.push(resolvedImport);
+      if (resolvedImport === root || resolvedImport.startsWith(root + sep)) {
+        if (!visited.has(resolvedImport)) queue.push(resolvedImport);
+      } else {
+        try {
+          readFileSync(resolvedImport);
+        } catch {
+          return true;
+        }
       }
     }
-
-    if (visited.size > 5_000) return true;
   }
 
   return false;
 }
 
-export async function assertNoMissingLocalImports({ distDir, entryPath, label = 'dist build' }) {
+export async function assertNoMissingLocalImports({ distDir, entryPath, entryPaths = [entryPath], label = 'dist build' }) {
   const root = resolve(distDir);
-  const entry = resolve(entryPath);
-
   const visited = new Set();
-  const queue = [entry];
+  const queue = entryPaths.map(path => resolve(path));
   const missing = [];
 
   while (queue.length) {
@@ -88,10 +82,6 @@ export async function assertNoMissingLocalImports({ distDir, entryPath, label = 
         if (!visited.has(resolvedImport)) queue.push(resolvedImport);
       }
     }
-
-    if (visited.size > 5_000) {
-      throw new Error(`[local] dist import graph too large while validating ${entryPath} (visited=${visited.size})`);
-    }
   }
 
   if (missing.length) {
@@ -101,7 +91,7 @@ export async function assertNoMissingLocalImports({ distDir, entryPath, label = 
       .join('\n');
     throw new Error(
       `[local] ${label} looks partial (missing local imports).\n` +
-        `Entrypoint: ${entryPath}\n` +
+        `Entrypoints: ${entryPaths.length}; first: ${entryPaths[0]}\n` +
         `Missing (${missing.length}):\n${preview}`,
     );
   }

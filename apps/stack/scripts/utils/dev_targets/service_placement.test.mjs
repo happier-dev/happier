@@ -1,12 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdir, mkdtemp, readFile, readlink, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, lstat, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import * as placement from './service_placement.mjs';
 import { writeJsonAtomic } from '../fs/json.mjs';
 import { loadDevTargetsConfig } from './config.mjs';
-import { resolveRuntimeBuildPlacement } from '../../build/remote_runtime_build.mjs';
 
 import {
   resolveDevTargetServicePlans,
@@ -19,7 +18,7 @@ async function withQaPlacementFixture(run) {
   const root = await mkdtemp(join(tmpdir(), 'hstack-qa-owner-'));
   const config = {
     version: 3,
-    targets: ['builder', 'linux2', 'linux3', 'mac-host', 'mac3-linux'].map(name => ({ name, platform: 'posix', ssh: name, repoDir: `/mirror/${name}`, cliHomeDir: `/state/${name}` })),
+    targets: ['builder', 'linux1', 'linux2', 'linux3', 'nl1', 'nl2', 'mac-host', 'mac3-linux'].map(name => ({ name, platform: 'posix', ssh: name, repoDir: `/mirror/${name}`, cliHomeDir: `/state/${name}` })),
     runtimePlacement: { build: { mode: 'prefer-target', targets: ['builder'] }, qa: { mode: 'auto', targets: ['linux2', 'linux3'], fallback: 'local' } },
     commandExecution: { mode: 'auto', targets: ['builder', 'mac-host'] },
   };
@@ -27,6 +26,79 @@ async function withQaPlacementFixture(run) {
   await writeJsonAtomic(join(root, 'producer', 'dev-targets.json'), config);
   try { await run({ root, config, env }); } finally { await rm(root, { recursive: true, force: true }); }
 }
+
+test('local QA daemon browser selects the most unreserved QA pool host without writing any placement', async () => {
+  await withQaPlacementFixture(async ({ root, config, env }) => {
+    const path = join(root, 'qa', 'dev-targets.json');
+    for (const explicitDaemon of [true, false]) {
+      await writeJsonAtomic(path, { ...config, runtimePlacement: {
+        ...config.runtimePlacement, ...(explicitDaemon ? { daemon: { mode: 'local' } } : {}),
+      } });
+      const before = await readFile(path);
+      const probes = [];
+      const result = await placement.resolveControlledQaBrowserTarget({ stackName: 'qa', sourceDir: '/repo',
+        env: explicitDaemon ? { ...env, HAPPIER_STACK_QA_DAEMON_TARGETS: 'linux3,linux2,linux1' } : env }, {
+        runCaptureResult: async (_command, args) => {
+          const target = args.find(arg => arg.startsWith('--target='));
+          probes.push(target);
+          const memory = target === '--target=linux1' ? [24900000, 3500000]
+            : target === '--target=linux2' ? [10900000, 9000000] : [3800000, 3700000];
+          return { ok: true, out: `HSTACK_QA_HOST=${JSON.stringify({ platform: 'linux', arch: 'x64', remote: true,
+            availableMemoryKiB: memory[0], unreservedMemoryKiB: memory[1] })}\n`, err: '' };
+        }, logger: { warn() {} },
+      });
+      assert.equal(result?.target?.name, 'linux2', 'browser must rank native unreserved memory, not raw free memory or the first host');
+      assert.deepEqual(probes, [...(!explicitDaemon ? ['--target=nl1', '--target=nl2'] : []), '--target=linux3', '--target=linux2', '--target=linux1']);
+      assert.deepEqual(await readFile(path), before, 'browser selection cannot move or initialize a daemon pin');
+    }
+  });
+});
+
+test('remote QA daemon browser ranks the pool without moving its fixed Machine', async () => {
+  await withQaPlacementFixture(async ({ root, config, env }) => {
+    const path = join(root, 'qa', 'dev-targets.json');
+    for (const [daemonHostUnavailable, registeredHosts] of [[false, ['nl1', 'nl2']], [true, ['nl1', 'nl2']], [false, ['nl1']], [false, []]]) {
+      await writeJsonAtomic(path, { ...config, targets: config.targets.filter(target => !['nl1', 'nl2'].includes(target.name) || registeredHosts.includes(target.name)),
+        runtimePlacement: { daemon: { mode: 'prefer-target', target: 'linux3' } } });
+      const before = await readFile(path);
+      const probes = [];
+      const result = await placement.resolveControlledQaBrowserTarget({ stackName: 'qa', sourceDir: '/repo', env }, {
+        runCaptureResult: async (_command, args) => {
+          const target = args.find(arg => arg.startsWith('--target='));
+          probes.push(target);
+          if (target === '--target=linux3' && daemonHostUnavailable) return { ok: false, exitCode: 255, err: 'unavailable' };
+          const available = target === '--target=nl2' ? 180000000 : target === '--target=nl1' ? 90000000 : target === '--target=linux1' ? 30000000 : target === '--target=linux2' ? 8500000 : 700000;
+          return { ok: true, out: `HSTACK_QA_HOST=${JSON.stringify({ platform: 'linux', arch: 'x64', remote: true,
+            availableMemoryKiB: available, unreservedMemoryKiB: available })}\n`, err: '' };
+        }, logger: { warn() {} },
+      });
+      assert.equal(result.target.name, registeredHosts.at(-1) ?? 'linux1');
+      assert.deepEqual(probes, [...registeredHosts.map(name => `--target=${name}`), '--target=linux3', '--target=linux2', '--target=linux1']);
+      assert.deepEqual(await readFile(path), before);
+    }
+  });
+});
+
+test('local QA daemon browser never falls back to the controller when no pool host is usable', async () => {
+  await withQaPlacementFixture(async ({ root, config, env }) => {
+    const path = join(root, 'qa', 'dev-targets.json');
+    await writeJsonAtomic(path, { ...config, runtimePlacement: { daemon: { mode: 'local' } } });
+    const before = await readFile(path);
+    await assert.rejects(placement.resolveControlledQaBrowserTarget({ stackName: 'qa', sourceDir: '/repo', env }, {
+      runCaptureResult: async () => ({ ok: false, exitCode: 255, err: 'unavailable' }), logger: { warn() {} },
+    }), /no QA browser host.*available-memory/);
+    assert.deepEqual(await readFile(path), before);
+    await writeJsonAtomic(path, { ...config, targets: config.targets.filter(target => target.name === 'builder'),
+      runtimePlacement: { daemon: { mode: 'local' } }, commandExecution: { mode: 'local' } });
+    const withoutDefaultHosts = await readFile(path);
+    const noProbe = { runCaptureResult: async () => assert.fail('an empty or invalid pool must not execute on another host'), logger: { warn() {} } };
+    await assert.rejects(placement.resolveControlledQaBrowserTarget({ stackName: 'qa', sourceDir: '/repo', env }, noProbe),
+      /no QA browser host.*available-memory/);
+    await assert.rejects(placement.resolveControlledQaBrowserTarget({ stackName: 'qa', sourceDir: '/repo',
+      env: { ...env, HAPPIER_STACK_QA_DAEMON_TARGETS: 'linux3' } }, noProbe), /QA browser hosts must be configured targets/);
+    assert.deepEqual(await readFile(path), withoutDefaultHosts);
+  });
+});
 
 test('explicit fresh controlled QA uses the native automatic selector over its own pool', async () => {
   await withQaPlacementFixture(async ({ root, config, env }) => {
@@ -38,7 +110,7 @@ test('explicit fresh controlled QA uses the native automatic selector over its o
         const projection = JSON.parse(await readFile(options.env.HAPPIER_EXEC_CONFIG_PATH, 'utf8'));
         assert.deepEqual(projection.commandExecution.targets, ['linux2', 'linux3']);
         assert.equal(projection.commandExecution.includeLocal, false);
-        assert.equal(await readlink(join(options.env.HAPPIER_EXEC_CONFIG_PATH, '..', 'mutagen')), join(root, 'producer', 'mutagen'));
+        await assert.rejects(lstat(join(options.env.HAPPIER_EXEC_CONFIG_PATH, '..', 'mutagen')), { code: 'ENOENT' });
         return { ok: true, out: `\rForcing synchronization cycle\r     \rHSTACK_QA_HOST=${JSON.stringify({ platform: 'linux', arch: 'x64', remote: true })}\n`, err: '[preferred-execution] selected linux3 (load=0.1, active=0, effective=0.1, fresh)\n' };
       },
     });
@@ -76,13 +148,10 @@ test('consumer target registries never borrow producer build placement or overri
         && message.includes('runtimePlacement.build') && message.includes(join(root, 'producer', 'dev-targets.json'))));
       else assert.deepEqual(warnings, []);
       const producer = await loadDevTargetsConfig({ path: join(loaded.authority.producerStackBaseDir, 'dev-targets.json'), env });
-      decisions.push(resolveRuntimeBuildPlacement({ config: producer.config,
-        hostTarget: { platform: 'linux', arch: 'x64' },
-        observedTarget: { ok: true, runtimeTarget: { platform: 'linux', arch: 'x64' } },
-      }));
+      decisions.push(producer.config.runtimePlacement.build);
       assert.deepEqual(await readFile(consumerPath), consumerBefore);
     }
-    assert.equal(decisions[0].target.name, 'builder');
+    assert.deepEqual(decisions[0].targets, ['builder']);
     assert.deepEqual(decisions[1], decisions[0]);
     assert.deepEqual(decisions[2], decisions[0]);
     await writeJsonAtomic(join(root, 'qa-local', 'dev-targets.json'), { version: 3,
@@ -131,6 +200,93 @@ test('fresh QA keeps its Machine local regardless of producer QA or command pool
     });
     assert.equal(result.target, null);
     assert.equal(result.policy.daemons.mode, 'local');
+  });
+});
+
+test('new opted-in QA pins the most unreserved available memory once and never follows changing capacity', async () => {
+  await withQaPlacementFixture(async ({ root, config, env }) => {
+    env.HAPPIER_STACK_QA_DAEMON_TARGETS = 'linux3,linux2,linux1';
+    const probes = [];
+    const dependencies = {
+      runCaptureResult: async (_command, args) => {
+        const target = args.find(arg => arg.startsWith('--target='));
+        probes.push(target);
+        const memory = target === '--target=linux3' ? [14000000, 8000000]
+          : target === '--target=linux2' ? [10000000, 9000000] : [22000000, 7000000];
+        return { ok: true, out: `HSTACK_QA_HOST=${JSON.stringify({ platform: 'linux', arch: 'x64', remote: true,
+          availableMemoryKiB: memory[0], unreservedMemoryKiB: memory[1] })}\n`, err: '' };
+      }, logger: { warn() {} },
+    };
+    const initial = await placement.resolveControlledRuntimePlacement({ stackName: 'qa', sourceDir: '/repo', env }, dependencies);
+    assert.equal(initial.daemonTarget?.name, 'linux2');
+    const saved = JSON.parse(await readFile(join(root, 'qa', 'dev-targets.json'), 'utf8'));
+    assert.deepEqual(saved.runtimePlacement.daemon, { mode: 'prefer-target', target: 'linux2', fallback: 'local' });
+    assert.deepEqual(probes, ['--target=linux3', '--target=linux2', '--target=linux1']);
+    await writeJsonAtomic(join(root, 'producer', 'dev-targets.json'), { ...config, commandExecution: { mode: 'auto', targets: ['linux3'] } });
+    probes.length = 0;
+    await assert.rejects(placement.resolveControlledRuntimePlacement({ stackName: 'qa', sourceDir: '/repo', env }, {
+      ...dependencies, runCaptureResult: async (_command, args) => {
+        probes.push(args.find(arg => arg.startsWith('--target=')));
+        return { ok: false, exitCode: 255, err: 'unavailable' };
+      },
+    }), /daemon placement.*linux2.*unavailable/);
+    assert.deepEqual(probes, ['--target=linux2']);
+    assert.equal(JSON.parse(await readFile(join(root, 'qa', 'dev-targets.json'), 'utf8')).runtimePlacement.daemon.target, 'linux2');
+  });
+});
+
+test('new QA ranks every initial host without imposing a validation admission floor on Machine placement', async () => {
+  await withQaPlacementFixture(async ({ root, env }) => {
+    env.HAPPIER_STACK_QA_DAEMON_TARGETS = 'linux3,linux2';
+    const probes = [];
+    const result = await placement.resolveControlledRuntimePlacement({ stackName: 'qa', sourceDir: '/repo', env }, {
+      runCaptureResult: async (_command, args) => {
+        const target = args.find(arg => arg.startsWith('--target='));
+        probes.push(target);
+        return { ok: true, out: `HSTACK_QA_HOST=${JSON.stringify({ platform: 'linux', arch: 'x64', remote: true,
+          availableMemoryKiB: target === '--target=linux3' ? 1 : 1000000,
+          unreservedMemoryKiB: target === '--target=linux3' ? 1 : 1000000 })}\n`, err: '' };
+      }, logger: { warn() {} },
+    });
+    assert.equal(result.daemonTarget?.name, 'linux2');
+    assert.deepEqual(probes, ['--target=linux3', '--target=linux2']);
+    assert.equal(JSON.parse(await readFile(join(root, 'qa', 'dev-targets.json'), 'utf8')).runtimePlacement.daemon.target, 'linux2');
+  });
+});
+
+test('QA creation policy never overrides an explicit Machine or the producer and writes no pin without capacity', async () => {
+  await withQaPlacementFixture(async ({ root, config, env }) => {
+    env.HAPPIER_STACK_QA_DAEMON_TARGETS = 'linux3,linux2';
+    await writeJsonAtomic(join(root, 'qa', 'dev-targets.json'), { ...config,
+      runtimePlacement: { daemon: { mode: 'local' } } });
+    const noProbe = { runCaptureResult: async () => assert.fail('existing explicit Machine must not be selected again'), logger: { warn() {} } };
+    assert.equal((await placement.resolveControlledRuntimePlacement({ stackName: 'qa', sourceDir: '/repo', env }, noProbe)).daemonTarget, null);
+    assert.equal((await placement.resolveControlledRuntimePlacement({ stackName: 'producer', sourceDir: '/repo', env }, noProbe)).daemonTarget, undefined);
+    await assert.rejects(placement.resolveControlledRuntimePlacement({ stackName: 'no-capacity', sourceDir: '/repo', env }, {
+      runCaptureResult: async () => ({ ok: true, out: 'HSTACK_QA_HOST={"platform":"linux","arch":"x64","remote":true}\n', err: '' }), logger: { warn() {} },
+    }), /no QA daemon host.*no Machine pin was written/);
+    await assert.rejects(readFile(join(root, 'no-capacity', 'dev-targets.json')), { code: 'ENOENT' });
+  });
+});
+
+test('automatic QA placement cannot infer outer Windows disk health from a configured WSL guest', async () => {
+  await withQaPlacementFixture(async ({ root, config, env }) => {
+    const wsl = { ...config.targets[0], name: 'windows1-linux', managedRuntime: {
+      kind: 'wsl', instance: 'Happier', user: 'happier',
+      host: { kind: 'ssh', ssh: 'windows1', sshConfigFile: '/configured/windows1' },
+      capacity: { mode: 'shared', shared: { cpus: 12, memoryGiB: 12 }, dedicated: { cpus: 12, memoryGiB: 12 } },
+    } };
+    await writeJsonAtomic(join(root, 'producer', 'dev-targets.json'), { ...config, targets: [...config.targets, wsl] });
+    env.HAPPIER_STACK_QA_DAEMON_TARGETS = 'windows1-linux,linux3';
+    await assert.rejects(placement.resolveControlledRuntimePlacement({ stackName: 'qa', sourceDir: '/repo', env }, {
+      runCaptureResult: async () => ({ ok: true, out: 'HSTACK_QA_HOST={"platform":"linux","arch":"x64","remote":true,"unreservedMemoryKiB":14000000}\n', err: '' }),
+      logger: { warn() {} },
+    }), /outer Windows disk health.*no Machine pin was written/);
+    await assert.rejects(placement.resolveControlledQaBrowserTarget({ stackName: 'qa', sourceDir: '/repo', env }, {
+      runCaptureResult: async () => assert.fail('WSL guest capacity cannot establish outer Windows disk health'),
+      logger: { warn() {} },
+    }), /outer Windows disk health.*no browser host was selected/);
+    await assert.rejects(readFile(join(root, 'qa', 'dev-targets.json')), { code: 'ENOENT' });
   });
 });
 

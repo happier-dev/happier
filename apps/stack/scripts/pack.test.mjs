@@ -1744,6 +1744,7 @@ test('Plugin SDK declares its complete transitive internal runtime bundle closur
 
   assert.deepEqual(dirs, [
     'packages/agents',
+    'packages/brand',
     'packages/cli-common',
     'packages/plugin-sdk',
     'packages/protocol',

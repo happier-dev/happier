@@ -40,6 +40,26 @@ test('hstack stack new normalizes stack names across valid and punctuation-heavy
   }
 });
 
+test('new QA stacks request the dedicated hosts while normal stacks and existing QA retain their placement', async t => {
+  const fixture = await setupStackNewMonorepoFixture({ importMetaUrl: import.meta.url, t, tmpPrefix: 'hstack-qa-creation-' });
+  await fixture.createMonorepoCheckout('main', { includeServerPrisma: true });
+  for (const [name, options, enabled] of [
+    ['agent-qa-example', [], true], ['custom-qa', ['--qa'], true], ['normal-stack', [], false],
+  ]) {
+    const created = await fixture.runStackNew([name, ...options, '--no-copy-auth', '--json']);
+    assert.equal(created.code, 0, created.stderr);
+    const contents = await fixture.readStackEnv(name);
+    assert.equal(contents.includes('HAPPIER_STACK_QA_DAEMON_TARGETS=nl1,nl2,linux3,linux2,linux1\n'), enabled);
+    assert.doesNotMatch(contents, /^HAPPIER_STACK_QA_DAEMON_TARGETS=.*\bwindows1-linux\b/m,
+      'the disk-unhealthy Windows host is not a default QA candidate');
+    assert.equal(contents.includes('HAPPIER_STACK_RUNTIME_MODE=source-snapshot\n'), enabled);
+  }
+  const before = await fixture.readStackEnv('normal-stack');
+  const retained = await fixture.runStackNew(['normal-stack', '--qa', '--if-missing', '--json']);
+  assert.equal(retained.code, 0, retained.stderr);
+  assert.equal(await fixture.readStackEnv('normal-stack'), before, 'creation defaults never retrofit an existing Machine');
+});
+
 test('hstack stack new does not prompt in a TTY when controlled flags are complete', async (t) => {
   const fixture = await setupStackNewMonorepoFixture({
     importMetaUrl: import.meta.url,

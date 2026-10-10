@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { dirname, isAbsolute, posix, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { shouldDelegateToActiveExecutionHost } from './controller.mjs';
 import { mapHostCwdToGuest, resolveHostWorkspaceMapping, runDelegatedHstackCommand } from './delegation.mjs';
@@ -72,9 +73,14 @@ export async function runExecutionHostBridge({
   }
   const shouldDelegate = shouldDelegateToActiveExecutionHost({ profile, argv, platform, env });
   if (!shouldDelegate) {
+    // The predecessor has no VM/primary owner. Its adapter reaches this shared
+    // controller, so keep profile management here instead of re-entering 0.2.
+    const controllerCommand = argv[0] === 'dev-vm';
     const outcome = await runForegroundChild({
       command: process.execPath,
-      args: [entrypoint, ...argv],
+      args: controllerCommand
+        ? [fileURLToPath(new URL('../../host.mjs', import.meta.url)), ...argv.slice(1)]
+        : [entrypoint, ...argv],
       options: {
         cwd,
         env: { ...env, HAPPIER_STACK_EXECUTION_HOST_ADAPTER_REENTRY: '1' },

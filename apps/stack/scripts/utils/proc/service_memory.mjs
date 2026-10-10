@@ -6,25 +6,21 @@ import { resolveHeavyweightPressureRetryMilliseconds } from '../dev_targets/heav
 
 import { expandHome } from '../paths/canonical_home.mjs';
 import { resolveStackBaseDir } from '../paths/paths.mjs';
+// The dependency-free source owner is available before workspace bootstrap.
+import { readProcessInstanceFingerprintSync } from '../../../../../packages/cli-common/processInstance.mjs';
 
 const SERVICE_PROCESS_KEYS = [
-  'serverPid', 'serverWrapperPid', 'proxyPid', 'serverBackendPid', 'serverDrainingPid', 'expoPid',
+  'serverPid', 'serverWrapperPid', 'proxyPid', 'serverBackendPid', 'serverDrainingPid', 'expoPid', 'daemonPid',
 ];
 const OBSERVED_ENVIRONMENT_KEYS = new Set([
   'HOME', 'HAPPIER_STACK_STACK', 'HAPPIER_STACK_ENV_FILE', 'HAPPIER_STACK_STORAGE_DIR',
+  'HAPPIER_STACK_PROCESS_KIND',
   'HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT', 'HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN',
 ]);
-const nativeIdentityPath = fileURLToPath(new URL('./native_process_identity.sh', import.meta.url));
 const runtimeAdmissionPhases = ['awaiting-runtime-request', 'building-runtime'];
 
 function readLinuxProcessFingerprintSync(pid) {
-  // Admission runs before dependency bootstrap. Its existing native owner
-  // supplies the kernel start token without importing a workspace package.
-  const identity = spawnSync('/bin/sh', ['-c', '. "$1"; heavyweight_process_token "$2"',
-    'worker-process-identity', nativeIdentityPath, String(pid)], { encoding: 'utf8' });
-  if (identity.error || identity.status !== 0) return null;
-  const token = identity.stdout.trim();
-  return /^\d+$/.test(token) ? `linux-proc:${token}` : null;
+  return readProcessInstanceFingerprintSync(pid, { platform: 'linux' });
 }
 
 function readJson(path) {
@@ -86,9 +82,9 @@ export function writeRuntimeAdmissionPhase(phase, env = process.env) {
 }
 
 /** One account-visible OS snapshot, never a persisted PID registry. */
-export function readLinuxWorkerProcesses() {
+export function readLinuxWorkerProcesses({ readSmapsRollup = path => readFileSync(path, 'utf8') } = {}) {
   const processes = new Map();
-  const metadata = spawnSync('ps', ['-e', '-o', 'pid=,ppid=,rss=,etimes=,times='], { encoding: 'utf8' });
+  const metadata = spawnSync('ps', ['-u', String(process.getuid()), '-o', 'pid=,ppid=,rss=,etimes=,times='], { encoding: 'utf8' });
   if (metadata.error || metadata.status !== 0) throw new Error('worker process memory observation is unavailable');
   const generationPids = new Set();
   for (const line of metadata.stdout.split('\n')) {
@@ -109,7 +105,29 @@ export function readLinuxWorkerProcesses() {
     const token = /^(\d+):(\d+)$/.exec(String(env.HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN ?? ''));
     if (token) generationPids.add(Number(token[1]));
     if (env.HAPPIER_STACK_ENV_FILE && env.HAPPIER_STACK_STACK) generationPids.add(pid);
-    processes.set(pid, { pid, parentPid: Number(row[2]), rssKiB: Number(row[3]), ageSeconds: Number(row[4]), cpuSeconds: Number(row[5]), fingerprint: null, env });
+    let pssKiB;
+    processes.set(pid, { pid, parentPid: Number(row[2]), rssKiB: Number(row[3]), ageSeconds: Number(row[4]), cpuSeconds: Number(row[5]), fingerprint: null, env,
+      // Only accounted trees need smaps; identity/CPU observers and unrelated
+      // host processes must not pay for a system-wide page-table walk.
+      get pssKiB() {
+        if (pssKiB === undefined) {
+          try {
+            const value = /^Pss:\s+(\d+)\s+kB\s*$/m.exec(readSmapsRollup(`/proc/${pid}/smaps_rollup`));
+            pssKiB = value && Number.isSafeInteger(Number(value[1])) ? Number(value[1]) : null;
+          } catch (error) {
+            // A vanished descendant consumes no memory. An existing process
+            // with an unreadable/unsupported rollup still uses conservative RSS.
+            pssKiB = null;
+            if (error.code === 'ENOENT' || error.code === 'ESRCH') {
+              try { readFileSync(`/proc/${pid}/stat`, 'utf8'); } catch (statError) {
+                if (statError.code === 'ENOENT' || statError.code === 'ESRCH') pssKiB = 0;
+              }
+            }
+          }
+        }
+        return pssKiB;
+      },
+    });
   }
   // Check generations only for actual positive bindings, not every unrelated
   // descendant or host process. Service roots below may be untagged listeners.
@@ -122,10 +140,14 @@ export function readLinuxWorkerProcesses() {
 
 function readServiceRoots(processes) {
   const scopes = new Map();
+  const bindings = new Map();
   for (const { env } of processes.values()) {
     const stackName = String(env.HAPPIER_STACK_STACK ?? '').trim();
     const envFile = expandHome(env.HAPPIER_STACK_ENV_FILE ?? '', env);
     if (!stackName || !isAbsolute(envFile)) continue;
+    bindings.set(JSON.stringify([stackName, envFile, env.HOME, env.HAPPIER_STACK_STORAGE_DIR]), { stackName, envFile, env });
+  }
+  for (const { stackName, envFile, env } of bindings.values()) {
     // Runtime state uses the canonical storage owner; the env-file directory
     // also covers existing explicit worker state bound directly to that file.
     for (const base of [resolveStackBaseDir(stackName, env).baseDir, dirname(envFile)]) {
@@ -161,6 +183,10 @@ function readServiceRoots(processes) {
         const fingerprint = instance?.pid === Number(pid) ? instance.fingerprint : null;
         accept(pid, fingerprint, base, stackNames);
       }
+      for (const pid of state.processes?.daemonPids ?? []) {
+        const instance = state.processInstances?.processes?.daemonPids?.find(value => value.pid === Number(pid));
+        accept(pid, instance?.fingerprint, base, stackNames);
+      }
     }
     // Standalone mobile/Expo has the same existing canonical PID writer but
     // may have no stack.runtime.json entry. Do not probe Metro over the network.
@@ -174,6 +200,12 @@ function readServiceRoots(processes) {
       }
     }
   }
+  for (const process of processes.values()) {
+    const { env } = process;
+    const envFile = expandHome(env.HAPPIER_STACK_ENV_FILE ?? '', env);
+    if (env.HAPPIER_STACK_PROCESS_KIND !== 'browser' || !env.HAPPIER_STACK_STACK || !isAbsolute(envFile)) continue;
+    accept(process.pid, null, canonicalPath(dirname(envFile)), new Set([env.HAPPIER_STACK_STACK]));
+  }
   return roots;
 }
 
@@ -183,7 +215,7 @@ function readLegacyOwners(processes, admissionRoot) {
   for (const { env } of processes.values()) {
     const root = String(env.HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT ?? '');
     const token = /^(\d+):(\d+)$/.exec(String(env.HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN ?? ''));
-    if (!isAbsolute(root) || !token || canonicalPath(root) === currentRoot) continue;
+    if (!isAbsolute(root) || !token || root === admissionRoot || canonicalPath(root) === currentRoot) continue;
     const pid = Number(token[1]);
     const start = token[2];
     const identity = `${pid}:${start}:${canonicalPath(root)}`;
@@ -214,7 +246,7 @@ function processTreePids(roots, children) {
   return pids;
 }
 
-function readAdmittedOwnerRss(processes, admissionRoot, legacyOwners, children, progress) {
+function readAdmittedOwnerRss(processes, admissionRoot, legacyOwners, children, progress, memoryKiB) {
   const owners = new Map();
   const accept = (pid, token, className, phase) => {
     const current = processes.get(pid);
@@ -265,7 +297,7 @@ function readAdmittedOwnerRss(processes, admissionRoot, legacyOwners, children, 
     let rssKiB = 0;
     let available = true;
     for (const pid of pids) {
-      const rss = processes.get(pid)?.rssKiB;
+      const rss = memoryKiB(pid);
       if (!Number.isSafeInteger(rss) || rss < 0) { available = false; break; }
       rssKiB += rss;
     }
@@ -287,9 +319,17 @@ function readAdmittedOwnerRss(processes, admissionRoot, legacyOwners, children, 
 }
 
 export function readWorkerMemoryReservations({ admissionRoot, readProcesses = readLinuxWorkerProcesses, includeAdmittedRss = false,
-  includeOwnerProgress = false, previousProgress = null, nowMs = Date.now() }) {
+  includeOwnerProgress = false, previousProgress = null, nowMs = Date.now(), serviceMemoryCeilingKiB = null }) {
   if (!admissionRoot) throw new Error('canonical host admission root is required');
   const processes = readProcesses();
+  const rssFallbackPids = new Set();
+  const memoryKiB = pid => {
+    const record = processes.get(pid);
+    const pss = record?.pssKiB;
+    if (Number.isSafeInteger(pss) && pss >= 0) return pss;
+    rssFallbackPids.add(pid);
+    return record?.rssKiB;
+  };
   const roots = readServiceRoots(processes);
   const children = new Map();
   for (const record of processes.values()) {
@@ -297,15 +337,27 @@ export function readWorkerMemoryReservations({ admissionRoot, readProcesses = re
     children.get(record.parentPid).push(record.pid);
   }
   const servicePids = processTreePids(roots, children);
+  const serviceRssUpperBound = [...servicePids].reduce((sum, pid) => sum + processes.get(pid)?.rssKiB, 0);
+  // The native budget supplies total - max(available, class floor). If even
+  // summed RSS fits that envelope, exact PSS cannot constrain either available
+  // memory or physical class capacity. Otherwise retain exact proportional
+  // accounting. Admitted credits below always use PSS, never this upper bound.
   let serviceRssKiB = 0;
-  for (const pid of servicePids) serviceRssKiB += processes.get(pid).rssKiB;
+  if (Number.isSafeInteger(serviceMemoryCeilingKiB) && serviceMemoryCeilingKiB >= 0
+    && Number.isSafeInteger(serviceRssUpperBound) && serviceRssUpperBound >= 0
+    && serviceRssUpperBound <= serviceMemoryCeilingKiB) {
+    serviceRssKiB = serviceRssUpperBound;
+  } else {
+    for (const pid of servicePids) serviceRssKiB += memoryKiB(pid);
+  }
   const legacyOwners = readLegacyOwners(processes, admissionRoot);
   const ownerProgress = { sampledAtMs: nowMs, owners: [] };
   const admittedOwners = includeAdmittedRss || includeOwnerProgress
     ? readAdmittedOwnerRss(processes, admissionRoot, legacyOwners, children,
-      includeOwnerProgress ? { sample: ownerProgress, previous: previousProgress } : null) : [];
+      includeOwnerProgress ? { sample: ownerProgress, previous: previousProgress } : null, memoryKiB) : [];
   return {
     serviceRssKiB, servicePids: [...servicePids], legacyOwners,
+    rssFallbackPids: [...rssFallbackPids],
     ...(includeAdmittedRss ? { admittedOwners } : {}),
     ...(includeOwnerProgress ? { ownerProgress } : {}),
   };
@@ -322,6 +374,27 @@ export function renderAdmissionOwnerProgress(progress) {
   return progress.owners.map(owner => `${owner.className} owner pid ${owner.pid} (age=${owner.ageSeconds ?? 'unknown'}s, phase=${owner.phase ?? 'unknown'}, recent CPU=${owner.recentCpuPercent === null ? 'unknown' : '~' + owner.recentCpuPercent.toFixed(1) + '%'}, tree CPU=${owner.cpuSeconds ?? 'unknown'}s)`).join('; ');
 }
 
+function readNativeCallerServiceMemoryCeiling() {
+  // Already-running native wrappers still call the old observer argv. Read
+  // their actual class through the existing native policy, not a second table,
+  // so they benefit immediately without restarting anybody else's operation.
+  try {
+    const caller = readFileSync(`/proc/${process.ppid}/cmdline`, 'utf8').split('\0');
+    if (!caller.some(value => value.endsWith('/hstack-exec'))) return null;
+    const className = caller.find(value => value.startsWith('--class='))?.slice('--class='.length);
+    if (!className) return null;
+    const policy = spawnSync('/bin/sh', ['-c', '. "$1"; heavyweight_memory_floor_kib "$2" local',
+      'admission-memory-policy', fileURLToPath(new URL('../dev_targets/native_command_policy.sh', import.meta.url)), className], { encoding: 'utf8' });
+    if (policy.error || policy.status !== 0) return null;
+    const floor = Number(policy.stdout);
+    const memory = readFileSync('/proc/meminfo', 'utf8');
+    const total = Number(/^MemTotal:\s+(\d+)/m.exec(memory)?.[1]);
+    const available = Number(/^MemAvailable:\s+(\d+)/m.exec(memory)?.[1]);
+    if (![floor, total, available].every(value => Number.isSafeInteger(value) && value >= 0)) return null;
+    return total - Math.max(available, floor);
+  } catch { return null; }
+}
+
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   const argument = process.argv.slice(2).find(value => value.startsWith('--admission-root='));
   const status = process.argv.includes('--admission-status');
@@ -331,6 +404,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
     const root = argument?.slice('--admission-root='.length) ?? spawnSync('/bin/sh', ['-c', '. "$1"; printf "%s" "$native_host_admission_root"',
       'admission-observation', fileURLToPath(new URL('./native_host_admission_state.sh', import.meta.url))], { encoding: 'utf8' }).stdout?.trim();
     const includeOwnerProgress = status || process.argv.includes('--include-owner-progress');
+    const serviceCeiling = process.argv.slice(2).find(value => value.startsWith('--service-memory-ceiling-kib='));
     let previousProgress = null;
     if (includeOwnerProgress && !status) {
       try { previousProgress = JSON.parse(readFileSync(0, 'utf8')); } catch { /* First observation has no prior CPU sample. */ }
@@ -339,6 +413,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
       admissionRoot: root,
       includeAdmittedRss: process.argv.includes('--include-admitted-rss'),
       includeOwnerProgress, previousProgress,
+      serviceMemoryCeilingKiB: serviceCeiling ? Number(serviceCeiling.slice('--service-memory-ceiling-kib='.length)) : readNativeCallerServiceMemoryCeiling(),
     });
     if (status) {
       if (sample.ownerProgress.owners.length) {
@@ -354,5 +429,6 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
       }
       process.stdout.write(JSON.stringify({ state: 'observed', ...sample.ownerProgress, ...(disk ? { disk } : {}) }) + '\n');
     } else process.stdout.write(renderWorkerMemoryReservationRows(sample));
+    if (sample.rssFallbackPids.length) process.stderr.write(`[preferred-execution] PSS unavailable; using RSS for accounted PIDs: ${sample.rssFallbackPids.join(',')}\n`);
   }
 }

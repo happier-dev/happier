@@ -1,5 +1,12 @@
 import { relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { resolveWorkspaceBuildMode, WORKSPACE_BUILD_MODE_ENV } from '../../../../../scripts/workspaces/workspaceChildBuildEnv.mjs';
+
+function resolvePreparationEnv(env, validationKind) {
+  return { ...env, [WORKSPACE_BUILD_MODE_ENV]: resolveWorkspaceBuildMode({
+    buildMode: env[WORKSPACE_BUILD_MODE_ENV] ?? (validationKind === 'runtime' ? 'source-dev' : 'strict'), env,
+  }) };
+}
 
 function resolveComponentDir(repoDir, componentRelativeDir) {
   const repositoryRoot = resolve(repoDir);
@@ -29,6 +36,7 @@ export async function prepareRemoteValidationWorkspace({
   if (validationKind === 'source-test') {
     return { ok: true, built: [], skipped: ['workspace-source-test'] };
   }
+  env = resolvePreparationEnv(env, validationKind);
   const livePluginHost = normalizedComponentPath === 'apps/cli' || normalizedComponentPath === 'apps/ui';
   const buildOptions = { env, ...(livePluginHost ? { isolatePluginFailures: true } : {}) };
 
@@ -96,7 +104,7 @@ if (entryPath && pathToFileURL(resolve(entryPath)).href === import.meta.url) {
     if (kind !== 'source-test') {
       // The selected checkout owns its package graph and emitted output.
       const { ensureWorkspacePackagesBuiltForComponent } = await import(pathToFileURL(resolve(repoDir, 'scripts/workspaces/ensureWorkspacePackagesBuilt.mjs')).href);
-      await ensureWorkspacePackagesBuiltForComponent(resolveComponentDir(repoDir, readComponentRelativeDir(process.argv.slice(2))).componentDir, { env: process.env });
+      await ensureWorkspacePackagesBuiltForComponent(resolveComponentDir(repoDir, readComponentRelativeDir(process.argv.slice(2))).componentDir, { env: resolvePreparationEnv(process.env, kind) });
     }
   } else {
     await prepareRemoteValidationWorkspace({

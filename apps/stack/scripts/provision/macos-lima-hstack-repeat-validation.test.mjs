@@ -11,6 +11,7 @@ import { createLimaTestEnv, limaGuestExec } from '../testkit/core/lima_guest_har
 const testEnv = createLimaTestEnv();
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
+const pinnedBunVersion = (await readFile(new URL('./.bun-version', import.meta.url), 'utf8')).trim();
 
 async function fileExists(path) {
   try {
@@ -76,6 +77,9 @@ test('macos lima repeat-validation wrapper records per-run artifacts for repeate
       '  exit 2',
       'fi',
       'case "$url" in',
+      '  */.bun-version)',
+      `    printf '%s\\n' ${JSON.stringify(pinnedBunVersion)} > "$out"`,
+      '    ;;',
       '  *linux-ubuntu-provision.sh)',
       '    cat >"$out" <<\'EOF\'',
       '#!/usr/bin/env bash',
@@ -141,7 +145,12 @@ test('macos lima repeat-validation wrapper records per-run artifacts for repeate
       '    if [[ "${1:-}" == "--" ]]; then',
       '      shift',
       '    fi',
+      '    if [[ "${1:-}" == "env" ]]; then',
+      '      shift',
+      '      while [[ "${1:-}" == *=* ]]; do export "$1"; shift; done',
+      '    fi',
       '    if [[ "${1:-}" == "bash" && "${2:-}" == "-s" ]]; then',
+      '      [[ "${HAPPIER_PROVISION_BUN_VERSION:-}" == ' + JSON.stringify(pinnedBunVersion) + ' ]] || exit 79',
       '      cat >/dev/null',
       '      echo "provision ${*:3}"',
       '      exit 0',
@@ -263,6 +272,9 @@ test('macos lima repeat-validation wrapper writes summary.json with failureReaso
       '  exit 2',
       'fi',
       'case "$url" in',
+      '  */.bun-version)',
+      `    printf '%s\\n' ${JSON.stringify(pinnedBunVersion)} > "$out"`,
+      '    ;;',
       '  *linux-ubuntu-provision.sh)',
       '    cat >"$out" <<\'EOF\'',
       '#!/usr/bin/env bash',
@@ -322,11 +334,6 @@ test('macos lima repeat-validation wrapper writes summary.json with failureReaso
       '    # Fail closed on the second run by inspecting the injected HSTACK_SMOKE_DIR.',
       '    while [[ $# -gt 0 && "$1" != "--" ]]; do shift; done',
       '    if [[ "${1:-}" == "--" ]]; then shift; fi',
-      '    if [[ "${1:-}" == "bash" && "${2:-}" == "-s" ]]; then',
-      '      cat >/dev/null',
-      '      echo "provision ${*:3}"',
-      '      exit 0',
-      '    fi',
       '    if [[ "${1:-}" == "env" ]]; then',
       '      shift',
       '      while [[ $# -gt 0 && "$1" == *=* ]]; do',
@@ -337,6 +344,12 @@ test('macos lima repeat-validation wrapper writes summary.json with failureReaso
       '        echo "forced failure for run 02" >&2',
       '        exit 42',
       '      fi',
+      '    fi',
+      '    if [[ "${1:-}" == "bash" && "${2:-}" == "-s" ]]; then',
+      '      [[ "${HAPPIER_PROVISION_BUN_VERSION:-}" == ' + JSON.stringify(pinnedBunVersion) + ' ]] || exit 79',
+      '      cat >/dev/null',
+      '      echo "provision ${*:3}"',
+      '      exit 0',
       '    fi',
       limaGuestExec,
       '    ;;',

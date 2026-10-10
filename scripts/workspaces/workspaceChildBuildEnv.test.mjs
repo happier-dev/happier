@@ -12,6 +12,8 @@ test('workspace child builds do not inherit the parent package staged output dir
     Happier_Workspace_Dist_Build_Lock_Held: 'mixed-case-parent-lease',
     HAPPIER_WORKSPACE_PACKAGE_PREREQUISITES_READY: '1',
     Happier_Workspace_Package_Prerequisites_Ready: '1',
+    HAPPIER_WORKSPACE_DIST_CHECK_ONLY: '1',
+    Happier_Workspace_Dist_Check_Only: '1',
   };
 
   const childEnv = createWorkspaceChildBuildEnv({
@@ -26,6 +28,8 @@ test('workspace child builds do not inherit the parent package staged output dir
   assert.equal(childEnv.Happier_Workspace_Dist_Build_Lock_Held, undefined);
   assert.equal(childEnv.HAPPIER_WORKSPACE_PACKAGE_PREREQUISITES_READY, undefined);
   assert.equal(childEnv.Happier_Workspace_Package_Prerequisites_Ready, undefined);
+  assert.equal(childEnv.HAPPIER_WORKSPACE_DIST_CHECK_ONLY, undefined);
+  assert.equal(childEnv.Happier_Workspace_Dist_Check_Only, undefined);
   assert.equal(parentEnv.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, '/repo/packages/plugin-sdk/.dist.parent-stage');
   assert.equal(
     parentEnv.Happier_Workspace_Dist_Output_Dir,

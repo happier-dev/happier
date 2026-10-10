@@ -33,7 +33,8 @@ export async function resolveStackDaemonCommandContext({
 }) {
   const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv, env, activeRuntimeState });
   const runtimeSnapshot = runtimeLaunchContext.snapshot;
-  const cliLaunchSpec = runtimeSnapshot ? resolveCliRuntimeLaunchSpec({ snapshot: runtimeSnapshot }) : null;
+  const cliLaunchSpec = runtimeLaunchContext.cliLaunchSpec
+    ?? (runtimeSnapshot ? resolveCliRuntimeLaunchSpec({ snapshot: runtimeSnapshot }) : null);
   const cliDir = cliLaunchSpec?.cliDir ?? getComponentDir(rootDir, 'happier-cli', env);
   const cliBin = join(cliDir, 'bin', 'happier.mjs');
   const cliEntrypoint = cliLaunchSpec?.entrypoint ?? '';

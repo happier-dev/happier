@@ -5,6 +5,7 @@ set -euo pipefail
 #
 # Intended usage (inside a VM):
 #   curl -fsSL https://raw.githubusercontent.com/happier-dev/happier/main/apps/stack/scripts/provision/linux-ubuntu-provision.sh -o /tmp/linux-ubuntu-provision.sh \
+#     && curl -fsSL https://raw.githubusercontent.com/happier-dev/happier/main/apps/stack/scripts/provision/.bun-version -o /tmp/.bun-version \
 #     && chmod +x /tmp/linux-ubuntu-provision.sh \
 #     && /tmp/linux-ubuntu-provision.sh --profile=happier
 #
@@ -123,4 +124,3 @@ hstack --sandbox-dir "$SANDBOX_DIR" stop --yes --aggressive --sweep-owned --no-s
 
 say "done"
 echo "[smoke] ok"
-

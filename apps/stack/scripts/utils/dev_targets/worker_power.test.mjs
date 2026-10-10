@@ -7,8 +7,33 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { join } from 'node:path';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
-import { buildWorkerPowerScript, buildRemoteWorkerPowerCommand } from './worker_power.mjs';
+import { buildWorkerPowerScript, buildRemoteWorkerPowerCommand, configureDevTargetPower } from './worker_power.mjs';
+import { writeFakeBin } from '../../testkit/core/fake_bin_harness.mjs';
 const execute = promisify(execFile);
+
+test('power configuration needs no privilege when Linux sleep targets are already masked', async t => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-power-already-masked-' });
+  const state = join(root, 'state');
+  await writeFile(state, 'masked');
+  const { binDir } = writeFakeBin({ root, name: 'ssh', content: '#!/usr/bin/env bash\nexec /bin/sh -c "${@: -1}"\n' });
+  writeFakeBin({ root, name: 'uname', content: '#!/bin/sh\necho Linux\n' });
+  writeFakeBin({ root, name: 'id', content: '#!/bin/sh\necho 1000\n' });
+  writeFakeBin({ root, name: 'systemctl', content: '#!/bin/sh\nif [ "$1" = is-enabled ]; then cat "$TEST_POWER_STATE"; elif [ "$1" = mask ]; then echo masked > "$TEST_POWER_STATE"; else exit 9; fi\n' });
+  writeFakeBin({ root, name: 'sudo', content: '#!/bin/sh\n[ "${TEST_ALLOW_ROOT:-0}" = 1 ] || { echo "sudo: authentication required" >&2; exit 23; }\n[ "$1" = -n ] || exit 9\nshift\nexec "$@"\n' });
+  const env = { ...process.env, PATH: `${binDir}:${process.env.PATH}`, TEST_POWER_STATE: state };
+  const target = { name: 'linux', platform: 'posix', ssh: 'fixture-worker' };
+  const healthy = await configureDevTargetPower({ target, env });
+  assert.ok(healthy.every(result => result.ok), JSON.stringify(healthy));
+  await writeFile(state, 'enabled');
+  const denied = await configureDevTargetPower({ target, env });
+  assert.equal(denied[0].ok, false);
+  assert.match(denied[0].detail, /authentication required/);
+  const configured = await configureDevTargetPower({ target, env: { ...env, TEST_ALLOW_ROOT: '1' } });
+  assert.ok(configured.every(result => result.ok), JSON.stringify(configured));
+  assert.equal((await readFile(state, 'utf8')).trim(), 'masked');
+  const repeated = await configureDevTargetPower({ target, env });
+  assert.ok(repeated.every(result => result.ok), JSON.stringify(repeated));
+});
 
 for (const os of ['Darwin', 'Linux']) {
   test(`worker power configuration prevents system sleep on ${os}`, { skip: process.platform === 'win32' }, async (t) => {

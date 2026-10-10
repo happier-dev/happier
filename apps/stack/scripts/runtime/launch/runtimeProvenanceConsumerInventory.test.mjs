@@ -17,9 +17,12 @@ async function collectProductionModules(root) {
 test('every production runtime CLI launch-spec consumer preserves canonical provenance', async () => {
   const scriptsDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
   const ownerPath = join(scriptsDir, 'runtime', 'launch', 'resolveCliRuntimeLaunchSpec.mjs');
+  // The context builder returns a spec; launching consumers below own its
+  // environment projection and are the provenance-preserving boundary.
+  const contextPath = join(scriptsDir, 'runtime', 'launch', 'resolveStackRuntimeLaunchContext.mjs');
   const omissions = [];
   for (const path of await collectProductionModules(scriptsDir)) {
-    if (path === ownerPath) continue;
+    if (path === ownerPath || path === contextPath) continue;
     const source = await readFile(path, 'utf8');
     if (!source.includes('resolveCliRuntimeLaunchSpec(')) continue;
     if (!source.includes('resolveCliRuntimeLaunchProvenance(') && !source.includes('applyCliRuntimeLaunchProvenanceEnv(')) {

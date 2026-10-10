@@ -370,7 +370,7 @@ test('remote daemon placement scopes generated plugin preparation to dependent t
   );
 });
 
-test('remote daemon preparation uses the same automatic runtime publisher as local daemon refresh', async () => {
+test('source development reloads never request native runtime publication', async () => {
   const source = await readFile(join(scriptsDir, 'dev.mjs'), 'utf-8');
 
   assert.match(
@@ -378,15 +378,10 @@ test('remote daemon preparation uses the same automatic runtime publisher as loc
     /const daemonRefreshExecutor = daemonReloadEnabled[\s\S]*?: remoteWorkspacePreparationExecutor;/u,
     'local activation and remote preparation must select one daemon refresh executor',
   );
-  assert.match(
-    source,
-    /wrapReloadExecutorWithRuntimeSnapshotPublication\(\{\s*executor: daemonRefreshExecutor,/u,
-    'the selected daemon refresh executor must enter the one canonical runtime publisher',
-  );
   assert.doesNotMatch(
     source,
-    /reloadExecutors\.push\(remoteWorkspacePreparationExecutor\)/u,
-    'remote placement must not bypass automatic daemon publication',
+    /runtimeSnapshotPublisher|runtimePublicationController|requestRuntimePublication|runtime-publication:/u,
+    'source refresh/readiness must not construct an undemanded native QA representation',
   );
 });
 
@@ -441,25 +436,6 @@ test('dev publishes a configured remote Expo service in its initial runtime decl
   );
 });
 
-test('dev gives runtime publication the canonical repository root', async () => {
-  const source = await readFile(join(scriptsDir, 'dev.mjs'), 'utf-8');
-
-  assert.match(
-    source,
-    /const repoDir = getRepoDir\(rootDir, baseEnv\);/u,
-    'the Stack package root must be normalized through the canonical repository resolver',
-  );
-  assert.match(
-    source,
-    /createRepositoryRuntimePublicationController\(\{[\s\S]*?rootDir: repoDir,/u,
-    'the runtime publisher must receive the repository root rather than apps/stack',
-  );
-  assert.match(
-    source,
-    /createRuntimeSnapshotPublicationReloadDescriptors\(\{ repoDir \}\)/u,
-    'runtime reload descriptors must resolve CLI inputs from the repository root',
-  );
-});
 
 test('one full CLI admission owns every shared workspace build exactly once', async (t) => {
   const cliPackageJson = JSON.parse(await readFile(join(repoRoot, 'apps', 'cli', 'package.json'), 'utf8'));

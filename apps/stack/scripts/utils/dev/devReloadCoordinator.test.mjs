@@ -11,7 +11,6 @@ import {
 } from './devReloadCoordinator.mjs';
 import { watchDebounced } from '../proc/watch.mjs';
 import { createHappyCliReloadDescriptors } from './daemon.mjs';
-import { createRuntimeSnapshotPublicationReloadDescriptors } from './runtimeSnapshotPublisher.mjs';
 import { createDevServerReloadDescriptors } from './server.mjs';
 
 test('reload coordinator watches and samples only inputs with an active consumer', async (t) => {
@@ -76,7 +75,6 @@ test('overlapping reload consumers share one filesystem sweep and observe subseq
     descriptors: [
       ...createHappyCliReloadDescriptors({ cliDir }),
       ...createDevServerReloadDescriptors({ serverDir }),
-      ...createRuntimeSnapshotPublicationReloadDescriptors({ repoDir: root }),
     ],
     executors: [executor('server', reloads), executor('daemon', reloads)],
     logger: { log() {}, warn() {}, error() {} },

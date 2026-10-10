@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 import { killProcessTree, spawnProc } from '../proc/proc.mjs';
 import { inspectDevTargetSync, runDevTargetCommand } from './executor.mjs';
@@ -21,7 +21,6 @@ import {
   ensureDevTargetSyncProject,
   flushDevTargetSync,
   INDEPENDENT_DEV_TARGET_SYNC_OWNER,
-  prepareDevTargetOpenSsh,
   releaseIndependentDevTargetSyncProject,
   runDevTargetControlProcess,
 } from './sync_project.mjs';
@@ -60,7 +59,7 @@ async function defaultResumeSync({ target, env }) {
   const result = await spawnProc(
     `sync:${target.name}`,
     'mutagen',
-    ['sync', 'resume', resolveMutagenSessionName(target.name)],
+    ['sync', 'resume', resolveMutagenSessionName(target.name, env?.HAPPIER_STACK_SYNC_SOURCE_DIR)],
     env,
   ).completion;
   if (result?.code !== 0) {
@@ -78,18 +77,12 @@ function assertUsableStatus(target, status) {
 }
 
 async function defaultEnsureReplicaRoots({ targets, stackBaseDir, env }) {
-  const runtime = resolveDevTargetMutagenRuntime({ stackBaseDir, env });
-  const openSsh = await prepareDevTargetOpenSsh({
-    targets,
-    mutagenDir: runtime.mutagenDir,
-    env,
-  });
   await Promise.all(targets.map(async (target) => {
     const result = await runDevTargetControlProcess({
       label: `remote:${target.name}`,
       command: 'ssh',
       args: [
-        ...openSsh.sshArgs,
+        ...(target.sshConfigFile ? ['-F', target.sshConfigFile] : []),
         '-o',
         'BatchMode=yes',
         target.ssh,
@@ -155,8 +148,8 @@ export async function repairRecoverableDevTargetSyncConflicts(
       );
     }
   }
-  const runtime = resolveDevTargetMutagenRuntime({ stackBaseDir, env });
-  const sessionName = resolveMutagenSessionName(target.name);
+  const runtime = resolveDevTargetMutagenRuntime({ stackBaseDir, sourceDir, env });
+  const sessionName = resolveMutagenSessionName(target.name, runtime.sourceDir);
   for (const action of ['reset', 'flush']) {
     const result = await runControl({
       label: `sync:${target.name}`,
@@ -217,6 +210,10 @@ export async function startDevTargetSyncService(
   if (!Array.isArray(targets) || targets.length === 0) {
     throw new Error('[dev-targets] no targets are configured for synchronization');
   }
+  if (basename(stackBaseDir).startsWith('agent-qa')) {
+    throw new Error('[dev-targets] QA stacks consume shared synchronization; start sync-service through the routing producer');
+  }
+  env = { ...env, HAPPIER_STACK_SYNC_SOURCE_DIR: sourceDir };
   await Promise.all(targets.map(async (target) => {
     await startTargetRuntime({ target, env });
   }));
@@ -278,7 +275,7 @@ export async function startDevTargetSyncService(
   if (failedPreparation !== -1) throw statusResults[failedPreparation].reason;
   const statuses = statusResults.map((result) => result.value);
   const targetBySession = new Map(
-    targets.map((target) => [resolveMutagenSessionName(target.name), target]),
+    targets.map((target) => [resolveMutagenSessionName(target.name, sourceDir), target]),
   );
   const recoveryByTarget = new Map();
   const scheduleConflictRecovery = ({ sessionName, conflictCount }) => {
@@ -309,7 +306,7 @@ export async function startDevTargetSyncService(
     : spawnMonitor({
         command: 'mutagen',
         args: buildMutagenMonitorArgs(
-          targets.map((target) => resolveMutagenSessionName(target.name)),
+          targets.map((target) => resolveMutagenSessionName(target.name, sourceDir)),
         ),
         lineFilter: createMutagenMonitorLineFilter({ onStateChange: scheduleConflictRecovery }),
         env: project.env,
@@ -321,6 +318,7 @@ export async function startDevTargetSyncService(
 // project owner without a monitor or spontaneous source propagation. Seed new
 // sessions once; every later command crosses the launcher's selected barrier.
 export async function prepareDevTargetCommandSync({ stackBaseDir, sourceDir, targets, env = process.env }) {
+  env = { ...env, HAPPIER_STACK_SYNC_SOURCE_DIR: sourceDir };
   const runtime = resolveDevTargetMutagenRuntime({ stackBaseDir, env });
   const desired = await readFile(runtime.projectFile, 'utf8').catch(() => null);
   const config = JSON.parse(await readFile(join(stackBaseDir, 'dev-targets.json'), 'utf8'));
@@ -386,16 +384,19 @@ export async function stopDevTargetSyncService(
   { stackBaseDir, env = process.env },
   { releaseProject = releaseIndependentDevTargetSyncProject } = {},
 ) {
+  if (basename(stackBaseDir).startsWith('agent-qa')) {
+    throw new Error('[dev-targets] QA stacks cannot stop the shared routing-owned synchronization');
+  }
   return {
     released: await releaseProject({ stackBaseDir, env }),
   };
 }
 
 export async function inspectDevTargetSyncService(
-  { stackBaseDir, targets, env = process.env },
+  { stackBaseDir, sourceDir, targets, env = process.env },
   {
     readProject = async () => {
-      const runtime = resolveDevTargetMutagenRuntime({ stackBaseDir, env });
+      const runtime = resolveDevTargetMutagenRuntime({ stackBaseDir, sourceDir, env });
       return await readFile(runtime.projectFile, 'utf8').catch(() => null);
     },
     inspectSync = inspectDevTargetSync,
@@ -403,6 +404,7 @@ export async function inspectDevTargetSyncService(
   } = {},
 ) {
   const project = await readProject();
+  if (sourceDir) env = { ...env, HAPPIER_STACK_SYNC_SOURCE_DIR: sourceDir };
   const preparation = await readPreparationState({ stackBaseDir, env });
   const statuses = await Promise.all(targets.map(async (target) => ({
     target: target.name,

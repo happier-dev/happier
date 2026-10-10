@@ -5,7 +5,7 @@ import { ensureDepsInstalled, pmExecBin, pmSpawnScript } from '../proc/pm.mjs';
 import { killProcessTree, markSpawnedProcessPlannedExit, spawnProc } from '../proc/proc.mjs';
 import { applyHappyServerMigrations, ensureHappyServerManagedInfra } from '../server/infra/happy_server_infra.mjs';
 import { applyServerLightEnvDefaults } from '../server/apply_server_light_env_defaults.mjs';
-import { applyRuntimeServerLightSqliteEnv } from '../server/apply_runtime_server_light_sqlite_env.mjs';
+import { applyRuntimeServerDatabaseEnv, applySharedDatabaseSourceEnv } from '../server/apply_runtime_server_database_env.mjs';
 import { applyEffectiveDbProviderEnv, resolveEffectiveDbProvider } from '../server/effective_db_provider.mjs';
 import { resolveServerDevScript } from '../server/flavor_scripts.mjs';
 import { resolveServerShutdownGraceMs } from '../server/shutdown_grace.mjs';
@@ -771,14 +771,16 @@ export async function startDevServer({
     publicServerUrl,
   });
   delete baseEnv.HAPPIER_STACK_SERVER_RESTART_PREFLIGHT_ALREADY_DONE;
-  const dbProvider = applyEffectiveDbProviderEnv({ serverComponentName, env: baseEnv, targetEnv: serverEnv });
+  applySharedDatabaseSourceEnv({ env: serverEnv });
+  const dbProvider = applyEffectiveDbProviderEnv({ serverComponentName, env: serverEnv });
   const explicitDatabaseUrl = serverEnv.DATABASE_URL;
   if (dbProvider === 'mysql' && !String(explicitDatabaseUrl ?? '').trim()) {
     throw new Error('[local] mysql requires an explicit DATABASE_URL before managed infra startup');
   }
 
   if (serverComponentName === 'happier-server-light') {
-    applyServerLightEnvDefaults({ baseEnv, serverEnv, baseDir: autostart.baseDir });
+    applyServerLightEnvDefaults({ baseEnv: serverEnv, serverEnv, baseDir: autostart.baseDir });
+    if (dbProvider === 'postgres') applyRuntimeServerDatabaseEnv({ env: serverEnv, serverDir });
   }
   let usePriorRuntime = Boolean(
     serverComponentName === 'happier-server-light'
@@ -891,7 +893,7 @@ export async function startDevServer({
   const provisionServer = async () => {
     const launchEnv = usePriorRuntime ? { ...serverEnv } : serverEnv;
     if (usePriorRuntime) {
-      applyRuntimeServerLightSqliteEnv({
+      applyRuntimeServerDatabaseEnv({
         env: launchEnv,
         serverDir: priorRuntimeServerLaunchSpec.serverDir,
       });
@@ -1274,9 +1276,10 @@ export function createDevServerReloadExecutor({
     launchSource = 'source',
   }) => {
     const nextEnv = { ...serverEnv, ...envOverrides, PORT: String(port) };
+    applySharedDatabaseSourceEnv({ env: nextEnv });
     const usePriorRuntime = launchSource === 'prior-runtime';
     if (usePriorRuntime) {
-      applyRuntimeServerLightSqliteEnv({
+      applyRuntimeServerDatabaseEnv({
         env: nextEnv,
         serverDir: priorRuntimeServerLaunchSpec.serverDir,
       });

@@ -8,6 +8,9 @@ import { parseDevTargetsConfig, resolveDevTargetsConfigPath } from '../dev_targe
 import { runCaptureResult } from '../proc/proc.mjs';
 import { withJsonOwnerFileLock } from '../proc/jsonOwnerFileLock.mjs';
 import { getHappyStacksHomeDir } from '../paths/paths.mjs';
+import { resolveSshPrimaryTarget } from './primary.mjs';
+import { buildSshWorkerArgs, posixQuote, prependRemotePath } from '../dev_targets/remote_commands.mjs';
+import { runDevTargetSshProcess } from '../dev_targets/ssh_transport.mjs';
 
 const MACFUSE_FILESYSTEM_PATH = '/Library/Filesystems/macfuse.fs';
 const MOUNT_PROBE_TIMEOUT_MS = 5_000;
@@ -23,7 +26,20 @@ function requireAbsolutePath(value, label) {
   return resolve(path);
 }
 
-export function resolveExecutionHostWorkspaceMount(profile, env = process.env, explicitMountDir = '') {
+export function resolveExecutionHostWorkspaceMount(profile, env = process.env, explicitMountDir = '', connection = null) {
+  if (profile?.mode === 'ssh-dev-target') {
+    const targetName = String(profile.sshPrimary?.targetName ?? '');
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(targetName) || !connection?.target) {
+      throw new Error('[execution-host] enrolled SSH primary transport is required');
+    }
+    return {
+      mountDir: requireAbsolutePath(explicitMountDir || join(getHappyStacksHomeDir(env), `${targetName}-home`), 'mount directory'),
+      sshConfigFile: connection.sshConfigFile,
+      sshHost: connection.target.ssh,
+      remote: `${connection.target.ssh}:`,
+      volumeName: `Happier ${targetName}`,
+    };
+  }
   const mountDir = requireAbsolutePath(
     explicitMountDir || join(getHappyStacksHomeDir(env), 'vm-home'),
     'mount directory',
@@ -45,7 +61,33 @@ export function resolveExecutionHostWorkspaceMount(profile, env = process.env, e
     // home directory. This exposes the authoritative workspaces and the
     // agent configuration through one exact guest view.
     remote: `${sshHost}:`,
+    volumeName: 'Happier VM',
   };
+}
+
+export async function resolveExecutionHostWorkspaceConnection(profile, env = process.env, mountDir = '') {
+  const connection = profile.mode === 'ssh-dev-target' ? await resolveSshPrimaryTarget({ profile, env }) : null;
+  return resolveExecutionHostWorkspaceMount(profile, env, mountDir, connection);
+}
+
+export async function captureExecutionHostGuestCommand({ profile, executor, env = process.env, cwd = '', args }) {
+  const capture = executor?.capture?.bind(executor) ?? ((command, argv, options = {}) => runCaptureResult(command, argv, { env, ...options }));
+  if (profile.mode !== 'ssh-dev-target') {
+    return await capture('limactl', ['shell', ...(cwd ? ['--workdir', cwd] : []), profile.instance, '--', ...args]);
+  }
+  const { target, sshConfigFile } = await resolveSshPrimaryTarget({ profile, env });
+  const command = `${cwd ? `cd -- ${posixQuote(cwd)} && ` : ''}exec ${args.map(posixQuote).join(' ')}`;
+  return await runDevTargetSshProcess({ command: 'ssh', args: buildSshWorkerArgs(target, {
+    remoteCommand: `exec bash -lc ${posixQuote(prependRemotePath(target, command))}`,
+    sshArgs: [...(sshConfigFile ? ['-F', sshConfigFile] : []), '-o', 'ConnectTimeout=10'], tty: false,
+  }) }, async input => {
+    const result = await capture(input.command, input.args);
+    if (result.exitCode === 255) {
+      // Keep the canonical transport's connect-only recovery classification.
+      return { ...result, code: result.exitCode };
+    }
+    return result;
+  });
 }
 
 function guestStorageEnv(mountDir, env) {
@@ -138,10 +180,14 @@ function defaultBoundary(env) {
   };
 }
 
-function mountOutputContains(output, mountDir) {
-  return String(output ?? '').split(/\r?\n/).some((line) => (
+function mountOutputLine(output, mountDir) {
+  return String(output ?? '').split(/\r?\n/).find((line) => (
     line.includes(` on ${mountDir} (`) || line.includes(` ${mountDir} `)
   ));
+}
+
+function mountOutputContains(output, mountDir) {
+  return Boolean(mountOutputLine(output, mountDir));
 }
 
 function mountHealthError(code, message) {
@@ -201,11 +247,10 @@ async function inspectMountHealth({ mounted, mountDir, boundary, platform, fileE
   return { ok: true, code: 'ready' };
 }
 
-export async function resolveExecutionHostGuestHome({ profile, executor }) {
-  if (!executor?.capture) return '';
-  const result = await executor.capture('limactl', [
-    'shell', profile.instance, '--', 'sh', '-lc', 'printf %s "$HOME"',
-  ]);
+export async function resolveExecutionHostGuestHome({ profile, executor, env = process.env }) {
+  if (!executor?.capture && profile.mode !== 'ssh-dev-target') return '';
+  const result = await captureExecutionHostGuestCommand({ profile, executor, env,
+    args: ['sh', '-lc', 'printf %s "$HOME"'] });
   const guestHome = String(result.out ?? '').trim();
   if (result.exitCode !== 0 || !guestHome.startsWith('/') || /[\0\r\n]/.test(guestHome)) {
     const detail = String(result.err ?? '').trim();
@@ -233,7 +278,7 @@ export async function inspectExecutionHostWorkspaceMount({
   platform = process.platform,
   fileExists = existsSync,
 } = {}) {
-  const resolved = resolveExecutionHostWorkspaceMount(profile, env, mountDir);
+  const resolved = await resolveExecutionHostWorkspaceConnection(profile, env, mountDir);
   const processBoundary = boundary ?? defaultBoundary(env);
   const observed = await processBoundary.capture('mount', []);
   if (observed.exitCode !== 0) {
@@ -247,6 +292,11 @@ export async function inspectExecutionHostWorkspaceMount({
     };
   }
   const mounted = mountOutputContains(observed.out, resolved.mountDir);
+  if (mounted && profile.mode === 'ssh-dev-target'
+    && !mountOutputLine(observed.out, resolved.mountDir).startsWith(`${resolved.sshHost}:`)) {
+    return { ...resolved, mounted,
+      health: mountHealthError('mount_source_mismatch', 'mount has a different SSH source; existing mount left in place') };
+  }
   return {
     ...resolved,
     mounted,
@@ -281,6 +331,11 @@ async function mountExecutionHostWorkspaceUnlocked({
     fileExists,
   });
   if (current.mounted && current.health?.ok === true) return current;
+  // SSH primaries can adopt an operator's mount, but have no authority to
+  // replace it. Leave unhealthy entries visible for the operator to detach.
+  if (current.mounted && profile.mode === 'ssh-dev-target') {
+    throw new Error(`[execution-host] leaving the existing SSH primary mount in place: ${current.health?.message ?? 'unknown failure'}`);
+  }
   if (current.mounted && requireDefiniteStale && !isDefiniteDeadMount(current.health)) {
     throw new Error(`[dev-vm] workspace mount probe is inconclusive; leaving the listed mount in place: ${current.health?.message ?? 'unknown failure'}`);
   }
@@ -298,8 +353,8 @@ async function mountExecutionHostWorkspaceUnlocked({
     })
     : current;
   if (ready.health?.ok !== true) throw new Error(`[dev-vm] ${ready.health?.message ?? 'workspace mount is unavailable'}`);
-  if (!fileExists(ready.sshConfigFile)) {
-    throw new Error(`[dev-vm] managed Lima SSH configuration is missing: ${ready.sshConfigFile}; start the VM first`);
+  if (ready.sshConfigFile && !fileExists(ready.sshConfigFile)) {
+    throw new Error(`[dev-vm] execution-host SSH configuration is missing: ${ready.sshConfigFile}`);
   }
   await mkdir(ready.mountDir, { recursive: true, mode: 0o700 });
   if ((await readdir(ready.mountDir)).length > 0) {
@@ -307,14 +362,14 @@ async function mountExecutionHostWorkspaceUnlocked({
   }
   // Lima rewrites this file on lifecycle changes. Passing its current path to
   // SSHFS intentionally avoids a copied/stale SSH identity.
-  const resolved = withGuestHome(ready, await resolveExecutionHostGuestHome({ profile, executor }));
+  const resolved = withGuestHome(ready, await resolveExecutionHostGuestHome({ profile, executor, env }));
   const child = await processBoundary.start('sshfs', [
-    '-F', resolved.sshConfigFile,
+    ...(resolved.sshConfigFile ? ['-F', resolved.sshConfigFile] : []),
     '-o', 'ControlMaster=no',
     '-o', 'ControlPath=none',
     resolved.remote,
     resolved.mountDir,
-    '-o', 'reconnect,ServerAliveInterval=15,ServerAliveCountMax=3,defer_permissions,noappledouble,volname=Happier VM',
+    '-o', `reconnect,ServerAliveInterval=15,ServerAliveCountMax=3,defer_permissions,noappledouble,volname=${resolved.volumeName}`,
   ]);
   try {
     await waitForMountedFilesystem({ boundary: processBoundary, mountDir: resolved.mountDir, child, signal });
@@ -367,8 +422,8 @@ async function unmountExecutionHostWorkspaceUnlocked({
   return { ...current, mounted: false, health: { ok: true, code: 'ready' } };
 }
 
-function withWorkspaceMountLock({ profile, env, mountDir, signal }, operation) {
-  const resolved = resolveExecutionHostWorkspaceMount(profile, env, mountDir);
+async function withWorkspaceMountLock({ profile, env, mountDir, signal }, operation) {
+  const resolved = await resolveExecutionHostWorkspaceConnection(profile, env, mountDir);
   return withJsonOwnerFileLock(operation, {
     // The sibling remains accessible when the mountpoint itself is stale.
     lockPath: `${resolved.mountDir}.lock`,

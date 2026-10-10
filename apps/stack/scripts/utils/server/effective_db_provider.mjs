@@ -113,6 +113,30 @@ export function isCanonicalManagedPostgresAuthority({ databaseUrl, env = {} } = 
   return String(databaseUrl ?? '').trim() === canonicalUrl;
 }
 
+// Shared light servers resolve their source at startup. The source URL is never
+// serialized into consumers, and an incompatible URL must never be discarded.
+export function resolveSharedDatabaseSourceProvider({ env = {} } = {}) {
+  const effective = resolveEffectiveDbProvider({
+    serverComponentName: env.HAPPIER_STACK_SERVER_COMPONENT || 'happier-server-light', env,
+  });
+  if (!effective.ok || !['sqlite', 'postgres'].includes(effective.provider)) {
+    throw new Error('[shared-db] source must use SQLite or Postgres');
+  }
+  return effective.provider;
+}
+
+export function resolveSharedDatabaseSource({ env = {} } = {}) {
+  const provider = resolveSharedDatabaseSourceProvider({ env });
+  const transition = resolveEffectiveDbProviderTransition({
+    nextServerComponentName: 'happier-server-light',
+    env: { ...env, HAPPIER_DB_PROVIDER: provider },
+  });
+  if (!transition.ok || transition.removeDatabaseUrl) {
+    throw new Error('[shared-db] source provider and DATABASE_URL must agree; Postgres requires an explicit URL');
+  }
+  return { provider, databaseUrl: transition.databaseUrl };
+}
+
 export function applyEffectiveDbProviderEnv({ serverComponentName, env = {}, targetEnv = env } = {}) {
   const effective = resolveEffectiveDbProvider({ serverComponentName, env });
   if (!effective.ok) {

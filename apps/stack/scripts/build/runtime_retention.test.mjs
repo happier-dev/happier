@@ -13,6 +13,17 @@ import {
   resolveRuntimeRetentionPolicy,
 } from './runtime_retention.mjs';
 
+test('artifact retention leaves private in-progress publication directories to their output owner', async t => {
+  const stackBaseDir = await mkdtemp(join(tmpdir(), 'runtime-private-output-'));
+  t.after(() => rm(stackBaseDir, { recursive: true, force: true }));
+  const staging = join(stackBaseDir, 'artifacts', 'server', '.tmp.1.123.private');
+  await mkdir(staging, { recursive: true });
+  await writeFile(join(staging, 'unfinished'), 'private compiler output');
+  await writeArtifact(stackBaseDir, 'server', 'complete', '2026-10-08T00:00:00Z');
+  await pruneComponentArtifacts({ stackBaseDir, component: 'server', keepCount: 1 });
+  assert.equal(await readFile(join(staging, 'unfinished'), 'utf8'), 'private compiler output');
+});
+
 async function writeRuntimeSnapshot(stackBaseDir, snapshotId, createdAt, target) {
   const snapshotDir = join(stackBaseDir, 'runtime', 'builds', snapshotId);
   await mkdir(join(snapshotDir, 'ui'), { recursive: true });

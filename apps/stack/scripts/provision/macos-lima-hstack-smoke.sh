@@ -88,6 +88,7 @@ limactl shell "${VM_NAME}" -- bash -lc "
   set -euo pipefail
   echo '[vm] downloading provision + smoke scripts...'
   curl -fsSL '${HSTACK_RAW_BASE}/scripts/provision/linux-ubuntu-provision.sh' -o /tmp/linux-ubuntu-provision.sh
+  curl -fsSL '${HSTACK_RAW_BASE}/scripts/provision/.bun-version' -o /tmp/.bun-version
   chmod +x /tmp/linux-ubuntu-provision.sh
   /tmp/linux-ubuntu-provision.sh --profile='${HSTACK_PROVISION_PROFILE}'
 
@@ -101,4 +102,3 @@ limactl shell "${VM_NAME}" -- bash -lc "
 
 echo ""
 echo "[lima-smoke] done."
-

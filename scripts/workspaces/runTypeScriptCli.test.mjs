@@ -157,7 +157,13 @@ esac
     fakeCompiler,
     start(args, options = {}) {
       const { command = process.execPath, ...childOptions } = options;
-      const env = { ...process.env, ...options.env, PATH: `${join(root, 'bin')}:${options.env?.PATH ?? process.env.PATH}`,
+      const env = { ...process.env,
+        // This OS-boundary fixture is an independent admitted machine, not
+        // the AUTO test runner's worker cache or parent reservation.
+        HAPPIER_DEV_TARGET_EXECUTION: '', HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN: '',
+        HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT: '', HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE: '',
+        HAPPIER_STACK_PM_CACHE_BASE_DIR: '',
+        ...options.env, PATH: `${join(root, 'bin')}:${options.env?.PATH ?? process.env.PATH}`,
         NODE_OPTIONS: `--require=${JSON.stringify(preload)}`, COMPILER_PID_FILE: pidFile };
       if (route || windows) {
         delete env.HAPPIER_HSTACK_EXECUTION;

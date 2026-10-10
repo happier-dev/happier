@@ -9,6 +9,7 @@ import { resolveServerShutdownGraceMs } from './utils/server/shutdown_grace.mjs'
 import { ensureDepsInstalled, pmExecBin, requireDir } from './utils/proc/pm.mjs';
 import { join } from 'node:path';
 import { statSync } from 'node:fs';
+import { mkdir, mkdtemp } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import { maybeResetTailscaleServe } from './tailscale.mjs';
 import { checkDaemonStatePingAware, getDaemonEnv, isDaemonRunning, startLocalDaemonWithAuth, stopLocalDaemon } from './daemon.mjs';
@@ -65,11 +66,12 @@ import {
 } from './utils/server/listener_ownership.mjs';
 import { findExistingStackCredentialPath } from './utils/auth/credentials_paths.mjs';
 import { createServiceDaemonAutostarter } from './utils/service/daemon_autostart.mjs';
-import { applyRuntimeServerLightSqliteEnv } from './utils/server/apply_runtime_server_light_sqlite_env.mjs';
+import { applyRuntimeServerDatabaseEnv, applySharedDatabaseSourceEnv } from './utils/server/apply_runtime_server_database_env.mjs';
 import { spawnSourceServerScript } from './utils/server/source_server_workspace_deps.mjs';
 import { applyEffectiveDbProviderEnv } from './utils/server/effective_db_provider.mjs';
 import { resolveStackRuntimeLaunchContext } from './runtime/launch/resolveStackRuntimeLaunchContext.mjs';
 import {
+  applyCliRuntimeLaunchProvenanceEnv,
   resolveCliRuntimeLaunchProvenance,
   resolveCliRuntimeLaunchSpec,
 } from './runtime/launch/resolveCliRuntimeLaunchSpec.mjs';
@@ -78,10 +80,12 @@ import { spawnRuntimeServerAfterMigration } from './runtime/launch/runServerRunt
 import { spawnStackOwnerDeathWatchdog } from './utils/stack/owner_death_watchdog.mjs';
 import { completeInterruptedStackStopBeforeStart } from './utils/stack/stop.mjs';
 import { decideDevStartupTopology, observeDevServerStartupTopology } from './utils/dev/devStartupTopology.mjs';
-import { isBorrowedExpoConsumer } from './runtime/shared/borrowed_expo.mjs';
+import { resolveDevServerConnection } from './utils/dev/resolveDevServerConnection.mjs';
+import { isBorrowedExpoConsumer, resolveSourceQaUiMode } from './runtime/shared/borrowed_expo.mjs';
 import { resolveServerMigrationsEnabled } from '@happier-dev/cli-common/firstPartyRuntime/selfHostServerEnv';
 import { persistControlledServerPlacement, resolveControlledRuntimePlacement } from './utils/dev_targets/service_placement.mjs';
 import { resolveStackRuntimeMode } from './runtime/shared/runtime_mode.mjs';
+import { beginPendingSourceStart } from './runtime/shared/pending_source_start.mjs';
 import { startStackDevTargets } from './utils/dev_targets/supervisor.mjs';
 import { resolveRemoteServerRuntimeConfig } from './utils/dev_targets/remote_commands.mjs';
 import { recordStackRuntimeUpdate } from './utils/stack/runtime_state.mjs';
@@ -107,6 +111,9 @@ async function main() {
           '--server=happier-server|happier-server-light',
           '--server-flavor=light|full',
           '--no-ui',
+          '--ui=export|borrowed',
+          '--no-server',
+          '--server-url=<url>',
           '--no-daemon',
           '--restart',
           '--no-browser',
@@ -178,7 +185,19 @@ async function main() {
   if (serverComponentName === 'both') {
     throw new Error(`[local] --server=both is not supported for run (pick one: happier-server-light or happier-server)`);
   }
+  const serverConnection = resolveDevServerConnection({
+    flags, kv, env: process.env,
+    resolvedLocalUrls: { internalServerUrl, publicServerUrl },
+  });
+  const serverRequested = serverConnection.startServer;
+  if (!serverRequested) {
+    internalServerUrl = serverConnection.internalServerUrl;
+    publicServerUrl = serverConnection.publicServerUrl;
+  }
   const autostart = getDefaultAutostartPaths();
+  const pendingSourceStart = !json && resolveStackRuntimeMode({ argv, env: process.env }).mode === 'source-snapshot'
+    ? await beginPendingSourceStart({ stackBaseDir: autostart.baseDir }) : null;
+  try {
   const cleanupEnv = { ...process.env };
   const cleanupStackCtx = resolveStackContext({ env: cleanupEnv, autostart });
   if (!json && cleanupStackCtx.stackMode && cleanupStackCtx.runtimeStatePath) {
@@ -197,7 +216,21 @@ async function main() {
   const requiredComponents = process.env.HAPPIER_STACK_SHARED_DB_SOURCE_STACK ? ['server'] : undefined;
   let runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv, env: process.env,
     target: controlledPlacement?.runtimeTarget, requiredComponents, purpose: 'deployment', placement: controlledPlacement });
+  pendingSourceStart?.signal.throwIfAborted();
   let runtimeSnapshot = runtimeLaunchContext.snapshot;
+  const sourceSnapshot = runtimeLaunchContext.runtimeMode.mode === 'source-snapshot';
+  const reuseSourceRuntime = flags.has('--reuse-source-runtime');
+  if (reuseSourceRuntime && (!sourceSnapshot || !flags.has('--no-dev-targets') || process.env.HAPPIER_DEV_TARGET_EXECUTION !== '1')) {
+    throw new Error('[source-bundle] runtime reuse is restricted to remote source recovery');
+  }
+  const sourceUi = sourceSnapshot ? resolveSourceQaUiMode({ uiMode: kv.get('--ui') ?? (flags.has('--ui') ? '' : undefined),
+    noUi: flags.has('--no-ui'), consumerStackName: autostart.stackName,
+    producerStackName: process.env.HAPPIER_STACK_EXPO_SOURCE_STACK }) : null;
+  if (sourceSnapshot && controlledPlacement?.target) {
+    await runControlledRemoteStack({ rootDir, argv, flags, json, autostart, runtimeSnapshot: null,
+      runtimeLaunchContext, placement: controlledPlacement, serverComponentName, sourceSnapshot: true, sourceUi, pendingSourceStart });
+    return;
+  }
   const unavailableTargets = [];
   while (runtimeSnapshot && controlledPlacement?.target) {
     try {
@@ -215,15 +248,18 @@ async function main() {
       runtimeSnapshot = runtimeLaunchContext.snapshot;
     }
   }
-  if (runtimeSnapshot && flags.has('--no-dev-targets') && process.env.HAPPIER_DEV_TARGET_EXECUTION === '1') {
+  if ((runtimeSnapshot || sourceSnapshot) && !json && flags.has('--no-dev-targets') && process.env.HAPPIER_DEV_TARGET_EXECUTION === '1') {
+    if (sourceSnapshot) await mkdir(join(autostart.baseDir, 'workspace'), { recursive: true });
     process.chdir(join(autostart.baseDir, 'workspace'));
   }
-  const runtimeBackedStart = Boolean(runtimeSnapshot);
-  const cliLaunchSpec = runtimeSnapshot && !flags.has('--no-daemon')
+  const runtimeBackedStart = Boolean(runtimeSnapshot || sourceSnapshot);
+  let cliLaunchSpec = runtimeSnapshot && !flags.has('--no-daemon')
     ? resolveCliRuntimeLaunchSpec({ snapshot: runtimeLaunchContext.componentSnapshots?.daemon ?? runtimeSnapshot }) : null;
-  const cliRuntimeProvenance = resolveCliRuntimeLaunchProvenance(cliLaunchSpec);
+  // This point runs on the server host, after remote placement. Resolve before
+  // choosing a provider-specific bundle, migration path or account probe.
+  if (serverRequested) applySharedDatabaseSourceEnv({ env: process.env });
   const dbProvider = applyEffectiveDbProviderEnv({ serverComponentName, env: process.env });
-  const serverLaunchSpec = runtimeSnapshot
+  let serverLaunchSpec = runtimeSnapshot && serverRequested
     ? resolveServerRuntimeLaunchSpec({
         serverComponent: serverComponentName,
         dbProvider,
@@ -231,21 +267,60 @@ async function main() {
         migrationsEnabled: resolveServerMigrationsEnabled(process.env),
       })
     : null;
-  if (dbProvider === 'mysql' && !String(process.env.DATABASE_URL ?? '').trim()) {
+  const daemonRequested = resolveStackDaemonStartRequested({ env: process.env, noDaemon: flags.has('--no-daemon') });
+  const remoteSourceDaemonRequested = sourceSnapshot && daemonRequested && Boolean(controlledPlacement?.daemonTarget);
+  const localDaemonRequested = daemonRequested && !remoteSourceDaemonRequested;
+  const sourceRuntimeIdentities = {};
+  let sourceRuntimeEnv = {};
+  let sourceUiLaunch = null;
+  if (sourceSnapshot && !json && (serverRequested || localDaemonRequested)) {
+    const { buildSourceRuntimeBundle } = await import('./build/build_source_runtime.mjs');
+    const sourceRoot = join(autostart.baseDir, 'source-runtime');
+    await mkdir(sourceRoot, { recursive: true });
+    const repoDir = getRepoDir(rootDir);
+    if (serverRequested) {
+      const built = await buildSourceRuntimeBundle({ repoDir, stackBaseDir:autostart.baseDir, component: 'server', serverComponent: serverComponentName, dbProvider, env: process.env, signal:pendingSourceStart?.signal, reuseSelected: reuseSourceRuntime });
+      serverLaunchSpec = resolveServerRuntimeLaunchSpec({ sourceRuntimeLaunch: built,
+        migrationsEnabled: resolveServerMigrationsEnabled(process.env) });
+      sourceRuntimeIdentities.server = { selected: built.identity, loaded: null };
+    }
+    if (localDaemonRequested) {
+      const built = await buildSourceRuntimeBundle({ repoDir, stackBaseDir:autostart.baseDir, component: 'daemon', env: process.env, signal:pendingSourceStart?.signal, reuseSelected: reuseSourceRuntime });
+      cliLaunchSpec = resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch: built });
+      sourceRuntimeEnv = applyCliRuntimeLaunchProvenanceEnv({ cliLaunchSpec });
+      sourceRuntimeIdentities.daemon = { selected: built.identity, loaded: null };
+    }
+    // A one-shot builder releases its esbuild service before the next phase;
+    // the long-lived Stack owner must not retain their large idle heaps.
+    if (sourceUi === 'export' && serverRequested) {
+      if (reuseSourceRuntime) {
+        const uiDir = kv.get('--source-ui-dir');
+        if (!uiDir || !await pathExists(uiDir)) {
+          throw new Error('[source-bundle] selected source UI is unavailable; explicitly restart the Stack to select current source');
+        }
+        sourceUiLaunch = { uiDir };
+      } else {
+        const { exportSourceWebUi } = await import('./build/build_source_web_ui.mjs');
+        sourceUiLaunch = await exportSourceWebUi({ repoDir, baseDir: sourceRoot,
+          outputDir: join(await mkdtemp(join(sourceRoot, 'web-')), 'export'), env: process.env,
+          signal: pendingSourceStart?.signal });
+      }
+    }
+  }
+  pendingSourceStart?.signal.throwIfAborted();
+  const cliRuntimeProvenance = resolveCliRuntimeLaunchProvenance(cliLaunchSpec);
+  if (serverRequested && dbProvider === 'mysql' && !String(process.env.DATABASE_URL ?? '').trim()) {
     throw new Error('[local] mysql requires an explicit DATABASE_URL before startup');
   }
   const usesFullManagedInfra = serverComponentName === 'happier-server'
     && (process.env.HAPPIER_STACK_MANAGED_INFRA ?? '1') !== '0';
-  if (dbProvider === 'postgres' && !usesFullManagedInfra && !String(process.env.DATABASE_URL ?? '').trim()) {
+  if (serverRequested && dbProvider === 'postgres' && !usesFullManagedInfra && !String(process.env.DATABASE_URL ?? '').trim()) {
     throw new Error('[local] postgres requires DATABASE_URL when the selected preset does not manage Postgres');
   }
 
-  const daemonRequested = resolveStackDaemonStartRequested({
-    env: process.env,
-    noDaemon: flags.has('--no-daemon'),
-  });
-  let startDaemon = daemonRequested;
-  const serveUiWanted = !flags.has('--no-ui') && (process.env.HAPPIER_STACK_SERVE_UI ?? '1') !== '0';
+  let startDaemon = localDaemonRequested;
+  const serveUiWanted = sourceSnapshot ? sourceUi === 'export' && serverRequested
+    : !flags.has('--no-ui') && (process.env.HAPPIER_STACK_SERVE_UI ?? '1') !== '0';
   let serveUi = serveUiWanted;
   // Capability semantics: if UI serving is enabled, default to "required" (fail closed)
   // unless explicitly disabled.
@@ -253,19 +328,19 @@ async function main() {
   const uiRequired = uiRequiredRaw ? uiRequiredRaw !== '0' : Boolean(serveUiWanted);
   const startMobile = flags.has('--mobile') || flags.has('--with-mobile');
   const borrowedExpoProducerStackName = String(process.env.HAPPIER_STACK_EXPO_SOURCE_STACK ?? '').trim();
-  const borrowedExpo = isBorrowedExpoConsumer({
+  const borrowedExpo = (!sourceSnapshot || sourceUi === 'borrowed') && isBorrowedExpoConsumer({
     consumerStackName: autostart.stackName,
     producerStackName: borrowedExpoProducerStackName,
   });
-  const startOwnedExpo = Boolean(startMobile && !borrowedExpo);
+  const startOwnedExpo = Boolean(!sourceSnapshot && startMobile && !borrowedExpo);
   const expoTailscale = flags.has('--expo-tailscale') || resolveExpoTailscaleEnabled({ env: process.env });
   const noBrowser = flags.has('--no-browser') || (process.env.HAPPIER_STACK_NO_BROWSER ?? '').toString().trim() === '1';
   const uiPrefix = process.env.HAPPIER_STACK_UI_PREFIX?.trim() ? process.env.HAPPIER_STACK_UI_PREFIX.trim() : '/';
-  const uiBuildDir = runtimeSnapshot
+  const uiBuildDir = sourceUiLaunch?.uiDir ?? (runtimeSnapshot
     ? join(runtimeSnapshot.launchPath ?? runtimeSnapshot.snapshotPath, 'ui')
     : process.env.HAPPIER_STACK_UI_BUILD_DIR?.trim()
       ? process.env.HAPPIER_STACK_UI_BUILD_DIR.trim()
-      : join(autostart.baseDir, 'ui');
+      : join(autostart.baseDir, 'ui'));
 
   const enableTailscaleServe = (process.env.HAPPIER_STACK_TAILSCALE_SERVE ?? '0') === '1';
 
@@ -298,30 +373,32 @@ async function main() {
         internalServerUrl,
         publicServerUrl,
         startDaemon,
+        daemonPlacement: remoteSourceDaemonRequested ? controlledPlacement.daemonTarget.name : localDaemonRequested ? 'local' : 'disabled',
         serveUi,
+        sourceUi,
         uiRequired,
         startMobile,
         startOwnedExpo,
-        expoOwnership: borrowedExpo ? 'borrowed' : 'owned',
+        expoOwnership: borrowedExpo ? 'borrowed' : sourceSnapshot ? 'disabled' : 'owned',
         uiPrefix,
         uiBuildDir,
         cliHomeDir,
-        launchMode: runtimeSnapshot ? 'runtime' : 'source',
+        launchMode: sourceSnapshot ? 'source-snapshot' : runtimeSnapshot ? 'runtime' : 'source',
         runtimeSnapshotId: runtimeSnapshot?.snapshotId ?? null,
       },
     });
     return;
   }
 
-  const serverStartScript = runtimeSnapshot ? null : resolveServerStartScript({ serverComponentName, serverDir });
+  const serverStartScript = runtimeBackedStart || !serverRequested ? null : resolveServerStartScript({ serverComponentName, serverDir });
 
-  if (!runtimeSnapshot) {
+  if (!runtimeBackedStart && serverRequested) {
     assertServerComponentDirMatches({ rootDir, serverComponentName, serverDir });
     assertServerPrismaProviderMatches({ serverComponentName, serverDir });
   }
 
-  if (!runtimeSnapshot) {
-    await requireDir(serverComponentName, serverDir);
+  if (!runtimeBackedStart) {
+    if (serverRequested) await requireDir(serverComponentName, serverDir);
     if (startDaemon) {
       await requireDir('happier-cli', cliDir);
     }
@@ -376,11 +453,12 @@ async function main() {
 	  let daemonAutostarter = null;
 	  let daemonRuntimeReconciler = null;
 	  let daemonLifecycleReconciler = null;
+  let sourceRemoteController;
 	  installExitCleanup({ label: 'local', children });
 	  const baseEnv = { ...process.env };
 	  const stackCtx = resolveStackContext({ env: baseEnv, autostart });
 	  const { stackMode, runtimeStatePath, stackName, envPath, ephemeral } = stackCtx;
-	  const daemonScopeEnv = applyStackActiveServerScopeEnv({ env: baseEnv, stackName, cliIdentity: 'default' });
+	  const daemonScopeEnv = applyStackActiveServerScopeEnv({ env: { ...baseEnv, ...sourceRuntimeEnv }, stackName, cliIdentity: 'default' });
 	  const serviceMode = (daemonScopeEnv.HAPPIER_STACK_SERVICE_MODE ?? '').toString().trim() === '1';
   const terminalIsInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
 
@@ -393,14 +471,14 @@ async function main() {
   });
 
   // Internal URL used by local processes on this machine.
-  internalServerUrl = `http://127.0.0.1:${serverPort}`;
+  internalServerUrl = serverRequested ? `http://127.0.0.1:${serverPort}` : serverConnection.internalServerUrl;
   // Public URL is what you might share/open (e.g. https://<machine>.<tailnet>.ts.net).
   // We auto-prefer the Tailscale HTTPS URL when available, unless explicitly overridden.
   const { publicServerUrl: publicServerUrlPreview } = getPublicServerUrlEnvOverride({ serverPort, env: baseEnv, stackName });
-  publicServerUrl = publicServerUrlPreview;
+  publicServerUrl = serverRequested ? publicServerUrlPreview : serverConnection.publicServerUrl;
 
   const daemonStartAdmission = resolveDaemonStartAdmission({
-    daemonRequested,
+    daemonRequested: localDaemonRequested,
     runtimeBackedStart,
     terminalIsInteractive,
     env: daemonScopeEnv,
@@ -408,18 +486,20 @@ async function main() {
     serverUrl: internalServerUrl,
   });
   startDaemon = daemonStartAdmission.startDaemon;
+  const controlledDaemonCustody = runtimeBackedStart && startDaemon && !serverRequested
+    && flags.has('--no-dev-targets') && baseEnv.HAPPIER_DEV_TARGET_EXECUTION === '1';
 
   const runtimeOwnershipObservationScope = createListenerOwnershipCommandScope();
   const serverHealthObservation = await fetchHappierHealth(internalServerUrl);
   const serverAlreadyRunning = serverHealthObservation.ok;
   const daemonAlreadyRunning = startDaemon
-    ? ['running', 'starting'].includes((await checkDaemonStatePingAware(
+    ? (reuseSourceRuntime ? ['running'] : ['running', 'starting']).includes((await checkDaemonStatePingAware(
         cliHomeDir,
         { serverUrl: internalServerUrl, env: daemonScopeEnv },
       )).status)
     : false;
   const serverTopologyObservation = await observeDevServerStartupTopology({
-    serverRequested: true, stackMode, serverPort, serverHealthObservation,
+    serverRequested, stackMode, serverPort, serverHealthObservation,
     ownershipArgs: { env: baseEnv, port: serverPort, stackName, runtimeStatePath, listenerObservationScope: runtimeOwnershipObservationScope },
   }, {
     observeTcpPortAvailabilityImpl: observeTcpPortAvailability,
@@ -435,13 +515,15 @@ async function main() {
       ? { status: 'known', pid: serverTopologyObservation.listenerPid }
       : { status: serverTopology === 'foreign' ? 'foreign' : 'not-running', pid: null };
   const startupDecision = decideDevStartupTopology({
-    serverRequested: true,
+    serverRequested,
     serverTopology,
     daemonRequested: startDaemon,
-    daemonRunning: daemonAlreadyRunning,
+    // Explicit source starts select new code. Transport recovery keeps the
+    // selection and adopts only a ping-healthy daemon through its existing owner.
+    daemonRunning: (!sourceSnapshot || reuseSourceRuntime) && daemonAlreadyRunning,
     expoRequested: startOwnedExpo,
     expoRunning: false,
-    restart,
+    restart: restart && !reuseSourceRuntime,
   });
 
   if (daemonStartAdmission.skipReason) {
@@ -462,7 +544,7 @@ async function main() {
   }
 
   // Ensure server deps exist before any Prisma/docker work.
-  if (!runtimeSnapshot && startupDecision.startServer) {
+  if (!runtimeBackedStart && startupDecision.startServer) {
     await ensureDepsInstalled(serverDir, serverComponentName);
   }
   if (startupDecision.startExpo) {
@@ -477,10 +559,13 @@ async function main() {
     !stackMode ||
     stackName === 'main' ||
     (baseEnv.HAPPIER_STACK_TAILSCALE_SERVE ?? '0').toString().trim() === '1';
-  const resolvedUrls = await resolveServerUrls({ env: baseEnv, serverPort, allowEnable: allowEnableTailscale });
+  const resolvedUrls = serverRequested
+    ? await resolveServerUrls({ env: baseEnv, serverPort, allowEnable: allowEnableTailscale })
+    : { defaultPublicUrl: serverConnection.publicServerUrl, publicServerUrl: serverConnection.publicServerUrl, canonicalServerUrl: serverConnection.publicServerUrl };
   defaultPublicUrl = resolvedUrls.defaultPublicUrl;
   publicServerUrl = resolvedUrls.publicServerUrl;
   canonicalServerUrl = resolvedUrls.canonicalServerUrl;
+  pendingSourceStart?.signal.throwIfAborted();
 
   const publishExistingServerOwnership = async () => {
     if (!(startupDecision.adoptedServer && stackMode && runtimeStatePath)) return;
@@ -498,7 +583,7 @@ async function main() {
   if (startupDecision.adoptedServer) {
     await publishExistingServerOwnership();
   }
-  if (!startupDecision.startServer && !startupDecision.startDaemon && !startupDecision.startExpo) {
+  if (!startupDecision.startServer && !startupDecision.startDaemon && !startupDecision.startExpo && !controlledDaemonCustody && !remoteSourceDaemonRequested) {
     console.log(
       `${green('✓')} start: already running ${dim('(')}` +
         `${dim('server=')}${cyan(internalServerUrl)}` +
@@ -508,17 +593,51 @@ async function main() {
     return;
   }
 
+  // Retire the old source launch while its recorded entrypoint still belongs to
+  // the previous daemon. Publishing the replacement first loses that custody.
+  if (sourceSnapshot && startupDecision.startDaemon && !reuseSourceRuntime) {
+    await stopLocalDaemon({
+      cliBin,
+      cliEntrypoint: cliLaunchSpec?.entrypoint ?? '',
+      cliNodeEntrypoint,
+      cliCommand,
+      cliCommandArgs,
+      internalServerUrl,
+      publicServerUrl,
+      cliHomeDir,
+      runtimeStatePath,
+      env: daemonScopeEnv,
+      stackName,
+      cliIdentity: 'default',
+    });
+  }
+
   // Stack runtime state (stack-scoped commands only): record the runner PID + chosen ports so stop/restart never kills other stacks.
   if (stackMode && runtimeStatePath) {
-    const startedRuntime = await recordStackRuntimeStart(runtimeStatePath, {
+    const publishRuntimeStart = () => recordStackRuntimeStart(runtimeStatePath, {
       stackName,
       script: 'run.mjs',
       ephemeral,
       ownerPid: process.pid,
-      ports: { server: serverPort },
+      ports: { server: serverRequested ? serverPort : null },
+      serverConnection: serverRequested ? null : { internalServerUrl, publicServerUrl },
       runtimeSnapshotId: runtimeSnapshot?.snapshotId ?? null,
+      sourceRuntimeIdentities: sourceSnapshot ? sourceRuntimeIdentities : null,
+      sourceRuntimeLaunch: sourceSnapshot && cliLaunchSpec ? { entrypoint: cliLaunchSpec.entrypoint, cliDir: cliLaunchSpec.cliDir,
+        env: sourceRuntimeEnv } : null,
+      adoptedSourceRoles: sourceSnapshot ? [
+        ...(startDaemon && daemonAlreadyRunning && !startupDecision.startDaemon ? ['daemon'] : []),
+        ...(startupDecision.adoptedServer ? ['server'] : []),
+      ] : [],
+      sourceUi,
+      sourceUiLaunch: sourceUiLaunch ? { uiDir: sourceUiLaunch.uiDir } : null,
+      ...(sourceSnapshot ? { placement: { server: serverRequested ? 'local' : 'external',
+        daemon: remoteSourceDaemonRequested ? controlledPlacement.daemonTarget.name : localDaemonRequested ? 'local' : 'disabled',
+        expo: borrowedExpo ? 'borrowed' : 'disabled' } } : {}),
       serveUi,
     });
+    const startedRuntime = pendingSourceStart
+      ? await pendingSourceStart.publish(publishRuntimeStart) : await publishRuntimeStart();
     spawnStackOwnerDeathWatchdog({
       rootDir,
       stackName,
@@ -529,6 +648,8 @@ async function main() {
       ownerStartedAt: startedRuntime.startedAt,
       env: baseEnv,
     });
+  } else if (pendingSourceStart) {
+    await pendingSourceStart.publish(async () => {});
   }
 
   // Server
@@ -539,7 +660,7 @@ async function main() {
   }
 
   const serverEnv = buildServerRuntimeEnv({
-    baseEnv,
+    baseEnv: { ...baseEnv, ...serverLaunchSpec?.env },
     serverPort,
     canonicalServerUrl,
     publicServerUrl,
@@ -551,10 +672,10 @@ async function main() {
   });
   let serverLightAccountCount = null;
   let happierServerAccountCount = null;
-  if (serverComponentName === 'happier-server-light' || dbProvider === 'sqlite' || dbProvider === 'pglite') {
+  if (serverRequested && (serverComponentName === 'happier-server-light' || dbProvider === 'sqlite' || dbProvider === 'pglite')) {
     applyServerLightEnvDefaults({ baseEnv, serverEnv, baseDir: autostart.baseDir, serverComponentName });
-    if (runtimeBackedStart && dbProvider === 'sqlite') {
-      applyRuntimeServerLightSqliteEnv({ env: serverEnv, serverDir });
+    if (runtimeBackedStart) {
+      applyRuntimeServerDatabaseEnv({ env: serverEnv, serverDir });
     }
 
     if (serverComponentName === 'happier-server-light' && !runtimeBackedStart && !startupDecision.adoptedServer) {
@@ -619,7 +740,7 @@ async function main() {
           });
           happierServerAccountCount = typeof acct.accountCount === 'number' ? acct.accountCount : null;
         }
-        const backend = runtimeSnapshot
+        const backend = serverLaunchSpec
           ? await spawnRuntimeServerAfterMigration({
               serverLaunchSpec,
               env: backendEnv,
@@ -627,9 +748,12 @@ async function main() {
               isCancellationRequested: () => pendingShutdownSignal !== null,
             })
           : await spawnSourceServerScript({ label: 'server', serverDir, script: 'start', env: backendEnv });
-        if (!runtimeSnapshot) children.push(backend);
+        if (!serverLaunchSpec) children.push(backend);
         activeServerProcess = backend;
         await waitForServerReady(backendUrl, { childProcess: backend });
+        if (sourceRuntimeIdentities.server) await recordStackRuntimeUpdate(runtimeStatePath, {
+          sourceRuntimeIdentities: { server: { ...sourceRuntimeIdentities.server, loaded: sourceRuntimeIdentities.server.selected } },
+        });
         if (stackMode && runtimeStatePath) {
           await recordStackRuntimeServerActivation(runtimeStatePath, {
             stablePort: serverPort,
@@ -676,7 +800,7 @@ async function main() {
   // Default server start (happier-server-light, or happier-server without managed infra).
   if (!(serverComponentName === 'happier-server' && (baseEnv.HAPPIER_STACK_MANAGED_INFRA ?? '1') !== '0')) {
     if (startupDecision.startServer) {
-      const server = runtimeSnapshot
+      const server = serverLaunchSpec
         ? await spawnRuntimeServerAfterMigration({
             serverLaunchSpec,
             env: serverEnv,
@@ -684,9 +808,12 @@ async function main() {
             isCancellationRequested: () => pendingShutdownSignal !== null,
           })
         : await spawnSourceServerScript({ label: 'server', serverDir, script: serverStartScript, env: serverEnv });
-      if (!runtimeSnapshot) children.push(server);
+      if (!serverLaunchSpec) children.push(server);
       activeServerProcess = server;
       await waitForServerReady(internalServerUrl, { childProcess: server });
+      if (sourceRuntimeIdentities.server) await recordStackRuntimeUpdate(runtimeStatePath, {
+        sourceRuntimeIdentities: { server: { ...sourceRuntimeIdentities.server, loaded: sourceRuntimeIdentities.server.selected } },
+      });
       if (stackMode && runtimeStatePath) {
         const listenerPid = await resolveSpawnedProcessGroupListenPid({
           port: serverPort,
@@ -764,8 +891,8 @@ async function main() {
 
   // Daemon
   const startDaemonAndRecord = async ({
-    forceRestart = restart && !serviceMode,
-    preserveExistingRunning = false,
+    forceRestart = restart && !reuseSourceRuntime && !serviceMode,
+    preserveExistingRunning = reuseSourceRuntime && daemonAlreadyRunning,
   } = {}) => {
     await startLocalDaemonWithAuth({
       cliBin,
@@ -804,7 +931,7 @@ async function main() {
     const initialGate = daemonStartGate({ env: daemonScopeEnv, cliHomeDir, serverUrl: effectiveInternalServerUrl });
 
     if (initialGate.reason !== 'auth_flow_missing_credentials') {
-      if (!runtimeBackedStart && serverComponentName === 'happier-server' && happierServerAccountCount == null) {
+      if (serverRequested && !runtimeBackedStart && serverComponentName === 'happier-server' && happierServerAccountCount == null) {
         const accountProbeImpl = startupDecision.adoptedServer
           ? probeExistingAccountCountForServerComponent
           : getAccountCountForServerComponent;
@@ -883,6 +1010,13 @@ async function main() {
 	    }
 	  }
 
+  if ((controlledDaemonCustody || (reuseSourceRuntime && startDaemon)) && !startupDecision.startDaemon) {
+    // The remote supervisor needs a foreground owner and loaded identity even
+    // when its own daemon survived an earlier worker. Reconcile/adopt through
+    // the existing lifecycle owner without restarting a healthy matching daemon.
+    await startDaemonAndRecord({ forceRestart: false, preserveExistingRunning: true });
+  }
+
   if (startDaemon && stackMode && runtimeStatePath) {
     const daemonRuntimeEnv = getDaemonEnv({
       baseEnv: daemonScopeEnv,
@@ -935,6 +1069,21 @@ async function main() {
   }
 
   // Optional: start Expo dev-client Metro for mobile reviewers.
+  if (remoteSourceDaemonRequested) {
+    sourceRemoteController = await startStackDevTargets({ stackName, stackBaseDir: autostart.baseDir,
+      syncStackBaseDir: controlledPlacement.authority.producerStackBaseDir,
+      sourceDir: getRepoDir(rootDir, baseEnv), localServerPort: serverPort,
+      publicServerUrl, canonicalServerUrl, sourceSnapshot: true,
+      activeServerId: resolveStackActiveServerId({ env: daemonScopeEnv, stackName }),
+      credentialPath: findExistingStackCredentialPath({ cliHomeDir, serverUrl: effectiveInternalServerUrl, env: daemonScopeEnv }),
+      cliHomeDir, targetPlans: controlledPlacement.targetPlans, syncTargets: controlledPlacement.config.targets,
+      onTargetStateChange: async ({ name, ...state }) => {
+        await recordStackRuntimeUpdate(runtimeStatePath, { remoteTargets: { [name]: state },
+          ...(state.sourceRuntimeIdentities ? { sourceRuntimeIdentities: state.sourceRuntimeIdentities } : {}),
+        });
+      }, env: { ...daemonScopeEnv, HAPPIER_STACK_DAEMON_WAIT_FOR_AUTH: '1' },
+    });
+  }
   if (startupDecision.startExpo) {
     const expoRes = await ensureDevExpoServer({
       startUi: false,
@@ -1003,6 +1152,7 @@ async function main() {
     }
 
     const preserveDaemonOnShutdown = shutdownRequest?.preserveDaemon === true;
+    await sourceRemoteController?.close();
 
 	    if (startDaemon && !preserveDaemonOnShutdown) {
 	      if (ownedDaemonPid && Number.isFinite(ownedDaemonPid) && ownedDaemonPid > 0) {
@@ -1064,12 +1214,22 @@ async function main() {
 
   if (pendingShutdownSignal) dispatchShutdown(pendingShutdownSignal);
 
-  // Keep running
-  await new Promise(() => {});
+  // A daemon-only runner has no foreground server child; its maintenance
+  // timers are deliberately unreferenced. Keep its existing signal/cleanup
+  // owner alive until shutdown, without adding a poll or an operation timeout.
+  const ownerLifetime = setInterval(() => {}, 2_147_483_647);
+  try {
+    await new Promise(() => {});
+  } finally {
+    clearInterval(ownerLifetime);
+  }
+  } finally {
+    await pendingSourceStart?.dispose();
+  }
 }
 
-async function runControlledRemoteStack({ rootDir, flags, json, autostart, runtimeSnapshot, runtimeLaunchContext, placement, serverComponentName }) {
-  const env = { ...process.env, HAPPIER_STACK_DAEMON_WAIT_FOR_AUTH: '1' };
+async function runControlledRemoteStack({ rootDir, flags, json, autostart, runtimeSnapshot, runtimeLaunchContext, placement, serverComponentName, sourceSnapshot = false, sourceUi = null, pendingSourceStart = null }) {
+  let env = { ...process.env, HAPPIER_STACK_DAEMON_WAIT_FOR_AUTH: '1' };
   const context = resolveStackContext({ env, autostart });
   const serverPort = await selectLocalServerPortCandidateForStack({ env, stackMode: true,
     stackName: context.stackName, runtimeStatePath: context.runtimeStatePath, defaultPort: 3005 });
@@ -1079,23 +1239,53 @@ async function runControlledRemoteStack({ rootDir, flags, json, autostart, runti
   const daemonRequested = resolveStackDaemonStartRequested({ env, noDaemon: flags.has('--no-daemon') });
   const localDaemonRequested = placement.policy.daemons.mode === 'local' && daemonRequested;
   const daemonSnapshot = daemonRequested ? runtimeLaunchContext.componentSnapshots?.daemon ?? null : null;
-  const localCli = localDaemonRequested && daemonSnapshot ? resolveCliRuntimeLaunchSpec({ snapshot: daemonSnapshot }) : null;
+  let localCli = localDaemonRequested && daemonSnapshot ? resolveCliRuntimeLaunchSpec({ snapshot: daemonSnapshot }) : null;
+  let localSourceIdentity;
   const targetPlans = placement.targetPlans.map(plan => ({ ...plan,
     services: { ...plan.services, daemon: plan.services.daemon && daemonRequested },
     ...(plan.services.daemon && daemonSnapshot ? { runtimeSnapshot: daemonSnapshot, runtimeTarget: placement.daemonRuntimeTarget } : {}) }));
   const daemonPlacement = localDaemonRequested ? 'local'
     : targetPlans.find(plan => plan.services.daemon)?.target.name ?? 'disabled';
   if (json) {
-    printResult({ json, data: { mode: 'start', launchMode: 'runtime', runtimeSnapshotId: runtimeSnapshot.snapshotId,
+    printResult({ json, data: { mode: 'start', launchMode: sourceSnapshot ? 'source-snapshot' : 'runtime', runtimeSnapshotId: runtimeSnapshot?.snapshotId ?? null,
       target: placement.target.name, runtimeTarget: placement.runtimeTarget, serverPort,
       publicServerUrl: urls.publicServerUrl, cliHomeDir, daemonPlacement,
+      sourceUi,
+      serveUi: sourceSnapshot ? sourceUi === 'export' : !flags.has('--no-ui'),
       daemonSnapshotId: daemonSnapshot?.snapshotId ?? null } });
     return;
   }
-  const started = await recordStackRuntimeStart(context.runtimeStatePath, { stackName: context.stackName,
+  if (sourceSnapshot && localDaemonRequested) {
+    const sourceRoot = join(autostart.baseDir, 'source-runtime');
+    await mkdir(sourceRoot, { recursive: true });
+    const { buildSourceRuntimeBundle } = await import('./build/build_source_runtime.mjs');
+    const built = await buildSourceRuntimeBundle({ repoDir: getRepoDir(rootDir, env),
+      stackBaseDir:autostart.baseDir, component: 'daemon', env, signal:pendingSourceStart?.signal });
+    localCli = resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch: built });
+    localSourceIdentity = { selected: built.identity, loaded: null };
+    env = applyCliRuntimeLaunchProvenanceEnv({ env, cliLaunchSpec: localCli });
+  }
+  if (sourceSnapshot && localCli) {
+    await stopLocalDaemon({ cliBin: join(localCli.cliDir, 'bin/happier.mjs'),
+      cliEntrypoint: localCli.entrypoint, cliNodeEntrypoint: localCli.nodeEntrypoint,
+      cliCommand: localCli.command, cliCommandArgs: localCli.args,
+      cliHomeDir, internalServerUrl: `http://127.0.0.1:${serverPort}`,
+      publicServerUrl: urls.publicServerUrl, runtimeStatePath: context.runtimeStatePath,
+      env, stackName: context.stackName, cliIdentity: 'default' });
+  }
+  const publishRuntimeStart = () => recordStackRuntimeStart(context.runtimeStatePath, { stackName: context.stackName,
     script: 'run.mjs', ephemeral: context.ephemeral, ownerPid: process.pid, ports: { server: serverPort },
-    runtimeSnapshotId: null, serveUi: !flags.has('--no-ui'),
-    placement: { server: placement.target.name, daemon: daemonPlacement, expo: env.HAPPIER_STACK_EXPO_SOURCE_STACK ? 'borrowed' : 'disabled' } });
+    runtimeMode: sourceSnapshot ? 'source-snapshot' : 'controlled',
+    serverConnection: null,
+    runtimeSnapshotId: null, serveUi: sourceSnapshot ? sourceUi === 'export' : !flags.has('--no-ui'),
+    sourceUi,
+    sourceUiLaunch: null,
+    sourceRuntimeIdentities: sourceSnapshot ? localSourceIdentity ? { daemon: localSourceIdentity } : {} : null,
+    sourceRuntimeLaunch: sourceSnapshot && localCli ? { entrypoint: localCli.entrypoint, cliDir: localCli.cliDir, env: localCli.env } : null,
+    placement: { server: placement.target.name, daemon: daemonPlacement,
+      expo: (!sourceSnapshot || sourceUi === 'borrowed') && env.HAPPIER_STACK_EXPO_SOURCE_STACK ? 'borrowed' : 'disabled' } });
+  const started = pendingSourceStart
+    ? await pendingSourceStart.publish(publishRuntimeStart) : await publishRuntimeStart();
   spawnStackOwnerDeathWatchdog({ rootDir, stackName: context.stackName, baseDir: autostart.baseDir,
     envPath: context.envPath, runtimeStatePath: context.runtimeStatePath, ownerPid: process.pid, ownerStartedAt: started.startedAt, env });
   let controller;
@@ -1114,7 +1304,10 @@ async function runControlledRemoteStack({ rootDir, flags, json, autostart, runti
       sourceDir: getRepoDir(rootDir, env), localServerPort: serverPort,
       publicServerUrl: urls.publicServerUrl, canonicalServerUrl: urls.canonicalServerUrl,
       runtimeSnapshot, runtimeTarget: placement.runtimeTarget,
-      borrowedExpoProducerStackName: String(env.HAPPIER_STACK_EXPO_SOURCE_STACK ?? '').trim(),
+      sourceSnapshot,
+      ...(sourceSnapshot ? { sourceUi } : {}),
+      borrowedExpoProducerStackName: !sourceSnapshot || sourceUi === 'borrowed'
+        ? String(env.HAPPIER_STACK_EXPO_SOURCE_STACK ?? '').trim() : '',
       activeServerId: resolveStackActiveServerId({ env, stackName: context.stackName }), credentialPath, cliHomeDir,
       remoteServerRuntimeConfig: resolveRemoteServerRuntimeConfig({ serverComponentName, env }),
       targetPlans, syncTargets: placement.config.targets,
@@ -1123,6 +1316,9 @@ async function runControlledRemoteStack({ rootDir, flags, json, autostart, runti
       onTargetStateChange: async ({ name, ...state }) => {
         await recordStackRuntimeUpdate(context.runtimeStatePath, {
           remoteTargets: { [name]: state },
+          ...(sourceSnapshot && state.sourceRuntimeIdentities ? { sourceRuntimeIdentities: state.sourceRuntimeIdentities } : {}),
+          ...(sourceSnapshot && state.services?.server && state.sourceUiLaunch
+            ? { sourceUiLaunch: state.sourceUiLaunch } : {}),
           ...(state.services?.server && state.runtimeSnapshotId ? { runtimeSnapshotId: state.runtimeSnapshotId } : {}),
         });
       }, env,
@@ -1136,15 +1332,17 @@ async function runControlledRemoteStack({ rootDir, flags, json, autostart, runti
         isServerReady: () => isHappierServerRunning(internalServerUrl),
         getCredentialFingerprint: () => resolveStackCredentialFingerprint({ cliHomeDir, serverUrl: internalServerUrl, env }),
         isDaemonRunning: () => isDaemonRunning(cliHomeDir, { serverUrl: internalServerUrl, env }),
-        startDaemon: () => startLocalDaemonWithAuth({ ...daemonOptions,
-          isShuttingDown: () => shuttingDown, ...resolveCliRuntimeLaunchProvenance(localCli) }), logger: console });
+        startDaemon: async () => {
+          await startLocalDaemonWithAuth({ ...daemonOptions,
+            isShuttingDown: () => shuttingDown, ...resolveCliRuntimeLaunchProvenance(localCli) });
+        }, logger: console });
       daemonAutostarter.start();
       daemonReconciler = startStackRuntimeDaemonPidReconciler({ runtimeStatePath: context.runtimeStatePath,
         cliHomeDir, internalServerUrl, env: getDaemonEnv({ baseEnv: env, cliHomeDir, internalServerUrl,
           publicServerUrl: urls.publicServerUrl, stackName: context.stackName, cliIdentity: 'default' }),
         isShuttingDown: () => shuttingDown }, { checkDaemonStateImpl: checkDaemonStatePingAware });
     }
-    console.log(`[runtime] ${context.stackName}: ${runtimeSnapshot.snapshotId} on ${placement.target.name}; server ${urls.publicServerUrl}`);
+    console.log(`[runtime] ${context.stackName}: ${sourceSnapshot ? 'source snapshot' : runtimeSnapshot.snapshotId} on ${placement.target.name}; server ${urls.publicServerUrl}`);
     await stopRequested;
   } finally {
     shuttingDown = true;
@@ -1173,6 +1371,10 @@ function resolveStackCredentialFingerprint({ cliHomeDir, serverUrl, env }) {
 }
 
 main().catch((err) => {
+  if (err?.code === 'ESOURCESTARTSUPERSEDED' || err?.cause?.code === 'ESOURCESTARTSUPERSEDED') {
+    console.log('[local] pending source start superseded by a newer start for this stack');
+    process.exit(0);
+  }
   console.error('[local] failed:', err);
   process.exit(1);
 });

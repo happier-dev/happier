@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import http from 'node:http';
 
@@ -46,6 +46,69 @@ test('readStackInfoSnapshot reports active runtime snapshot metadata', async (t)
     assert.equal(out.runtime.runtimePublication, null);
   } finally {
     restore();
+  }
+});
+
+test('source snapshot info never depends on native selection and hides stopped loaded identities', async t => {
+  const fixture = await createRuntimeSnapshotFixture(t, { stackName: 'source-info' });
+  await writeFile(join(fixture.stackDir, 'env'), 'HAPPIER_STACK_RUNTIME_MODE=source-snapshot\nHAPPIER_STACK_DAEMON=0\nHAPPIER_STACK_SERVE_UI=0\n');
+  await writeFile(join(fixture.stackDir, 'stack.runtime.json'), JSON.stringify({ version: 1, stackName: fixture.stackName,
+    ownerPid: 999999999, runtimeSnapshotId: null,
+    sourceRuntimeIdentities: { server: { selected: 'new-code', loaded: 'old-code' } },
+  }));
+  const restore = withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: fixture.storageDir });
+  try {
+    const out = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName: fixture.stackName });
+    assert.equal(out.runtime.mode, 'source-snapshot');
+    assert.equal(out.runtime.selectedSnapshotId, null);
+    assert.equal(out.runtime.loadedSnapshotId, null);
+    assert.deepEqual(out.runtime.sourceRuntimeIdentities, { server: { selected: 'new-code', loaded: null } });
+    assert.equal(out.runtime.pendingManualRestart, false);
+  } finally { restore(); }
+});
+
+test('remote-only info reports the recorded running role and an incomplete stop instead of stopped', async t => {
+  const fixture = await createRuntimeSnapshotFixture(t, { stackName: 'remote-stop-info' });
+  await writeFile(join(fixture.stackDir, 'env'), 'HAPPIER_STACK_RUNTIME_MODE=source-snapshot\nHAPPIER_STACK_DAEMON=1\nHAPPIER_STACK_SERVE_UI=0\n');
+  withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: fixture.storageDir });
+  const runtimePath = join(fixture.stackDir, 'stack.runtime.json');
+  const state = { version: 1, stackName: fixture.stackName, ownerPid: null, sourceRuntimeIdentities: {},
+    placement: { daemon: 'linux1' }, remoteTargets: { linux1: { services: { daemon: true }, status: 'running', serviceStatus: { daemon: 'running' } } } };
+  await writeFile(runtimePath, JSON.stringify(state));
+  const running = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName: fixture.stackName });
+  assert.equal(running.runtime.components.daemon.running, true);
+  assert.equal(running.runtime.running, true, 'aggregate must include remote daemon ownership');
+  assert.notEqual(running.runtime.health.status, 'stopped');
+  await writeFile(runtimePath, JSON.stringify({ ...state, stopRequest: { requestedAt: '2026-10-09T00:00:00.000Z' },
+    remoteTargets: { linux1: { services: { daemon: true }, status: 'failed', phase: 'stop', serviceStatus: { daemon: 'failed' } } } }));
+  const failed = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName: fixture.stackName });
+  assert.equal(failed.runtime.components.daemon.running, false, 'failure is not proof of running');
+  assert.equal(failed.runtime.health.status, 'degraded');
+  assert.ok(failed.runtime.health.issues.includes('stop_cleanup_incomplete'));
+  await writeFile(runtimePath, JSON.stringify({ ...state,
+    remoteTargets: { linux1: { services: { daemon: true }, status: 'failed', phase: 'stop', serviceStatus: { daemon: 'failed' } } } }));
+  const ownerFailed = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName: fixture.stackName });
+  assert.equal(ownerFailed.runtime.health.status, 'degraded', 'owner-initiated failed retirement also preserves remote custody');
+});
+
+test('source snapshot info uses its recorded UI choice rather than implicitly borrowing a configured Expo producer', async t => {
+  const fixture = await createRuntimeSnapshotFixture(t, { stackName: 'source-ui-info' });
+  const producerStackName = 'source-ui-producer';
+  await writeFile(join(fixture.stackDir, 'env'), `HAPPIER_STACK_RUNTIME_MODE=source-snapshot\nHAPPIER_STACK_DAEMON=0\nHAPPIER_STACK_EXPO_SOURCE_STACK=${producerStackName}\n`);
+  await mkdir(join(fixture.storageDir, producerStackName), { recursive: true });
+  await writeFile(join(fixture.storageDir, producerStackName, 'stack.runtime.json'), JSON.stringify({ expo: {}, processes: {} }));
+  withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: fixture.storageDir });
+  const sourceUiLaunch = { uiDir: '/remote/server/source-export/ui' };
+  for (const sourceUi of [undefined, 'borrowed', 'disabled']) {
+    await writeFile(join(fixture.stackDir, 'stack.runtime.json'), JSON.stringify({ version: 1, stackName: fixture.stackName,
+      sourceRuntimeIdentities: {}, sourceUi, sourceUiLaunch,
+    }));
+    const out = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName: fixture.stackName });
+    assert.equal(Boolean(out.runtime.borrowedExpo), sourceUi === 'borrowed');
+    assert.equal(out.runtime.sourceUi, sourceUi ?? 'export');
+    assert.deepEqual(out.runtime.sourceUiLaunch, sourceUi === 'borrowed' || sourceUi === 'disabled' ? null : sourceUiLaunch);
+    if (sourceUi === 'borrowed') assert.equal(out.runtime.borrowedExpo.producerStackName, producerStackName);
+    if (sourceUi === 'disabled') assert.equal(out.runtime.components.ui.running, false);
   }
 });
 

@@ -1,9 +1,8 @@
-import { appendFile, mkdir, rename, stat } from 'node:fs/promises';
+import { appendFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 export const EXECUTION_PROVENANCE_SCHEMA_VERSION = 1;
 export const EXECUTION_PROVENANCE_FILENAME = 'provenance.jsonl';
-const EXECUTION_PROVENANCE_MAX_BYTES = 1024 * 1024;
 
 function finiteNumber(value, fallback = null) {
   return Number.isFinite(value) ? value : fallback;
@@ -44,13 +43,5 @@ export async function appendExecutionProvenance(stackBaseDir, record) {
   const directory = join(stackBaseDir, 'dev-target-command-load-native');
   const path = join(directory, EXECUTION_PROVENANCE_FILENAME);
   await mkdir(directory, { recursive: true });
-  try {
-    const current = await stat(path);
-    if (current.size >= EXECUTION_PROVENANCE_MAX_BYTES) {
-      await rename(path, `${path}.previous`);
-    }
-  } catch (error) {
-    if (error?.code !== 'ENOENT') throw error;
-  }
   await appendFile(path, `${JSON.stringify(normalizeRecord(record))}\n`, 'utf8');
 }

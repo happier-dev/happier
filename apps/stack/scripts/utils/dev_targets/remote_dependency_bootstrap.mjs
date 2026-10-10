@@ -4,6 +4,7 @@ import { join, posix, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { execYarn } from '../../../../../scripts/workspaces/execYarnCommand.mjs';
+import { resolveWorkspaceBuildMode, WORKSPACE_BUILD_MODE_ENV } from '../../../../../scripts/workspaces/workspaceChildBuildEnv.mjs';
 import { SCRIPTLESS_DEPENDENCY_INSTALL_MODE, withDependencyRefresh } from '../proc/dependency_refresh.mjs';
 import { ensureUiPostinstallOutputs } from '../proc/ui_postinstall.mjs';
 import { resolvePackageManagerCachePaths } from '../proc/package_manager_cache.mjs';
@@ -72,30 +73,30 @@ export async function bootstrapRemoteDependencies({
   loadWorkspaceBuildOwner = async () => await import('../../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs'),
   loadDependencyOwner = async () => await import('../proc/pm.mjs'),
 } = {}) {
+  // Runtime preparation emits executable prerequisites. Semantic checking is
+  // owned by explicit strict/publication callers and the separate check lane.
+  env = { ...env, [WORKSPACE_BUILD_MODE_ENV]: resolveWorkspaceBuildMode({
+    buildMode: env[WORKSPACE_BUILD_MODE_ENV] ?? (validationKind === 'runtime' ? 'source-dev' : 'strict'), env,
+  }) };
   const componentDir = join(repoDir, 'apps', 'stack');
   const componentPath = posix.normalize(String(componentRelativeDir).replaceAll('\\', '/'));
   const sourceToolsOnly = toolsOnly || validationKind === 'source-test';
-  const needsUiSchemaPreparation = sourceToolsOnly && /^apps\/ui(?:\/|$)/u.test(componentPath);
+  const needsUiPostinstallPreparation = sourceToolsOnly && /^apps\/ui(?:\/|$)/u.test(componentPath);
   let refreshed = false;
   const installAndPrepare = async () => {
     await installInitialDependenciesImpl({ repoDir, env });
     refreshed = true;
-    // UI source tooling prepares Protocol before postinstall under the same
-    // freshness lock. Other installs still complete shared UI outputs before
+    // UI source tooling prepares postinstall under the same freshness lock.
+    // Other installs still complete shared UI outputs before
     // releasing their stage-zero dependency admission.
-    if (!needsUiSchemaPreparation) await prepareInitialUiOutputs({ repoDir, env });
+    if (!needsUiPostinstallPreparation) await prepareInitialUiOutputs({ repoDir, env });
   };
   if (sourceToolsOnly) {
     // Source tests do not consume the Stack dependency owner's compiled closure.
-    // UI patch readiness imports Protocol's public UI schemas, so prepare that
-    // prerequisite under the same lock without admitting the full runtime closure.
-    const onDependenciesReady = needsUiSchemaPreparation
+    // The readiness verifier and postinstall tools resolve source directly;
+    // retain patched dependency preparation without publishing workspace dist.
+    const onDependenciesReady = needsUiPostinstallPreparation
       ? async () => {
-          const { ensureWorkspacePackagesBuiltByName } = await loadWorkspaceBuildOwner();
-          await ensureWorkspacePackagesBuiltByName(repoDir, ['@happier-dev/protocol'], {
-            env,
-            includeDevDependencies: false,
-          });
           const { ensureUiPostinstallOutputs } = await loadDependencyOwner();
           await ensureUiPostinstallOutputs(join(repoDir, 'apps', 'ui'), repoDir, { env, force: refreshed });
         }

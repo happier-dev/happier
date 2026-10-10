@@ -90,6 +90,10 @@ If hstack prints that a restart is disabled because the PID is unknown, re-run w
 
 ## Runtime-backed named stacks
 
+In 0.3 development, new QA stacks use direct source bundles and a one-shot frozen web export by default. Start with `hstack stack start <qa> --runtime=source`; explicitly reload with `hstack stack start <qa> --runtime=source --restart`. Each runtime host uses its synced mirror and shares unchanged bundles across stacks without watchers or native publication; the server serves the exported UI. `--ui=borrowed` explicitly selects configured moving Expo, and `--no-ui` requests headless source workers. Require per-role `runtime.sourceRuntimeIdentities` selected == loaded and actual service readiness. See [Controlled stacks for agent QA](/hstack/stacks#controlled-stacks-for-agent-qa) for auth, placement and UI boundaries.
+
+The commands below are the separate built-runtime workflow. Use `--runtime=built` to run an existing selected build; source QA does not require these builds or selections.
+
 Build targets:
 
 In 0.3 development, every successful component build publishes a complete snapshot and advances the repository producer. It reuses the producer's current unrequested components. Initialize a target once with `--all` if it has no complete snapshot yet.

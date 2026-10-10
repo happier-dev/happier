@@ -1,4 +1,4 @@
-import { chmod, cp, lstat, mkdir, readFile, readdir, readlink, rm, symlink } from 'node:fs/promises';
+import { chmod, copyFile, cp, lstat, mkdir, readFile, readdir, readlink, rm, symlink } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { readCachedFileDigest } from '../../apps/stack/scripts/utils/fs/cached_file_digest.mjs';
 
@@ -36,7 +36,13 @@ export async function captureBuildInputFiles({ sourceDir, captureDir, readPaths 
     if (info.isDirectory()) await mkdir(target, { recursive: true });
     else {
       await rm(target, { force: true });
-      try { await cp(source, target, { verbatimSymlinks: true }); }
+      // Paths are already admitted and the destination was unlinked. For a
+      // regular file, generic cp redundantly stats every ancestor on every
+      // copy; large dependency captures amplify that into millions of calls.
+      try {
+        if (info.isFile()) await copyFile(source, target);
+        else await cp(source, target, { verbatimSymlinks: true });
+      }
       catch (error) {
         if (typeof error !== 'object' || error === null || !('code' in error)
           || (error.code !== 'ENOENT' && error.code !== 'ENOTDIR')) throw error;

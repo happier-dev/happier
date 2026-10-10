@@ -28,6 +28,7 @@ import { getServerLightDataDirFromEnvOrDefault } from '../utils/stack/dirs.mjs';
 import { assertCanonicalManagedStackName } from '../utils/stack/names.mjs';
 import { resolveStackServerEndpoint } from '../utils/server/urls.mjs';
 import { createListenerOwnershipObservationScope } from '../utils/server/listener_ownership.mjs';
+import { resolveSharedDatabaseSourceProvider } from '../utils/server/effective_db_provider.mjs';
 
 const readExistingEnv = readTextOrEmpty;
 
@@ -86,7 +87,7 @@ export async function withStackEnv({
   reconcileDaemonRuntimeState = true,
   beforeRuntimeReconcile = null,
 }) {
-  const envPath = resolveStackEnvPath(stackName).envPath;
+  const { envPath, baseDir } = resolveStackEnvPath(stackName);
   if (!stackExistsSync(stackName)) {
     throw new Error(
       `[stack] stack "${stackName}" does not exist yet.\n` +
@@ -121,6 +122,9 @@ export async function withStackEnv({
     HAPPIER_STACK_ENV_FILE: envPath,
     // Expose runtime state path so scripts can find it if needed.
     HAPPIER_STACK_RUNTIME_STATE_PATH: runtimeStatePath,
+    // Resolve logs on the runtime host, including named source QA stacks.
+    HAPPIER_STACK_LOG_TEE_DIR: join(baseDir, 'logs'),
+    HAPPIER_STACK_LOG_TEE_TIMESTAMPS: '1',
     // Stack env is authoritative by default.
     ...stackEnv,
     // One-shot overrides (e.g. --repo=...) win over stack env file.
@@ -219,37 +223,46 @@ export async function configureSharedDatabasePreset({ stackName, sourceStackName
   const consumer = parseEnvToObject(await readExistingEnv(consumerPath.envPath));
   const source = parseEnvToObject(await readExistingEnv(sourcePath.envPath));
   if (!Object.keys(consumer).length || !Object.keys(source).length) throw new Error('[shared-db] both stacks must already exist');
-  if (consumer.HAPPIER_DB_PROVIDER !== 'sqlite' || (source.HAPPIER_DB_PROVIDER && source.HAPPIER_DB_PROVIDER !== 'sqlite')) {
-    throw new Error('[shared-db] both stacks must use SQLite');
-  }
-  if (await hasRetainedServerData(getServerLightDataDirFromEnvOrDefault({ stackBaseDir: consumerPath.baseDir, env: consumer }))) {
+  // Controller metadata admits the provider. URL/secret validation belongs to
+  // the server host's runtime resolver, where the source env authority lives.
+  resolveSharedDatabaseSourceProvider({ env: source });
+  const sameSource = consumer.HAPPIER_STACK_SHARED_DB_SOURCE_STACK === sourceStackName
+    && Boolean(consumer.HAPPIER_STACK_SHARED_DB_SOURCE_ENV_FILE);
+  if (!sameSource && await hasRetainedServerData(getServerLightDataDirFromEnvOrDefault({ stackBaseDir: consumerPath.baseDir, env: consumer }))) {
     throw new Error('[shared-db] preset requires a fresh consumer without retained server data');
   }
   const sourcePlacement = await loadDevTargetsConfig({ stackName: sourceStackName, env });
   const server = sourcePlacement.config.runtimePlacement?.server;
-  if (server?.mode !== 'prefer-target') throw new Error('[shared-db] source stack requires explicit server-host placement');
-  const target = sourcePlacement.config.targets.find(candidate => candidate.name === server.target);
-  if (!target) throw new Error('[shared-db] source server host is not configured');
-  const pathApi = target.platform === 'windows' ? win32 : posix;
-  if (pathApi.basename(target.cliHomeDir) !== 'cli') throw new Error('[shared-db] source server host requires its canonical stack CLI home');
+  if (!['local', 'prefer-target'].includes(server?.mode)) throw new Error('[shared-db] source stack requires explicit server-host placement');
   const own = await loadDevTargetsConfig({ stackName, env });
-  const consumerTarget = { ...target, remoteServerPort: null };
-  // A target name is not host identity: the source definition owns this
-  // placement even when the consumer already has a same-named target.
-  const targets = own.config.targets.length
-    ? [...own.config.targets.filter(candidate => candidate.name !== target.name), consumerTarget]
-    : sourcePlacement.config.targets.map(candidate => candidate.name === target.name ? consumerTarget : candidate);
+  let targets = own.config.targets;
+  let sourceEnvPath = sourcePath.envPath;
+  let serverPlacement = { mode: 'local' };
+  if (server.mode === 'prefer-target') {
+    const target = sourcePlacement.config.targets.find(candidate => candidate.name === server.target);
+    if (!target) throw new Error('[shared-db] source server host is not configured');
+    const pathApi = target.platform === 'windows' ? win32 : posix;
+    if (pathApi.basename(target.cliHomeDir) !== 'cli') throw new Error('[shared-db] source server host requires its canonical stack CLI home');
+    const consumerTarget = { ...target, remoteServerPort: null };
+    // A target name is not host identity: the source definition owns this
+    // placement even when the consumer already has a same-named target.
+    targets = own.config.targets.length
+      ? [...own.config.targets.filter(candidate => candidate.name !== target.name), consumerTarget]
+      : sourcePlacement.config.targets.map(candidate => candidate.name === target.name ? consumerTarget : candidate);
+    sourceEnvPath = resolveRemoteStackStatePaths(target, { stackName: sourceStackName }).stackEnvPath;
+    serverPlacement = { mode: 'prefer-target', target: server.target, fallback: 'error' };
+  }
   const placementConfig = parseDevTargetsConfig({ version: 3,
     targets,
-    runtimePlacement: { ...own.config.runtimePlacement, server: { mode: 'prefer-target', target: server.target, fallback: 'error' } },
+    runtimePlacement: { ...own.config.runtimePlacement, server: serverPlacement },
     commandExecution: own.config.commandExecution ?? sourcePlacement.config.commandExecution,
   });
   if (!own.daemonExplicitlySet) delete placementConfig.runtimePlacement.daemon;
   await writeJsonAtomic(own.path, placementConfig);
   await ensureEnvFileUpdated({ envPath: consumerPath.envPath, updates: Object.entries({
     HAPPIER_STACK_SHARED_DB_SOURCE_STACK: sourceStackName,
-    HAPPIER_STACK_SHARED_DB_SOURCE_ENV_FILE: resolveRemoteStackStatePaths(target, { stackName: sourceStackName }).stackEnvPath,
+    HAPPIER_STACK_SHARED_DB_SOURCE_ENV_FILE: sourceEnvPath,
     HAPPIER_STACK_RUNTIME_MODE: 'require', HAPPIER_SQLITE_AUTO_MIGRATE: '0', HAPPIER_STACK_MIGRATE_MODE: 'skip', METRICS_ENABLED: 'false',
   }).map(([key, value]) => ({ key, value })) });
-  return { ok: true, stackName, sourceStackName, serverTarget: server.target };
+  return { ok: true, stackName, sourceStackName, serverTarget: server.mode === 'local' ? 'local' : server.target };
 }

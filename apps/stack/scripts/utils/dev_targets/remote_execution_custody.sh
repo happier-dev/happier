@@ -178,7 +178,7 @@ reap_test_temp_roots() {
 
 if [ "$mode" = reap-temp-roots ]; then
   # Explicit maintenance shares the custody owner, never its process-cancel
-  # path. Unknown live-process visibility retains every historical candidate.
+  # path. Unknown UID or same-UID visibility retains historical candidates.
   exec node "${BASH_SOURCE[0]%/*}/historical_temp_roots.mjs" "${TMPDIR:-/tmp}"
 fi
 
@@ -195,6 +195,14 @@ if [ "$mode" = test-temp-users ]; then
 fi
 
 if [ "$mode" = cancel ]; then cancel_record; exit 0; fi
+# The existing execution record lives beneath the configured worker CLI home.
+# Use that disk-backed owner for default scratch, not RAM-backed /tmp quotas.
+# Explicit TMPDIR remains caller-owned; never relocate an active scratch tree.
+if [ -z "${TMPDIR-}" ]; then
+  TMPDIR="${pid_file%/remote-exec/*}/tmp"
+  mkdir -p -m 700 -- "$TMPDIR" || exit 1
+  export TMPDIR
+fi
 reap_test_temp_roots
 
 # Legacy native records lack a lifetime pipe. Reap only a positively identified
@@ -230,6 +238,21 @@ cleanup() {
 }
 terminate_command() {
   [ -n "$remote_child_pid" ] || return 0
+  if [ "${HAPPIER_STACK_PROCESS_KIND-}" = browser ] && [ "$control_stdin" = 1 ]; then
+    # Browser close owns detached Chromium and may outlive the generic group
+    # grace. Reuse its control channel: repeated TERM could also interrupt the
+    # worker's close subprocess via ordinary foreground signal forwarding.
+    # The original parent reaps it; the lifeline reader is not its wait owner.
+    # A reaped child must not authorize a recycled PID. The existing parent
+    # edge identifies this still-owned worker without another custody record.
+    if [ "$(ps -p "$remote_child_pid" -o ppid= 2>/dev/null | tr -d ' ')" = "$$" ]; then
+      printf 'close\n' > "$control_pipe" || return 1
+    fi
+    # In the reader subshell this is not our child and wait returns immediately;
+    # only the original parent can reap it. No Bash-4-only BASHPID is required.
+    wait "$remote_child_pid" 2>/dev/null || true
+    return 0
+  fi
   local members
   members=$(group_identities "$remote_child_pid")
   # Job control establishes a group for the command and all its descendants.
@@ -252,7 +275,7 @@ if [ "$lifetime_stdin" = 1 ]; then
     control_pipe="$pid_file.stdin"
     mkfifo -m 600 "$control_pipe" || exit 1
     exec 4<> "$control_pipe"
-    (exec 3<&- 4>&-; "$@" < "$control_pipe") &
+    (exec 3<&- 4>&-; exec "$@" < "$control_pipe") &
   else
     "$@" </dev/null &
   fi

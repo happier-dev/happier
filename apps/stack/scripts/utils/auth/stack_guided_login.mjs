@@ -400,7 +400,7 @@ export async function resolveStackWebappTargetForAuth({ rootDir, stackName, env 
 
   // Runtime-backed stacks may place Expo on another target while the server remains API-only.
   // Trust only the Expo endpoint published by the active runtime before falling back to its server UI.
-  if (runtimeLaunchContext.snapshot) {
+  if (runtimeLaunchContext.snapshot || runtimeLaunchContext.runtimeMode.mode === 'source-snapshot') {
     const runtimeExpoUrl = await resolveRuntimeExpoWebappUrlForAuth({ rootDir, stackName, env });
     if (runtimeExpoUrl) {
       return {
@@ -507,8 +507,9 @@ async function prepareCoreAuthEnv({ stackName, webappUrl, env = process.env } = 
 
 async function resolveStackAuthCliLaunch({ rootDir, env = process.env } = {}) {
   const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv: [], env });
-  if (runtimeLaunchContext.snapshot) {
-    const cliLaunchSpec = resolveCliRuntimeLaunchSpec({ snapshot: runtimeLaunchContext.snapshot });
+  const cliLaunchSpec = runtimeLaunchContext.cliLaunchSpec ?? (runtimeLaunchContext.snapshot
+    ? resolveCliRuntimeLaunchSpec({ snapshot: runtimeLaunchContext.snapshot }) : null);
+  if (cliLaunchSpec) {
     return { cliExecutable: cliLaunchSpec.command, cliLaunchSpec };
   }
 

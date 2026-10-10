@@ -9,6 +9,10 @@ import { parseArgs } from '../cli/args.mjs';
 import { inferTuiStackName } from '../tui/args.mjs';
 import { mountExecutionHostWorkspace, superviseExecutionHostWorkspaceMount } from './workspace_mount.mjs';
 import { ensureExecutionHostServiceTunnel, superviseExecutionHostServiceTunnel } from './service_tunnel.mjs';
+import { resolveSshPrimaryTarget } from './primary.mjs';
+import { buildSshWorkerArgs, posixQuote, prependRemotePath } from '../dev_targets/remote_commands.mjs';
+import { runDevTargetSshProcess } from '../dev_targets/ssh_transport.mjs';
+import { runCaptureResult } from '../proc/proc.mjs';
 
 let delegatedCommandSequence = 0;
 
@@ -71,39 +75,59 @@ function startsGuestStackServices(argv) {
   return positionals[0] === 'stack' && ['start', 'dev'].includes(positionals[1]);
 }
 
-async function reconcileManagedHostAfterStart({
+function executionHostExecutor(profile, env, boundary) {
+  if (profile.mode === 'ssh-dev-target') {
+    return { capture: boundary?.capture?.bind(boundary) ?? ((command, args, options = {}) => runCaptureResult(command, args, { env, ...options })) };
+  }
+  return createManagedLimaHostExecutor(
+    { kind: 'local' }, undefined, env, { hostEnvironment: { LIMA_HOME: profile.limaHome } },
+  );
+}
+
+async function reconcileExecutionHostAfterStart({
   profile,
   workspaceId,
   stackName,
   signal,
   env,
   previousRuntimeStartedAt,
+  executor,
 }) {
-  const executor = createManagedLimaHostExecutor(
-    { kind: 'local' },
-    undefined,
-    env,
-    { hostEnvironment: { LIMA_HOME: profile.limaHome } },
-  );
-  const tunnel = superviseExecutionHostServiceTunnel({
-    profile,
-    workspaceId,
-    stackName,
-    executor,
-    env,
-    signal,
-    previousRuntimeStartedAt,
-  });
+  const sshPrimary = profile.mode === 'ssh-dev-target';
+  const selectedExecutor = executor ?? executionHostExecutor(profile, env);
+  const workspaces = sshPrimary ? profile.workspaces : [{ id: workspaceId, stackName }];
+  const supervision = workspaces.map(workspace => superviseExecutionHostServiceTunnel({
+    profile, workspaceId: workspace.id,
+    stackName: workspace.id === workspaceId ? stackName : workspace.stackName,
+    executor: selectedExecutor, env, signal,
+    ...(sshPrimary ? {} : { previousRuntimeStartedAt }),
+  }));
+  const tunnel = sshPrimary ? Promise.all(supervision) : supervision[0];
   if (profile.autoMount !== true) return await tunnel;
   const mount = superviseExecutionHostWorkspaceMount({
     profile,
     env,
-    mountDir: profile.hostMountDir || '',
-    executor,
+    mountDir: sshPrimary ? '' : profile.hostMountDir || '',
+    executor: selectedExecutor,
     signal,
   });
   const [tunnelResult] = await Promise.all([tunnel, mount]);
   return tunnelResult;
+}
+
+async function prepareSshHost(profile, { workspaceId, stackName, env, executor, reportWarning }) {
+  for (const workspace of profile.workspaces) {
+    try {
+      // The same controller serves both named checkouts. Keep their declared
+      // service addresses available even when only one TUI is open.
+      await ensureExecutionHostServiceTunnel({ profile, workspaceId: workspace.id,
+        stackName: workspace.id === workspaceId ? stackName : workspace.stackName, executor, env });
+    } catch (error) {
+      if (error.code !== 'EXECUTION_HOST_SERVICE_TUNNEL_PORT_CONFLICT') throw error;
+      reportWarning?.(`${error.message}; existing listener left in place. Release the manual tunnel to enable supervised forwarding.`);
+    }
+  }
+  if (profile.autoMount === true) await mountExecutionHostWorkspace({ profile, env, executor });
 }
 
 export function mapHostCwdToGuest(profile, hostCwd) {
@@ -182,6 +206,33 @@ function isPendingLegacyServiceForwardCutover(diagnosis) {
   ]);
 }
 
+export function assertManagedHostExecutionReady(profile, diagnosis, reportWarning = defaultBoundary().reportWarning) {
+  // Full provisioning compliance is not a prerequisite for controlling an
+  // already-active guest. Keep using its current capacity and toolchain until
+  // the operator explicitly applies updates; individual commands own their
+  // actual tool requirements. Creation identity and security configuration
+  // still fail closed, as does unavailable guest session management.
+  const canRetainRunningHost = profile.activation === 'active'
+    && diagnosis.exists === true
+    && String(diagnosis.status ?? '').toLowerCase() === 'running'
+    && diagnosis.guestLoginManager?.ok === true
+    && diagnosis.drift?.creation?.length === 0
+    && diagnosis.drift?.configuration?.length === 0
+    && Array.isArray(diagnosis.drift?.resources)
+    && (diagnosis.drift.resources.length > 0 || diagnosis.guestToolchain?.ok === false);
+  if (diagnosis.ok !== true && !canRetainRunningHost) {
+    throw new Error('[execution-host] managed Lima doctor reported drift; run `hstack dev-vm doctor` before execution');
+  }
+  if (diagnosis.ok !== true && canRetainRunningHost) {
+    const pendingUpdates = [
+      ...diagnosis.drift.resources.map((entry) => entry.field),
+      ...(diagnosis.guestToolchain?.ok === false
+        ? [diagnosis.guestToolchain.error || 'guest toolchain update pending'] : []),
+    ].join('; ');
+    reportWarning(`[execution-host] retaining the running VM without applying pending updates: ${pendingUpdates}. Run hstack dev-vm doctor for details.`);
+  }
+}
+
 export async function prepareManagedHost(profile, dependencies = {}) {
   const executor = dependencies.executor ?? createManagedLimaHostExecutor(
     { kind: 'local' },
@@ -203,8 +254,8 @@ export async function prepareManagedHost(profile, dependencies = {}) {
   });
   const pendingLegacyServiceForwardCutover = diagnosis.ok !== true
     && isPendingLegacyServiceForwardCutover(diagnosis);
-  if (diagnosis.ok !== true && !pendingLegacyServiceForwardCutover) {
-    throw new Error('[execution-host] managed Lima doctor reported drift; run `hstack dev-vm doctor` before execution');
+  if (!pendingLegacyServiceForwardCutover) {
+    assertManagedHostExecutionReady(profile, diagnosis, dependencies.reportWarning);
   }
   const workspaceId = String(dependencies.workspaceId ?? '').trim();
   const stackName = String(dependencies.stackName ?? '').trim();
@@ -239,16 +290,44 @@ export async function runExecutionHostGuestCommand({
   profile, guestCwd, command, args = [], cwd = process.cwd(), env = process.env,
   boundary = defaultBoundary(), onStarted,
 }) {
+  const sshPrimary = profile.mode === 'ssh-dev-target';
+  const transport = sshPrimary ? await resolveSshPrimaryTarget({ profile, env }) : null;
+  const sshArgs = transport ? [
+    ...(transport.sshConfigFile ? ['-F', transport.sshConfigFile] : []),
+    '-o', 'ConnectTimeout=10',
+  ] : [];
+  const remoteScript = script => `exec bash -lc ${posixQuote(prependRemotePath(transport.target, script))}`;
+  if (transport) {
+    const probe = await runDevTargetSshProcess({ command: 'ssh', env,
+      args: buildSshWorkerArgs(transport.target, { sshArgs, tty: false,
+        remoteCommand: remoteScript(`cd -- ${posixQuote(guestCwd)} && command -v systemd-run >/dev/null`) }) },
+    async ({ command: executable, args: probeArgs }) => {
+      const captured = await (boundary.capture ?? runCaptureResult)(executable, probeArgs, { cwd, env });
+      return { ...captured, code: captured.exitCode, stderr: captured.err };
+    });
+    if (probe.code !== 0) {
+      throw new Error(`[execution-host] SSH primary ${profile.sshPrimary.targetName} is unreachable or its mapped workspace/session tools are unavailable; execution refused (no local fallback)`);
+    }
+  }
   delegatedCommandSequence += 1;
   const delegatedUnit = [
     'happier-execution-host', process.pid.toString(36),
     Date.now().toString(36), delegatedCommandSequence.toString(36),
   ].join('-') + '.scope';
-  const child = boundary.spawn('limactl', [
-    'shell', '--workdir', guestCwd, profile.instance, '--',
+  const scopedCommand = [
     'systemd-run', '--user', '--scope', '--quiet', `--unit=${delegatedUnit}`, '--',
     command, ...args,
-  ], { cwd, env: { ...env, LIMA_HOME: profile.limaHome }, stdio: 'inherit', shell: false });
+  ];
+  const spawnTransport = (commandArgs, { tty, workdir, stdio }) => boundary.spawn(
+    transport ? 'ssh' : 'limactl',
+    transport ? buildSshWorkerArgs(transport.target, { sshArgs, tty,
+      remoteCommand: remoteScript(`cd -- ${posixQuote(workdir)} && exec ${commandArgs.map(posixQuote).join(' ')}`) })
+      : ['shell', '--workdir', workdir, profile.instance, '--', ...commandArgs],
+    { cwd, env: transport ? env : { ...env, LIMA_HOME: profile.limaHome }, stdio, shell: false },
+  );
+  // OpenSSH inherits the controller terminal and forwards its window changes;
+  // the same systemd scope retains guest job ownership for either transport.
+  const child = spawnTransport(scopedCommand, { tty: true, workdir: guestCwd, stdio: 'inherit' });
   let guestCancellation = null;
   let interruptionSignal = null;
   const removeSignalHandlers = boundary.onSignal((signal) => {
@@ -259,20 +338,16 @@ export async function runExecutionHostGuestCommand({
         `grace_attempt=0; while [ "$grace_attempt" -lt 150 ]; do state=$(systemctl --user show --property=ActiveState --value ${delegatedUnit} 2>/dev/null || true); case "$state" in active|activating|deactivating) ;; *) break ;; esac; sleep 0.1; grace_attempt=$((grace_attempt + 1)); done`,
         `systemctl --user kill --kill-whom=all --signal=SIGKILL ${delegatedUnit} >/dev/null 2>&1 || true`,
       ].join('; ');
-      const cancellationChild = boundary.spawn('limactl', [
-        'shell', '--workdir', '/', profile.instance, '--',
-        '/bin/sh', '-c', cancellationScript,
-      ], {
-        cwd,
-        env: { ...env, LIMA_HOME: profile.limaHome },
-        stdio: 'ignore',
-        shell: false,
-      });
+      const cancellationChild = spawnTransport(['/bin/sh', '-c', cancellationScript],
+        { tty: false, workdir: '/', stdio: 'ignore' });
       guestCancellation = new Promise((resolveCancellation) => {
         let settled = false;
-        const settle = () => {
+        const settle = (code) => {
           if (settled) return;
           settled = true;
+          if (transport && code !== 0) {
+            boundary.reportWarning?.(`[execution-host] SSH primary ${profile.sshPrimary.targetName} cancellation was not confirmed; its delegated job may still be running`);
+          }
           resolveCancellation();
         };
         cancellationChild.once('error', settle);
@@ -293,6 +368,9 @@ export async function runExecutionHostGuestCommand({
       child.once('close', (exitCode, signal) => resolvePromise({ exitCode, signal }));
     });
     if (guestCancellation) await guestCancellation;
+    if (transport && result.exitCode === 255 && !interruptionSignal) {
+      boundary.reportWarning?.(`[execution-host] SSH primary ${profile.sshPrimary.targetName} transport or command exited 255; no replay or local fallback`);
+    }
     return interruptionSignal ? { exitCode: null, signal: interruptionSignal } : result;
   } finally { removeSignalHandlers(); }
 }
@@ -315,7 +393,11 @@ export async function runDelegatedHstackCommand({
     requiresServiceTunnel: startsGuestStackServices(argv),
   };
   if (typeof boundary.reportWarning === 'function') preparation.reportWarning = boundary.reportWarning;
-  const prepared = await prepare(profile, preparation);
+  const sshPrimary = profile.mode === 'ssh-dev-target';
+  const executor = sshPrimary ? executionHostExecutor(profile, env, boundary) : undefined;
+  const prepared = sshPrimary && prepare === prepareManagedHost
+    ? await prepareSshHost(profile, { ...preparation, env, executor })
+    : await prepare(profile, preparation);
   const guestCwd = mapping?.guestCwd ?? mapHostCwdToGuest(profile, cwd);
   const invocation = guestInvocation ?? (mapping
     ? {
@@ -329,7 +411,7 @@ export async function runDelegatedHstackCommand({
     : argv;
   const reconciliationController = new AbortController();
   const postStartReconciler = reconcileAfterStart
-    ?? (prepare === prepareManagedHost ? reconcileManagedHostAfterStart : null);
+    ?? (prepare === prepareManagedHost ? reconcileExecutionHostAfterStart : null);
   const startReconciliation = () => startsGuestStackServices(argv) && postStartReconciler
     ? Promise.resolve(postStartReconciler({
         profile,
@@ -337,6 +419,7 @@ export async function runDelegatedHstackCommand({
         stackName,
         signal: reconciliationController.signal,
         env,
+        executor,
         previousRuntimeStartedAt: String(prepared?.serviceTunnelRuntimeStartedAt ?? '').trim(),
       })).catch((error) => {
         boundary.reportWarning?.(

@@ -47,7 +47,12 @@ function resolveAdmittedServerComponent({ serverComponent, snapshot }) {
   return admittedServerComponent;
 }
 
-export function resolveServerRuntimeLaunchSpec({ serverComponent, dbProvider, snapshot, migrationsEnabled = true }) {
+export function resolveServerRuntimeLaunchSpec({ serverComponent, dbProvider, snapshot, sourceRuntimeLaunch, migrationsEnabled = true }) {
+  if (sourceRuntimeLaunch) {
+    return { ...sourceRuntimeLaunch, command: process.execPath,
+      args: [sourceRuntimeLaunch.entrypoint, ...(sourceRuntimeLaunch.args ?? [])],
+      migration: migrationsEnabled ? sourceRuntimeLaunch.migration ?? { mode: 'in-process' } : { mode: 'disabled' } };
+  }
   resolveAdmittedServerComponent({ serverComponent, snapshot });
   const runtimeRoot = snapshot.launchPath ?? snapshot.snapshotPath;
   const serverDir = join(runtimeRoot, 'server');

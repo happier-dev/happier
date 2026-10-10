@@ -1,4 +1,4 @@
-import { runExecutionHostGuestCommand } from './delegation.mjs';
+import { assertManagedHostExecutionReady, runExecutionHostGuestCommand } from './delegation.mjs';
 import { doctorManagedLimaInstance } from '../managed_lima/manager.mjs';
 import { startManagedLimaInstance } from '../managed_lima/lifecycle.mjs';
 import { resolveManagedLimaCapacityResources } from '../managed_lima/capacity.mjs';
@@ -31,7 +31,7 @@ export function shouldDelegateToActiveExecutionHost({
   platform = process.platform,
   env = process.env,
 }) {
-  if (!profile || profile.activation !== 'active' || profile.mode !== 'managed-lima') return false;
+  if (!profile || profile.activation !== 'active' || !['managed-lima', 'ssh-dev-target'].includes(profile.mode)) return false;
   if (platform !== 'darwin') return false;
   if (truthy(env.CI) || String(env.HAPPIER_STACK_SANDBOX_DIR ?? '').trim()) return false;
   if (truthy(env.HAPPIER_STACK_EXECUTION_HOST_REENTRY)) return false;
@@ -57,7 +57,7 @@ export async function inspectExecutionHost({ profile, doctor = doctorManagedLima
   });
   return {
     configured: true,
-    authoritative: profile.activation === 'active',
+    authoritative: profile.activation === 'active' && profile.mode === 'managed-lima',
     activation: profile.activation,
     profile,
     doctor: diagnosis,
@@ -86,8 +86,6 @@ export async function executeCandidateHostCommand({
     diskImageFormat: profile.diskImageFormat,
     resources: resolveManagedLimaCapacityResources(profile.capacity),
   });
-  if (diagnosis.ok !== true) {
-    throw new Error('[execution-host] managed Lima doctor reported drift; run `hstack dev-vm doctor` before execution');
-  }
+  assertManagedHostExecutionReady(profile, diagnosis, boundary?.reportWarning);
   return await runExecutionHostGuestCommand({ profile, guestCwd: cwd, command: executable, args, boundary });
 }

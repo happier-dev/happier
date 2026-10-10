@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
@@ -122,6 +122,39 @@ async function waitForTunnelState(statePath, predicate) {
   }
   throw new Error(`timed out waiting for service tunnel state: ${statePath}`);
 }
+
+test('SSH primary discovers and forwards declared services through enrolled SSH without replacing manual listeners', async t => {
+  const fixture = await createTempFixture(t);
+  const env = { HAPPIER_STACK_HOME_DIR: fixture.path('home'), HAPPIER_STACK_STORAGE_DIR: fixture.path('stacks') };
+  const selected = { ...profile(fixture.path('lima')), mode: 'ssh-dev-target',
+    sshPrimary: { targetName: 'nl2', stackName: 'lane' } };
+  await mkdir(fixture.path('stacks', 'lane'), { recursive: true });
+  await writeFile(fixture.path('stacks', 'lane', 'dev-targets.json'), JSON.stringify({ version: 3,
+    targets: [{ name: 'nl2', platform: 'posix', ssh: 'enrolled-nl2', sshConfigFile: fixture.path('ssh-config'),
+      repoDir: selected.workspaces[0].guestDir, cliHomeDir: '/home/guest/.happier/cli' }] }));
+  const executor = runtimeExecutor(runtimeProjection());
+  const boundary = tunnelBoundary({ marker: 'ssh-nl2:0.3:repo-dev-1234567890',
+    listenerPids: (_port, spawned) => spawned.length ? [731] : [] });
+  const options = { profile: selected, workspaceId: '0.3', executor, env, boundary };
+  const result = await ensureExecutionHostServiceTunnel(options);
+  assert.equal(executor.calls[0].command, 'ssh');
+  assert.ok(executor.calls[0].args.includes('enrolled-nl2'));
+  assert.ok(executor.calls[0].args.includes(fixture.path('ssh-config')));
+  assert.equal(result.status, 'running');
+  assert.equal(result.statePath, fixture.path('home', 'execution-host-tunnels', 'ssh-nl2-0.3.json'));
+  assert.ok(boundary.spawned[0].args.includes('enrolled-nl2'));
+  assert.ok(boundary.spawned[0].args.includes(fixture.path('ssh-config')));
+  assert.ok(boundary.spawned[0].args.includes('*:52753:127.0.0.1:52754'));
+  assert.ok(boundary.spawned[0].args.includes('*:18829:127.0.0.1:18829'));
+  assert.equal((await stopExecutionHostServiceTunnel(options)).changed, true);
+  boundary.spawned.length = 0;
+  boundary.terminated.length = 0;
+  boundary.observeProcess = async () => ({ status: 'not_found' });
+  boundary.probePortBinding = async () => ({ status: 'in_use' });
+  await assert.rejects(ensureExecutionHostServiceTunnel(options), { code: 'EXECUTION_HOST_SERVICE_TUNNEL_PORT_CONFLICT' });
+  assert.equal(boundary.spawned.length, 0);
+  assert.equal(boundary.terminated.length, 0);
+});
 
 test('runtime projection reads only the selected guest Stack declaration and maps server backend plus Expo web', async () => {
   const executor = runtimeExecutor(runtimeProjection());

@@ -6,8 +6,10 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { createCargoProbeFixture } from './testkit/tauri_testkit.mjs';
 
 const execFileAsync = promisify(execFile);
+const withCargoProbe = await createCargoProbeFixture(test);
 
 function cleanTauriDevTestEnv(overrides = {}) {
   const env = { ...process.env };
@@ -20,12 +22,12 @@ function cleanTauriDevTestEnv(overrides = {}) {
   delete env.HAPPIER_SERVER_URL;
   delete env.HAPPIER_WEBAPP_URL;
   delete env.HAPPIER_ACTIVE_SERVER_ID;
-  return {
+  return withCargoProbe({
     ...env,
     HAPPIER_STACK_HOME_DIR: join(tmpdir(), `happier-tauri-dev-home-${process.pid}`),
     HAPPIER_STACK_DISABLE_STACK_ENV_AUTOLOAD: '1',
     ...overrides,
-  };
+  });
 }
 
 test('tauri_dev --json prints the resolved launch plan without running build hooks', async () => {

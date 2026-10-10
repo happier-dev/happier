@@ -16,6 +16,19 @@ import { createTempFixture } from '../../apps/stack/scripts/testkit/core/temp_fi
 import { writeFakeBin } from '../../apps/stack/scripts/testkit/core/fake_bin_harness.mjs';
 import { installNativeAdmissionFixture } from '../../apps/stack/scripts/testkit/core/native_admission_fixture.mjs';
 
+test('compiler leaf uses the package admission policy instead of escalating CLI to the UI envelope', () => {
+  const workspaceDir = fileURLToPath(new URL('../../', import.meta.url));
+  for (const component of ['cli', 'ui', 'server']) {
+    const invocation = resolveTypeScriptCliInvocation({
+      workspaceDir, args: ['--noEmit', '-p', `apps/${component}/tsconfig.json`],
+      platform: 'linux', env: {},
+      requireResolve: () => '/repo/node_modules/@typescript/native/package.json',
+      readFileSyncImpl: () => JSON.stringify({ bin: { tsc: './bin/tsc' } }),
+    });
+    assert.ok(invocation.argsPrefix.includes(`--class=compilation-${component}`), invocation.argsPrefix.join(' '));
+  }
+});
+
 test('canonical compiler admission blocks inherited routing markers and preserves native terminal results', { skip: process.platform !== 'linux' }, async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-canonical-compiler-' });
   const { launcher, admissionRoot } = await installNativeAdmissionFixture({ root: fixture.root });
@@ -41,6 +54,7 @@ esac
 ` });
   writeFakeBin({ root: fixture.root, name: 'systemctl', content: '#!/bin/sh\nexit 1\n' });
   const env = { ...process.env, PATH: `${fixture.path('bin')}:/usr/bin:/bin`, CI: '',
+    HAPPIER_STACK_PM_CACHE_BASE_DIR: '',
     FIXTURE_MEMORY: memory, COMPILER_STARTED: fixture.path('started'),
     HAPPIER_HSTACK_EXECUTION: '1', HAPPIER_DEV_TARGET_EXECUTION: '', HAPPIER_TYPECHECK_DISPATCHED: '',
     HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN: '', HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT: '', HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE: '' };
@@ -67,7 +81,7 @@ esac
     assert.equal(child.exitCode, null, `compiler bypassed admission: ${stderr}`);
     assert.match(stderr, /waiting for heavyweight admission/);
     await assert.rejects(readFile(env.COMPILER_STARTED), { code: 'ENOENT' });
-    await writeFile(memory, '25165824 73400320\n');
+    await writeFile(memory, '41943040 73400320\n');
     assert.deepEqual(await exited, [7, null], stderr);
     assert.equal(invocation.compilerPath, compiler);
     assert.equal(await readFile(env.COMPILER_STARTED, 'utf8'), `--project|${project}`);
@@ -145,7 +159,7 @@ esac
         await new Promise(resolveWait => setTimeout(resolveWait, 20));
       }
       await assert.rejects(readFile(fixture.path('nested-started')), { code: 'ENOENT' });
-      await writeFile(memory, '25165824 73400320\n');
+      await writeFile(memory, '41943040 73400320\n');
       assert.deepEqual(await nestedExit, [7, null], nestedStderr);
       assert.equal(await readFile(join(ancestorOwner, 'class'), 'utf8'), 'compilation\n');
       assert.deepEqual(await readdir(join(admissionRoot, 'owners')), [`${process.pid}-${token}`],

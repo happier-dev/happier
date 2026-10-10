@@ -9,9 +9,8 @@ import { constants as zlibConstants } from 'node:zlib';
 const brotliCompressAsync = promisify(brotliCompress);
 const gzipAsync = promisify(gzip);
 
-const COMPRESSIBLE_EXTENSIONS = new Set(['.css', '.js', '.json', '.map', '.svg', '.wasm']);
+const COMPRESSIBLE_EXTENSIONS = new Set(['.css', '.html', '.js', '.json', '.map', '.svg', '.wasm']);
 const SIDECAR_EXTENSIONS = new Set(['.br', '.gz']);
-const MIN_COMPRESSIBLE_BYTES = 1024;
 const SUPPORTED_ENCODINGS = new Set(['br', 'gzip']);
 
 function extensionOf(path) {
@@ -20,12 +19,12 @@ function extensionOf(path) {
   return index >= 0 ? lower.slice(index) : '';
 }
 
-function shouldPrecompress(relativePath, size) {
+function shouldPrecompress(relativePath) {
   const lower = relativePath.toLowerCase();
   for (const sidecarExtension of SIDECAR_EXTENSIONS) {
     if (lower.endsWith(sidecarExtension)) return false;
   }
-  return size >= MIN_COMPRESSIBLE_BYTES && COMPRESSIBLE_EXTENSIONS.has(extensionOf(relativePath));
+  return COMPRESSIBLE_EXTENSIONS.has(extensionOf(relativePath));
 }
 
 async function collectCompressibleFiles(rootDir, dir = rootDir, prefix = '') {
@@ -41,7 +40,7 @@ async function collectCompressibleFiles(rootDir, dir = rootDir, prefix = '') {
     if (!entry.isFile()) continue;
     const info = await stat(absolutePath).catch(() => null);
     if (!info?.isFile()) continue;
-    if (shouldPrecompress(relativePath, info.size)) {
+    if (shouldPrecompress(relativePath)) {
       files.push({ absolutePath, relativePath, size: info.size });
     }
   }

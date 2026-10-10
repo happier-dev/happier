@@ -1632,7 +1632,7 @@ test('ensureDepsInstalled does not repeat a monorepo refresh after a successful 
   assert.equal(installLines.length, 1, `expected one yarn install after a successful refresh, got:\n${installLines.join('\n')}`);
 });
 
-test('ensureDepsInstalled keeps a current dependency tree outside dependency and CLI publication locks', async (t) => {
+test('ensureDepsInstalled keeps dependency-only reads of a current tree outside dependency and CLI publication locks', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'hs-pm-current-deps-read-only-'));
   t.after(async () => rm(root, { recursive: true, force: true }));
 
@@ -1662,7 +1662,7 @@ test('ensureDepsInstalled keeps a current dependency tree outside dependency and
     '--eval',
     [
       `const { ensureDepsInstalled } = await import(${JSON.stringify(new URL('./pm.mjs', import.meta.url).href)});`,
-      `await ensureDepsInstalled(${JSON.stringify(componentDir)}, 'happier-ui', { quiet: true, env: process.env });`,
+      `await ensureDepsInstalled(${JSON.stringify(componentDir)}, 'happier-ui', { quiet: true, env: process.env, prepareComponentOutputs: false });`,
     ].join('\n'),
   ], { cwd: root, env: process.env });
 
@@ -1674,7 +1674,7 @@ test('ensureDepsInstalled keeps a current dependency tree outside dependency and
   await rm(join(root, '.project'), { recursive: true, force: true });
   await writeFile(join(root, '.project'), 'read-only-fast-path\n', 'utf-8');
 
-  await ensureDepsInstalled(componentDir, 'happier-ui', { quiet: true, env: process.env });
+  await ensureDepsInstalled(componentDir, 'happier-ui', { quiet: true, env: process.env, prepareComponentOutputs: false });
   const yarnInvocations = (await readFile(outputPath, 'utf-8')).split('\n');
   const installs = yarnInvocations.filter((line) => /\binstall\b/.test(line));
   const readinessProbes = yarnInvocations.filter((line) => line.trim() === '--version');

@@ -1,7 +1,7 @@
 import { configureDevTargetPower, inspectDevTargetPower } from './utils/dev_targets/worker_power.mjs';
 import { provisionManagedWslDevTarget } from './utils/dev_targets/managed_wsl.mjs';
 import './utils/env/env.mjs';
-import { loadControlledRuntimeConfig } from './utils/dev_targets/service_placement.mjs';
+import { loadControlledRuntimeConfig, resolveControlledQaBrowserTarget } from './utils/dev_targets/service_placement.mjs';
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
@@ -21,7 +21,8 @@ import {
   applyManagedDevTargetCapacity,
   doctorManagedDevTargetRuntime,
 } from './utils/dev_targets/managed_runtime.mjs';
-import { provisionPosixDevTarget } from './utils/dev_targets/provision.mjs';
+import { prepareDevTargetHost, provisionPosixDevTarget, provisionQaDevTarget } from './utils/dev_targets/provision.mjs';
+import { runQaBrowserSession } from './utils/dev_targets/qa_browser.mjs';
 import { provisionManagedLimaDevTarget } from './utils/dev_targets/managed_worker.mjs';
 import {
   inspectDevTargetAdmission,
@@ -38,6 +39,7 @@ import {
 } from './utils/dev_targets/sync_service.mjs';
 import { prepareCommandRepository, writeNativeExecutionProjection } from './utils/dev_targets/native_execution_projection.mjs';
 import { moveRetainedServerData } from './utils/dev_targets/retained_server_data.mjs';
+import { readStackEnvObject } from './stack/stack_environment.mjs';
 
 async function configureWorkerPower(target) {
   const results = await configureDevTargetPower({ target });
@@ -318,12 +320,15 @@ async function writeConfig(path, config, repoRoot = resolve(dirname(fileURLToPat
 }
 
 async function main() {
-  const argv = process.argv.slice(2);
+  const requestedArgv = process.argv.slice(2);
+  const sshShortcut = requestedArgv[0] === 'ssh';
+  const argv = sshShortcut ? ['exec', ...requestedArgv.slice(1), '--tty', '--', 'bash', '-l'] : requestedArgv;
   const { wrapperArgs, remoteCommandArgs } = splitCommandArguments(argv);
   const { flags, kv } = parseArgs(wrapperArgs);
   const json = wantsJson(wrapperArgs, { flags });
   const positionals = collectPositionals(wrapperArgs, kv);
   const command = String(positionals[0] ?? '').trim();
+  if (sshShortcut && (positionals.length !== 2 || positionals[1] === 'auto')) throw new Error('[dev-targets] ssh requires one exact target name');
   const stackName =
     String(kv.get('--stack') ?? process.env.HAPPIER_STACK_STACK ?? 'main').trim() || 'main';
   let path = resolveDevTargetsConfigPath({ stackName, env: process.env });
@@ -341,6 +346,10 @@ async function main() {
         '  hstack dev-targets show NAME [--stack=NAME]',
         '  hstack dev-targets doctor [NAME] [--stack=NAME]',
         '  hstack dev-targets status NAME [--stack=NAME]',
+        '  hstack dev-targets qa setup NAME --stack=QA_STACK [--json]',
+        '  hstack dev-targets browser start SESSION --stack=QA_STACK --url=QA_UI_URL [--forward-url=LOOPBACK_URL] [--trust-cert=PEM_PATH]',
+        '    Keeps the lane browser and CDP forward alive; Ctrl+C closes only this session.',
+        '    --trust-cert pins the supplied certificate SPKI for this browser lifetime.',
         '  hstack dev-targets capacity show NAME [--stack=NAME]',
         '  hstack dev-targets capacity set NAME shared|dedicated [--shared-cpus=N --shared-memory-gib=N --dedicated-cpus=N --dedicated-memory-gib=N] [--force] [--stack=NAME]',
         '  hstack dev-targets sync NAME [--stack=NAME]',
@@ -348,6 +357,8 @@ async function main() {
         '  hstack dev-targets sync-service status [--stack=NAME]',
         '  hstack dev-targets sync-service stop [--stack=NAME]',
         '  hstack dev-targets exec NAME|auto [--cwd=PATH] [--env=KEY=VALUE]... [--flush] [--tty] [--stack=NAME] -- COMMAND [ARG...]',
+        '  hstack dev-targets ssh NAME [--stack=NAME]',
+        '  hstack dev-targets host prepare NAME...|--all-linux [--toolchain] [--create-user=NAME --home=PATH] [--tailscale --tailscale-authkey-stdin] [--lockdown[=tailscale-only|ssh-public]] [--auto-updates] [--grow-root] [--no-sleep] [--passwordless-sudo] [--passwordless-provisioning] [--fleet-ssh] [--disk-tmp] [--inotify] [--stack=NAME]',
         '  hstack dev-targets placement show [--stack=NAME]',
         '  hstack dev-targets move-server TARGET [--stack=NAME]',
         '  hstack dev-targets placement set server|expo local|TARGET [--stack=NAME]',
@@ -391,6 +402,30 @@ async function main() {
     printResult({ json, data: { path, stackName }, text: path });
     return;
   }
+  if (command === 'qa' && positionals[1] === 'setup') {
+    const controlled = await loadControlledRuntimeConfig({ stackName, env: process.env });
+    const target = requireTarget(controlled.config.targets, positionals[2], 'qa setup');
+    const result = await provisionQaDevTarget({ target, stackName,
+      stackBaseDir: controlled.authority.producerStackBaseDir, env: process.env });
+    printResult({ json, data: result, text: `[dev-targets] ${target.name} QA dependencies ${result.dependenciesReady ? 'ready' : 'incomplete'}; power ${result.powerReady ? 'ready' : 'requires OS authorization'}` });
+    if (!result.dependenciesReady || !result.diskReady || !result.powerReady) process.exitCode = 1;
+    return;
+  }
+  if (command === 'browser' && positionals[1] === 'start') {
+    if (flags.has('--trust-cert') && !kv.get('--trust-cert')) {
+      throw new Error('[dev-targets] browser --trust-cert requires a certificate path');
+    }
+    const { env: stackEnv } = await readStackEnvObject(stackName);
+    const browserEnv = { ...process.env, ...stackEnv };
+    const controlled = await resolveControlledQaBrowserTarget({ stackName, env: browserEnv });
+    const target = controlled.target;
+    const url = String(kv.get('--url') ?? '').trim();
+    if (!url) throw new Error('[dev-targets] browser start requires --url from the QA stack UI endpoint');
+    await runQaBrowserSession({ target, stackName, stackBaseDir: controlled.authority.producerStackBaseDir,
+      sessionName: positionals[2], url, extraUrls: kv.get('--forward-url') ? [kv.get('--forward-url')] : [],
+      trustCertPath: kv.get('--trust-cert'), env: browserEnv });
+    return;
+  }
   if (command === 'list') {
     printResult({
       json,
@@ -410,7 +445,7 @@ async function main() {
       target, stackName, stackBaseDir: dirname(loaded.path), config: loaded.config, env: process.env,
       syncStackBaseDir: authority.producerStackBaseDir,
       persistPlacement: async () => {
-        const current = await loadDevTargetsConfig({ stackName, env: process.env });
+        const current = await loadDevTargetsConfig({ stackName, path, env: process.env });
         if (current.config.runtimePlacement?.server?.mode === 'prefer-target') {
           throw new Error('[dev-targets] server placement changed during handoff; copied source retained and placement was not replaced');
         }
@@ -466,10 +501,10 @@ async function main() {
     if (requestedName && targets.length === 0) {
       throw new Error(`[dev-targets] target not found: ${requestedName}`);
     }
-    const toolDiagnosis = await runDevTargetsDoctor({ targets, env: process.env });
+    const toolDiagnosis = await runDevTargetsDoctor({ targets, stackBaseDir: dirname(path), env: process.env });
     const diagnosedTargets = await Promise.all(toolDiagnosis.targets.map(async (observed, index) => {
       const synchronization = await inspectDevTargetSync({
-        target: targets[index], stackBaseDir: dirname(loaded.path), env: process.env,
+        target: targets[index], stackBaseDir: dirname(loaded.path), sourceDir: commandRepoRoot, env: process.env,
       });
       return {
         ...observed,
@@ -502,6 +537,7 @@ async function main() {
       inspectDevTargetSync({
         target,
         stackBaseDir: dirname(loaded.path),
+        sourceDir: commandRepoRoot,
         env: process.env,
       }),
       target.managedRuntime
@@ -524,7 +560,7 @@ async function main() {
       text: [
         formatSyncStatus(target, status),
         `[dev-targets] ${target.name} admission\t${admission.state}${admission.state === 'observed' ? '\t' + (renderAdmissionOwnerProgress(admission) || 'no live owners') : admission.error ? '\t' + admission.error : ''}`,
-        ...(admission.disk ? [`[dev-targets] ${target.name} disk\t${admission.disk.state}\t${admission.disk.state === 'observed' ? `${admission.disk.reason}; ${admission.disk.commandClass} requires=${admission.disk.requiredBytes} bytes; ${admission.disk.filesystems.map(fs => `free=${fs.availableBytes}/${fs.totalBytes}`).join('; ')}` : admission.disk.error}`] : []),
+        ...(admission.disk ? [`[dev-targets] ${target.name} disk\t${admission.disk.state}\t${admission.disk.state === 'observed' ? `${admission.disk.reason}; ${admission.disk.commandClass}; ${admission.disk.filesystems.map(fs => `free=${fs.availableBytes}/${fs.totalBytes}`).join('; ')}` : admission.disk.error}`] : []),
         ...powerPolicy.results.map(result => `[dev-targets] ${target.name} ${result.role} power\t${result.ok ? 'ok' : 'failed'}${result.detail ? '\t' + result.detail : ''}`),
         ...(managedRuntime
           ? [`[dev-targets] ${target.name} managed ${target.managedRuntime.kind}\t${managedRuntime.status}\t${managedRuntime.ok ? 'ok' : 'failed'}`]
@@ -669,7 +705,7 @@ async function main() {
         json,
         data: { path, stackName, ...result },
         text: result.released
-          ? `[dev-targets] paused independent synchronization for stack ${stackName}; Stack lifecycle ownership restored`
+          ? `[dev-targets] paused routing-owned synchronization for stack ${stackName}; consumers remain borrowers`
           : `[dev-targets] independent synchronization is not active for stack ${stackName}`,
       });
       return;
@@ -737,6 +773,37 @@ async function main() {
     process.exitCode = exitCodeForCommandResult(result);
     return;
   }
+  if (command === 'host') {
+    if (positionals[1] !== 'prepare') throw new Error('[dev-targets] host requires prepare');
+    for (const flag of ['--create-user', '--home']) {
+      if (flags.has(flag) || kv.get(flag) === '') throw new Error(`[dev-targets] ${flag} requires a value`);
+    }
+    const names = positionals.slice(2);
+    const allLinux = flags.has('--all-linux');
+    if ((allLinux && names.length) || (!allLinux && !names.length)) throw new Error('[dev-targets] host prepare requires NAME... or --all-linux');
+    const targets = allLinux ? loaded.config.targets.filter(target => target.platform === 'posix')
+      : [...new Set(names.map(name => name.toLowerCase()))].map(name => requireTarget(loaded.config.targets, name, 'host prepare'));
+    if (!targets.length) throw new Error('[dev-targets] no Linux worker candidates configured');
+    if (targets.some(target => target.platform !== 'posix')) throw new Error('[dev-targets] host prepare supports Linux workers only');
+    if (flags.has('--tailscale-authkey-stdin') && targets.length !== 1) throw new Error('[dev-targets] auth-key stdin requires exactly one target');
+    // Password entry belongs to the owner terminal; process one worker at a time.
+    for (const target of targets) {
+      process.stderr.write(`[dev-targets] preparing ${target.name}; enter its sudo password if prompted\n`);
+      const prepared = await prepareDevTargetHost({ target, allLinux, growRoot: flags.has('--grow-root'), noSleep: flags.has('--no-sleep'),
+        passwordlessSudo: flags.has('--passwordless-sudo'), passwordlessProvisioning: flags.has('--passwordless-provisioning'),
+        fleetSsh: flags.has('--fleet-ssh'), diskTmp: flags.has('--disk-tmp'), inotify: flags.has('--inotify'),
+        toolchain: flags.has('--toolchain'), createUser: kv.get('--create-user') ?? null, home: kv.get('--home') ?? null,
+        tailscale: flags.has('--tailscale'), tailscaleAuthkeyStdin: flags.has('--tailscale-authkey-stdin'),
+        lockdown: kv.has('--lockdown') ? kv.get('--lockdown') : flags.has('--lockdown') ? 'tailscale-only' : null,
+        autoUpdates: flags.has('--auto-updates') });
+      if (prepared !== target) {
+        const current = await loadDevTargetsConfig({ stackName, env: process.env });
+        await writeConfig(path, withTargets(current.config, current.config.targets.map(entry => entry.name === target.name ? prepared : entry)));
+      }
+    }
+    printResult({ json, data: { targets: targets.map(target => target.name) }, text: '[dev-targets] host preparation finished' });
+    return;
+  }
   if (command === 'power') {
     if (positionals[1] !== 'no-sleep') throw new Error('[dev-targets] power requires no-sleep NAME|auto');
     const requested = positionals[2];
@@ -759,15 +826,20 @@ async function main() {
       return;
     }
     if (action === 'set') {
-      const config = setPlacement(loaded.config, positionals[2], positionals[3], {
+      const options = {
         targets: parseTargetNames(kv.get('--targets')),
         includeLocal: flags.has('--include-local'),
         fallback: kv.get('--fallback'),
         loadProbeTtlMs: kv.get('--load-probe-ttl-ms'),
         unavailableProbeTtlMs: kv.get('--unavailable-probe-ttl-ms'),
-      });
+      };
+      let config = setPlacement(loaded.config, positionals[2], positionals[3], options);
       if (positionals[2] === 'commands' && config.commandExecution?.mode === 'auto') {
         await Promise.all(config.commandExecution.targets.map((name) => configureWorkerPower(requireTarget(config.targets, name, 'placement'))));
+        // Host preparation/enrollment can finish during the external power
+        // checks. Apply only this placement choice to the latest registry.
+        const current = await loadDevTargetsConfig({ stackName, path, env: process.env });
+        config = setPlacement(current.config, positionals[2], positionals[3], options);
       }
       await writeConfig(path, config, commandRepoRoot);
       printResult({
@@ -882,6 +954,7 @@ async function main() {
           stackBaseDir: dirname(path),
           repoDir: kv.get('--repo-dir') ?? null,
           cliHomeDir: kv.get('--cli-home-dir') ?? null,
+          requireToolchain: false,
           env: process.env,
         });
       }
@@ -915,13 +988,17 @@ async function main() {
         remoteServerPort: kv.get('--remote-server-port') ?? null,
       };
     }
+    loaded = await loadDevTargetsConfig({ stackName, path, env: process.env, allowMissing: true });
     const remaining = loaded.config.targets.filter(
       (target) => target.name.toLowerCase() !== name.toLowerCase(),
     );
     const config = withTargets(loaded.config, [...remaining, candidate]);
     await writeConfig(path, config);
     const target = config.targets.find((entry) => entry.name === name.toLowerCase());
-    if (target.managedRuntime || host) await configureWorkerPower(target);
+    if (candidate.toolchainReady === false) {
+      process.stderr.write(`[dev-targets] SSH enrollment is ready; next run: hstack dev-targets host prepare ${target.name} --toolchain --stack=${stackName}\n`);
+    }
+    if (target.managedRuntime) await configureWorkerPower(target);
     printResult({
       json,
       data: { path, stackName, target },

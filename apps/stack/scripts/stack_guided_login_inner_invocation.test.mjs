@@ -13,6 +13,7 @@ import {
 import { createAuthStackFixture, getStackRootFromMeta } from './testkit/auth_testkit.mjs';
 import { writeRuntimeSnapshotLayout } from './testkit/core/runtime_snapshot_layout.mjs';
 import { withPatchedProcessEnv } from './testkit/core/env_scope.mjs';
+import { buildAuthSafeStackStartSpec } from './utils/auth/buildAuthSafeStackStartSpec.mjs';
 
 function sourceRuntimeEnv() {
   return {
@@ -148,6 +149,45 @@ test('guided stack auth login invocation uses the active runtime snapshot cli wh
   } finally {
     await fixture.cleanup();
   }
+});
+
+test('guided source snapshot auth consumes the retained CLI and its child environment', async (t) => {
+  const rootDir = getStackRootFromMeta(import.meta.url);
+  const fixture = await createAuthStackFixture({ t, prefix: 'hstack-source-auth-', stackName: 'agent-qa-source' });
+  const stackDir = join(fixture.storageDir, 'agent-qa-source');
+  const cliDir = join(stackDir, 'source-runtime', 'bundle', 'cli');
+  const entrypoint = join(cliDir, 'src', 'index.mjs');
+  await mkdir(join(cliDir, 'src'), { recursive: true });
+  await writeFile(entrypoint, 'export {};\n');
+  await writeFile(join(stackDir, 'stack.runtime.json'), JSON.stringify({
+    version: 1, stackName: 'agent-qa-source',
+    sourceRuntimeLaunch: { entrypoint, cliDir, env: { HAPPIER_STACK_CLI_ROOT_DIR: cliDir } },
+  }));
+  const invocation = await buildStackAuthLoginInvocation({ rootDir, stackName: 'agent-qa-source', webappUrl: 'https://cloud.happier.dev',
+    env: fixture.buildEnv({ HAPPIER_STACK_RUNTIME_MODE: 'source-snapshot', HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED: '1',
+      HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT: '/moving/dist/index.mjs',
+      HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT: 'ffffffffffffffff',
+      HAPPIER_CLI_SUBPROCESS_PREFER_TSX: '1', HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK: '1' }),
+  });
+  assert.equal(invocation.command, process.execPath);
+  assert.deepEqual(invocation.args, [entrypoint, 'auth', 'login']);
+  assert.equal(invocation.env.HAPPIER_CLI_ROOT_DIR, cliDir);
+  assert.equal(invocation.env.HAPPIER_STACK_CLI_ROOT_DIR, cliDir);
+  assert.equal(invocation.env.HAPPIER_CLI_SUBPROCESS_ENTRYPOINT, entrypoint);
+  assert.equal(invocation.env.HAPPIER_CLI_SUBPROCESS_PREFER_TSX, '0');
+  assert.equal(invocation.env.HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK, '0');
+  assert.equal(invocation.env.HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED, undefined);
+  assert.equal(invocation.env.HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT, undefined);
+  assert.equal(invocation.env.HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT, undefined);
+});
+
+test('source snapshot auth recovery preserves source start even for Expo login', () => {
+  const spec = buildAuthSafeStackStartSpec({ rootDir: '/stack', stackName: 'agent-qa', runtimeMode: 'source-snapshot',
+    effectiveWebappMode: 'expo', shouldStartDevForAutoAuth: true, baseEnv: {} });
+  assert.equal(spec.command, 'start');
+  assert.equal(spec.startedStackForExpoAuth, false);
+  assert.deepEqual(spec.args[1].slice(1), ['start', 'agent-qa', '--background', '--runtime=source', '--no-daemon', '--no-browser']);
+  assert.equal(spec.env.HAPPIER_STACK_AUTH_FLOW, undefined);
 });
 
 test('guided stack auth login rejects generic runtime-backed HTML without the Happier readiness marker', async (t) => {

@@ -55,7 +55,7 @@ test('sanitizeStackTestRunnerEnv seeds isolated stack roots when requested', () 
   assert.equal(env.HAPPIER_STACK_CLI_ROOT_DISABLE, '1');
 });
 
-test('sanitizeStackTestRunnerEnv removes execution-host placement and isolates package-manager caches', () => {
+test('sanitizeStackTestRunnerEnv preserves admitted execution identity while isolating stack state and caches', () => {
   const root = '/tmp/happier-stack-unit-abc';
   const env = sanitizeStackTestRunnerEnv(
     {
@@ -68,19 +68,23 @@ test('sanitizeStackTestRunnerEnv removes execution-host placement and isolates p
       HAPPIER_HSTACK_EXECUTION: 'remote',
       YARN_CACHE_FOLDER: '/live/yarn-cache',
       npm_config_cache: '/live/npm-cache',
+      npm_execpath: '/live/yarn.js',
+      npm_node_execpath: '/live/node',
     },
     { isolatedStackRoot: root },
   );
 
-  assert.equal(env.HAPPIER_DEV_TARGET_EXECUTION, undefined);
+  assert.equal(env.HAPPIER_DEV_TARGET_EXECUTION, '1');
   assert.equal(env.HAPPIER_PREFERRED_EXECUTION, undefined);
-  assert.equal(env.HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN, undefined);
-  assert.equal(env.HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT, undefined);
-  assert.equal(env.HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE, undefined);
+  assert.equal(env.HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN, 'pid:token');
+  assert.equal(env.HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT, '/live/admission');
+  assert.equal(env.HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE, 'mac3-linux');
   assert.equal(env.HAPPIER_HSTACK_DISPATCH_CONTROL, undefined);
   assert.equal(env.HAPPIER_HSTACK_EXECUTION, undefined);
   assert.equal(env.YARN_CACHE_FOLDER, join(root, 'cache', 'yarn'));
   assert.equal(env.npm_config_cache, join(root, 'cache', 'npm'));
+  assert.equal(env.npm_execpath, undefined);
+  assert.equal(env.npm_node_execpath, undefined);
 });
 
 test('sanitizeStackTestRunnerEnv can seed the repo checkout without restoring live stack scope', () => {

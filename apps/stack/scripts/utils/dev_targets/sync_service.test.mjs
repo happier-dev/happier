@@ -2,11 +2,12 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 
-import { renderMutagenProject } from './mutagen_project.mjs';
+import { resolveDevTargetMutagenRuntime } from './mutagen_runtime.mjs';
+import { DEV_TARGET_SYNC_EXECUTOR_REPO, renderMutagenProject, resolveMutagenSessionName } from './mutagen_project.mjs';
 import {
   ensureDevTargetSyncProject,
   INDEPENDENT_DEV_TARGET_SYNC_OWNER,
@@ -19,6 +20,9 @@ import {
   stopDevTargetSyncService,
   waitForDevTargetSyncMonitor,
 } from './sync_service.mjs';
+
+const envFor = root => ({ HAPPIER_STACK_STORAGE_DIR: root });
+const runtimeFor = (root, sourceDir = DEV_TARGET_SYNC_EXECUTOR_REPO) => resolveDevTargetMutagenRuntime({ stackBaseDir: root, sourceDir, env: envFor(root) });
 
 const targets = [
   { name: 'mac' },
@@ -53,8 +57,10 @@ test('sync startup seeds an unscanned no-watch session once through the canonica
   await writeFile(join(bin, 'ssh'), '#!/bin/sh\nexit 0\n');
   await Promise.all(['mutagen', 'ssh'].map(name => chmod(join(bin, name), 0o700)));
   const marker = fixture.path('seeded');
-  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, DBUS_SESSION_BUS_ADDRESS: '', HSTACK_TEST_SYNC_STATE: marker };
+  const env = { ...process.env, ...envFor(fixture.root), PATH: `${bin}:${process.env.PATH}`, DBUS_SESSION_BUS_ADDRESS: '', HSTACK_TEST_SYNC_STATE: marker };
   const target = { name: 'worker', platform: 'windows', ssh: 'worker', repoDir: 'C:/repo', cliHomeDir: 'C:/home' };
+  await assert.rejects(startDevTargetSyncService({ stackBaseDir: fixture.path('agent-qa-test'), sourceDir: '/repo', targets: [target], detached: true, env }));
+  await assert.rejects(readFile(marker), { code: 'ENOENT' });
   const start = () => startDevTargetSyncService({ stackBaseDir: fixture.path('stack'), sourceDir: '/repo', targets: [target], detached: true, env });
   assert.equal((await start()).statuses[0].status.state, 'ready');
   assert.equal(await readFile(marker, 'utf8'), '1');
@@ -63,7 +69,7 @@ test('sync startup seeds an unscanned no-watch session once through the canonica
   env.HSTACK_TEST_SYNC_STATE = fixture.path('failed-seed');
   env.HSTACK_TEST_SYNC_FLUSH_FAILED = '1';
   await assert.rejects(start(), /Mutagen initial flush failed/);
-  assert.equal((await inspectDevTargetSyncService({ stackBaseDir: fixture.path('stack'), targets: [target], env })).preparation.state, 'failed');
+  assert.equal((await inspectDevTargetSyncService({ stackBaseDir: fixture.path('stack'), sourceDir: '/repo', targets: [target], env })).preparation.state, 'failed');
   env.HSTACK_TEST_SYNC_STATE = fixture.path('sibling-seed');
   delete env.HSTACK_TEST_SYNC_FLUSH_FAILED;
   const stackBaseDir = fixture.path('command-stack');
@@ -77,25 +83,28 @@ test('sync startup seeds an unscanned no-watch session once through the canonica
   const prepare = () => prepareDevTargetCommandSync({ stackBaseDir, sourceDir: '/source/0.2', targets: [commandTarget], env });
   await prepare();
   assert.equal(await readFile(env.HSTACK_TEST_SYNC_STATE, 'utf8'), '1');
+  const legacySession = join(stackBaseDir, 'mutagen/data/sessions/sync_existing');
+  await mkdir(dirname(legacySession), { recursive: true });
+  await writeFile(legacySession, 'opaque legacy session');
   await prepare();
-  assert.equal(await readFile(env.HSTACK_TEST_SYNC_STATE, 'utf8'), '1', 'prepared command replicas leave subsequent dispatch flushes to the launcher');
-  const project = await readFile(join(stackBaseDir, 'mutagen/mutagen.yml'), 'utf8');
+  assert.equal(await readFile(env.HSTACK_TEST_SYNC_STATE, 'utf8'), '1', 'remaining legacy sessions must not refuse live dispatch through an already prepared shared replica');
+  const project = await readFile(resolveDevTargetMutagenRuntime({ stackBaseDir, sourceDir: '/source/0.2', env }).projectFile, 'utf8');
   assert.doesNotMatch(project, /portable|pollingInterval/);
 });
 
 test('detached sync start recreates requested sessions missing from its canonical project', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-sync-service-missing-sessions-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const projectFile = join(root, 'mutagen', 'mutagen.yml');
+  const projectFile = runtimeFor(root).projectFile;
   const target = {
     name: 'mac',
     platform: 'posix',
     ssh: 'mac',
     repoDir: '/remote/happier',
   };
-  await mkdir(join(root, 'mutagen'), { recursive: true });
+  await mkdir(dirname(runtimeFor(root).projectFile), { recursive: true });
   await writeFile(projectFile, renderMutagenProject({
-    sourceDir: '/source/happier',
+    sourceDir: DEV_TARGET_SYNC_EXECUTOR_REPO,
     targets: [target],
     ownerId: INDEPENDENT_DEV_TARGET_SYNC_OWNER,
   }));
@@ -104,10 +113,10 @@ test('detached sync start recreates requested sessions missing from its canonica
 
   const result = await startDevTargetSyncService({
     stackBaseDir: root,
-    sourceDir: '/source/happier',
+    sourceDir: DEV_TARGET_SYNC_EXECUTOR_REPO,
     targets: [target],
     detached: true,
-    env: {},
+    env: envFor(root),
   }, {
     startTargetRuntime: async () => {},
     ensureReplicaRoots: async () => {},
@@ -142,14 +151,15 @@ test('detached sync start recreates requested sessions missing from its canonica
   ]);
 });
 
-test('detached sync start resumes the canonical project and reports every session without a resident wrapper or dependency bootstrap', async () => {
+test('detached sync start resumes the canonical project and reports every session without a resident wrapper or dependency bootstrap', async (t) => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-sync-service-' });
   const calls = [];
   const result = await startDevTargetSyncService({
     stackBaseDir: '/stack',
     sourceDir: '/repo',
     targets,
     detached: true,
-    env: {},
+    env: envFor(root),
   }, {
     ensureReplicaRoots: async () => {},
     ensureProject: async (options) => {
@@ -180,7 +190,8 @@ test('detached sync start resumes the canonical project and reports every sessio
   assert.equal(result.monitor, null);
 });
 
-test('sync startup makes configured Lima transports ready before Mutagen project startup', async () => {
+test('sync startup makes configured Lima transports ready before Mutagen project startup', async (t) => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-sync-service-' });
   const calls = [];
   const configuredTargets = [
     { name: 'mac', platform: 'posix' },
@@ -197,7 +208,7 @@ test('sync startup makes configured Lima transports ready before Mutagen project
     sourceDir: '/repo',
     targets: configuredTargets,
     detached: true,
-    env: {},
+    env: envFor(root),
   }, {
     startTargetRuntime: async ({ target }) => {
       calls.push({ kind: 'runtime', target: target.name });
@@ -207,7 +218,7 @@ test('sync startup makes configured Lima transports ready before Mutagen project
     },
     ensureProject: async () => {
       calls.push({ kind: 'ensure' });
-      return { ownership: 'owned', env: {} };
+      return { ownership: 'owned', env: envFor(root) };
     },
     resumeSync: async ({ target }) => { calls.push({ kind: 'resume', target: target.name }); },
     inspectSync: async ({ target }) => ({ state: 'ready', sessionName: `happier-${target.name}` }),
@@ -222,18 +233,19 @@ test('sync startup makes configured Lima transports ready before Mutagen project
   ]);
 });
 
-test('sync startup accepts an unpaused reconnecting session when Mutagen resume reports an offline endpoint', async () => {
+test('sync startup accepts an unpaused reconnecting session when Mutagen resume reports an offline endpoint', async (t) => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-sync-service-' });
   const states = [];
   const result = await startDevTargetSyncService({
     stackBaseDir: '/stack',
     sourceDir: '/repo',
     targets: [{ name: 'mac', platform: 'posix' }],
     detached: true,
-    env: {},
+    env: envFor(root),
   }, {
     startTargetRuntime: async () => {},
     ensureReplicaRoots: async () => {},
-    ensureProject: async () => ({ ownership: 'owned', env: {} }),
+    ensureProject: async () => ({ ownership: 'owned', env: envFor(root) }),
     resumeSync: async () => { throw new Error('endpoint offline'); },
     inspectSync: async () => ({ state: 'synchronizing', sessionName: 'happier-mac' }),
     writePreparationState: async ({ state }) => { states.push(state); },
@@ -243,7 +255,8 @@ test('sync startup accepts an unpaused reconnecting session when Mutagen resume 
   assert.equal(result.statuses[0].status.state, 'synchronizing');
 });
 
-test('detached sync start never owns dependency preparation on any sync target', async () => {
+test('detached sync start never owns dependency preparation on any sync target', async (t) => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-sync-service-' });
   const prepared = [];
   const configuredTargets = [
     { name: 'windows', platform: 'windows' },
@@ -254,10 +267,10 @@ test('detached sync start never owns dependency preparation on any sync target',
     sourceDir: '/repo',
     targets: configuredTargets,
     detached: true,
-    env: {},
+    env: envFor(root),
   }, {
     ensureReplicaRoots: async () => {},
-    ensureProject: async () => ({ ownership: 'owned', env: {} }),
+    ensureProject: async () => ({ ownership: 'owned', env: envFor(root) }),
     resumeSync: async () => {},
     prepareTarget: async ({ target }) => { prepared.push(target.name); },
     inspectSync: async ({ target }) => ({ state: 'ready', sessionName: `happier-${target.name}` }),
@@ -268,7 +281,8 @@ test('detached sync start never owns dependency preparation on any sync target',
   assert.deepEqual(result.statuses.map((entry) => entry.target), ['windows', 'mac']);
 });
 
-test('POSIX sync startup does not flush or bootstrap the remote checkout', async () => {
+test('POSIX sync startup does not flush or bootstrap the remote checkout', async (t) => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-sync-service-' });
   const calls = [];
   const target = {
     name: 'mac',
@@ -280,7 +294,7 @@ test('POSIX sync startup does not flush or bootstrap the remote checkout', async
     sourceDir: '/repo',
     targets: [target],
     detached: true,
-    env: {},
+    env: envFor(root),
   }, {
     ensureReplicaRoots: async () => {},
     ensureProject: async () => ({ ownership: 'owned', env: { TEST_ENV: 'project' } }),
@@ -294,7 +308,8 @@ test('POSIX sync startup does not flush or bootstrap the remote checkout', async
   assert.deepEqual(calls, []);
 });
 
-test('foreground sync start streams the canonical Mutagen monitor until it exits', async () => {
+test('foreground sync start streams the canonical Mutagen monitor until it exits', async (t) => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-sync-service-' });
   const spawned = [];
   const completion = Promise.resolve({ code: 0, signal: null });
   const result = await startDevTargetSyncService({
@@ -302,7 +317,7 @@ test('foreground sync start streams the canonical Mutagen monitor until it exits
     sourceDir: '/repo',
     targets,
     detached: false,
-    env: {},
+    env: envFor(root),
   }, {
     ensureReplicaRoots: async () => {},
     ensureProject: async () => ({ ownership: 'owned', env: { MUTAGEN_DATA_DIRECTORY: '/stack/mutagen/data' } }),
@@ -325,7 +340,7 @@ test('foreground sync start streams the canonical Mutagen monitor until it exits
     /if \.SessionState/,
     'the monitor must skip transient Mutagen entries whose embedded session state is nil',
   );
-  assert.deepEqual(spawned[0].args.slice(-2), ['happier-mac', 'happier-mac2']);
+  assert.deepEqual(spawned[0].args.slice(-2), targets.map(target => resolveMutagenSessionName(target.name, '/repo')));
   assert.deepEqual(spawned[0].env, { MUTAGEN_DATA_DIRECTORY: '/stack/mutagen/data' });
   assert.equal(spawned[0].lineFilter({ stream: 'stdout', line: 'happier-mac|Watching|1||false|0' }), true);
   assert.equal(spawned[0].lineFilter({ stream: 'stdout', line: 'happier-mac|Watching|1||false|0' }), false);
@@ -360,23 +375,25 @@ test('foreground monitor Ctrl-C stops only the monitor process and detaches with
   assert.equal(signals.listenerCount('SIGTERM'), 0);
 });
 
-test('sync stop delegates lifecycle release to the independent project owner', async () => {
+test('sync stop delegates lifecycle release to the independent project owner', async (t) => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-sync-service-' });
   const calls = [];
-  const result = await stopDevTargetSyncService({ stackBaseDir: '/stack', env: {} }, {
+  const result = await stopDevTargetSyncService({ stackBaseDir: '/stack', env: envFor(root) }, {
     releaseProject: async (options) => {
       calls.push(options);
       return true;
     },
   });
   assert.equal(result.released, true);
-  assert.deepEqual(calls, [{ stackBaseDir: '/stack', env: {} }]);
+  assert.deepEqual(calls, [{ stackBaseDir: '/stack', env: envFor(root) }]);
 });
 
-test('sync status reports ownership and every target session without changing lifecycle', async () => {
+test('sync status reports ownership and every target session without changing lifecycle', async (t) => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-sync-service-' });
   const result = await inspectDevTargetSyncService({
     stackBaseDir: '/stack',
     targets,
-    env: {},
+    env: envFor(root),
   }, {
     readProject: async () => '# hstack-owner: "dev-target-sync-service"\n',
     readPreparationState: async () => ({
@@ -414,13 +431,13 @@ test('recovered sync status uses current sessions and retains failed startup as 
     const recoveryTargets = targets.map(({ name }) => ({
       name, platform: 'windows', ssh: name, repoDir: 'C:/repo', cliHomeDir: 'C:/home',
     }));
-    const env = { ...process.env, PATH: `${binDir}:${process.env.PATH}`, HSTACK_TEST_SYNC_UNHEALTHY: '1' };
+    const env = { ...process.env, ...envFor(root), PATH: `${binDir}:${process.env.PATH}`, HSTACK_TEST_SYNC_UNHEALTHY: '1' };
     await assert.rejects(startDevTargetSyncService({
       stackBaseDir: root, sourceDir: '/repo', targets: recoveryTargets, detached: true, env,
     }), /transient beta transition/);
     env.HSTACK_TEST_SYNC_UNHEALTHY = '0';
     const inspect = () => inspectDevTargetSyncService({
-      stackBaseDir: root, targets: recoveryTargets, env,
+      stackBaseDir: root, sourceDir: '/repo', targets: recoveryTargets, env,
     });
     const healthy = await inspect();
     assert.equal(healthy.state, 'ready');
@@ -433,7 +450,8 @@ test('recovered sync status uses current sessions and retains failed startup as 
   }
 });
 
-test('detached sync start records every synchronization observation before rejecting an unavailable target', async () => {
+test('detached sync start records every synchronization observation before rejecting an unavailable target', async (t) => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-sync-service-' });
   const states = [];
   await assert.rejects(
     startDevTargetSyncService({
@@ -441,10 +459,10 @@ test('detached sync start records every synchronization observation before rejec
       sourceDir: '/repo',
       targets,
       detached: true,
-      env: {},
+      env: envFor(root),
     }, {
       ensureReplicaRoots: async () => {},
-      ensureProject: async () => ({ ownership: 'owned', env: {} }),
+      ensureProject: async () => ({ ownership: 'owned', env: envFor(root) }),
       resumeSync: async () => {},
       prepareTarget: async () => { throw new Error('dependency bootstrap must not run'); },
       inspectSync: async ({ target }) => target.name === 'mac'
@@ -462,7 +480,8 @@ test('detached sync start records every synchronization observation before rejec
   });
 });
 
-test('sync service repairs a deleted source root blocked only by ignored beta artifacts', async () => {
+test('sync service repairs a deleted source root blocked only by ignored beta artifacts', async (t) => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-sync-service-' });
   const repaired = [];
   const conflictStatus = {
     state: 'unhealthy',
@@ -506,10 +525,10 @@ test('sync service repairs a deleted source root blocked only by ignored beta ar
     sourceDir: '/repo',
     targets: [{ name: 'mac', platform: 'posix', repoDir: '/remote/repo' }],
     detached: true,
-    env: {},
+    env: envFor(root),
   }, {
     ensureReplicaRoots: async () => {},
-    ensureProject: async () => ({ ownership: 'owned', env: {} }),
+    ensureProject: async () => ({ ownership: 'owned', env: envFor(root) }),
     resumeSync: async () => {},
     inspectSync: async () => conflictStatus,
     repairSync: async (options) => {
@@ -601,7 +620,8 @@ test('recoverable conflict repair deletes only the exact managed replica root af
   ]);
 });
 
-test('recoverable conflict repair refuses when the alpha source root exists again', async () => {
+test('recoverable conflict repair refuses when the alpha source root exists again', async (t) => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-sync-service-' });
   let ran = false;
   const result = await repairRecoverableDevTargetSyncConflicts({
     target: { name: 'mac', platform: 'posix', repoDir: '/remote/repo' },
@@ -625,7 +645,7 @@ test('recoverable conflict repair refuses when the alpha source root exists agai
     },
     sourceDir: '/source/repo',
     stackBaseDir: '/stack',
-    env: {},
+    env: envFor(root),
   }, {
     pathExists: () => true,
     runCommand: async () => { ran = true; return { code: 0 }; },
@@ -636,7 +656,8 @@ test('recoverable conflict repair refuses when the alpha source root exists agai
   assert.equal(ran, false);
 });
 
-test('recoverable conflict repair skips a root that reappeared without blocking other safe roots', async () => {
+test('recoverable conflict repair skips a root that reappeared without blocking other safe roots', async (t) => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-sync-service-' });
   const repairedRoots = [];
   const result = await repairRecoverableDevTargetSyncConflicts({
     target: { name: 'mac', platform: 'posix', repoDir: '/remote/repo' },
@@ -675,7 +696,7 @@ test('recoverable conflict repair skips a root that reappeared without blocking 
     },
     sourceDir: '/source/repo',
     stackBaseDir: '/stack',
-    env: {},
+    env: envFor(root),
   }, {
     pathExists: (path) => path.endsWith('/reappeared-plugin'),
     runCommand: async ({ commandArgs }) => {

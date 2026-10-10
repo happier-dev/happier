@@ -37,8 +37,11 @@ async function validateRuntimeServerMigration(serverLaunchSpec) {
   const serverDir = resolve(String(serverLaunchSpec?.serverDir ?? ''));
   const command = resolve(migration.command);
   const cwd = resolve(String(migration.cwd ?? ''));
-  const expectedName = `happier-server-migrate${String(serverLaunchSpec?.entrypoint ?? '').toLowerCase().endsWith('.exe') ? '.exe' : ''}`;
-  if (cwd !== serverDir || dirname(command) !== serverDir || basename(command) !== expectedName) {
+  const sourceSidecar = migration.mode === 'external';
+  const expectedDir = sourceSidecar ? resolve(serverDir, 'scripts') : serverDir;
+  const expectedName = sourceSidecar ? 'migrate.mjs'
+    : `happier-server-migrate${String(serverLaunchSpec?.entrypoint ?? '').toLowerCase().endsWith('.exe') ? '.exe' : ''}`;
+  if (cwd !== serverDir || dirname(command) !== expectedDir || basename(command) !== expectedName) {
     throw migrationError('ERUNTIMESERVERMIGRATIONUNAVAILABLE', 'artifact_migration_command_escape', migration);
   }
 
@@ -46,18 +49,18 @@ async function validateRuntimeServerMigration(serverLaunchSpec) {
   try {
     commandStat = await lstat(command);
     const [realServerDir, realCommand] = await Promise.all([realpath(serverDir), realpath(command)]);
-    if (dirname(realCommand) !== realServerDir) {
+    if (dirname(realCommand) !== (sourceSidecar ? resolve(realServerDir, 'scripts') : realServerDir)) {
       throw migrationError('ERUNTIMESERVERMIGRATIONUNAVAILABLE', 'artifact_migration_command_escape', migration);
     }
   } catch (error) {
     if (error instanceof RuntimeServerMigrationError) throw error;
     throw migrationError('ERUNTIMESERVERMIGRATIONUNAVAILABLE', 'unusable_artifact_migration_command', migration, { cause: error });
   }
-  const executable = process.platform === 'win32' || (commandStat.mode & 0o111) !== 0;
+  const executable = sourceSidecar || process.platform === 'win32' || (commandStat.mode & 0o111) !== 0;
   if (!commandStat.isFile() || !executable) {
     throw migrationError('ERUNTIMESERVERMIGRATIONUNAVAILABLE', 'unusable_artifact_migration_command', migration);
   }
-  return { command, cwd, args: Array.isArray(migration.args) ? migration.args : [] };
+  return { command, cwd, sourceSidecar, args: Array.isArray(migration.args) ? migration.args : [] };
 }
 
 export async function runServerRuntimeMigration({
@@ -75,7 +78,13 @@ export async function runServerRuntimeMigration({
   throwIfStartupCancelled(isCancellationRequested, migration);
   let child;
   try {
-    child = spawnProcImpl('server-migrate', migration.command, migration.args, env, { cwd: migration.cwd });
+    child = spawnProcImpl(
+      'server-migrate',
+      migration.sourceSidecar ? process.execPath : migration.command,
+      migration.sourceSidecar ? [migration.command, ...migration.args] : migration.args,
+      env,
+      { cwd: migration.cwd },
+    );
   } catch (error) {
     throw migrationError('ERUNTIMESERVERMIGRATIONUNAVAILABLE', 'spawn_error', migration, { cause: error });
   }

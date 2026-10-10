@@ -16,21 +16,24 @@ import {
   MUTAGEN_SYNC_LIST_JSON_TEMPLATE,
   parseMutagenSyncList,
   resolveDevTargetMutagenRuntime,
+  resolveDevTargetSshConfigFile,
 } from './mutagen_runtime.mjs';
 import { resolveMutagenSessionName } from './mutagen_project.mjs';
 import { appendExecutionProvenance } from './execution_provenance.mjs';
 import { buildDevTargetControlLaunch } from './sync_project.mjs';
+import { classifyDevTargetSshDiagnostic, runDevTargetSshProcess } from './ssh_transport.mjs';
 
-async function defaultRunCaptureResult({ command, args, env, streamLabel = '', timeoutMs }) {
+async function defaultRunCaptureResult({ command, args, env, streamLabel = '', stdoutDiagnosticStream, timeoutMs }) {
   return await runCaptureResult(command, args, {
     env,
     ...(streamLabel ? { streamLabel } : {}),
+    ...(stdoutDiagnosticStream !== undefined ? { stdoutDiagnosticStream } : {}),
     ...(Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
   });
 }
 
-function defaultSpawnProcess({ label, command, args, env, tty, lifetimeStdin, onLine }) {
-  return spawnProc(label, command, args, env, { onLine, ...(tty ? { stdio: 'inherit' } : lifetimeStdin ? { ownedProcessGroup: true, stdio: ['pipe', 'pipe', 'pipe'] } : {}) });
+function defaultSpawnProcess({ label, command, args, env, tty, lifetimeStdin, onLine, silent, lineFilter, persistOutput }) {
+  return spawnProc(label, command, args, env, { onLine, silent, lineFilter, persistOutput, ...(tty ? { stdio: 'inherit' } : lifetimeStdin ? { ownedProcessGroup: true, stdio: ['pipe', 'pipe', 'pipe'] } : {}) });
 }
 
 async function defaultStopProcess(child, signal) {
@@ -57,11 +60,11 @@ function isMissingNamedMutagenSession(result) {
 }
 
 export async function inspectDevTargetSync(
-  { target, stackBaseDir, env = process.env, timeoutMs = null },
+  { target, stackBaseDir, sourceDir, env = process.env, timeoutMs = null },
   { runCaptureResult: runCaptureResultImpl = defaultRunCaptureResult } = {},
 ) {
-  const runtime = resolveDevTargetMutagenRuntime({ stackBaseDir, env });
-  const sessionName = resolveMutagenSessionName(target.name);
+  const runtime = resolveDevTargetMutagenRuntime({ stackBaseDir, sourceDir, env });
+  const sessionName = resolveMutagenSessionName(target.name, runtime.sourceDir);
   const launch = buildDevTargetControlLaunch({
     command: 'mutagen',
     args: ['sync', 'list', sessionName, '--template', MUTAGEN_SYNC_LIST_JSON_TEMPLATE],
@@ -127,7 +130,7 @@ async function flushDevTarget(
   { runCaptureResult: runCaptureResultImpl = defaultRunCaptureResult } = {},
 ) {
   const runtime = resolveDevTargetMutagenRuntime({ stackBaseDir, env });
-  const sessionName = resolveMutagenSessionName(target.name);
+  const sessionName = resolveMutagenSessionName(target.name, runtime.sourceDir);
   const launch = buildDevTargetControlLaunch({
     command: 'mutagen',
     args: ['sync', 'flush', sessionName],
@@ -138,6 +141,7 @@ async function flushDevTarget(
     args: launch.args,
     env: runtime.env,
     streamLabel: `sync:${target.name}`,
+    stdoutDiagnosticStream: process.stderr,
     ...(Number.isFinite(timeoutMs) ? { timeoutMs } : {}),
   });
   if (!result?.ok) {
@@ -174,11 +178,15 @@ export async function runDevTargetDependencyBootstrap(
     componentRelativeDir = '.',
     syncAlreadyVerified = false,
     flush = false,
+    silent,
+    onLine,
     env = process.env,
   },
   { runCommand = runDevTargetCommand } = {},
 ) {
-  return await runCommand({
+  let ownershipRefused = false;
+  let ownershipDetail = '';
+  const result = await runCommand({
     target,
     stackBaseDir,
     commandArgs: [
@@ -192,10 +200,24 @@ export async function runDevTargetDependencyBootstrap(
     },
     dependencyAdmission: 'skip',
     provenance: 'skip',
+    onLine: event => {
+      if (event.stream === 'stderr') {
+        if (event.line.includes('HAPPIER_DEPENDENCY_METRO_RESTART_REQUIRED')) ownershipRefused = true;
+        if (event.line.startsWith('Error: Expo') || event.line.startsWith('Error: Cannot stop verified Expo')) ownershipDetail = event.line;
+      }
+      onLine?.(event);
+    },
     syncAlreadyVerified,
     ...(flush ? { flush: true } : {}),
+    ...(silent !== undefined ? { silent } : {}),
     env,
   });
+  if (result?.code !== 0 && ownershipRefused) {
+    const error = new Error(ownershipDetail || 'Stop the owning Stack once on this target, verify its recorded Expo process has exited, then start again.');
+    error.code = 'HAPPIER_DEPENDENCY_METRO_RESTART_REQUIRED';
+    return { ...result, error };
+  }
+  return result;
 }
 
 export async function runDevTargetWorkspacePreparation(
@@ -238,12 +260,18 @@ export async function runDevTargetCommand(
     environment = {},
     flush = null,
     tty = false,
+    controlStdin = false,
     dependencyAdmission = 'auto',
     admissionMode = 'wait',
     workspacePreparation = 'auto',
     provenance = 'auto',
     syncAlreadyVerified = false,
     sourceDir = fileURLToPath(new URL('../../../../../', import.meta.url)),
+    onLine,
+    silent = false,
+    lineFilter,
+    persistOutput,
+    signal,
     env = process.env,
   },
   {
@@ -258,6 +286,7 @@ export async function runDevTargetCommand(
     now = Date.now,
   } = {},
 ) {
+  signal?.throwIfAborted();
   const classification = classifyRemoteCommand(commandArgs, { cwd });
   if (classification.placement === 'primary-only') {
     throw new Error('[dev-targets] Git/index/worktree commands must execute on the authoritative primary checkout');
@@ -309,6 +338,7 @@ export async function runDevTargetCommand(
   }
 
   const executionId = createExecutionId();
+  signal?.throwIfAborted();
   const lifetimeStdin = target.platform !== 'windows' && !tty;
   const remoteCommand = buildRemoteExecCommand(target, {
     executionId,
@@ -326,11 +356,11 @@ export async function runDevTargetCommand(
     environment,
     admissionMode,
     lifetimeStdin,
+    controlStdin,
   });
+  const sshConfigFile = resolveDevTargetSshConfigFile(target, { stackBaseDir, env });
   const sshArgs = [
-    ...(target.sshConfigFile ? ['-F', target.sshConfigFile] : []),
-    '-o',
-    'ControlMaster=no',
+    ...(sshConfigFile ? ['-F', sshConfigFile] : []),
     '-o',
     'BatchMode=yes',
     '-o',
@@ -338,18 +368,31 @@ export async function runDevTargetCommand(
   ];
   const admittedAt = now();
   let admissionDeclined = false;
-  const child = spawnProcess({
+  let child;
+  let stopPromise = null;
+  const completion = runDevTargetSshProcess({
     label: `remote:${target.name}`,
     command: 'ssh',
     args: buildSshWorkerArgs(target, { remoteCommand, sshArgs, tty }),
     env,
     tty,
     lifetimeStdin,
-    onLine: ({ stream, line }) => {
-      if (stream === 'stderr' && [
-        `HSTACK_ADMISSION_BUSY:${executionId}`, `HSTACK_ADMISSION_DISK:${executionId}`,
-      ].includes(line)) admissionDeclined = true;
-    },
+    silent,
+    lineFilter,
+    persistOutput,
+  }, async input => {
+    signal?.throwIfAborted();
+    if (stopPromise) return { code: 130, signal: 'SIGINT' };
+    let diagnosticReason = null;
+    child = spawnProcess({ ...input, onLine: ({ stream, line }) => {
+      onLine?.({ stream, line });
+      if (stream === 'stderr') {
+        diagnosticReason ??= classifyDevTargetSshDiagnostic(line);
+        if ([`HSTACK_ADMISSION_BUSY:${executionId}`, `HSTACK_ADMISSION_DISK:${executionId}`].includes(line)) admissionDeclined = true;
+      }
+    } });
+    const result = await child.completion;
+    return { ...result, ...(diagnosticReason ? { diagnosticReason } : {}) };
   });
   const recordProvenance = async (record) => {
     if (provenance === 'skip') return;
@@ -359,7 +402,6 @@ export async function runDevTargetCommand(
       // Diagnostics must never change command execution behavior.
     }
   };
-  let stopPromise = null;
   const listeners = new Map(
     ['SIGINT', 'SIGTERM', 'SIGHUP'].map((signal) => [signal, () => {
       stopPromise ??= Promise.resolve()
@@ -375,7 +417,6 @@ export async function runDevTargetCommand(
                 tty: false,
               }),
               env,
-              timeoutMs: 10_000,
             });
             if (!cancelResult?.ok) {
               const detail = String(cancelResult?.err ?? '').trim()
@@ -400,6 +441,9 @@ export async function runDevTargetCommand(
     }]),
   );
   for (const [signal, listener] of listeners) signalSource.on(signal, listener);
+  const abortListener = () => listeners.get('SIGINT')();
+  signal?.addEventListener('abort', abortListener, { once: true });
+  if (signal?.aborted) abortListener();
   try {
     await recordProvenance({
       phase: 'admitted',
@@ -410,7 +454,7 @@ export async function runDevTargetCommand(
       syncStatus: syncStatus.state,
       syncSuccessfulCycles: syncStatus.session?.successfulCycles ?? 0,
     });
-    const result = await child.completion;
+    const result = await completion;
     const stopError = stopPromise ? await stopPromise : null;
     if (stopError) throw stopError;
     const completedAt = now();
@@ -428,6 +472,7 @@ export async function runDevTargetCommand(
       ? { ...result, admissionUnavailable: true }
       : result;
   } finally {
+    signal?.removeEventListener('abort', abortListener);
     for (const [signal, listener] of listeners) {
       if (typeof signalSource.off === 'function') signalSource.off(signal, listener);
       else signalSource.removeListener(signal, listener);

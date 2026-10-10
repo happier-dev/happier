@@ -4015,6 +4015,21 @@ describe('buildSharedDeps', () => {
 
       const oldTime = new Date('2025-01-01T00:00:00.000Z');
       const currentTime = new Date('2025-01-02T00:00:00.000Z');
+      const sdkOutputTime = new Date('2030-01-01T00:00:00.000Z');
+      const buildOwner = createWorkspaceCompilerBoundary(
+        repoRoot,
+        ['@happier-dev/plugin-sdk', '@happier-dev/plugins-opencode'],
+        (packageDir, outputDir) => {
+          expect(JSON.parse(readFileSync(resolve(packageDir, 'package.json'), 'utf8')).name)
+            .toBe('@happier-dev/plugins-opencode');
+          const outputPath = resolve(outputDir, 'index.js');
+          writeFileSync(outputPath, 'export const opencode = 2;\n', 'utf8');
+          utimesSync(outputPath, currentTime, currentTime);
+          writeFileSync(pluginSdkSourcePath, 'export const sdk = 2;\n', 'utf8');
+          const sdkChangedTime = new Date(sdkOutputTime.getTime() + 1);
+          utimesSync(pluginSdkSourcePath, sdkChangedTime, sdkChangedTime);
+        },
+      );
       for (const path of [
         resolve(pluginSdkDir, 'package.json'),
         resolve(pluginSdkDir, 'tsconfig.json'),
@@ -4028,7 +4043,6 @@ describe('buildSharedDeps', () => {
       }
       utimesSync(openCodeSourcePath, currentTime, currentTime);
 
-      const sdkOutputTime = new Date('2030-01-01T00:00:00.000Z');
       utimesSync(resolve(pluginSdkDir, 'dist', 'index.js'), sdkOutputTime, sdkOutputTime);
       markFixtureWorkspaceOutputsCurrent(pluginSdkDir);
 
@@ -4039,14 +4053,7 @@ describe('buildSharedDeps', () => {
         includeRuntimeDependencies: false,
         publishBundledPluginArtifacts: false,
         withBuildSharedDepsLockImpl: async (fn: () => Promise<unknown> | unknown) => await fn(),
-        ensureWorkspacePackagesBuiltByNameImpl: createWorkspaceBuildOwner(({ packageName }) => {
-          expect(packageName).toBe('@happier-dev/plugins-opencode');
-          writeFileSync(openCodeDistPath, 'export const opencode = 2;\n', 'utf8');
-          utimesSync(openCodeDistPath, currentTime, currentTime);
-          writeFileSync(pluginSdkSourcePath, 'export const sdk = 2;\n', 'utf8');
-          const sdkChangedTime = new Date(sdkOutputTime.getTime() + 1);
-          utimesSync(pluginSdkSourcePath, sdkChangedTime, sdkChangedTime);
-        }),
+        ensureWorkspacePackagesBuiltByNameImpl: buildOwner,
         syncBundledWorkspaceDistImpl: syncDist,
         syncBundledWorkspaceRuntimeDependenciesImpl: () => undefined,
         syncCliRuntimeDependenciesImpl: () => undefined,
@@ -4114,6 +4121,62 @@ describe('buildSharedDeps', () => {
     } finally {
       removeTempDirSync(repoRoot);
     }
+  });
+
+  it('prepares newly invalidated declaration dependents in one watch sync without rebuilding unrelated plugins', async () => {
+    const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happier-watch-dependent-');
+    const names = ['leaf', 'consumer', 'plugins-unrelated'];
+    const packageNames = names.map((name) => `@happier-dev/${name}`);
+    const dirs = names.map((name) => writeWorkspacePackageFixture({
+      repoRoot,
+      workspacePath: name.startsWith('plugins-') ? `packages/plugins/${name.slice(8)}` : `packages/${name}`,
+      packageName: `@happier-dev/${name}`,
+      manifestOverrides: name === 'consumer' ? { dependencies: { '@happier-dev/leaf': 'workspace:*' } } : {},
+      files: { 'src/index.ts': 'export const value: string = "first";\n', 'tsconfig.json': '{}\n' },
+    }));
+    try {
+      writeBundledPluginSourceInputs({ repoRoot, pluginId: 'unrelated', writePackageJson: false });
+      writeCliBundledHostPackage({ happyCliDir, bundledDependencies: packageNames });
+      const compiled: string[] = [];
+      const buildOwner = createWorkspaceCompilerBoundary(repoRoot, packageNames, (dir, outDir) => {
+        const name = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).name as string;
+        compiled.push(name);
+        const source = readFileSync(join(dir, 'src/index.ts'), 'utf8');
+        writeFileSync(join(outDir, 'index.js'), source.replace(/: (string|number)/u, ''));
+        writeFileSync(join(outDir, 'index.d.ts'), `export declare const value: ${source.includes(': number') ? 'number' : 'string'};\n`);
+      });
+      // Prime the unrelated plugin's real build record so watch preparation has
+      // a complete current plugin alongside the changing dependency corridor.
+      await buildOwner(repoRoot, ['@happier-dev/plugins-unrelated'], { env: process.env });
+      const pluginRecordPath = join(dirs[2], 'dist/.happier-build-inputs.json');
+      const pluginRecord = readFileSync(pluginRecordPath, 'utf8');
+      const sync = () => syncSharedDepsForSourceDev({
+        repoRoot, includeRuntimeDependencies: false,
+        ensureWorkspacePackagesBuiltByNameImpl: buildOwner,
+      });
+      await sync();
+      compiled.length = 0;
+      expect(await sync()).toEqual({ synced: false, reason: 'current' });
+      expect(compiled).toEqual([]);
+
+      writeFileSync(join(dirs[0], 'src/index.ts'), 'export const value: string = "implementation changed";\n');
+      expect(await sync()).toEqual({ synced: true, stamped: true });
+      expect(compiled).toEqual(['@happier-dev/leaf']);
+      expect(inspectSourceDevSharedDepsForSourceDev({ repoRoot, includeRuntimeDependencies: false }).current).toBe(true);
+      compiled.length = 0;
+
+      writeFileSync(join(dirs[0], 'src/index.ts'), 'export const value: number = 3;\n');
+      const result = await sync();
+      expect(compiled).toEqual(['@happier-dev/leaf', '@happier-dev/consumer']);
+      expect(result).toEqual({ synced: true, stamped: true });
+      expect(inspectSourceDevSharedDepsForSourceDev({ repoRoot, includeRuntimeDependencies: false }).current).toBe(true);
+      expect(readFileSync(pluginRecordPath, 'utf8')).toBe(pluginRecord);
+      compiled.length = 0;
+      expect(await sync()).toEqual({ synced: false, reason: 'current' });
+      expect(compiled).toEqual([]);
+      // The scratch repository has no publisher entrypoint. Any accidental full
+      // plugin regeneration would fail instead of satisfying these assertions.
+    } finally { cleanup(); }
   });
 
   it('compiles stale source-dev bundled workspace outputs before syncing them into the CLI runtime tree', async () => {

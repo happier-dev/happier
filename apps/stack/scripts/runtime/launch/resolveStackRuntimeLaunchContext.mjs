@@ -1,4 +1,8 @@
-import { getRootDir, getStackName, resolveStackBaseDir } from '../../utils/paths/paths.mjs';
+import { getRepoDir, getRootDir, getStackName, resolveStackBaseDir } from '../../utils/paths/paths.mjs';
+import { join } from 'node:path';
+import { pathExists } from '../../utils/fs/fs.mjs';
+import { readStackRuntimeStateFile, recordStackRuntimeUpdate } from '../../utils/stack/runtime_state.mjs';
+import { resolveCliRuntimeLaunchSpec } from './resolveCliRuntimeLaunchSpec.mjs';
 import { resolveStackRuntimeMode } from '../shared/runtime_mode.mjs';
 import { resolveActiveRuntimeSnapshot } from './resolveActiveRuntimeSnapshot.mjs';
 import { resolveRuntimeBuildAuthority } from '../shared/runtime_build_authority.mjs';
@@ -104,6 +108,21 @@ export async function resolveStackRuntimeLaunchContext({ argv = [], env = proces
   const stackName = (env.HAPPIER_STACK_STACK ?? '').toString().trim() || getStackName(env);
   const { baseDir: stackBaseDir } = resolveStackBaseDir(stackName, env);
   const runtimeMode = resolveStackRuntimeMode({ argv, env, activeRuntimeState });
+  if (runtimeMode.mode === 'source-snapshot') {
+    if (purpose === 'deployment') return { stackName, stackBaseDir, runtimeMode, snapshot: null };
+    const statePath = join(stackBaseDir, 'stack.runtime.json');
+    const recorded = activeRuntimeState ?? await readStackRuntimeStateFile(statePath);
+    let sourceRuntimeLaunch = recorded?.sourceRuntimeLaunch;
+    if (!sourceRuntimeLaunch?.entrypoint || !await pathExists(sourceRuntimeLaunch.entrypoint)) {
+      const { buildSourceRuntimeBundle } = await import('../../build/build_source_runtime.mjs');
+      const built = await buildSourceRuntimeBundle({ repoDir: getRepoDir(getRootDir(import.meta.url), env),
+        stackBaseDir, component: 'daemon', env });
+      sourceRuntimeLaunch = { entrypoint: built.entrypoint, cliDir: built.cliDir, env: built.env ?? {} };
+      await recordStackRuntimeUpdate(statePath, { sourceRuntimeLaunch });
+    }
+    return { stackName, stackBaseDir, runtimeMode, snapshot: null,
+      cliLaunchSpec: resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch }) };
+  }
   if (purpose === 'deployment' && runtimeMode.mode !== 'source' && !argv.includes('--no-dev-targets')) {
     const components = env.HAPPIER_STACK_SHARED_DB_SOURCE_STACK ? ['server'] : requiredComponents ?? ['web', 'server'];
     const inspection = await resolveStackRuntimeComponentSnapshots({ stackName, stackBaseDir, env, placement, hostTarget,

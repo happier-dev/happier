@@ -12,10 +12,12 @@ import {
 } from './tauri_dev.mjs';
 import { buildStackStableScopeId } from '../auth/stable_scope_id.mjs';
 import { getDefaultAutostartPaths } from '../paths/paths.mjs';
+import { createCargoProbeFixture } from '../../testkit/tauri_testkit.mjs';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const repoRootDir = resolve(join(__dirname, '../../../../..'));
 const stackRootDir = join(repoRootDir, 'apps', 'stack');
+const withCargoProbe = await createCargoProbeFixture(test);
 
 function splitPathEntries(pathValue) {
   return String(pathValue ?? '')
@@ -78,7 +80,7 @@ test('buildStackTauriDevProcessInvocation launches tauri from apps/ui/src-tauri 
 
   const invocation = buildStackTauriDevProcessInvocation({
     rootDir: stackRootDir,
-    env: cargoNeutralEnv(),
+    env: withCargoProbe(cargoNeutralEnv()),
     configPath: 'src-tauri/tauri.publicdev.conf.json',
     configOverride: {
       build: {
@@ -111,10 +113,10 @@ test('buildStackTauriDevProcessInvocation scopes the cargo target directory to t
   const stackName = 'codex-bootstrap-qa-24534';
   const invocation = buildStackTauriDevProcessInvocation({
     rootDir: stackRootDir,
-    env: {
+    env: withCargoProbe({
       ...process.env,
       HAPPIER_STACK_STACK: stackName,
-    },
+    }),
     configPath: 'src-tauri/tauri.publicdev.conf.json',
     configOverride: {
       build: {
@@ -139,10 +141,10 @@ test('buildStackTauriDevProcessInvocation uses the explicitly resolved UI dir ev
     rootDir: stackRootDir,
     repoRootDir: repoRootDir,
     uiDir: explicitUiDir,
-    env: {
+    env: withCargoProbe({
       ...process.env,
       HAPPIER_STACK_REPO_DIR: fakeRepo,
-    },
+    }),
     configPath: 'src-tauri/tauri.publicdev.conf.json',
     configOverride: {
       build: {

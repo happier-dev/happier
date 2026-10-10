@@ -115,8 +115,10 @@ export function createServerReadinessDeadline({
 } = {}) {
   const rawReadyMs = Number(readinessTimeoutMs);
   const rawMigrationMs = Number(migrationTimeoutMs);
-  const readyMs = Number.isFinite(rawReadyMs) && rawReadyMs > 0 ? Math.trunc(rawReadyMs) : 60_000;
-  const migrationMs = Number.isFinite(rawMigrationMs) && rawMigrationMs > 0
+  const readyMs = rawReadyMs === Infinity ? Infinity
+    : Number.isFinite(rawReadyMs) && rawReadyMs > 0 ? Math.trunc(rawReadyMs) : 60_000;
+  const migrationMs = rawMigrationMs === Infinity ? Infinity
+    : Number.isFinite(rawMigrationMs) && rawMigrationMs > 0
     ? Math.min(Math.trunc(rawMigrationMs), MAX_SERVER_MIGRATION_TIMEOUT_MS)
     : DEFAULT_SERVER_MIGRATION_TIMEOUT_MS;
   let phase = 'pending';

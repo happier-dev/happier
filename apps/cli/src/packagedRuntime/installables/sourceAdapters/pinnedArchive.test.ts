@@ -229,7 +229,7 @@ describe('pinned archive runtime installable adapter', () => {
       version: '1.1.1',
       asset: AGY_LINUX_ASSET,
       platform: 'linux',
-    })).resolves.toEqual({ ok: false, errorMessage: 'invalid archive' });
+    })).resolves.toEqual({ ok: false, errorMessage: 'invalid archive', errorCode: 'verification-failed' });
 
     await expect(readFile(installedPath)).resolves.toEqual(installedBytes);
     const installRoot = join(configurationState.happyHomeDir, 'tools', installId);

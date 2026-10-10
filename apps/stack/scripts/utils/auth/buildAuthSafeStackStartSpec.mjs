@@ -4,11 +4,14 @@ export function buildAuthSafeStackStartSpec({
   rootDir,
   stackName,
   shouldUseRuntimeStart = false,
+  runtimeMode = '',
   effectiveWebappMode = 'auto',
   shouldStartDevForAutoAuth = false,
   baseEnv = process.env,
 } = {}) {
   const name = String(stackName ?? '').trim() || 'main';
+  const sourceSnapshot = runtimeMode === 'source-snapshot';
+  shouldUseRuntimeStart ||= sourceSnapshot;
   const useDevCommand = !shouldUseRuntimeStart && (effectiveWebappMode === 'expo' || shouldStartDevForAutoAuth);
   const command = shouldUseRuntimeStart ? 'start' : useDevCommand ? 'dev' : 'start';
 
@@ -22,7 +25,7 @@ export function buildAuthSafeStackStartSpec({
         command,
         name,
         '--background',
-        ...(shouldUseRuntimeStart ? ['--runtime'] : []),
+        ...(shouldUseRuntimeStart ? [sourceSnapshot ? '--runtime=source' : '--runtime'] : []),
         '--no-daemon',
         '--no-browser',
       ],

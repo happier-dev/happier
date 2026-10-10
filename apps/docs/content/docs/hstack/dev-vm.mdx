@@ -15,6 +15,172 @@ development workflow that owns it.
 Use `hstack dev-vm` when you need a managed Linux guest for development or
 validation work. The controller manages one Lima VM, can run commands inside
 it, and can expose the guest's complete home directory on macOS through SSHFS.
+The 0.3 development controller can also delegate Mac commands to an enrolled
+SSH primary after you have moved the workload there.
+
+## Move the primary
+
+In the 0.3 development checkout, inspect the workload authority and describe a
+handoff to an enrolled remote development target:
+
+```bash
+hstack dev-vm primary status --stack=repo-dev
+hstack dev-vm primary switch nl2 --stack=repo-dev --dry-run
+hstack dev-vm primary switch nl2 --stack=repo-dev --dry-run --pause-agents --pause-timeout=120
+```
+
+Inspect read-only prerequisites between explicitly enrolled matching-home
+targets, using the actual 0.2 work repository and Stack:
+
+```bash
+hstack dev-vm primary verify standby --source=primary --home=/home/leeroy.guest --stack=repo-dev --work-stack=work-stack --work-repo=/home/leeroy.guest/workspace/0.2 --json
+```
+
+This invokes the public 0.2 CLI to inspect daemon identities, Account/API scope,
+the handoff Action description and paginated active-session Machine/permission
+authority. It also inspects existing standby synchronization. It sends no
+checkpoint messages and performs no handoff, database restore or assignment
+change. A successful inspection still reports `executable: false` and
+`restoreVerified: false`: two-daemon capability negotiation, native resume and
+the composed server move have not been certified. Both work daemons and the
+work repository's executable Stack CLI must already be available.
+
+Actual workload switching and `verify --restore-test` are not available yet. A switch
+without `--dry-run` fails with `PRIMARY_SWITCH_NOT_READY`, including when
+`--force` is supplied. A successful dry-run means the description was produced;
+it does not certify that the target or its replicas are ready.
+
+`--pause-agents` currently describes the planned 0.2 public-CLI checkpoint/idle
+wait/stop/resume workflow; it sends no messages. The dry-run names the work
+stack, explicit permission-preservation requirement and timeout. Its timeout
+uses the existing 0.2 session-wait contract (integer seconds 1–3600, default
+300); ephemeral execution runs would be relaunched by their parent sessions.
+The 0.2 development source now exposes canonical existing-state handoff and
+authoritative Machine/permission summaries. Both daemons must load that source
+and advertise existing-state support before it can be used; this does not
+restart an already running work Stack. Canonical API reachability for both
+daemons during the server move, reversal and composed live validation remain
+blockers, not bypassed by `--force`.
+
+The dry-run describes preflight, writer quiescence, final synchronization,
+database replication, target startup, reversed standby synchronization, worker
+mirror recreation, the Tailscale role move, and post-verification. It does not
+open destination SSH connections, flush synchronization, stop services, copy credentials,
+or change the primary assignment. Status reads the existing execution-host
+profile and target configuration; it reports unknown standby lag and database
+replica time explicitly. Server placement is shown separately from whole-workload
+authority. When the controller cannot read the active guest configuration, it
+does not substitute a stale controller copy.
+
+For an explicitly authorized Stack, `hstack stack stop NAME --preserve-daemon`
+uses the existing stop owner while retaining its daemon and sessions. Stopping
+Stack-owned writers this way does not establish API reachability on another
+host or make a primary cutover safe.
+
+### Select the command primary
+
+Once the workload is ready on an enrolled POSIX target, keep running `yarn tui`
+and ordinary hstack commands on the Mac by selecting its command destination:
+
+```bash
+hstack dev-vm primary assign nl2 --stack=repo-dev
+yarn tui
+```
+
+Use the actual Stack name that owns the Mac's enrolled dev-target configuration.
+The controller must already have an active version 2 execution-host profile
+with named workspaces. The enrolled target's repository path must match one of
+those workspaces' remote paths; all named checkout paths retain their existing
+mapping. SSH aliases, keys, host verification and tool paths come from the
+existing [dev-target enrollment](/hstack/dev-targets), including its shared SSH
+configuration. Enroll the authoritative checkout path, rather than a worker copy.
+
+Assignment writes only the execution-host profile. It does not move source,
+sessions, databases, services or Tailscale roles, and it does not certify a
+workload cutover. Ordinary commands use SSH with a terminal, the mapped working
+directory and the same Stack/reentry environment as Lima delegation. The TUI
+retains terminal resizing and interrupt handling; the controller cancels only
+its delegated systemd scope. The target needs a working user systemd manager.
+The existing Mac-only command exceptions, including mobile/native tooling,
+remain local. Arbitrary Mac environment variables and credentials are not
+forwarded to the target.
+
+With automatic mounting enabled, SSH-primary delegation mounts that target's
+home at `~/.happier-stack/<target>-home`, with Finder volume name
+`Happier <target>`. It keeps the retained Lima mount and its saved destination
+separate. A healthy existing SSHFS mount from the enrolled SSH alias is adopted;
+an inaccessible mount or a different source is left in place with a diagnostic.
+Detach that mount yourself before retrying if it needs replacement.
+
+The controller also supervises service forwarding for all named workspaces.
+API and Expo ports come from each remote Stack's declarations, using the same
+service projection as Lima. Existing listeners, including manual SSH tunnels,
+are left in place and reported. Release the manual forwards yourself, then
+run `yarn tui`; supervision can bind the declared ports once they are free.
+
+An unreachable target or unavailable mapped directory refuses execution with
+an SSH-primary diagnostic; the controller never falls back to running the
+command locally. A command that was dispatched is never replayed after failure.
+Inspect the selected destination with `hstack dev-vm primary status`.
+`dev-vm status` still inspects the retained Lima VM, but no longer reports it
+as authoritative while SSH is selected. Explicit VM execution still requires
+a Lima selection.
+
+The profile retains its Lima configuration. To select that VM again after the
+workload is ready there:
+
+```bash
+hstack dev-vm primary assign lima
+```
+
+Both named checkouts use this controller when their repo-local entrypoints
+already forward through the profile's `controllerEntrypoint`; the current 0.2
+adapter does so without a separate SSH implementation.
+From either checkout, `yarn dev-vm primary assign nl2 --stack=repo-dev` reaches
+the same Mac controller and writes that same profile. The 0.2 shortcut requires
+the existing configured 0.3 controller; it does not create its own VM or SSH owner.
+
+To produce a standby replica between two explicitly enrolled POSIX targets:
+
+```bash
+hstack dev-vm primary sync standby --source=primary --home=/home/leeroy.guest --stack=repo-dev
+hstack dev-vm primary status --source=primary --stack=repo-dev
+```
+
+This development-only command checks fresh SSH login, matching user/home paths
+and disk capacity. It uses the existing Mutagen daemon to synchronize portable
+home state, including both checkouts, Git metadata, dirty/untracked files and
+credentials. Use only trusted endpoints. Build outputs, caches, materialized
+service homes and live Agent SQLite/WAL files are excluded. Authored build scripts,
+coverage source, external plugin dist fixtures and dependency lockfiles remain portable.
+Agent SQLite databases
+are captured with SQLite online backup into a separate generated snapshot tree;
+that tree is replicated, not installed over the target's live databases.
+
+Portable home synchronization uses Mutagen's one-way-safe mode: target-only
+files are retained, and conflicting changes fail the flush rather than being
+overwritten. Standby sessions must use non-synced working directories; this is
+not a multi-writer checkout. Generated SQLite snapshots use one-way-replica mode
+within the same project. Daemon identity/settings, runtime files and incoming
+SSH authorized keys remain host-local. An overlapping worker synchronization
+writer is rejected. Status shows capture time when `--source` is supplied;
+actual lag and development-database replica time remain unknown.
+
+Prepare matching user and home paths through the existing
+[remote host onboarding command](/hstack/dev-targets#bring-up-a-fresh-linux-server),
+using `--create-user=leeroy.guest --home=/home/leeroy.guest` when that is your
+current primary's identity. Worker mirrors exclude Git metadata and do not
+constitute complete standby replicas. Before retiring a host, the
+remaining implementation must prove dirty and untracked work, Git metadata,
+consistent live SQLite snapshots, database restoration, and one Claude Code
+and one Codex session resume on a standby. Each host retains its own Machine;
+the planned switch uses canonical session handoff to move sessions, not cloned
+daemon identities; both hosts' daemons may keep accepting work outside synchronized
+checkouts. The current work sessions live on the 0.2 stack, whose public
+handoff/pause adapter consumes its public CLI contract. The 0.3 Agent runtime
+uses different plugin-owned execution surfaces, so the existing-state handoff
+extension has not been ported there. Standby sync alone does not move sessions
+or either stack's server/database.
 
 ## Prerequisites
 
@@ -63,6 +229,13 @@ manager, or configured mount is unhealthy. Use
 `hstack dev-vm doctor --repair-forwarding` only when the Lima guest agent's
 forwarding needs an explicit repair.
 
+When a development workflow has activated the execution-host profile, ordinary
+Stack commands can keep using a running guest with pending capacity or toolchain
+updates. They warn about those updates without applying them or restarting the
+VM; each command still enforces the tools it actually needs. Doctor continues
+to report the pending updates. Unavailable guest session management, creation
+identity drift, and unsafe configuration remain blocking.
+
 Start and stop the retained VM with:
 
 ```bash
@@ -75,6 +248,83 @@ unmounts it before stopping Lima. When `start` actually boots a stopped guest,
 it also launches a non-blocking skill synchronization in the background. A
 repeated `start` while the guest is already running does not launch another
 synchronization.
+
+## Persist inotify instance capacity
+
+Managed controller and worker guest provisioning in the 0.3 development
+checkout installs `/etc/sysctl.d/60-happier-inotify.conf` containing only
+`fs.inotify.max_user_instances=1024`, and applies that file immediately when
+the runtime value differs. This owner-approved fleet setting addresses observed
+instance exhaustion from many concurrent Agent processes; it leaves
+`fs.inotify.max_user_watches` unchanged. Provisioning repeats the check even
+when the guest toolchain is already ready, without reinstalling it.
+
+For an existing Linux guest, use the opt-in
+[worker host preparation command](/hstack/dev-targets#prepare-linux-worker-hosts-explicitly)
+before scheduling a VM restart. A runtime-only `sysctl` change does not survive
+that restart. Verify both the drop-in and `sysctl -n fs.inotify.max_user_instances`
+inside the guest afterward. Network apply itself changes no guest sysctl.
+
+To remove the policy inside a guest, remove only its drop-in:
+
+```bash
+sudo rm -- /etc/sysctl.d/60-happier-inotify.conf
+```
+
+Removal takes effect at the next boot that loads the distribution's sysctl
+defaults. It does not restore a live value automatically. To restore a live
+value immediately, first establish the previous value for that machine and
+set only `fs.inotify.max_user_instances` with `sudo sysctl -w`; do not assume
+every distribution uses 128. Managed provisioning installs the policy again
+when explicitly rerun.
+
+## Use native NAT for VM traffic
+
+New managed VZ instances in the 0.3 development checkout include
+`networks: [{ vzNAT: true }]`. According to [Lima's VMNet documentation](https://lima-vm.io/docs/config/network/vmnet/),
+this uses macOS native NAT without `socket_vmnet` or a sudoers setup. Lima gives
+the added interface a default route metric of 100, ahead of usernet's 200.
+The usernet interface remains available for `host.lima.internal`, DNS, and
+Lima's SSH/forwarding transport; Stack service tunnels and Mutagen still use
+their existing SSH owners. These are source-derived expectations; verify the
+live paths after the owner-run restart below.
+
+Existing instances keep their networking until an operator explicitly applies
+the change from the macOS controller, outside the VM:
+
+```bash
+hstack dev-vm network apply --force
+```
+
+This stops this execution host's service tunnels, unmounts its SSHFS workspace,
+gracefully stops the retained VM, edits only its network configuration, and
+starts the same VM. Startup restores the configured workspace mount; reconcile
+service tunnels for each workspace afterward with
+`hstack dev-vm forward reconcile --workspace-id=YOUR_WORKSPACE`. Every process
+inside that VM is interrupted, including Agents, daemons,
+development services, and commands; schedule the operation around that work.
+The command preserves CPU, memory, disk format, mounts, SSH policy, forwarding
+rules, and other configured network interfaces. Without `--force`, a required
+change is refused before any mutation. An already configured VM is a no-op.
+An edit failure leaves the VM stopped and reports the error; correct the
+reported problem and rerun the same command. If the edit succeeded but startup
+failed, inspect the retained VM and use `hstack dev-vm start` to recover it;
+an already configured, stopped VM is also a no-op for network apply.
+
+For fleet connections, install [Tailscale inside the Linux guest](https://tailscale.com/docs/install/linux)
+and authenticate it yourself with `sudo tailscale up`. The VM is its own tailnet
+device, with its own name, address, and access policy; it does not inherit the
+Mac's identity. Use that guest identity for fleet traffic. Stack does not
+automate account login or change your enrolled target endpoints. Native NAT
+provides the ordinary outbound path, while the guest's Tailscale interface
+provides tailnet routing.
+
+After applying, inspect `ip -4 route` in the guest: the native NAT interface
+should win the default route and `192.168.5.0/24` should still use usernet.
+Check DNS and `host.lima.internal`, run `hstack dev-vm doctor`, reconcile and
+probe the Stack service tunnels, and confirm the Mutagen sessions reconnect.
+These checks require the restarted VM; profile generation alone does not prove
+live connectivity.
 
 ## Switch shared and dedicated capacity
 

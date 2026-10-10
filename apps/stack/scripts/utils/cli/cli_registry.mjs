@@ -134,7 +134,7 @@ export function gethstackRegistry() {
       name: 'dev-vm',
       kind: 'node',
       scriptRelPath: 'scripts/host.mjs',
-      rootUsage: 'hstack dev-vm setup|activate|mirror [status|sync|stop]|mount [status|enable|disable]|unmount|backup [status|schedule enable|status|disable]|forward [status|reconcile|stop]|recovery [enable|status|disable|run]|skills sync|status|doctor [--repair-forwarding]|start|stop|shell|exec [--json]',
+      rootUsage: 'hstack dev-vm setup|activate|mirror [status|sync|stop]|mount [status|enable|disable]|unmount|backup [status|schedule enable|status|disable]|forward [status|reconcile|stop]|recovery [enable|status|disable|run]|skills sync|status|doctor [--repair-forwarding]|start|stop|shell|exec|primary [status|sync TARGET --source=SOURCE --home=HOME --stack=NAME|switch TARGET --dry-run] [--json]',
       description: 'Manage the optional primary Linux execution host',
     },
     {

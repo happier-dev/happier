@@ -32,7 +32,7 @@ import {
   withWorkspaceBundleLock,
 } from './workspaceBundleLock.mjs';
 import { resolveWorkspacePackageBuildLockPath } from './workspacePackageBuildLock.mjs';
-import { WORKSPACE_PACKAGE_PREREQUISITES_READY_ENV_VAR, WORKSPACE_BUILD_MODE_ENV, resolveWorkspaceBuildMode } from './workspaceChildBuildEnv.mjs';
+import { WORKSPACE_PACKAGE_PREREQUISITES_READY_ENV_VAR, WORKSPACE_BUILD_MODE_ENV, WORKSPACE_DIST_CHECK_ONLY_ENV, resolveWorkspaceBuildMode } from './workspaceChildBuildEnv.mjs';
 export { WORKSPACE_BUILD_MODE_ENV, resolveWorkspaceBuildMode } from './workspaceChildBuildEnv.mjs';
 import { resolveWorkspaceBundlePublicationMode } from './workspaceBundlePublication.mjs';
 import { syncBundledWorkspacePackages } from './syncBundledWorkspacePackages.mjs';
@@ -273,24 +273,24 @@ function remapDistPathToDir(path, { packageDir, distDir }) {
   });
 }
 
-export function readWorkspaceBuildFileDigest(path) {
-  const stat = lstatSync(path, { bigint: true });
+export function readWorkspaceBuildFileDigest(path, { followSymlinks = false } = {}) {
+  const stat = (followSymlinks ? statSync : lstatSync)(path, { bigint: true });
   if (!stat.isFile()) throw new Error(`[workspace-build] expected a build input file: ${path}`);
   const digest = readCachedFileDigestSync(path, stat);
   if (digest.startsWith('metadata:')) throw new Error(`[workspace-build] unreadable build input: ${path}`);
   return digest;
 }
 
-function digestDirectory(path, hash, { declarationsOnly = false, root = path } = {}) {
+function digestDirectory(path, hash, { declarationsOnly = false, root = path, followSymlinks = false } = {}) {
   if (!existsSync(path)) return;
   for (const name of readdirSync(path).sort()) {
     if (name === BUILD_INPUT_RECORD) continue;
     const child = join(path, name);
-    const stat = lstatSync(child, { bigint: true });
-    if (stat.isDirectory()) digestDirectory(child, hash, { declarationsOnly, root });
+    const stat = (followSymlinks ? statSync : lstatSync)(child, { bigint: true });
+    if (stat.isDirectory()) digestDirectory(child, hash, { declarationsOnly, root, followSymlinks });
     else if (!declarationsOnly || /\.d\.(?:ts|mts|cts)$/.test(name)) {
       hash.update(`${relative(root, child).split(sep).join('/')}\0`);
-      if (stat.isFile()) hash.update(readWorkspaceBuildFileDigest(child));
+      if (stat.isFile()) hash.update(readWorkspaceBuildFileDigest(child, { followSymlinks }));
       else hash.update(`other:${stat.mode}:${stat.size}:${stat.mtimeNs}`);
       hash.update('\0');
     }
@@ -323,11 +323,13 @@ function digestDependencyOutputs(packageDir, packageJson, hash, { declarationsOn
 export function readWorkspacePackageInputFingerprint({
   packageDir,
   dependencyDirs = [],
+  env = process.env,
   includeShippedFiles = false,
   excludeGeneratedPluginManifest,
   excludeGeneratedPluginArtifacts = false,
-  identitySourceRepoDir = process.env.HAPPIER_STACK_REPO_DIR,
-  identityRepoDir = process.env.HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR,
+  identitySourceRepoDir = env.HAPPIER_STACK_REPO_DIR,
+  identityRepoDir = env.HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR,
+  installedDependencyRepoDir = env.HAPPIER_WORKSPACE_CAPTURE_SOURCE_REPO_DIR,
   resolveTypeScriptCliInvocationImpl = resolveTypeScriptCliInvocation,
 }) {
   const hash = createHash('sha256');
@@ -347,25 +349,40 @@ export function readWorkspacePackageInputFingerprint({
   const referencedBuildInputs = [...buildScript.matchAll(/(?:^|\s)(\.{1,2}\/[^\s;&|]+\.(?:[cm]?[jt]sx?|json))(?=$|\s|[;&|])/g)]
     .map((match) => resolve(packageDir, match[1]))
     .filter(existsSync);
-  const invocation = resolveTypeScriptCliInvocationImpl({ args: [], env: process.env });
+  const invocation = resolveTypeScriptCliInvocationImpl({ args: [], env });
   const compilerPath = invocation.compilerPath ?? invocation.argsPrefix[0];
   const compilerPackageJson = resolve(dirname(compilerPath), '..', 'package.json');
+  // The canonical selector's @typescript installation owns the actual native
+  // executable and launcher helpers. Its launcher alone is not tool identity.
+  const compilerInstallationDir = dirname(dirname(dirname(compilerPath)));
+  const dependencyLockRepoDir = coerceHappyMonorepoRootFromPath(packageDir) || identitySourceRepoDir;
+  const dependencyLockPath = dependencyLockRepoDir && join(dependencyLockRepoDir, 'yarn.lock');
   const capturedBuildOwnerPath = identitySourceRepoDir && join(identitySourceRepoDir, 'scripts/workspaces/buildTypeScriptPackageDist.mjs');
   const buildOwnerPath = capturedBuildOwnerPath && existsSync(capturedBuildOwnerPath)
     ? capturedBuildOwnerPath : fileURLToPath(new URL('./buildTypeScriptPackageDist.mjs', import.meta.url));
-  const identityPathFor = path => identityRepoDir && identitySourceRepoDir
-    ? remapPathToDirectory(path, { sourceDir: identitySourceRepoDir, destinationDir: identityRepoDir }) : path;
+  const identityPathFor = path => {
+    if (!identityRepoDir || !identitySourceRepoDir) return path;
+    const capturedIdentity = remapPathToDirectory(path, { sourceDir: identitySourceRepoDir, destinationDir: identityRepoDir });
+    // Package captures mount installed tools from their immediate source repo.
+    // Keep those compiler paths in the same producer frame as captured inputs.
+    return installedDependencyRepoDir && capturedIdentity === path
+      ? remapPathToDirectory(capturedIdentity, { sourceDir: installedDependencyRepoDir, destinationDir: identityRepoDir })
+      : capturedIdentity;
+  };
   const paths = [...new Set([
     ...inputPaths,
     ...referencedBuildInputs,
     compilerPath,
     compilerPackageJson,
     buildOwnerPath,
+    ...(dependencyLockPath && existsSync(dependencyLockPath) ? [dependencyLockPath] : []),
   ])].sort((a, b) => identityPathFor(a) < identityPathFor(b) ? -1 : identityPathFor(a) > identityPathFor(b) ? 1 : 0);
   for (const path of paths) {
     const identityPath = identityPathFor(path);
     hash.update(`${identityPath}\0${readWorkspaceBuildFileDigest(path)}\0`);
   }
+  hash.update(`compiler-installation:${identityPathFor(compilerInstallationDir)}\0`);
+  digestDirectory(compilerInstallationDir, hash, { followSymlinks: true });
   for (const dependencyDir of [...dependencyDirs].sort()) {
     const identityDependencyDir = identityRepoDir && identitySourceRepoDir
       ? remapPathToDirectory(dependencyDir, { sourceDir: identitySourceRepoDir, destinationDir: identityRepoDir }) : dependencyDir;
@@ -381,7 +398,10 @@ export function readWorkspacePackageInputFingerprint({
 }
 
 function collectOutputDigests(distDir, expectedTargetMatches) {
-  return [...new Set(expectedTargetMatches.flatMap(({ paths }) => paths))]
+  return [...new Set([
+    ...expectedTargetMatches.flatMap(({ paths }) => paths),
+    ...collectPublishedDistFiles(distDir).map((path) => join(distDir, path)),
+  ])]
     .map((path) => ({
       path: relative(distDir, path).split(sep).join('/'),
       digest: readWorkspaceBuildFileDigest(path),
@@ -399,7 +419,7 @@ function collectPublishedDistFiles(distDir, relativeDir = '') {
   }).sort();
 }
 
-function publishedOutputsMatch(distDir, inputFingerprint, { requirePruned = false, allowQaFailure = true, buildMode = 'qa-runtime' } = {}) {
+function publishedOutputsMatch(distDir, inputFingerprint, { requirePruned = false, requireCompleteDigests = false, allowQaFailure = true, buildMode = 'qa-runtime' } = {}) {
   try {
     const record = JSON.parse(readFileSync(join(distDir, BUILD_INPUT_RECORD), 'utf8'));
     if (!allowQaFailure && record.qaFailure) return false;
@@ -407,6 +427,10 @@ function publishedOutputsMatch(distDir, inputFingerprint, { requirePruned = fals
     if (record.version !== 2 || record.fingerprint !== inputFingerprint || !Array.isArray(record.outputs) || record.outputs.length === 0) {
       return false;
     }
+    // Older receipts may cover only declared exports. A semantic-only check
+    // can retain emitted bytes only when every recorded file is integrity-bound.
+    if (requireCompleteDigests && (!Array.isArray(record.files) || record.files.length === 0
+      || record.files.some((path) => !record.outputs.some((output) => output.path === path)))) return false;
     if (requirePruned) {
       const actualFiles = collectPublishedDistFiles(distDir);
       if (
@@ -426,10 +450,10 @@ function publishedOutputsMatch(distDir, inputFingerprint, { requirePruned = fals
   }
 }
 
-export function isWorkspacePackageOutputCurrent(packageDir, { dependencyDirs = [], buildMode = 'qa-runtime' } = {}) {
+export function isWorkspacePackageOutputCurrent(packageDir, { dependencyDirs = [], buildMode = 'qa-runtime', env = process.env } = {}) {
   return publishedOutputsMatch(
     join(packageDir, 'dist'),
-    readWorkspacePackageInputFingerprint({ packageDir, dependencyDirs }),
+    readWorkspacePackageInputFingerprint({ packageDir, dependencyDirs, env }),
     { allowQaFailure: false, buildMode },
   ) && publishedDependencyOutputsMatch(join(packageDir, 'dist'), readWorkspaceBuiltDependencies({
     monorepoRoot: coerceHappyMonorepoRootFromPath(packageDir) ?? packageDir, dependencyDirs,
@@ -461,8 +485,8 @@ function readWorkspaceBuiltDependencies({ monorepoRoot, dependencyDirs }) {
   });
 }
 
-function publishedDependencyOutputsMatch(distDir, dependencies) {
-  if (dependencies.length === 0) return true;
+function publishedDependencyOutputsMatch(distDir, dependencies, { requireRecorded = false } = {}) {
+  if (dependencies.length === 0 && !requireRecorded) return true;
   try {
     return JSON.stringify(JSON.parse(readFileSync(join(distDir, BUILD_INPUT_RECORD), 'utf8')).dependencies)
       === JSON.stringify(dependencies);
@@ -479,6 +503,7 @@ function parsePositiveEnvInt(envValue, fallback) {
 async function assertNoMissingLocalImportsWithRetry({
   distDir,
   entryPath,
+  entryPaths,
   label,
   env,
   onRetry,
@@ -495,7 +520,7 @@ async function assertNoMissingLocalImportsWithRetry({
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
-      await assertNoMissingLocalImports({ distDir, entryPath, label });
+      await assertNoMissingLocalImports({ distDir, entryPath, entryPaths, label });
       return;
     } catch (error) {
       lastError = error;
@@ -523,9 +548,11 @@ async function inspectWorkspacePackageOutput(packageDir, packageJson, {
   builtDependencies = [],
   publicationMode = 'live',
   allowQaFailure = false,
+  outputDir = join(packageDir, 'dist'),
+  requireCompleteDigests = false,
 } = {}) {
   const expectedTargets = collectExpectedPackageOutputTargets(packageJson);
-  const distDir = join(packageDir, 'dist');
+  const distDir = outputDir;
   const expectedTargetMatches = resolveExpectedPackageOutputTargetMatches({
     packageDir,
     distDir,
@@ -565,23 +592,22 @@ async function inspectWorkspacePackageOutput(packageDir, packageJson, {
   const outputsAreAdmissible = missing.length === 0 && inputFingerprint
     && await publishedOutputsMatch(distDir, inputFingerprint, {
       requirePruned: publicationMode === 'artifact',
+      requireCompleteDigests,
       allowQaFailure,
       buildMode: resolveWorkspaceBuildMode({ env }),
     });
   if (outputsAreAdmissible) {
     try {
-      for (const entryPath of distEntrypoints) {
-        if (
-          retryImports
-          && String(env.HAPPIER_WORKSPACE_DIST_IMPORT_VALIDATION_RETRY_ATTEMPTS ?? '').trim()
-        ) {
-          await assertNoMissingLocalImportsWithRetry({ distDir, entryPath, label, env });
-        } else {
-          await assertNoMissingLocalImports({ distDir, entryPath, label });
-        }
+      if (
+        retryImports
+        && String(env.HAPPIER_WORKSPACE_DIST_IMPORT_VALIDATION_RETRY_ATTEMPTS ?? '').trim()
+      ) {
+        await assertNoMissingLocalImportsWithRetry({ distDir, entryPath: distEntrypoints[0], entryPaths: distEntrypoints, label, env });
+      } else {
+        await assertNoMissingLocalImports({ distDir, entryPaths: distEntrypoints, label });
       }
       return {
-        complete: publishedDependencyOutputsMatch(distDir, builtDependencies),
+        complete: publishedDependencyOutputsMatch(distDir, builtDependencies, { requireRecorded: requireCompleteDigests }),
         compileComplete: true,
         invalidation: 'dependencies-changed',
         expectedTargets,
@@ -754,8 +780,8 @@ async function captureWorkspacePackage({ monorepoRoot, packageDir, dependencyDir
     const capturePackageDir = join(repoDir, relative(monorepoRoot, packageDir));
     const captureDependencyDirs = dependencyDirs.map(dir => join(repoDir, relative(monorepoRoot, dir)));
     const identityRepoDir = env.HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR || monorepoRoot;
-    const inputFingerprint = readWorkspacePackageInputFingerprint({ packageDir: capturePackageDir, dependencyDirs: captureDependencyDirs,
-      identitySourceRepoDir: repoDir, identityRepoDir });
+    const inputFingerprint = readWorkspacePackageInputFingerprint({ packageDir: capturePackageDir, dependencyDirs: captureDependencyDirs, env,
+      identitySourceRepoDir: repoDir, identityRepoDir, installedDependencyRepoDir: monorepoRoot });
     const builtDependencies = readWorkspaceBuiltDependencies({ monorepoRoot: repoDir, dependencyDirs: captureDependencyDirs });
     return { packageDir: capturePackageDir, dependencyDirs: captureDependencyDirs, repoDir, inputFingerprint, builtDependencies,
       env: { ...env, HAPPIER_STACK_REPO_DIR: repoDir,
@@ -767,6 +793,7 @@ async function captureWorkspacePackage({ monorepoRoot, packageDir, dependencyDir
     throw error;
   }
 }
+
 
 async function ensureWorkspacePackageBuiltUnderLock({
   monorepoRoot,
@@ -787,7 +814,7 @@ async function ensureWorkspacePackageBuiltUnderLock({
   dependencyDirs,
 }) {
   const packageJson = await readJson(packageJsonPath);
-  let inputFingerprint = readWorkspacePackageInputFingerprint({ packageDir, dependencyDirs });
+  let inputFingerprint = readWorkspacePackageInputFingerprint({ packageDir, dependencyDirs, env });
   let builtDependencies = readWorkspaceBuiltDependencies({ monorepoRoot, dependencyDirs });
   const state = await inspectWorkspacePackageOutput(packageDir, packageJson, {
     env,
@@ -813,7 +840,11 @@ async function ensureWorkspacePackageBuiltUnderLock({
   }
 
   let refreshOnly = !force && state.compileComplete;
-  const priorRecord = refreshOnly ? await readJson(join(distDir, BUILD_INPUT_RECORD)) : null;
+  const checkOnly = !force && buildMode === 'strict' && state.invalidation === 'unchecked-qa-output'
+    && publishedOutputsMatch(distDir, inputFingerprint, {
+      requireCompleteDigests: true, allowQaFailure: false,
+    }) && publishedDependencyOutputsMatch(distDir, builtDependencies);
+  const priorRecord = refreshOnly || checkOnly ? await readJson(join(distDir, BUILD_INPUT_RECORD)) : null;
 
   if (!packageJson?.scripts?.build) {
     throw new Error(
@@ -835,7 +866,7 @@ async function ensureWorkspacePackageBuiltUnderLock({
     packageDir,
     packageName: String(packageJson?.name ?? '').trim(),
   });
-  const capture = buildMode === 'qa-runtime'
+  const capture = buildMode !== 'strict'
     ? await captureWorkspacePackage({ monorepoRoot, packageDir, dependencyDirs, env }) : null;
   const buildPackageDir = capture?.packageDir ?? packageDir;
   const buildDependencyDirs = capture?.dependencyDirs ?? dependencyDirs;
@@ -850,6 +881,7 @@ async function ensureWorkspacePackageBuiltUnderLock({
       HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: heldLockValue,
       HAPPIER_WORKSPACE_DIST_OUTPUT_DIR: tmpDistDir,
       [WORKSPACE_PACKAGE_PREREQUISITES_READY_ENV_VAR]: '1',
+      [WORKSPACE_DIST_CHECK_ONLY_ENV]: checkOnly ? '1' : '0',
     };
     // QA fallback needs the compiler's diagnostic even when preparation is
     // verbose. The adapters transport evidence; this owner decides eligibility.
@@ -872,6 +904,15 @@ async function ensureWorkspacePackageBuiltUnderLock({
           await runScript(buildPackageDir, 'build:ui', options);
         }
       } else {
+        if (checkOnly) {
+          for (const path of priorRecord.files) {
+            const sourcePath = resolve(distDir, path);
+            if (!sourcePath.startsWith(`${resolve(distDir)}${sep}`)) throw new Error(`[workspace-build] invalid recorded output: ${path}`);
+            const destinationPath = join(tmpDistDir, path);
+            await mkdir(dirname(destinationPath), { recursive: true });
+            await cp(sourcePath, destinationPath, { preserveTimestamps: true });
+          }
+        }
         await workspaceBuildBoundary.runPackageBuild(buildPackageDir, options);
       }
     } catch (error) {
@@ -893,18 +934,20 @@ async function ensureWorkspacePackageBuiltUnderLock({
         + '\nFix: ensure the package build honors HAPPIER_WORKSPACE_DIST_OUTPUT_DIR or generates the files referenced by package.json exports/main/types.',
       );
     }
-    for (const entryPath of distEntrypoints) {
-      await assertNoMissingLocalImportsWithRetry({
-        distDir: tmpDistDir,
-        entryPath: remapDistPathToDir(entryPath, { packageDir, distDir: tmpDistDir }),
-        label,
-        env,
-        onRetry: reportImportRetry,
-      });
-    }
-    if (readWorkspacePackageInputFingerprint({ packageDir: buildPackageDir, dependencyDirs: buildDependencyDirs,
-      ...(capture ? { identitySourceRepoDir: capture.repoDir, identityRepoDir: capture.env.HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR } : {}) }) !== inputFingerprint
-      || JSON.stringify(readWorkspaceBuiltDependencies({ monorepoRoot: capture?.repoDir ?? monorepoRoot, dependencyDirs: buildDependencyDirs })) !== JSON.stringify(builtDependencies)) {
+    const stagedEntrypoints = distEntrypoints.map(entryPath => remapDistPathToDir(entryPath, { packageDir, distDir: tmpDistDir }));
+    await assertNoMissingLocalImportsWithRetry({
+      distDir: tmpDistDir,
+      entryPath: stagedEntrypoints[0],
+      entryPaths: stagedEntrypoints,
+      label,
+      env,
+      onRetry: reportImportRetry,
+    });
+    if (readWorkspacePackageInputFingerprint({ packageDir: buildPackageDir, dependencyDirs: buildDependencyDirs, env: buildEnv,
+      ...(capture ? { identitySourceRepoDir: capture.repoDir, identityRepoDir: capture.env.HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR,
+        installedDependencyRepoDir: capture.env.HAPPIER_WORKSPACE_CAPTURE_SOURCE_REPO_DIR } : {}) }) !== inputFingerprint
+      || JSON.stringify(readWorkspaceBuiltDependencies({ monorepoRoot: capture?.repoDir ?? monorepoRoot, dependencyDirs: buildDependencyDirs })) !== JSON.stringify(builtDependencies)
+      || (checkOnly && !publishedOutputsMatch(distDir, inputFingerprint, { requireCompleteDigests: true, allowQaFailure: false }))) {
       // A successful compiler exit cannot identify which moving files it read.
       // Do not replace the last-green tree/receipt with an unproven mixture.
       throw new BuildInputDriftError(`[workspace-build] inputs changed while building ${packageJson.name ?? packageDir}; retained the last coherent output; rerun the phase`);
@@ -962,6 +1005,7 @@ async function ensureWorkspacePackageBuiltUnderLock({
     packageName: String(packageJson?.name ?? '').trim(),
   });
 
+
   return { built: !refreshOnly, refreshed: refreshOnly, reason: refreshOnly ? 'runtime-outputs-refreshed' : 'rebuilt',
     invalidation: force ? 'forced' : state.invalidation };
 }
@@ -984,7 +1028,7 @@ async function ensureWorkspacePackageBuilt(packageDir, {
   if (!existsSync(packageJsonPath)) return { built: false, reason: 'missing-package-json' };
 
   const packageJson = await readJson(packageJsonPath);
-  const inputFingerprint = readWorkspacePackageInputFingerprint({ packageDir, dependencyDirs });
+  const inputFingerprint = readWorkspacePackageInputFingerprint({ packageDir, dependencyDirs, env: envIn });
   const initial = await inspectWorkspacePackageOutput(packageDir, packageJson, {
     env: envIn,
     inputFingerprint,
@@ -1011,7 +1055,7 @@ async function ensureWorkspacePackageBuilt(packageDir, {
       const current = await inspectWorkspacePackageOutput(packageDir, currentPackageJson, {
         env,
         retryImports: true,
-        inputFingerprint: readWorkspacePackageInputFingerprint({ packageDir, dependencyDirs }),
+        inputFingerprint: readWorkspacePackageInputFingerprint({ packageDir, dependencyDirs, env }),
         builtDependencies: readWorkspaceBuiltDependencies({ monorepoRoot, dependencyDirs }),
         publicationMode,
       });

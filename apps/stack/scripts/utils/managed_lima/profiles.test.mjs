@@ -23,6 +23,7 @@ test('managed Lima balanced profile leaves TCP service reachability to the execu
     containerd: 'none',
     mountNone: true,
     rosetta: false,
+    networks: [{ vzNAT: true }],
     portForwards: [],
   });
 
@@ -40,6 +41,7 @@ test('managed Lima balanced profile leaves TCP service reachability to the execu
     '--set', '.vmOpts.vz.diskImageFormat = "raw"',
     '--set', '.ssh.forwardAgent = false',
     '--set', '.vmOpts.vz.rosetta.enabled = false | .vmOpts.vz.rosetta.binfmt = false',
+    '--set', '.networks = [{"vzNAT":true}]',
     '--set', '.portForwards = [{"guestIP":"0.0.0.0","guestIPMustBeZero":false,"proto":"any","ignore":true}]',
     'template:ubuntu-24.04',
   ]);
@@ -51,6 +53,8 @@ test('managed Lima worker profile can render a native x86_64 guest without chang
   assert.equal(profile.arch, 'x86_64');
   assert.equal(profile.cpus, 8);
   assert.equal(profile.memoryGiB, 24);
+  assert.ok(buildManagedLimaCreateArgs({ instance: 'happier-worker-intel', profile })
+    .includes('.networks = [{"vzNAT":true}]'));
   assert.deepEqual(
     buildManagedLimaCreateArgs({ instance: 'happier-worker-intel', profile }).slice(0, 8),
     ['create', '--name', 'happier-worker-intel', '--tty=false', '--vm-type', 'vz', '--arch', 'x86_64'],
@@ -90,6 +94,8 @@ test('managed Lima heavy profile leaves Mac headroom while providing a large spa
   assert.equal(profile.cpus, 14);
   assert.equal(profile.memoryGiB, 72);
   assert.equal(profile.diskGiB, 640);
+  assert.ok(buildManagedLimaCreateArgs({ instance: 'happier-controller', profile })
+    .includes('.networks = [{"vzNAT":true}]'));
 });
 
 test('managed Lima edit args update only mutable retained-instance settings', () => {
@@ -119,7 +125,7 @@ test('managed Lima profile rejects unknown profiles and unsafe instance names', 
   );
   assert.throws(
     () => buildManagedLimaCreateArgs({ instance: '../escape', profile: resolveManagedLimaProfile('small') }),
-    /invalid managed Lima instance name/,
+    (error) => error.code === 'LIMA_INVALID_IDENTITY',
   );
   assert.throws(
     () => resolveManagedLimaProfile('worker-balanced', {

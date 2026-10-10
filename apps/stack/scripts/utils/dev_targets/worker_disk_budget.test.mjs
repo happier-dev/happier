@@ -1,62 +1,69 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, writeFile, utimes, access, symlink } from 'node:fs/promises';
+import { mkdir, writeFile, utimes, access, symlink, rm, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-test('disk budget reclaims oldest stale staging before obsolete packages and scratch, preserving newest target and holders', async t => {
+test('package-specific compiler classes inspect the same write filesystems', async t => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-disk-compiler-' });
+  const repoDir = join(root, 'repo'), cacheBaseDir = join(root, 'cli/cache');
+  await mkdir(join(repoDir, 'node_modules'), { recursive: true });
+  await writeFile(join(repoDir, 'node_modules/data'), 'dependency'.repeat(8192));
+  await mkdir(cacheBaseDir, { recursive: true });
+  const { inspectWorkerDiskBudget } = await import('./worker_disk_budget.mjs');
+  const options = { repoDir, cacheBaseDir, observeFilesystem: () => ({ device: 'fixture', availableBytes: 1e9, totalBytes: 2e9 }) };
+  const compilation = await inspectWorkerDiskBudget({ ...options, commandClass: 'compilation' });
+  for (const commandClass of ['compilation-ui', 'compilation-cli', 'compilation-server']) {
+    assert.deepEqual(await inspectWorkerDiskBudget({ ...options, commandClass }), compilation);
+  }
+});
+
+test('disk budget reclaims obsolete packages and unused final scratch without scanning retired source staging', async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-disk-budget-' });
   const repoDir = join(root, 'repo'), cacheBaseDir = join(root, 'cli/cache');
-  const runtimeBuildRoot = join(root, 'cli/runtime-build'), scratchRoot = join(root, 'scratch'), procRoot = join(root, 'proc');
+  const retiredStage = join(root, 'cli/runtime-build/old/linux-x64');
+  const scratchRoot = join(root, 'scratch'), procRoot = join(root, 'proc');
   await mkdir(repoDir);
-  await mkdir(join(repoDir, 'node_modules'));
-  await writeFile(join(repoDir, 'node_modules/data'), 'dependency'.repeat(8192));
   await writeFile(join(repoDir, 'yarn.lock'), '# yarn lockfile v1\nfixture:\n  resolved "https://example/current.tgz#hash"\n');
   await mkdir(join(cacheBaseDir, 'yarn/v6'), { recursive: true });
+  await mkdir(join(retiredStage, 'repo'), { recursive: true });
+  await writeFile(join(retiredStage, 'source-files.json'), '[]');
   await mkdir(scratchRoot);
-  await mkdir(join(procRoot, '42/fd'), { recursive: true });
-  await writeFile(join(procRoot, '42/status'), 'State:\tS (sleeping)\n');
-  await symlink(root, join(procRoot, '42/cwd'));
-  await writeFile(join(procRoot, '42/maps'), '');
+  await mkdir(procRoot);
   const old = new Date(Date.now() - 48 * 3600000);
-  const oldest = new Date(Date.now() - 72 * 3600000);
-  for (const [stack, target, time] of [['old', 'linux-x64', oldest], ['new', 'linux-x64', old], ['held', 'darwin-arm64', old]]) {
-    const stage = join(runtimeBuildRoot, stack, target);
-    await mkdir(join(stage, 'repo'), { recursive: true });
-    await writeFile(join(stage, 'repo/yarn.lock'), '# yarn lockfile v1\nfixture:\n  resolved "https://example/current.tgz#hash"\n');
-    await writeFile(join(stage, 'source-files.json'), '[]');
-    await utimes(join(stage, 'repo/yarn.lock'), time, time);
-    await utimes(join(stage, 'repo'), time, time);
-    await utimes(join(stage, 'source-files.json'), time, time);
-    await utimes(stage, time, time);
-  }
-  await symlink(join(runtimeBuildRoot, 'held/darwin-arm64/source-files.json'), join(procRoot, '42/fd/9'));
-  const legacyCache = join(runtimeBuildRoot, 'old/cache');
-  await mkdir(legacyCache);
-  await writeFile(join(legacyCache, 'old-package'), 'legacy regenerable cache');
-  await utimes(join(legacyCache, 'old-package'), oldest, oldest);
-  await utimes(legacyCache, oldest, oldest);
+  await utimes(join(retiredStage, 'repo'), old, old);
+  await utimes(join(retiredStage, 'source-files.json'), old, old);
+  await utimes(retiredStage, old, old);
   const obsolete = join(cacheBaseDir, 'yarn/v6/npm-obsolete/node_modules/obsolete');
   await mkdir(obsolete, { recursive: true });
   await writeFile(join(obsolete, '.yarn-metadata.json'), JSON.stringify({ remote: { resolved: 'https://example/obsolete.tgz#hash' } }));
-  await mkdir(join(scratchRoot, 'happier-old'));
-  await utimes(join(scratchRoot, 'happier-old'), old, old);
+  await mkdir(join(scratchRoot, 'happier-runtime-build-old'));
+  await utimes(join(scratchRoot, 'happier-runtime-build-old'), old, old);
   const { admitWorkerDiskBudget } = await import('./worker_disk_budget.mjs');
-  const result = await admitWorkerDiskBudget({ repoDir, cacheBaseDir, scratchRoot, procRoot, commandClass: 'runtime-build', target: 'linux-x64', observeFilesystem: () => ({ device: 'fixture', availableBytes: 1, totalBytes: 1e9 }) });
+  const result = await admitWorkerDiskBudget({ repoDir, cacheBaseDir, scratchRoot, procRoot, commandClass: 'runtime-build',
+    observeFilesystem: () => ({ device: 'fixture', availableBytes: 0, totalBytes: 1e9 }) });
   assert.equal(result.admitted, false);
-  assert.deepEqual(result.reclamation.map(step => step.kind), ['staging', 'packages', 'scratch']);
-  await assert.rejects(access(join(runtimeBuildRoot, 'old/linux-x64')), { code: 'ENOENT' });
-  await assert.rejects(access(legacyCache), { code: 'ENOENT' });
-  await access(join(runtimeBuildRoot, 'new/linux-x64'));
-  await access(join(runtimeBuildRoot, 'held/darwin-arm64'));
+  assert.deepEqual(result.reclamation.map(step => step.kind), ['packages', 'scratch']);
+  await access(retiredStage);
   await assert.rejects(access(obsolete), { code: 'ENOENT' });
-  await assert.rejects(access(join(scratchRoot, 'happier-old')), { code: 'ENOENT' });
-  assert.ok(result.requiredBytes > 8192);
+  await assert.rejects(access(join(scratchRoot, 'happier-runtime-build-old')), { code: 'ENOENT' });
+  assert.equal(result.reason, 'worker write filesystem exhausted');
 });
 
-test('unknown process visibility retains every cleanup candidate and low disk is still rejected', async t => {
+test('runtime build disk admission observes the mirror, cache and final scratch instead of retired source staging', async t => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-disk-runtime-write-owner-' });
+  const repoDir = join(root, 'repo'), cacheBaseDir = join(root, 'cli/cache'), scratchRoot = join(root, 'scratch');
+  const { inspectWorkerDiskBudget } = await import('./worker_disk_budget.mjs');
+  const actualWrites = [repoDir, cacheBaseDir, scratchRoot];
+  const result = await inspectWorkerDiskBudget({ repoDir, cacheBaseDir, scratchRoot, commandClass: 'runtime-build',
+    observeFilesystem: path => ({ device: path, availableBytes: actualWrites.includes(path) ? 1 : 0, totalBytes: 2e9 }) });
+  assert.equal(result.admitted, true, 'a retired source tree is not a write resource for a mirror build');
+  assert.deepEqual(result.filesystems.map(filesystem => filesystem.path).sort(), actualWrites.sort());
+});
+
+test('unknown same-user visibility retains scratch, but other-user processes do not block reclamation or bypass holders', async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-disk-unknown-' });
   const repoDir = join(root, 'repo'), cacheBaseDir = join(root, 'cli/cache'), scratchRoot = join(root, 'scratch'), procRoot = join(root, 'proc');
   await mkdir(join(repoDir, 'node_modules'), { recursive: true });
@@ -73,30 +80,49 @@ test('unknown process visibility retains every cleanup candidate and low disk is
   assert.equal(result.reclaimedBytes, 0);
   await access(join(scratchRoot, 'happier-old'));
   assert.match(result.reclamation.at(-1).observationUnavailable, /references unavailable/);
+
+  // Add the genuine Linux procfs boundary where PID 1 belongs to another user
+  // and may deny cwd/fd visibility. No privilege or foreign-process mutation.
+  await rm(join(procRoot, '42'), { recursive: true });
+  if (process.platform === 'linux') {
+    const initUids = (await readFile('/proc/1/status', 'utf8')).match(/^Uid:\s+(.*)$/m)[1].split(/\s+/);
+    if (!initUids.includes(String(process.getuid()))) await symlink('/proc/1', join(procRoot, '1'));
+  }
+  const held = join(scratchRoot, 'happier-held');
+  await mkdir(held);
+  await utimes(held, old, old);
+  await mkdir(join(procRoot, '43/fd'), { recursive: true });
+  await writeFile(join(procRoot, '43/status'), `State:\tS\nUid:\t${Array(4).fill(process.getuid()).join('\t')}\n`);
+  await writeFile(join(procRoot, '43/maps'), '');
+  await symlink(held, join(procRoot, '43/cwd'));
+  // Procfs inode ownership can differ from the process UID (dumpability).
+  // Foreign status UIDs, not this same-user fixture directory, decide visibility.
+  await mkdir(join(procRoot, '44'));
+  await writeFile(join(procRoot, '44/status'), `State:\tS\nUid:\t${Array(4).fill(process.getuid() + 1).join('\t')}\n`);
+  const reclaimed = await admitWorkerDiskBudget({ repoDir, cacheBaseDir, scratchRoot, procRoot, commandClass: 'dependency-install', observeFilesystem: () => ({ device: 'fixture', availableBytes: 0, totalBytes: 1e9 }) });
+  assert.equal(reclaimed.admitted, false, 'cleanup cannot fabricate available disk');
+  assert.equal(reclaimed.reclamation.at(-1).observationUnavailable, null);
+  await assert.rejects(access(join(scratchRoot, 'happier-old')), { code: 'ENOENT' });
+  await access(held);
 });
 
-test('disk admission charges an authenticated live peer reservation on the same filesystem', async t => {
-  const { root } = await createTempFixture(t, { prefix: 'hstack-disk-peer-' });
-  const repoDir = join(root, 'repo'), cacheBaseDir = join(root, 'cli/cache'), admissionRoot = join(root, 'admission');
-  await mkdir(join(repoDir, 'node_modules'), { recursive: true });
-  await writeFile(join(repoDir, 'node_modules/data'), 'x'.repeat(8192));
-  await mkdir(join(cacheBaseDir, 'yarn/v6'), { recursive: true });
-  const identity = spawnSync('/bin/sh', ['-c', '. "$1"; heavyweight_process_token "$2"', 'test-identity', fileURLToPath(new URL('../proc/native_process_identity.sh', import.meta.url)), String(process.pid)], { encoding: 'utf8' });
-  assert.equal(identity.status, 0, identity.stderr);
-  const token = identity.stdout.trim();
-  assert.match(token, /^\d+$/);
-  const owner = join(admissionRoot, 'owners', `${process.pid}-${token}`);
-  await mkdir(owner, { recursive: true });
-  await writeFile(join(owner, 'process'), `${process.pid} ${token}\n`);
-  await writeFile(join(owner, 'class'), 'validation\n');
-  await writeFile(join(owner, 'disk'), JSON.stringify({ filesystems: [{ device: 'fixture', requiredBytes: 1000000 }] }));
+test('available filesystem space admits work without resident dependency or cache sizing', async t => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-disk-free-' });
+  const repoDir = join(root, 'repo'), cacheBaseDir = join(root, 'cli/cache');
+  await mkdir(repoDir);
   const { inspectWorkerDiskBudget } = await import('./worker_disk_budget.mjs');
-  const options = { repoDir, cacheBaseDir, admissionRoot, commandClass: 'validation', observeFilesystem: () => ({ device: 'fixture', availableBytes: 1000000, totalBytes: 2000000 }) };
-  assert.equal((await inspectWorkerDiskBudget(options)).admitted, false);
-  assert.equal((await inspectWorkerDiskBudget({ ...options, ownOwnerPath: owner })).admitted, true, 'an inherited owner replaces its existing reservation');
+  const options = { repoDir, cacheBaseDir, observeFilesystem: path => ({ device: path, availableBytes: 1, totalBytes: 2000000 }) };
+  for (const commandClass of ['dependency-install', 'runtime-build', 'source-bundle', 'package-dist', 'compilation', 'validation']) {
+    assert.equal((await inspectWorkerDiskBudget({ ...options, commandClass })).admitted, true, `${commandClass} must not reserve an unmeasured resident closure`);
+  }
+  const separateFilesystems = { ...options, observeFilesystem: path => ({ device: path, availableBytes: path === repoDir ? 1 : 0, totalBytes: 2000000 }) };
+  assert.equal((await inspectWorkerDiskBudget({ ...separateFilesystems, commandClass: 'dependency-install' })).admitted, false, 'install writes must fit the cache filesystem too');
+  assert.equal((await inspectWorkerDiskBudget({ ...separateFilesystems, commandClass: 'runtime-build' })).admitted, false, 'runtime writes use the staging filesystem');
+  assert.equal((await inspectWorkerDiskBudget({ ...separateFilesystems, commandClass: 'source-bundle' })).admitted, false, 'shared source bundles write to the target home filesystem containing its cache');
+  assert.equal((await inspectWorkerDiskBudget({ ...separateFilesystems, commandClass: 'compilation' })).admitted, true, 'in-place compilation does not copy retained staging or caches');
 });
 
-test('loaded admission status observes the disk envelope without a circular observer import', async t => {
+test('loaded admission status observes free space without a circular observer import', async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-disk-status-' });
   const repoDir = join(root, 'repo'), cacheBaseDir = join(root, 'cli/cache');
   await mkdir(join(repoDir, 'node_modules'), { recursive: true });
@@ -109,5 +135,19 @@ test('loaded admission status observes the disk envelope without a circular obse
   const status = JSON.parse(result.stdout);
   assert.equal(status.state, 'observed');
   assert.equal(status.disk.state, 'observed');
-  assert.ok(status.disk.measurements.dependencyBytes >= 8192);
+  assert.ok(status.disk.filesystems.every(fs => fs.availableBytes > 0));
+});
+
+test('resident dependencies and caches do not become additional disk demand', async t => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-disk-inplace-' });
+  const repoDir = join(root, 'repo'), cacheBaseDir = join(root, 'cli/cache');
+  await mkdir(join(repoDir, 'node_modules'), { recursive: true });
+  await writeFile(join(repoDir, 'node_modules/data'), 'dependency'.repeat(8192));
+  await mkdir(join(cacheBaseDir, 'yarn'), { recursive: true });
+  await writeFile(join(cacheBaseDir, 'yarn/data'), 'cache'.repeat(8192));
+  const { inspectWorkerDiskBudget } = await import('./worker_disk_budget.mjs');
+  const options = { repoDir, cacheBaseDir, observeFilesystem: () => ({ device: 'fixture', availableBytes: 4096, totalBytes: 2e9 }) };
+  for (const commandClass of ['dependency-install', 'runtime-build', 'package-dist', 'compilation', 'validation']) {
+    assert.equal((await inspectWorkerDiskBudget({ ...options, commandClass })).admitted, true, `${commandClass} reuses the existing install`);
+  }
 });

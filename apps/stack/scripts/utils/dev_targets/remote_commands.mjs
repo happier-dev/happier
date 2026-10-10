@@ -10,9 +10,6 @@ import { renderNativeHeavyweightPressureCadence } from './heavyweight_pressure_c
 import { resolveRemoteStackStorageDir } from './stack_paths.mjs';
 export { resolveHeavyweightPressureRetryMilliseconds } from './heavyweight_pressure_cadence.mjs';
 
-export const DEFAULT_REMOTE_STACK_STARTUP_TIMEOUT_MS = 30 * 60_000;
-
-
 // Both dispatchers evaluate this policy. The native artifact is generated once,
 // while argv and path normalization remain thin transport adapters.
 export const REMOTE_COMMAND_CLASSIFICATION = Object.freeze({
@@ -26,32 +23,61 @@ const DEFAULT_COMMAND_POLICY = Object.freeze({
   validation: '0', kind: 'runtime', heavyClass: '', workerTool: '',
   workerArguments: '0', runnerKnown: '0', componentOverride: '',
   generator: '0', generatorCheck: '0', componentFromNative: '0',
+  localCompile: '0', requiredTools: '',
 });
 const validation = { validation: '1', bootstrap: '1', heavyClass: 'validation' };
 // Available-memory envelopes, not process limits or fixed concurrency slots.
 // The native selection and admission paths consume this generated policy too.
 // 2026-10-05 Linux measurements: cli-common dist 1,853,332 KiB; Protocol
 // dist 4,682,608 KiB. Both fit beneath the existing 6 GiB compiler/suite
-// envelope. Unmeasured builds and full typechecks retain the 21 GiB envelope;
-// a failed dependency-incomplete typecheck is not evidence to lower it.
+// envelope.
 // The successful full daemon worker request peaked at 16,442,992 KiB of
 // aggregate process-tree RSS on Linux x64 (2026-10-05). Preserve at least
 // Round 1's measured package headroom (6,291,456 - 4,682,608 = 1,608,848 KiB):
 // peak + headroom = 18,051,840 KiB, rounded up to 18 GiB. This does not
 // justify admitting a worker with only 15 GiB available.
+// 2026-10-09 Round 2: two sequential public TS7 typecheck runs per app on
+// Linux ARM64, sampling descendant RSS/VmHWM and /usr/bin/time -v. Largest
+// observed metrics: UI 18,909,772, CLI 13,688,852, server 14,179,616 KiB.
+// Add the same 1,608,848 KiB measured headroom and round up to whole GiB:
+// UI 20, CLI 15, server 16. Round 3 owner decision applies these despite
+// incomplete import graphs; general/root/mixed compilation uses UI's 20 GiB.
+// Re-derive these envelopes if a clean graph measures higher. Admission
+// diagnostics and compiler OOMs make insufficient headroom observable;
+// these samples are observations, not certified maximum process limits.
+// 2026-10-10 completed daemon source-bundle trees: nl1 (Linux x64)
+// 8,660,328 KiB; mac-host (Darwin ARM64) 6,425,616 KiB, with dependency-first
+// public author emission and the shared single-checker compiler owner.
+// Protocol alone peaked at 6,533,716 KiB on nl1. The earlier parallel
+// declaration pass was OOM-killed on linux2 at 12,356,912 KiB anonymous RSS.
+// The larger current tree plus the existing 1,608,848 KiB measured headroom
+// is 10,269,176 KiB, rounded up to 10 GiB.
+// Web preparation/export retains the validation envelope.
 const HEAVYWEIGHT_MEMORY_KIB = Object.freeze({
   validation: 6291456,
+  'source-bundle': 10 * 1024 * 1024,
   'dependency-install': 6291456,
   'package-dist': 6291456,
   'runtime-build': 18874368,
-  compilation: 22020096,
+  compilation: 20 * 1024 * 1024,
+  'compilation-ui': 20 * 1024 * 1024,
+  'compilation-cli': 15 * 1024 * 1024,
+  'compilation-server': 16 * 1024 * 1024,
 });
+const HEAVYWEIGHT_COMPILE_CLASSES = ['compilation', 'compilation-ui', 'compilation-cli', 'compilation-server', 'package-dist', 'runtime-build'];
+
 // The primary VM's browser/agent workloads pause below 8 GiB MemAvailable
 // (2026-10-06 observation). Worker envelopes remain class-owned; only local
 // admission raises smaller envelopes to this measured controller floor.
 const LOCAL_HEAVYWEIGHT_MEMORY_FLOOR_KIB = 8 * 1024 * 1024;
+
+export function resolveHeavyweightMemoryFloorKiB(className, { machine = 'worker' } = {}) {
+  const floor = HEAVYWEIGHT_MEMORY_KIB[className] ?? HEAVYWEIGHT_MEMORY_KIB.compilation;
+  return machine === 'local' ? Math.max(floor, LOCAL_HEAVYWEIGHT_MEMORY_FLOOR_KIB) : floor;
+}
 const COMMAND_RULES = [
   { when: { hasScript: ['1'] }, set: { bootstrap: '1' } },
+  { when: { workspace: ['@happier-dev/cli'] }, set: { componentOverride: 'apps/cli' } },
   { when: { command: ['git'] }, set: { placement: 'primary-only', commandClass: 'vcs-authority' } },
   { when: { command: ['find', 'grep', 'rg'] }, set: { commandClass: 'source-search' } },
   { when: { command: ['rg'] }, set: { workerTool: 'rg' } },
@@ -67,6 +93,7 @@ const COMMAND_RULES = [
   { when: { command: ['node', 'nodejs'], entryPath: ['packages/cli-common/scripts/build.mjs'] }, set: { componentOverride: 'packages/cli-common' } },
   { when: { command: ['vitest'] }, set: { runnerKnown: '1', workerTool: 'vitest', workerArguments: '1' } },
   { when: { command: ['node', 'nodejs', 'tsx'], entry: ['vitest.mjs'] }, set: { ...validation, runnerKnown: '1', workerTool: 'vitest', workerArguments: '1' } },
+  { when: { command: ['node', 'nodejs'], entry: ['runVitestShards.mjs'], component: ['apps/cli'] }, set: { ...validation, runnerKnown: '1', workerTool: 'vitest' } },
   { when: { managerNode: ['1'], entry: ['run-vitest-with-heartbeat.mjs'] }, set: { ...validation, runnerKnown: '1', workerTool: 'vitest', workerArguments: '1' } },
   { when: { script: REMOTE_COMMAND_CLASSIFICATION.sourceTestScripts }, set: { runnerKnown: '1' } },
   // Unknown native suites may consume emitted workspace packages. Only proven
@@ -74,22 +101,53 @@ const COMMAND_RULES = [
   { when: { command: ['node', 'nodejs'], nativeTest: ['1'] }, set: { ...validation, componentFromNative: '1' } },
   { when: { command: ['node', 'nodejs'], nativeTest: ['1'], nativeTestPath: ['packages/plugin-sdk/scripts/generateActionTypeMap.test.mjs'] }, set: { kind: 'source-test' } },
   { when: { command: ['node', 'nodejs'], nativeTest: ['1'], stackScope: ['1'] }, set: { kind: 'runtime', componentOverride: 'apps/stack' } },
+  // These preparation/policy owner suites import repository source tools and
+  // construct isolated dependency fixtures, not Stack's emitted runtime closure.
+  { when: { command: ['node', 'nodejs'], nativeTest: ['1'], nativeTestPath: [
+    'apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.test.mjs',
+    'apps/stack/scripts/utils/dev_targets/remote_commands.test.mjs',
+    'apps/stack/scripts/build/build_source_runtime.test.mjs',
+  ] }, set: { kind: 'source-test' } },
+  { when: { command: ['node', 'nodejs'], nativeTest: ['0'], workerRequest: ['1'], entryPath: ['apps/stack/scripts/build/remote_runtime_build.mjs'] }, set: { ...validation, kind: 'source-test', componentOverride: 'apps/stack' } },
+  { when: { command: ['node', 'nodejs'], nativeTest: ['0'], workerRequest: ['1'], entryPath: ['scripts/build/remote_runtime_build.mjs'], component: ['apps/stack'] }, set: { ...validation, kind: 'source-test' } },
   { when: { command: ['node'], stripTypes: ['1'], entryPath: ['apps/cli/scripts/build-owned/generateBundledPluginEntries.ts', 'scripts/build-owned/generateBundledPluginEntries.ts'] }, set: { generator: '1', workerTool: 'bundled-plugin-generator', heavyClass: 'validation', placement: 'primary-only' } },
   { when: { command: ['node'], stripTypes: ['1'], entryPath: ['apps/cli/scripts/build-owned/generateBundledPluginEntries.ts', 'scripts/build-owned/generateBundledPluginEntries.ts'], mode: ['check'] }, set: { ...validation, placement: 'worker-eligible', generatorCheck: '1', componentOverride: 'apps/cli' } },
+  { when: { command: ['node'], stripTypes: ['1'], sourceCondition: ['1'], entryPath: ['apps/cli/scripts/build-owned/generateBundledPluginEntries.ts', 'scripts/build-owned/generateBundledPluginEntries.ts'], mode: ['check'] }, set: { kind: 'source-test' } },
   { when: { script: ['check:first-party-plugins:finite', 'check:first-party-plugins:finite:local', 'plugins:aggregate:finite', 'test:migration:bundled-plugin-projections', 'test:migration:governance'] }, set: { ...validation, generatorCheck: '1', componentOverride: 'apps/cli' } },
 ];
 const FINAL_COMMAND_RULES = [
+  // CLI Vitest global setup compiles the process-custody component with Go.
+  { when: { component: ['apps/cli'], workerTool: ['vitest'], generatorCheck: ['0'] }, set: { requiredTools: 'go' } },
+  { when: { script: ['types:check'], component: ['apps/docs'] }, set: { ...validation, kind: 'typecheck', workerTool: 'typescript-native' } },
   { when: { bootstrap: ['1'], heavyClass: [''] }, set: { heavyClass: 'dependency-install' } },
   { when: { entry: ['remote_runtime_build.mjs'] }, set: { heavyClass: 'compilation' } },
   { when: { validation: ['1'] }, set: { commandClass: 'targeted-validation' } },
   { when: { validation: ['1'], component: ['.'] }, set: { commandClass: 'full-validation' } },
   { when: { family: ['build'] }, set: { heavyClass: 'compilation' } },
   { when: { kind: ['typecheck'] }, set: { heavyClass: 'compilation' } },
+  ...['ui', 'cli', 'server'].map(component => ({
+    when: { kind: ['typecheck'], component: [`apps/${component}`] }, set: { heavyClass: `compilation-${component}` },
+  })),
+  // 2026-10-09 public checks: Protocol tree VmHWM 10,420,624 KiB;
+  // cli-common 2,777,992 KiB; Plugin SDK 4,428,896 KiB; docs 439,544 KiB
+  // with fresh incremental-state files. The SDK reached
+  // both compiler programs and reported only fixture TS2322 diagnostics.
+  // With the existing 1,608,848 KiB measured
+  // headroom these fit the existing 18 and 6 GiB classes respectively.
+  { when: { kind: ['typecheck'], component: ['packages/protocol'] }, set: { heavyClass: 'runtime-build' } },
+  { when: { kind: ['typecheck'], component: ['packages/cli-common', 'packages/plugin-sdk', 'apps/docs'] }, set: { heavyClass: 'package-dist' } },
+  { when: { kind: ['typecheck'], mixedProjects: ['1'] }, set: { heavyClass: 'compilation' } },
   { when: { command: ['node', 'nodejs'], nativeTest: ['0'], workerRequest: ['1'], entryPath: ['apps/stack/scripts/build/remote_runtime_build.mjs'] }, set: { heavyClass: 'runtime-build' } },
   { when: { command: ['node', 'nodejs'], nativeTest: ['0'], workerRequest: ['1'], entryPath: ['scripts/build/remote_runtime_build.mjs'], component: ['apps/stack'] }, set: { heavyClass: 'runtime-build' } },
   { when: { script: ['build', 'build:finite', 'build:clean'], component: ['packages/cli-common', 'packages/protocol'] }, set: { heavyClass: 'package-dist' } },
   { when: { command: ['node', 'nodejs'], entryPath: ['scripts/build.mjs', 'packages/cli-common/scripts/build.mjs'], component: ['packages/cli-common'] }, set: { heavyClass: 'package-dist' } },
-  { when: { command: ['node', 'nodejs'], entry: ['buildTypeScriptPackageDist.mjs'], component: ['packages/protocol'], project: ['tsconfig.json', './tsconfig.json'] }, set: { heavyClass: 'package-dist' } },
+  // Round 3: strict dependency dist builds compile one package, not the root
+  // graph. Reuse package-dist (measured dist peaks fit 6 GiB); Protocol's
+  // 10,420,624 KiB and SDK's 6,720,800 KiB public-check observations instead
+  // require the existing runtime-build class. Cross-package projects and
+  // root/unknown builds retain general compilation; emit-only remains below.
+  { when: { command: ['node', 'nodejs'], entry: ['buildTypeScriptPackageDist.mjs'], packageComponent: ['1'], project: ['tsconfig.json', './tsconfig.json'], mixedProjects: ['0'] }, set: { heavyClass: 'package-dist' } },
+  { when: { command: ['node', 'nodejs'], entry: ['buildTypeScriptPackageDist.mjs'], component: ['packages/protocol', 'packages/sdk'], project: ['tsconfig.json', './tsconfig.json'], mixedProjects: ['0'] }, set: { heavyClass: 'runtime-build' } },
   { when: { command: ['node', 'nodejs'], entry: ['buildTypeScriptPackageDist.mjs'], noCheck: ['1'] }, set: { heavyClass: 'package-dist' } },
   // Carry the explicit envelope into placement before its payload starts.
   { when: { command: ['hstack-exec'], entry: ['--heavyweight-admission'] }, set: { heavyClass: 'compilation' } },
@@ -97,8 +155,15 @@ const FINAL_COMMAND_RULES = [
     when: { command: ['hstack-exec'], admissionClass: [heavyClass] }, set: { heavyClass },
   })),
   { when: { command: ['hstack-exec'], admissionClass: ['targeted-validation', 'full-validation'] }, set: { heavyClass: 'validation' } },
+  // CLI unit aliases use the same source resolver as direct Vitest. Runtime
+  // preparation would build the emitted closure and escalate their parent
+  // validation reservation for the rest of the test run.
+  { when: { kind: ['runtime'], component: ['apps/cli'], script: ['test', 'test:local', 'test:unit', 'test:unit:local', 'test:unit:vitest', 'test:unit:vitest:local'], config: ['vitest.config.ts'], resolverOverride: ['0'] }, set: { kind: 'source-test' } },
   { when: { kind: ['runtime'], runnerKnown: ['1'], component: REMOTE_COMMAND_CLASSIFICATION.sourceTestComponents, config: REMOTE_COMMAND_CLASSIFICATION.sourceTestConfigs, resolverOverride: ['0'] }, set: { kind: 'source-test' } },
   { when: { kind: ['runtime'], runnerKnown: ['1'], component: ['apps/cli'], config: ['vitest.source.integration.config.ts'], resolverOverride: ['0'] }, set: { kind: 'source-test' } },
+  // UI integration keeps the base workspace-source plugins and aliases.
+  { when: { kind: ['runtime'], runnerKnown: ['1'], component: ['apps/ui'], config: ['vitest.integration.config.ts'], resolverOverride: ['0'] }, set: { kind: 'source-test' } },
+  { when: { heavyClass: HEAVYWEIGHT_COMPILE_CLASSES }, set: { localCompile: '1' } },
 ];
 function commandBasename(value) {
   return String(value ?? '').trim().replaceAll('\\', '/').split('/').at(-1);
@@ -130,13 +195,13 @@ function normalizeCommandArguments(commandArgs, cwd) {
   const command = commandBasename(args[0]);
   const managerIndex = command === 'corepack' ? 1 : 0;
   const manager = commandBasename(args[managerIndex]);
-  let script = '', entry = commandBasename(args[1]), managerCwd = '', managerNode = '0';
+  let script = '', entry = commandBasename(args[1]), managerCwd = '', managerNode = '0', workspace = '';
   if (REMOTE_COMMAND_CLASSIFICATION.packageManagerCommands.includes(manager)) {
     for (let index = managerIndex + 1; index < args.length; index += 1) {
       const arg = args[index];
       if (arg === '--cwd' || arg === '-C') { managerCwd = args[++index] ?? '.'; continue; }
       if (arg.startsWith('--cwd=')) { managerCwd = arg.slice(6); continue; }
-      if (arg === 'workspace' && manager === 'yarn') { index += 1; continue; }
+      if (arg === 'workspace' && manager === 'yarn') { workspace = args[++index] ?? ''; continue; }
       if (arg === 'run' || arg.startsWith('-')) continue;
       script = arg;
       if (arg === 'node') { managerNode = '1'; entry = commandBasename(args[index + 1]); }
@@ -144,6 +209,7 @@ function normalizeCommandArguments(commandArgs, cwd) {
     }
   }
   let stripTypes = args[1] === '--experimental-strip-types' ? '1' : '0';
+  let sourceCondition = '0';
   let entryIndex = stripTypes === '1' ? 2 : 1;
   if (command === 'node' || command === 'nodejs') {
     stripTypes = '0';
@@ -155,25 +221,46 @@ function normalizeCommandArguments(commandArgs, cwd) {
       if (argument === '--experimental-strip-types') { stripTypes = '1'; entryIndex += 1; }
       else if (argument === '--import') entryIndex += 2;
       else if (argument.startsWith('--import=')) entryIndex += 1;
+      else if (argument === '--conditions' || argument === '-C') {
+        if (args[entryIndex + 1] === 'happier-source') sourceCondition = '1';
+        entryIndex += 2;
+      }
+      else if (argument.startsWith('--conditions=')) {
+        if (argument === '--conditions=happier-source') sourceCondition = '1';
+        entryIndex += 1;
+      }
       else break;
     }
     entry = commandBasename(args[entryIndex]);
   } else if (stripTypes === '1') entry = commandBasename(args[2]);
   const rawEntryPath = String(args[entryIndex] ?? '').replaceAll('\\', '/');
   const entryPath = posix.normalize(rawEntryPath.startsWith(COMMAND_REPO_ROOT + '/') ? rawEntryPath.slice(COMMAND_REPO_ROOT.length + 1) : rawEntryPath);
-  let config = 'vitest.config.ts', resolverOverride = '0', project = '', mode = 'write';
+  let config = 'vitest.config.ts', resolverOverride = '0', project = '', mode = 'write', noCheck = '0';
+  const projects = [];
   for (let index = 1; index < args.length; index += 1) {
     const arg = args[index];
     if (/^(?:--root|--workspace|--project)(?:=|$)/u.test(arg) || arg.startsWith('-r')) resolverOverride = '1';
-    if (arg === '--config' || arg === '-c') config = args[++index] ?? '';
+    if (arg === '--noCheck') {
+      noCheck = '1';
+      if (args[index + 1] === 'true' || args[index + 1] === 'false') noCheck = args[++index] === 'true' ? '1' : '0';
+    }
+    else if (arg === '--noCheck=true' || arg === '--noCheck=false') noCheck = arg === '--noCheck=true' ? '1' : '0';
+    else if (arg === '--config' || arg === '-c') config = args[++index] ?? '';
     else if (arg.startsWith('--config=')) config = arg.slice(9);
     else if (arg.startsWith('-c') && arg.length > 2) config = arg.slice(2);
-    else if (arg === '--project' || arg === '-p') project = args[++index] ?? '';
-    else if (arg.startsWith('--project=')) project = arg.slice(10);
+    else if (arg === '--project' || arg === '-p') { project = args[++index] ?? ''; projects.push(project); }
+    else if (arg.startsWith('--project=')) { project = arg.slice(10); projects.push(project); }
+    else if (arg.startsWith('-p') && arg.length > 2) { project = arg.slice(2); projects.push(project); }
     else if (arg === '--mode') mode = args[++index] ?? '';
     else if (arg.startsWith('--mode=')) mode = arg.slice(7);
   }
   const slashCwd = String(cwd ?? '.').replaceAll('\\', '/');
+  const projectScopes = new Set(projects.map(value => {
+    const normalized = normalizeCommandPath(value);
+    const directory = normalized.endsWith('.json') ? posix.dirname(normalized) : normalized;
+    const scope = normalizeCommandPath(directory.startsWith('/') ? directory : posix.join(slashCwd, directory));
+    return scope.startsWith(COMMAND_REPO_ROOT + '/') ? scope.slice(COMMAND_REPO_ROOT.length + 1) : scope;
+  }));
   const testPaths = args.slice(1).filter(arg => !arg.startsWith('-') && /\.(?:[cm]?[jt]s)$/u.test(arg)).map(arg => {
     const path = arg.replaceAll('\\', '/');
     return posix.normalize(path.startsWith(COMMAND_REPO_ROOT + '/') ? path.slice(COMMAND_REPO_ROOT.length + 1) : posix.join(slashCwd, path));
@@ -188,12 +275,12 @@ function normalizeCommandArguments(commandArgs, cwd) {
     }
   }
   return {
-    command, script, family: script.split(':', 1)[0], entry, entryPath, managerNode, admissionClass,
-    noCheck: args.includes('--noCheck') || args.includes('--noCheck=true') ? '1' : '0',
+    command, script, family: script.split(':', 1)[0], entry, entryPath, managerNode, admissionClass, workspace,
+    noCheck,
     hasScript: script ? '1' : '0', nativeTest: args.includes('--test') ? '1' : '0',
-    stripTypes, mode, config: normalizeCommandPath(config), resolverOverride,
+    stripTypes, sourceCondition, mode, config: normalizeCommandPath(config), resolverOverride,
     workerRequest: args.some(arg => arg.startsWith('--worker-request=') && arg.length > '--worker-request='.length) ? '1' : '0',
-    component: normalizeCommandPath(slashCwd), managerCwd, project,
+    component: normalizeCommandPath(slashCwd), managerCwd, project, mixedProjects: projectScopes.size > 1 ? '1' : '0',
     nativeTestPath: testPaths.length === 1 ? testPaths[0] : '',
     nativeComponent: testComponents.length && testComponents.every(component => component === testComponents[0]) ? testComponents[0] : '',
     stackScope: /^apps\/stack(?:\/|$)/u.test(posix.normalize(slashCwd))
@@ -203,14 +290,20 @@ function normalizeCommandArguments(commandArgs, cwd) {
 export function resolveRemoteCommandPolicy(commandArgs, { cwd = '.' } = {}) {
   const facts = normalizeCommandArguments(commandArgs, cwd);
   const policy = applyCommandRules(facts, COMMAND_RULES, { ...DEFAULT_COMMAND_POLICY });
-  if (facts.managerCwd) facts.component = posix.join(facts.component, facts.managerCwd.replaceAll('\\', '/'));
+  if (facts.managerCwd) {
+    const managerCwd = facts.managerCwd.replaceAll('\\', '/');
+    facts.component = managerCwd.startsWith('/') ? managerCwd : posix.join(facts.component, managerCwd);
+  }
   else if (policy.kind === 'typecheck' && facts.project) {
     const project = facts.project.replaceAll('\\', '/');
-    facts.component = posix.join(facts.component, project.endsWith('.json') ? posix.dirname(project) : project);
+    const projectDir = project.endsWith('.json') ? posix.dirname(project) : project;
+    facts.component = projectDir.startsWith('/') ? projectDir : posix.join(facts.component, projectDir);
   }
   if (policy.componentOverride) facts.component = policy.componentOverride;
   else if (policy.componentFromNative === '1' && facts.nativeComponent) facts.component = facts.nativeComponent;
   facts.component = normalizeCommandPath(facts.component);
+  if (facts.component.startsWith(COMMAND_REPO_ROOT + '/')) facts.component = facts.component.slice(COMMAND_REPO_ROOT.length + 1);
+  facts.packageComponent = facts.component.startsWith('packages/') ? '1' : '0';
   applyCommandRules(facts, FINAL_COMMAND_RULES, policy);
   return { ...policy, component: normalizeCommandPath(facts.component) };
 }
@@ -295,21 +388,38 @@ native_node_entry() {
       --experimental-strip-types) policy_stripTypes=1; shift ;;
       --import) shift; [ "$#" -eq 0 ] || shift ;;
       --import=*) shift ;;
+      --conditions|-C) shift; if [ "$#" -gt 0 ]; then [ "$1" != happier-source ] || policy_sourceCondition=1; shift; fi ;;
+      --conditions=happier-source) policy_sourceCondition=1; shift ;;
+      --conditions=*) shift ;;
       *) break ;;
     esac
   done
   native_entry_path=\${1-}
   native_command_basename "$native_entry_path"; policy_entry=$native_basename
 }
+native_record_project_scope() {
+  native_normalize_path "$native_project"; native_scope=$native_result
+  native_project_path=$native_result
+  case "$native_project_path" in *.json) ;; *) native_project_path="$native_project_path/tsconfig.json" ;; esac
+  case "$native_project_path" in /*) ;; *) native_normalize_path "$policy_component/$native_project_path"; native_project_path=$native_result ;; esac
+  case "$native_project_path" in "$repo_root"/*) native_project_path=\${native_project_path#"$repo_root"/} ;; esac
+  policy_projectPaths="$policy_projectPaths
+$native_project_path"
+  case "$native_scope" in *.json) case "$native_scope" in */*) native_scope=\${native_scope%/*} ;; *) native_scope=. ;; esac ;; esac
+  case "$native_scope" in /*) ;; *) native_normalize_path "$policy_component/$native_scope"; native_scope=$native_result ;; esac
+  case "$native_scope" in "$repo_root"/*) native_scope=\${native_scope#"$repo_root"/} ;; esac
+  if [ -z "$native_project_scope" ]; then native_project_scope=$native_scope
+  elif [ "$native_project_scope" != "$native_scope" ]; then policy_mixedProjects=1; fi
+}
 resolve_native_command_policy() {
   [ "\${1-}" = -- ] && shift
   case "\${1-}" in --script=*) native_script=\${1#--script=}; shift; [ "\${1-}" = -- ] && shift; set -- corepack yarn -s "$native_script" "$@" ;; esac
   native_command_basename "\${1-}"; policy_command=$native_basename
   native_command_basename "\${2-}"; policy_entry=$native_basename
-  policy_script=; policy_hasScript=0; policy_managerNode=0; policy_stripTypes=0
+  policy_script=; policy_hasScript=0; policy_managerNode=0; policy_stripTypes=0; policy_sourceCondition=0; policy_workspace=
   native_manager_cwd=; native_project=; policy_mode=write
   policy_nativeTest=0; policy_config=vitest.config.ts; policy_resolverOverride=0
-  policy_project=; policy_workerRequest=0
+  policy_project=; policy_projectPaths=; policy_workerRequest=0
   policy_noCheck=0
   policy_admissionClass=
   if [ "$policy_command" = hstack-exec ] && [ "\${2-}" = --heavyweight-admission ]; then
@@ -331,22 +441,29 @@ resolve_native_command_policy() {
   esac
   native_normalize_path "$native_entry_path"; policy_entryPath=$native_result
   case "$policy_entryPath" in "$repo_root"/*) policy_entryPath=\${policy_entryPath#"$repo_root"/} ;; esac
-  native_pending=
+  native_pending=; native_project_scope=; policy_mixedProjects=0
   for native_arg in "$@"; do
     case "$native_pending" in
       config) policy_config=$native_arg; native_pending=; continue ;;
-      project) native_project=$native_arg; native_pending=; continue ;;
+      project) native_project=$native_arg; native_record_project_scope; native_pending=; continue ;;
       mode) policy_mode=$native_arg; native_pending=; continue ;;
+      noCheck)
+        native_pending=
+        case "$native_arg" in true) policy_noCheck=1; continue ;; false) policy_noCheck=0; continue ;; esac
+        ;;
     esac
     case "$native_arg" in
       --test) policy_nativeTest=1 ;;
-      --noCheck|--noCheck=true) policy_noCheck=1 ;;
+      --noCheck) policy_noCheck=1; native_pending=noCheck ;;
+      --noCheck=true) policy_noCheck=1 ;;
+      --noCheck=false) policy_noCheck=0 ;;
       --worker-request=?*) policy_workerRequest=1 ;;
       --config|-c) native_pending=config; policy_config= ;;
       --config=*) policy_config=\${native_arg#--config=} ;;
       -c?*) policy_config=\${native_arg#-c} ;;
       --project|-p) native_pending=project; [ "$native_arg" = --project ] && policy_resolverOverride=1 ;;
-      --project=*) native_project=\${native_arg#--project=}; policy_resolverOverride=1 ;;
+      --project=*) native_project=\${native_arg#--project=}; native_record_project_scope; policy_resolverOverride=1 ;;
+      -p?*) native_project=\${native_arg#-p}; native_record_project_scope ;;
       --root|--root=*|--workspace|--workspace=*|-r*) policy_resolverOverride=1 ;;
       --mode) native_pending=mode ;;
       --mode=*) policy_mode=\${native_arg#--mode=} ;;
@@ -384,7 +501,7 @@ resolve_native_command_policy() {
         run|-s|--silent) shift ;;
         --cwd|-C) shift; native_manager_cwd=\${1-.}; [ "$#" -gt 0 ] && shift ;;
         --cwd=*) native_manager_cwd=\${1#--cwd=}; shift ;;
-        workspace) if [ "$native_manager" = yarn ]; then shift; [ "$#" -gt 0 ] && shift; else policy_script=$1; break; fi ;;
+        workspace) if [ "$native_manager" = yarn ]; then shift; policy_workspace=\${1-}; [ "$#" -gt 0 ] && shift; else policy_script=$1; break; fi ;;
         -*) shift ;;
         *) policy_script=$1; if [ "$1" = node ]; then policy_managerNode=1; native_command_basename "\${2-}"; policy_entry=$native_basename; fi; break ;;
       esac
@@ -393,19 +510,24 @@ resolve_native_command_policy() {
   [ -n "$policy_script" ] && policy_hasScript=1
   policy_family=\${policy_script%%:*}
   native_command_policy_base
-  if [ -n "$native_manager_cwd" ]; then native_normalize_path "$policy_component/$native_manager_cwd"; policy_component=$native_result
+  if [ -n "$native_manager_cwd" ]; then
+    case "$native_manager_cwd" in /*) native_normalize_path "$native_manager_cwd" ;; *) native_normalize_path "$policy_component/$native_manager_cwd" ;; esac
+    policy_component=$native_result
   elif [ "$policy_kind" = typecheck ] && [ -n "$native_project" ]; then
     native_normalize_path "$native_project"; native_project=$native_result
     case "$native_project" in *.json) case "$native_project" in */*) native_project=\${native_project%/*} ;; *) native_project=. ;; esac ;; esac
-    native_normalize_path "$policy_component/$native_project"; policy_component=$native_result
+    case "$native_project" in /*) native_normalize_path "$native_project" ;; *) native_normalize_path "$policy_component/$native_project" ;; esac
+    policy_component=$native_result
   fi
+  case "$policy_component" in "$repo_root"/*) policy_component=\${policy_component#"$repo_root"/} ;; esac
   [ -n "$policy_componentOverride" ] && policy_component=$policy_componentOverride
   if [ -z "$policy_componentOverride" ] && [ "$policy_componentFromNative" = 1 ] && [ -n "$native_test_component" ]; then policy_component=$native_test_component; fi
+  case "$policy_component" in packages/*) policy_packageComponent=1 ;; *) policy_packageComponent=0 ;; esac
   native_command_policy_finish
 }
 `;
 
-function posixQuote(value) {
+export function posixQuote(value) {
   return `'${String(value).replace(/'/g, `'\"'\"'`)}'`;
 }
 
@@ -424,7 +546,7 @@ export function buildRemotePowerShellCommand(script) {
   return `powershell.exe -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(String(script), 'utf16le').toString('base64')}`;
 }
 
-function prependRemotePath(target, script) {
+export function prependRemotePath(target, script) {
   const entries = Array.isArray(target.remotePath) ? target.remotePath.map(String) : [];
   if (entries.length === 0) return script;
   if (target.platform === 'windows') {
@@ -481,7 +603,7 @@ function resolveRemoteExecutionPidFile(target, executionId) {
 
 export function buildRemoteExecCommand(
   target,
-  { executionId, cwd = '.', commandArgs, environment = {}, preparation = null, admissionClass = '', admissionMode = 'wait', lifetimeStdin = false } = {},
+  { executionId, cwd = '.', commandArgs, environment = {}, preparation = null, admissionClass = '', admissionMode = 'wait', lifetimeStdin = false, controlStdin = false } = {},
 ) {
   let args = Array.isArray(commandArgs) ? commandArgs.map(String) : [];
   if (args.length === 0 || !args[0]) {
@@ -503,26 +625,12 @@ export function buildRemoteExecCommand(
     }
     if (preparation?.componentRelativeDir != null) {
       requireRemoteRelativeWorkingDirectory(target, preparation.componentRelativeDir);
-      // Dependency bootstrap stays outside admission. Workspace preparation can
-      // then take dist locks, so reserve the largest existing compiler envelope
-      // before it reaches those locks; nested package compilers are reentrant.
-      body.push([
-        cacheEnv,
-        posixQuote(`${repoDir}/apps/stack/bin/hstack-exec`),
-        '--heavyweight-admission',
-        '--class=compilation',
-        posixQuote(`--machine=${target.name}`),
-        posixQuote(`--failure-id=${normalizedExecutionId}`),
-        '--',
-        'node',
-        './apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs',
-        posixQuote(`--component-relative-dir=${preparation.componentRelativeDir}`),
-        posixQuote(`--validation-kind=${preparation.validationKind}`),
-      ].join(' '));
+      body.push(`${cacheEnv} node ./apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs ${posixQuote(`--component-relative-dir=${preparation.componentRelativeDir}`)} ${posixQuote(`--validation-kind=${preparation.validationKind}`)}`);
     }
     if (admissionClass) {
       // Dependency/build lock holders can need admission themselves. Only
-      // reserve the payload envelope once its preparation has released locks.
+      // reserve the payload envelope once preparation has released its locks;
+      // dist compilers acquire their own canonical admission before their lock.
       args = ['env', `HAPPIER_STACK_PM_CACHE_BASE_DIR=${String(target.cliHomeDir).replace(/[\\/]+$/, '')}/cache`, `${repoDir}/apps/stack/bin/hstack-exec`, '--heavyweight-admission',
         `--class=${admissionClass}`, `--machine=${target.name}`, `--failure-id=${normalizedExecutionId}`, ...(admissionMode === 'try' ? ['--no-wait'] : []), '--', ...args];
     }
@@ -557,7 +665,16 @@ export function buildRemoteExecCommand(
       `exec ${args.map(posixQuote).join(' ')}`,
   ].join('; ');
   const custody = `${requireRemoteRelativeWorkingDirectory(target, '.')}/apps/stack/scripts/utils/dev_targets/remote_execution_custody.sh`;
-  return wrapRemoteScript(target, `${lifetimeStdin ? 'HAPPIER_REMOTE_EXEC_LIFELINE=1 ' : ''}bash ${posixQuote(custody)} run ${posixQuote(pidFile)} ${posixQuote(normalizedExecutionId)} bash -c ${posixQuote(body)}`);
+  // Custody must let the browser worker finish closing its detached Chromium
+  // session after controller loss, just as the foreground browser owner does.
+  const browserKind = environment.HAPPIER_STACK_PROCESS_KIND === 'browser' ? 'HAPPIER_STACK_PROCESS_KIND=browser ' : '';
+  return wrapRemoteScript(target, `exec env ${lifetimeStdin ? 'HAPPIER_REMOTE_EXEC_LIFELINE=1 ' : ''}${controlStdin ? 'HAPPIER_REMOTE_EXEC_CONTROL_STDIN=1 ' : ''}${browserKind}bash ${posixQuote(custody)} run ${posixQuote(pidFile)} ${posixQuote(normalizedExecutionId)} bash -c ${posixQuote(body)}`);
+}
+
+export function buildRemoteQaBrowserStopCommand(target, { stackName }) {
+  if (target.platform !== 'posix') throw new Error('[dev-targets] QA browser retirement requires a POSIX host');
+  const paths = resolveRemoteStackStatePaths(target, { stackName, runtimeMode: 'controlled' });
+  return wrapRemoteScript(target, `set -e; cd -- ${posixQuote(target.repoDir)}; exec node ./apps/stack/scripts/utils/dev_targets/qa_browser.mjs --stop-stack ${posixQuote(stackName)} ${posixQuote(paths.stackEnvPath)}`);
 }
 
 export function buildRemoteCancelCommand(target, { executionId } = {}) {
@@ -595,7 +712,8 @@ function wrapRemoteScript(target, script) {
   if (target.platform === 'windows') {
     return buildRemotePowerShellCommand(wrappedScript);
   }
-  return `bash -lc ${posixQuote(wrappedScript)}`;
+  // Replace SSH's shell so its logout hook cannot replace the actual status.
+  return `exec bash -lc ${posixQuote(wrappedScript)}`;
 }
 
 function buildWindowsOrphanedMutagenCleanupScript() {
@@ -615,7 +733,7 @@ function buildWindowsOrphanedMutagenCleanupScript() {
 }
 
 export function buildRemoteEnsureDirectoriesCommand(target, options = {}) {
-  const additional = options.runtimeMode === 'controlled'
+  const additional = usesRetainedRemoteStackState(options.runtimeMode)
     ? (() => { const paths = resolveRemoteStackStatePaths(target, options); return [paths.stackBaseDir, paths.cliHomeDir, paths.workspaceDir]; })()
     : [];
   if (target.platform === 'windows') {
@@ -760,14 +878,15 @@ export function resolveRemoteServerRuntimeConfig({ serverComponentName, env = {}
   }
   const effectiveProvider = resolveEffectiveDbProvider({ serverComponentName, env });
   if (!effectiveProvider.ok) {
-    throw new Error('[dev-targets] remote server placement has an unsupported SQLite provider configuration');
+    throw new Error('[dev-targets] remote server placement has an unsupported database provider configuration');
   }
-  if (effectiveProvider.provider !== 'sqlite') {
-    throw new Error('[dev-targets] remote server placement only supports SQLite');
+  if (!['sqlite', 'postgres'].includes(effectiveProvider.provider)) {
+    throw new Error('[dev-targets] remote server placement only supports SQLite or Postgres');
   }
   return {
     serverComponentName: 'happier-server-light',
-    dbProvider: 'sqlite',
+    // The URL/credentials remain in the server host's env, never this projection.
+    dbProvider: effectiveProvider.provider,
     environment: projectRemoteServerLightSemanticEnvironment(env),
   };
 }
@@ -860,42 +979,78 @@ function resolveRemoteTargetStackName(target, { stackName } = {}) {
   return `dev-target-${targetToken}-${fingerprint}`;
 }
 
+function usesRetainedRemoteStackState(runtimeMode) {
+  return runtimeMode === 'controlled' || runtimeMode === 'source-snapshot';
+}
+
 export function resolveRemoteStackStatePaths(target, { stackName, runtimeMode = 'source' } = {}) {
-  if (runtimeMode === 'controlled') {
+  const retainedState = usesRetainedRemoteStackState(runtimeMode);
+  if (retainedState) {
     const pathApi = target.platform === 'windows' ? win32 : posix;
     const relativeHome = pathApi.relative(String(target.repoDir).replaceAll('\\', '/'), String(target.cliHomeDir).replaceAll('\\', '/'));
     if (!pathApi.isAbsolute(relativeHome) && relativeHome !== '..' && !relativeHome.startsWith(`..${pathApi.sep}`)) {
       throw new Error('[dev-targets] controlled CLI state and workspace must be outside the one-way source replica; configure an external target cli-home-dir');
     }
   }
-  const remoteStackName = runtimeMode === 'controlled' ? stackName : resolveRemoteTargetStackName(target, { stackName });
+  const remoteStackName = retainedState ? stackName : resolveRemoteTargetStackName(target, { stackName });
   const stackStorageDir = resolveRemoteStackStorageDir(target.cliHomeDir);
   const stackBaseDir = `${stackStorageDir}/${remoteStackName}`;
   return {
     activeServerId: buildStackStableScopeId({
-      stackName: runtimeMode === 'controlled' ? stackName : remoteStackName,
+      stackName: remoteStackName,
       cliIdentity: 'default',
     }),
     stackName: remoteStackName,
     stackStorageDir,
     stackBaseDir,
     stackEnvPath: `${stackBaseDir}/env`,
-    cliHomeDir: runtimeMode === 'controlled' ? `${stackBaseDir}/cli` : String(target.cliHomeDir).replace(/[\\/]+$/, ''),
+    cliHomeDir: retainedState ? `${stackBaseDir}/cli` : String(target.cliHomeDir).replace(/[\\/]+$/, ''),
     workspaceDir: `${stackBaseDir}/workspace`,
     serverLightDataDir: `${stackBaseDir}/server-light`,
   };
 }
 
-export function buildRemoteStackRetirementProbeCommand(target, { stackName, runtimeMode = 'source' } = {}) {
-  const { stackBaseDir } = resolveRemoteStackStatePaths(target, { stackName, runtimeMode });
+export function buildRemoteStackRetirementProbeCommand(target, { stackName, runtimeMode = 'source', preserveDaemon = false } = {}) {
+  const { stackBaseDir, stackName: remoteStackName, stackEnvPath, cliHomeDir } = resolveRemoteStackStatePaths(target, { stackName, runtimeMode });
   const runtimeStatePath = `${stackBaseDir}/stack.runtime.json`;
+  // Reboots leave state files behind. Runtime ownership, not file presence,
+  // proves whether recorded processes still require retirement. Legacy Expo
+  // records are checked separately because they can outlive their runner.
+  const expression = [
+    "const fs = require('node:fs'), path = require('node:path');",
+    '(async () => {',
+    `if (fs.existsSync(${JSON.stringify(runtimeStatePath)})) {`,
+    `  const ownerUrl = require('node:url').pathToFileURL(path.join(${JSON.stringify(target.repoDir)}, 'apps/stack/scripts/utils/stack/runtime_state.mjs')).href;`,
+    '  const { readStackRuntimeStateFile, hasTrustedStackRuntimeLifecycle } = await import(ownerUrl);',
+    `  const state = await readStackRuntimeStateFile(${JSON.stringify(runtimeStatePath)});`,
+    '  if (!state) {',
+    // A reboot retires the prior process lifetime even when its last state
+    // write was lost. Current-boot corruption still cannot prove absence.
+    `    fs.readFileSync(${JSON.stringify(runtimeStatePath)}, 'utf8');`,
+    "    const bootedAt = Date.now() - require('node:os').uptime() * 1000;",
+    `    if (!(fs.statSync(${JSON.stringify(runtimeStatePath)}).mtimeMs < bootedAt)) process.exit(1);`,
+    '  }',
+    `  if (await hasTrustedStackRuntimeLifecycle(state, ${JSON.stringify({ stackName: remoteStackName, envPath: stackEnvPath, cliHomeDir })}, ${JSON.stringify({ preserveDaemon: preserveDaemon === true })})) process.exit(1);`,
+    '}',
+    `const base = ${JSON.stringify(stackBaseDir)};`,
+    "for (const [kind, file] of [['expo-dev','expo.state.json'],['mobile','expo.state.json'],['ui-dev','ui.state.json'],['mobile-dev','mobile.state.json']]) {",
+    "  const root = path.join(base, kind); if (!fs.existsSync(root)) continue;",
+    "  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {",
+    "    if (!entry.isDirectory()) continue; const state = path.join(root, entry.name, file);",
+    "    if (!fs.existsSync(state)) continue; const pid = Number(JSON.parse(fs.readFileSync(state, 'utf8')).pid);",
+    "    if (!Number.isInteger(pid) || pid <= 1) continue;",
+    "    try { process.kill(pid, 0); process.exit(1); } catch (error) { if (error.code !== 'ESRCH') throw error; }",
+    '  }',
+    '}',
+    '})().catch(error => { console.error(error); process.exit(1); });',
+  ].join('\n');
   if (target.platform === 'windows') {
     return wrapRemoteScript(
       target,
       [
         '$ErrorActionPreference = "Stop"',
-        `if (Test-Path -LiteralPath ${powershellQuote(runtimeStatePath)}) { exit 1 }`,
-        'exit 0',
+        `node -e ${powershellQuote(expression)}`,
+        'exit $LASTEXITCODE',
       ].join('; '),
     );
   }
@@ -903,7 +1058,7 @@ export function buildRemoteStackRetirementProbeCommand(target, { stackName, runt
     target,
     [
       'set -euo pipefail',
-      `test ! -e ${posixQuote(runtimeStatePath)}`,
+      `exec node -e ${posixQuote(expression)}`,
     ].join('; '),
   );
 }
@@ -918,14 +1073,46 @@ export function buildRemoteRuntimeSnapshotImportCommand(target, { stackName, arc
     : `set -euo pipefail; cd -- ${quote(target.repoDir)}; exec node ${args.map(quote).join(' ')}`);
 }
 
-export function buildRemoteRuntimeSnapshotProbeCommand(target, { stackName, snapshotId }) {
-  const paths = resolveRemoteStackStatePaths(target, { stackName, runtimeMode: 'controlled' });
-  const expression = `const fs=require('node:fs');const s=JSON.parse(fs.readFileSync(${JSON.stringify(paths.stackBaseDir + '/stack.runtime.json')},'utf8'));process.exit(s.runtimeSnapshotId===${JSON.stringify(snapshotId)}?0:1)`;
+export function buildRemoteRuntimeSnapshotProbeCommand(target, { stackName, snapshotId, runtimeMode = 'controlled', services = {}, sourceUi = 'export' }) {
+  const paths = resolveRemoteStackStatePaths(target, { stackName, runtimeMode });
+  const statePath = paths.stackBaseDir + '/stack.runtime.json';
+  const components = ['server', 'daemon'].filter(component => services[component] === true);
+  const sourceProbe = [
+    'const sourceRuntimeIdentities = {};',
+    `for (const component of ${JSON.stringify(components)}) {`,
+    '  const identity = s.sourceRuntimeIdentities?.[component];',
+    "  if (typeof identity?.selected !== 'string' || !identity.selected) fail('runtime_identity_missing', { component });",
+    "  if (identity.loaded !== identity.selected) fail('runtime_identity_not_loaded', { component });",
+    '  sourceRuntimeIdentities[component] = { selected: identity.selected, loaded: identity.loaded };',
+    '}',
+    "if (!Object.keys(sourceRuntimeIdentities).length) fail('runtime_identity_missing');",
+    'const observed = { sourceRuntimeIdentities };',
+    ...(services.server ? [
+      `if (s.sourceUi !== ${JSON.stringify(sourceUi === 'export' ? 'export' : 'disabled')}) process.exit(1); observed.sourceUi = s.sourceUi;`,
+      "if (s.sourceUi === 'export') {",
+      "  if (typeof s.sourceUiLaunch?.uiDir !== 'string' || !s.sourceUiLaunch.uiDir.trim()) process.exit(1);",
+      '  observed.sourceUiLaunch = { uiDir: s.sourceUiLaunch.uiDir };',
+      '}',
+    ] : []),
+    'process.stdout.write(JSON.stringify(observed));',
+  ].join('\n');
+  const expression = [
+    "const fs=require('node:fs');",
+    `const statePath=${JSON.stringify(statePath)};`,
+    "function fail(code, details = {}) { process.stderr.write(JSON.stringify({ ok: false, error: { code, statePath, ...details, recovery: 'Inspect this target with dev-targets status/doctor and recover the named Stack through stack start --restart.' } }) + '\\n'); process.exit(1); }",
+    "let raw; try { raw=fs.readFileSync(statePath,'utf8'); } catch(error) { fail(error.code === 'ENOENT' ? 'runtime_state_missing' : 'runtime_state_unreadable', { causeCode: error.code }); }",
+    "if (!raw.trim()) fail('runtime_state_empty');",
+    "let s; try { s=JSON.parse(raw); } catch { fail('runtime_state_invalid'); }",
+    "if (!s || typeof s !== 'object' || Array.isArray(s)) fail('runtime_state_invalid');",
+    runtimeMode === 'source-snapshot'
+      ? sourceProbe
+      : `process.exit(s.runtimeSnapshotId===${JSON.stringify(snapshotId)}?0:1)`,
+  ].join('');
   const quote = target.platform === 'windows' ? powershellQuote : posixQuote;
   return wrapRemoteScript(target, target.platform === 'windows' ? `node -e ${quote(expression)}; exit $LASTEXITCODE` : `exec node -e ${quote(expression)}`);
 }
 
-function resolveRemoteStackInvocation(target, {
+function resolveRemoteStackStartInvocation(target, {
   services,
   serverUrl,
   publicServerUrl = '',
@@ -944,6 +1131,9 @@ function resolveRemoteStackInvocation(target, {
   runtimeMode = 'source',
   runtimeSnapshotId = null,
   borrowedExpoProducerStackName = '',
+  sourceUi = 'export',
+  reuseSourceRuntime = false,
+  sourceUiLaunch = null,
 }) {
   const normalizedServices = {
     server: services?.server === true,
@@ -988,7 +1178,7 @@ function resolveRemoteStackInvocation(target, {
   const stackEnvLines = [
     `HAPPIER_STACK_REPO_DIR=${target.repoDir}`,
     `HAPPIER_STACK_CLI_HOME_DIR=${cliHomeDir}`,
-    ...(runtimeMode === 'controlled' ? [
+    ...(usesRetainedRemoteStackState(runtimeMode) ? [
       'HAPPIER_STACK_SYNC_BUNDLED_WORKSPACES=0',
       'HAPPIER_STACK_UPDATE_CHECK=0',
       `HAPPIER_STACK_INVOKED_CWD=${workspaceDir}`,
@@ -997,13 +1187,12 @@ function resolveRemoteStackInvocation(target, {
     `HAPPIER_STACK_SERVER_COMPONENT=${stackServerComponent}`,
     `HAPPIER_DB_PROVIDER=${stackDbProvider}`,
     ...Object.entries(serverRuntimeConfig?.environment ?? {}).map(([key, value]) => `${key}=${value}`),
-    `HAPPIER_CLI_PKGROLL_TIMEOUT_MS=${DEFAULT_REMOTE_STACK_STARTUP_TIMEOUT_MS}`,
     'HAPPIER_DEV_TARGET_EXECUTION=1',
     ...(normalizedServices.daemon && deferDaemonStartUntilCredentials
       ? ['HAPPIER_STACK_DAEMON_WAIT_FOR_AUTH=1']
       : []),
     ...(serverPort ? [`HAPPIER_STACK_SERVER_PORT=${serverPort}`] : []),
-    ...(runtimeMode === 'controlled' && stablePublicServerUrl ? [`HAPPIER_PUBLIC_SERVER_URL=${stablePublicServerUrl}`] : []),
+    ...(usesRetainedRemoteStackState(runtimeMode) && stablePublicServerUrl ? [`HAPPIER_PUBLIC_SERVER_URL=${stablePublicServerUrl}`] : []),
     ...(originCanonicalServerUrl ? [`HAPPIER_CANONICAL_SERVER_URL=${originCanonicalServerUrl}`] : []),
     ...(expoPort ? [
       `HAPPIER_STACK_EXPO_DEV_PORT=${expoPort}`,
@@ -1013,11 +1202,15 @@ function resolveRemoteStackInvocation(target, {
     ...(stablePublicExpoPort ? [`HAPPIER_STACK_EXPO_PUBLIC_PORT=${stablePublicExpoPort}`] : []),
     ...(expoPublicUrl && !resolveExpoPublicUrlOnTarget ? [`EXPO_PACKAGER_PROXY_URL=${expoPublicUrl}`] : []),
   ];
-  const devArgs = runtimeMode === 'controlled'
-    ? ['--runtime', '--no-dev-targets', '--no-browser',
+  const devArgs = usesRetainedRemoteStackState(runtimeMode)
+    ? [runtimeMode === 'source-snapshot' ? '--runtime=source' : '--runtime', '--no-dev-targets', '--no-browser',
+      ...(runtimeMode === 'source-snapshot' && reuseSourceRuntime ? ['--reuse-source-runtime', '--restart',
+        ...(normalizedServices.server && sourceUi === 'export' && sourceUiLaunch?.uiDir
+          ? [`--source-ui-dir=${sourceUiLaunch.uiDir}`] : [])] : []),
       ...(!normalizedServices.server ? ['--no-server', `--server-url=${serverUrl}`] : []),
       ...(!normalizedServices.daemon ? ['--no-daemon'] : []),
-      ...(!normalizedServices.server || borrowedExpoProducerStackName ? ['--no-ui'] : [])]
+      ...(!normalizedServices.server || (runtimeMode === 'source-snapshot'
+        ? sourceUi !== 'export' : Boolean(borrowedExpoProducerStackName)) ? ['--no-ui'] : [])]
     : buildRemoteDevArgs({
     services: normalizedServices,
     serverUrl,
@@ -1055,7 +1248,7 @@ function buildWindowsRemoteStackPrelude(target, invocation) {
     `$env:HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID = ${powershellQuote(invocation.activeServerId)}`,
     ...(invocation.attended ? ["$env:HAPPIER_STACK_TUI = '1'"] : []),
     `Set-Location -LiteralPath ${powershellQuote(target.repoDir)}`,
-    ...(invocation.runtimeMode === 'controlled' ? [
+    ...(usesRetainedRemoteStackState(invocation.runtimeMode) ? [
       `New-Item -ItemType Directory -Force -Path ${powershellQuote(invocation.cliHomeDir)},${powershellQuote(invocation.workspaceDir)} | Out-Null`,
       "$env:HAPPIER_STACK_SYNC_BUNDLED_WORKSPACES = '0'",
       "$env:HAPPIER_STACK_UPDATE_CHECK = '0'",
@@ -1076,7 +1269,7 @@ function buildPosixRemoteStackPrelude(target, invocation) {
     `export HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID=${posixQuote(invocation.activeServerId)}`,
     ...(invocation.attended ? ['export HAPPIER_STACK_TUI=1'] : []),
     `cd -- ${posixQuote(target.repoDir)}`,
-    ...(invocation.runtimeMode === 'controlled' ? [
+    ...(usesRetainedRemoteStackState(invocation.runtimeMode) ? [
       `mkdir -p -- ${posixQuote(invocation.cliHomeDir)} ${posixQuote(invocation.workspaceDir)}`,
       'export HAPPIER_STACK_SYNC_BUNDLED_WORKSPACES=0',
       'export HAPPIER_STACK_UPDATE_CHECK=0',
@@ -1085,21 +1278,40 @@ function buildPosixRemoteStackPrelude(target, invocation) {
 }
 
 function buildWindowsRemoteStackInitializationCommands(target, invocation) {
+  const launcher = remoteStackLauncher(invocation);
   return [
-    `corepack yarn workspace @happier-dev/stack stack new ${powershellQuote(invocation.stackName)} --server=${powershellQuote(invocation.stackServerComponent)} --db-provider=${powershellQuote(invocation.stackDbProvider)} --repo=${powershellQuote(target.repoDir)} --no-copy-auth --non-interactive --if-missing`,
-    `corepack yarn workspace @happier-dev/stack stack env ${powershellQuote(invocation.stackName)} set ${invocation.stackEnvLines.map(powershellQuote).join(' ')}`,
+    `${launcher} stack new ${powershellQuote(invocation.stackName)} --server=${powershellQuote(invocation.stackServerComponent)} --db-provider=${powershellQuote(invocation.stackDbProvider)} --repo=${powershellQuote(target.repoDir)} --no-copy-auth --non-interactive --if-missing`,
+    `${launcher} stack env ${powershellQuote(invocation.stackName)} set ${invocation.stackEnvLines.map(powershellQuote).join(' ')}`,
   ];
 }
 
 function buildPosixRemoteStackInitializationCommands(target, invocation) {
+  const launcher = remoteStackLauncher(invocation);
   return [
-    `corepack yarn workspace @happier-dev/stack stack new ${posixQuote(invocation.stackName)} --server=${posixQuote(invocation.stackServerComponent)} --db-provider=${posixQuote(invocation.stackDbProvider)} --repo=${posixQuote(target.repoDir)} --no-copy-auth --non-interactive --if-missing`,
-    `corepack yarn workspace @happier-dev/stack stack env ${posixQuote(invocation.stackName)} set ${invocation.stackEnvLines.map(posixQuote).join(' ')}`,
+    `${launcher} stack new ${posixQuote(invocation.stackName)} --server=${posixQuote(invocation.stackServerComponent)} --db-provider=${posixQuote(invocation.stackDbProvider)} --repo=${posixQuote(target.repoDir)} --no-copy-auth --non-interactive --if-missing`,
+    `${launcher} stack env ${posixQuote(invocation.stackName)} set ${invocation.stackEnvLines.map(posixQuote).join(' ')}`,
   ];
 }
 
+function remoteStackLauncher(invocation) {
+  // Source QA executes the existing repository entry using the target toolchain
+  // PATH selected at provisioning. Runtime children still use the managed JS
+  // launch owner; no package-manager wrapper or publication belongs here.
+  return invocation.runtimeMode === 'source-snapshot'
+    ? 'node ./apps/stack/bin/hstack.mjs'
+    : 'corepack yarn workspace @happier-dev/stack';
+}
+
 export function buildRemoteStackStopCommand(target, options) {
-  const invocation = resolveRemoteStackInvocation(target, options);
+  const { runtimeMode = 'source', attended = false, preserveDaemon = false } = options;
+  const preserveDaemonArg = preserveDaemon === true ? ' --preserve-daemon' : '';
+  // Retirement uses recorded Stack custody, not the service configuration
+  // required to start it. Share the identity owner with startup and probes.
+  const invocation = {
+    ...resolveRemoteStackStatePaths(target, options),
+    runtimeMode,
+    attended: attended === true,
+  };
   if (target.platform === 'windows') {
     return wrapRemoteScript(
       target,
@@ -1107,7 +1319,7 @@ export function buildRemoteStackStopCommand(target, options) {
         ...buildWindowsRemoteStackPrelude(target, invocation),
         "$env:HAPPIER_STACK_SYNC_BUNDLED_WORKSPACES = '0'",
         "$env:HAPPIER_STACK_UPDATE_CHECK = '0'",
-        `corepack yarn workspace @happier-dev/stack stack stop ${powershellQuote(invocation.stackName)} --yes --no-docker`,
+        `${remoteStackLauncher(invocation)} stack stop ${powershellQuote(invocation.stackName)} --yes --no-docker${preserveDaemonArg}`,
         'exit $LASTEXITCODE',
       ].join('; '),
     );
@@ -1118,13 +1330,13 @@ export function buildRemoteStackStopCommand(target, options) {
       ...buildPosixRemoteStackPrelude(target, invocation),
       'export HAPPIER_STACK_SYNC_BUNDLED_WORKSPACES=0',
       'export HAPPIER_STACK_UPDATE_CHECK=0',
-      `exec corepack yarn workspace @happier-dev/stack stack stop ${posixQuote(invocation.stackName)} --yes --no-docker`,
+      `exec ${remoteStackLauncher(invocation)} stack stop ${posixQuote(invocation.stackName)} --yes --no-docker${preserveDaemonArg}`,
     ].join('; '),
   );
 }
 
 export function buildRemoteStackCommand(target, options) {
-  const invocation = resolveRemoteStackInvocation(target, options);
+  const invocation = resolveRemoteStackStartInvocation(target, options);
   if (target.platform === 'windows') {
     return wrapRemoteScript(
       target,
@@ -1134,7 +1346,7 @@ export function buildRemoteStackCommand(target, options) {
           command,
           'if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }',
         ]),
-        `corepack yarn workspace @happier-dev/stack stack ${invocation.runtimeMode === 'controlled' ? 'start' : 'dev'} ${powershellQuote(invocation.stackName)} ${invocation.devArgs.map(formatPowerShellDevArg).join(' ')}`,
+        `${remoteStackLauncher(invocation)} stack ${usesRetainedRemoteStackState(invocation.runtimeMode) ? 'start' : 'dev'} ${powershellQuote(invocation.stackName)} ${invocation.devArgs.map(formatPowerShellDevArg).join(' ')}`,
         'exit $LASTEXITCODE',
       ].join('; '),
     );
@@ -1144,9 +1356,26 @@ export function buildRemoteStackCommand(target, options) {
     [
       ...buildPosixRemoteStackPrelude(target, invocation),
       ...buildPosixRemoteStackInitializationCommands(target, invocation),
-      `exec corepack yarn workspace @happier-dev/stack stack ${invocation.runtimeMode === 'controlled' ? 'start' : 'dev'} ${posixQuote(invocation.stackName)} ${invocation.devArgs.map(formatPosixDevArg).join(' ')}`,
+      `exec ${remoteStackLauncher(invocation)} stack ${usesRetainedRemoteStackState(invocation.runtimeMode) ? 'start' : 'dev'} ${posixQuote(invocation.stackName)} ${invocation.devArgs.map(formatPosixDevArg).join(' ')}`,
     ].join('; '),
   );
+}
+
+export function buildRemoteStackHappierCommand(target, { stackName, runtimeMode = 'source', passthrough = [] }) {
+  const invocation = { ...resolveRemoteStackStatePaths(target, { stackName, runtimeMode }), runtimeMode };
+  if (target.platform === 'windows') {
+    return wrapRemoteScript(target, [
+      ...buildWindowsRemoteStackPrelude(target, invocation),
+      "$env:HAPPIER_DEV_TARGET_EXECUTION = '1'",
+      `${remoteStackLauncher(invocation)} stack happier ${powershellQuote(invocation.stackName)} ${passthrough.map(powershellQuote).join(' ')}`,
+      'exit $LASTEXITCODE',
+    ].join('; '));
+  }
+  return wrapRemoteScript(target, [
+    ...buildPosixRemoteStackPrelude(target, invocation),
+    'export HAPPIER_DEV_TARGET_EXECUTION=1',
+    `exec ${remoteStackLauncher(invocation)} stack happier ${posixQuote(invocation.stackName)} ${passthrough.map(posixQuote).join(' ')}`,
+  ].join('; '));
 }
 
 export function buildRemoteDaemonCommand(target, { serverUrl, activeServerId, stackName }) {
@@ -1215,6 +1444,8 @@ export function buildSshTunnelArgs(
   target,
   { localServerPort, remoteServerPort, sshArgs = [] },
 ) {
+  // Forward listeners belong to this process. A multiplexed -N request installs
+  // them on the persistent master and exits, losing per-Stack stop custody.
   return [
     '-T',
     '-o',
@@ -1239,8 +1470,8 @@ export function buildSshTunnelArgs(
 
 function formatSshForward(forward) {
   const direction = forward?.direction;
-  if (direction !== 'local' && direction !== 'reverse') {
-    throw new Error('[dev-targets] SSH forward direction must be local or reverse');
+  if (direction !== 'local' && direction !== 'reverse' && direction !== 'reverse-dynamic') {
+    throw new Error('[dev-targets] SSH forward direction must be local, reverse or reverse-dynamic');
   }
   const listenHost = String(forward.listenHost ?? '127.0.0.1').trim();
   const targetHost = String(forward.targetHost ?? '127.0.0.1').trim();
@@ -1254,6 +1485,9 @@ function formatSshForward(forward) {
     ? '*'
     : listenHost;
   const listenPort = requireServicePort(forward.listenPort, 'SSH forward listen port');
+  if (direction === 'reverse-dynamic') {
+    return { flag: '-R', specification: `${effectiveListenHost}:${listenPort}` };
+  }
   const targetPort = requireServicePort(forward.targetPort, 'SSH forward target port');
   return {
     flag: direction === 'local' ? '-L' : '-R',
@@ -1265,6 +1499,8 @@ export function buildSshForwardArgs(target, { forwards, sshArgs = [] } = {}) {
   if (!Array.isArray(forwards) || forwards.length === 0) {
     throw new Error('[dev-targets] at least one SSH forward is required');
   }
+  // Keep browser SOCKS/CDP and service listeners under their foreground owner;
+  // killing a multiplex client cannot retire master-owned forward listeners.
   return [
     '-T',
     '-o',

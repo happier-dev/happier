@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -8,6 +8,7 @@ import { createRuntimeArtifactFingerprint, readRuntimeComponentSourceFingerprint
 import { resolveRuntimeBuildRequestIdentity } from './runtime_build_request_identity.mjs';
 import { createRuntimeSnapshotId } from '../runtime/shared/runtime_snapshot_identity.mjs';
 import { readWorkspaceBuildInputs } from '../utils/fs/workspaceBuildInputs.mjs';
+import { captureBuildInputFiles } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
 
 test('daemon support identity ignores unshipped tests while retaining shipped resources and runtime source', async (t) => {
   const repoDir = await mkdtemp(join(tmpdir(), 'runtime-daemon-test-membership-'));
@@ -43,6 +44,8 @@ test('daemon support identity ignores unshipped tests while retaining shipped re
     await writeFile(join(dir, 'owner.testkit.ts'), 'test support only');
     await writeFile(join(dir, 'owner.test-support.ts'), 'excluded compiler test support only');
     await writeFile(join(dir, 'testkit/fixture.ts'), 'fixture only');
+    await mkdir(join(dir, '__snapshots__'), {recursive:true});
+    await writeFile(join(dir, '__snapshots__/owner.spec.ts.snap'), 'test snapshot only');
   }
   assert.deepEqual(await fingerprint(), before, 'adding tests must not change component membership');
   await writeFile(join(cliDir, 'src/owner.test.ts'), 'changed test only');
@@ -292,7 +295,6 @@ test('build request identity matches the exact all-component artifact recipe and
     assertSelectedBuildPrerequisitesImpl: () => {},
     resolveServerSupportArtifactFingerprintImpl: async () => 'server-support-a',
     resolveDaemonSupportArtifactFingerprintImpl: async () => 'daemon-support-a',
-    resolveDaemonWorkspaceSourceFingerprintImpl: async () => 'a'.repeat(64),
   });
 
   const web = createRuntimeArtifactFingerprint({
@@ -323,7 +325,6 @@ test('build request identity matches the exact all-component artifact recipe and
   });
 
   assert.deepEqual(result.artifactFingerprints, { web, server, daemon });
-  assert.equal(result.daemonWorkspaceSourceFingerprint, 'a'.repeat(64));
   assert.equal(
     result.snapshotId,
     createRuntimeSnapshotId({ sourceMetadata, componentFingerprints: { web, server, daemon }, ...target }),
@@ -364,16 +365,43 @@ test('server-only request identity has no web artifact dependency', async () => 
   assert.equal(result.snapshotId, null);
 });
 
-test('workspace build inputs admit hand-authored root declarations beside root ESM/CJS sources', async (t) => {
-  const packageDir = await mkdtemp(join(tmpdir(), 'workspace-root-declarations-'));
-  t.after(() => rm(packageDir, { recursive: true, force: true }));
-  await mkdir(join(packageDir, 'src'), { recursive: true });
-  await writeFile(join(packageDir, 'package.json'), JSON.stringify({ name: '@happier-dev/fixture' }));
-  await writeFile(join(packageDir, 'src/index.ts'), "export { lock } from '../lock.mjs';");
-  await writeFile(join(packageDir, 'lock.mjs'), 'export const lock = 1;');
-  await writeFile(join(packageDir, 'lock.d.mts'), 'export declare const lock: number;');
-  await writeFile(join(packageDir, 'legacy.cjs'), 'module.exports = 1;');
-  await writeFile(join(packageDir, 'legacy.d.cts'), 'declare const value: number; export = value;');
-  const inputs = readWorkspaceBuildInputs(packageDir);
-  for (const path of ['lock.mjs', 'lock.d.mts', 'legacy.cjs', 'legacy.d.cts']) assert.ok(inputs.includes(path), `${path} is a build input`);
+test('workspace capture includes authored root declarations without admitting tests or generated outputs', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'workspace-root-declarations-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const sourceDir = join(root, 'source');
+  const captureDir = join(root, 'capture');
+  await mkdir(sourceDir);
+  await writeFile(join(sourceDir, 'package.json'), JSON.stringify({ files: ['dist'] }));
+  const files = {
+    'workspaceBundleLock.mjs': 'export const lock = true;',
+    'workspaceBundleLock.d.mts': 'export declare const lock: boolean;',
+    'cliDistBuildManifest.cjs': 'exports.manifest = true;',
+    'cliDistBuildManifest.d.cts': 'export declare const manifest: boolean;',
+    'runtime.js': 'exports.runtime = true;',
+    'runtime.d.ts': 'export declare const runtime: boolean;',
+    'src/index.ts': 'export const source = true;',
+    'src/owner.test.ts': 'test only',
+    'src/testkit/fixture.d.mts': 'test fixture only',
+    'vitest.config.mjs': 'test config only',
+    'test-setup.d.mts': 'test setup only',
+    'tsconfig.test.json': '{}',
+    'dist/generated.d.mts': 'generated output only',
+    '.happier-plugin/api/generated.d.mts': 'generated plugin output only',
+  };
+  for (const [path, content] of Object.entries(files)) {
+    await mkdir(join(sourceDir, path, '..'), { recursive: true });
+    await writeFile(join(sourceDir, path), content);
+  }
+  const { files: captured } = await captureBuildInputFiles({ sourceDir, captureDir,
+    readPaths: () => readWorkspaceBuildInputs(sourceDir, {
+      includeShippedFiles: true, excludeGeneratedPluginArtifacts: true,
+    }),
+  });
+  assert.deepEqual(captured, [
+    'cliDistBuildManifest.cjs', 'cliDistBuildManifest.d.cts', 'package.json',
+    'runtime.d.ts', 'runtime.js', 'src/index.ts',
+    'workspaceBundleLock.d.mts', 'workspaceBundleLock.mjs',
+  ]);
+  for (const path of captured) assert.equal(await readFile(join(captureDir, path), 'utf8'),
+    await readFile(join(sourceDir, path), 'utf8'));
 });

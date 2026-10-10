@@ -52,6 +52,25 @@ export function defaultCanImportFirstPartyPluginSource(): boolean {
   return currentModulePath.endsWith('/src/packagedRuntime/resolvePackagedRuntimeEntrypoint.ts');
 }
 
+/** A compiled source runtime retains the source role, but never imports moving TS.
+ * Its explicit launch root must agree with the executing module and CLI owner.
+ */
+export function isExecutingFirstPartySourceRuntime(moduleUrl: string): boolean {
+  const runtime = resolveAuthoritativePackagedRuntimeProjectRoot({ moduleUrl });
+  if (runtime?.provenance !== 'source-module') return false;
+  if (defaultCanImportFirstPartyPluginSource()) return true;
+  const modulePath = normalizeRootForEquality(fileURLToPath(moduleUrl));
+  if (!modulePath.startsWith(`${normalizeRootForEquality(runtime.root)}/src/`)) return false;
+  const explicitRoot = process.env.HAPPIER_STACK_CLI_ROOT_DIR;
+  if (!explicitRoot || normalizeRootForEquality(explicitRoot) !== normalizeRootForEquality(runtime.root)) return false;
+  try {
+    const manifest: unknown = JSON.parse(readFileSync(join(runtime.root, 'package.json'), 'utf8'));
+    return !!manifest && typeof manifest === 'object' && 'name' in manifest && manifest.name === '@happier-dev/cli';
+  } catch {
+    return false;
+  }
+}
+
 function normalizeExecutableBase(pathLike: string): string {
   return basename(normalizePathLike(pathLike)).toLowerCase().replace(/\.exe$/, '');
 }

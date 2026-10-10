@@ -104,18 +104,8 @@ import {
   hasExplicitMobileReachableHost,
   resolveMobileReachableServerUrl,
 } from './utils/server/mobile_api_url.mjs';
-import { resolveRuntimeBuildAuthority } from './runtime/shared/runtime_build_authority.mjs';
-import { resolveStackRuntimeMode } from './runtime/shared/runtime_mode.mjs';
+import { hasExplicitStackRuntimeModeArg, resolveStackRuntimeMode } from './runtime/shared/runtime_mode.mjs';
 import { isBorrowedExpoConsumer } from './runtime/shared/borrowed_expo.mjs';
-import {
-  createRuntimeSnapshotPublicationReloadDescriptors,
-  createRuntimeSnapshotPublicationReloadExecutor,
-  createRepositoryRuntimePublicationController,
-  isRepositoryRuntimePublicationOwner,
-  publishRepositoryRuntimeSnapshotInChildProcess,
-  resolveRemoteRuntimePublicationComponents,
-  wrapReloadExecutorWithRuntimeSnapshotPublication,
-} from './utils/dev/runtimeSnapshotPublisher.mjs';
 
  /**
   * Dev mode stack:
@@ -128,12 +118,13 @@ async function main() {
   const argv = process.argv.slice(2);
   const { flags, kv } = parseArgs(argv);
   const json = wantsJson(argv, { flags });
-  if (flags.has('--runtime') || flags.has('--source')) {
+  if (hasExplicitStackRuntimeModeArg(argv)) {
     throw new Error('[dev] hstack dev does not support runtime mode flags. Use hstack start for runtime snapshots.');
   }
-  if (resolveStackRuntimeMode({ argv: [], env: process.env }).mode === 'require') {
+  const persistedRuntimeMode = resolveStackRuntimeMode({ argv: [], env: process.env }).mode;
+  if (persistedRuntimeMode === 'require' || persistedRuntimeMode === 'source-snapshot') {
     throw new Error(
-      '[dev] this is a controlled runtime stack (HAPPIER_STACK_RUNTIME_MODE=require). '
+      `[dev] this is a controlled runtime stack (HAPPIER_STACK_RUNTIME_MODE=${persistedRuntimeMode}). `
       + 'Use hstack start or a runtime TUI, then restart explicitly when you want to load the selected snapshot.',
     );
   }
@@ -548,7 +539,8 @@ async function main() {
       script: 'dev.mjs',
       ephemeral,
       ownerPid: process.pid,
-      ports: requestedStartServer ? { server: serverPort } : {},
+      ports: { server: requestedStartServer ? serverPort : null },
+      serverConnection: requestedStartServer ? null : { internalServerUrl, publicServerUrl },
       ...(initialRemoteExpoProjection ? { expo: initialRemoteExpoProjection } : {}),
       runtimeSnapshotId: null,
       serveUi: null,
@@ -564,38 +556,6 @@ async function main() {
       env: baseEnv,
     });
   }
-
-  const runtimeBuildAuthority = stackMode && runtimeStatePath
-    ? resolveRuntimeBuildAuthority({
-        rootDir,
-        consumerStackName: stackName,
-        env: baseEnv,
-      })
-    : null;
-  const repositoryRuntimePublicationOwner = isRepositoryRuntimePublicationOwner({
-    stackMode,
-    stackName,
-    authority: runtimeBuildAuthority,
-  });
-  let runtimePublicationController = null;
-  const requestRuntimePublication = (components, label) => {
-    if (!runtimePublicationController || shuttingDown) return;
-    try {
-      void Promise.resolve(runtimePublicationController.markRefreshed(components)).catch((error) => {
-        console.error(
-          `[local] ${label} runtime publication request failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      });
-    } catch (error) {
-      console.error(
-        `[local] ${label} runtime publication request failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  };
-  const notifyWebRuntimePublicationAfterWorkspaceRefresh = () => {
-    requestRuntimePublication(['web'], 'web workspace refresh');
-  };
-  const remoteRuntimePublicationStateByTarget = new Map();
 
   // Start server (only if not already healthy)
   // NOTE: In stack mode we avoid killing arbitrary port listeners (fail-closed instead).
@@ -652,7 +612,6 @@ async function main() {
         : {}),
       expoTailscale,
       isShuttingDown: () => shuttingDown,
-      onWorkspacePrepared: notifyWebRuntimePublicationAfterWorkspaceRefresh,
     });
     return expoResEarly;
   };
@@ -902,39 +861,8 @@ async function main() {
     if (daemonLifecycleReconciler) watchers.push(daemonLifecycleReconciler);
   }
 
-  // Snapshot publication is background-only: an unavailable publication dependency
-  // must not revoke the source services that have already become usable.
-  if (repositoryRuntimePublicationOwner) {
-    try {
-      const {
-        resolveRepositoryRuntimePublicationComponents,
-      } = await import('./build/build_stack_artifacts.mjs');
-      runtimePublicationController = createRepositoryRuntimePublicationController({
-        rootDir: repoDir,
-        authority: runtimeBuildAuthority,
-        env: baseEnv,
-        runtimeStatePath,
-        resolveRepositoryRuntimePublicationComponents,
-        publishRepositoryRuntimeSnapshot: (input) => publishRepositoryRuntimeSnapshotInChildProcess({
-          ...input,
-          children,
-        }),
-        recordStackRuntimeUpdate,
-        isShuttingDown: () => shuttingDown,
-        logger: console,
-      });
-    } catch (error) {
-      console.error(
-        `[local] runtime publication setup failed; keeping the current snapshot selected. ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-
   const reloadDescriptors = [];
   const reloadExecutors = [];
-  if (runtimePublicationController) {
-    reloadDescriptors.push(...createRuntimeSnapshotPublicationReloadDescriptors({ repoDir }));
-  }
   const daemonReloadEnabled =
     !serverWorkspaceAdmissionFailure
     && startDaemon
@@ -967,12 +895,7 @@ async function main() {
         stackName,
       })
       : remoteWorkspacePreparationExecutor;
-    reloadExecutors.push(runtimePublicationController
-      ? wrapReloadExecutorWithRuntimeSnapshotPublication({
-          executor: daemonRefreshExecutor,
-          publisher: runtimePublicationController,
-        })
-      : daemonRefreshExecutor);
+    reloadExecutors.push(daemonRefreshExecutor);
   }
 
   const serverProcRef = { current: serverProc };
@@ -1024,24 +947,8 @@ async function main() {
         ? priorRuntimeServer.launchSpec
         : null,
     });
-    reloadExecutors.push(runtimePublicationController
-      ? wrapReloadExecutorWithRuntimeSnapshotPublication({
-          executor: serverReloadExecutor,
-          publisher: runtimePublicationController,
-        })
-      : serverReloadExecutor);
+    reloadExecutors.push(serverReloadExecutor);
   }
-  if (runtimePublicationController) {
-    for (const component of ['server', 'daemon']) {
-      if (reloadExecutors.some((executor) => executor?.target === component)) continue;
-      const publicationExecutor = createRuntimeSnapshotPublicationReloadExecutor({
-        component,
-        publisher: runtimePublicationController,
-      });
-      if (publicationExecutor) reloadExecutors.push(publicationExecutor);
-    }
-  }
-
   const reloadWatcher = startDevReloadCoordinator({
     enabled: watchEnabled,
     descriptors: reloadDescriptors,
@@ -1052,10 +959,6 @@ async function main() {
     logger: console,
   });
   if (reloadWatcher) watchers.push(reloadWatcher);
-
-  if (runtimePublicationController) {
-    void runtimePublicationController.reconcileAfterRestart();
-  }
 
   if (startServer && watchEnabled && stackMode && serverComponentName === 'happier-server' && !serverReloadEnabled) {
     console.warn(
@@ -1159,19 +1062,9 @@ async function main() {
       targetPlans: servicePlans.targets,
       onTargetStateChange: async ({ name, ...state }) => {
         if (!stackMode || !runtimeStatePath) return;
-        const previousState = remoteRuntimePublicationStateByTarget.get(name) ?? null;
-        const nextState = { name, ...state };
-        remoteRuntimePublicationStateByTarget.set(name, nextState);
         await recordStackRuntimeUpdate(runtimeStatePath, {
           remoteTargets: { [name]: state },
         });
-        const publicationComponents = resolveRemoteRuntimePublicationComponents({
-          previousState,
-          nextState,
-        });
-        if (publicationComponents.length > 0) {
-          requestRuntimePublication(publicationComponents, `${name} readiness`);
-        }
       },
       env: baseEnv,
     };
@@ -1279,7 +1172,6 @@ async function main() {
       return;
     }
     shuttingDown = true;
-    runtimePublicationController?.close();
     const shutdownRequest = runtimeStatePath ? (await readStackRuntimeStateFile(runtimeStatePath).catch(() => null))?.stopRequest ?? null : null;
     const expectedStopState = runtimeStatePath ? await captureStackRuntimeStopSnapshot(runtimeStatePath).catch(() => null) : null;
     const preserveDaemonOnShutdown = shutdownRequest?.preserveDaemon === true;

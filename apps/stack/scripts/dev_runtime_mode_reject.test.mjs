@@ -12,13 +12,22 @@ function stackRootDirFromMeta(metaUrl) {
 
 test('hstack dev rejects runtime mode flags', async () => {
   const rootDir = stackRootDirFromMeta(import.meta.url);
-  const res = await runNode([join(rootDir, 'scripts', 'dev.mjs'), '--runtime'], {
-    cwd: rootDir,
-    env: process.env,
-  });
+  for (const runtimeArg of ['--runtime', '--runtime=source', '--runtime=built']) {
+    const res = await runNode([join(rootDir, 'scripts', 'dev.mjs'), runtimeArg], {
+      cwd: rootDir,
+      env: process.env,
+    });
+    assert.equal(res.code, 1, `stdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+    assert.match(res.stderr + res.stdout, /does not support runtime mode/i);
+  }
+});
 
-  assert.equal(res.code, 1, `stdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
-  assert.match(res.stderr + res.stdout, /does not support runtime mode/i);
+test('hstack dev rejects a stack persisted in controlled source snapshot mode', async () => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const res = await runNode([join(rootDir, 'scripts/dev.mjs'), '--json'], { cwd: rootDir,
+    env: { ...process.env, HAPPIER_STACK_RUNTIME_MODE: 'source-snapshot', HAPPIER_STACK_NO_DEV_TARGETS: '1' } });
+  assert.notEqual(res.code, 0);
+  assert.match(res.stderr + res.stdout, /controlled runtime.*hstack start/i);
 });
 
 test('hstack dev rejects a stack persisted in controlled runtime require mode', async () => {

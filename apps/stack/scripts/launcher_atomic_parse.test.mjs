@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { copyFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { createTempFixture } from './testkit/core/temp_fixture.mjs';
@@ -11,7 +11,8 @@ import { renderNativeExecutionProjection } from './utils/dev_targets/native_exec
 
 async function fixture(t) {
   const { root } = await createTempFixture(t, { prefix: 'hstack-atomic-parse-' });
-  await mkdir(join(root, 'mutagen/hstack-control'), { recursive: true });
+  await mkdir(`/tmp/happier-sync-control-${process.getuid()}${root}/mutagen/hstack-control`, { recursive: true });
+  t.after(() => rm(`/tmp/happier-sync-control-${process.getuid()}${root}`, { recursive: true, force: true }));
   const { launcher } = await installNativeAdmissionFixture({ root });
   const checkout = join(root, 'native-owner');
   const targets = join(checkout, 'apps/stack/scripts/utils/dev_targets');

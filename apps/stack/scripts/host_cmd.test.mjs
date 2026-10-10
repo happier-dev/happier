@@ -9,6 +9,136 @@ import { runCommandCapture, runNodeCapture } from './testkit/core/run_node_captu
 const script = new URL('./host.mjs', import.meta.url).pathname;
 const launcher = new URL('../bin/hstack.mjs', import.meta.url).pathname;
 
+test('primary assign selects an enrolled path-parity SSH target and restores Lima by changing only the profile', async t => {
+  const fixture = await createTempFixture(t);
+  const home = fixture.path('home');
+  const stacks = fixture.path('stacks');
+  const bin = fixture.path('bin');
+  await Promise.all([mkdir(home), mkdir(join(stacks, 'lane'), { recursive: true }), mkdir(bin)]);
+  const profile = { version: 2, mode: 'managed-lima', activation: 'active', instance: 'retained-vm',
+    limaHome: '/controller/lima', profile: 'balanced', pressureProfile: 'none',
+    guestWorkspaceDir: '/remote/workspace', mirrorWorkspaceDir: '/controller/mirror',
+    controllerEntrypoint: '/controller/bridge.mjs', workspaces: [{ id: '0.3', stackName: 'lane',
+      hostSourceDir: '/controller/source', hostMirrorDir: '/controller/mirror/0.3', guestDir: '/remote/workspace/0.3' }] };
+  const profilePath = join(home, 'execution-host.json');
+  await writeFile(profilePath, JSON.stringify(profile));
+  const targets = [{ name: 'nl2', platform: 'posix', ssh: 'enrolled-nl2', repoDir: '/remote/workspace/0.3', cliHomeDir: '/remote/cli' },
+    { name: 'wrong-path', platform: 'posix', ssh: 'enrolled-other', repoDir: '/worker/copy', cliHomeDir: '/remote/cli' }];
+  const config = JSON.stringify({ version: 3, targets });
+  const configPath = join(stacks, 'lane', 'dev-targets.json');
+  await writeFile(configPath, config);
+  for (const command of ['ssh', 'limactl', 'mutagen', 'tailscale']) {
+    await writeFile(join(bin, command), '#!/bin/sh\nexit 99\n', { mode: 0o755 });
+  }
+  const env = { ...process.env, HAPPIER_STACK_HOME_DIR: home, HAPPIER_STACK_STORAGE_DIR: stacks,
+    HAPPIER_STACK_DISABLE_STACK_ENV_AUTOLOAD: '1', PATH: `${bin}:${process.env.PATH}` };
+  const invoke = target => runNodeCapture([launcher, 'dev-vm', 'primary', 'assign', target, '--stack=lane', '--json'], { env });
+  for (const target of ['unknown', 'wrong-path']) {
+    const rejected = await invoke(target);
+    assert.equal(rejected.code, 1);
+    assert.equal(await readFile(profilePath, 'utf8'), JSON.stringify(profile));
+  }
+  const assigned = await invoke('nl2');
+  assert.equal(assigned.code, 0, assigned.stderr);
+  assert.equal(JSON.parse(assigned.stdout).workloadMoved, false);
+  assert.deepEqual(JSON.parse(await readFile(profilePath, 'utf8')), { ...profile, mode: 'ssh-dev-target',
+    sshPrimary: { targetName: 'nl2', stackName: 'lane' } });
+  const status = await runNodeCapture([launcher, 'dev-vm', 'primary', 'status', '--stack=lane', '--json'], { env });
+  assert.equal(status.code, 0, status.stderr);
+  assert.equal(JSON.parse(status.stdout).primary.targetName, 'nl2');
+  assert.equal(JSON.parse(status.stdout).configuration.state, 'available');
+  const restored = await invoke('lima');
+  assert.equal(restored.code, 0, restored.stderr);
+  assert.deepEqual(JSON.parse(await readFile(profilePath, 'utf8')), profile);
+  assert.equal(await readFile(configPath, 'utf8'), config);
+});
+
+test('primary switch dry-run describes the complete handoff without invoking transports or changing configuration', async (t) => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-primary-dry-run-' });
+  const home = fixture.path('home');
+  const stacks = fixture.path('stacks');
+  const bin = fixture.path('bin');
+  await Promise.all([mkdir(home, { recursive: true }), mkdir(join(stacks, 'lane'), { recursive: true }), mkdir(bin)]);
+  const path = join(stacks, 'lane', 'dev-targets.json');
+  const config = JSON.stringify({ version: 3, targets: [{ name: 'nl1', platform: 'posix', ssh: 'fixture-nl1',
+    sshConfigFile: fixture.path('secret-ssh-config'), repoDir: '/home/leeroy.guest/.happier-stack/workspace/0.3',
+    cliHomeDir: '/home/leeroy.guest/.happier/stacks/lane/cli' }], runtimePlacement: {}, commandExecution: { mode: 'local' } });
+  await writeFile(path, config);
+  for (const command of ['ssh', 'limactl', 'mutagen', 'tailscale']) {
+    await writeFile(join(bin, command), '#!/bin/sh\nexit 99\n', { mode: 0o755 });
+  }
+  const env = { ...process.env, HAPPIER_STACK_HOME_DIR: home, HAPPIER_STACK_STORAGE_DIR: stacks,
+    HAPPIER_STACK_DISABLE_STACK_ENV_AUTOLOAD: '1', PATH: `${bin}:${process.env.PATH}` };
+  const result = await runNodeCapture([script, 'primary', 'switch', 'nl1', '--stack=lane', '--dry-run', '--pause-agents', '--pause-timeout=120', '--json'], { env });
+  assert.equal(result.code, 0, result.stderr);
+  const data = JSON.parse(result.stdout);
+  assert.equal(data.dryRun, true);
+  assert.equal(data.executable, false);
+  assert.equal(data.target.name, 'nl1');
+  assert.deepEqual(data.steps.map(step => step.id), ['preflight', 'quiesce', 'final-sync', 'database-replica',
+    'start-primary', 'reverse-sync', 'worker-sync', 'move-role', 'post-verify']);
+  assert.equal(data.steps[1].refuseMidTurnUnlessForce, true);
+  assert.equal(data.steps[2].requireZeroPending, true);
+  assert.equal(data.steps[4].requireSingleWriter, true);
+  assert.equal(data.steps[8].verifyMachineIdentity, true);
+  assert.deepEqual(data.sessionControl, { stackName: 'repo-remote-dev-d72117acdb', adapter: '0.2-public-cli',
+    pauseAgents: true, timeoutSeconds: 120, permissionMode: 'require-explicit-authoritative-mode', handoff: 'canonical-existing-state-reachability-required' });
+  assert.equal(data.primary.authority, 'unresolved');
+  assert.ok(data.blockers.some(blocker => blocker.code === 'PRIMARY_API_MOVE_UNAVAILABLE'));
+  assert.ok(data.blockers.some(blocker => blocker.code === 'NATIVE_RESTORE_PROOF_UNAVAILABLE'));
+  assert.ok(!data.blockers.some(blocker => blocker.code === 'WORK_SESSION_CONTRACT_UNAVAILABLE'));
+  assert.doesNotMatch(result.stdout, /secret-ssh-config|fixture-nl1/);
+  assert.equal(await readFile(path, 'utf8'), config);
+  assert.deepEqual(await readdir(home), []);
+  const rejected = await runNodeCapture([script, 'primary', 'switch', 'nl1', '--stack=lane', '--force', '--json'], { env });
+  assert.equal(rejected.code, 1);
+  assert.match(rejected.stderr, /PRIMARY_SWITCH_NOT_READY/);
+  assert.equal(await readFile(path, 'utf8'), config);
+});
+
+test('primary verify restore-test refuses fixture-only certification before transport or profile access', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-primary-restore-refusal-' });
+  const home = fixture.path('home');
+  const bin = fixture.path('bin');
+  await mkdir(home);
+  await mkdir(bin);
+  // Any profile access would fail too; restore certification refusal must come
+  // before configuration loading, not after a mutating or partial restore.
+  await writeFile(join(home, 'execution-host.json'), 'invalid fixture profile');
+  for (const command of ['ssh', 'limactl', 'mutagen']) {
+    await writeFile(join(bin, command), '#!/bin/sh\nexit 99\n', { mode: 0o755 });
+  }
+  const result = await runNodeCapture([script, 'primary', 'verify', '--restore-test', '--json'], {
+    env: { ...process.env, HAPPIER_STACK_HOME_DIR: home, HAPPIER_STACK_STORAGE_DIR: fixture.path('stacks'),
+      HAPPIER_STACK_DISABLE_STACK_ENV_AUTOLOAD: '1', PATH: `${bin}:${process.env.PATH}` },
+  });
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /RESTORE_TEST_UNAVAILABLE/);
+  assert.equal(await readFile(join(home, 'execution-host.json'), 'utf8'), 'invalid fixture profile');
+});
+
+test('primary status exposes unavailable standby and database evidence instead of treating worker placement as primary authority', async (t) => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-primary-status-' });
+  const home = fixture.path('home');
+  const stacks = fixture.path('stacks');
+  await mkdir(join(stacks, 'lane'), { recursive: true });
+  await writeFile(join(stacks, 'lane', 'dev-targets.json'), JSON.stringify({ version: 3, targets: [{ name: 'nl1',
+    platform: 'posix', ssh: 'fixture-nl1', repoDir: '/worker/repo', cliHomeDir: '/worker/cli' }],
+    runtimePlacement: { server: { mode: 'prefer-target', target: 'nl1' } }, commandExecution: { mode: 'local' } }));
+  const result = await runNodeCapture([script, 'primary', 'status', '--stack=lane', '--json'], {
+    env: { ...process.env, HAPPIER_STACK_HOME_DIR: home, HAPPIER_STACK_STORAGE_DIR: stacks,
+      HAPPIER_STACK_DISABLE_STACK_ENV_AUTOLOAD: '1' },
+  });
+  assert.equal(result.code, 0, result.stderr);
+  const data = JSON.parse(result.stdout);
+  assert.equal(data.primary.authority, 'unresolved');
+  assert.equal(data.serverPlacement.target, 'nl1');
+  assert.equal(data.standby.state, 'unverified');
+  assert.equal(data.standby.syncLag, null);
+  assert.equal(data.database.lastReplicaAt, null);
+  assert.equal(data.database.state, 'unverified');
+});
+
 test('ghops LaunchAgent installs, updates, diagnoses and removes through the recovery owner', async (t) => {
   const owner = await import('./utils/execution_host/recovery.mjs');
   assert.equal(typeof owner.installExecutionHostGhopsBroker, 'function');
@@ -132,8 +262,15 @@ test('dev-vm setup preserves retained mount configuration when mount overrides a
     writeFile(join(bin, 'launchctl'), `#!/bin/sh\nprintf '%s\\n' "$*" >> '${launchctlLog}'\nexit 0\n`, 'utf8'),
     writeFile(join(bin, 'limactl'), [
       '#!/bin/sh',
+      `state=${JSON.stringify(fixture.path('instance-state'))}`,
       'if [ "$1" = "--version" ]; then printf "limactl version 2.1.0\\n"; exit 0; fi',
-      'if [ "$1" = "list" ]; then printf "No instance matching candidate found. unmatched instances\\n" >&2; exit 1; fi',
+      'if [ "$1" = "list" ]; then',
+      '  if [ ! -f "$state" ]; then printf "No instance matching candidate found. unmatched instances\\n" >&2; exit 1; fi',
+      '  printf \'{"name":"candidate","status":"%s"}\\n\' "$(cat "$state")"',
+      '  exit 0',
+      'fi',
+      'if [ "$1" = "create" ]; then printf "Stopped\\n" > "$state"; exit 0; fi',
+      'if [ "$1" = "restart" ]; then printf "Running\\n" > "$state"; exit 0; fi',
       'if [ "$1" = "shell" ]; then',
       '  case "$*" in',
       '    *HAPPIER_SWAP_GIB*) printf "{\\"ok\\":true}\\n" ;;',
@@ -339,26 +476,32 @@ async function createDevVmLifecycleFixture(t, { withLiveTunnelLock = false } = {
   const limaHome = fixture.path('lima');
   const statePath = fixture.path('instance-state');
   const callsPath = fixture.path('limactl.log');
+  const networksPath = fixture.path('networks.json');
   await Promise.all([
     mkdir(home, { recursive: true }),
     mkdir(bin, { recursive: true }),
     mkdir(fixture.path('mirror'), { recursive: true }),
     writeFile(statePath, 'Running\n', 'utf8'),
+    writeFile(networksPath, '[]\n', 'utf8'),
   ]);
   await writeFile(join(bin, 'limactl'), [
     '#!/bin/sh',
     `state=${JSON.stringify(statePath)}`,
     `calls=${JSON.stringify(callsPath)}`,
+    `networks=${JSON.stringify(networksPath)}`,
     'printf "%s\\n" "$*" >> "$calls"',
     'if [ "$1" = "--version" ]; then echo "limactl version 2.1.0"; exit 0; fi',
     'if [ "$1" = "list" ]; then',
     '  status=$(cat "$state")',
-    '  printf \'{"name":"candidate","status":"%s","vmType":"vz","arch":"aarch64","cpus":8,"memory":17179869184,"disk":171798691840,"config":{"mounts":[],"vmOpts":{"vz":{"diskImageFormat":"raw","rosetta":{"enabled":false,"binfmt":false}}},"ssh":{"forwardAgent":false},"containerd":{"user":false,"system":false},"portForwards":[{"guestIP":"0.0.0.0","guestIPMustBeZero":false,"proto":"any","ignore":true}]}}\\n\' "$status"',
+    '  printf \'{"name":"candidate","status":"%s","vmType":"vz","arch":"aarch64","cpus":8,"memory":17179869184,"disk":171798691840,"config":{"networks":%s,"mounts":[],"vmOpts":{"vz":{"diskImageFormat":"raw","rosetta":{"enabled":false,"binfmt":false}}},"ssh":{"forwardAgent":false},"containerd":{"user":false,"system":false},"portForwards":[{"guestIP":"0.0.0.0","guestIPMustBeZero":false,"proto":"any","ignore":true}]}}\\n\' "$status" "$(cat "$networks")"',
     '  exit 0',
     'fi',
     'if [ "$1" = "stop" ]; then printf "Stopped\\n" > "$state"; exit 0; fi',
-    'if [ "$1" = "start" ]; then printf "Running\\n" > "$state"; exit 0; fi',
-    'if [ "$1" = "edit" ]; then exit 0; fi',
+    'if [ "$1" = "restart" ]; then printf "Running\\n" > "$state"; exit 0; fi',
+    'if [ "$1" = "edit" ]; then',
+    '  if [ "$3" = "--set" ]; then printf "%s\\n" "$4" | sed "s/^\\.networks = //" > "$networks"; fi',
+    '  exit 0',
+    'fi',
     'exit 90',
     '',
   ].join('\n'), 'utf8');
@@ -398,6 +541,7 @@ async function createDevVmLifecycleFixture(t, { withLiveTunnelLock = false } = {
   }
   return {
     callsPath,
+    statePath,
     env: {
       ...process.env,
       PATH: `${bin}:${process.env.PATH ?? ''}`,
@@ -420,7 +564,28 @@ test('dev-vm stop --force bypasses a wedged tunnel lock and forces the retained 
 
   assert.equal(result.code, 0, result.stderr);
   assert.equal(JSON.parse(result.stdout).status, 'Stopped');
-  assert.match(await readFile(fixture.callsPath, 'utf8'), /^list .*candidate\nstop --force candidate\n$/);
+  assert.equal((await readFile(fixture.statePath, 'utf8')).trim(), 'Stopped');
+  const calls = await readFile(fixture.callsPath, 'utf8');
+  assert.match(calls, /^stop --force candidate$/m);
+  assert.doesNotMatch(calls, /^(?:create|delete|start|restart)\b/m);
+});
+
+test('dev-vm network apply requires owner restart permission and reaches the retained lifecycle', async (t) => {
+  const fixture = await createDevVmLifecycleFixture(t);
+  const refused = await runNodeCapture([script, 'network', 'apply', '--json'], { env: fixture.env });
+  assert.equal(refused.code, 1);
+  assert.match(refused.stderr, /--force/);
+  assert.doesNotMatch(await readFile(fixture.callsPath, 'utf8'), /^(stop|edit|restart) /m);
+  const result = await runNodeCapture([script, 'network', 'apply', '--force', '--json'], { env: fixture.env });
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).changed, true);
+  const calls = (await readFile(fixture.callsPath, 'utf8')).split('\n');
+  const mutations = calls.filter((line) => /^(stop|edit|restart) /.test(line));
+  assert.equal(mutations.length, 3);
+  assert.match(mutations[0], /^stop candidate$/);
+  assert.match(mutations[1], /^edit --tty=false --set \.networks = /);
+  assert.match(mutations[2], /^restart candidate$/);
+  assert.equal(await readFile(fixture.statePath, 'utf8'), 'Running\n');
 });
 
 test('dev-vm restart stops and starts the retained VM through the canonical lifecycle', async (t) => {
@@ -433,10 +598,11 @@ test('dev-vm restart stops and starts the retained VM through the canonical life
   assert.equal(payload.status, 'Running');
   assert.equal(payload.stop.status, 'Stopped');
   assert.equal(payload.start.status, 'Running');
-  assert.match(
-    await readFile(fixture.callsPath, 'utf8'),
-    /^list .*candidate\nstop candidate\nlist .*candidate\nstart candidate\n/,
-  );
+  assert.equal((await readFile(fixture.statePath, 'utf8')).trim(), 'Running');
+  const calls = await readFile(fixture.callsPath, 'utf8');
+  assert.match(calls, /^stop candidate$/m);
+  assert.match(calls, /^restart candidate$/m);
+  assert.doesNotMatch(calls, /^(?:create|delete|start)\b/m);
 });
 
 test('dev-vm capacity set --force persists the selected presets and reconciles only the retained VM', async (t) => {
@@ -468,7 +634,7 @@ test('dev-vm capacity set --force persists the selected presets and reconciles o
   const calls = await readFile(fixture.callsPath, 'utf8');
   assert.match(calls, /stop candidate/);
   assert.match(calls, /edit --tty=false --cpus 6 --memory 16/);
-  assert.match(calls, /start candidate/);
+  assert.match(calls, /^restart candidate$/m);
   assert.doesNotMatch(calls, /create/);
 });
 
@@ -769,6 +935,7 @@ test('dev-vm backup reaches the canonical execution-host snapshot owner without 
     writeFile(fixture.path('bin', 'limactl'), [
       '#!/bin/sh',
       `export HOME=${JSON.stringify(guestHome)}`,
+      'unset HAPPIER_STACK_STORAGE_DIR',
       'export TMPDIR=/tmp',
       'if [ "$1" = "shell" ]; then',
       '  shift',
@@ -1046,7 +1213,7 @@ test('dev-vm start launches skill synchronization only after an actual managed g
     '  printf "{\\"name\\":\\"candidate\\",\\"status\\":\\"%s\\"}\\n" "$status"',
     '  exit 0',
     'fi',
-    'if [ "$1" = "start" ]; then : > "$running"; exit 0; fi',
+    'if [ "$1" = "restart" ]; then : > "$running"; exit 0; fi',
     'if [ "$1" = "shell" ]; then',
     '  case "$*" in *printf*) printf "/home/happier" ;; esac',
     '  exit 0',
@@ -1090,6 +1257,7 @@ test('dev-vm start launches skill synchronization only after an actual managed g
   const first = await runNodeCapture([script, 'start', '--json'], { env });
   assert.equal(first.code, 0, first.stderr);
   assert.equal(JSON.parse(first.stdout).changed, true);
+  assert.equal(JSON.parse(first.stdout).status, 'Running');
   for (let attempt = 0; attempt < 100; attempt += 1) {
     try {
       if ((await readFile(rsyncLog, 'utf8')).trim()) break;
@@ -1104,6 +1272,7 @@ test('dev-vm start launches skill synchronization only after an actual managed g
   const second = await runNodeCapture([script, 'start', '--json'], { env });
   assert.equal(second.code, 0, second.stderr);
   assert.equal(JSON.parse(second.stdout).changed, false);
+  assert.equal(JSON.parse(second.stdout).status, 'Running');
   await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
   assert.equal((await readFile(rsyncLog, 'utf8')).trim().split('\n').length, afterBoot);
 });
@@ -1138,7 +1307,7 @@ test('host mirror status inspects continuous candidate sync without touching the
   await writeFile(fixture.path('bin', 'mutagen'), [
     '#!/bin/sh',
     'if [ "$1 $2" = "sync list" ]; then',
-    '  echo \'[{"name":"happier-execution--host--candidate","status":"watching","successfulCycles":1}]\'',
+    '  echo \'[{"name":"happier-execution--host--candidate","paused":false,"status":"watching","successfulCycles":1,"alpha":{"connected":true,"scanned":true},"beta":{"connected":true,"scanned":true}}]\'',
     '  exit 0',
     'fi',
     'exit 9',
@@ -1330,10 +1499,12 @@ test('dev-vm recovery runs only the configured primary VM lifecycle, tunnel, and
   const bin = fixture.path('bin');
   const log = fixture.path('limactl.log');
   const mirrorRoot = fixture.path('workspace-mirror');
+  const statePath = fixture.path('instance-state');
   await Promise.all([
     mkdir(home, { recursive: true }),
     mkdir(bin, { recursive: true }),
     mkdir(mirrorRoot, { recursive: true }),
+    writeFile(statePath, 'Stopped\n', 'utf8'),
   ]);
   await writeFile(join(home, 'execution-host.json'), `${JSON.stringify({
     version: 2,
@@ -1365,9 +1536,10 @@ test('dev-vm recovery runs only the configured primary VM lifecycle, tunnel, and
   })}\n`, 'utf8');
   await writeFile(join(bin, 'limactl'), [
     '#!/bin/sh',
+    `state=${JSON.stringify(statePath)}`,
     `printf '%s\\n' "$*" >> ${JSON.stringify(log)}`,
-    'if [ "$1" = "list" ]; then echo \'{"name":"happier-dev","status":"Stopped"}\'; exit 0; fi',
-    'if [ "$1" = "start" ]; then exit 0; fi',
+    'if [ "$1" = "list" ]; then printf \'{"name":"happier-dev","status":"%s"}\\n\' "$(cat "$state")"; exit 0; fi',
+    'if [ "$1" = "restart" ]; then printf "Running\\n" > "$state"; exit 0; fi',
     'if [ "$1" = "shell" ]; then',
     '  case "$*" in',
     '    *"HAPPIER_STACK_REPO_DIR"*) exit 3 ;;',
@@ -1398,8 +1570,11 @@ test('dev-vm recovery runs only the configured primary VM lifecycle, tunnel, and
   ]);
   assert.equal(recovery.sync.workspaceId, '0.3');
   assert.equal(recovery.sync.status, 'started');
+  assert.equal(recovery.vm.status, 'Running');
+  assert.equal((await readFile(statePath, 'utf8')).trim(), 'Running');
   const calls = await readFile(log, 'utf8');
-  assert.match(calls, /^start happier-dev$/m);
+  assert.match(calls, /^restart happier-dev$/m);
+  assert.doesNotMatch(calls, /^(?:create|delete|start)\b/m);
   assert.match(calls, /shell --workdir \/home\/leeroy\.guest\/.happier-stack\/workspace\/0\.3 happier-dev -- env .*dev-targets sync-service start --detached --json/);
   assert.equal((calls.match(/dev-targets sync-service start --detached --json/g) ?? []).length, 1);
   assert.doesNotMatch(calls, /hstack\.mjs (?:start|dev|tui)(?:\s|$)/);

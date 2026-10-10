@@ -8,12 +8,13 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pipeline } from 'node:stream/promises';
 import { createGzip } from 'node:zlib';
-import { loadCliCommonDistModule } from '../../../../scripts/ensureCliCommonDistModule.mjs';
-import { listPublicReleaseRingCatalogEntries, normalizePublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
+import '../../../../packages/cli-common/registerSourceRuntime.mjs';
 import { resolveTarCreateArgs } from './archive-tar-options.mjs';
 import { fileSha256 } from './artifact-checksums.mjs';
 import { prepareMinisignSecretKeyFile } from './minisign-secret-key.mjs';
 import { parseArgs } from './release-script-arguments.mjs';
+
+const { listPublicReleaseRingCatalogEntries, normalizePublicReleaseRingId } = await import('@happier-dev/release-runtime/releaseRings');
 
 const {
   CLI_BINARY_TARGETS,
@@ -29,11 +30,7 @@ const {
   prepareUiWebDist,
   refreshCliBinaryArtifactRuntimeAssetBuildManifest,
   resolveYarnCommand,
-} = await loadCliCommonDistModule({
-  repoRoot: fileURLToPath(new URL('../../../../', import.meta.url)),
-  subpath: 'componentArtifacts',
-  force: true,
-});
+} = await import('@happier-dev/cli-common/componentArtifacts');
 
 export {
   buildCliBinaryArtifactPayload,

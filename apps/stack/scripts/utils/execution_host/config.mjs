@@ -30,6 +30,7 @@ const FIELDS = new Set([
   'autoMount',
   'hostMountDir',
   'capacity',
+  'sshPrimary',
 ]);
 const WORKSPACE_FIELDS = new Set(['id', 'stackName', 'hostSourceDir', 'hostMirrorDir', 'guestDir']);
 const WORKSPACE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/;
@@ -113,7 +114,23 @@ function normalizeExecutionHostProfile(raw) {
     if (!FIELDS.has(key)) throw new Error(`[execution-host] unknown field: ${key}`);
   }
   if (raw.version !== 1 && raw.version !== 2) throw new Error('[execution-host] unsupported profile version');
-  if (raw.mode !== 'managed-lima') throw new Error('[execution-host] unsupported execution host mode');
+  if (!['managed-lima', 'ssh-dev-target'].includes(raw.mode)) throw new Error('[execution-host] unsupported execution host mode');
+  let sshPrimary;
+  if (raw.mode === 'ssh-dev-target') {
+    if (raw.version !== 2 || raw.activation !== 'active') {
+      throw new Error('[execution-host] SSH primary requires a named active profile');
+    }
+    const selection = raw.sshPrimary;
+    if (!selection || typeof selection !== 'object' || Array.isArray(selection)
+      || Object.keys(selection).some(key => !['targetName', 'stackName'].includes(key))
+      || typeof selection.targetName !== 'string' || !/^[a-z0-9][a-z0-9._-]*$/.test(selection.targetName)
+      || typeof selection.stackName !== 'string' || !WORKSPACE_STACK_RE.test(selection.stackName)) {
+      throw new Error('[execution-host] invalid SSH primary target/Stack selection');
+    }
+    sshPrimary = { targetName: selection.targetName, stackName: selection.stackName };
+  } else if (raw.sshPrimary != null) {
+    throw new Error('[execution-host] SSH primary selection requires ssh-dev-target mode');
+  }
   if (raw.activation !== 'candidate' && raw.activation !== 'active') {
     throw new Error('[execution-host] activation must be candidate or active');
   }
@@ -124,7 +141,8 @@ function normalizeExecutionHostProfile(raw) {
   const mirrorWorkspaceDir = requireAbsolutePath(raw.mirrorWorkspaceDir, 'mirrorWorkspaceDir');
   const common = {
     version: raw.version,
-    mode: 'managed-lima',
+    mode: raw.mode,
+    ...(sshPrimary ? { sshPrimary } : {}),
     activation: raw.activation,
     instance,
     limaHome: requireAbsolutePath(raw.limaHome, 'limaHome'),
@@ -267,6 +285,16 @@ export async function configureExecutionHostCapacity(capacity, env = process.env
   const current = readExecutionHostProfile(env);
   if (!current) throw new Error('[execution-host] no execution host profile exists');
   return writeExecutionHostProfile({ ...current, capacity }, env);
+}
+
+export async function configureExecutionHostPrimary(sshPrimary, env = process.env) {
+  const current = readExecutionHostProfile(env);
+  if (current?.version !== 2 || current.activation !== 'active') {
+    throw new Error('[execution-host] primary assignment requires a named active profile');
+  }
+  const { sshPrimary: previousSelection, ...retained } = current;
+  return await writeExecutionHostProfile({ ...retained,
+    mode: sshPrimary ? 'ssh-dev-target' : 'managed-lima', ...(sshPrimary ? { sshPrimary } : {}) }, env);
 }
 
 export function validateExecutionHostProfile(raw) {

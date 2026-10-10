@@ -7,6 +7,7 @@ import {
   buildVitestShardArgs,
   resolveCliVitestLaneAdmission,
   resolveVitestConfigPath,
+  resolveVitestForwardArgs,
   resolveVitestShardCount,
   resolveVitestShardRange,
   runCliVitestShardRuns,
@@ -89,6 +90,12 @@ describe('runVitestShards', () => {
     expect(resolveVitestConfigPath(['node', 'run'])).toBe(null);
   });
 
+  it('preserves file and name filters on either side of the runner config', () => {
+    expect(resolveVitestForwardArgs(['node', 'runner', 'src/api/artifacts/accountArtifactStore.test.ts', '--config', 'vitest.config.ts', '-t', 'plain'])).toEqual([
+      'src/api/artifacts/accountArtifactStore.test.ts', '-t', 'plain',
+    ]);
+  });
+
   it('runs every later shard after an earlier shard fails', async () => {
     const runShard = vi.fn()
       .mockResolvedValueOnce({ ok: true, code: 1, signal: null })
@@ -108,41 +115,56 @@ describe('runVitestShards', () => {
     expect(outcomes.map((entry) => entry.shardSpec)).toEqual(['5/8', '6/8', '7/8', '8/8']);
   });
 
-  it('forwards extra vitest args after --config into each shard invocation', async () => {
+  it('runs a selected file once without shard empty-collection tolerance', async () => {
     const prevArgv = process.argv.slice();
     const prevShardCount = process.env.HAPPIER_CLI_VITEST_SHARDS;
 
     try {
-      process.env.HAPPIER_CLI_VITEST_SHARDS = '1';
+      process.env.HAPPIER_CLI_VITEST_SHARDS = '8';
+      runManagedChildCommandMock.mockClear();
       process.argv = [
         'node',
         fileURLToPath(new URL('../runVitestShards.mjs', import.meta.url)),
         '--config',
         'vitest.integration.config.ts',
+        '--unit-checks',
         'src/backends/catalog.runtimeAdapterConsumption.integration.test.ts',
       ];
 
       vi.resetModules();
       await import('../runVitestShards.mjs');
 
-      // `main` is only voided at module scope, and the lane collection pass now runs
-      // before the first shard, so the shard spawn lands after the import settles.
+      // Module entry starts the real runner through its process boundary.
       await vi.waitFor(() => {
-        expect(runManagedChildCommandMock).toHaveBeenCalledWith(
-          expect.objectContaining({
-            command: 'vitest',
-            args: [
-              'run',
-              '--config',
-              'vitest.integration.config.ts',
-              'src/backends/catalog.runtimeAdapterConsumption.integration.test.ts',
-              '--passWithNoTests',
-              '--shard',
-              '1/1',
-            ],
-          }),
+        expect(runManagedChildCommandMock.mock.calls.map(([input]) => input.args)).toContainEqual(
+          ['run', '--config', 'vitest.integration.config.ts', 'src/backends/catalog.runtimeAdapterConsumption.integration.test.ts'],
         );
       });
+      expect(runManagedChildCommandMock.mock.calls.filter(([input]) => input.args?.[0] === 'run')).toHaveLength(1);
+    } finally {
+      process.argv = prevArgv;
+      if (prevShardCount === undefined) delete process.env.HAPPIER_CLI_VITEST_SHARDS;
+      else process.env.HAPPIER_CLI_VITEST_SHARDS = prevShardCount;
+    }
+  });
+
+  it('keeps the native checks and import-cycle guard after an unfiltered unit suite', async () => {
+    const prevArgv = process.argv.slice();
+    const prevShardCount = process.env.HAPPIER_CLI_VITEST_SHARDS;
+    try {
+      runManagedChildCommandMock.mockClear();
+      process.env.HAPPIER_CLI_VITEST_SHARDS = '2';
+      process.argv = ['node', fileURLToPath(new URL('../runVitestShards.mjs', import.meta.url)), '--config', 'vitest.config.ts', '--unit-checks'];
+      vi.resetModules();
+      await import('../runVitestShards.mjs');
+      await vi.waitFor(() => {
+        expect(runManagedChildCommandMock.mock.calls.map(([input]) => input.args)).toContainEqual(
+          expect.arrayContaining(['-s', 'test:import-cycles']),
+        );
+      });
+      const calls = runManagedChildCommandMock.mock.calls.map(([input]) => input.args ?? []);
+      expect(calls.filter(args => args[0] === 'run').map(args => args.at(-1))).toEqual(['1/2', '2/2']);
+      expect(calls).toContainEqual(['--test', 'scripts/prepack-script.test.mjs', 'scripts/stageManagedRuntimeArchives.test.mjs', 'scripts/runWorkspaceSyncRealIntegration.test.mjs']);
     } finally {
       process.argv = prevArgv;
       if (prevShardCount === undefined) delete process.env.HAPPIER_CLI_VITEST_SHARDS;

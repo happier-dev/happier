@@ -11,6 +11,32 @@ import { readStackInfoSnapshot, resolveStackComponentRuntime } from './stack/sta
 import { createRuntimeSnapshotFixture } from './testkit/runtime_snapshot_testkit.mjs';
 import { resolvePreferredStackDaemonStatePaths } from './utils/auth/credentials_paths.mjs';
 import { applyStackDaemonLifecycleScopeEnv } from './utils/auth/stable_scope_id.mjs';
+import { captureStackRuntimeStopSnapshot, finalizeStackRuntimeStop, recordStackRuntimeStart } from './utils/stack/runtime_state.mjs';
+
+test('Info reports retained native retirement as incomplete after successful local finalization', async t => {
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-info-pending-retirement-'));
+  t.after(() => rm(tmp, { recursive: true, force: true }));
+  const stackName = 'pending-retirement';
+  const baseDir = join(tmp, stackName);
+  await mkdir(baseDir);
+  await writeFile(join(baseDir, 'env'), 'HAPPIER_STACK_DAEMON=0\nHAPPIER_STACK_SERVE_UI=0\n');
+  withPatchedProcessEnv(t, { HAPPIER_STACK_STORAGE_DIR: tmp });
+  const statePath = join(baseDir, 'stack.runtime.json');
+  await recordStackRuntimeStart(statePath, { stackName, ownerPid: null,
+    placement: { daemon: 'linux3' }, remoteTargets: { linux3: {
+      services: { daemon: true }, runtimeMode: 'source-snapshot', status: 'retirement-pending', phase: 'stop',
+      serviceStatus: { daemon: 'retirement-pending' },
+    } } });
+  const expected = await captureStackRuntimeStopSnapshot(statePath);
+  const finalized = await finalizeStackRuntimeStop(statePath, { expected });
+  assert.equal(finalized.finalized, true, 'local cleanup can succeed without remote confirmation');
+  const out = await readStackInfoSnapshot({ rootDir: process.cwd(), stackName });
+  assert.equal(out.runtime.running, false);
+  assert.equal(out.runtime.stopRequest, null);
+  assert.equal(out.runtime.health.status, 'degraded');
+  assert.ok(out.runtime.health.issues.includes('stop_cleanup_incomplete'));
+  assert.equal(out.runtime.remoteTargets.linux3.status, 'retirement-pending');
+});
 
 test('stack info shares daemon transport observation within a snapshot and refreshes the next snapshot', async (t) => {
   const tmp = await mkdtemp(join(tmpdir(), 'hstack-info-daemon-observation-'));

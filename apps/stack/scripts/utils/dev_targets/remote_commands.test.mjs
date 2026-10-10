@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { execFile, spawn } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFile, spawn, spawnSync } from 'node:child_process';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
@@ -19,11 +20,14 @@ import {
   buildRemoteStackRetirementProbeCommand,
   buildRemoteStackStopCommand,
   buildRemoteStackCommand,
+  buildRemoteStackHappierCommand,
+  buildRemoteRuntimeSnapshotProbeCommand,
   buildRemoteEnsureDirectoriesCommand,
   buildSshForwardArgs,
   buildSshTunnelArgs,
   buildSshWorkerArgs,
   classifyRemoteCommand,
+  resolveRemoteCommandPolicy,
   resolveRemoteValidationKind,
   resolveRemoteStackStatePaths,
   requiresRemoteDependencyBootstrap,
@@ -52,6 +56,169 @@ const windows = {
 };
 
 const execFileAsync = promisify(execFile);
+
+test('remote stack happier keeps literal CLI arguments and retained stack scope on POSIX and Windows', () => {
+  for (const target of [posix, windows]) {
+    const raw = buildRemoteStackHappierCommand(target, { stackName: 'agent-qa', runtimeMode: 'source-snapshot',
+      passthrough: ['--identity=account-b', '--runtime', '--', 'actions', 'get', "widget's $literal; --json"] });
+    const command = target.platform === 'windows' ? Buffer.from(raw.split(' ').at(-1), 'base64').toString('utf16le') : raw;
+    assert.match(command, /stack happier/);
+    assert.ok(command.includes('/stack-state/agent-qa/cli'));
+    assert.ok(command.includes('--identity=account-b'));
+    assert.match(command, /HAPPIER_DEV_TARGET_EXECUTION/);
+    assert.doesNotMatch(command, /stack (start|dev|new|stop)|stack env/);
+    if (target.platform === 'windows') {
+      assert.ok(command.includes("'widget''s $literal; --json'"));
+      assert.match(command, /exit \$LASTEXITCODE/);
+    } else {
+      // Both the SSH shell and its bash payload must retain this argument literally.
+      assert.ok(command.includes('$literal; --json'));
+      assert.match(command, /exec node .*stack happier/);
+    }
+  }
+});
+
+test('CLI command prerequisites distinguish Vitest setup from generator-only projection checks', () => {
+  const vitest = resolveRemoteCommandPolicy(['corepack', 'yarn', '--cwd', 'apps/cli', 'vitest', 'run', 'src/example.test.ts']);
+  const projection = resolveRemoteCommandPolicy(['corepack', 'yarn', '--cwd', 'apps/cli', 'test:migration:bundled-plugin-projections']);
+  assert.equal(vitest.requiredTools, 'go');
+  assert.equal(projection.requiredTools, '', 'generator-only checks do not run Vitest global setup');
+});
+
+test('source snapshot remote commands retain the QA stack home and start source without watching on both platforms', () => {
+  for (const target of [posix, windows]) {
+    const options = {
+      stackName: 'agent-qa', runtimeMode: 'source-snapshot',
+      services: { server: false, expo: false, daemon: true },
+      serverUrl: 'http://127.0.0.1:43001', publicServerUrl: 'http://127.0.0.1:3005',
+    };
+    assert.deepEqual(resolveRemoteStackStatePaths(target, options), resolveRemoteStackStatePaths(target, { ...options, runtimeMode: 'controlled' }));
+    const invocation = buildRemoteStackCommand(target, options);
+    const command = target.platform === 'windows' ? Buffer.from(invocation.split(' ').at(-1), 'base64').toString('utf16le') : invocation;
+    assert.match(command, /stack start/);
+    assert.match(command, /--runtime=.*source/);
+    assert.match(command, /--no-dev-targets/);
+    assert.match(command, /--no-browser/);
+    assert.match(command, /--no-server/);
+    assert.match(command, /--no-ui/);
+    assert.doesNotMatch(command, /stack dev|--watch/);
+    assert.doesNotMatch(command, /corepack|yarn/);
+    assert.match(command, /apps\/stack\/bin\/hstack\.mjs/);
+    const stopInvocation = buildRemoteStackStopCommand(target, options);
+    const stopCommand = target.platform === 'windows' ? Buffer.from(stopInvocation.split(' ').at(-1), 'base64').toString('utf16le') : stopInvocation;
+    assert.doesNotMatch(stopCommand, /corepack|yarn/);
+    assert.match(stopCommand, /apps\/stack\/bin\/hstack\.mjs/);
+    const recoveryInvocation = buildRemoteStackCommand(target, { ...options, reuseSourceRuntime: true });
+    const recoveryCommand = target.platform === 'windows' ? Buffer.from(recoveryInvocation.split(' ').at(-1), 'base64').toString('utf16le') : recoveryInvocation;
+    assert.match(recoveryCommand, /--reuse-source-runtime/);
+    assert.match(recoveryCommand, /--restart/);
+  }
+});
+
+test('source snapshot launches the canonical Stack entry directly and preserves initialization failure', async (t) => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-source-direct-entry-' });
+  const repoDir = join(root, 'repo with spaces');
+  const binDir = join(root, 'bin');
+  const recorded = join(root, 'invocations');
+  mkdirSync(repoDir, { recursive: true });
+  mkdirSync(binDir, { recursive: true });
+  // The remote JavaScript executable is an OS/process boundary; Stack argument
+  // selection and shell error propagation remain the real command owner.
+  writeFileSync(join(binDir, 'node'), `#!/bin/sh\nprintf '%s\\n' "$*" >> '${recorded}'\nif [ "$3" = new ] && [ "\${FAIL_NEW:-0}" = 1 ]; then exit 23; fi\n`);
+  chmodSync(join(binDir, 'node'), 0o755);
+  const target = { ...posix, repoDir, cliHomeDir: join(root, 'home'), remotePath: [binDir] };
+  const command = buildRemoteStackCommand(target, {
+    stackName: 'agent-qa', runtimeMode: 'source-snapshot',
+    services: { server: false, expo: false, daemon: true }, serverUrl: 'http://127.0.0.1:43001',
+  });
+  await execFileAsync('/bin/bash', ['-c', command]);
+  const invocations = readFileSync(recorded, 'utf8').trim().split('\n');
+  assert.equal(invocations.length, 3);
+  assert.match(invocations[0], /^\.\/apps\/stack\/bin\/hstack\.mjs stack new agent-qa /);
+  assert.match(invocations[1], /^\.\/apps\/stack\/bin\/hstack\.mjs stack env agent-qa set /);
+  assert.match(invocations[2], /^\.\/apps\/stack\/bin\/hstack\.mjs stack start agent-qa .*--runtime=source/);
+  writeFileSync(recorded, '');
+  await assert.rejects(execFileAsync('/bin/bash', ['-c', command], { env: { ...process.env, FAIL_NEW: '1' } }), error => error.code === 23);
+  assert.equal(readFileSync(recorded, 'utf8').trim().split('\n').length, 1);
+});
+
+test('source snapshot identity probe observes selected and loaded component identities and fails closed', async (t) => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-source-identity-' });
+  const target = { ...posix, repoDir: join(root, 'repo'), cliHomeDir: join(root, 'home') };
+  const paths = resolveRemoteStackStatePaths(target, { stackName: 'agent-qa', runtimeMode: 'controlled' });
+  mkdirSync(paths.stackBaseDir, { recursive: true });
+  const command = buildRemoteRuntimeSnapshotProbeCommand(target, {
+    stackName: 'agent-qa', runtimeMode: 'source-snapshot', services: { server: true, daemon: true },
+  });
+  const sourceUiLaunch = { uiDir: '/remote/server/source-export/ui' };
+  for (const sourceRuntimeIdentities of [
+    {}, { server: { selected: 'server-a', loaded: 'server-b' }, daemon: { selected: 'daemon-a', loaded: 'daemon-a' } },
+    { server: { selected: 'server-a', loaded: 'server-a' }, daemon: { selected: '', loaded: '' } },
+  ]) {
+    writeFileSync(join(paths.stackBaseDir, 'stack.runtime.json'), JSON.stringify({ sourceRuntimeIdentities, sourceUi: 'export', sourceUiLaunch }));
+    await assert.rejects(execFileAsync('/bin/bash', ['-c', command]));
+  }
+  const sourceRuntimeIdentities = { server: { selected: 'server-a', loaded: 'server-a' }, daemon: { selected: 'daemon-a', loaded: 'daemon-a' } };
+  writeFileSync(join(paths.stackBaseDir, 'stack.runtime.json'), JSON.stringify({ sourceRuntimeIdentities, sourceUi: 'export', sourceUiLaunch }));
+  const withUi = await execFileAsync('/bin/bash', ['-c', command]);
+  assert.deepEqual(JSON.parse(withUi.stdout), { sourceRuntimeIdentities, sourceUi: 'export', sourceUiLaunch });
+  const daemonProbe = buildRemoteRuntimeSnapshotProbeCommand(target, {
+    stackName: 'agent-qa', runtimeMode: 'source-snapshot', services: { daemon: true },
+  });
+  const daemonResult = await execFileAsync('/bin/bash', ['-c', daemonProbe]);
+  assert.deepEqual(JSON.parse(daemonResult.stdout), { sourceRuntimeIdentities: { daemon: sourceRuntimeIdentities.daemon } });
+  writeFileSync(join(paths.stackBaseDir, 'stack.runtime.json'), JSON.stringify({ sourceRuntimeIdentities, sourceUi: 'export' }));
+  await assert.rejects(execFileAsync('/bin/bash', ['-c', command]));
+  writeFileSync(join(paths.stackBaseDir, 'stack.runtime.json'), JSON.stringify({ sourceRuntimeIdentities }));
+  await assert.rejects(execFileAsync('/bin/bash', ['-c', command]));
+  writeFileSync(join(paths.stackBaseDir, 'stack.runtime.json'), JSON.stringify({ sourceRuntimeIdentities, sourceUi: 'disabled' }));
+  await assert.rejects(execFileAsync('/bin/bash', ['-c', command]));
+  for (const sourceUi of ['disabled', 'borrowed']) {
+    const noExportProbe = buildRemoteRuntimeSnapshotProbeCommand(target, {
+      stackName: 'agent-qa', runtimeMode: 'source-snapshot', services: { server: true, daemon: true }, sourceUi,
+    });
+    const noExportResult = await execFileAsync('/bin/bash', ['-c', noExportProbe]);
+    assert.deepEqual(JSON.parse(noExportResult.stdout), { sourceRuntimeIdentities, sourceUi: 'disabled' });
+  }
+});
+
+test('runtime identity probe reports actionable structured errors for absent, empty and invalid state', async (t) => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-identity-unavailable-' });
+  const target = { ...posix, cliHomeDir: root };
+  const paths = resolveRemoteStackStatePaths(target, { stackName: 'agent-qa', runtimeMode: 'source-snapshot' });
+  mkdirSync(paths.stackBaseDir, { recursive: true });
+  const statePath = join(paths.stackBaseDir, 'stack.runtime.json');
+  const command = buildRemoteRuntimeSnapshotProbeCommand(target, {
+    stackName: 'agent-qa', runtimeMode: 'source-snapshot', services: { daemon: true },
+  });
+  for (const [raw, code] of [[null, 'runtime_state_missing'], ['', 'runtime_state_empty'], ['{invalid', 'runtime_state_invalid']]) {
+    if (raw !== null) writeFileSync(statePath, raw);
+    await assert.rejects(execFileAsync('/bin/bash', ['-c', command]), error => {
+      const diagnostic = JSON.parse(error.stderr);
+      assert.equal(diagnostic.ok, false);
+      assert.equal(diagnostic.error.code, code);
+      assert.equal(diagnostic.error.statePath, statePath);
+      assert.equal(typeof diagnostic.error.recovery, 'string');
+      return true;
+    });
+  }
+});
+
+test('source snapshot server placement exports its UI unless borrowed or disabled while daemon-only placement never exports', () => {
+  const options = {
+    stackName: 'agent-qa', runtimeMode: 'source-snapshot',
+    services: { server: true, expo: false, daemon: false }, remoteServerPort: 43001,
+    serverUrl: 'http://127.0.0.1:43001', publicServerUrl: 'http://127.0.0.1:3005',
+    remoteServerRuntimeConfig: { serverComponentName: 'happier-server-light', dbProvider: 'sqlite', environment: {} },
+  };
+  for (const target of [posix, windows]) {
+    const decode = command => target.platform === 'windows' ? Buffer.from(command.split(' ').at(-1), 'base64').toString('utf16le') : command;
+    assert.doesNotMatch(decode(buildRemoteStackCommand(target, options)), /--no-ui/);
+    assert.doesNotMatch(decode(buildRemoteStackCommand(target, { ...options, borrowedExpoProducerStackName: 'repo-producer' })), /--no-ui/);
+    for (const sourceUi of ['borrowed', 'disabled']) assert.match(decode(buildRemoteStackCommand(target, { ...options, sourceUi })), /--no-ui/);
+    assert.match(decode(buildRemoteStackCommand(target, { ...options, services: { server: false, expo: false, daemon: true } })), /--no-ui/);
+  }
+});
 
 function installRemoteCustody(repoDir) {
   const directory = join(repoDir, 'apps/stack/scripts/utils/dev_targets');
@@ -180,9 +347,36 @@ test('remote Stack state paths use one canonical target CLI-home derivation', ()
   assert.equal(windowsState.stackEnvPath, `${windowsState.stackBaseDir}/env`);
 });
 
-test('remote Stack retirement probe only verifies that the canonical runtime state is gone', async () => {
+test('remote Stack stop needs only its canonical identity, not startup service options', () => {
+  for (const target of [posix, windows]) {
+    for (const runtimeMode of ['source', 'source-snapshot', 'controlled']) {
+      const options = {
+        stackName: 'agent-qa', runtimeMode,
+        services: { server: true, expo: true, daemon: true },
+      };
+      const invocation = buildRemoteStackStopCommand(target, options);
+      const command = target.platform === 'windows'
+        ? Buffer.from(invocation.split(' ').at(-1), 'base64').toString('utf16le')
+        : invocation;
+      const paths = resolveRemoteStackStatePaths(target, options);
+      assert.ok(command.includes(paths.cliHomeDir));
+      assert.match(command, new RegExp(`stack stop .*${paths.stackName}.* --yes --no-docker`));
+      assert.doesNotMatch(command, /stack new|stack env|--server-url|HAPPIER_STACK_SERVER_PORT|HAPPIER_STACK_EXPO_DEV_PORT/);
+      assert.equal(invocation, buildRemoteStackStopCommand(target, { stackName: options.stackName, runtimeMode }));
+      assert.doesNotMatch(command, /--preserve-daemon/);
+      const preserveInvocation = buildRemoteStackStopCommand(target, { ...options, preserveDaemon: true });
+      const preserveCommand = target.platform === 'windows'
+        ? Buffer.from(preserveInvocation.split(' ').at(-1), 'base64').toString('utf16le') : preserveInvocation;
+      assert.match(preserveCommand, /--preserve-daemon/);
+      assert.throws(() => buildRemoteStackCommand(target, options), /remote server port/);
+    }
+  }
+});
+
+test('remote Stack retirement probe includes a live legacy Expo without runtime state', async () => {
   const root = mkdtempSync(join(tmpdir(), 'hstack-remote-retirement-probe-'));
-  const posixTarget = { ...posix, cliHomeDir: root };
+  const posixTarget = { ...posix, cliHomeDir: root,
+    repoDir: fileURLToPath(new URL('../../../../../', import.meta.url)) };
   const posixState = resolveRemoteStackStatePaths(posixTarget, { stackName: 'repo-local-dev' });
   const statePath = join(posixState.stackBaseDir, 'stack.runtime.json');
   try {
@@ -194,7 +388,16 @@ test('remote Stack retirement probe only verifies that the canonical runtime sta
 
     await execFileAsync('/bin/mkdir', ['-p', posixState.stackBaseDir]);
     await execFileAsync('/bin/sh', ['-c', "printf '%s\\n' '{}' > \"$1\"", 'sh', statePath]);
-    await assert.rejects(execFileAsync('/bin/bash', ['-lc', command]));
+    await execFileAsync('/bin/bash', ['-lc', command]);
+
+    rmSync(statePath);
+    const expoStateDir = join(posixState.stackBaseDir, 'expo-dev', 'legacy');
+    mkdirSync(expoStateDir, { recursive: true });
+    const expoStatePath = join(expoStateDir, 'expo.state.json');
+    writeFileSync(expoStatePath, JSON.stringify({ pid: process.pid, projectDir: '/recorded/ui' }));
+    await assert.rejects(execFileAsync('/bin/bash', ['-lc', command]), 'a live recorded Expo must require retirement even after its runner state vanished');
+    writeFileSync(expoStatePath, JSON.stringify({ pid: 2147483647, projectDir: '/recorded/ui' }));
+    await execFileAsync('/bin/bash', ['-lc', command]);
 
     const windowsState = resolveRemoteStackStatePaths(windows, { stackName: 'repo-local-dev' });
     const windowsCommand = buildRemoteStackRetirementProbeCommand(windows, {
@@ -202,9 +405,61 @@ test('remote Stack retirement probe only verifies that the canonical runtime sta
     });
     const decodedWindows = Buffer.from(windowsCommand.split(' ').at(-1), 'base64').toString('utf16le');
     assert.match(decodedWindows, new RegExp(`stack-state/${windowsState.stackName}/stack\\.runtime\\.json`));
-    assert.match(decodedWindows, /Test-Path/);
+    assert.match(decodedWindows, /expo-dev/);
     assert.doesNotMatch(decodedWindows, /stack stop/);
   } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('remote Stack retirement probe accepts rebooted runtime records but requires retirement of their surviving owned processes', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'hstack-remote-reboot-probe-'));
+  const target = { ...posix, cliHomeDir: root, repoDir: fileURLToPath(new URL('../../../../../', import.meta.url)) };
+  const paths = resolveRemoteStackStatePaths(target, { stackName: 'agent-qa-reboot', runtimeMode: 'source-snapshot' });
+  const statePath = join(paths.stackBaseDir, 'stack.runtime.json');
+  mkdirSync(paths.stackBaseDir, { recursive: true });
+  let child;
+  try {
+    const command = buildRemoteStackRetirementProbeCommand(target, { stackName: 'agent-qa-reboot', runtimeMode: 'source-snapshot' });
+    writeFileSync(statePath, JSON.stringify({ ownerPid: 2147483647, processes: { daemonPid: 2147483647 } }));
+    await execFileAsync('/bin/bash', ['-lc', command]);
+    writeFileSync(statePath, JSON.stringify({ ownerPid: process.pid, processes: { daemonPid: process.pid } }));
+    await execFileAsync('/bin/bash', ['-lc', command]); // A live PID with another identity is not this Stack's runtime.
+    child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore', env: { ...process.env,
+      HAPPIER_STACK_STACK: paths.stackName, HAPPIER_STACK_ENV_FILE: paths.stackEnvPath, HAPPIER_STACK_PROCESS_KIND: 'infra' } });
+    await once(child, 'spawn');
+    writeFileSync(statePath, JSON.stringify({ ownerPid: child.pid, processes: { daemonPid: child.pid } }));
+    await assert.rejects(execFileAsync('/bin/bash', ['-lc', command]), 'a surviving owned runtime is not retired');
+    const preservedCommand = buildRemoteStackRetirementProbeCommand(target, {
+      stackName: 'agent-qa-reboot', runtimeMode: 'source-snapshot', preserveDaemon: true,
+    });
+    await assert.rejects(execFileAsync('/bin/bash', ['-lc', preservedCommand]), 'preservation still requires the controller to retire');
+    writeFileSync(statePath, JSON.stringify({ ownerPid: null, processes: { daemonPid: child.pid, daemonPids: [child.pid] } }));
+    await execFileAsync('/bin/bash', ['-lc', preservedCommand]);
+    await assert.rejects(execFileAsync('/bin/bash', ['-lc', command]), 'a later full stop must still see the preserved daemon');
+    writeFileSync(statePath, JSON.stringify({ ownerPid: null, processes: { daemonPid: child.pid, serverPid: child.pid } }));
+    await assert.rejects(execFileAsync('/bin/bash', ['-lc', preservedCommand]), 'preservation does not exempt server retirement');
+    const exited = once(child, 'exit');
+    child.kill('SIGTERM');
+    await exited;
+    await execFileAsync('/bin/bash', ['-lc', command]);
+    assert.equal(existsSync(statePath), true, 'absence observation must not mutate retained state');
+    writeFileSync(statePath, '{invalid');
+    await assert.rejects(execFileAsync('/bin/bash', ['-lc', command]), 'unreadable runtime membership is not proof of retirement');
+    for (const raw of ['', '{invalid']) {
+      writeFileSync(statePath, raw);
+      // A native host reboot cannot retain the prior runtime's processes.
+      // Current-boot corruption above must still fail closed.
+      utimesSync(statePath, new Date(0), new Date(0));
+      await execFileAsync('/bin/bash', ['-lc', command]);
+      assert.equal(readFileSync(statePath, 'utf8'), raw, 'reboot observation must not rewrite state');
+    }
+  } finally {
+    if (child && child.exitCode == null && child.signalCode == null) {
+      const exited = once(child, 'exit');
+      child.kill('SIGKILL');
+      await exited;
+    }
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -269,6 +524,26 @@ test('native source tests and generator checks use their real preparation contra
   const sdk = ['node', '--test', 'packages/plugin-sdk/scripts/generateActionTypeMap.test.mjs'];
   assert.equal(classifyRemoteCommand(sdk).requiresDependencyBootstrap, true);
   assert.equal(resolveRemoteValidationKind(sdk), 'source-test');
+  // These owner suites load repository source modules and prepare their own
+  // isolated fixtures; they do not consume Stack's emitted package closure.
+  for (const path of [
+    'apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.test.mjs',
+    'apps/stack/scripts/utils/dev_targets/remote_commands.test.mjs',
+    'apps/stack/scripts/build/build_source_runtime.test.mjs',
+  ]) {
+    const args = ['node', '--test', path];
+    assert.equal(classifyRemoteCommand(args).requiresDependencyBootstrap, true);
+    assert.equal(resolveRemoteValidationKind(args), 'source-test');
+    assert.equal(resolveRemoteValidationKind(['node', '--test', path.slice('apps/stack/'.length)], { cwd: 'apps/stack' }), 'source-test');
+    if (process.platform !== 'win32') {
+      // Execute the shipped projection at its shell/platform boundary too.
+      const root = fileURLToPath(new URL('../../../../../', import.meta.url));
+      const artifact = fileURLToPath(new URL('./native_command_policy.sh', import.meta.url));
+      const native = spawnSync('/bin/sh', ['-c', '. "$1"; repo_root=$2; invoked_cwd=$2; shift 2; resolve_native_command_policy "$@"; printf "%s,%s" "$policy_bootstrap" "$policy_kind"', 'policy', artifact, root, ...args], { encoding: 'utf8' });
+      assert.equal(native.status, 0, native.stderr);
+      assert.equal(native.stdout, '1,source-test');
+    }
+  }
   assert.equal(resolveRemoteValidationKind(['node', '--test', 'apps/ui/scripts/generateBundledPluginUiArtifacts.test.mjs']), 'runtime');
   assert.equal(requiresRemoteWorkspacePreparation(['node', '--test', 'apps/ui/scripts/generateBundledPluginUiArtifacts.test.mjs']), true);
   assert.equal(resolveRemoteValidationKind(['node', '--test', 'unknown.test.mjs']), 'runtime');
@@ -323,6 +598,20 @@ test('source-test classification follows the configured resolver contract rather
     ['corepack', 'yarn', '-s', 'vitest:artifact'],
   ]) assert.equal(resolveRemoteValidationKind(args, { cwd: 'apps/cli' }), 'runtime');
   assert.equal(resolveRemoteValidationKind(['vitest', 'run'], { cwd: 'apps/ui' }), 'source-test');
+  for (const args of [
+    ['vitest', 'run', '--config', 'vitest.integration.config.ts'],
+    ['corepack', 'yarn', '-s', 'vitest:local', 'run', '--config=vitest.integration.config.ts'],
+  ]) {
+    assert.equal(resolveRemoteValidationKind(args, { cwd: 'apps/ui' }), 'source-test');
+    if (process.platform !== 'win32') {
+      const root = fileURLToPath(new URL('../../../../../', import.meta.url));
+      const artifact = fileURLToPath(new URL('./native_command_policy.sh', import.meta.url));
+      const native = spawnSync('/bin/sh', ['-c', '. "$1"; repo_root=$2; invoked_cwd=$2/apps/ui; shift 2; resolve_native_command_policy "$@"; printf "%s,%s" "$policy_bootstrap" "$policy_kind"', 'policy', artifact, root, ...args], { encoding: 'utf8' });
+      assert.equal(native.status, 0, native.stderr);
+      assert.equal(native.stdout, '1,source-test');
+    }
+  }
+  assert.equal(resolveRemoteValidationKind(['vitest', 'run', '--config=vitest.integration.config.ts', '--root=../cli'], { cwd: 'apps/ui' }), 'runtime');
   assert.equal(resolveRemoteValidationKind(['vitest', 'run', '--config=vitest.source.integration.config.ts'], { cwd: 'apps/ui' }), 'runtime');
   assert.equal(resolveRemoteValidationKind(
     ['node', '../../../node_modules/vitest/vitest.mjs', 'run', '--config=vitest.config.ts'],
@@ -648,7 +937,6 @@ test('remote daemon command reuses the Stack dev owner and adopts a last-green d
   assert.doesNotMatch(command, /HAPPIER_STACK_PM_CACHE_BASE_DIR=.*HOME.*\/\.cache/);
   assert.match(command, /HAPPIER_STACK_STACK/);
   assert.match(command, /HAPPIER_ACTIVE_SERVER_ID/);
-  assert.match(command, /HAPPIER_CLI_PKGROLL_TIMEOUT_MS=1800000/);
   assert.match(command, /http:\/\/127\.0\.0\.1:43005/);
   assert.doesNotMatch(command, /stack stop/);
   assert.doesNotMatch(command, /corepack yarn dev /);
@@ -667,7 +955,6 @@ test('remote daemon command reuses the Stack dev owner and adopts a last-green d
     /\$env:HAPPIER_STACK_PM_CACHE_BASE_DIR = 'C:\/Users\/test qa\/\.happier\/windows\/cache'/,
   );
   assert.match(decodedPowerShell, new RegExp(`\\$env:HAPPIER_STACK_STACK = '${windowsRemoteStack}'`));
-  assert.match(decodedPowerShell, /HAPPIER_CLI_PKGROLL_TIMEOUT_MS=1800000/);
   assert.match(
     decodedPowerShell,
     new RegExp(`corepack yarn workspace @happier-dev/stack stack dev '${windowsRemoteStack}' --no-server --no-ui --no-browser --no-dev-targets --watch`),
@@ -737,6 +1024,26 @@ test('remote lifecycle retirement is a separate lightweight command before the l
     'the Windows worker must initialize through Stack before dev',
   );
   assert.doesNotMatch(decodedWindowsWorker, /Set-Content -LiteralPath \$stackEnvPath/);
+});
+
+test('remote light Postgres admits the source-host authority without transporting its URL or secret', () => {
+  const config = resolveRemoteServerRuntimeConfig({ serverComponentName: 'happier-server-light', env: {
+    HAPPIER_DB_PROVIDER: 'postgres', DATABASE_URL: 'postgresql://fixture:private-pg-secret@host/dev',
+    HANDY_MASTER_SECRET: 'private-master-secret', HAPPIER_STACK_SHARED_DB_SOURCE_STACK: 'dev',
+    HAPPIER_STACK_SHARED_DB_SOURCE_ENV_FILE: '/source-host/dev/env',
+  } });
+  assert.equal(config.dbProvider, 'postgres');
+  assert.equal(config.environment.HAPPIER_STACK_SHARED_DB_SOURCE_ENV_FILE, '/source-host/dev/env');
+  for (const target of [posix, windows]) {
+    const command = buildRemoteStackCommand(target, {
+      services: { server: true, expo: false, daemon: false }, serverUrl: 'http://127.0.0.1:43005',
+      publicServerUrl: 'http://192.168.1.20:53005', activeServerId: 'stack_repo__id_default',
+      stackName: 'repo-local-dev', remoteServerPort: 43005, remoteServerRuntimeConfig: config,
+    });
+    const decoded = target === windows ? Buffer.from(command.split(' ').at(-1), 'base64').toString('utf16le') : command;
+    assert.match(decoded, /HAPPIER_DB_PROVIDER=postgres/);
+    assert.doesNotMatch(decoded, /private-pg-secret|private-master-secret|DATABASE_URL=/);
+  }
 });
 
 test('co-located remote server waits for deferred daemon credentials without creating another worker', () => {
@@ -1076,4 +1383,13 @@ test('SSH forwarding supports local and reverse routes in one transport owner', 
       'happier-stack-linux',
     ],
   );
+});
+
+test('SSH reverse dynamic forwarding keeps canonical browser origins and resolves from the controller', () => {
+  const args = buildSshForwardArgs(posix, { forwards: [
+    { direction: 'reverse-dynamic', listenHost: '127.0.0.1', listenPort: 43005 },
+    { direction: 'local', listenPort: 18081, targetPort: 48081 },
+  ] });
+  assert.equal(args[args.indexOf('-R') + 1], '127.0.0.1:43005');
+  assert.equal(args[args.indexOf('-L') + 1], '127.0.0.1:18081:127.0.0.1:48081');
 });

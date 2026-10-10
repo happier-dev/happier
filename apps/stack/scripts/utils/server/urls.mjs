@@ -6,7 +6,8 @@ import { preferStackLocalhostHost, preferStackLocalhostUrl } from '../paths/loca
 import { resolvePublicServerUrl } from '../../tailscale.mjs';
 import { readPinnedServerPortFromEnvFile, resolveServerPortFromEnv } from './port.mjs';
 import { normalizeUrlNoTrailingSlash } from '../net/url.mjs';
-import { readStackRuntimeStateFile, resolveTrustedStackRuntimeServerPort } from '../stack/runtime_state.mjs';
+import { hasTrustedStackRuntimeLifecycle, readStackRuntimeStateFile, resolveTrustedStackRuntimeServerPort } from '../stack/runtime_state.mjs';
+import { resolveDevServerConnection } from '../dev/resolveDevServerConnection.mjs';
 
 /** Runtime ingress wins over a retained port; only the process owner can attest it. */
 export async function resolveStackServerEndpoint({
@@ -22,9 +23,23 @@ export async function resolveStackServerEndpoint({
   const runtimePath = env.HAPPIER_STACK_STACK === stackName && env.HAPPIER_STACK_RUNTIME_STATE_PATH
     ? env.HAPPIER_STACK_RUNTIME_STATE_PATH : join(baseDir, 'stack.runtime.json');
   const state = runtimeState === undefined ? await readStackRuntimeStateFile(runtimePath) : runtimeState;
-  const runtimePort = await resolveTrustedStackRuntimeServerPort(state, {
+  const trustContext = {
     stackName, envPath, cliHomeDir: !isForeignStackEnv && env.HAPPIER_STACK_CLI_HOME_DIR || join(baseDir, 'cli'),
-  }, trustOptions);
+  };
+  // Daemon-only hosts have no local server listener. Startup publishes the
+  // connection it actually admitted, including the forwarded/external URL.
+  if (state?.serverConnection && await hasTrustedStackRuntimeLifecycle(state, trustContext, trustOptions)) {
+    const connection = resolveDevServerConnection({
+      flags: new Set(['--no-server']), kv: new Map(),
+      env: { HAPPIER_SERVER_URL: state.serverConnection.internalServerUrl,
+        HAPPIER_PUBLIC_SERVER_URL: state.serverConnection.publicServerUrl },
+    });
+    const url = new URL(connection.internalServerUrl);
+    const port = Number(url.port || (url.protocol === 'https:' ? 443 : 80));
+    return { port, runtimePort: null, internalServerUrl: connection.internalServerUrl,
+      publicServerUrl: connection.publicServerUrl };
+  }
+  const runtimePort = await resolveTrustedStackRuntimeServerPort(state, trustContext, trustOptions);
   const configuredPort = resolveServerPortFromEnv({ env, defaultPort: null });
   const port = runtimePort ?? configuredPort ?? await readPinnedServerPortFromEnvFile(envPath) ?? defaultPort;
   return { port, runtimePort, internalServerUrl: port ? `http://127.0.0.1:${port}` : null };
@@ -125,7 +140,16 @@ export async function resolveStackCanonicalServerUrl({
 }
 
 export async function resolveServerUrls({ env = process.env, serverPort, allowEnable = true } = {}) {
-  serverPort ??= (await resolveStackServerEndpoint({ env })).port;
+  if (serverPort == null) {
+    const endpoint = await resolveStackServerEndpoint({ env });
+    if (endpoint.publicServerUrl) {
+      return { serverPort: endpoint.port, internalServerUrl: endpoint.internalServerUrl,
+        defaultPublicUrl: endpoint.publicServerUrl, envPublicUrl: endpoint.publicServerUrl,
+        publicServerUrl: endpoint.publicServerUrl, publicServerUrlSource: 'runtime',
+        canonicalServerUrl: endpoint.publicServerUrl };
+    }
+    serverPort = endpoint.port;
+  }
   const internalServerUrl = `http://127.0.0.1:${serverPort}`;
   const stackName =
     (env.HAPPIER_STACK_STACK ?? '').toString().trim() ||

@@ -33,6 +33,27 @@ async function listenServer(handler) {
   };
 }
 
+test('server readiness accepts an unbounded caller lifetime without losing cancellation', async (t) => {
+  let clock = Date.now();
+  t.mock.method(Date, 'now', () => clock);
+  let probes = 0;
+  t.mock.method(globalThis, 'fetch', async url => {
+    if (probes++ === 0) {
+      clock += 2 * 60 * 60_000;
+      return new Response('', { status: 503 });
+    }
+    return String(url).endsWith('/health')
+      ? Response.json({ status: 'ok', service: 'happier-server' })
+      : new Response('', { status: 503 });
+  });
+  await waitForServerReady('http://localhost:3005', { timeoutMs: Infinity, intervalMs: 1 });
+  const controller = new AbortController();
+  controller.abort(new Error('owner cancelled readiness'));
+  await assert.rejects(waitForServerReady('http://localhost:3005', {
+    timeoutMs: Infinity, signal: controller.signal,
+  }), /owner cancelled readiness/);
+});
+
 test('fetchHappierHealth accepts the canonical Happier health payload only', async () => {
   const fixture = await listenServer((req, res) => {
     if (req.url === '/health') {

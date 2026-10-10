@@ -9,6 +9,25 @@ import { checkDaemonState, checkDaemonStatePingAware } from './daemon.mjs';
 import { spawnDetachedInlineNodeTestProcess } from './testkit/core/spawn_test_process.mjs';
 import { resolveStackDaemonStatePaths } from './utils/auth/credentials_paths.mjs';
 
+test('checkDaemonState recognizes the canonical structured startup lock in the exact server scope', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-structured-lock-'));
+  try {
+    const serverUrl = 'http://127.0.0.1:4104';
+    const env = {};
+    const paths = resolveStackDaemonStatePaths({ cliHomeDir: dir, serverUrl, env });
+    await mkdir(dirname(paths.serverScopedLockPath), { recursive: true });
+    const record = { t: 'happier_daemon_lock_v2', pid: process.pid,
+      ownerToken: '00000000-0000-4000-8000-000000000001', processStartedAtMs: 1, createdAtMs: 1 };
+    await writeFile(paths.serverScopedLockPath, JSON.stringify(record));
+    assert.deepEqual(checkDaemonState(dir, { serverUrl, env }), { status: 'starting', pid: process.pid });
+    assert.equal(checkDaemonState(dir, { serverUrl: 'http://127.0.0.1:4105', env }).status, 'stopped');
+    await writeFile(paths.serverScopedLockPath, JSON.stringify({ ...record, ownerToken: 'invalid' }));
+    assert.deepEqual(checkDaemonState(dir, { serverUrl, env }), { status: 'bad_lock', pid: null });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('checkDaemonState reads server-scoped daemon state for active server URL', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-state-'));
   try {

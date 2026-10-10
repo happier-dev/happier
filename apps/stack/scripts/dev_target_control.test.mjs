@@ -9,6 +9,45 @@ import { fileURLToPath } from 'node:url';
 const testDir = dirname(fileURLToPath(import.meta.url));
 const controlExecutable = resolve(testDir, '..', 'bin', 'hstack-dev-target-control');
 
+async function removeFixture(root) {
+  await rm(root, { recursive: true, force: true });
+  if (process.platform !== 'win32') {
+    await rm(`/tmp/happier-sync-control-${process.getuid()}${root}`, { recursive: true, force: true });
+  }
+}
+
+test('sync control uses shared host state when daemon storage is not writable and TMPDIR differs', {
+  skip: process.platform !== 'linux',
+}, async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-sync-control-sandbox-'));
+  t.after(() => removeFixture(root));
+  const session = root.split('/').at(-1);
+  const daemonDir = `/proc/${session}`;
+  const stateDir = `/tmp/happier-sync-control-${process.getuid()}${daemonDir}/hstack-control`;
+  t.after(() => rm(`/tmp/happier-sync-control-${process.getuid()}${daemonDir}`, { recursive: true, force: true }));
+  const binDir = join(root, 'bin');
+  await mkdir(binDir);
+  await executable(join(binDir, 'mutagen'), '#!/bin/sh\nif [ "$2" = list ]; then printf "%s|Watching|false|true|1|0/0|0/0|true|1|0/0|0/0|active|2|ok|0|0\\n" "$3"; fi\n');
+  const args = ['--sync-flush', session, '--', 'mutagen', 'sync', 'flush', session];
+  const env = { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ''}`,
+    MUTAGEN_DATA_DIRECTORY: `${daemonDir}/data`, DBUS_SESSION_BUS_ADDRESS: '' };
+  for (const TMPDIR of [root, '/tmp']) {
+    const result = spawnSync(controlExecutable, args, { env: { ...env, TMPDIR }, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+  }
+  assert.equal(await readFile(join(stateDir, `${session}.flight`), 'utf8'), '2 2\n',
+    'both callers must advance the same flight record independently of TMPDIR');
+  const otherDaemonDir = `${daemonDir}-other`;
+  const otherStateDir = `/tmp/happier-sync-control-${process.getuid()}${otherDaemonDir}`;
+  t.after(() => rm(otherStateDir, { recursive: true, force: true }));
+  const otherDaemon = spawnSync(controlExecutable, args, {
+    env: { ...env, MUTAGEN_DATA_DIRECTORY: `${otherDaemonDir}/data` }, encoding: 'utf8',
+  });
+  assert.equal(otherDaemon.status, 0, otherDaemon.stderr);
+  assert.equal(await readFile(join(otherStateDir, 'hstack-control', `${session}.flight`), 'utf8'), '1 1\n',
+    'identically named sessions in separate daemons must not share a flight');
+});
+
 async function executable(path, contents) {
   await writeFile(path, contents);
   await chmod(path, 0o755);
@@ -37,7 +76,7 @@ test('dispatch recovery rescans transient scan problems and rejects persistent o
   skip: process.platform !== 'linux',
 }, async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-sync-rescan-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.after(() => removeFixture(root));
   const binDir = join(root, 'bin');
   const flushed = join(root, 'flushed');
   await mkdir(binDir);
@@ -79,7 +118,7 @@ test('no-watch first dispatch is eligible but its barrier still requires a compl
   skip: process.platform === 'win32',
 }, async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-no-watch-dispatch-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.after(() => removeFixture(root));
   const binDir = join(root, 'bin');
   const marker = join(root, 'flushed');
   await mkdir(binDir);
@@ -111,7 +150,7 @@ test('queued demands share a later-started flush while a demand during that flus
   skip: process.platform !== 'linux',
 }, async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-dev-target-control-causal-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.after(() => removeFixture(root));
   const binDir = join(root, 'bin');
   const dataDir = join(root, 'mutagen', 'data');
   const invocationLog = join(root, 'mutagen-invocations');
@@ -191,7 +230,7 @@ test('failed and canceled flushes cannot satisfy queued demand, and later reques
         for (const child of children) {
           if (child.exitCode == null && child.signalCode == null) child.kill('SIGTERM');
         }
-        await rm(root, { recursive: true, force: true });
+        await removeFixture(root);
       });
       await mkdir(binDir, { recursive: true });
       await mkdir(dataDir, { recursive: true });
@@ -245,7 +284,8 @@ test('a waiter joining a successful flush still rejects fresh session problems',
 }, async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-dev-target-control-join-health-'));
   const binDir = join(root, 'bin');
-  const stateDir = join(root, 'mutagen', 'hstack-control');
+  const session = root.split('/').at(-1);
+  const stateDir = `/tmp/happier-sync-control-${process.getuid()}${root}/mutagen/hstack-control`;
   const lockStarted = join(root, 'lock-started');
   const lockRelease = join(root, 'lock-release');
   const flushLog = join(root, 'flushes');
@@ -256,12 +296,12 @@ test('a waiter joining a successful flush still rejects fresh session problems',
     for (const child of children) {
       if (child.exitCode == null && child.signalCode == null) child.kill('SIGTERM');
     }
-    await rm(root, { recursive: true, force: true });
+    await removeFixture(root);
   });
   await mkdir(binDir, { recursive: true });
   await mkdir(stateDir, { recursive: true });
   const lockHolder = spawn('/usr/bin/flock', [
-    join(stateDir, 'happier-linux.lock'), 'sh', '-c',
+    join(stateDir, `${session}.lock`), 'sh', '-c',
     `: > ${JSON.stringify(lockStarted)}; while [ ! -e ${JSON.stringify(lockRelease)} ]; do sleep 0.02; done`,
   ], { stdio: 'ignore' });
   children.push(lockHolder);
@@ -288,7 +328,7 @@ test('a waiter joining a successful flush still rejects fresh session problems',
     DBUS_SESSION_BUS_ADDRESS: '',
   };
   const launch = () => {
-    const child = spawn(controlExecutable, ['--sync-flush', 'happier-linux', '--', 'mutagen', 'sync', 'flush', 'happier-linux'], {
+    const child = spawn(controlExecutable, ['--sync-flush', session, '--', 'mutagen', 'sync', 'flush', session], {
       env, stdio: ['ignore', 'ignore', 'pipe'],
     });
     children.push(child);
@@ -311,7 +351,7 @@ test('a waiter joining a successful flush still rejects fresh session problems',
 
 test('sync inspection does not reinterpret partial template output as session health', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-dev-target-control-template-failure-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.after(() => removeFixture(root));
   const binDir = join(root, 'bin');
   const dataDir = join(root, 'mutagen', 'data');
   await mkdir(binDir, { recursive: true });
@@ -340,7 +380,7 @@ test('sync inspection does not reinterpret partial template output as session he
 
 test('native sync admission rejects every problem-bearing public-model fact and permits clean post-cycle movement', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-dev-target-control-admission-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.after(() => removeFixture(root));
   const binDir = join(root, 'bin');
   const dataDir = join(root, 'mutagen', 'data');
   await mkdir(binDir, { recursive: true });
@@ -383,7 +423,7 @@ test('native sync admission rejects every problem-bearing public-model fact and 
 
 test('the no-flock platform path still performs a fresh post-flush health check', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-dev-target-control-no-flock-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.after(() => removeFixture(root));
   const binDir = join(root, 'bin');
   const dataDir = join(root, 'mutagen', 'data');
   const flushMarker = join(root, 'flush-ran');
@@ -424,7 +464,7 @@ test('critical-slice placement runs the requested flush in the protected slice',
   skip: process.platform !== 'linux' || !process.env.DBUS_SESSION_BUS_ADDRESS,
 }, async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-dev-target-control-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.after(() => removeFixture(root));
   const binDir = join(root, 'bin');
   const dataDir = join(root, 'mutagen', 'data');
   const invocationLog = join(root, 'mutagen-invocations');
@@ -480,7 +520,7 @@ test('falls back to direct execution when the inherited user bus is unavailable'
   skip: process.platform !== 'linux',
 }, async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-dev-target-control-stale-bus-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.after(() => removeFixture(root));
   const binDir = join(root, 'bin');
   const scopeLog = join(root, 'systemd-scopes');
   const commandLog = join(root, 'command-ran');

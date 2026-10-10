@@ -192,7 +192,6 @@ test('createServiceDaemonAutostarter waits for server readiness before starting 
   const autostarter = createServiceDaemonAutostarter({
     enabled: true,
     isShuttingDown: () => false,
-    isServerReady: async () => true,
     pollMs: 5000,
     maxAttemptsPerCredentials: 2,
     retryBaseMs: 1000,

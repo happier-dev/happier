@@ -163,9 +163,14 @@ Inside the VM:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/happier-dev/happier/main/apps/stack/scripts/provision/linux-ubuntu-provision.sh -o /tmp/linux-ubuntu-provision.sh \
+  && curl -fsSL https://raw.githubusercontent.com/happier-dev/happier/main/apps/stack/scripts/provision/.bun-version -o /tmp/.bun-version \
   && chmod +x /tmp/linux-ubuntu-provision.sh \
   && /tmp/linux-ubuntu-provision.sh --profile=happier
 ```
+
+Keep the script and its Bun version file on the same repository ref (replace
+`main` in both URLs when testing another ref). The version file is required only
+for the `happier` profile unless `HAPPIER_PROVISION_BUN_VERSION` is set explicitly.
 
 ### 3b) (Optional) Run the hstack dev setup wizard
 

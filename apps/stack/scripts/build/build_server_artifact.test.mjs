@@ -6,11 +6,10 @@ import { join } from 'node:path';
 
 import { buildServerArtifact, linkServerRuntimeSupportPayload, resolveServerSupportArtifactFingerprint } from './build_server_artifact.mjs';
 import { writeArtifactManifest } from '../runtime/shared/artifact_manifest.mjs';
-import { resolveTypeScriptCliInvocation } from '../../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs';
 import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
 import { resolveRuntimeBuildRequestIdentity } from './runtime_build_request_identity.mjs';
 
-test('cold server support identity prepares workspace outputs and preserves canonical QA admission', async (t) => {
+test('cold server support identity consumes native assets without workspace dist or semantic compilation', async (t) => {
   const { root } = await createTempFixture(t, { prefix: 'runtime-server-cold-support-' });
   const write = async (path, value) => {
     await mkdir(join(path, '..'), { recursive: true });
@@ -22,8 +21,8 @@ test('cold server support identity prepares workspace outputs and preserves cano
       name: `@fixture/${name}`,
       ...(name === 'server' ? {
         dependencies: { '@happier-dev/iroh-native': '0.0.0' },
-        // Prisma generation is an external command boundary. This fixture has
-        // its generated clients already, while package admission remains real.
+        // Prisma generation is an external command boundary. The fixture has
+        // its generated clients already; no workspace compiler is needed.
         scripts: { 'generate:providers': 'node generate.mjs' },
       } : {}),
     }));
@@ -40,12 +39,9 @@ test('cold server support identity prepares workspace outputs and preserves cano
     target: 'ES2022', module: 'ESNext', moduleResolution: 'Bundler', rootDir: 'src',
     strict: true, declaration: true, types: [],
   }, include: ['src/**/*.ts'] }));
-  const compiler = resolveTypeScriptCliInvocation({});
-  await write(join(packageDir, 'compile.mjs'), `import { spawnSync } from 'node:child_process';
-const result = spawnSync(${JSON.stringify(compiler.command)}, [...${JSON.stringify(compiler.argsPrefix)}, '-p', 'tsconfig.json', '--outDir', process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR], { env: process.env, stdio: 'inherit' });
-if (result.error) throw result.error;
-process.exitCode = result.status ?? 1;
-`);
+  await write(join(packageDir, 'compile.mjs'), 'throw new Error("runtime-only workspace compilation invoked");');
+  const addonPath = join(packageDir, 'native', `happier-iroh-native-lifecycle.${process.platform}-${process.arch}.node`);
+  await write(addonPath, 'native first');
   for (const path of ['packages/iroh-native/scripts/load.mjs', 'apps/server/generated/sqlite-client/index.js',
     'apps/server/prisma/sqlite/migrations/fixture.sql', 'node_modules/.prisma/client/index.js',
     'node_modules/@prisma/client/package.json']) await write(join(root, path), '{}');
@@ -58,7 +54,7 @@ process.exitCode = result.status ?? 1;
     env: { ...env, ...extraEnv },
   });
   const cold = await identity();
-  assert.match(await readFile(join(packageDir, 'dist/index.js'), 'utf8'), /green/);
+  await assert.rejects(readFile(join(packageDir, 'dist/index.js'), 'utf8'), { code: 'ENOENT' });
   assert.equal(await identity(), cold);
   await write(sourcePath, 'export const value: string = 1;\n');
   const request = await resolveRuntimeBuildRequestIdentity({
@@ -67,15 +63,12 @@ process.exitCode = result.status ?? 1;
     selection: { components: { server: true, daemon: false, web: false }, activateRuntime: false },
     env,
   });
-  assert.equal(request.stalePackagesByComponent.server.length, 1,
-    'initial identity must describe the stale output just admitted for server support');
-  assert.equal(request.stalePackagesByComponent.server[0].packageName, '@happier-dev/iroh-native');
-  assert.match(await readFile(join(packageDir, 'dist/index.js'), 'utf8'), /green/);
-  await assert.rejects(identity({ HAPPIER_WORKSPACE_BUILD_MODE: 'strict' }));
-  await assert.rejects(identity({ npm_lifecycle_event: 'prepack' }));
-  await write(sourcePath, 'export const value: string = "fixed";\n');
+  assert.equal(request.supportArtifactFingerprints.server, cold);
+  assert.equal(await identity({ HAPPIER_WORKSPACE_BUILD_MODE: 'strict' }), cold);
+  assert.equal(await identity({ npm_lifecycle_event: 'prepack' }), cold);
+  await write(addonPath, 'native changed');
   assert.notEqual(await identity(), cold);
-  assert.match(await readFile(join(packageDir, 'dist/index.js'), 'utf8'), /fixed/);
+  await assert.rejects(readFile(join(packageDir, 'dist/index.js'), 'utf8'), { code: 'ENOENT' });
 });
 
 async function writeServerSupportArtifact({

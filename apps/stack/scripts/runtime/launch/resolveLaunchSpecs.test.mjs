@@ -1,5 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
 
 import {
   applyCliRuntimeLaunchProvenanceEnv,
@@ -7,6 +11,36 @@ import {
   resolveCliRuntimeLaunchSpec,
 } from './resolveCliRuntimeLaunchSpec.mjs';
 import { resolveServerRuntimeLaunchSpec } from './resolveServerRuntimeLaunchSpec.mjs';
+
+test('source server launch executes nonexecutable emitted JS through its managed runtime and honors disabled migrations', async t => {
+  const serverDir = await mkdtemp(join(tmpdir(), 'hstack-source-launch-'));
+  t.after(() => rm(serverDir, { recursive: true, force: true }));
+  const entrypoint = join(serverDir, 'main.mjs');
+  await writeFile(entrypoint, 'process.stdout.write(JSON.stringify(process.argv.slice(2)));\n');
+  await chmod(entrypoint, 0o644);
+  const sourceRuntimeLaunch = { runtimeCommand: entrypoint, entrypoint, serverDir, args: ['source-launch'],
+    migration: { mode: 'external', command: join(serverDir, 'scripts/migrate.mjs'), args: [], cwd: serverDir } };
+  const enabled = resolveServerRuntimeLaunchSpec({ sourceRuntimeLaunch, migrationsEnabled: true });
+  const child = spawnSync(enabled.command, enabled.args, { encoding: 'utf8' });
+  assert.equal(child.status, 0, child.error?.message ?? child.stderr);
+  assert.deepEqual(JSON.parse(child.stdout), ['source-launch']);
+  assert.equal(enabled.command, process.execPath);
+  assert.deepEqual(enabled.args, [entrypoint, 'source-launch']);
+  assert.equal(enabled.migration.mode, 'external');
+  const disabled = resolveServerRuntimeLaunchSpec({ sourceRuntimeLaunch, migrationsEnabled: false });
+  assert.deepEqual(disabled.migration, { mode: 'disabled' });
+});
+
+test('source bundle CLI launch uses its retained entry without native snapshot provenance', () => {
+  const spec = resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch: { cliDir: '/qa/source/cli', entrypoint: '/qa/source/cli/src/index.mjs' } });
+  assert.equal(spec.command, '/qa/source/cli/src/index.mjs');
+  assert.equal(spec.sourceSnapshot, true);
+  assert.equal(resolveCliRuntimeLaunchProvenance(spec).runtimeBacked, false);
+  const env = applyCliRuntimeLaunchProvenanceEnv({ cliLaunchSpec: spec, env: { HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED: '1' } });
+  assert.equal(env.HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED, undefined);
+  assert.equal(env.HAPPIER_CLI_SUBPROCESS_ENTRYPOINT, spec.entrypoint);
+  assert.equal(env.HAPPIER_CLI_SUBPROCESS_PREFER_TSX, '0');
+});
 
 test('runtime launch refuses to invent a missing service entrypoint in a component snapshot', () => {
   const snapshot = { snapshotPath: '/tmp/server-only', daemonDistClosureFingerprint: '1111111111111111',

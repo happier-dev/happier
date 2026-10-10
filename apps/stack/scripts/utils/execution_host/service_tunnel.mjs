@@ -13,7 +13,7 @@ import { getHappyStacksHomeDir } from '../paths/paths.mjs';
 import { withJsonOwnerFileLock } from '../proc/jsonOwnerFileLock.mjs';
 import { observePsEnvLine, textContainsNeedle } from '../proc/ownership.mjs';
 import { terminateProcessPid } from '../proc/terminate.mjs';
-import { resolveExecutionHostWorkspaceMount } from './workspace_mount.mjs';
+import { captureExecutionHostGuestCommand, resolveExecutionHostWorkspaceConnection } from './workspace_mount.mjs';
 
 const TUNNEL_STATE_VERSION = 1;
 const TUNNEL_PROCESS_KIND = 'execution-host-service-tunnel';
@@ -266,8 +266,13 @@ function pendingProjectedServices(projection) {
   return expoReady ? [] : ['expo'];
 }
 
+function executionHostTunnelInstance(profile) {
+  return requireSafeComponent(profile?.mode === 'ssh-dev-target'
+    ? `ssh-${profile.sshPrimary.targetName}` : profile?.instance, 'execution-host identity');
+}
+
 function workspaceStatePath(profile, env, workspaceId) {
-  const instance = requireSafeComponent(profile?.instance, 'managed Lima instance name');
+  const instance = executionHostTunnelInstance(profile);
   const workspace = String(workspaceId ?? '').trim() || 'default';
   const safeWorkspace = requireSafeComponent(workspace, 'execution-host workspace');
   return join(getHappyStacksHomeDir(env), TUNNEL_HOME_DIR, `${instance}-${safeWorkspace}.json`);
@@ -288,7 +293,7 @@ async function withTunnelStateMutationLock(statePath, fn) {
 }
 
 function tunnelMarker({ profile, workspaceId, stackName }) {
-  return `${requireSafeComponent(profile?.instance, 'managed Lima instance name')}:${String(workspaceId ?? '').trim() || 'default'}:${normalizeStackName(stackName)}`;
+  return `${executionHostTunnelInstance(profile)}:${String(workspaceId ?? '').trim() || 'default'}:${normalizeStackName(stackName)}`;
 }
 
 function sameForwards(left, right) {
@@ -519,14 +524,16 @@ export async function inspectExecutionHostStackRuntime({
   workspaceId = '',
   stackName = '',
   executor,
+  env = process.env,
 } = {}) {
   if (!executor?.capture) throw new Error('[dev-vm] managed Lima executor is required');
   const workspace = requireWorkspace(profile, workspaceId);
   const expectedStack = normalizeStackName(stackName || workspace.stackName);
-  const result = await executor.capture('limactl', [
-    'shell', '--workdir', workspace.guestDir, profile.instance, '--',
-    'sh', '-lc', GUEST_STACK_PROJECTION_SCRIPT, 'sh', workspace.guestDir, expectedStack,
-  ]);
+  const result = await captureExecutionHostGuestCommand({ profile, executor, env, cwd: workspace.guestDir,
+    args: ['sh', '-lc', GUEST_STACK_PROJECTION_SCRIPT, 'sh', workspace.guestDir, expectedStack] });
+  if (profile.mode === 'ssh-dev-target' && result.exitCode === 255) {
+    throw new Error(`[execution-host] SSH primary ${profile.sshPrimary.targetName} is unreachable; execution refused (no local fallback)`);
+  }
   if (result.exitCode === 3) {
     return { status: 'missing', workspaceId: workspace.id, forwards: [] };
   }
@@ -620,7 +627,7 @@ async function ensureExecutionHostServiceTunnelUnlocked({
   statePath,
 } = {}) {
   const processBoundary = boundary ?? defaultBoundary();
-  const projection = await inspectExecutionHostStackRuntime({ profile, workspaceId: workspace.id, stackName, executor });
+  const projection = await inspectExecutionHostStackRuntime({ profile, workspaceId: workspace.id, stackName, executor, env });
   if (projection.status !== 'ready' || projection.forwards.length === 0) {
     return {
       changed: false,
@@ -650,7 +657,7 @@ async function ensureExecutionHostServiceTunnelUnlocked({
           return { changed: false, status: TUNNEL_TRANSITION_STOPPING, workspaceId: workspace.id, statePath };
         }
       } else {
-        const samePlan = loaded.state.instance === profile.instance
+        const samePlan = loaded.state.instance === executionHostTunnelInstance(profile)
           && loaded.state.workspaceId === workspace.id
           && loaded.state.stackName === projection.stackName
           && loaded.state.marker === marker
@@ -706,7 +713,7 @@ async function ensureExecutionHostServiceTunnelUnlocked({
     }
     await assertPortsUnclaimed(projection.forwards, processBoundary);
     const hostTransport = projection.forwards.every((forward) => forward.transport === 'host');
-    const resolvedSsh = hostTransport ? null : resolveExecutionHostWorkspaceMount(profile, env);
+    const resolvedSsh = hostTransport ? null : await resolveExecutionHostWorkspaceConnection(profile, env);
     const command = hostTransport ? process.execPath : 'ssh';
     const args = hostTransport
       ? [
@@ -723,7 +730,7 @@ async function ensureExecutionHostServiceTunnelUnlocked({
               direction: 'local', listenHost, listenPort, targetHost, targetPort,
             })),
             sshArgs: [
-              '-F', resolvedSsh.sshConfigFile,
+              ...(resolvedSsh.sshConfigFile ? ['-F', resolvedSsh.sshConfigFile] : []),
               '-o', `SetEnv=HAPPIER_STACK_EXECUTION_HOST_TUNNEL=${marker}`,
             ],
           },
@@ -761,7 +768,7 @@ async function ensureExecutionHostServiceTunnelUnlocked({
     }
     const state = {
       version: TUNNEL_STATE_VERSION,
-      instance: profile.instance,
+      instance: executionHostTunnelInstance(profile),
       workspaceId: workspace.id,
       stackName: projection.stackName,
       marker,

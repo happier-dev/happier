@@ -22,8 +22,6 @@ const RELEASE_PACKAGE_FIELDS = Object.freeze({
   channelsProtocol: 'channels_protocol',
 });
 const REUSABLE_CANDIDATE_FIELDS = Object.freeze(['cli', 'stack', 'server']);
-
-const REUSABLE_CANDIDATE_FIELDS = Object.freeze(['cli', 'stack', 'server']);
 const CONTROL_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
 /** @param {unknown} value @param {string} name */
@@ -211,14 +209,6 @@ function main() {
   };
   const repoRoot = path.resolve(String(values['repo-root'] ?? '').trim() || process.cwd());
   const serverRunnerDir = String(values['server-runner-dir'] ?? '').trim() || 'packages/relay-server';
-  const { allocationRequested, reusedVersions } = resolveNpmVersionSources({
-    requested,
-    suppliedVersions: {
-      cli: String(values['cli-version'] ?? ''),
-      stack: String(values['stack-version'] ?? ''),
-      server: String(values['server-version'] ?? ''),
-    },
-  });
   // Versions already admitted by the release plan are consumed as-is; only the
   // remaining selections allocate from published release state. A supplied
   // version that is no longer valid refuses downstream at the rolling

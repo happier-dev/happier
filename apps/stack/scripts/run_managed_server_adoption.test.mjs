@@ -1,17 +1,95 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveServerReadyTimeoutMs } from './utils/server/server.mjs';
+import { createTempFixture } from './testkit/core/temp_fixture.mjs';
+import { spawnDaemonLikeProcess, killDetachedProcessGroup } from './testkit/core/spawn_daemon_like_process.mjs';
+import { resolvePreferredStackDaemonStatePaths } from './utils/auth/credentials_paths.mjs';
+import { getDaemonEnv, checkDaemonStatePingAware } from './daemon.mjs';
+import { buildStubHappierServerSetSource } from './testkit/core/stub_happier_cli_server_set.mjs';
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const packageRoot = dirname(scriptsDir);
 const repoRoot = dirname(dirname(packageRoot));
 const runScript = join(packageRoot, 'scripts', 'run.mjs');
 const runServerReadyTimeoutMs = resolveServerReadyTimeoutMs();
+
+test('source runner recovery adopts a healthy daemon from its frozen selection without stopping or rebuilding it', async (t) => {
+  const fixture = await createTempFixture(t, {prefix:'hstack-source-daemon-adoption-'});
+  const stackName = 'source-recovery';
+  const baseDir = fixture.path('stacks', stackName);
+  const cliHomeDir = join(baseDir, 'cli');
+  const runtimeStatePath = join(baseDir, 'stack.runtime.json');
+  const fakeRepo = fixture.path('moving-repo');
+  await createFakeMonorepo(fakeRepo);
+  const movingCli = join(fakeRepo, 'apps/cli');
+  const locators = join(movingCli, 'src/plugins/projection/registry/sources');
+  await mkdir(locators, {recursive:true});
+  await mkdir(join(movingCli, 'node_modules'), {recursive:true});
+  await symlink(dirname(createRequire(import.meta.url).resolve('esbuild/package.json')), join(movingCli, 'node_modules/esbuild'), process.platform === 'win32' ? 'junction' : 'dir');
+  await writeFile(join(movingCli, 'tsconfig.json'), '{}');
+  await writeFile(join(movingCli, 'package.json'), JSON.stringify({name:'@happier-dev/cli',type:'module',exports:{}}));
+  await writeFile(join(locators, 'generatedBundledPluginManifests.ts'), 'export const BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS=[];');
+  await writeFile(join(movingCli, 'src/index.ts'), 'export const movingSource = true;');
+  // The selected CLI is an external executable boundary; host selection,
+  // ping, ownership publication and daemon lifecycle logic remain real.
+  const bundleDir = fixture.path('stacks/source-bundles/bundle-frozen');
+  const cliDir = join(bundleDir, 'apps/cli');
+  const entrypoint = join(cliDir, 'src/index.mjs');
+  const stopMarker = fixture.path('unexpected-stop');
+  await mkdir(dirname(entrypoint), {recursive:true});
+  await mkdir(join(baseDir, 'source-runtime'), {recursive:true});
+  await mkdir(cliHomeDir, {recursive:true});
+  await writeFile(join(cliDir, 'package.json'), '{}');
+  await writeFile(entrypoint, `import {writeFileSync} from 'node:fs';
+    const args=process.argv.slice(2);
+    ${buildStubHappierServerSetSource()}
+    if(args[0]==='daemon' && args[1]==='stop') writeFileSync(${JSON.stringify(stopMarker)},'stopped');
+  `);
+  await writeFile(join(bundleDir, 'source-bundle.json'), JSON.stringify({identity:'frozen-identity', entrypoint, runtimeDir:cliDir, cliDir, env:{}, args:[]}));
+  await writeFile(join(baseDir, 'source-runtime/selected-daemon.json'), JSON.stringify({entrypoint}));
+  await writeFile(join(cliHomeDir, 'access.key'), 'dummy\n');
+  const health = await spawnStackOwnedHealthServer({stackName, envPath:join(baseDir, 'env')});
+  const serverUrl = `http://127.0.0.1:${health.port}`;
+  const env = {...process.env, CI:'1', HAPPIER_STACK_STACK:stackName,
+    HAPPIER_STACK_STORAGE_DIR:fixture.path('stacks'), HAPPIER_STACK_REPO_DIR:fakeRepo,
+    HAPPIER_STACK_ENV_FILE:join(baseDir,'env'), HAPPIER_STACK_RUNTIME_STATE_PATH:runtimeStatePath,
+    HAPPIER_STACK_CLI_HOME_DIR:cliHomeDir, HAPPIER_DEV_TARGET_EXECUTION:'1',
+    HAPPIER_STACK_AUTO_AUTH_SEED:'0', HAPPIER_STACK_MIGRATE_CREDENTIALS:'0',
+    HAPPIER_STACK_TAILSCALE_SERVE:'0', HAPPIER_STACK_SYNC_BUNDLED_WORKSPACES:'0',
+    HAPPIER_STACK_SKIP_REFRESH_DEPS:'1', HAPPIER_STACK_SERVER_COMPONENT:'happier-server-light'};
+  const daemonEnv = getDaemonEnv({baseEnv:env, cliHomeDir, internalServerUrl:serverUrl, publicServerUrl:serverUrl, stackName});
+  const {statePath} = resolvePreferredStackDaemonStatePaths({cliHomeDir, serverUrl, env:daemonEnv});
+  const daemon = spawnDaemonLikeProcess({cliHomeDir, statePaths:[statePath], internalServerUrl:serverUrl, publicServerUrl:serverUrl, env:daemonEnv});
+  let runner;
+  t.after(async () => { await stopProcess(runner); killDetachedProcessGroup(daemon.pid); await stopProcess(health.child); });
+  const daemonReadyDeadline = Date.now() + runServerReadyTimeoutMs;
+  while ((await checkDaemonStatePingAware(cliHomeDir, {serverUrl,env:daemonEnv})).status !== 'running') {
+    assert.ok(daemon.exitCode === null && daemon.signalCode === null, 'daemon fixture exited before readiness');
+    assert.ok(Date.now() < daemonReadyDeadline, 'daemon fixture did not become ready within the harness readiness deadline');
+    await new Promise(resolve => setTimeout(resolve,25));
+  }
+  await writeFile(runtimeStatePath, JSON.stringify({stackName, ownerPid:null, sourceRuntimeIdentities:{daemon:{selected:'frozen-identity',loaded:'frozen-identity'}},
+    sourceRuntimeLaunch:{entrypoint,cliDir,env:{}}, processes:{daemonPid:daemon.pid,daemonPids:[daemon.pid]}}));
+  runner = spawn(process.execPath, [runScript, '--runtime=source', '--reuse-source-runtime', '--restart', '--no-dev-targets', '--no-server', `--server-url=${serverUrl}`, '--no-ui', '--no-browser'], {cwd:repoRoot, env, stdio:['ignore','pipe','pipe'], detached:true});
+  let output = '';
+  runner.stdout.on('data', data => { output += String(data); });
+  runner.stderr.on('data', data => { output += String(data); });
+  await waitForOutput(() => output + (existsSync(stopMarker) ? '\nunexpected-stop' : ''), /unexpected-stop|keeping existing daemon|daemon already running/i,
+    runServerReadyTimeoutMs, () => runner.exitCode !== null || runner.signalCode !== null);
+  await assert.rejects(readFile(stopMarker), {code:'ENOENT'}, 'a healthy frozen daemon must not receive stop during runner recovery');
+  const state = JSON.parse(await readFile(runtimeStatePath,'utf8'));
+  assert.equal(state.ownerPid, runner.pid);
+  assert.equal(state.processes.daemonPid, daemon.pid);
+  assert.deepEqual(state.sourceRuntimeIdentities.daemon, {selected:'frozen-identity',loaded:'frozen-identity'});
+  assert.equal((await checkDaemonStatePingAware(cliHomeDir,{serverUrl,env:daemonEnv})).status,'running');
+});
 
 async function createFakeMonorepo(rootDir) {
   await mkdir(join(rootDir, 'node_modules'), { recursive: true });
@@ -88,11 +166,12 @@ async function stopProcess(child) {
   child.stderr?.destroy();
 }
 
-async function waitForOutput(getOutput, pattern, timeoutMs = runServerReadyTimeoutMs) {
+async function waitForOutput(getOutput, pattern, timeoutMs = runServerReadyTimeoutMs, isStopped = () => false) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const output = getOutput();
     if (pattern.test(output)) return output;
+    if (isStopped()) throw new Error(`fixture process exited before ${pattern}:\n${output}`);
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   throw new Error(`timed out waiting for ${pattern}:\n${getOutput()}`);

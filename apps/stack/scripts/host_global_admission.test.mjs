@@ -1,11 +1,47 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { spawn, spawnSync } from 'node:child_process';
-import { access, mkdir, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 import { createTempFixture } from './testkit/core/temp_fixture.mjs';
 import { writeFakeBin } from './testkit/core/fake_bin_harness.mjs';
 import { installNativeAdmissionFixture } from './testkit/core/native_admission_fixture.mjs';
+
+test('nested package admission preserves its live parent and ignores incomplete retired owner records', { skip: process.platform !== 'linux' }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'host-global-nested-package-' });
+  const { launcher, admissionRoot } = await installNativeAdmissionFixture({ root: fixture.root });
+  await mkdir(`${admissionRoot}/owners/99999999-1`, { recursive: true });
+  await writeFile(`${admissionRoot}/owners/99999999-1/disk`, 'retired field\n');
+  writeFakeBin({ root: fixture.root, name: 'awk', content: `#!/bin/sh
+case "$*" in
+  */proc/meminfo*) printf '9437184 26676708\\n' ;;
+  *) exec /usr/bin/awk "$@" ;;
+esac
+` });
+  writeFakeBin({ root: fixture.root, name: 'systemctl', content: '#!/bin/sh\nexit 1\n' });
+  const sanitizedChild = fixture.path('sanitized-child.mjs');
+  await writeFile(sanitizedChild, `import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { sanitizeStackTestRunnerEnv } from ${JSON.stringify(new URL('./utils/test/test_env.mjs', import.meta.url).href)};
+const child = spawnSync('/bin/sh', [process.argv[2], '--heavyweight-admission', '--class=package-dist', '--machine=worker', '--no-wait', '--', '/usr/bin/true'], { encoding: 'utf8', env: sanitizeStackTestRunnerEnv(process.env) });
+assert.equal(child.status, 0, child.stderr);
+`);
+  const result = spawnSync('/bin/sh', [launcher, '--heavyweight-admission', '--class=validation', '--machine=worker', '--no-wait', '--',
+    '/bin/sh', '-eu', '-c', `
+    owner="$HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT/owners/$(printf '%s' "$HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN" | tr : -)"
+    before=$(cat "$owner/process")
+    "$1" --heavyweight-admission --class=package-dist --machine=worker --no-wait -- /usr/bin/true
+    "$3" "$4" "$1"
+    [ "$before" = "$(cat "$owner/process")" ]
+    printf '%s' "$before" > "$2"
+    `, 'nested-package', launcher, fixture.path('parent'), process.execPath, sanitizedChild], {
+    encoding: 'utf8', env: { ...process.env, PATH: `${fixture.path('bin')}:/usr/bin:/bin`,
+      HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN: '', HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT: '', HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE: '' },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(await readFile(fixture.path('parent'), 'utf8'), /^[0-9]+ [0-9]+$/);
+  assert.doesNotMatch(result.stderr, /cannot open|insufficient memory|inherited owner/);
+});
 
 test('private mirrors, caller roots and machine aliases share the worker host admission', { skip: process.platform !== 'linux' }, async t => {
   const fixture = await createTempFixture(t, { prefix: 'host-global-admission-' });

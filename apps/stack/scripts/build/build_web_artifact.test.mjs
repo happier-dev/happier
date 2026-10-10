@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 
 import {
   buildWebArtifact,
@@ -65,15 +66,12 @@ test('latest component lookup selects only complete artifacts for the requested 
   assert.equal((await resolveLatestComponentArtifact({ stackBaseDir: root, component: 'web', target })).manifest.artifactFingerprint, 'matching');
 });
 
-test('web publication records the requested consumer target while exporting on the worker', async (t) => {
+test('web publication compiles authored plugin inputs privately and records the consumer target', async (t) => {
   const root = createTempDir('stack-web-target-');
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  for (const app of ['ui', 'cli', 'server']) {
-    mkdirSync(join(root, 'apps', app), { recursive: true });
-    writeFileSync(join(root, 'apps', app, 'package.json'), JSON.stringify({ name: `@happier-dev/${app}` }));
-  }
+  const repoDir = fileURLToPath(new URL('../../../../', import.meta.url));
   const priorRepoDir = process.env.HAPPIER_STACK_REPO_DIR;
-  process.env.HAPPIER_STACK_REPO_DIR = root;
+  process.env.HAPPIER_STACK_REPO_DIR = repoDir;
   t.after(() => {
     if (priorRepoDir === undefined) delete process.env.HAPPIER_STACK_REPO_DIR;
     else process.env.HAPPIER_STACK_REPO_DIR = priorRepoDir;
@@ -81,14 +79,19 @@ test('web publication records the requested consumer target while exporting on t
   const target = { platform: 'linux', arch: process.arch === 'arm64' ? 'x64' : 'arm64' };
   const artifactDir = join(root, 'artifacts', 'web', 'target-web');
   const result = await buildWebArtifact({
-    rootDir: root, artifactDir, artifactFingerprint: 'target-web', target,
-    sourceMetadata: { repoDir: root, sourceFingerprint: 'source', builtAt: '2026-10-05T00:00:00Z' },
-    env: { HAPPIER_STACK_HOME_DIR: join(root, 'home') },
+    rootDir: repoDir, artifactDir, artifactFingerprint: 'target-web', target,
+    sourceMetadata: { repoDir, sourceFingerprint: 'source', builtAt: '2026-10-05T00:00:00Z' },
+    env: { ...process.env, HAPPIER_STACK_HOME_DIR: join(root, 'home') },
     // Package installation/postinstall and Expo are external tool boundaries;
     // export staging, payload validation, atomic publication and manifests stay real.
     ensureDepsInstalledImpl: async (_dir, _label, { onDependenciesReady }) => await onDependenciesReady(),
     runUiPostinstallImpl: () => {},
-    expoExecImpl: async ({ args }) => {
+    expoExecImpl: async ({ args, env }) => {
+      assert.equal(typeof env.HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY, 'string', 'native export must consume its private authored-source inventory');
+      const inventory = readFileSync(env.HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY, 'utf8');
+      assert.match(inventory, /happier\.channels/);
+      assert.ok(env.HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY.startsWith(root));
+      assert.equal(env.EXPO_PUBLIC_HAPPIER_SERVER_URL, '');
       const output = args[args.indexOf('--output-dir') + 1];
       writeFileSync(join(output, 'index.html'), '<script src="./chunk.js"></script>');
       writeFileSync(join(output, 'chunk.js'), 'browser payload');
@@ -97,6 +100,7 @@ test('web publication records the requested consumer target while exporting on t
   assert.deepEqual(result.manifest.target, target);
   assert.deepEqual(JSON.parse(readFileSync(join(artifactDir, 'manifest.json'), 'utf8')).target, target);
   assert.equal(readFileSync(join(artifactDir, 'payload', 'chunk.js'), 'utf8'), 'browser payload');
+  assert.deepEqual(readdirSync(artifactDir).sort(), ['manifest.json', 'payload']);
 });
 
 test('web artifact dependencies run the canonical UI postinstall through the dependency-ready callback', async () => {

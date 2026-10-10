@@ -48,7 +48,9 @@ test('direct Stack artifact entry delegates runtime locking to the canonical art
   child.stdout.on('data', chunk => { stdout += String(chunk); });
   child.stderr.on('data', chunk => {
     stderr += String(chunk);
-    if (stderr.includes('waiting for runtime publication flight lock') && stderr.includes(lockPath)) observedWait();
+    // Observe the owning lock path, not an obsolete diagnostic label. The
+    // canonical admission now reports runtime publication without "flight".
+    if (stderr.includes(lockPath)) observedWait();
   });
   const completion = once(child, 'exit').then(([code]) => ({ code, stdout, stderr }));
   t.after(async () => {

@@ -27,12 +27,16 @@ function inspectTree(path, countedInodes = new Set()) {
   return { info, newestMtimeMs, bytes, identities };
 }
 
-function processReferences(procRoot) {
+function processReferences(procRoot, ownerUid) {
   const paths = [], identities = new Set();
   for (const pid of readdirSync(procRoot).filter(name => /^\d+$/.test(name))) {
     const processRoot = join(procRoot, pid);
     try {
       const status = readFileSync(join(processRoot, 'status'), 'utf8');
+      // Procfs inode ownership changes with dumpability; status owns actual
+      // process UIDs. Skip only known foreign users, not unknown visibility.
+      const uids = /^Uid:[ \t]+(\d+)[ \t]+(\d+)[ \t]+(\d+)[ \t]+(\d+)[ \t]*$/m.exec(status);
+      if (uids && !uids.slice(1).some(uid => Number(uid) === ownerUid)) continue;
       if (/^State:\s+Z/m.test(status) || /^Kthread:\s+1/m.test(status)) continue;
       const addPath = path => {
         paths.push(path.replace(/ \(deleted\)$/, ''));
@@ -100,7 +104,7 @@ export function reapHistoricalTempRoots(tempParent, procRoot = '/proc', {
   }
   if (!candidates.length) return result;
   let references;
-  try { references = processReferences(procRoot); }
+  try { references = processReferences(procRoot, ownerUid); }
   catch (error) {
     result.retainedRoots += candidates.length;
     result.observationUnavailable = error.message;
@@ -114,7 +118,7 @@ export function reapHistoricalTempRoots(tempParent, procRoot = '/proc', {
       // replacement inode never inherits this candidate's deletion authority.
       const current = inspectTree(directory);
       if (identity(current.info) !== identity(tree.info) || current.newestMtimeMs >= cutoff
-        || hasUser(directory, current, processReferences(procRoot))) {
+        || hasUser(directory, current, processReferences(procRoot, ownerUid))) {
         result.retainedRoots++;
         continue;
       }

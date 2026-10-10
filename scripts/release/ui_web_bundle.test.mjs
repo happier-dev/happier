@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { brotliDecompressSync, gunzipSync } from 'node:zlib';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { createUiWebReleaseArtifacts } from '../pipeline/release/lib/ui-web-bundle.mjs';
-import { precompressUiWebAssets } from '../pipeline/release/lib/precompress-ui-web-assets.mjs';
+import { precompressUiWebAssets } from '../../apps/stack/scripts/build/precompress_ui_web_assets.mjs';
 
 process.env.LC_ALL = 'C';
 process.env.LANG = 'C';
@@ -155,5 +156,18 @@ test('precompressUiWebAssets can generate gzip-only sidecars for nginx static se
     await assert.rejects(() => stat(join(root, 'main.js.br')), /ENOENT/);
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('web precompression includes small HTML and refreshes sidecars when original bytes change', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-ui-web-precompress-html-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const path = join(root, 'index.html');
+  for (const word of ['first', 'second']) {
+    const html = `<html><body>${word.repeat(100)}</body></html>`;
+    await writeFile(path, html);
+    await precompressUiWebAssets({ dir: root });
+    assert.equal(brotliDecompressSync(await readFile(`${path}.br`)).toString(), html);
+    assert.equal(gunzipSync(await readFile(`${path}.gz`)).toString(), html);
   }
 });

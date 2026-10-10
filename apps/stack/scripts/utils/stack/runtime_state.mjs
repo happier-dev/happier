@@ -191,6 +191,16 @@ function observeRuntimeProcessInstance(pid, previous = null) {
   return null;
 }
 
+function readStackRuntimeProcessMembership(runtimeState) {
+  const processes = { ...(isPlainObject(runtimeState?.processes) ? runtimeState.processes : {}) };
+  // Target service state belongs to the remote host, but its SSH forward is a
+  // controller-local child and must survive in stop custody until it is retired.
+  for (const [targetName, state] of Object.entries(isPlainObject(runtimeState?.remoteTargets) ? runtimeState.remoteTargets : {})) {
+    processes[`remoteTargets.${targetName}.forwardPid`] = state?.forwardPid ?? null;
+  }
+  return processes;
+}
+
 function reconcileStackRuntimeProcessInstances(runtimeState) {
   const next = { ...(runtimeState ?? {}) };
   const previous = isPlainObject(runtimeState?.processInstances)
@@ -198,7 +208,7 @@ function reconcileStackRuntimeProcessInstances(runtimeState) {
     : {};
   const owner = observeRuntimeProcessInstance(runtimeState?.ownerPid, previous.owner);
   const processInstances = {};
-  const processes = isPlainObject(runtimeState?.processes) ? runtimeState.processes : {};
+  const processes = readStackRuntimeProcessMembership(runtimeState);
   const previousProcesses = isPlainObject(previous.processes) ? previous.processes : {};
 
   for (const [key, value] of Object.entries(processes)) {
@@ -317,8 +327,7 @@ export function createStackDevProxyRuntimePatch({
 }
 
 export function getStackRuntimeProcessEntries(runtimeState) {
-  const processes = runtimeState?.processes;
-  if (!isPlainObject(processes)) return [];
+  const processes = readStackRuntimeProcessMembership(runtimeState);
 
   const entries = [];
   for (const [rawKey, value] of Object.entries(processes)) {
@@ -425,6 +434,7 @@ export async function isStackRuntimeProcessTrusted(
 
 export async function hasTrustedStackRuntimeProcesses(runtimeState, context = {}, options = {}) {
   for (const { key, pid } of getStackRuntimeProcessEntries(runtimeState)) {
+    if (options.preserveDaemon === true && (key === 'daemonPid' || key === 'daemonPids')) continue;
     // eslint-disable-next-line no-await-in-loop
     if (await isStackRuntimeProcessTrusted(pid, { ...context, key }, options)) {
       return true;
@@ -581,7 +591,7 @@ async function assertNoDifferentLiveRuntimeOwner(existing, { stackName, ownerPid
 
 async function recordStackRuntimeStartUnlocked(
   statePath,
-  { stackName, script, ephemeral, ownerPid, ports, ...rest } = {},
+  { stackName, script, ephemeral, ownerPid, ports, adoptedSourceRoles = [], ...rest } = {},
   options = {},
 ) {
   const wallClockMs = Date.now();
@@ -624,6 +634,26 @@ async function recordStackRuntimeStartUnlocked(
     stopRequest: null,
     serverLifecycle: createStackServerLifecycleProjection({ phase: 'idle' }),
   });
+  // Replacement admits new emitted code; adoption keeps the execution that is
+  // actually running, including the CLI launch required to retire that daemon.
+  next.sourceRuntimeIdentities = isPlainObject(restWithoutProcesses.sourceRuntimeIdentities)
+    ? { ...restWithoutProcesses.sourceRuntimeIdentities }
+    : restWithoutProcesses.sourceRuntimeIdentities ?? null;
+  next.sourceRuntimeLaunch = restWithoutProcesses.sourceRuntimeLaunch ?? null;
+  for (const role of ['daemon', 'server']) {
+    if (!adoptedSourceRoles.includes(role)) continue;
+    if (isPlainObject(next.sourceRuntimeIdentities)) {
+      delete next.sourceRuntimeIdentities[role];
+      if (existing.sourceRuntimeIdentities?.[role]) {
+        next.sourceRuntimeIdentities[role] = existing.sourceRuntimeIdentities[role];
+      }
+    }
+    if (role === 'daemon') next.sourceRuntimeLaunch = existing.sourceRuntimeLaunch ?? null;
+    if (role === 'server') {
+      next.sourceUi = existing.sourceUi ?? null;
+      next.sourceUiLaunch = existing.sourceUiLaunch ?? null;
+    }
+  }
   return await writeStackRuntimeStateFileUnlocked(statePath, next);
 }
 
@@ -986,7 +1016,7 @@ export async function withStackRuntimeStopTransaction(statePath, input = {}, fn)
 
 function createStackRuntimeStopSnapshot(runtimeState) {
   if (!runtimeState) return null;
-  const processes = isPlainObject(runtimeState.processes) ? runtimeState.processes : {};
+  const processes = readStackRuntimeProcessMembership(runtimeState);
   const processMembership = {};
   for (const key of Object.keys(processes).sort()) {
     if (!/(?:Pid|Pids)$/.test(key)) continue;
@@ -1045,6 +1075,21 @@ export async function captureStackRuntimeStopSnapshot(statePath) {
   return await withStackRuntimeStateMutationLock(statePath, async () => createStackRuntimeStopSnapshot(await readStackRuntimeStateFile(statePath)));
 }
 
+export function getStackRuntimePendingRemoteTargets(runtimeState) {
+  const targets = new Map(Object.entries(isPlainObject(runtimeState?.remoteTargets) ? runtimeState.remoteTargets : {}));
+  // Placement is published before supervisor preparation. A failure before its
+  // first target projection must not erase custody of the prior native runtime.
+  for (const service of ['server', 'expo', 'daemon']) {
+    const name = runtimeState?.placement?.[service];
+    if (typeof name !== 'string' || !name.trim() || ['local', 'external', 'disabled', 'borrowed'].includes(name)) continue;
+    const state = targets.get(name) ?? {};
+    targets.set(name, { ...state, services: { ...state.services, [service]: true } });
+  }
+  return [...targets]
+    .filter(([, state]) => Object.entries(isPlainObject(state?.services) ? state.services : {})
+      .some(([service, enabled]) => enabled === true && (state.serviceStatus?.[service] ?? state.status) !== 'stopped'));
+}
+
 async function finalizeStackRuntimeStopUnlocked(statePath, {
   expected,
   preserveDaemon = false,
@@ -1060,15 +1105,31 @@ async function finalizeStackRuntimeStopUnlocked(statePath, {
     return { finalized: false, reason: 'external_stop_in_progress', runtimeState: current };
   }
   if (!expected || !stackRuntimeStopSnapshotMatches(current, expected)) return { finalized: false, reason: 'successor_state', runtimeState: current };
+  const pendingRemoteTargets = getStackRuntimePendingRemoteTargets(current);
+  if (pendingRemoteTargets.some(([, state]) => state.status !== 'retirement-pending')) {
+    return { finalized: false, reason: 'remote_cleanup_incomplete', runtimeState: current };
+  }
+  const remoteTargets = Object.fromEntries(pendingRemoteTargets.map(([name, state]) => [name, { ...state, forwardPid: null }]));
   if (preserveDaemon) {
     const daemonPid = normalizeRuntimePid(current?.processes?.daemonPid);
     const daemonPids = Array.from(new Set((Array.isArray(current?.processes?.daemonPids) ? current.processes.daemonPids : []).map(normalizeRuntimePid).filter(Boolean)));
     if (daemonPid && !daemonPids.includes(daemonPid)) daemonPids.push(daemonPid);
     if (daemonPids.length > 0) {
-      const next = { ...current, ownerPid: null, processes: { daemonPid: daemonPid ?? daemonPids.at(-1), daemonPids }, stopRequest: null, updatedAt: new Date().toISOString() };
+      const preservedTargets = Object.fromEntries(Object.entries({ ...current.remoteTargets, ...remoteTargets })
+        .map(([name, state]) => [name, { ...state, forwardPid: null }]));
+      const next = { ...current, ownerPid: null, processes: { daemonPid: daemonPid ?? daemonPids.at(-1), daemonPids }, remoteTargets: preservedTargets, stopRequest: null, updatedAt: new Date().toISOString() };
       await writeStackRuntimeStateFileUnlocked(statePath, next);
       return { finalized: true, reason: 'daemon_preserved', runtimeState: next };
     }
+  }
+  if (pendingRemoteTargets.length > 0) {
+    // Local stop is complete, not remote retirement. Keep only the existing
+    // target custody needed by explicit stop or the next native prior-retirement
+    // step; stale placement/ports must not advertise a running local Stack.
+    const next = { version: current.version ?? 1, stackName: current.stackName, ownerPid: null,
+      processes: {}, remoteTargets, stopRequest: null, updatedAt: new Date().toISOString() };
+    await writeStackRuntimeStateFileUnlocked(statePath, next);
+    return { finalized: true, reason: 'remote_retirement_pending', runtimeState: next };
   }
   try { if (existsSync(statePath)) await unlink(statePath); } catch { /* ignore */ }
   return { finalized: true, reason: 'deleted', runtimeState: null };

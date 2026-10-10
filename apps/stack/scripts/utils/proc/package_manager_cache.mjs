@@ -13,7 +13,7 @@ export function resolvePackageManagerCachePaths(cacheBaseDir) {
 // directory. This is the observed worker layout; unknown layouts/metadata are
 // retained. Lockfile membership, rather than a guessed age/size quota, owns
 // eviction eligibility. Custody remains the only deletion/process-use owner.
-export function pruneWorkerYarnCache({ cacheBaseDir, repositoryDirectories, runtimeBuildRoot, procRoot = '/proc', ownerUid = process.getuid() }) {
+export function pruneWorkerYarnCache({ cacheBaseDir, repositoryDirectories, procRoot = '/proc', ownerUid = process.getuid() }) {
   const retained = reason => {
     console.error(`[preferred-execution] retaining worker Yarn cache: ${reason}`);
     return { reclaimedBytes: 0, reclaimedRoots: 0, retainedRoots: 0, observationUnavailable: reason };
@@ -22,19 +22,6 @@ export function pruneWorkerYarnCache({ cacheBaseDir, repositoryDirectories, runt
   const repositories = new Set(repositoryDirectories);
   const resolutions = new Set();
   try {
-    if (runtimeBuildRoot) {
-      for (const stack of readdirSync(runtimeBuildRoot, { withFileTypes: true })) {
-        if (!stack.isDirectory()) continue;
-        const stackDir = join(runtimeBuildRoot, stack.name);
-        for (const entry of readdirSync(stackDir, { withFileTypes: true })) {
-          if (!entry.isDirectory()) continue;
-          const candidate = entry.name === 'repo' ? join(stackDir, entry.name) : join(stackDir, entry.name, 'repo');
-          try {
-            if (lstatSync(join(candidate, 'yarn.lock')).isFile()) repositories.add(candidate);
-          } catch (error) { if (error.code !== 'ENOENT') throw error; }
-        }
-      }
-    }
     for (const repo of repositories) {
       const lock = readFileSync(join(repo, 'yarn.lock'), 'utf8');
       if (!/^# yarn lockfile v1\s*$/m.test(lock)) return retained('unsupported protected lockfile');

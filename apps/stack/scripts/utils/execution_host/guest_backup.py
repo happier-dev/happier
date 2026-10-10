@@ -18,6 +18,7 @@ import stat
 import sys
 import tarfile
 import tempfile
+from datetime import datetime, timezone
 
 
 ARCHIVE_FORMAT = 2
@@ -318,7 +319,7 @@ def validate_archive_entries(bundle: tarfile.TarFile, entries: list[dict[str, ob
 
 
 def sqlite_health(path: Path) -> None:
-    connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=30)
+    connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=30)
     try:
         integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
         foreign_key_violations = connection.execute("PRAGMA foreign_key_check").fetchall()
@@ -328,6 +329,111 @@ def sqlite_health(path: Path) -> None:
         raise RuntimeError("SQLite snapshot integrity check failed")
     if foreign_key_violations:
         raise RuntimeError("SQLite snapshot foreign-key check failed")
+
+
+def backup_sqlite(source_path: Path, snapshot_path: Path) -> None:
+    """The same online-backup boundary serves Stack and Agent SQLite state."""
+    source = sqlite3.connect(f"{source_path.resolve().as_uri()}?mode=ro", uri=True, timeout=30)
+    snapshot = sqlite3.connect(snapshot_path)
+    try:
+        source.backup(snapshot)
+    finally:
+        snapshot.close()
+        source.close()
+    os.chmod(snapshot_path, 0o600)
+    sqlite_health(snapshot_path)
+
+
+AGENT_ROOTS = (".codex", ".claude", ".happier")
+AGENT_DISPOSABLE_DIRS = {"materialized", "isolation", "tmp", "cache", "caches", "node_modules", "server-light"}
+
+
+def require_real_home(home: Path) -> Path:
+    if not home.is_absolute() or home == Path("/") or not home.is_dir():
+        raise RuntimeError("agent capture requires an existing absolute home directory")
+    if home.resolve() != home:
+        raise RuntimeError("agent capture home must not contain symlinks")
+    return home
+
+
+def capture_agent_databases(home: Path) -> dict[str, object]:
+    home = require_real_home(home)
+    stage = home / ".happier-stack" / "standby-sqlite"
+    for parent in (stage.parent, stage):
+        if parent.is_symlink():
+            raise RuntimeError("agent snapshot staging must not contain symlinks")
+        parent.mkdir(mode=0o700, exist_ok=True)
+        os.chmod(parent, 0o700)
+    entries: list[dict[str, object]] = []
+    for root_name in AGENT_ROOTS:
+        root = home / root_name
+        if root.is_symlink():
+            raise RuntimeError("agent capture root must not be a symlink")
+        if not root.exists():
+            continue
+        for directory, subdirs, files in os.walk(root, followlinks=False):
+            subdirs[:] = sorted(name for name in subdirs if name not in AGENT_DISPOSABLE_DIRS
+                               and not (Path(directory) / name).is_symlink())
+            for name in sorted(files):
+                if Path(name).suffix.lower() not in (".sqlite", ".sqlite3", ".db"):
+                    continue
+                source_path = Path(directory) / name
+                if source_path.is_symlink():
+                    raise RuntimeError("agent database must not be a symlink")
+                relative_path = source_path.relative_to(home)
+                snapshot_path = stage / (str(relative_path) + ".snapshot")
+                parent = stage
+                for part in relative_path.parts[:-1]:
+                    parent = parent / part
+                    if parent.is_symlink():
+                        raise RuntimeError("agent snapshot destination must not contain symlinks")
+                    parent.mkdir(mode=0o700, exist_ok=True)
+                    os.chmod(parent, 0o700)
+                fd, temporary = tempfile.mkstemp(prefix=".capture-", dir=snapshot_path.parent)
+                os.close(fd)
+                try:
+                    backup_sqlite(source_path, Path(temporary))
+                    os.replace(temporary, snapshot_path)
+                finally:
+                    Path(temporary).unlink(missing_ok=True)
+                entries.append({"path": relative_path.as_posix(), "sha256": file_sha256(snapshot_path),
+                                "bytes": snapshot_path.stat().st_size})
+    report: dict[str, object] = {"format": 1, "capturedAt": datetime.now(timezone.utc).isoformat(),
+                               "entries": entries, "paths": [entry["path"] for entry in entries]}
+    fd, temporary = tempfile.mkstemp(prefix=".capture-manifest-", dir=stage)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as output:
+            json.dump(report, output, sort_keys=True)
+            output.write("\n")
+        os.replace(temporary, stage / "manifest.json")
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+    return report
+
+
+def inspect_home() -> dict[str, object]:
+    # SSH-primary enrollment is POSIX-only; don't make other backup actions
+    # depend on this platform module when the helper is used on Windows.
+    import pwd
+    home = Path.home().resolve()
+    required = 0
+    for directory, subdirs, files in os.walk(home, followlinks=False):
+        relative = Path(directory).relative_to(home)
+        excluded = {"node_modules", ".turbo", ".next", ".expo", ".cache"}
+        if relative.parts and relative.parts[0] in AGENT_ROOTS:
+            excluded |= AGENT_DISPOSABLE_DIRS
+        if relative == Path(".happier-stack"):
+            excluded.add("lima")
+        # Count authored build/coverage/dist source too. Including some ignored
+        # outputs is conservative; omitting portable source understates capacity.
+        subdirs[:] = [name for name in subdirs if name not in excluded
+                     and not (Path(directory) / name).is_symlink()]
+        for name in files:
+            path = Path(directory) / name
+            if not path.is_symlink() and path.is_file():
+                required += path.stat().st_size
+    return {"homeDir": str(home), "user": pwd.getpwuid(os.getuid()).pw_name,
+            "requiredBytes": required, "availableBytes": shutil.disk_usage(home).free}
 
 
 def inspect_archive(archive_path: Path) -> tuple[dict[str, object], list[dict[str, object]], dict[str, object]]:
@@ -430,19 +536,7 @@ def create_backup(stack_name: str) -> None:
         with tempfile.TemporaryDirectory(prefix="happier-dev-vm-snapshot-") as staging_raw:
             staging = Path(staging_raw)
             snapshot_path = staging / "happier-server-light.sqlite"
-            source = sqlite3.connect(f"file:{database_path}?mode=ro", uri=True, timeout=30)
-            snapshot = sqlite3.connect(snapshot_path)
-            try:
-                source.backup(snapshot)
-                integrity = snapshot.execute("PRAGMA integrity_check").fetchone()[0]
-                foreign_key_violations = snapshot.execute("PRAGMA foreign_key_check").fetchall()
-            finally:
-                snapshot.close()
-                source.close()
-            if integrity != "ok":
-                raise RuntimeError("SQLite snapshot integrity check failed")
-            if foreign_key_violations:
-                raise RuntimeError("SQLite snapshot foreign-key check failed")
+            backup_sqlite(database_path, snapshot_path)
 
             snapshot_entry = archive_entry(snapshot_path, DATABASE_ARCHIVE_PATH)
             entries = [snapshot_entry, *source_entries]
@@ -493,9 +587,27 @@ def create_backup(stack_name: str) -> None:
 
 
 def main() -> None:
+    if len(sys.argv) == 2 and sys.argv[1] == "inspect-home":
+        print(json.dumps(inspect_home(), sort_keys=True))
+        return
+    if len(sys.argv) == 2 and sys.argv[1] == "capture-status":
+        manifest = Path.home() / ".happier-stack" / "standby-sqlite" / "manifest.json"
+        if not manifest.exists():
+            print(json.dumps({"capturedAt": None, "agentSqliteCount": None}))
+            return
+        if manifest.is_symlink():
+            raise RuntimeError("agent capture manifest must not be a symlink")
+        captured = json.loads(manifest.read_text(encoding="utf-8"))
+        if captured.get("format") != 1 or not isinstance(captured.get("entries"), list):
+            raise RuntimeError("agent capture manifest is invalid")
+        print(json.dumps({"capturedAt": captured.get("capturedAt"), "agentSqliteCount": len(captured["entries"])}))
+        return
     if len(sys.argv) < 3:
         raise RuntimeError("a backup action is required")
     action = sys.argv[1]
+    if action == "capture-agents" and len(sys.argv) == 3:
+        print(json.dumps(capture_agent_databases(Path(sys.argv[2])), sort_keys=True))
+        return
     if action in ("preflight", "backup"):
         if len(sys.argv) != 3 or not STACK_NAME_RE.fullmatch(sys.argv[2]):
             raise RuntimeError("a backup action and safe Stack name are required")

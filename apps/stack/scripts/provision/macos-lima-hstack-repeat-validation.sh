@@ -209,9 +209,10 @@ FAILURE_STAGE="ensure_vm"
 guest_command="$(cat <<'EOF'
 set -euo pipefail
 mkdir -p "$GUEST_CACHE_DIR"
-if [[ ! -x "$GUEST_PROVISION_SCRIPT" || ! -x "$GUEST_SMOKE_SCRIPT" ]]; then
+if [[ ! -x "$GUEST_PROVISION_SCRIPT" || ! -x "$GUEST_SMOKE_SCRIPT" || ! -f "$GUEST_CACHE_DIR/.bun-version" ]]; then
   echo '[lima-repeat] downloading guest scripts...'
   curl -fsSL "$HSTACK_RAW_BASE/scripts/provision/linux-ubuntu-provision.sh" -o "$GUEST_PROVISION_SCRIPT"
+  curl -fsSL "$HSTACK_RAW_BASE/scripts/provision/.bun-version" -o "$GUEST_CACHE_DIR/.bun-version"
   chmod +x "$GUEST_PROVISION_SCRIPT"
   curl -fsSL "$HSTACK_RAW_BASE/scripts/provision/linux-ubuntu-hstack-smoke.sh" -o "$GUEST_SMOKE_SCRIPT"
   chmod +x "$GUEST_SMOKE_SCRIPT"

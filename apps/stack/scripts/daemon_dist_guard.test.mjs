@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 
 import {
+  DEFAULT_STACK_DAEMON_START_VERIFY_TIMEOUT_MS,
   applyDaemonDistClosureRuntimeEnv,
   assertFinalSourceDaemonDistAdmission,
   checkDaemonStatePingAware,
@@ -21,7 +22,7 @@ import {
   stopLocalDaemon,
 } from './daemon.mjs';
 import { writeCliDistBuildManifest } from './utils/cli/cliDistIntegrity.mjs';
-import { recordStackRuntimeStart } from './utils/stack/runtime_state.mjs';
+import { recordStackRuntimeStart, recordStackRuntimeUpdate, readStackRuntimeStateFile } from './utils/stack/runtime_state.mjs';
 import {
   writeStubCliDistBuildManifest,
   writeStubHappierCliFiles,
@@ -872,7 +873,7 @@ assert.deepEqual(remainingLifecycleLocks, [], 'typed admission failure must rele
   assert.equal(result.status, 0, result.stderr || result.stdout);
 });
 
-test('source daemon releases the publication lease during stop and holds it through a paused start', async (t) => {
+test('source daemon holds publication through profile and start but releases it during stop', async (t) => {
   const tmp = await mkdtemp(join(tmpdir(), 'hstack-source-daemon-start-publication-lease-'));
   const { internalServerUrl, publicServerUrl } = await reserveLoopbackServerUrls();
   const cliDir = join(tmp, 'apps', 'cli');
@@ -880,11 +881,13 @@ test('source daemon releases the publication lease during stop and holds it thro
   const eventsPath = join(tmp, 'daemon-events.log');
   const cliBin = await writeDelayedStopStubHappyCli({
     cliDir,
+    profileDelayMs: 500,
     stopDelayMs: 750,
     startDelayMs: 500,
   });
   const lockPath = resolveCliDistBuildLockPath(tmp);
   let startPromise = null;
+  let profilePublisherPromise = null;
   let stopPublisherPromise = null;
   let startPublisherPromise = null;
   let daemonEnv = null;
@@ -953,7 +956,18 @@ test('source daemon releases the publication lease during stop and holds it thro
       assert.fail(`expected daemon ${event} command to begin; observed events=${JSON.stringify(events)}`);
     };
 
+    await waitForEvent('profile');
+    let profilePublisherEntered = false;
+    profilePublisherPromise = withCliDistBuildLock(
+      async () => { profilePublisherEntered = true; },
+      { lockPath, timeoutMs: 10_000, pollIntervalMs: 5 },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 75));
+    assert.equal(profilePublisherEntered, false,
+      'a competing publisher must not remove the runner while profile reconciliation uses it');
     await waitForEvent('stop');
+    await profilePublisherPromise;
+    assert.equal(profilePublisherEntered, true, 'profile completion releases publication before daemon stop');
     let stopPublisherEntered = false;
     stopPublisherPromise = withCliDistBuildLock(
       async () => {
@@ -989,6 +1003,7 @@ test('source daemon releases the publication lease during stop and holds it thro
   } finally {
     shouldShutdown = true;
     await startPromise?.catch(() => {});
+    await profilePublisherPromise?.catch(() => {});
     await stopPublisherPromise?.catch(() => {});
     await startPublisherPromise?.catch(() => {});
     await stopLocalDaemon({
@@ -1580,7 +1595,7 @@ process.exit(0);
   return join(cliBinDir, 'happier.mjs');
 }
 
-async function writeDelayedStopStubHappyCli({ cliDir, stopDelayMs = 250, startDelayMs = 0 }) {
+async function writeDelayedStopStubHappyCli({ cliDir, profileDelayMs = 0, stopDelayMs = 250, startDelayMs = 0 }) {
   const distScript = `
 import { spawn } from 'node:child_process';
 import { appendFileSync, existsSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
@@ -1588,6 +1603,10 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const args = process.argv.slice(2);
+if (args[0] === 'server' && args[1] === 'set' && ${Number(profileDelayMs)} > 0) {
+  appendFileSync(process.env.HAPPIER_TEST_DAEMON_EVENTS_PATH, 'profile\\n', 'utf-8');
+  await delay(${Number(profileDelayMs)});
+}
 ${buildStubHappierServerSetSource()}
 if (args[0] !== 'daemon') process.exit(0);
 const sub = args[1] || '';
@@ -3546,6 +3565,48 @@ test('startLocalDaemonWithAuth accepts a runtime snapshot cli executable without
   }
 });
 
+for (const { matchingLaunch, nativeLauncher } of [
+  { matchingLaunch: true, nativeLauncher: true },
+  { matchingLaunch: true, nativeLauncher: false },
+  { matchingLaunch: false, nativeLauncher: false },
+]) {
+  test(`manual source daemon start attests only its recorded launch (matching=${matchingLaunch}, native=${nativeLauncher})`, async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'hstack-source-daemon-attestation-'));
+    const cliHomeDir = join(tmp, 'stack', 'cli');
+    const { internalServerUrl, publicServerUrl } = await reserveLoopbackServerUrls();
+    const launch = nativeLauncher
+      ? { cliBin: await writeRuntimeSnapshotHappyCli({ snapshotDir: join(tmp, 'bundle') }) }
+      : await writeRuntimeSnapshotHappyCliJsCommand({ snapshotDir: join(tmp, 'bundle') });
+    const cliBin = launch.cliBin;
+    const cliCommand = launch.cliCommand ?? cliBin;
+    const runtimeStatePath = join(tmp, 'stack.runtime.json');
+    const env = buildDaemonDistGuardEnv({ HAPPIER_STACK_CLI_BUILD: '0' });
+    try {
+      await mkdir(cliHomeDir, { recursive: true });
+      await writeFile(join(cliHomeDir, 'access.key'), 'dummy\n');
+      await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }));
+      await recordStackRuntimeStart(runtimeStatePath, { stackName: 'source-attestation', ownerPid: process.pid,
+        sourceRuntimeIdentities: { daemon: { selected: 'prepared-source', loaded: null } },
+        sourceRuntimeLaunch: { entrypoint: matchingLaunch ? cliCommand : join(tmp, 'other-bundle'), cliDir: dirname(cliCommand), env: {} } });
+      const result = await startLocalDaemonWithAuth({ cliBin, cliCommand, cliHomeDir, internalServerUrl, publicServerUrl,
+        runtimeStatePath, env, stackName: 'source-attestation', isShuttingDown: () => false });
+      assert.equal(result.started, true);
+      assert.equal((await readStackRuntimeStateFile(runtimeStatePath)).sourceRuntimeIdentities.daemon.loaded,
+        matchingLaunch ? 'prepared-source' : null);
+      if (matchingLaunch) {
+        await recordStackRuntimeUpdate(runtimeStatePath, { sourceRuntimeIdentities: { daemon: { loaded: null } } });
+        const adopted = await startLocalDaemonWithAuth({ cliBin, cliCommand, cliHomeDir, internalServerUrl, publicServerUrl,
+          runtimeStatePath, env, stackName: 'source-attestation', preserveExistingRunning: true });
+        assert.equal(adopted.started, false);
+        assert.equal((await readStackRuntimeStateFile(runtimeStatePath)).sourceRuntimeIdentities.daemon.loaded, null);
+      }
+    } finally {
+      await stopLocalDaemon({ cliBin, cliCommand, cliHomeDir, internalServerUrl, env });
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+}
+
 test('startLocalDaemonWithAuth rejects runtime snapshot payload changed after build-manifest admission', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-runtime-node-entrypoint-'));
   try {
@@ -3596,6 +3657,7 @@ test('startLocalDaemonWithAuth rejects runtime snapshot payload changed after bu
 
 test('startLocalDaemonWithAuth ordinary runtime adoption replaces closure A with admitted closure B', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-runtime-adoption-mismatch-'));
+  let cleanupDaemon = null;
   try {
     const { internalServerUrl, publicServerUrl } = await reserveLoopbackServerUrls();
     const snapshotDir = join(tmp, 'runtime', 'builds', 'snap-b');
@@ -3631,8 +3693,10 @@ test('startLocalDaemonWithAuth ordinary runtime adoption replaces closure A with
       runtimeBacked: true,
       admittedDistClosureFingerprint,
     });
+    cleanupDaemon = () => stopLocalDaemon({ cliBin, cliCommand: cliBin, cliNodeEntrypoint,
+      internalServerUrl, cliHomeDir, runtimeStatePath, env });
 
-    await start(firstManifest.fingerprint, true);
+    const initialStart = await start(firstManifest.fingerprint, true);
     const firstPid = await readDaemonPid(statePath);
 
     await writeFile(cliNodeEntrypoint, `${await readFile(cliNodeEntrypoint, 'utf-8')}\n// closure B\n`, 'utf-8');
@@ -3648,11 +3712,11 @@ test('startLocalDaemonWithAuth ordinary runtime adoption replaces closure A with
       'utf-8',
     );
 
-    await start(secondManifest.fingerprint, false, true);
+    const replacementStart = await start(secondManifest.fingerprint, false, true);
     const secondPid = await readDaemonPid(statePath);
     assert.notEqual(secondPid, firstPid, 'preserve-existing must replace authenticated closure A even when projection already says B');
 
-    await start(secondManifest.fingerprint);
+    const adoptedStart = await start(secondManifest.fingerprint);
     assert.equal(await readDaemonPid(statePath), secondPid, 'matching admitted closure must remain adopted');
 
     const daemonBaseEnv = getDaemonEnv({
@@ -3685,17 +3749,14 @@ test('startLocalDaemonWithAuth ordinary runtime adoption replaces closure A with
       );
     }
 
-    await stopLocalDaemon({
-      cliBin,
-      cliCommand: cliBin,
-      cliNodeEntrypoint,
-      internalServerUrl,
-      cliHomeDir,
-      runtimeStatePath,
-      env,
-    });
+    await cleanupDaemon();
+    cleanupDaemon = null;
+    assert.deepEqual(initialStart, { started: true });
+    assert.deepEqual(replacementStart, { started: true });
+    assert.deepEqual(adoptedStart, { started: false });
   } finally {
-    await rm(tmp, { recursive: true, force: true });
+    try { await cleanupDaemon?.(); }
+    finally { await rm(tmp, { recursive: true, force: true }); }
   }
 });
 
@@ -3999,7 +4060,9 @@ test('cancelled Stack restart preserves a concurrently published successor lock 
     const baseEnv = buildDaemonDistGuardEnv({
       HAPPIER_STACK_CLI_BUILD: '0',
       HAPPIER_STACK_TUI: '0',
-      HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: '75',
+      // Cancellation is signaled by the start marker; keep preflight on the
+      // canonical startup budget rather than racing its OS process scheduling.
+      HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: String(DEFAULT_STACK_DAEMON_START_VERIFY_TIMEOUT_MS),
       HAPPIER_STACK_DAEMON_START_VERIFY_POLL_MS: '10',
       HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0',
       HAPPIER_STACK_CREDENTIAL_VALIDATE_TIMEOUT_MS: '1',

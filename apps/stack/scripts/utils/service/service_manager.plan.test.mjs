@@ -34,7 +34,7 @@ test('planServiceAction plans a windows task install', () => {
   });
 
   assert.equal(plan.writes.length, 1);
-  assert.ok(plan.commands.some((c) => c.cmd === 'schtasks' && c.args.includes('/Create')));
+  assert.ok(plan.commands.some((c) => c.cmd === 'powershell.exe' && c.args.at(-1)?.includes('RegisterTask')));
   assert.ok(plan.commands.some((c) => c.cmd === 'schtasks' && c.args.includes('/Run')));
 });
 

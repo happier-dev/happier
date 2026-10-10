@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 
@@ -13,7 +14,7 @@ async function setup(t) {
   const fixture = await createTempFixture(t, { prefix: 'retained-server-data-' });
   const stackBaseDir = fixture.path('source');
   const sourceDir = join(stackBaseDir, 'server-light');
-  const target = { name: 'linux', platform: 'posix', repoDir: process.cwd(), cliHomeDir: fixture.path('target'), ssh: 'test-ssh-boundary' };
+  const target = { name: 'linux', platform: 'posix', repoDir: fileURLToPath(new URL('../../../../../', import.meta.url)), cliHomeDir: fixture.path('target'), ssh: 'test-ssh-boundary' };
   const paths = resolveRemoteStackStatePaths(target, { stackName: 'qa-retained', runtimeMode: 'controlled' });
   await mkdir(join(sourceDir, 'files', 'empty'), { recursive: true });
   await mkdir(join(sourceDir, 'private-files'), { recursive: true });
@@ -32,7 +33,7 @@ async function setup(t) {
   } };
   // Replace only SSH command/file transport; worker, archives and SQLite stay real.
   const dependencies = { runCommand: async ({ commandArgs }) => {
-    const result = await runNodeCapture(commandArgs.slice(1), { env: { ...process.env, HAPPIER_STACK_DISABLE_STACK_ENV_AUTOLOAD: '1' } });
+    const result = await runNodeCapture(commandArgs.slice(1), { cwd: target.repoDir, env: { ...process.env, HAPPIER_STACK_DISABLE_STACK_ENV_AUTOLOAD: '1' } });
     return { code: result.code, out: result.stdout, err: result.stderr };
   }, transferFile: async ({ localPath, remotePath }) => { await cp(localPath, remotePath); } };
   return { fixture, options, dependencies, sourceDir, paths, configPath };

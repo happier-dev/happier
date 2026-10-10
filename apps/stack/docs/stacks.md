@@ -156,6 +156,19 @@ Stack shorthand also works:
 hstack exp1 happier status
 ```
 
+In 0.3 development, when the daemon is placed on a remote dev target, this
+passthrough runs the CLI on that host with the target's stack identity and CLI
+home. Output and exit status return to the caller. A recorded local daemon
+placement takes precedence over a configured remote preference.
+
+Use `hstack stack happier <name> --runtime -- <args>` to follow the active
+runtime. For a running source-snapshot daemon, `--runtime` uses its recorded
+source launch rather than a checkout's potentially stale CLI dist. Missing
+loaded source code produces an error; the command does not rebuild it.
+`--runtime=built` explicitly selects a native runtime snapshot, while `--source`
+explicitly selects checkout source. Filesystem arguments to a remotely executed
+CLI refer to that host's filesystem.
+
 ## Stack wrappers you can use
 
 These commands run with the stack env file applied:

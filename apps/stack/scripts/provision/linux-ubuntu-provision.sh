@@ -6,6 +6,7 @@ set -euo pipefail
 #
 # Intended usage (inside a VM):
 #   curl -fsSL https://raw.githubusercontent.com/happier-dev/happier/main/apps/stack/scripts/provision/linux-ubuntu-provision.sh -o /tmp/linux-ubuntu-provision.sh \
+#     && curl -fsSL https://raw.githubusercontent.com/happier-dev/happier/main/apps/stack/scripts/provision/.bun-version -o /tmp/.bun-version \
 #     && chmod +x /tmp/linux-ubuntu-provision.sh \
 #     && /tmp/linux-ubuntu-provision.sh --profile=happier
 #
@@ -13,6 +14,8 @@ set -euo pipefail
 # - happier   : build tools + Node + Corepack/Yarn (default)
 # - installer : minimal base tooling (curl/ca-certs) to test the official installer on a mostly-empty box
 # - bare      : do nothing (useful if you explicitly want an unprovisioned VM)
+# - qa        : browser runtime only; no user Codex configuration or build-tool setup
+# - toolchain : Node + Corepack/Yarn + Go + ripgrep; ready hosts require no changes
 #
 # Env overrides:
 # - HAPPIER_PROVISION_NODE_MAJOR (default: 24)
@@ -20,17 +23,18 @@ set -euo pipefail
 # - HAPPIER_PROVISION_MUTAGEN_VERSION (default: 0.18.1)
 # - HAPPIER_PROVISION_AGENT_BROWSER_VERSION (default: 0.34.0)
 # - HAPPIER_PROVISION_PLAYWRIGHT_VERSION (default: 1.58.2; Linux ARM64 browser payload)
-# - HAPPIER_PROVISION_BUN_VERSION (default: 1.3.5)
+# - HAPPIER_PROVISION_BUN_VERSION (default: adjacent .bun-version from the same source ref)
 
 usage() {
   cat <<'EOF'
 Usage:
-  ./linux-ubuntu-provision.sh [--profile=happier|installer|bare]
+  ./linux-ubuntu-provision.sh [--profile=happier|installer|bare|qa|toolchain]
 
 Examples:
   ./linux-ubuntu-provision.sh --profile=happier
   ./linux-ubuntu-provision.sh --profile=installer
   ./linux-ubuntu-provision.sh --profile=bare
+  ./linux-ubuntu-provision.sh --profile=toolchain
 EOF
 }
 
@@ -62,7 +66,25 @@ as_root() {
     return
   fi
   if require_cmd sudo; then
-    sudo "$@"
+    if [[ "${PROFILE}" == "qa" ]]; then
+      local environment_prefix=()
+      if [[ "$1" == "env" ]]; then
+        environment_prefix=(env)
+        shift
+        while [[ "${1:-}" == *=* ]]; do
+          environment_prefix+=("$1")
+          shift
+        done
+      fi
+      if [[ "$1" == "corepack" ]]; then
+        # Corepack's env-node shebang cannot rely on sudo's secure_path.
+        sudo -n "${environment_prefix[@]}" "$(node -p 'process.execPath')" "$(command -v corepack)" "${@:2}"
+      else
+        sudo -n "${environment_prefix[@]}" "$(command -v "$1")" "${@:2}"
+      fi
+    else
+      sudo "$@"
+    fi
     return
   fi
   echo "[provision] missing sudo; re-run as root" >&2
@@ -79,10 +101,10 @@ YARN_VERSION="${HAPPIER_PROVISION_YARN_VERSION:-1.22.22}"
 MUTAGEN_VERSION="${HAPPIER_PROVISION_MUTAGEN_VERSION:-0.18.1}"
 AGENT_BROWSER_VERSION="${HAPPIER_PROVISION_AGENT_BROWSER_VERSION:-0.34.0}"
 PLAYWRIGHT_VERSION="${HAPPIER_PROVISION_PLAYWRIGHT_VERSION:-1.58.2}"
-BUN_VERSION="${HAPPIER_PROVISION_BUN_VERSION:-1.3.5}"
+BUN_VERSION="${HAPPIER_PROVISION_BUN_VERSION:-}"
 
 case "${PROFILE}" in
-  happier|installer|bare) ;;
+  happier|installer|bare|qa|toolchain) ;;
   *)
     echo "[provision] invalid --profile: ${PROFILE}" >&2
     usage >&2
@@ -97,6 +119,95 @@ if [[ "${PROFILE}" == "bare" ]]; then
   exit 0
 fi
 
+provision_node_toolchain() {
+  if [[ ! "${NODE_MAJOR}" =~ ^[0-9]+$ ]] || [[ ! "${YARN_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "[provision] invalid Node major or Yarn version" >&2
+    exit 2
+  fi
+
+  local node_version node_major yarn_version corepack_installed=0
+  local corepack_environment=(COREPACK_HOME=/usr/local/share/corepack COREPACK_ENABLE_DOWNLOAD_PROMPT=0 COREPACK_ENABLE_PROJECT_SPEC=0)
+  node_version="$(node --version 2>/dev/null || true)"
+  node_major="${node_version#v}"
+  node_major="${node_major%%.*}"
+  if [[ ! "${node_major}" =~ ^[0-9]+$ ]] || (( node_major < NODE_MAJOR )); then
+    say "installing Node.js (NodeSource ${NODE_MAJOR}.x)"
+    as_root apt-get update -y
+    as_root apt-get install -y --no-install-recommends ca-certificates curl gnupg
+    as_root bash -lc "curl -fsSL https://deb.nodesource.com/setup_${NODE_MAJOR}.x | bash -"
+    as_root apt-get install -y nodejs
+    hash -r
+    node_version="$(node --version)"
+    node_major="${node_version#v}"
+    node_major="${node_major%%.*}"
+    if [[ ! "${node_major}" =~ ^[0-9]+$ ]] || (( node_major < NODE_MAJOR )); then
+      echo "[provision] Node ${NODE_MAJOR} or newer is not active on PATH after installation" >&2
+      exit 1
+    fi
+  fi
+  say "node: ${node_version}"
+
+  # NodeSource packages do not necessarily ship Corepack, even on Node 24.
+  # Bootstrap it with the npm supplied by Node before using Corepack itself.
+  if ! corepack --version >/dev/null 2>&1; then
+    say "installing Corepack"
+    as_root npm install --global --no-audit --no-fund corepack
+    hash -r
+    corepack --version >/dev/null
+    corepack_installed=1
+  fi
+
+  # Preparation and both probes share the system cache. Never prompt or fetch
+  # during readiness checks, including when the caller has an empty user cache.
+  yarn_version="$(env "${corepack_environment[@]}" COREPACK_ENABLE_NETWORK=0 yarn --version 2>/dev/null || true)"
+  if [[ "${PROFILE}" == "happier" || "${yarn_version}" != "${YARN_VERSION}" || "${corepack_installed}" == "1" ]]; then
+    say "enabling Corepack shims (root)"
+    as_root corepack enable
+    say "preparing Yarn ${YARN_VERSION} (root; system cache)"
+    as_root mkdir -p /usr/local/share/corepack
+    as_root env "${corepack_environment[@]}" corepack prepare "yarn@${YARN_VERSION}" --activate
+  fi
+  yarn_version="$(env "${corepack_environment[@]}" COREPACK_ENABLE_NETWORK=0 yarn --version)"
+  if [[ "${yarn_version}" != "${YARN_VERSION}" ]]; then
+    echo "[provision] Yarn ${YARN_VERSION} is not active on PATH after preparation" >&2
+    exit 1
+  fi
+  say "yarn: ${yarn_version}"
+}
+
+if [[ "${PROFILE}" == "toolchain" ]]; then
+  provision_node_toolchain
+  # CLI test setup builds process-custody with Go; source retrieval uses rg.
+  # Keep this profile narrow: full host provisioning also changes agent settings.
+  if ! go version >/dev/null 2>&1 || ! rg --version >/dev/null 2>&1; then
+    say "installing worker build tools (Go and ripgrep)"
+    as_root apt-get update -y
+    as_root apt-get install -y --no-install-recommends ripgrep golang-go
+    hash -r
+  fi
+  go version
+  rg --version
+  say "toolchain ready"
+  exit 0
+fi
+
+if [[ "${PROFILE}" == "happier" ]]; then
+  if [[ -z "${BUN_VERSION}" ]]; then
+    BUN_VERSION_FILE="$(dirname "${BASH_SOURCE[0]}")/.bun-version"
+    if [[ ! -r "${BUN_VERSION_FILE}" ]]; then
+      echo "[provision] missing Bun version owner: ${BUN_VERSION_FILE}; download it beside this script from the same source ref or set HAPPIER_PROVISION_BUN_VERSION" >&2
+      exit 2
+    fi
+    BUN_VERSION="$(cat "${BUN_VERSION_FILE}")"
+    BUN_VERSION="${BUN_VERSION%$'\r'}"
+  fi
+  if [[ ! "${BUN_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "[provision] invalid Bun version: ${BUN_VERSION}" >&2
+    exit 2
+  fi
+fi
+
+if [[ "${PROFILE}" != "qa" ]]; then
 say "updating apt"
 as_root apt-get update -y
 
@@ -228,11 +339,6 @@ fi
 
 say "mutagen: $(mutagen version)"
 
-if [[ ! "${BUN_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "[provision] invalid Bun version: ${BUN_VERSION}" >&2
-  exit 2
-fi
-
 BUN_ARCH=""
 case "$(uname -m)" in
   aarch64|arm64) BUN_ARCH="aarch64" ;;
@@ -259,27 +365,8 @@ fi
 
 say "bun: $(bun --version)"
 
-if ! require_cmd node; then
-  say "installing Node.js (NodeSource ${NODE_MAJOR}.x)"
-  as_root bash -lc "curl -fsSL https://deb.nodesource.com/setup_${NODE_MAJOR}.x | bash -"
-  as_root apt-get install -y nodejs
+provision_node_toolchain
 fi
-
-say "node: $(node --version)"
-
-if ! require_cmd corepack; then
-  echo "[provision] corepack not found (expected with Node >=16)." >&2
-  exit 1
-fi
-
-say "enabling Corepack shims (root)"
-as_root corepack enable
-
-say "preparing Yarn ${YARN_VERSION} (root; system cache)"
-as_root mkdir -p /usr/local/share/corepack
-as_root env COREPACK_HOME=/usr/local/share/corepack corepack prepare "yarn@${YARN_VERSION}" --activate
-
-say "yarn: $(yarn --version)"
 
 if [[ ! "${AGENT_BROWSER_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "[provision] invalid agent-browser version: ${AGENT_BROWSER_VERSION}" >&2
@@ -289,7 +376,7 @@ fi
 CURRENT_AGENT_BROWSER_VERSION="$(agent-browser --version 2>/dev/null | awk '{print $NF}' || true)"
 if [[ "${CURRENT_AGENT_BROWSER_VERSION}" != "${AGENT_BROWSER_VERSION}" ]]; then
   say "installing agent-browser ${AGENT_BROWSER_VERSION}"
-  as_root corepack npm install --global --no-audit --no-fund \
+  as_root env COREPACK_ENABLE_PROJECT_SPEC=0 corepack npm install --global --no-audit --no-fund \
     --allow-scripts=agent-browser \
     "agent-browser@${AGENT_BROWSER_VERSION}"
 fi
@@ -328,6 +415,13 @@ case "$(uname -m)" in
     ;;
 esac
 say "agent-browser: $(agent-browser --version)"
+
+# Dedicated QA workers reuse the normal browser installer without changing
+# user Codex configuration or provisioning the unrelated build toolchain.
+if [[ "${PROFILE}" == "qa" ]]; then
+  say "QA browser runtime ready"
+  exit 0
+fi
 
 say "converging Codex configuration"
 mkdir -p "${HOME}/.codex"

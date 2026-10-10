@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
+import { readFile, stat, writeFile } from 'node:fs/promises';
 import test from 'node:test';
+import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
+import { writeFakeBin } from '../../testkit/core/fake_bin_harness.mjs';
+import { runCommandCapture } from '../../testkit/core/run_node_capture.mjs';
 
 import {
   ensureManagedLimaGuestLoginManager,
@@ -8,6 +12,8 @@ import {
   provisionManagedLimaGuest,
   restartManagedLimaGuestAgent,
 } from './provisioner.mjs';
+
+const pinnedBunVersion = (await readFile(new URL('../../provision/.bun-version', import.meta.url), 'utf8')).trim();
 
 function fakeExecutor({ ready = false } = {}) {
   const calls = [];
@@ -24,6 +30,47 @@ function fakeExecutor({ ready = false } = {}) {
     },
   };
 }
+
+test('managed guest provisioning persists inotify instances even with a ready toolchain, without changing watches', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-lima-inotify-' });
+  const runtime = fixture.path('instances');
+  const writes = fixture.path('sysctl-writes');
+  await writeFile(runtime, '128\n');
+  const { binDir } = writeFakeBin({ root: fixture.root, name: 'id', content: '#!/bin/sh\necho 1000\n' });
+  writeFakeBin({ root: fixture.root, name: 'sudo', content: '#!/bin/sh\nexec "$@"\n' });
+  writeFakeBin({ root: fixture.root, name: 'sysctl', content: `#!/bin/sh
+set -eu
+case "$*" in
+  '-n fs.inotify.max_user_instances') cat "$TEST_INSTANCES" ;;
+  '-p '*)
+    [ "$(cat "$2")" = 'fs.inotify.max_user_instances=1024' ] || exit 91
+    echo 1024 > "$TEST_INSTANCES"
+    echo instances >> "$TEST_SYSCTL_WRITES" ;;
+  *) echo 'unexpected sysctl mutation' >&2; exit 92 ;;
+esac
+` });
+  const executor = fakeExecutor({ ready: true });
+  executor.run = async (command, args, { input } = {}) => {
+    assert.equal(command, 'limactl');
+    // Remap only the guest filesystem and process boundaries, not provisioning logic.
+    const result = await runCommandCapture(args[3], args.slice(4), {
+      input: input?.replaceAll('/etc/', `${fixture.root}/etc/`),
+      env: { ...process.env, PATH: `${binDir}:${process.env.PATH}`, TEST_INSTANCES: runtime, TEST_SYSCTL_WRITES: writes },
+    });
+    if (result.code !== 0) throw new Error(result.stderr);
+    return { exitCode: result.code, out: result.stdout, err: result.stderr };
+  };
+  const options = { executor, instance: 'primary', scriptSource: 'exit 91' };
+  const first = await provisionManagedLimaGuest(options);
+  assert.equal(first.changed, false, 'ready tooling must not be reinstalled');
+  const dropIn = fixture.path('etc', 'sysctl.d', '60-happier-inotify.conf');
+  assert.equal(await readFile(dropIn, 'utf8'), 'fs.inotify.max_user_instances=1024\n');
+  assert.equal((await stat(dropIn)).mode & 0o777, 0o644);
+  assert.equal(await readFile(runtime, 'utf8'), '1024\n');
+  const second = await provisionManagedLimaGuest(options);
+  assert.equal(second.changed, false);
+  assert.equal(await readFile(writes, 'utf8'), 'instances\n', 'repeat does not rewrite the kernel setting');
+});
 
 test('managed Lima guest provisioning streams the canonical script and writes a content-addressed readiness marker', async () => {
   const executor = fakeExecutor();
@@ -48,7 +95,7 @@ test('managed Lima guest provisioning streams the canonical script and writes a 
   assert.ok(provision.args.includes('HAPPIER_PROVISION_MUTAGEN_VERSION=0.18.1'));
   assert.ok(provision.args.includes('HAPPIER_PROVISION_AGENT_BROWSER_VERSION=0.34.0'));
   assert.ok(provision.args.includes('HAPPIER_PROVISION_PLAYWRIGHT_VERSION=1.58.2'));
-  assert.ok(provision.args.includes('HAPPIER_PROVISION_BUN_VERSION=1.3.5'));
+  assert.ok(provision.args.includes(`HAPPIER_PROVISION_BUN_VERSION=${pinnedBunVersion}`));
   assert.deepEqual(provision.args.slice(-4), ['bash', '-s', '--', '--profile=happier']);
   assert.equal(executor.calls.some((call) => call.args.includes('delete')), false);
   assert.equal(executor.calls.at(-1).kind, 'run');
@@ -91,7 +138,8 @@ test('managed Lima guest provisioning is idempotent for the exact script and too
   });
 
   assert.equal(result.changed, false);
-  assert.equal(executor.calls.some((call) => call.kind === 'run'), false);
+  assert.equal(executor.calls.filter((call) => call.kind === 'run').length, 1);
+  assert.ok(executor.calls.find((call) => call.kind === 'run').options.input.includes('fs.inotify.max_user_instances=1024'));
 });
 
 test('managed Lima guest provisioning repairs drifted tooling even when the readiness marker remains', async () => {
@@ -182,7 +230,7 @@ test('managed Lima guest toolchain health requires the managed runtime, sandbox,
   assert.match(calls[0].args.at(-1), /rg --version/);
   assert.match(calls[0].args.at(-1), /gh --version/);
   assert.match(calls[0].args.at(-1), /go version/);
-  assert.match(calls[0].args.at(-1), /bun --version \| grep -Fx '1\.3\.5'/);
+  assert.ok(calls[0].args.at(-1).includes(`bun --version | grep -Fx '${pinnedBunVersion}'`));
   assert.match(calls[0].args.at(-1), /happier-bwrap AppArmor profile/);
   assert.match(calls[0].args.at(-1), /userns/);
   assert.match(calls[0].args.at(-1), /headless_shell/);

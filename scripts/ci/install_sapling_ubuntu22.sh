@@ -19,9 +19,9 @@ curl -fsSL \
 echo "${SAPLING_SHA256}  ${SAPLING_ASSET_PATH}" | sha256sum --check --strict
 
 if command -v sudo >/dev/null 2>&1; then
-  sudo apt-get update
+  # The pinned local archive and Ubuntu runner metadata already identify its dependencies.
+  # Refreshing every mirror here can stall installation before any dependency is needed.
   sudo apt-get install -y --no-install-recommends "${SAPLING_ASSET_PATH}"
 else
-  apt-get update
   apt-get install -y --no-install-recommends "${SAPLING_ASSET_PATH}"
 fi

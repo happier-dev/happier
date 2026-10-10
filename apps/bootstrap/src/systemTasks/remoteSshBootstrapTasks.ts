@@ -5,6 +5,9 @@ import {
   RemoteHostTrustResolution,
   SystemTaskSshConnectionConfig,
   buildRemoteBootstrapCommand,
+  isRemoteBootstrapUnauthenticatedCliResult,
+  normalizeRemoteBootstrapCliJsonResult,
+  SystemTaskExecutionError,
   createOpenSshHappierJsonExecutor,
   type HappierJsonExecutor,
 } from '@happier-dev/cli-common/systemTasks';
@@ -250,36 +253,9 @@ export async function runRemoteBootstrapCommandDefault(params: Readonly<{
     data: params.data,
   });
 
-  const result = await runRemoteJson(ssh, command, params.knownHostsMode, params.signal) as null | Readonly<{
-    ok?: boolean;
-    data?: Record<string, unknown>;
-  }>;
-  if (params.label === 'auth.status') {
-    if (result?.ok === false) {
-      return {
-        ok: true,
-        data: { authenticated: false },
-      };
-    }
-    if (result?.data && typeof result.data === 'object') {
-      return {
-        ok: true,
-        data: result.data,
-      };
-    }
-  }
-
-  if (result?.data && typeof result.data === 'object') {
-    return {
-      ok: result.ok !== false,
-      data: result.data,
-    };
-  }
-
-  return {
-    ok: result?.ok !== false,
-    data: (result ?? {}) as Record<string, unknown>,
-  };
+  const authStatus = params.label === 'auth.status';
+  const result = await runRemoteJson(ssh, command, params.knownHostsMode, params.signal, authStatus);
+  return normalizeRemoteBootstrapCliJsonResult(result, authStatus);
 }
 
 function buildRemoteSshConnection(
@@ -303,9 +279,17 @@ async function runRemoteJson(
   remoteCommand: string,
   knownHostsMode: 'app' | 'system',
   signal?: AbortSignal,
+  authStatus = false,
 ): Promise<unknown> {
   const result = await runRemoteText(ssh, remoteCommand, knownHostsMode, signal);
-  return parseFirstJsonObject(result.stdout);
+  const parsed = parseFirstJsonObject(result.stdout);
+  if (result.status !== 0 && !(authStatus && isRemoteBootstrapUnauthenticatedCliResult(parsed, result.status))) {
+    throw new SystemTaskExecutionError(
+      'remote_command_failed',
+      redactSshText(result.stderr.trim() || result.stdout.trim() || `SSH command failed for ${ssh.target}`),
+    );
+  }
+  return parsed;
 }
 
 async function runRemoteText(
@@ -327,6 +311,7 @@ async function runRemoteText(
     auth,
     remoteCommand: ['bash', '-lc', safeBashSingleQuote(remoteCommand)],
     signal,
+    rejectOnNonZero: false,
     errorPrefix: `SSH command failed for ${ssh.target}`,
   });
 }

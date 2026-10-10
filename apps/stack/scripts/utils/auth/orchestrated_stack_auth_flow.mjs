@@ -22,8 +22,10 @@ import {
 } from './stack_guided_login.mjs';
 import { checkDaemonStatePingAware, startLocalDaemonWithAuth } from '../../daemon.mjs';
 import { isTty } from '../cli/wizard.mjs';
+import { buildAuthSafeStackStartSpec } from './buildAuthSafeStackStartSpec.mjs';
 import { resolveStackRuntimeLaunchContext } from '../../runtime/launch/resolveStackRuntimeLaunchContext.mjs';
 import {
+  applyCliRuntimeLaunchProvenanceEnv,
   resolveCliRuntimeLaunchProvenance,
   resolveCliRuntimeLaunchSpec,
 } from '../../runtime/launch/resolveCliRuntimeLaunchSpec.mjs';
@@ -133,28 +135,20 @@ async function tryStartStackUiInBackgroundForAuth({ rootDir, stackName, env = pr
   const name = String(stackName ?? '').trim() || 'main';
   try {
     const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv: [], env });
-    const useRuntimeStart = Boolean(runtimeLaunchContext.snapshot);
-    const command = useRuntimeStart ? 'start' : 'dev';
+    const startSpec = buildAuthSafeStackStartSpec({
+      rootDir,
+      stackName: name,
+      shouldUseRuntimeStart: Boolean(runtimeLaunchContext.snapshot),
+      runtimeMode: runtimeLaunchContext.runtimeMode.mode,
+      shouldStartDevForAutoAuth: true,
+      baseEnv: { ...process.env, ...(env ?? {}) },
+    });
     await run(
-      process.execPath,
-      [
-        join(rootDir, 'scripts', 'stack.mjs'),
-        command,
-        name,
-        '--background',
-        ...(useRuntimeStart ? ['--runtime'] : []),
-        '--no-daemon',
-        '--no-browser',
-      ],
+      ...startSpec.args,
       {
         cwd: rootDir,
         timeoutMs: resolveAuthUiStartTimeoutMs(env),
-        env: {
-          ...process.env,
-          ...(env ?? {}),
-          HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
-          ...(useRuntimeStart ? {} : { HAPPIER_STACK_AUTH_FLOW: '1' }),
-        },
+        env: startSpec.env,
       }
     );
     return { ok: true };
@@ -211,7 +205,8 @@ export async function prepareGuidedLoginWebapp({
       if (stopped) return;
       try {
         const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv: [], env });
-        const waitingForRuntimeUi = Boolean(runtimeLaunchContext.snapshot);
+        const waitingForRuntimeUi = Boolean(runtimeLaunchContext.snapshot)
+          || runtimeLaunchContext.runtimeMode.mode === 'source-snapshot';
         const st = await readStackRuntimeStateFile(getStackRuntimeStatePath(name)).catch(() => null);
         const ownerPid = Number(st?.ownerPid);
         const ownerAlive = Number.isFinite(ownerPid) && ownerPid > 1 ? isPidAlive(ownerPid) : null;
@@ -404,9 +399,9 @@ export async function startDaemonPostAuth({
     (mergedEnv.HAPPIER_STACK_CLI_HOME_DIR ?? '').toString().trim() ||
     join(baseDir, 'cli');
   const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv: [], env: mergedEnv });
-  const cliLaunchSpec = runtimeLaunchContext.snapshot
-    ? resolveCliRuntimeLaunchSpec({ snapshot: runtimeLaunchContext.snapshot })
-    : null;
+  const cliLaunchSpec = runtimeLaunchContext.cliLaunchSpec ?? (runtimeLaunchContext.snapshot
+    ? resolveCliRuntimeLaunchSpec({ snapshot: runtimeLaunchContext.snapshot }) : null);
+  const launchEnv = applyCliRuntimeLaunchProvenanceEnv({ env: mergedEnv, cliLaunchSpec });
   const runtimeProvenance = resolveCliRuntimeLaunchProvenance(cliLaunchSpec);
   const cliBin = cliLaunchSpec?.command
     || await resolveStackAuthCliExecutable({ rootDir, env: mergedEnv });
@@ -414,7 +409,7 @@ export async function startDaemonPostAuth({
   const internalServerUrl = `http://127.0.0.1:${serverPort}`;
   const explicitWebappUrl = String(webappUrl ?? '').trim();
   const { publicServerUrl: resolvedPublicServerUrl } = await resolveServerUrls({
-    env: mergedEnv,
+    env: launchEnv,
     serverPort,
     allowEnable: false,
   });
@@ -433,7 +428,7 @@ export async function startDaemonPostAuth({
     runtimeStatePath,
     isShuttingDown: () => false,
     forceRestart: Boolean(forceRestart),
-    env: mergedEnv,
+    env: launchEnv,
     stackName: name,
     ...runtimeProvenance,
   });
@@ -441,7 +436,7 @@ export async function startDaemonPostAuth({
   // Verify (best-effort): daemon wrote state.
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
-    const s = await checkDaemonStatePingAware(cliHomeDir, { serverUrl: internalServerUrl, env: mergedEnv });
+    const s = await checkDaemonStatePingAware(cliHomeDir, { serverUrl: internalServerUrl, env: launchEnv });
     if (s.status === 'running') {
       return {
         ok: true,

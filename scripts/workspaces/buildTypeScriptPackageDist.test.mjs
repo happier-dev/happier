@@ -8,6 +8,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { buildTypeScriptPackageDist } from './buildTypeScriptPackageDist.mjs';
+import { BUILD_INPUT_RECORD, ensureWorkspacePackagesBuiltByName, isWorkspacePackageOutputCurrent } from './ensureWorkspacePackagesBuilt.mjs';
 import { withWorkspaceBundleLock } from './workspaceBundleLock.mjs';
 import { resolveWorkspacePackageBuildLockPath } from './workspacePackageBuildLock.mjs';
 import { resolveTypeScriptCliInvocation } from './resolveTypeScriptCliInvocation.mjs';
@@ -206,9 +207,13 @@ test('buildTypeScriptPackageDist defaults to one checker but respects an explici
   for (const explicit of [false, true]) {
     await buildTypeScriptPackageDist({
       packageDir,
-      args: ['-p', 'tsconfig.json', ...(explicit ? ['--singleThreaded', 'false'] : [])],
+      args: ['-p', 'tsconfig.json', '--noCheck', ...(explicit ? ['--singleThreaded', 'false'] : [])],
+      env: { HAPPIER_WORKSPACE_BUILD_MODE: 'strict' },
       stdio: 'ignore',
-      resolveTypeScriptCliInvocationImpl: () => ({ command: 'tsc', argsPrefix: [] }),
+      resolveTypeScriptCliInvocationImpl: ({ admissionClass }) => {
+        assert.equal(admissionClass, 'compilation', 'strict compiler overrides must govern resource admission');
+        return { command: 'tsc', argsPrefix: [] };
+      },
       // The process boundary observes the resource policy passed to the real
       // compiler; output admission, caching and promotion remain real.
       runCommandImpl: (_command, args) => {
@@ -216,6 +221,7 @@ test('buildTypeScriptPackageDist defaults to one checker but respects an explici
         assert.notEqual(checkerOption, -1, 'package compiles must not implicitly use every checker');
         if (explicit) assert.equal(args[checkerOption + 1], 'false');
         assert.equal(args.filter((arg) => arg === '--singleThreaded').length, 1);
+        assert.equal(args[args.lastIndexOf('--noCheck') + 1], 'false');
         writeTypeScriptFixtureOutput(args);
         return { status: 0 };
       },
@@ -255,7 +261,7 @@ test('buildTypeScriptPackageDist emits incremental QA output while strict and pu
     // Compiler execution is the system boundary. Keep cache preparation,
     // artifact verification and publication real while observing its options.
     runCommandImpl: (_command, args) => {
-      if (!args.includes('--noCheck')) return { status: 1 };
+      if (!args.includes('--noCheck') || args[args.indexOf('--noCheck') + 1] === 'false') return { status: 1 };
       assert.ok(args.includes('--incremental'));
       const outDir = args[args.indexOf('--outDir') + 1];
       mkdirSync(outDir, { recursive: true });
@@ -917,14 +923,26 @@ test('buildTypeScriptPackageDist does not invalidate compiler output for a wildc
 });
 
 test('buildTypeScriptPackageDist permits an incremental repeat but does not replace identical dist', async (t) => {
-  const packageDir = await createPackageFixture(t, 'build-ts-package-unchanged-repeat');
+  const fixtureDir = await createPackageFixture(t, 'build-ts-package-unchanged-repeat');
+  const repoDir = await mkdtemp(join(tmpdir(), 'happier-build-ts-recorded-repeat-'));
+  t.after(() => rm(repoDir, { recursive: true, force: true }));
+  const packageDir = join(repoDir, 'packages/example');
+  await mkdir(dirname(packageDir), { recursive: true });
+  await cp(fixtureDir, packageDir, { recursive: true });
+  await writeJson(join(repoDir, 'package.json'), { private: true, workspaces: ['apps/*', 'packages/*'] });
+  await writeFile(join(repoDir, 'yarn.lock'), '# fixture\n');
+  for (const app of ['cli', 'server', 'ui']) {
+    await mkdir(join(repoDir, 'apps', app), { recursive: true });
+    await writeJson(join(repoDir, 'apps', app, 'package.json'), { name: `@fixture/${app}` });
+  }
+  const packageJson = JSON.parse(await readFile(join(packageDir, 'package.json'), 'utf8'));
+  packageJson.scripts = { build: 'fixture compiler' };
+  await writeJson(join(packageDir, 'package.json'), packageJson);
   await writeFile(join(packageDir, 'src', 'index.ts'), 'export const built = true;\n', 'utf-8');
   let compilerRuns = 0;
-  const compilerOutputDirs = new Set();
   const runCommandImpl = (_command, args) => {
     compilerRuns += 1;
     const compilerOutputDir = args[args.indexOf('--outDir') + 1];
-    compilerOutputDirs.add(compilerOutputDir);
     const tsBuildInfoFile = args[args.indexOf('--tsBuildInfoFile') + 1];
     mkdirSync(compilerOutputDir, { recursive: true });
     writeFileSync(join(compilerOutputDir, 'index.js'), 'export const built = true;\n', 'utf-8');
@@ -940,7 +958,22 @@ test('buildTypeScriptPackageDist permits an incremental repeat but does not repl
     runCommandImpl,
   };
 
-  await buildTypeScriptPackageDist(buildOptions);
+  const admit = () => ensureWorkspacePackagesBuiltByName(repoDir, [packageJson.name], {
+    quiet: true,
+    env: { ...process.env, HAPPIER_WORKSPACE_BUILD_MODE: 'strict' },
+    // Only the compiler process is substituted. Canonical package admission
+    // invokes the real staged builder and publishes its real input receipt.
+    workspaceBuildBoundary: {
+      async prepareEnv(_dir, env) { return { ...env }; },
+      async runPackageBuild(_dir, { env }) {
+        await buildTypeScriptPackageDist({ ...buildOptions, outputDir: env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, env });
+      },
+    },
+  });
+  await admit();
+  assert.equal(isWorkspacePackageOutputCurrent(packageDir), true);
+  const recordPath = join(packageDir, 'dist', BUILD_INPUT_RECORD);
+  const beforeRecord = await readFile(recordPath, 'utf8');
   const before = statSync(join(packageDir, 'dist'));
   const beforeHash = await hashFixtureDist(join(packageDir, 'dist'));
 
@@ -949,10 +982,127 @@ test('buildTypeScriptPackageDist permits an incremental repeat but does not repl
   const after = statSync(join(packageDir, 'dist'));
   const afterHash = await hashFixtureDist(join(packageDir, 'dist'));
   assert.equal(compilerRuns, 2, 'a cheap incremental compiler invocation remains allowed');
-  assert.equal(compilerOutputDirs.size, 1, 'promoted builds share one stable compiler output tree');
+  assert.equal(await readFile(recordPath, 'utf8'), beforeRecord,
+    'byte-identical standalone output must not destroy the canonical admission receipt');
   assert.equal(after.ino, before.ino, 'identical staged bytes must not replace the last-green dist directory');
   assert.equal(after.mtimeMs, before.mtimeMs, 'identical staged bytes must not mutate the last-green dist directory');
   assert.equal(afterHash, beforeHash);
+  assert.equal(isWorkspacePackageOutputCurrent(packageDir), true);
+
+  // Retaining a receipt must never bless changed source or changed output.
+  await writeJson(join(packageDir, 'package.json'), { ...packageJson, dependencies: { '@fixture/dependency': '1.0.0' } });
+  assert.equal(isWorkspacePackageOutputCurrent(packageDir), false);
+  await writeJson(join(packageDir, 'package.json'), packageJson);
+  assert.equal(isWorkspacePackageOutputCurrent(packageDir), true);
+  await writeFile(join(packageDir, 'src/index.ts'), 'export const built = false;\n');
+  assert.equal(isWorkspacePackageOutputCurrent(packageDir), false);
+  await buildTypeScriptPackageDist({
+    ...buildOptions,
+    runCommandImpl: (_command, args) => {
+      const outDir = writeTypeScriptFixtureOutput(args);
+      writeFileSync(join(outDir, 'index.js'), 'export const built = false;\n');
+      return { status: 0 };
+    },
+  });
+  assert.equal(existsSync(recordPath), false, 'changed emitted bytes invalidate the prior receipt');
+  assert.equal(isWorkspacePackageOutputCurrent(packageDir), false);
+});
+
+test('native strict package promotion checks identical QA output and preserves the emitted UI and internal closure', async (t) => {
+  const fixtureDir = await createPackageFixtureWithUiArtifacts(t, 'native-strict-promotion');
+  const repoDir = await mkdtemp(join(tmpdir(), 'happier-native-strict-promotion-'));
+  t.after(() => rm(repoDir, { recursive: true, force: true }));
+  const packageDir = join(repoDir, 'packages/example');
+  await mkdir(dirname(packageDir), { recursive: true });
+  await cp(fixtureDir, packageDir, { recursive: true });
+  await writeJson(join(repoDir, 'package.json'), { private: true, workspaces: ['apps/*', 'packages/*'] });
+  for (const app of ['cli', 'server', 'ui']) {
+    await mkdir(join(repoDir, 'apps', app), { recursive: true });
+    await writeJson(join(repoDir, 'apps', app, 'package.json'), { name: `@fixture/${app}` });
+  }
+  const packageJson = JSON.parse(await readFile(join(packageDir, 'package.json'), 'utf8'));
+  const config = JSON.parse(await readFile(join(packageDir, 'tsconfig.json'), 'utf8'));
+  // Inherited noCheck must never bypass a strict promotion; the exact dist
+  // project still excludes authored type tests, as its emitter does.
+  config.compilerOptions.noCheck = true;
+  config.compilerOptions.sourceMap = true;
+  config.compilerOptions.declarationMap = true;
+  await writeJson(join(packageDir, 'tsconfig.json'), config);
+  await writeFile(join(packageDir, 'src/index.ts'), 'import { value } from "./value.js"; export const built: string = value;\n');
+  await writeFile(join(packageDir, 'src/value.ts'), 'export const value = "checked";\n');
+  await writeFile(join(packageDir, 'src/excluded.test.ts'), 'const testOnlyError: string = 1;\n');
+  const passes = [];
+  let uiBuilds = 0;
+  const boundary = {
+    prepareEnv: async (_dir, env) => ({ ...env }),
+    runPackageBuild: (_dir, { env }) => buildTypeScriptPackageDist({
+      packageDir, env, outputDir: env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR,
+      args: ['-p', 'tsconfig.json', '--happier-staged-output-script', 'build:ui'],
+      resolveYarnCommandInvocationImpl: () => ({ command: 'fixture-ui-process', args: [] }),
+      async runCommandImpl(command, args, options) {
+        if (command === 'fixture-ui-process') {
+          uiBuilds += 1;
+          const uiDir = join(options.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'happier-plugin-ui');
+          await mkdir(uiDir, { recursive: true });
+          await writeFile(join(uiDir, 'ui-artifacts.json'), '{"version":1,"entries":["verified"]}\n');
+          await writeFile(join(uiDir, 'entry.js'), 'export const uiReady = true;\n');
+          return { status: 0 };
+        }
+        // Observe the real native compiler boundary; admission, generated dist
+        // config, compiler cache and package publication remain the real owners.
+        const result = await runCaptureResult(command, args, { ...options, stdio: undefined });
+        passes.push({ args, output: result.out + result.err, status: result.exitCode });
+        t.diagnostic(JSON.stringify({ checkOnly: args.includes('--noEmit'), exitCode: result.exitCode,
+          durationMs: result.durationMs, output: result.out + result.err }));
+        return { status: result.exitCode, signal: result.signal };
+      },
+    }),
+  };
+  const admit = (buildMode) => ensureWorkspacePackagesBuiltByName(repoDir, [packageJson.name], {
+    buildMode, quiet: true, workspaceBuildBoundary: boundary,
+    env: { ...process.env, HAPPIER_STACK_REPO_DIR: repoDir, HAPPIER_STACK_RUNTIME_IDENTITY_REPO_DIR: '' },
+  });
+  const recordPath = join(packageDir, 'dist', BUILD_INPUT_RECORD);
+  await admit('source-dev');
+  const before = await hashFixtureDist(join(packageDir, 'dist'));
+  const uiBefore = await readFile(join(packageDir, 'dist/happier-plugin-ui/entry.js'), 'utf8');
+  await admit('strict');
+  assert.ok(passes.at(-1).args.includes('--noEmit'));
+  assert.equal(passes.at(-1).status, 0, passes.at(-1).output);
+  assert.equal(await hashFixtureDist(join(packageDir, 'dist')), before);
+  assert.equal(await readFile(join(packageDir, 'dist/happier-plugin-ui/entry.js'), 'utf8'), uiBefore);
+  assert.equal(uiBuilds, 1, 'strict promotion retains the verified generated UI graph');
+  assert.equal(JSON.parse(await readFile(recordPath, 'utf8')).buildMode, 'strict');
+  assert.deepEqual((await admit('strict')).built, []);
+
+  await writeFile(join(packageDir, 'src/value.ts'), 'export const value = 1;\n');
+  await admit('source-dev');
+  const qaRecord = await readFile(recordPath, 'utf8');
+  const qaOutput = await hashFixtureDist(join(packageDir, 'dist'));
+  await assert.rejects(admit('strict'), /TypeScript package build failed/);
+  assert.ok(passes.at(-1).args.includes('--noEmit'));
+  assert.match(passes.at(-1).output, /TS2322/);
+  assert.equal(await readFile(recordPath, 'utf8'), qaRecord, 'failed promotion must preserve QA provenance');
+  assert.equal(await hashFixtureDist(join(packageDir, 'dist')), qaOutput);
+  await writeFile(join(packageDir, 'dist/value.js'), 'export const value = "damaged";\n');
+  await assert.rejects(admit('strict'), /TypeScript package build failed/);
+  assert.equal(passes.at(-1).args.includes('--noEmit'), false, 'damaged QA output requires a full strict build');
+  assert.match(passes.at(-1).output, /TS2322/, 'inherited noCheck cannot bypass strict fallback emission either');
+  assert.equal(await readFile(recordPath, 'utf8'), qaRecord);
+
+  await writeFile(join(packageDir, 'src/value.ts'), 'export const value = "recovered";\n');
+  await admit('source-dev');
+  await writeFile(join(packageDir, 'dist/value.js'), 'export const value = "corrupt internal output";\n');
+  await admit('strict');
+  assert.equal(passes.at(-1).args.includes('--noEmit'), false, 'damaged internal bytes require emission, not promotion');
+  assert.match(await readFile(join(packageDir, 'dist/value.js'), 'utf8'), /"recovered"/);
+
+  const legacyRecord = JSON.parse(await readFile(recordPath, 'utf8'));
+  legacyRecord.buildMode = 'qa-runtime';
+  legacyRecord.outputs = legacyRecord.outputs.filter(({ path }) => path === 'index.js' || path === 'index.d.ts');
+  await writeJson(recordPath, legacyRecord);
+  await admit('strict');
+  assert.equal(passes.at(-1).args.includes('--noEmit'), false, 'legacy export-only digests cannot prove the complete emitted tree');
 });
 
 test('buildTypeScriptPackageDist resets a corrupt compiler cache without replacing last-green dist', async (t) => {

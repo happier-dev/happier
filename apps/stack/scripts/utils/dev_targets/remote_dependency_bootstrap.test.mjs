@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
+import { prepareRemoteValidationWorkspace } from './remote_validation_preparation.mjs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { inspectDependencyRefresh, SCRIPTLESS_DEPENDENCY_INSTALL_MODE, withDependencyRefresh } from '../proc/dependency_refresh.mjs';
 import { ensureWorkspacePackagesBuiltForComponent, inspectWorkspaceQaStalePackages, WORKSPACE_BUILD_MODE_ENV } from '../../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
@@ -20,6 +21,50 @@ import {
 } from './remote_dependency_bootstrap.mjs';
 
 const runDependencyRefreshImmediately = async (_options, refresh) => await refresh({});
+
+test('runtime worker bootstrap emits package prerequisites by default while explicit publication checks remain strict', async t => {
+  const repoDir = await mkdtemp(join(tmpdir(), 'happier-runtime-bootstrap-default-'));
+  t.after(async () => rm(repoDir, { recursive: true, force: true }));
+  await writeFile(join(repoDir, 'package.json'), JSON.stringify({ private: true, workspaces: ['apps/*', 'packages/*'] }));
+  await writeFile(join(repoDir, 'yarn.lock'), '# fixture\n');
+  for (const name of ['cli', 'ui', 'server', 'stack']) {
+    await mkdir(join(repoDir, 'apps', name), { recursive: true });
+    await writeFile(join(repoDir, 'apps', name, 'package.json'), JSON.stringify({ name: `@fixture/${name}`,
+      ...(name === 'stack' ? { dependencies: { '@fixture/emitted': '1.0.0' } } : {}) }));
+  }
+  const packageDir = join(repoDir, 'packages/emitted');
+  await mkdir(join(packageDir, 'src'), { recursive: true });
+  const builder = new URL('../../../../../scripts/workspaces/buildTypeScriptPackageDist.mjs', import.meta.url).href;
+  await writeFile(join(packageDir, 'compile.mjs'), `import { buildTypeScriptPackageDist } from ${JSON.stringify(builder)}; await buildTypeScriptPackageDist({ args: ['-p', 'tsconfig.json'] });\n`);
+  await writeFile(join(packageDir, 'package.json'), JSON.stringify({ name: '@fixture/emitted', version: '1.0.0', type: 'module',
+    main: './dist/index.js', types: './dist/index.d.ts', scripts: { build: 'node compile.mjs' } }));
+  await writeFile(join(packageDir, 'tsconfig.json'), JSON.stringify({ compilerOptions: {
+    target: 'ES2022', module: 'ESNext', moduleResolution: 'Bundler', rootDir: 'src', declaration: true, strict: true, types: [],
+  }, include: ['src/**/*.ts'] }));
+  await writeFile(join(packageDir, 'src/index.ts'), 'export const value: string = 1;\n');
+  for (const domain of ['workspaces', 'process']) {
+    await mkdir(join(repoDir, 'packages/cli-common/dist', domain), { recursive: true });
+    await writeFile(join(repoDir, 'packages/cli-common/dist', domain, 'index.js'), 'export {};\n');
+  }
+  await mkdir(join(repoDir, 'node_modules'), { recursive: true });
+  // The tiny real compiler fixture runs on a hosted-CI executor; its resource
+  // boundary is external to the runtime/bootstrap behavior under test.
+  const env = { ...process.env, HAPPIER_STACK_SKIP_REFRESH_DEPS: '1', CI: '1', HAPPIER_DEV_TARGET_EXECUTION: '',
+    HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN: '', HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT: '', HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE: '' };
+  delete env[WORKSPACE_BUILD_MODE_ENV];
+  delete env.npm_lifecycle_event;
+  const bootstrap = extra => bootstrapRemoteDependencies({ repoDir, componentRelativeDir: 'apps/stack', env: { ...env, ...extra } });
+  await bootstrap();
+  assert.match(await readFile(join(packageDir, 'dist/index.js'), 'utf8'), /value = 1/);
+  await writeFile(join(packageDir, 'src/index.ts'), 'export const value: string = 2;\n');
+  await prepareRemoteValidationWorkspace({ repoDir, componentRelativeDir: 'apps/stack', env });
+  assert.match(await readFile(join(packageDir, 'dist/index.js'), 'utf8'), /value = 2/);
+  await assert.rejects(prepareRemoteValidationWorkspace({ repoDir, componentRelativeDir: 'apps/stack',
+    validationKind: 'typecheck', env }), { code: 'EEXIT' });
+  await assert.rejects(bootstrap({ [WORKSPACE_BUILD_MODE_ENV]: 'strict' }), { code: 'EEXIT' });
+  await assert.rejects(bootstrap({ npm_lifecycle_event: 'prepack' }), { code: 'EEXIT' });
+  assert.match(await readFile(join(packageDir, 'dist/index.js'), 'utf8'), /value = 2/);
+});
 
 async function copyColdPreparationSourceGraph(repoDir) {
   const sourceRepoDir = fileURLToPath(new URL('../../../../../', import.meta.url));
@@ -62,7 +107,9 @@ test('runtime worker bootstrap retains coherent last-green output in explicit QA
   await writeFile(join(packageDir, 'tsconfig.json'), JSON.stringify({ compilerOptions: {
     target: 'ES2022', module: 'ESNext', moduleResolution: 'Bundler', rootDir: 'src', declaration: true, strict: true, types: [],
   }, include: ['src/**/*.ts'] }));
-  const compiler = resolveTypeScriptCliInvocation({});
+  // Bound the external compiler fixture to ordinary hosted-CI invocation.
+  // Bootstrap/output admission stays real; native memory admission has its own fixture.
+  const compiler = resolveTypeScriptCliInvocation({ env: { CI: '1' } });
   await writeFile(join(packageDir, 'compile.mjs'), `import { spawnSync } from 'node:child_process';
 const result = spawnSync(${JSON.stringify(compiler.command)}, [...${JSON.stringify(compiler.argsPrefix)}, '-p', 'tsconfig.json', '--outDir', process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR], { stdio: 'inherit', env: process.env });
 if (result.error) throw result.error;
@@ -182,7 +229,7 @@ test('UI dependency preparation owner imports from installed source without comp
   }
 });
 
-test('cold UI source-test bootstrap prepares the real postinstall import closure without compiling the Stack closure', {
+test('cold UI source-test bootstrap prepares real postinstall outputs without publishing workspace packages', {
   skip: process.platform === 'win32' ? 'This fixture exercises the POSIX worker package-manager executable boundary' : false,
 }, async (t) => {
   const repoDir = await mkdtemp(join(tmpdir(), 'happier-source-test-ui-patch-'));
@@ -214,25 +261,17 @@ test('cold UI source-test bootstrap prepares the real postinstall import closure
   }
   const protocolDir = join(repoDir, 'packages', 'protocol');
   await cp(join(sourceRepoDir, 'packages', 'protocol', 'src'), join(protocolDir, 'src'), { recursive: true });
-  // Compile the actual public UI import closure, not reconstructed Protocol
-  // exports. Fixture package metadata limits this process-boundary build to
-  // the entrypoint consumed by the real readiness verifier and generator.
+  // Keep Protocol's public package unavailable until publication. The real
+  // postinstall readiness/source-tool import closure must not consume its dist.
   await writeFile(join(protocolDir, 'package.json'), JSON.stringify({
     name: '@happier-dev/protocol', version: '0.0.0', type: 'module',
     main: './dist/plugins/ui/index.js', types: './dist/plugins/ui/index.d.ts',
     exports: { './plugins/ui': './dist/plugins/ui/index.js' },
     scripts: { build: 'node compile.mjs' },
   }));
-  await writeFile(join(protocolDir, 'tsconfig.json'), JSON.stringify({ compilerOptions: {
-    target: 'ES2022', module: 'ESNext', moduleResolution: 'Bundler', rootDir: 'src',
-    declaration: true, strict: true, skipLibCheck: true, types: ['node'],
-  }, include: ['src/plugins/ui/index.ts', 'src/auth/tr46.d.ts'] }));
-  const compiler = resolveTypeScriptCliInvocation({});
-  await writeFile(join(protocolDir, 'compile.mjs'), `import { spawnSync } from 'node:child_process';
-const result = spawnSync(${JSON.stringify(compiler.command)}, [...${JSON.stringify(compiler.argsPrefix)}, '-p', 'tsconfig.json', '--outDir', process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR], { stdio: 'inherit', env: process.env });
-if (result.error) throw result.error;
-process.exitCode = result.status ?? 1;
-`);
+  // The compiler process is an external boundary. Make unnecessary publication
+  // fail deliberately rather than relying on unrelated Protocol diagnostics.
+  await writeFile(join(protocolDir, 'compile.mjs'), "throw new Error('UI source tests do not consume Protocol dist; publication must not gate postinstall readiness');\n");
   await mkdir(join(repoDir, 'node_modules', '@happier-dev'), { recursive: true });
   for (const entry of await readdir(join(sourceRepoDir, 'node_modules'))) {
     if (entry === '@happier-dev' || entry === '.bin') continue;
@@ -267,8 +306,8 @@ process.exitCode = result.status ?? 1;
   await mkdir(binDir);
   // Corepack/Yarn is the OS boundary. A scriptless install creates only the
   // dependency tree; the UI package-manager task produces its patched module,
-  // and a package build invokes the canonical native compiler. Bootstrap,
-  // source import resolution, workspace publication and readiness stay real.
+  // and rejects unnecessary publication. Bootstrap, source import resolution
+  // and postinstall readiness stay real.
   const packageManagerFixture = `#!${process.execPath}
 const fs = require('node:fs');
 const path = require('node:path');
@@ -279,7 +318,7 @@ if (args[0] === '--version') {
 } else if (args[0] === 'install') {
   fs.mkdirSync(path.join(process.cwd(), 'node_modules'), { recursive: true });
 } else if (args.join(' ') === '-s build' && process.cwd() === ${JSON.stringify(protocolDir)}) {
-  require('node:child_process').execFileSync(process.execPath, ['compile.mjs'], { stdio: 'inherit', env: process.env });
+  throw new Error('UI source tests do not consume Protocol dist; publication must not gate postinstall readiness');
 } else if (args.join(' ') === '-s workspace @happier-dev/app postinstall:real'
   || (args.join(' ') === '-s postinstall:real' && process.cwd() === ${JSON.stringify(uiDir)})) {
   fs.cpSync(process.env.HAPPIER_TEST_UI_PATCH_INPUT, path.dirname(path.dirname(path.dirname(path.dirname(process.env.HAPPIER_TEST_UI_PATCH_OUTPUT)))), { recursive: true });
@@ -310,8 +349,7 @@ if (args[0] === '--version') {
   // This is the payload's dependency read after bootstrap returns, not a
   // postinstall call-count assertion or a separately repaired fixture.
   assert.equal(await readFile(requiredOutputPath, 'utf8'), preparedModule);
-  assert.ok((await stat(join(protocolDir, 'dist/plugins/ui/index.js'))).size > 0);
-  assert.ok((await stat(join(protocolDir, 'dist/plugins/ui/index.d.ts'))).size > 0);
+  await assert.rejects(stat(join(protocolDir, 'dist')), { code: 'ENOENT' });
   assert.equal((await inspectDependencyRefresh({
     installDir: repoDir, installMode: SCRIPTLESS_DEPENDENCY_INSTALL_MODE,
   })).required, false);
@@ -379,7 +417,7 @@ test('remote stage-zero dependency install materializes dependencies without wor
   ]);
 });
 
-test('remote dependency bootstrap serializes stage-zero installs through the canonical dependency owner', async (t) => {
+test('remote dependency bootstrap joins nine same-input waiters through the canonical dependency owner', async (t) => {
   const repoDir = await mkdtemp(join(tmpdir(), 'happier-remote-dependency-bootstrap-'));
   t.after(async () => rm(repoDir, { recursive: true, force: true }));
 
@@ -431,26 +469,21 @@ test('remote dependency bootstrap serializes stage-zero installs through the can
     await mkdir(join(repoDir, 'node_modules'), { recursive: true });
     await writeFile(join(repoDir, 'node_modules', '.yarn-integrity'), 'fixture\n', 'utf-8');
   };
-  const loadDependencyOwner = async () => ({
-    ensureDepsInstalled: async () => {},
-    ensureWorkspacePackagesBuiltForComponent: async () => {},
-  });
   const options = {
     repoDir,
+    validationKind: 'source-test',
     env: { ...process.env, CI: '1' },
-    packageExists: () => false,
     installInitialDependencies,
-    loadDependencyOwner,
   };
 
   const firstBootstrap = bootstrapRemoteDependencies(options);
   await firstInstallStarted;
-  const secondBootstrap = bootstrapRemoteDependencies(options);
+  const waiters = Array.from({ length: 9 }, () => bootstrapRemoteDependencies(options));
   await delay(100);
   assert.equal(installCalls, 1, 'a second controller must wait instead of mutating shared node_modules');
 
   releaseFirstInstall();
-  await Promise.all([firstBootstrap, secondBootstrap]);
+  await Promise.all([firstBootstrap, ...waiters]);
   assert.equal(installCalls, 1);
 });
 

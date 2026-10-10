@@ -509,6 +509,17 @@ build normally. Full release callers forward the canonical resolver's artifact
 maps, source identity, and original run number. Trusted preparation regenerates
 the publication envelope and verifies every updater signature before publishing.
 
+When only desktop publication remains, an authorized maintainer can dispatch
+`build-tauri.yml` from corrected `dev` control with `source_ref` set to the exact
+approved candidate, `resume_run_id` set to its terminal original run, and
+`release_notes_id` set to the approved notes. For a release origin, also set
+`resume_workflow=release.yml` or `release-preview-and-production.yml` and
+`resume_operation_id` to the exact conductor operation. `environment` selects
+the channel's status and artifacts; the canonical resolver still verifies the
+operation, source, run, and archive digests. All available finalized platforms
+skip builds, signing, and notarization. This desktop-only recovery does not run
+mobile flows or change the failed parent operation's status.
+
 ### Mobile and OTA current-origin recovery
 
 Standard release recovery can retain accepted OTA, native iOS/Android, and APK

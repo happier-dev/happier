@@ -52,6 +52,7 @@ test('review-pr defaults to a persistent workspace cache (sandbox keeps home/run
     'node:child_process': toDataUrl(`
 import { appendFileSync } from 'node:fs';
 import { EventEmitter } from 'node:events';
+export const fork = process.getBuiltinModule('node:child_process').fork;
 
 function log(call) {
   const p = process.env.HSTACK_REVIEW_PR_MARKER;
@@ -140,6 +141,7 @@ test('review-pr supports opting out of workspace cache', async (t) => {
     'node:child_process': toDataUrl(`
 import { appendFileSync } from 'node:fs';
 import { EventEmitter } from 'node:events';
+export const fork = process.getBuiltinModule('node:child_process').fork;
 const p = process.env.HSTACK_REVIEW_PR_MARKER;
 export function spawn(cmd, args, options = {}) {
   if (p) appendFileSync(p, JSON.stringify({ cmd, args, options: { env: options.env ?? null } }) + '\\n', 'utf-8');

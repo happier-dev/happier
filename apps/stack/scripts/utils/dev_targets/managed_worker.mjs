@@ -232,7 +232,7 @@ export async function provisionManagedLimaDevTarget(
   const outer = outerTarget
     ? await inspectOuterHost({ target: outerTarget, requireToolchain: false, env })
     : await provisionOuterHost({
-        name: `${targetName.slice(0, 27)}-host`,
+        name: `${targetName}-host`,
         host,
         user,
         stackBaseDir,

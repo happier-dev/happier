@@ -282,6 +282,10 @@ if ! run_remote_daemon_setup_with_public_flag \
   rm -f "$remote_setup_output"
   exit 1
 fi
+if ! node "$(dirname "$0")/remote-setup-result.mjs" "$remote_setup_output"; then
+  rm -f "$remote_setup_output"
+  exit 1
+fi
 rm -f "$remote_setup_output"
 
 echo "[remote-daemon-reuse-cli] checking remote daemon connectivity after setup..."

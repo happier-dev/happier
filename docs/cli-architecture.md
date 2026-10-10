@@ -80,6 +80,14 @@ private Sync source route retain the local profile for credentials and requester
 custody, while Workspace and Source addressing uses the admitted Home id. Current
 Machine admission and requester authorization remain required.
 
+Finite Project script/preparation and local saved-review Actions use the same exact
+Home admission helper. Finite execution keeps the original local profile for
+requester credential/custody validation, then uses the admitted Home for Account
+rows and Workspace refs. Private Account row and setup-trust readers admit that
+Home through the exact binding without relaxing requester Account/HTTP custody
+equality. Saved-review filesystem access instead receives the active local profile
+after admission; retained directory and Session authorization checks still apply.
+
 Daemon authenticated startup establishes an exact descriptor for a saved URL-only
 profile through `server/serverProfiles.ts#refreshServerProfileHomeConnectionDescriptor`
 before exposing Project Open. This covers credentials seeded, copied, or restored
@@ -951,15 +959,30 @@ The 0.3 development UI consumes this same relation for the Session Work tab's
 **Writes here** group. Upcoming rows and the global Work sidebar's **Scheduled**
 group consume `workflow.trigger.list { scope: 'account_all' }`, including
 Account-inline, saved-workflow and Session-scoped sets. The existing trigger
-projection retains `scopeSessionId`; optional leaf names and authored sibling
-ordinals come from the materializer's shared traversal, not a UI walker.
+projection retains `scopeSessionId`; leaf labels use `workflowBlockReferenceLabel`
+and visible ordinals use `listWorkflowBlockOrdinalsV1`, continuously across
+containers within each definition. Nested definitions number their own leaves;
+persisted sibling `memberOrdinal` is unchanged. Neither UI path walks the graph.
 Concurrent Account trigger reads share pending work while keeping consumer
 cancellation independent. Data remains in the incumbent Automation store.
+
+Relative occurrence and history labels register their formatter's next display
+boundary with the existing shared runtime clock. Scheduled, Trigger and Board
+leaves keep their own snapshots until that boundary; no per-row timer or whole
+Board minute invalidation is introduced. Calendar-day labels wake at local
+midnight, while minute/hour countdowns and elapsed ages use their rounding rules.
 
 Habit history uses the shared Run window filtered by `automationId`; last
 results page the shared Account window until the relevant latest Runs are
 known, rather than issuing a request per trigger row. Active destination rows
-reuse R22 and the existing viewport-demanded live map. Neither scheduled
+retain the destination Session id and show that destination's accepted
+`step N · title` labels alongside aggregate Run progress. The existing root
+`stepProgress.destinations` projection carries each accepted leaf's last observed
+invocation lifecycle, physical record identity and revision. Unopened observations
+survive reload; missing observations remain unknown. An observed completed loop
+iteration does not claim that the whole loop is complete. This uses the existing
+lean root envelope, not a per-row history/detail read. Active rows reuse R22 and
+the existing viewport-demanded live map. Neither scheduled
 occurrences nor transcript event order manufacture a Run or step identity.
 Upcoming occurrences open the existing trigger or workflow detail; admitted
 occurrences open their Run. Transcript first display batches exact Run ids and
@@ -1508,7 +1531,7 @@ In 0.3 development, unused-MCP Coach evidence follows the actual runtime
 selection: `resolveRunnerMcpServers` captures the selected, materialized enabled
 binding's catalog IDs and row revision. Claude's native SDK tool inventory and
 successful, settled foreground stream witness per-binding invocation counts.
-Missing inventory, ambiguous tool mapping or hidden delegated/task activity
+Missing or changing inventory, unlisted/ambiguous tool mapping or hidden delegated/task activity
 cannot prove zero usage; other Agent boundaries without equivalent evidence
 remain insufficient. Native schema sizes are not exposed and stay `null`.
 

@@ -122,7 +122,7 @@ function resolveDefaultExpoExportMaxWorkers() {
   return DEFAULT_EXPO_EXPORT_MAX_WORKERS_NONINTERACTIVE;
 }
 
-function applyExpoExportMaxWorkersArgs(args, env) {
+export function applyExpoExportMaxWorkersArgs(args, env) {
   const a = Array.isArray(args) ? [...args] : [];
   if (a[0] !== 'export') return a;
   if (hasFlag(a, '--max-workers')) return a;

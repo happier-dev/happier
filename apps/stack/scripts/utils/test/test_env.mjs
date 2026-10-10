@@ -22,11 +22,7 @@ const STACK_TEST_RUNNER_ENV_DENY_LIST = new Set([
   'HAPPIER_ACTIVE_SERVER_ID',
   'HAPPIER_DAEMON_SERVICE_LABEL',
   'HAPPIER_DAEMON_STARTUP_SOURCE',
-  'HAPPIER_DEV_TARGET_EXECUTION',
   'HAPPIER_EXEC_CONFIG_PATH',
-  'HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE',
-  'HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT',
-  'HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN',
   'HAPPIER_HOME_DIR',
   'HAPPIER_HSTACK_DISPATCH_CONTROL',
   'HAPPIER_HSTACK_EXECUTION',
@@ -36,12 +32,20 @@ const STACK_TEST_RUNNER_ENV_DENY_LIST = new Set([
   'NPM_CONFIG_CACHE',
   'YARN_CACHE_FOLDER',
   'npm_config_cache',
+  // The suite's Yarn launcher is not a fixture's package-manager boundary.
+  // Inherited executable hints otherwise bypass its PATH-selected stubs.
+  'npm_execpath',
+  'npm_node_execpath',
 ]);
 const STACK_TEST_ISOLATED_ROOT_MARKER = 'HAPPIER_STACK_TEST_ISOLATED_ROOT';
 const STACK_TEST_REPO_DIR_MARKER = 'HAPPIER_STACK_TEST_REPO_DIR';
 
 export function sanitizeStackTestRunnerEnv(env = {}, { isolatedStackRoot = '', repoDir = '' } = {}) {
   const cleanEnv = sanitizeDefinedEnv(env);
+  // Stack/server scope is fixture-owned; placement and authenticated admission
+  // still belong to the actual executor. Scrubbing them makes compiler children
+  // queue a second reservation behind their own parent. Native admission remains
+  // responsible for validating every inherited identity before reentry.
   const inheritedIsolatedStackRoot = String(cleanEnv[STACK_TEST_ISOLATED_ROOT_MARKER] ?? '').trim();
   const inheritedRepoDir = String(cleanEnv[STACK_TEST_REPO_DIR_MARKER] ?? '').trim();
 

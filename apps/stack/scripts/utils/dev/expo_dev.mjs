@@ -241,7 +241,6 @@ export async function ensureDevExpoServer({
   quiet = false,
   prepareExpoWorkspace = ensureExpoWorkspacePrepared,
   hasUsableWorkspaceLastGreen = hasUsableExpoWorkspaceLastGreen,
-  onWorkspacePrepared = null,
 } = {}) {
   const wantWeb = Boolean(startUi);
   const wantDevClient = Boolean(startMobile);
@@ -303,25 +302,16 @@ export async function ensureDevExpoServer({
       await prepareExpoWorkspace({ projectDir, env: preparationEnv, quiet });
     });
   };
-  const prepareAndNotify = async () => {
-    await prepareWorkspace();
-    try {
-      onWorkspacePrepared?.();
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      console.warn(`[local] Expo workspace refresh notification failed.\n${detail}`);
-    }
-  };
   // Fresh replicas lack the target-owned plugin inventories excluded from
   // Mutagen. Their first preparation must complete before Metro can serve.
   // A usable last-green workspace can still refresh without losing availability.
   if (await hasUsableWorkspaceLastGreen({ projectDir })) {
-    void prepareAndNotify().catch((error) => {
+    void prepareWorkspace().catch((error) => {
       const detail = error instanceof Error ? error.message : String(error);
       console.warn(`[local] Expo workspace refresh failed; keeping the current last-green outputs.\n${detail}`);
     });
   } else {
-    await prepareAndNotify();
+    await prepareWorkspace();
   }
 
   let desiredApiServerUrl = normalizeApiServerUrl(env.EXPO_PUBLIC_HAPPIER_SERVER_URL || apiServerUrl);

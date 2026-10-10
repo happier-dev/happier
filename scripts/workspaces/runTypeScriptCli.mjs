@@ -86,6 +86,7 @@ if (process.platform !== 'win32' && shouldRouteTypeScriptCliThroughHstack({ args
   exitWithCommandResult(routedResult);
 } else {
   const invocation = resolveTypeScriptCliInvocation({
+    args,
     repoRoot,
     workspaceDir: process.cwd(),
     processExecPath: process.execPath,

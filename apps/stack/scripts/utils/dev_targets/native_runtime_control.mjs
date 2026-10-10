@@ -30,8 +30,7 @@ async function finish(code) {
 }
 
 function scheduleAlternative() {
-  if (completing || winner || !waiting?.worker || waiting.worker === 'local' || cadence
-      || (process.env.HSTACK_EXEC_RUNTIME_SOURCE_UPLOAD === '1' && !waiting.sourceUploaded)) return;
+  if (completing || winner || !waiting?.worker || waiting.worker === 'local' || cadence) return;
   cadence = setTimeout(() => {
     cadence = null;
     if (completing || winner) return;
@@ -74,20 +73,12 @@ function launch(mode, excludedWorker = '') {
       HSTACK_EXEC_PRE_DISPATCH_BUSY_TARGETS: '', HSTACK_EXEC_PRE_DISPATCH_SYNC_FAILED: '' },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
-  const channel = { child, worker: '', closed: false, stopping: false, sourceUploaded: false };
+  const channel = { child, worker: '', closed: false, stopping: false };
   channels.add(channel);
   child.stdin.on('error', () => {}); // Closing/canceling a losing channel is expected.
   const stdout = createInterface({ input: child.stdout });
   stdout.on('line', line => {
     if (line.startsWith('HAPPIER_RUNTIME_BUILD_READY=')) choose(channel, line);
-    else if (line.startsWith('HAPPIER_RUNTIME_BUILD_PREPARE=')) {
-      try {
-        const { worker } = JSON.parse(line.slice('HAPPIER_RUNTIME_BUILD_PREPARE='.length));
-        if (typeof worker !== 'string' || (channel.worker && worker !== channel.worker)) throw new Error('invalid source-transfer worker');
-        channel.worker = worker;
-        if (!channel.stopping && !completing && !winner) process.stdout.write(`${line}\n`);
-      } catch (error) { process.stderr.write(`${error.message}\n`); void finish(1); }
-    }
     else if (!channel.stopping) process.stdout.write(`${line}\n`);
   });
   const stderr = createInterface({ input: child.stderr });
@@ -117,17 +108,6 @@ function launch(mode, excludedWorker = '') {
 
 const input = createInterface({ input: process.stdin });
 input.on('line', line => {
-  let message;
-  try { message = JSON.parse(line); } catch { void finish(1); return; }
-  if (typeof message?.prepareWorker === 'string') {
-    const channel = [...channels].find(candidate => candidate.worker === message.prepareWorker && !candidate.closed && !candidate.stopping);
-    if (channel && !channel.sourceUploaded) {
-      channel.sourceUploaded = true;
-      channel.child.stdin.write('source-uploaded\n');
-      scheduleAlternative();
-    }
-    return;
-  }
   if (winner) winner.child.stdin.write(line + '\n');
   else pendingInput.push(line + '\n');
 });

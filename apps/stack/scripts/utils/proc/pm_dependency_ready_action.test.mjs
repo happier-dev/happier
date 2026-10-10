@@ -112,9 +112,9 @@ test('ensureDepsInstalled serializes dependency-ready actions inside the existin
   releaseFirstAction();
   await Promise.all([firstEnsure, secondEnsure]);
   assert.deepEqual(events, ['first:action:start', 'first:action:end', 'second:action']);
-  assert.match(
-    await (await import('node:fs/promises')).readFile(join(root, 'scope.log'), 'utf8'),
-    /^ui,cli$/m,
+  assert.deepEqual(
+    new Set((await (await import('node:fs/promises')).readFile(join(root, 'scope.log'), 'utf8')).split('\n').filter(Boolean)),
+    new Set(['cli']),
     'Stack-managed dependency refresh must not run shared-package or server build postinstalls',
   );
 });

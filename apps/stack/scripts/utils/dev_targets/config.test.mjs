@@ -9,6 +9,33 @@ import {
   upgradeDevTargetsConfigToVersion3,
 } from './config.mjs';
 
+test('automatic placement accepts caller cache lifetimes without arbitrary duration limits', () => {
+  const config = parseDevTargetsConfig({
+    version: 3,
+    targets: [{ name: 'linux', platform: 'posix', ssh: 'linux', repoDir: '/repo', cliHomeDir: '/state/linux' }],
+    commandExecution: { mode: 'auto', loadProbeTtlMs: 1, unavailableProbeTtlMs: 7_200_000 },
+  });
+  assert.equal(config.commandExecution.loadProbeTtlMs, 1);
+  assert.equal(config.commandExecution.unavailableProbeTtlMs, 7_200_000);
+});
+
+test('target names preserve safe complete identity rather than an arbitrary length budget', () => {
+  const name = `worker-${'a'.repeat(40)}-tail`;
+  const config = parseDevTargetsConfig({ version: 3,
+    targets: [{ name, platform: 'posix', ssh: 'linux', repoDir: '/repo', cliHomeDir: '/state/linux' }],
+  });
+  assert.equal(config.targets[0].name, name);
+});
+
+test('Lima instance names delegate platform length acceptance while preserving path safety', () => {
+  const instance = 'worker-'.concat('a'.repeat(65));
+  const config = parseDevTargetsConfig({ version: 2,
+    targets: [{ name: 'linux', platform: 'posix', ssh: 'linux', repoDir: '/repo', cliHomeDir: '/state/linux',
+      limaInstance: instance, limaHome: '/state/lima' }],
+  });
+  assert.equal(config.targets[0].limaInstance, instance);
+});
+
 test('QA placement is independent of build placement and shares ordered and automatic normalization', () => {
   const base = {
     version: 3,

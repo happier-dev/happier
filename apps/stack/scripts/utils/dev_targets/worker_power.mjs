@@ -1,6 +1,8 @@
 import { runCaptureResult } from '../proc/proc.mjs';
 import { buildRemotePowerShellCommand } from './remote_commands.mjs';
 
+export const LINUX_WORKER_SLEEP_TARGETS = ['sleep.target', 'suspend.target', 'hibernate.target', 'hybrid-sleep.target', 'suspend-then-hibernate.target'];
+
 const WINDOWS_POWER_SETTINGS = [
   ['29f6c1db-86da-48c5-9fdb-f2b67b1f44da', 'SUB_SLEEP', 'STANDBYIDLE', 'standby-timeout-'],
   ['9d7815a6-7ee4-497e-8888-515a05f02364', 'SUB_SLEEP', 'HIBERNATEIDLE', 'hibernate-timeout-'],
@@ -144,8 +146,17 @@ $failures = @(Set-WorkerPowerSettings)
 if ($failures.Count) { throw ($failures -join '; ') }
 `;
   }
+  const linuxPowerCheck = `
+linux_power_healthy() {
+  for unit in ${LINUX_WORKER_SLEEP_TARGETS.join(' ')}; do
+    state=$(systemctl is-enabled "$unit" 2>/dev/null || true)
+    [ "$state" = masked ] || return 1
+  done
+}
+`;
   if (action === 'inspect') return `
 set -eu
+${linuxPowerCheck}
 case "$(uname -s)" in
   Darwin)
     policy=$(pmset -g custom)
@@ -156,22 +167,20 @@ case "$(uname -s)" in
     fi ;;
   Linux)
     healthy=true
-    for unit in sleep.target suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target; do
-      state=$(systemctl is-enabled "$unit" 2>/dev/null || true)
-      [ "$state" = masked ] || healthy=false
-    done
+    linux_power_healthy || healthy=false
     printf '__HAPPIER_WORKER_POWER__={"ok":%s,"detail":"systemd sleep targets must all be masked"}\\n' "$healthy" ;;
   *) printf '%s\\n' '__HAPPIER_WORKER_POWER__={"ok":false,"detail":"unsupported operating system"}' ;;
 esac
 `;
   return `
 set -eu
+${linuxPowerCheck}
 root() {
   if [ "$(id -u)" = 0 ]; then "$@"; else sudo -n "$@"; fi
 }
 case "$(uname -s)" in
   Darwin) root pmset -a sleep 0 ;;
-  Linux) root systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target ;;
+  Linux) linux_power_healthy || root systemctl mask ${LINUX_WORKER_SLEEP_TARGETS.join(' ')} ;;
   *) echo 'Worker sleep configuration is unsupported on this operating system' >&2; exit 1 ;;
 esac
 `;

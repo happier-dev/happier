@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 import { createManagedLimaHostExecutor } from './utils/managed_lima/host_executor.mjs';
 import {
+  applyManagedLimaNetworking,
   getManagedLimaStatus,
   startManagedLimaInstance,
   stopManagedLimaInstance,
@@ -26,11 +27,13 @@ function flagValue(argv, name) {
 function usage(json) {
   printResult({
     json,
-    data: { commands: ['setup', 'status', 'doctor', 'start', 'stop', 'shell', 'ssh-config'] },
+    data: { commands: ['setup', 'status', 'doctor', 'start', 'stop', 'network', 'shell', 'ssh-config'] },
     text: [
       '[managed-lima] usage:',
       '  hstack tools managed-lima setup --instance=NAME [--profile=balanced] [--disk-image-format=raw|asif] [--pressure-profile=none|swap64|swap64-zswap|swap128|swap128-zswap|swap256|swap256-zswap] [--guest-profile=happier] [--lima-home=PATH] [--no-install] [--json]',
       '  hstack tools managed-lima status|doctor|start|stop --instance=NAME [--profile=balanced] [--disk-image-format=raw|asif] [--lima-home=PATH] [--json]',
+      '  hstack tools managed-lima network apply --instance=NAME [--lima-home=PATH] [--force] [--json]',
+      '    --force authorizes stop, network-only edit and start; all guest processes are interrupted.',
       '  hstack tools managed-lima shell --instance=NAME [--lima-home=PATH] -- COMMAND [ARG...]',
       '  hstack tools managed-lima ssh-config --instance=NAME --output=/absolute/guest.conf [--alias=happier-agent-primary]',
       '',
@@ -104,6 +107,9 @@ async function main() {
       nodeMajor: flagValue(argv, '--node-major').trim() || '24',
       yarnVersion: flagValue(argv, '--yarn-version').trim() || '1.22.22',
     });
+  } else if (command === 'network') {
+    if (argv[argv.indexOf(command) + 1] !== 'apply') throw new Error('[managed-lima] expected network apply');
+    result = await applyManagedLimaNetworking({ executor, instance, force: argv.includes('--force') });
   } else if (command === 'status') {
     result = await getManagedLimaStatus({ executor, instance });
   } else if (command === 'doctor') {

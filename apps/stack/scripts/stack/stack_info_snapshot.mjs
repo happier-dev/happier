@@ -5,6 +5,7 @@ import { resolveLocalhostHost, preferStackLocalhostUrl } from '../utils/paths/lo
 import { worktreeSpecFromDir } from '../utils/git/worktrees.mjs';
 import {
   getStackRuntimeStatePath,
+  getStackRuntimePendingRemoteTargets,
   hasTrustedStackRuntimeLifecycle,
   isStackRuntimeProcessTrusted,
   readStackRuntimeStateFile,
@@ -25,7 +26,7 @@ import { isTcpPortListening, listListenPidsWithStatus } from '../utils/net/ports
 import { createListenerOwnershipObservationScope, STACK_LISTENER_OBSERVATION_TIMEOUT_MS } from '../utils/server/listener_ownership.mjs';
 import { getProcessGroupId, isPidOwnedByStack } from '../utils/proc/ownership.mjs';
 import { resolveRuntimeRemoteServiceObservation } from '../utils/tui/runtime_placement_summary.mjs';
-import { buildBorrowedExpoUiUrl, isBorrowedExpoConsumer, resolveBorrowedExpoRuntime } from '../runtime/shared/borrowed_expo.mjs';
+import { buildBorrowedExpoUiUrl, isBorrowedExpoConsumer, resolveBorrowedExpoRuntime, resolveSourceQaUiMode } from '../runtime/shared/borrowed_expo.mjs';
 import { inspectWorkspaceQaStalePackagesForComponent } from '../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
 
 const readExistingEnv = readTextOrEmpty;
@@ -167,7 +168,7 @@ export async function readStackInfoSnapshot({
     : await readStackRuntimeStateWithDaemonSync({
         runtimeStatePath,
         cliHomeDir: join(baseDir, 'cli'),
-        internalServerUrl: trustedRuntimeServerPort ? `http://127.0.0.1:${trustedRuntimeServerPort}` : '',
+        internalServerUrl: trustedRuntimeServerPort || endpoint.publicServerUrl ? endpoint.internalServerUrl : '',
         env: stackScopedEnv,
       }, {
         checkDaemonStateImpl: observeDaemonState,
@@ -184,11 +185,19 @@ export async function readStackInfoSnapshot({
     runtimeState?.runtimePublication && typeof runtimeState.runtimePublication === 'object'
       ? runtimeState.runtimePublication
       : null;
-  const serveUiWanted = typeof runtimeState?.serveUi === 'boolean'
+  const serveUiConfigured = typeof runtimeState?.serveUi === 'boolean'
     ? runtimeState.serveUi
     : String(getEnvValueAny(stackEnv, ['HAPPIER_STACK_SERVE_UI']) ?? '1').trim() !== '0';
   const runtimeSnapshotId = String(runtimeState?.runtimeSnapshotId ?? '').trim();
-  const runtimeBackedStart = Boolean(runtimeSnapshotId);
+  const sourceSnapshot = Boolean(runtimeState?.sourceRuntimeIdentities)
+    || resolveStackRuntimeMode({ env: stackEnv }).mode === 'source-snapshot';
+  const sourceUi = sourceSnapshot ? resolveSourceQaUiMode({
+    uiMode: runtimeState?.sourceUi === 'disabled' ? undefined : runtimeState?.sourceUi ?? undefined,
+    noUi: runtimeState?.sourceUi === 'disabled' || (runtimeState?.sourceUi == null && !serveUiConfigured),
+    consumerStackName: stackName, producerStackName: borrowedExpoProducerStackName,
+  }) : null;
+  const serveUiWanted = sourceSnapshot ? sourceUi === 'export' : serveUiConfigured;
+  const runtimeBackedStart = Boolean(runtimeSnapshotId || sourceSnapshot);
   const componentEnv = { ...process.env, ...stackEnv };
   const repoDir = getEnvValueAny(stackEnv, ['HAPPIER_STACK_REPO_DIR']) || resolveDefaultRepoEnv({ rootDir }).HAPPIER_STACK_REPO_DIR;
   const uiDir = getComponentDir(rootDir, 'happier-ui', componentEnv);
@@ -212,7 +221,7 @@ export async function readStackInfoSnapshot({
   const observedDaemon = await getObservedStackDaemonAsync({
     cliHomeDir: join(baseDir, 'cli'),
     stackName,
-    internalServerUrl: trustedRuntimeServerPort ? `http://127.0.0.1:${trustedRuntimeServerPort}` : '',
+    internalServerUrl: trustedRuntimeServerPort || endpoint.publicServerUrl ? endpoint.internalServerUrl : '',
     runtimeDaemonPid: runtimeState?.processes?.daemonPid ?? null,
     runtimeDaemonPids: runtimeState?.processes?.daemonPids ?? [],
     env: stackScopedEnv,
@@ -234,6 +243,9 @@ export async function readStackInfoSnapshot({
   const remoteDaemon = resolveRuntimeRemoteServiceObservation(runtimeState, 'daemon');
   const remoteDaemonRunning = remoteDaemon.running;
   const remoteExpo = resolveRuntimeRemoteServiceObservation(runtimeState, 'expo');
+  const remoteServer = resolveRuntimeRemoteServiceObservation(runtimeState, 'server');
+  const sourceUiLaunch = sourceUi === 'export'
+    ? runtimeState?.sourceUiLaunch ?? remoteTargets[remoteServer.target]?.sourceUiLaunch ?? null : null;
 
   const ownerAlive = await isStackRuntimeProcessTrusted(ownerPid, {
     ...runtimeProcessTrustContext,
@@ -326,7 +338,7 @@ export async function readStackInfoSnapshot({
     serveUiWanted,
     runtimeBackedStart,
   });
-  const borrowedExpo = isBorrowedExpoConsumer({
+  const borrowedExpo = (!sourceSnapshot || sourceUi === 'borrowed') && isBorrowedExpoConsumer({
     consumerStackName: stackName,
     producerStackName: borrowedExpoProducerStackName,
   })
@@ -359,6 +371,8 @@ export async function readStackInfoSnapshot({
     serverBackendRunning ||
     (!borrowedExpo && uiRunning) ||
     daemonRunning ||
+    remoteDaemonRunning ||
+    remoteServer.running ||
     daemonPidAlive ||
     proxyPidAlive ||
     serverPidAlive ||
@@ -367,6 +381,9 @@ export async function readStackInfoSnapshot({
     expoForwarderAlive;
 
   const healthIssues = [];
+  const stopCleanupIncomplete = Boolean(runtimeState?.stopRequest)
+    || getStackRuntimePendingRemoteTargets(runtimeState).some(([, state]) => state.phase === 'stop' && state.status === 'failed');
+  if (stopCleanupIncomplete) healthIssues.push('stop_cleanup_incomplete');
   const proxyBackendUnavailable = Boolean(
     serverProxy?.mode === 'proxy'
     && !serverBackendRunning
@@ -387,18 +404,22 @@ export async function readStackInfoSnapshot({
   if (daemonExpected && running && !daemonRunning && !remoteDaemonRunning) {
     healthIssues.push('daemon_down');
   }
-  const healthStatus = !running ? 'stopped' : healthIssues.length > 0 ? 'degraded' : 'healthy';
+  const healthStatus = stopCleanupIncomplete ? 'degraded' : !running ? 'stopped' : healthIssues.length > 0 ? 'degraded' : 'healthy';
 
   const host = resolveLocalhostHost({ stackMode: true, stackName });
-  const internalServerUrl = activeServerPort ? `http://127.0.0.1:${activeServerPort}` : null;
+  const internalServerUrl = endpoint.publicServerUrl
+    ? endpoint.internalServerUrl
+    : activeServerPort ? endpoint.internalServerUrl : null;
   const uiUrl = borrowedExpo?.running
     ? buildBorrowedExpoUiUrl({ consumerHost: host, expoPort: uiPort, serverPort: activeServerPort })
     : uiPort ? `http://${host}:${uiPort}` : null;
   const mobileUrl = mobilePort ? await preferStackLocalhostUrl(`http://localhost:${mobilePort}`, { stackName }) : null;
 
   const repoWorktreeSpec = repoDir ? worktreeSpecFromDir({ rootDir, component: 'happier-ui', dir: repoDir }) || null : null;
-  const runtimeMode = resolveStackRuntimeMode({ argv: [], env: stackEnv }).mode;
-  const runtimeInspection = await inspectStackRuntimeSelection({ stackName, stackBaseDir: baseDir, env: componentEnv });
+  const runtimeMode = sourceSnapshot ? 'source-snapshot' : resolveStackRuntimeMode({ argv: [], env: stackEnv }).mode;
+  const runtimeInspection = sourceSnapshot ? { activeSnapshotId: null, producerStackName: null, snapshotPath: null,
+    sourceFingerprint: null, valid: true, errors: [] }
+    : await inspectStackRuntimeSelection({ stackName, stackBaseDir: baseDir, env: componentEnv });
   const selectedSnapshotId = runtimeInspection.activeSnapshotId;
   // The state file's snapshot identity is authoritative while a recorded lifecycle
   // process is still trusted as live. A listener is stronger evidence for endpoint
@@ -408,7 +429,11 @@ export async function readStackInfoSnapshot({
     runtimeProcessTrustContext,
     runtimeStatusTrustOptions,
   );
-  const loadedSnapshotId = runtimeLifecycleLive ? runtimeSnapshotId || null : null;
+  const loadedSnapshotId = !sourceSnapshot && runtimeLifecycleLive ? runtimeSnapshotId || null : null;
+  const sourceRuntimeIdentities = sourceSnapshot ? Object.fromEntries(Object.entries(runtimeState?.sourceRuntimeIdentities ?? {})
+    .map(([component, identity]) => [component, { selected: identity.selected,
+      loaded: runtimeLifecycleLive && (component === 'server' ? serverRunning : component === 'ui' ? uiRunning : daemonRunning || remoteDaemonRunning)
+        ? identity.loaded : null }])) : null;
   const pendingManualRestart = Boolean(
     running
     && loadedSnapshotId
@@ -487,10 +512,10 @@ export async function readStackInfoSnapshot({
           running: uiRunning,
           pidAlive: uiPidAlive,
           portListening: uiPortListening,
-          source: borrowedExpo ? 'borrowed_expo' : remoteExpo.running ? 'remote_target' : 'local',
+          source: borrowedExpo ? 'borrowed_expo' : remoteExpo.running || (sourceUi === 'export' && remoteServer.target) ? 'remote_target' : 'local',
           ownership: borrowedExpo?.ownership ?? 'owned',
           producerStackName: borrowedExpo?.producerStackName ?? null,
-          remoteTarget: borrowedExpo?.remoteTarget ?? remoteExpo.target,
+          remoteTarget: borrowedExpo?.remoteTarget ?? (sourceUi === 'export' ? remoteServer.target : remoteExpo.target),
         },
         expoTailscaleForwarder: {
           pid: Number.isFinite(expoTailscaleForwarderPid) && expoTailscaleForwarderPid > 1 ? expoTailscaleForwarderPid : null,
@@ -510,6 +535,7 @@ export async function readStackInfoSnapshot({
       processes: runtimeState?.processes ?? null,
       placement: runtimePlacement,
       remoteTargets,
+      stopRequest: runtimeState?.stopRequest ?? null,
       startedAt: runtimeState?.startedAt ?? null,
       updatedAt: runtimeState?.updatedAt ?? null,
       mode: runtimeMode,
@@ -527,6 +553,9 @@ export async function readStackInfoSnapshot({
       snapshotComponents: runtimeInspection.manifest?.components ?? null,
       componentSnapshotIds: Object.fromEntries(Object.entries(runtimeInspection.componentSnapshots ?? {}).map(([component, snapshot]) => [component, snapshot.snapshotId])),
       componentTargets: runtimeInspection.componentTargets ?? null,
+      sourceRuntimeIdentities,
+      sourceUi,
+      sourceUiLaunch,
       sourceWorkspaceStalePackages,
     },
     urls: {

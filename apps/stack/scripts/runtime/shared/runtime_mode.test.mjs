@@ -10,6 +10,20 @@ test('resolveStackRuntimeMode defaults to source mode', () => {
   assert.equal(resolved.source, 'default');
 });
 
+test('controlled source snapshots and explicit built runtime stay separate', () => {
+  assert.deepEqual(resolveStackRuntimeMode({ argv: ['--runtime=source'], env: { HAPPIER_STACK_RUNTIME_MODE: 'require' } }),
+    { mode: 'source-snapshot', source: 'flag' });
+  assert.deepEqual(resolveStackRuntimeMode({ argv: ['--runtime=built'], env: { HAPPIER_STACK_RUNTIME_MODE: 'source-snapshot' } }),
+    { mode: 'require', source: 'flag' });
+  assert.deepEqual(resolveStackRuntimeMode({ env: { HAPPIER_STACK_RUNTIME_MODE: 'source-snapshot' } }),
+    { mode: 'source-snapshot', source: 'env' });
+  assert.deepEqual(resolveStackRuntimeMode({ env: { HAPPIER_STACK_RUNTIME_MODE: 'require' }, activeRuntimeState: {
+    runtimeSnapshotId: null, sourceRuntimeIdentities: { daemon: { selected: 'code', loaded: 'code' } },
+  } }), { mode: 'source-snapshot', source: 'active-runtime' });
+  assert.equal(hasExplicitStackRuntimeModeArg(['--runtime=source', '--', 'status']), true);
+  assert.throws(() => resolveStackRuntimeMode({ argv: ['--runtime=other'], env: {} }), /invalid.*runtime/i);
+});
+
 test('resolveStackRuntimeMode reads prefer mode from stack env', () => {
   const resolved = resolveStackRuntimeMode({
     argv: [],

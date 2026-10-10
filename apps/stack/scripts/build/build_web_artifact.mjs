@@ -8,7 +8,11 @@ import { ensureDepsInstalled, requireDir } from '../utils/proc/pm.mjs';
 import { getComponentDir } from '../utils/paths/paths.mjs';
 import { getDefaultAutostartPaths } from '../utils/paths/paths.mjs';
 import { ensureExpoIsolationEnv, getExpoStatePaths, resolveExpoTmpDir, wantsExpoClearCache } from '../utils/expo/expo.mjs';
-import { expoExec } from '../utils/expo/command.mjs';
+import { resolveExpoBin, applyExpoExportMaxWorkersArgs } from '../utils/expo/command.mjs';
+import { applyExpoNodeHeapEnv } from '../utils/expo/expoNodeHeapEnv.mjs';
+import { runSourceBuildCommand } from '../utils/proc/runSourceBuildCommand.mjs';
+import { prepareSourceWebUi } from './build_source_web_ui.mjs';
+import { precompressUiWebAssets } from './precompress_ui_web_assets.mjs';
 import { pathExists } from '../utils/fs/fs.mjs';
 import { buildStackWebExportEnv } from '../utils/ui/ui_export_env.mjs';
 import { artifactPayloadDir, readArtifactManifest, readReusableArtifactManifest, writeArtifactManifest } from '../runtime/shared/artifact_manifest.mjs';
@@ -20,6 +24,13 @@ function runCanonicalUiPostinstall({ uiDir, env }) {
     env,
     stdio: 'inherit',
   });
+}
+
+async function runPreparedWebExport({ dir, args, env }) {
+  const exportEnv = applyExpoNodeHeapEnv({ ...env, CI: '1', EXPO_UNSTABLE_WEB_MODAL: '1' });
+  await runSourceBuildCommand({ repoDir: join(dir, '../..'), cwd: dir,
+    command: await resolveExpoBin(dir), args: applyExpoExportMaxWorkersArgs(args, exportEnv),
+    env: exportEnv, captureStdout: false });
 }
 
 export async function ensureWebUiDependencies({
@@ -114,7 +125,7 @@ export async function exportWebPayloadToArtifactPayloadDir({
   payloadDir,
   env,
   artifactFingerprint,
-  expoExecImpl = expoExec,
+  expoExecImpl = runPreparedWebExport,
 }) {
   const stagingRoot = resolveWebExportStagingRootDir(uiDir);
   const stagingDir = resolveWebExportStagingDir(uiDir, artifactFingerprint);
@@ -159,6 +170,7 @@ export async function exportWebPayloadToArtifactPayloadDir({
     }
 
     await assertWebArtifactPayload({ payloadDir: stagingDir, entrypoint: 'index.html' });
+    await precompressUiWebAssets({ dir: stagingDir });
     await moveDir({ fromDir: stagingDir, toDir: payloadDir });
     ok = true;
     return 'index.html';
@@ -189,7 +201,7 @@ export async function buildWebArtifact({
   env = process.env,
   ensureDepsInstalledImpl = ensureDepsInstalled,
   runUiPostinstallImpl = runCanonicalUiPostinstall,
-  expoExecImpl = expoExec,
+  expoExecImpl = runPreparedWebExport,
 }) {
   void forceRebuild;
   const existing = await readReusableArtifactManifest({ artifactDir, artifactFingerprint });
@@ -203,8 +215,11 @@ export async function buildWebArtifact({
 
   await buildIntoTempThenReplace(artifactDir, async (tmpArtifactDir) => {
     const payloadDir = artifactPayloadDir(tmpArtifactDir);
-
-    const exportEnv = buildStackWebExportEnv({ baseEnv: env });
+    const sourceInputsDir = join(tmpArtifactDir, 'source-inputs');
+    const { inventoryPath } = await prepareSourceWebUi({ repoDir: join(uiDir, '../..'), outputDir: sourceInputsDir, env });
+    const exportEnv = buildStackWebExportEnv({ baseEnv: {
+      ...env, HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY: inventoryPath,
+    } });
     const paths = getExpoStatePaths({
       baseDir: getDefaultAutostartPaths(env).baseDir,
       kind: 'ui-export-runtime-artifact',
@@ -214,6 +229,7 @@ export async function buildWebArtifact({
     const tmpDir = resolveExpoTmpDir({ env: exportEnv, defaultTmpDir: paths.tmpDir, kind: 'ui-export-runtime-artifact', projectDir: uiDir });
     await ensureExpoIsolationEnv({ env: exportEnv, stateDir: paths.stateDir, expoHomeDir: paths.expoHomeDir, tmpDir });
     const entrypoint = await exportWebPayloadToArtifactPayloadDir({ uiDir, payloadDir, env: exportEnv, artifactFingerprint, expoExecImpl });
+    await rm(sourceInputsDir, { recursive: true, force: true });
 
     await writeArtifactManifest({
       artifactDir: tmpArtifactDir,

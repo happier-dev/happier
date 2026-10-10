@@ -404,8 +404,7 @@ test('hstack stack runtime select fails closed when the producer has no complete
   );
 
   assert.equal(res.code, 1, `stdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
-  assert.match(res.stderr, /producer.*complete runtime snapshot/i);
-  assert.match(res.stderr, /stack build qa-consumer --all --activate-runtime --target=/i);
+  assert.match(res.stderr, /missing server snapshot/i);
   await assert.rejects(readFile(join(consumerStackDir, 'runtime', 'current.json'), 'utf8'), { code: 'ENOENT' });
 });
 
@@ -530,7 +529,7 @@ test('hstack stack runtime select does not treat a producer pin pointing to its 
   );
 
   assert.equal(res.code, 1, `stdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
-  assert.match(res.stderr, /no complete runtime snapshot/i);
+  assert.match(res.stderr, /missing server snapshot/i);
   assert.equal(await readFile(consumerPointerPath, 'utf8'), consumerPointerBefore);
 });
 

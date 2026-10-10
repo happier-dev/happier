@@ -67,6 +67,9 @@ export const STACK_WRAPPER_PRESERVE_KEYS = [
   'HAPPIER_STACK_RUNTIME_MODE',
   'HAPPIER_STACK_RUNTIME_STATE_PATH',
   'HAPPIER_STACK_DAEMON',
+  // The selected stack owns child-process logs across the runtime env-loader hop.
+  'HAPPIER_STACK_LOG_TEE_DIR',
+  'HAPPIER_STACK_LOG_TEE_TIMESTAMPS',
 
   // Sandbox detection + policy.
   'HAPPIER_STACK_SANDBOX_DIR',

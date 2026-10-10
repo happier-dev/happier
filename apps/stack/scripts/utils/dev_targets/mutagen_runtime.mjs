@@ -1,7 +1,8 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { DEV_TARGET_DISPOSABLE_REPLICA_ARTIFACT_ROOTS } from './mutagen_project.mjs';
+import { DEV_TARGET_DISPOSABLE_REPLICA_ARTIFACT_ROOTS, DEV_TARGET_SYNC_EXECUTOR_REPO, resolveMutagenRepositoryKey } from './mutagen_project.mjs';
+import { resolveRepoStackIdentity, resolveStacksStorageRoot } from '../stack/repo_stack_identity.mjs';
 
 export const MUTAGEN_SYNC_LIST_JSON_TEMPLATE = '{{json .}}';
 export const DEV_TARGET_MUTAGEN_RUNTIME_OWNER = 'stack-dev-targets';
@@ -67,27 +68,47 @@ const MUTAGEN_UNHEALTHY_STATUSES = new Set([
 export function resolveDevTargetMutagenRuntime({
   stackBaseDir,
   env = process.env,
+  sourceDir = env?.HAPPIER_STACK_SYNC_SOURCE_DIR || DEV_TARGET_SYNC_EXECUTOR_REPO,
   pathExists = existsSync,
 } = {}) {
   const baseDir = String(stackBaseDir ?? '').trim();
   if (!baseDir) throw new Error('[dev-targets] stack base directory is required');
-  const mutagenDir = join(baseDir, 'mutagen');
+  const ownerBaseDir = resolveRepoStackIdentity({
+    repoRoot: DEV_TARGET_SYNC_EXECUTOR_REPO,
+    stacksStorageRoot: resolveStacksStorageRoot(env),
+    createIfMissing: false,
+  }).stackBaseDir;
+  const mutagenDir = join(ownerBaseDir, 'mutagen');
   const dataDir = join(mutagenDir, 'data');
   const opensshDir = join(mutagenDir, 'openssh');
+  const repository = resolveMutagenRepositoryKey(sourceDir);
+  const projectDir = repository ? join(mutagenDir, 'repositories', repository) : mutagenDir;
   return {
     owner: DEV_TARGET_MUTAGEN_RUNTIME_OWNER,
     mutagenDir,
     dataDir,
     opensshDir,
-    projectFile: join(mutagenDir, 'mutagen.yml'),
-    syncServiceStateFile: join(mutagenDir, 'sync-service-state.v1.json'),
+    sourceDir,
+    ownerBaseDir,
+    projectFile: join(projectDir, 'mutagen.yml'),
+    syncServiceStateFile: join(projectDir, 'sync-service-state.v1.json'),
     env: {
       ...(env ?? process.env),
       MUTAGEN_DATA_DIRECTORY: dataDir,
+      HAPPIER_STACK_SYNC_SOURCE_DIR: sourceDir,
       MUTAGEN_SSH_CONNECT_TIMEOUT: String(env?.MUTAGEN_SSH_CONNECT_TIMEOUT ?? '10'),
       ...(pathExists(opensshDir) ? { MUTAGEN_SSH_PATH: opensshDir } : {}),
     },
   };
+}
+
+export function resolveDevTargetSshConfigFile(target, { stackBaseDir, env = process.env } = {}) {
+  if (stackBaseDir) {
+    const { opensshDir } = resolveDevTargetMutagenRuntime({ stackBaseDir, env });
+    const sharedConfig = join(opensshDir, 'config');
+    if (existsSync(sharedConfig)) return sharedConfig;
+  }
+  return target.sshConfigFile;
 }
 
 /**

@@ -55,6 +55,7 @@ test('review-pr warms cached workspace deps when shouldRunYarnInstall returns tr
     'node:child_process': toDataUrl(`
 import { appendFileSync } from 'node:fs';
 import { EventEmitter } from 'node:events';
+export const fork = process.getBuiltinModule('node:child_process').fork;
 
 function log(call) {
   const p = process.env.HSTACK_REVIEW_PR_MARKER;

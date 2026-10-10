@@ -11,7 +11,7 @@ const RUNTIME_PROVENANCE_ENV_KEYS = [
 ];
 
 export function resolveCliRuntimeLaunchProvenance(cliLaunchSpec) {
-  if (!cliLaunchSpec) {
+  if (!cliLaunchSpec || cliLaunchSpec.sourceSnapshot === true) {
     return {
       runtimeBacked: false,
       admittedDistClosureFingerprint: null,
@@ -42,6 +42,11 @@ export function applyCliRuntimeLaunchProvenanceEnv({ env = {}, cliLaunchSpec = n
   const projected = { ...env };
   for (const key of RUNTIME_PROVENANCE_ENV_KEYS) delete projected[key];
   const provenance = resolveCliRuntimeLaunchProvenance(cliLaunchSpec);
+  if (cliLaunchSpec?.sourceSnapshot === true) {
+    return { ...projected, ...cliLaunchSpec.env, HAPPIER_CLI_ROOT_DIR: cliLaunchSpec.cliDir,
+      HAPPIER_CLI_SUBPROCESS_ENTRYPOINT: cliLaunchSpec.entrypoint,
+      HAPPIER_CLI_SUBPROCESS_PREFER_TSX: '0', HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK: '0' };
+  }
   if (!provenance.runtimeBacked) return projected;
   projected.HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED = '1';
   projected.HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT = provenance.distEntrypoint;
@@ -49,7 +54,13 @@ export function applyCliRuntimeLaunchProvenanceEnv({ env = {}, cliLaunchSpec = n
   return projected;
 }
 
-export function resolveCliRuntimeLaunchSpec({ snapshot }) {
+export function resolveCliRuntimeLaunchSpec({ snapshot, sourceRuntimeLaunch }) {
+  if (sourceRuntimeLaunch) {
+    const { entrypoint, cliDir, env = {} } = sourceRuntimeLaunch;
+    if (!entrypoint || !cliDir) throw new Error('[runtime] source CLI launch requires its retained entrypoint and root.');
+    return { source: 'source-snapshot', sourceSnapshot: true, entrypoint, nodeEntrypoint: entrypoint,
+      cliDir, command: entrypoint, args: [], env };
+  }
   const daemonDistClosureFingerprint = String(snapshot?.daemonDistClosureFingerprint ?? '').trim().toLowerCase();
   if (!/^[a-f0-9]{16}$/.test(daemonDistClosureFingerprint)) {
     throw new Error('[runtime] admitted daemon snapshot is missing a valid dist closure fingerprint.');

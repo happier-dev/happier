@@ -312,6 +312,9 @@ async function pruneComponentArtifactsUnderLock({ stackBaseDir, component, keepC
   };
 
   for (const artifactId of artifactIds) {
+    // atomic_dir_swap owns private staging/rollback directories until commit.
+    // They are not published artifacts and may belong to a concurrent build.
+    if (artifactId.startsWith('.tmp.') || artifactId.startsWith('.backup.')) continue;
     const artifactDir = join(componentDir, artifactId);
     const manifest = await readArtifactManifest({ artifactDir });
     const validation = validateArtifactManifest(manifest);

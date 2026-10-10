@@ -11,6 +11,54 @@ import YAML from 'yaml';
 const here = dirname(fileURLToPath(import.meta.url));
 const runScript = join(here, 'run.sh');
 
+for (const scriptName of ['remote-daemon-smoke.sh', 'remote-daemon-authenticated-cli-smoke.sh']) {
+  function runSetupCapture(result) {
+    const source = fs.readFileSync(join(here, 'bin', scriptName), 'utf8');
+    const start = source.indexOf('remote_setup_output="$(mktemp');
+    // Exercise the real setup capture at the hstack process boundary, before
+    // unrelated relay/SSH connectivity checks.
+    const captureEnd = source.indexOf('checking remote daemon connectivity after setup...', start);
+    const block = source.slice(start, source.lastIndexOf('\necho ', captureEnd));
+    assert.ok(start >= 0 && captureEnd > start);
+    return spawnSync('bash', ['-c', `set -euo pipefail
+      hstack() { printf '%s\\n' "$HAPPIER_TEST_SETUP_RESULT"; }
+      remote_channel_args=(--preview)
+      ${block}`, join(here, 'bin', scriptName)], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        HAPPIER_TEST_SETUP_RESULT: result,
+        REMOTE_SSH_TARGET: 'happy@remote1',
+        HAPPIER_SERVER_URL: 'http://stack:3005',
+        HAPPIER_WEBAPP_URL: 'http://stack:3005',
+        HAPPIER_PUBLIC_SERVER_URL: 'http://stack:3005',
+      },
+    });
+  }
+
+  test(`${scriptName} rejects a failed JSON task result even when hstack exits successfully`, () => {
+    const output = runSetupCapture([
+      JSON.stringify({ protocolVersion: 1, taskId: 'private-task', type: 'progress', data: { token: 'private-token' } }),
+      JSON.stringify({ protocolVersion: 1, taskId: 'private-task', ok: false, error: { code: 'DOWNLOAD_FAILED', message: 'Release download failed' } }),
+    ].join('\n'));
+    assert.equal(output.status, 1, output.stderr);
+    assert.match(output.stderr, /DOWNLOAD_FAILED/);
+    assert.doesNotMatch(output.stdout + output.stderr, /private-task|private-token/);
+  });
+
+  test(`${scriptName} accepts a successful JSON task result without disclosing its data`, () => {
+    const output = runSetupCapture(JSON.stringify({ protocolVersion: 1, taskId: 'private-task', ok: true, data: { token: 'private-token' } }));
+    assert.equal(output.status, 0, output.stderr);
+    assert.equal(output.stdout + output.stderr, '');
+  });
+
+  test(`${scriptName} rejects setup output without a terminal result`, () => {
+    const output = runSetupCapture(JSON.stringify({ protocolVersion: 1, taskId: 'private-task', type: 'progress' }));
+    assert.equal(output.status, 1, output.stderr);
+    assert.match(output.stderr, /REMOTE_SETUP_RESULT_MISSING/);
+  });
+}
+
 test('npm-e2e-smoke run.sh documents remote daemon flags', () => {
   const res = spawnSync('bash', [runScript, '--help'], { encoding: 'utf8' });
   assert.equal(res.status, 0);

@@ -9,15 +9,16 @@ import {
   reconcileManagedLimaDevTargetSshPublication,
 } from './managed_worker.mjs';
 
-test('managed worker enrollment provisions the outer Mac and canonical Lima guest before publishing strict guest SSH', async (t) => {
+for (const name of ['worker', `worker-${'a'.repeat(40)}-tail`]) {
+test(`managed worker enrollment preserves ${name} identity in host and guest publication`, async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-managed-worker-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const keyDir = join(root, 'dev-target-ssh', 'worker-host');
   const privateKeyPath = join(keyDir, 'id_ed25519');
   const publicKeyPath = `${privateKeyPath}.pub`;
-  const guestKnownHostsPath = join(root, 'dev-target-ssh', 'worker', 'guest-known-hosts');
+  const guestKnownHostsPath = join(root, 'dev-target-ssh', name, 'guest-known-hosts');
   await mkdir(keyDir, { recursive: true });
-  await mkdir(join(root, 'dev-target-ssh', 'worker'), { recursive: true });
+  await mkdir(join(root, 'dev-target-ssh', name), { recursive: true });
   await writeFile(privateKeyPath, 'private-key');
   await writeFile(publicKeyPath, 'ssh-ed25519 AAAATEST controller');
   await writeFile(guestKnownHostsPath, 'happier-dev-target-worker ssh-ed25519 AAAASTALE stale\n');
@@ -25,7 +26,7 @@ test('managed worker enrollment provisions the outer Mac and canonical Lima gues
   let guestConfigModes = [];
 
   const target = await provisionManagedLimaDevTarget({
-    name: 'worker',
+    name,
     host: 'mac.example.test',
     user: 'dev',
     stackBaseDir: root,
@@ -34,7 +35,7 @@ test('managed worker enrollment provisions the outer Mac and canonical Lima gues
     env: {},
   }, {
     provisionOuterHost: async (options) => {
-      calls.push(['outer', options.requireToolchain]);
+      calls.push(['outer', options.requireToolchain, options.name]);
       return {
         ssh: 'happier-dev-target-worker-host',
         sshConfigFile: join(root, 'outer.conf'),
@@ -115,7 +116,7 @@ test('managed worker enrollment provisions the outer Mac and canonical Lima gues
     guestPressureScriptSource: '#!/bin/sh\n# pressure\n',
   });
 
-  assert.deepEqual(calls[0], ['outer', false]);
+  assert.deepEqual(calls[0], ['outer', false, `${name}-host`]);
   assert.deepEqual(calls.find(([kind]) => kind === 'runtime'), [
     'runtime', 'happier-worker', 'worker-balanced', 'aarch64', true, 'happier',
     '#!/bin/sh\n', '#!/bin/sh\n# pressure\n',
@@ -125,9 +126,9 @@ test('managed worker enrollment provisions the outer Mac and canonical Lima gues
   assert.ok(keyInstall.includes('ssh-ed25519 AAAATEST controller'));
   assert.deepEqual(guestConfigModes, ['yes', 'accept-new', 'yes']);
   assert.match(await readFile(guestKnownHostsPath, 'utf8'), /AAAACURRENT/);
-  assert.equal(target.ssh, 'happier-dev-target-worker');
+  assert.equal(target.ssh, `happier-dev-target-${name}`);
   assert.equal(target.repoDir, '/home/dev/happier-dev');
-  assert.equal(target.cliHomeDir, '/home/dev/.happier/dev-targets/worker');
+  assert.equal(target.cliHomeDir, `/home/dev/.happier/dev-targets/${name}`);
   assert.deepEqual(target.managedRuntime, {
     kind: 'lima',
     host: {
@@ -148,8 +149,8 @@ test('managed worker enrollment provisions the outer Mac and canonical Lima gues
     },
   });
   const guestConfig = await readFile(target.sshConfigFile, 'utf8');
-  assert.match(guestConfig, /HostName happier-dev-target-worker/);
-  assert.match(guestConfig, /HostKeyAlias happier-dev-target-worker/);
+  assert.match(guestConfig, new RegExp(`HostName happier-dev-target-${name}`));
+  assert.match(guestConfig, new RegExp(`HostKeyAlias happier-dev-target-${name}`));
   assert.match(guestConfig, /Port 54321/);
   assert.match(guestConfig, /IdentityFile .*id_ed25519/);
   assert.match(guestConfig, /ProxyCommand ssh -T -F .*outer\.conf"? happier-dev-target-worker-host -W 127\.0\.0\.1:%p/);
@@ -161,6 +162,7 @@ test('managed worker enrollment provisions the outer Mac and canonical Lima gues
   assert.match(guestConfig, /ServerAliveCountMax 6/);
   assert.match(guestConfig, /StrictHostKeyChecking yes/);
 });
+}
 
 test('managed worker can reuse an existing outer Dev Target connection without enrolling a competing host identity', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-managed-worker-existing-'));

@@ -51,7 +51,7 @@ run_remote_ssh_probe() {
   # changing or stopping its configured master.
   probe_command=$1
   if [ -n "$ssh_config" ]; then
-    ssh -T -F "$ssh_config" -o ControlMaster=no -o BatchMode=yes -o ConnectTimeout=5 "$ssh_target" "$probe_command"
+    ssh -T -F "$ssh_config" -o BatchMode=yes -o ConnectTimeout=5 "$ssh_target" "$probe_command"
     probe_status=$?
     if [ "$probe_status" -eq 255 ]; then
       ssh -T -F "$ssh_config" -o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o ConnectTimeout=5 "$ssh_target" "$probe_command"
@@ -59,68 +59,13 @@ run_remote_ssh_probe() {
     fi
     return "$probe_status"
   fi
-  ssh -T -o ControlMaster=no -o BatchMode=yes -o ConnectTimeout=5 "$ssh_target" "$probe_command"
+  ssh -T -o BatchMode=yes -o ConnectTimeout=5 "$ssh_target" "$probe_command"
   probe_status=$?
   if [ "$probe_status" -eq 255 ]; then
     ssh -T -o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o ConnectTimeout=5 "$ssh_target" "$probe_command"
     return $?
   fi
   return "$probe_status"
-}
-
-read_controller_host_cpu() (
-  # Consume the existing shell-safe configuration, not a second host registry.
-  # A Linux worker is independent; only this checkout's controller VM shares
-  # capacity with its configured Darwin host. No observation means no denial.
-  controller_storage=${HAPPIER_STACK_STORAGE_DIR:-${HOME}/.happier/stacks}
-  for controller_projection in "$controller_storage"/repo-*/dev-target-exec-v1.sh; do
-    [ -f "$controller_projection" ] || continue
-    projection_repo_root=
-    target_count=0
-    . "$controller_projection" || continue
-    [ "$projection_repo_root" = "$repo_root" ] || continue
-    controller_index=1
-    while [ "$controller_index" -le "$target_count" ]; do
-      eval 'controller_name=${target_'"$controller_index"'_name-}'
-      if [ "$controller_name" = mac-host ]; then
-        eval 'ssh_target=${target_'"$controller_index"'_ssh-}'
-        eval 'ssh_config=${target_'"$controller_index"'_ssh_config-}'
-        [ -n "$ssh_target" ] || return 1
-        run_remote_ssh_probe 'cpu=$(sysctl -n hw.ncpu); set -- $(sysctl -n vm.loadavg); printf "%s %s\n" "$cpu" "$2"' 2>/dev/null
-        return $?
-      fi
-      controller_index=$((controller_index + 1))
-    done
-  done
-  return 1
-)
-
-heavyweight_capacity_domain_is_ready() {
-  heavyweight_host_sample=
-  case "$(uname -s 2>/dev/null || true)" in
-    Darwin)
-      heavyweight_host_cpu=$(sysctl -n hw.ncpu 2>/dev/null || true)
-      heavyweight_host_load=$(sysctl -n vm.loadavg 2>/dev/null | awk '{print $2}')
-      heavyweight_host_sample="$heavyweight_host_cpu $heavyweight_host_load"
-      ;;
-    Linux)
-      if [ "${heavyweight_admission_placement-}" = local ]; then
-        heavyweight_host_sample=$(read_controller_host_cpu || true)
-      fi
-      ;;
-  esac
-  IFS=' ' read -r heavyweight_host_cpu heavyweight_host_load heavyweight_host_tail <<EOF
-$heavyweight_host_sample
-EOF
-  case "$heavyweight_host_cpu:$heavyweight_host_load" in *[!0-9:.]*|:*|*:) return 0 ;; esac
-  [ -z "$heavyweight_host_tail" ] || return 0
-  # Reuse admission's severe two-runnable-tasks-per-CPU boundary. Darwin's
-  # aggregate load includes hypervisor work that the guest cannot observe.
-  if awk -v cpu="$heavyweight_host_cpu" -v host_load="$heavyweight_host_load" 'BEGIN {exit !(cpu > 0 && host_load >= cpu * 2)}'; then
-    heavyweight_resource_reason="host-cpu-load=$heavyweight_host_load/$heavyweight_host_cpu"
-    return 1
-  fi
-  return 0
 }
 
 score_load_sample() {
@@ -218,7 +163,7 @@ heavyweight_try_reentrant_admission() {
   case "$heavyweight_inherited_root" in /*) ;; *) return 1 ;; esac
   heavyweight_inherited_owner_path="$heavyweight_inherited_root/owners/$heavyweight_owner_pid-$heavyweight_owner_token"
   [ -d "$heavyweight_inherited_owner_path" ] || return 1
-  IFS=' ' read -r heavyweight_recorded_pid heavyweight_recorded_token < "$heavyweight_inherited_owner_path/process" 2>/dev/null || return 1
+  IFS=' ' read -r heavyweight_recorded_pid heavyweight_recorded_token 2>/dev/null < "$heavyweight_inherited_owner_path/process" || return 1
   [ "$heavyweight_recorded_pid" = "$heavyweight_owner_pid" ] || return 1
   [ "$heavyweight_recorded_token" = "$heavyweight_owner_token" ] || return 1
   heavyweight_recorded_machine=$(sed -n '1p' "$heavyweight_inherited_owner_path/machine" 2>/dev/null || true)
@@ -301,10 +246,8 @@ heavyweight_count_reserved_memory() {
   heavyweight_reserved_memory=0
   for heavyweight_reserved_entry in "$heavyweight_admission_root/owners"/*; do
     [ -d "$heavyweight_reserved_entry" ] || continue
-    IFS=' ' read -r heavyweight_reserved_pid heavyweight_reserved_token < "$heavyweight_reserved_entry/process" 2>/dev/null || continue
+    IFS=' ' read -r heavyweight_reserved_pid heavyweight_reserved_token 2>/dev/null < "$heavyweight_reserved_entry/process" || continue
     if ! heavyweight_process_is_current "$heavyweight_reserved_pid" "$heavyweight_reserved_token"; then
-      rm -f -- "$heavyweight_reserved_entry/process" "$heavyweight_reserved_entry/class" "$heavyweight_reserved_entry/machine" "$heavyweight_reserved_entry/phase" 2>/dev/null || true
-      rmdir -- "$heavyweight_reserved_entry" 2>/dev/null || true
       continue
     fi
     # Escalation changes the original reservation, rather than reserving the
@@ -337,7 +280,16 @@ EOF
 heavyweight_read_worker_reservations() {
   heavyweight_service_reserved_memory=
   heavyweight_owner_diagnostics=
-  if ! heavyweight_worker_reservation_snapshot=$(printf '%s\n' "${heavyweight_previous_owner_progress-}" | node "$script_dir/../scripts/utils/proc/service_memory.mjs" "--admission-root=$heavyweight_admission_root" --include-admitted-rss --include-owner-progress); then
+  # A service RSS upper bound is sufficient only when it cannot constrain this
+  # same budget's availability or physical class floor. The observer keeps exact
+  # PSS when that proof fails, and always uses exact PSS for admitted credits.
+  heavyweight_service_floor=$(heavyweight_memory_floor_kib "${heavyweight_admission_class-compilation}" "${heavyweight_admission_placement-}")
+  heavyweight_service_budget_available=$heavyweight_mem_available
+  if [ "$heavyweight_service_floor" -gt "$heavyweight_service_budget_available" ]; then
+    heavyweight_service_budget_available=$heavyweight_service_floor
+  fi
+  heavyweight_service_memory_ceiling=$((heavyweight_mem_total - heavyweight_service_budget_available))
+  if ! heavyweight_worker_reservation_snapshot=$(printf '%s\n' "${heavyweight_previous_owner_progress-}" | node "$script_dir/../scripts/utils/proc/service_memory.mjs" "--admission-root=$heavyweight_admission_root" "--service-memory-ceiling-kib=$heavyweight_service_memory_ceiling" --include-admitted-rss --include-owner-progress); then
     heavyweight_resource_reason=worker-reservation-observation-unavailable
     return 1
   fi
@@ -382,11 +334,33 @@ heavyweight_cleanup_records() {
   # Dead waiters affect queue order and backfill even when capacity is busy.
   for heavyweight_entry in "$heavyweight_admission_root/waiters"/*; do
     [ -f "$heavyweight_entry" ] || continue
-    IFS=' ' read -r heavyweight_entry_pid heavyweight_entry_token _heavyweight_tail < "$heavyweight_entry" 2>/dev/null || continue
+    IFS=' ' read -r heavyweight_entry_pid heavyweight_entry_token _heavyweight_tail 2>/dev/null < "$heavyweight_entry" || continue
     if ! heavyweight_process_is_current "$heavyweight_entry_pid" "$heavyweight_entry_token"; then
       rm -f -- "$heavyweight_entry" 2>/dev/null || true
     fi
   done
+}
+
+heavyweight_observe_memory_budget() {
+  heavyweight_memory=$(read_host_memory_kib)
+  IFS=' ' read -r heavyweight_mem_available heavyweight_mem_total <<EOF
+$heavyweight_memory
+EOF
+  case "$heavyweight_mem_available:$heavyweight_mem_total" in
+    *[!0-9:]*|'':*|*:) return 1 ;;
+    *)
+      heavyweight_resource_reason=worker-reservation-observation-unavailable
+      heavyweight_read_worker_reservations || return 1
+      heavyweight_count_reserved_memory
+      heavyweight_unreserved_memory=$((heavyweight_mem_available - heavyweight_reserved_memory))
+      # Resident service memory is already absent from MemAvailable. Reserve
+      # it against total capacity without subtracting that RSS a second time.
+      heavyweight_service_capacity=$((heavyweight_mem_total - heavyweight_service_reserved_memory - heavyweight_reserved_memory))
+      if [ "$heavyweight_unreserved_memory" -gt "$heavyweight_service_capacity" ]; then
+        heavyweight_unreserved_memory=$heavyweight_service_capacity
+      fi
+      ;;
+  esac
 }
 
 heavyweight_resource_is_ready() {
@@ -394,21 +368,8 @@ heavyweight_resource_is_ready() {
   # capacity lock and reclaim dead incarnations before observing resources.
   heavyweight_cleanup_records
   heavyweight_resource_reason=ready
-  heavyweight_capacity_domain_is_ready || return 1
-  heavyweight_cpu=$(getconf _NPROCESSORS_ONLN 2>/dev/null || true)
-  heavyweight_run_queue=$(awk '{split($4, running, "/"); print running[1]}' /proc/loadavg 2>/dev/null || true)
-  heavyweight_cpu_psi=$(awk '/^some / {for (field = 1; field <= NF; field += 1) if ($field ~ /^avg10=/) {sub(/^avg10=/, "", $field); print $field; exit}}' /proc/pressure/cpu 2>/dev/null || true)
-  heavyweight_memory=$(read_host_memory_kib)
-  IFS=' ' read -r heavyweight_mem_available heavyweight_mem_total <<EOF
-$heavyweight_memory
-EOF
-  heavyweight_memory_psi=$(awk '/^some / {for (field = 1; field <= NF; field += 1) if ($field ~ /^avg10=/) {sub(/^avg10=/, "", $field); print $field; exit}}' /proc/pressure/memory 2>/dev/null || true)
-  case "$heavyweight_mem_available:$heavyweight_mem_total" in
-    *[!0-9:]*|'':*) ;;
-    *)
+  if heavyweight_observe_memory_budget; then
       heavyweight_memory_floor=$(heavyweight_memory_floor_kib "$heavyweight_admission_class" "${heavyweight_admission_placement-}")
-      heavyweight_resource_reason=worker-reservation-observation-unavailable
-      heavyweight_read_worker_reservations || return 1
       heavyweight_required_memory=$heavyweight_memory_floor
       while IFS=' ' read -r heavyweight_own_kind heavyweight_own_pid heavyweight_own_token heavyweight_own_rss heavyweight_own_tail; do
         [ "$heavyweight_own_kind" = admitted ] || continue
@@ -426,43 +387,20 @@ EOF
           "$heavyweight_admission_machine" "$heavyweight_admission_class" "$heavyweight_mem_total" "$heavyweight_service_reserved_memory" "$heavyweight_memory_floor" >&2
         exit 1
       fi
-      heavyweight_count_reserved_memory
-      heavyweight_unreserved_memory=$((heavyweight_mem_available - heavyweight_reserved_memory))
-      # Resident service memory is already absent from MemAvailable. Reserve
-      # it against total capacity without subtracting that RSS a second time.
-      heavyweight_service_capacity=$((heavyweight_mem_total - heavyweight_service_reserved_memory - heavyweight_reserved_memory))
-      if [ "$heavyweight_unreserved_memory" -gt "$heavyweight_service_capacity" ]; then
-        heavyweight_unreserved_memory=$heavyweight_service_capacity
-      fi
-      if [ "$heavyweight_mem_total" -gt 0 ] && awk -v available="$heavyweight_mem_available" -v total="$heavyweight_mem_total" \
-        -v unreserved="$heavyweight_unreserved_memory" -v floor="$heavyweight_required_memory" 'BEGIN { exit !(unreserved < floor || available / total < 0.1) }'; then
+      if [ "$heavyweight_unreserved_memory" -lt "$heavyweight_required_memory" ]; then
         heavyweight_resource_reason="memory-available=$heavyweight_mem_available/$heavyweight_mem_total requires=$heavyweight_required_memory KiB reserved-memory=$heavyweight_reserved_memory service-reserved-memory=$heavyweight_service_reserved_memory"
         return 1
       fi
-      ;;
-  esac
-  if [ -n "$heavyweight_memory_psi" ] && awk -v pressure="$heavyweight_memory_psi" 'BEGIN { exit !((pressure + 0) >= 10) }'; then
-    heavyweight_resource_reason="memory-psi=$heavyweight_memory_psi/threshold=10"
+  elif [ "$heavyweight_resource_reason" = worker-reservation-observation-unavailable ]; then
     return 1
   fi
-  case "$heavyweight_cpu:$heavyweight_run_queue:$heavyweight_cpu_psi" in
-    *[!0-9:.]*|'':*|*::*|*:) ;;
-    *)
-      # Do not turn ordinary concurrency into a fixed job-count limit. Pause
-      # only when two independent Linux signals agree that runnable work is
-      # already severely starved: at least one queued task per online CPU and
-      # at least half of the preceding ten seconds lost to CPU contention.
-      if awk -v cpu="$heavyweight_cpu" -v run_queue="$heavyweight_run_queue" -v pressure="$heavyweight_cpu_psi" \
-        'BEGIN { exit !(cpu > 0 && run_queue >= (cpu * 2) && pressure >= 50) }'; then
-        heavyweight_resource_reason="cpu-pressure=$heavyweight_cpu_psi/run-queue=$heavyweight_run_queue/cpu=$heavyweight_cpu"
-        return 1
-      fi
-      ;;
-  esac
+  heavyweight_disk_is_ready
+}
+
+heavyweight_disk_is_ready() {
   if [ -n "${HAPPIER_STACK_PM_CACHE_BASE_DIR-}" ]; then
-    if ! heavyweight_disk_snapshot=$(node "$script_dir/../scripts/utils/dev_targets/worker_disk_budget.mjs" --admit \
-      "--repo=$repo_root" "--class=$heavyweight_admission_class" "--target=${HAPPIER_RUNTIME_BUILD_DISK_TARGET-}" \
-      "--admission-root=$heavyweight_admission_root" "--own-owner-path=${heavyweight_owner_path-}"); then
+    if ! node "$script_dir/../scripts/utils/dev_targets/worker_disk_budget.mjs" --admit \
+      "--repo=$repo_root" "--class=$heavyweight_admission_class" >/dev/null; then
       heavyweight_declined_disk=1
       exit 75
     fi
@@ -598,23 +536,7 @@ run_heavyweight_admission() {
     exit 1
   }
 
-  # Darwin shares physical CPU capacity with its controller VM, but has no
-  # Linux reservation/PSI queue. Observe that domain through this same owner.
   case "$(uname -s 2>/dev/null || true)" in
-    Darwin)
-      heavyweight_last_wait_state=
-      while ! heavyweight_capacity_domain_is_ready; do
-        if [ "$heavyweight_last_wait_state" != "$heavyweight_resource_reason" ]; then
-          printf '[preferred-execution] waiting for heavyweight admission on %s (class=%s, %s)\n' \
-            "$heavyweight_admission_machine" "$heavyweight_admission_class" "$heavyweight_resource_reason" >&2
-          heavyweight_last_wait_state=$heavyweight_resource_reason
-        fi
-        [ "${heavyweight_no_wait-0}" != 1 ] || heavyweight_decline_before_dispatch
-        sleep "$(heavyweight_pressure_retry_seconds_for_pid "$$")"
-      done
-      heavyweight_payload_started=1
-      exec "$@"
-      ;;
     Linux) ;;
     *) heavyweight_payload_started=1; exec "$@" ;;
   esac
@@ -628,16 +550,8 @@ run_heavyweight_admission() {
     heavyweight_recorded_class=$(sed -n '1p' "$heavyweight_owner_path/class" 2>/dev/null || true)
     heavyweight_inherited_floor=$(heavyweight_memory_floor_kib "$heavyweight_recorded_class")
     heavyweight_requested_floor=$(heavyweight_memory_floor_kib "$heavyweight_admission_class")
-    heavyweight_disk_escalation=0
-    if [ -n "${HAPPIER_STACK_PM_CACHE_BASE_DIR-}" ]; then
-      case "$heavyweight_recorded_class:$heavyweight_admission_class" in
-        validation:package-dist|validation:runtime-build|validation:compilation|dependency-install:package-dist|dependency-install:runtime-build|dependency-install:compilation)
-          heavyweight_disk_escalation=1 ;;
-      esac
-    fi
-    if [ "$heavyweight_requested_floor" -gt "$heavyweight_inherited_floor" ] || [ "$heavyweight_disk_escalation" = 1 ]; then
-      # Equal memory classes can still require a larger build disk envelope.
-      # Escalate through the same resource owner while retaining its record;
+    if [ "$heavyweight_requested_floor" -gt "$heavyweight_inherited_floor" ]; then
+      # Escalate memory through the same resource owner while retaining its record;
       # descendants must never queue for a second owner behind their parent.
       heavyweight_last_wait_state=
       exec 9>>"$heavyweight_admission_root/lock" || exit 1
@@ -649,7 +563,6 @@ run_heavyweight_admission() {
         fi
         if heavyweight_resource_is_ready; then
           printf '%s\n' "$heavyweight_admission_class" > "$heavyweight_owner_path/class" || exit 1
-          [ -z "${heavyweight_disk_snapshot-}" ] || printf '%s\n' "$heavyweight_disk_snapshot" > "$heavyweight_owner_path/disk" || exit 1
           flock -u 9
           break
         fi
@@ -664,6 +577,8 @@ run_heavyweight_admission() {
         sleep "$heavyweight_pressure_retry_seconds"
       done
       exec 9>&-
+    else
+      heavyweight_disk_is_ready
     fi
     # This wrapper is a descendant of the owner and therefore must not create
     # a waiter, acquire the capacity lock, or release the owner's reservation.
@@ -776,7 +691,6 @@ run_heavyweight_admission() {
       printf '%s\n' "$heavyweight_admission_class" > "$heavyweight_owner_path/class" || exit 1
       printf '%s\n' "$heavyweight_admission_machine" > "$heavyweight_owner_path/machine" || exit 1
       printf '%s\n' 'admitted' > "$heavyweight_owner_path/phase" || exit 1
-      [ -z "${heavyweight_disk_snapshot-}" ] || printf '%s\n' "$heavyweight_disk_snapshot" > "$heavyweight_owner_path/disk" || exit 1
       if ! heavyweight_charge_backfill; then
         printf '[preferred-execution] could not record heavyweight backfill on %s\n' "$heavyweight_admission_machine" >&2
         exit 1
@@ -836,10 +750,6 @@ run_heavyweight_admission() {
 
 check_heavyweight_admission() {
   if [ "$(uname -s 2>/dev/null || true)" != Linux ]; then
-    if ! heavyweight_capacity_domain_is_ready; then
-      printf '[preferred-execution] heavyweight admission unavailable on %s (%s)\n' "$heavyweight_admission_machine" "$heavyweight_resource_reason" >&2
-      return 1
-    fi
     return 0
   fi
   mkdir -p -- "$heavyweight_admission_root/owners" "$heavyweight_admission_root/waiters" || return 1
@@ -857,6 +767,17 @@ check_heavyweight_admission() {
     return 1
   fi
 }
+
+if [ "${1-}" = --heavyweight-memory-sample ]; then
+  [ "$#" -eq 1 ] && [ "$(uname -s 2>/dev/null || true)" = Linux ] || exit 1
+  # Observe the existing host owner; never create a queue, reclaim records,
+  # reserve capacity, or spend a waiting owner's admission/backfill budget.
+  heavyweight_admission_root=$native_host_admission_root
+  heavyweight_observe_memory_budget || exit 1
+  printf '{"availableMemoryKiB":%s,"totalMemoryKiB":%s,"reservedMemoryKiB":%s,"serviceRssKiB":%s,"unreservedMemoryKiB":%s}\n' \
+    "$heavyweight_mem_available" "$heavyweight_mem_total" "$heavyweight_reserved_memory" "$heavyweight_service_reserved_memory" "$heavyweight_unreserved_memory"
+  exit 0
+fi
 
 if [ "${1-}" = --heavyweight-admission ] || [ "${1-}" = --heavyweight-admission-check ]; then
   heavyweight_check_only=0
@@ -929,17 +850,6 @@ mark_public_typecheck_dispatch() {
   esac
 }
 
-runtime_wait_for_source_upload() {
-  [ -n "${runtime_build_target-}" ] && [ "${HSTACK_EXEC_RUNTIME_SOURCE_UPLOAD-0}" = 1 ] || return 0
-  printf 'HAPPIER_RUNTIME_BUILD_PREPARE={"worker":"%s"}\n' "$1"
-  IFS= read -r runtime_source_ack || exit 130
-  [ "$runtime_source_ack" = source-uploaded ] || {
-    printf '%s\n' '[preferred-execution] invalid runtime source-upload acknowledgment' >&2
-    exit 64
-  }
-  unset HSTACK_EXEC_RUNTIME_SOURCE_UPLOAD
-}
-
 run_local() {
   if [ -n "${runtime_build_target-}" ] && [ "${HAPPIER_DEV_TARGET_EXECUTION-}" != 1 ]; then
     HAPPIER_RUNTIME_BUILD_WORKER_NAME=local
@@ -952,7 +862,6 @@ run_local() {
   HAPPIER_HSTACK_EXECUTION=1
   export HAPPIER_HSTACK_EXECUTION
   heavyweight_local_class=$policy_heavyClass
-  runtime_wait_for_source_upload "${HAPPIER_RUNTIME_BUILD_WORKER_NAME-local}"
   case "${1-}" in
     --script=*)
       local_script=${1#--script=}
@@ -978,7 +887,7 @@ run_local() {
   # skips development admission; placed workers and explicit admission
   # descendants retain their existing resource guard and escalation.
   if [ -n "$heavyweight_local_class" ] \
-    && { [ -z "${CI-}" ] || [ "${HAPPIER_DEV_TARGET_EXECUTION-}" = 1 ] || [ -n "${HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN-}" ]; } \
+    && { [ -z "${CI-}" ] || [ "${explicit_local_compilation_override-0}" = 1 ] || [ "${HAPPIER_DEV_TARGET_EXECUTION-}" = 1 ] || [ -n "${HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN-}" ]; } \
     && { [ "$(uname -s 2>/dev/null || true)" = Linux ] || [ "$(uname -s 2>/dev/null || true)" = Darwin ]; }; then
     heavyweight_local_root=
     if [ "$(uname -s 2>/dev/null || true)" = Linux ]; then
@@ -1165,14 +1074,6 @@ explicit_target=
 runtime_build_target=${HSTACK_EXEC_RUNTIME_BUILD_TARGET-}
 runtime_build_components=${HSTACK_EXEC_RUNTIME_BUILD_COMPONENTS-}
 control_stdin=${HSTACK_EXEC_CONTROL_STDIN-0}
-if [ "${1-}" = --runtime-build-memory ]; then
-  # A local observation for the already-running build, not command placement
-  # or a second admission queue. Missing observations select sequential work.
-  read_host_memory_kib
-  heavyweight_memory_floor_kib runtime-build
-  printf '\n'
-  exit 0
-fi
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --runtime-build-target=*) runtime_build_target=${1#*=} ;;
@@ -1243,6 +1144,18 @@ if [ "${1-}" = --local ]; then
     exit 1
   fi
   shift
+  explicit_local_compilation_override=0
+  if [ "${1-}" = --allow-local-compilation ]; then
+    explicit_local_compilation_override=1
+    shift
+  fi
+  resolve_command_policy "$@"
+  if [ "$policy_localCompile" = 1 ] && [ "${HAPPIER_DEV_TARGET_EXECUTION-}" != 1 ] \
+    && [ "$(uname -s 2>/dev/null || true)" = Linux ] \
+    && [ "$explicit_local_compilation_override" != 1 ]; then
+    printf '%s\n' '[preferred-execution] controller --local heavyweight compilation is refused; use AUTO (omit --local), or explicitly authorize --local --allow-local-compilation. The override retains class admission and the local memory floor.' >&2
+    exit 1
+  fi
   if [ "${HAPPIER_HSTACK_DISPATCH_CONTROL-0}" != 1 ]; then
     printf '%s\n' \
       '[preferred-execution] explicit --local bypasses automatic load distribution; use it only when the command must run on the authoritative machine' >&2
@@ -1583,6 +1496,14 @@ if [ -n "$policy_heavyClass" ]; then
   minimum_memory_capacity_kib=$(heavyweight_memory_floor_kib "$policy_heavyClass")
 fi
 heavyweight_remote_class=$policy_heavyClass
+typecheck_affinity_key=
+case "$policy_heavyClass" in compilation|compilation-*)
+  # Advisory locality only, never a compiler-currentness or result-cache key.
+  # Project normalization belongs to the generated command-policy adapter.
+  # Options may share locality, but the worker's equality key includes them.
+  typecheck_affinity_key=$(printf '%s\0' "$policy_component" "$policy_projectPaths" "$policy_script" | cksum | awk '{print $1 "-" $2}')
+  ;;
+esac
 
 stack_dir=$(dirname -- "$config_path")
 cache_dir="$stack_dir/dev-target-command-load-native"
@@ -1632,10 +1553,12 @@ sync_name_for_target() {
 }
 
 configure_mutagen_environment() {
-  MUTAGEN_DATA_DIRECTORY="$stack_dir/mutagen/data"
+  # The projection names the single routing owner, never this consumer's dir.
+  [ -n "${projection_mutagen_data_dir-}" ] || return 1
+  MUTAGEN_DATA_DIRECTORY="$projection_mutagen_data_dir"
   export MUTAGEN_DATA_DIRECTORY
-  if [ -d "$stack_dir/mutagen/openssh" ]; then
-    MUTAGEN_SSH_PATH="$stack_dir/mutagen/openssh"
+  if [ -d "${projection_mutagen_ssh_path-}" ]; then
+    MUTAGEN_SSH_PATH="$projection_mutagen_ssh_path"
     export MUTAGEN_SSH_PATH
   fi
 }
@@ -1674,6 +1597,9 @@ remote_load_probe() {
   number=$1
   ssh_target=$(value_for_target ssh "$number")
   ssh_config=$(value_for_target ssh_config "$number")
+  if [ -n "${projection_mutagen_ssh_path-}" ] && [ -f "$projection_mutagen_ssh_path/config" ]; then
+    ssh_config="$projection_mutagen_ssh_path/config"
+  fi
   remote_repo=$(value_for_target repo_dir "$number")
   remote_path=$(value_for_target remote_path "$number")
   path_setup=
@@ -1689,6 +1615,9 @@ remote_command_probe() {
   number=$1
   ssh_target=$(value_for_target ssh "$number")
   ssh_config=$(value_for_target ssh_config "$number")
+  if [ -n "${projection_mutagen_ssh_path-}" ] && [ -f "$projection_mutagen_ssh_path/config" ]; then
+    ssh_config="$projection_mutagen_ssh_path/config"
+  fi
   remote_repo=$(value_for_target repo_dir "$number")
   remote_path=$(value_for_target remote_path "$number")
   remote_cwd=$remote_repo
@@ -1701,6 +1630,9 @@ remote_command_probe() {
     */*) availability="[ -x $(quote_remote "$preflight_command") ]" ;;
     *) availability="command -v $(quote_remote "$preflight_command") >/dev/null 2>&1" ;;
   esac
+  for required_tool in $policy_requiredTools; do
+    availability="$availability && command -v $(quote_remote "$required_tool") >/dev/null 2>&1"
+  done
   remote_command="${path_setup}cd -- $(quote_remote "$remote_cwd") && $availability"
   if [ -n "$runtime_build_target" ]; then
     capability_script='const { getComponentArtifactBuildTargetUnavailableReason } = await import(process.argv[1]); const [os,arch] = process.argv[2].split("-"); const components = Object.fromEntries(process.argv[3].split(",").map(component => [component,true])); const reason = getComponentArtifactBuildTargetUnavailableReason({target:{os,arch},components}); if(reason){console.error(reason);process.exit(77)} console.log((process.platform === "win32" ? "windows" : process.platform) + "-" + process.arch)'
@@ -1716,7 +1648,7 @@ remote_command_probe() {
 command_is_available() {
   number=$1
   name=$2
-  command_key=$(printf '%s %s %s' "$preflight_command" "$runtime_build_target" "$runtime_build_components" | cksum | awk '{print $1}')
+  command_key=$(printf '%s %s %s %s' "$preflight_command" "$policy_requiredTools" "$runtime_build_target" "$runtime_build_components" | cksum | awk '{print $1}')
   cache_path="$cache_dir/$name.command.$command_key.cache"
   now=$(date +%s)
   runtime_worker_target=
@@ -1836,7 +1768,6 @@ probe_target() {
     *,daemon,*) [ "$runtime_worker_target" = "$runtime_build_target" ] || runtime_native_preference=1 ;;
   esac
   cache_path="$cache_dir/$name.cache"
-  lock_path="$cache_path.lock"
   now=$(date +%s)
   cached=$(read_fresh_cache "$cache_path" "$now" 2>/dev/null || true)
   if [ -n "$cached" ]; then
@@ -1853,49 +1784,6 @@ probe_target() {
       return
     fi
   fi
-  lock_acquired=0
-  if mkdir "$lock_path" 2>/dev/null; then
-    lock_acquired=1
-  else
-    lock_mtime=$(stat -c %Y "$lock_path" 2>/dev/null || true)
-    case "$lock_mtime" in
-      ''|*[!0-9]*) lock_mtime=$(stat -f %m "$lock_path" 2>/dev/null || true) ;;
-    esac
-    case "$lock_mtime" in
-      ''|*[!0-9]*) ;;
-      *)
-        if [ $((now - lock_mtime)) -ge 20 ]; then
-          rmdir "$lock_path" 2>/dev/null || true
-          mkdir "$lock_path" 2>/dev/null && lock_acquired=1
-        fi
-        ;;
-    esac
-  fi
-  if [ "$lock_acquired" -ne 1 ]; then
-    attempt=0
-    while [ "$attempt" -lt 40 ]; do
-      sleep 0.05
-      now=$(date +%s)
-      cached=$(read_fresh_cache "$cache_path" "$now" 2>/dev/null || true)
-      if [ -n "$cached" ]; then
-        if [ "${cached%% *}" = 2 ]; then
-          report_insufficient_memory_capacity "$name"
-          printf '%s %s 0 - 1 memory-capacity\n' "$number" "$name"
-          return
-        fi
-        if [ "${cached%% *}" = 0 ]; then
-          printf '%s %s 0 - 1 %s\n' "$number" "$name" "${cached##* }"
-        else
-          printf '%s %s %s cached %s\n' "$number" "$name" "$cached" "$runtime_native_preference"
-        fi
-        return
-      fi
-      attempt=$((attempt + 1))
-    done
-    # Coalescing is an optimization. A contended probe lock must not turn a
-    # reachable target into a local fallback; perform this read-only probe.
-  fi
-  if [ "$lock_acquired" -eq 1 ]; then trap 'rmdir "$lock_path" 2>/dev/null || true' EXIT HUP INT TERM; fi
   target_unavailable_reason=prerequisite
   if sync_is_ready "$name" "$number"; then
     sample=$(remote_load_probe "$number" 2>/dev/null)
@@ -1911,9 +1799,7 @@ probe_target() {
   capacity=
   if [ -n "$sample" ]; then
     # APFS rounds capacity to 100% while still reporting multiple GiB as
-    # available. Admit from the authoritative available-block count instead;
-    # one GiB is the minimum useful scratch budget for the routed build/test
-    # commands. Older three-field cached/test probes remain valid until refreshed.
+    # available. Refuse exhaustion using the available-block count instead.
     sample_score=$(score_load_sample "$sample" "$heavyweight_admission_required")
     score=$(score_load_sample "$sample" "$heavyweight_admission_required" "$minimum_memory_capacity_kib")
     capacity=$(printf '%s\n' "$sample" | awk '{if ($1 ~ /^[0-9]+$/ && $1 > 0) print $1}')
@@ -1945,10 +1831,6 @@ probe_target() {
       rm -f -- "$temporary" 2>/dev/null || true
     fi
     printf '%s %s 0 - 1 %s\n' "$number" "$name" "$target_unavailable_reason"
-  fi
-  if [ "$lock_acquired" -eq 1 ]; then
-    rmdir "$lock_path" 2>/dev/null || true
-    trap - EXIT HUP INT TERM
   fi
 }
 
@@ -1997,69 +1879,18 @@ EOF
   fi
 fi
 
-dispatch_lock="$cache_dir/dispatch.lock"
-dispatch_lock_acquired=0
-dispatch_retry_seconds=$((2 + $$ % 2))
-dispatch_stale_check_attempt=0
-dispatch_last_wait_state=
-dispatch_wait_pid=
-cancel_dispatch_wait() {
-  if [ -n "$dispatch_wait_pid" ] && kill -0 "$dispatch_wait_pid" 2>/dev/null; then
-    kill -TERM "$dispatch_wait_pid" 2>/dev/null || true
-    wait "$dispatch_wait_pid" 2>/dev/null || true
+dispatch_reservation_is_active() {
+  # Controllers in distinct PID namespaces share this cache. The lifetime
+  # lock remains authoritative even when the recorded PID is not visible or
+  # resolves to a different process here. Darwin retains the PID fallback.
+  if command -v flock >/dev/null 2>&1; then
+    ! flock -n "$1" -c : 2>/dev/null
+    return
   fi
-  cleanup_probe_tmp
-  exit 130
+  dispatch_controller_pid=$(sed -n '1p' "$1" 2>/dev/null || true)
+  dispatch_controller_token=$(sed -n '4p' "$1" 2>/dev/null || true)
+  heavyweight_process_is_current "$dispatch_controller_pid" "${dispatch_controller_token:--}"
 }
-trap 'cancel_dispatch_wait' HUP INT TERM
-while :; do
-  if mkdir "$dispatch_lock" 2>/dev/null; then
-    dispatch_lock_acquired=1
-    break
-  fi
-  # A non-directory is a controller filesystem failure, not a busy worker.
-  [ -d "$dispatch_lock" ] || break
-  dispatch_stale_check_attempt=$((dispatch_stale_check_attempt + 1))
-  # The selection critical section is normally brief. Poll passively, and
-  # inspect its mtime only every fourth retry so a crowded caller set does not
-  # turn lock waiting into a date/stat fork storm. GNU and BSD stat use
-  # different format switches; accept only a numeric result from either.
-  if [ "$dispatch_stale_check_attempt" -ge 4 ]; then
-    dispatch_stale_check_attempt=0
-    now=$(date +%s)
-    lock_mtime=$(stat -c %Y "$dispatch_lock" 2>/dev/null || true)
-    case "$lock_mtime" in
-      ''|*[!0-9]*) lock_mtime=$(stat -f %m "$dispatch_lock" 2>/dev/null || true) ;;
-    esac
-    case "$lock_mtime" in
-      ''|*[!0-9]*) ;;
-      *)
-        if [ $((now - lock_mtime)) -ge 20 ]; then
-          rmdir "$dispatch_lock" 2>/dev/null || true
-          dispatch_last_wait_state=
-          continue
-        fi
-        ;;
-    esac
-  fi
-  if [ -z "$dispatch_last_wait_state" ]; then
-    printf '%s\n' '[preferred-execution] waiting for dispatch reservation' >&2
-    dispatch_last_wait_state=waiting
-  fi
-  sleep "$dispatch_retry_seconds" &
-  dispatch_wait_pid=$!
-  wait "$dispatch_wait_pid" 2>/dev/null || true
-  dispatch_wait_pid=
-done
-trap cleanup_probe_tmp EXIT HUP INT TERM
-release_dispatch_lock() {
-  rmdir "$dispatch_lock" 2>/dev/null || true
-}
-if [ "$dispatch_lock_acquired" -ne 1 ]; then
-  release_dispatch_lock
-  printf '[preferred-execution] command dispatch lock is unavailable: %s; check directory permissions.\n' "$dispatch_lock" >&2
-  exit 1
-fi
 
 count_active_dispatches() {
   target_name=$1
@@ -2068,38 +1899,36 @@ count_active_dispatches() {
   active_heavyweight_count=0
   for reservation in "$cache_dir/$target_name.active."*; do
     [ -f "$reservation" ] || continue
-    # Sandboxed callers can share this cache while running in distinct PID
-    # namespaces. A namespace-local PID can collide with an unrelated live
-    # process, so prefer the kernel-held reservation lock when flock exists.
-    # An unlocked file is stale regardless of what its recorded PID resolves
-    # to in this caller's namespace. Darwin retains the prior PID fallback.
-    if command -v flock >/dev/null 2>&1 && flock -n "$reservation" -c : 2>/dev/null; then
+    if ! dispatch_reservation_is_active "$reservation"; then
       stale_execution_id=$(sed -n '3p' "$reservation" 2>/dev/null || true)
       case "$stale_execution_id" in native-*) ;; *) rm -f -- "$reservation" 2>/dev/null || true ;; esac
       continue
     fi
-    reservation_pid=$(sed -n '1p' "$reservation" 2>/dev/null || true)
-    case "$reservation_pid" in
-      ''|*[!0-9]*) rm -f -- "$reservation" 2>/dev/null || true ;;
-      *)
-        reservation_process_token=$(sed -n '4p' "$reservation" 2>/dev/null || true)
-        if heavyweight_process_is_current "$reservation_pid" "${reservation_process_token:--}"; then
-          active_count=$((active_count + 1))
-          reservation_class=$(sed -n '2p' "$reservation" 2>/dev/null || true)
-          [ "$reservation_class" = "$command_class" ] && active_class_count=$((active_class_count + 1))
-          is_heavyweight_dispatch_class "$reservation_class" && active_heavyweight_count=$((active_heavyweight_count + 1))
-        else
-          stale_execution_id=$(sed -n '3p' "$reservation" 2>/dev/null || true)
-          case "$stale_execution_id" in native-*) ;; *) rm -f -- "$reservation" 2>/dev/null || true ;; esac
-        fi
-        ;;
-    esac
+    active_count=$((active_count + 1))
+    reservation_class=$(sed -n '2p' "$reservation" 2>/dev/null || true)
+    [ "$reservation_class" = "$command_class" ] && active_class_count=$((active_class_count + 1))
+    is_heavyweight_dispatch_class "$reservation_class" && active_heavyweight_count=$((active_heavyweight_count + 1))
   done
   printf '%s %s %s\n' "$active_count" "$active_class_count" "$active_heavyweight_count"
 }
 
 candidates="$probe_tmp/candidates"
 : > "$candidates"
+typecheck_warm_target=
+typecheck_running_target=
+if [ -n "$typecheck_affinity_key" ] && [ -z "$explicit_target_number" ]; then
+  typecheck_warm_target=$(sed -n '1p' "$cache_dir/typecheck-$typecheck_affinity_key.warm" 2>/dev/null || true)
+  if [ "$policy_kind" = typecheck ]; then
+    for typecheck_active in "$cache_dir"/*.active.*; do
+      [ -f "$typecheck_active" ] || continue
+      [ "$(sed -n '5p' "$typecheck_active")" = "$typecheck_affinity_key" ] || continue
+      dispatch_reservation_is_active "$typecheck_active" || continue
+      typecheck_running_target=${typecheck_active##*/}
+      typecheck_running_target=${typecheck_running_target%%.active.*}
+      break
+    done
+  fi
+fi
 for result_path in "$probe_tmp"/[0-9]* "$probe_tmp/local"; do
   [ -f "$result_path" ] || continue
   IFS=' ' read -r candidate_number candidate_name candidate_available candidate_score candidate_capacity candidate_cache candidate_native_preference < "$result_path" || continue
@@ -2110,6 +1939,18 @@ for result_path in "$probe_tmp"/[0-9]* "$probe_tmp/local"; do
     candidate_class_active=${remaining_active_counts%% *}
     candidate_heavyweight_active=${remaining_active_counts#* }
     candidate_effective=$(awk -v score="$candidate_score" -v active="$candidate_active" -v capacity="$candidate_capacity" 'BEGIN {printf "%.6f", score + (active / capacity)}')
+    if [ "$candidate_name" = "$typecheck_warm_target" ]; then
+      # Only prefer a currently admissible sample. Actual admission still uses
+      # --no-wait and reselects normally if this observation races another job.
+      candidate_memory=$(awk '{print $7}' "$cache_dir/$candidate_name.telemetry" 2>/dev/null || true)
+      case "$candidate_memory" in ''|*[!0-9]*) candidate_memory=0 ;; esac
+      if [ "$candidate_memory" -ge "$minimum_memory_capacity_kib" ]; then
+        candidate_native_preference=-1
+      fi
+    fi
+    # A same-project follower performs its own flush on the leader's worker;
+    # source/compiler equality is established there before heavy admission.
+    if [ "$candidate_name" = "$typecheck_running_target" ]; then candidate_native_preference=-2; fi
   else
     candidate_active=0
     candidate_class_active=0
@@ -2143,7 +1984,6 @@ selected=$(awk '
   }
 ' "$candidates")
 if [ -z "$selected" ]; then
-  release_dispatch_lock
   if [ "${HSTACK_EXEC_RUNTIME_CONTROL_CHILD-}" = try ]; then
     cleanup_probe_tmp
     exit 75
@@ -2158,7 +1998,7 @@ if [ -z "$selected" ]; then
     trap - EXIT HUP INT TERM
     sleep "$(heavyweight_pressure_retry_seconds_for_pid "$$")"
     unset HSTACK_EXEC_PRE_DISPATCH_RETRY_COUNT HSTACK_EXEC_PRE_DISPATCH_EXCLUDED_TARGETS HSTACK_EXEC_PRE_DISPATCH_BUSY_TARGETS
-    exec "$0" -- "$@"
+    restart_launcher -- "$@"
   fi
   if [ "${HSTACK_EXEC_PRE_DISPATCH_SYNC_FAILED-0}" = 1 ] || awk -v runtime="$runtime_build_target" '$1 != 0 && $3 != 1 && $5 != "unreachable" && !(runtime != "" && ($5 == "capability" || $5 == "memory-capacity")) { found=1 } END { exit !found }' "$candidates"; then
     printf '%s\n' '[preferred-execution] reachable remote targets cannot run this command safely; check synchronization, target tools, repository cwd and disk space with hstack dev-targets status. Local fallback is only for unreachable targets.' >&2
@@ -2176,7 +2016,6 @@ $selected
 EOF
 if [ -n "$runtime_build_target" ]; then printf 'HSTACK_RUNTIME_SELECTED:%s\n' "$selected_name" >&2; fi
 if [ "$selected_number" = 0 ]; then
-  release_dispatch_lock
   run_selected_local "$@"
 fi
 reservation_temporary=$(create_cache_temporary "$cache_dir/$selected_name.active" 2>/dev/null || true)
@@ -2196,7 +2035,7 @@ if [ -n "$reservation_temporary" ] && command -v flock >/dev/null 2>&1; then
   fi
 fi
 if [ -z "$reservation_temporary" ] \
-    || ! printf '%s\n%s\n%s\n%s\n' "$$" "$command_class" "$execution_id" "$(heavyweight_process_token "$$")" > "$reservation_temporary" \
+    || ! printf '%s\n%s\n%s\n%s\n%s\n' "$$" "$command_class" "$execution_id" "$(heavyweight_process_token "$$")" "$typecheck_affinity_key" > "$reservation_temporary" \
     || ! mv -f -- "$reservation_temporary" "$reservation_path"; then
   if [ "$reservation_lock_held" -eq 1 ]; then
     flock -u 8 2>/dev/null || true
@@ -2204,7 +2043,6 @@ if [ -z "$reservation_temporary" ] \
     reservation_lock_held=0
   fi
   [ -z "$reservation_temporary" ] || rm -f -- "$reservation_temporary" 2>/dev/null || true
-  release_dispatch_lock
   printf '[preferred-execution] command dispatch reservation failed: %s; check directory permissions and disk space.\n' "$cache_dir" >&2
   exit 1
 fi
@@ -2338,15 +2176,6 @@ fi
 execution_provenance_schema_version=${execution_provenance_schema_version-1}
 execution_provenance_filename=${execution_provenance_filename-provenance.jsonl}
 provenance_path="$cache_dir/$execution_provenance_filename"
-if [ -r "$provenance_path" ]; then
-  provenance_size=$(wc -c < "$provenance_path" 2>/dev/null || printf 0)
-else
-  provenance_size=0
-fi
-case "$provenance_size" in ''|*[!0-9]*) provenance_size=0 ;; esac
-if [ "$provenance_size" -ge 1048576 ]; then
-  mv -f -- "$provenance_path" "$provenance_path.previous" 2>/dev/null || true
-fi
 admitted_at_seconds=$(date +%s)
 admitted_at=$((admitted_at_seconds * 1000))
 printf '{"schemaVersion":%s,"phase":"admitted","executionId":"%s","timestamp":%s,"target":"%s","commandClass":"%s","syncStatus":"%s","syncSuccessfulCycles":%s,"normalizedLoad":%s,"activeReservations":%s,"activeClassReservations":%s,"effectiveScore":%s,"capacity":%s,"platform":"%s","runQueue":%s,"memAvailableKiB":%s,"memTotalKiB":%s,"swapUsedKiB":%s,"swapTotalKiB":%s,"cpuPsiAvg10":%s,"memoryPsiAvg10":%s,"ioPsiAvg10":%s,"swapInPages":%s,"swapOutPages":%s,"diskFreeKiB":%s}\n' \
@@ -2356,23 +2185,24 @@ printf '{"schemaVersion":%s,"phase":"admitted","executionId":"%s","timestamp":%s
   "$telemetry_mem_total_kib" "$telemetry_swap_used_kib" "$telemetry_swap_total_kib" \
   "$telemetry_psi_cpu" "$telemetry_psi_memory" "$telemetry_psi_io" "$telemetry_swap_in_pages" \
   "$telemetry_swap_out_pages" "$telemetry_disk_free_kib" >> "$provenance_path"
-release_dispatch_lock
 printf '[preferred-execution] selected %s (load=%s, active=%s, effective=%s, %s)\n' \
   "$selected_name" "$selected_base_score" "$selected_active" "$selected_score" "$selected_cache" >&2
 
 ssh_target=$(value_for_target ssh "$selected_number")
 ssh_config=$(value_for_target ssh_config "$selected_number")
+if [ -n "${projection_mutagen_ssh_path-}" ] && [ -f "$projection_mutagen_ssh_path/config" ]; then
+  ssh_config="$projection_mutagen_ssh_path/config"
+fi
 remote_repo=$(value_for_target repo_dir "$selected_number")
 remote_executor_repo=$(value_for_target executor_repo_dir "$selected_number")
 [ -n "$remote_executor_repo" ] || remote_executor_repo=$remote_repo
 remote_home=$(value_for_target cli_home "$selected_number")
 remote_path=$(value_for_target remote_path "$selected_number")
-runtime_wait_for_source_upload "$selected_name"
 remote_cwd=$remote_repo
 [ -n "$relative_cwd" ] && remote_cwd="$remote_repo/$relative_cwd"
 
 pid_file="$remote_home/remote-exec/$execution_id.pid"
-remote_script="set -euo pipefail; export HAPPIER_DEV_TARGET_EXECUTION=1; export HAPPIER_STACK_PM_CACHE_BASE_DIR=$(quote_remote "$remote_home/cache"); export HAPPIER_RUNTIME_BUILD_DISK_TARGET=$(quote_remote "$runtime_build_target");"
+remote_script="set -euo pipefail; export HAPPIER_DEV_TARGET_EXECUTION=1; export HAPPIER_STACK_PM_CACHE_BASE_DIR=$(quote_remote "$remote_home/cache");"
 if [ -n "$remote_path" ]; then remote_script="$remote_script PATH=$(quote_remote "$remote_path"):\$PATH; export PATH;"; fi
 remote_setup_script=
 if [ "$requires_remote_dependencies" -eq 1 ]; then
@@ -2380,10 +2210,7 @@ if [ "$requires_remote_dependencies" -eq 1 ]; then
   if [ -n "$command_repo_root" ]; then remote_setup_script="${remote_setup_script%;} --tools-only;"; fi
 fi
 if [ "$requires_remote_workspace_preparation" -eq 1 ]; then
-  # Bootstrap has already released dependency locks. Validation preparation
-  # can take workspace dist locks, so reserve the largest existing compiler
-  # envelope before it reaches them; nested package compilers are reentrant.
-  remote_setup_script="$remote_setup_script cd -- $(quote_remote "$remote_repo"); export HAPPIER_STACK_PM_CACHE_BASE_DIR=$(quote_remote "$remote_home/cache"); $(quote_remote "$remote_executor_repo/apps/stack/bin/hstack-exec") --heavyweight-admission --class=compilation $(quote_remote "--machine=$selected_name") $(quote_remote "--failure-id=$execution_id") -- node $(quote_remote "$remote_executor_repo/apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs") $(quote_remote "--component-relative-dir=$preparation_component_relative_dir") $(quote_remote "--validation-kind=$remote_validation_kind") $(quote_remote "--repo-dir=$remote_repo");"
+  remote_setup_script="$remote_setup_script cd -- $(quote_remote "$remote_repo"); export HAPPIER_STACK_PM_CACHE_BASE_DIR=$(quote_remote "$remote_home/cache"); node $(quote_remote "$remote_executor_repo/apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs") $(quote_remote "--component-relative-dir=$preparation_component_relative_dir") $(quote_remote "--validation-kind=$remote_validation_kind") $(quote_remote "--repo-dir=$remote_repo");"
 fi
 remote_setup_script="$remote_setup_script cd -- $(quote_remote "$remote_cwd");"
 remote_command_environment=
@@ -2443,19 +2270,21 @@ if [ "$governor_inject_vitest_environment" -eq 1 ] && [ "$nested_vitest_argument
   append_remote_command_argument "--minWorkers=1"
 fi
 heavyweight_admission_prefix=
+admission_failure_id=$execution_id
+if [ "$policy_kind" = typecheck ] && [ -n "$typecheck_affinity_key" ]; then admission_failure_id="typecheck-$typecheck_affinity_key"; fi
 if [ "$heavyweight_admission_required" -eq 1 ]; then
   # The same native launcher owns local and target admission. The target's
   # POSIX account home is machine-local rather than target-config-local, so
   # independently routed jobs contend even when their CLI homes differ.
-  heavyweight_admission_prefix=" cd -- $(quote_remote "$remote_repo"); $(quote_remote "$remote_executor_repo/apps/stack/bin/hstack-exec") --heavyweight-admission $(quote_remote "--class=$heavyweight_remote_class") $(quote_remote "--machine=$selected_name") $(quote_remote "--failure-id=$execution_id") --"
+  heavyweight_admission_prefix=" cd -- $(quote_remote "$remote_repo"); $(quote_remote "$remote_executor_repo/apps/stack/bin/hstack-exec") --heavyweight-admission $(quote_remote "--class=$heavyweight_remote_class") $(quote_remote "--machine=$selected_name") $(quote_remote "--failure-id=$admission_failure_id") --"
   if [ -z "$explicit_target_number" ] && [ "${HSTACK_EXEC_RUNTIME_CONTROL_CHILD-}" != wait ]; then
     heavyweight_admission_prefix="${heavyweight_admission_prefix% --} --no-wait --"
   fi
 fi
 if [ -n "$heavyweight_admission_prefix" ]; then
-  # Dependency bootstrap finished before any reservation. Workspace preparation
-  # used its own admitted compiler envelope, then released it before this
-  # payload-specific envelope is reserved.
+  # Preparation may wait on a dependency/build lock whose holder still needs
+  # admission. Finish it before reserving the payload's compilation envelope;
+  # dist compilers acquire their own canonical admission before their lock.
   heavyweight_command_body="set -euo pipefail; cd -- $(quote_remote "$remote_cwd");$remote_command_environment"
   if [ "$resource_governor_priority" = background ]; then
     # Keep niceness on the actual child process while the admission wrapper
@@ -2490,15 +2319,7 @@ remote_orphan_cleanup=
 for orphan_reservation in "$cache_dir/$selected_name.active."*; do
   [ -f "$orphan_reservation" ] || continue
   [ "$orphan_reservation" != "$reservation_path" ] || continue
-  orphan_controller=$(sed -n '1p' "$orphan_reservation" 2>/dev/null || true)
-  orphan_token=$(sed -n '4p' "$orphan_reservation" 2>/dev/null || true)
-  orphan_is_gone=0
-  if command -v flock >/dev/null 2>&1 && flock -n "$orphan_reservation" -c : 2>/dev/null; then
-    orphan_is_gone=1
-  elif ! heavyweight_process_is_current "$orphan_controller" "${orphan_token:--}"; then
-    orphan_is_gone=1
-  fi
-  [ "$orphan_is_gone" = 1 ] || continue
+  dispatch_reservation_is_active "$orphan_reservation" && continue
   orphan_id=$(sed -n '3p' "$orphan_reservation" 2>/dev/null || true)
   case "$orphan_id" in native-*) ;; *) continue ;; esac
   case "$orphan_id" in *[!A-Za-z0-9_-]*) continue ;; esac
@@ -2508,6 +2329,9 @@ done
 if [ -n "$remote_orphan_cleanup" ]; then
   remote_command="bash -lc $(quote_remote "set -e;$remote_orphan_cleanup exec env $remote_command")"
 fi
+# The SSH login shell must not run an exit hook after custody has returned the
+# command's status. Replace that shell, including any environment assignments.
+remote_command="exec env $remote_command"
 release_orphan_reservations() {
   for orphan_reservation in "$cache_dir/$selected_name.active."*; do
     [ -f "$orphan_reservation" ] || continue
@@ -2539,12 +2363,17 @@ ssh_config_identity=
 if [ -n "$ssh_config" ] && [ -r "$ssh_config" ]; then
   ssh_config_identity=$(cksum < "$ssh_config" 2>/dev/null | awk '{print $1 "." $2}' || true)
 fi
-control_key=$(printf '%s\n%s\n%s\n%s\n' "$stack_dir" "$selected_name" "$ssh_target" "$ssh_config_identity" | cksum | awk '{print $1}')
+control_key=$(printf '%s\n%s\n' "$ssh_target" "$ssh_config_identity" | cksum | awk '{print $1}')
 case "$control_key" in ''|*[!0-9]*) control_key=$$ ;; esac
-control_pool_size=$(( (selected_capacity + 3) / 4 ))
-[ "$control_pool_size" -gt 0 ] || control_pool_size=1
-[ "$control_pool_size" -le 4 ] || control_pool_size=4
-control_path=
+control_path="$ssh_control_root/$control_key-0"
+# OpenSSH expands tokens, home paths and Includes. Reuse its configured socket
+# instead of keeping a separate per-Stack master beside the shared transport.
+if [ -n "$ssh_config" ] && [ -r "$ssh_config" ]; then
+  configured_control_path=$(ssh -G -F "$ssh_config" "$ssh_target" 2>/dev/null | sed -n 's/^controlpath //p')
+  case "$configured_control_path" in
+    /*) control_path=$configured_control_path ;;
+  esac
+fi
 
 check_selected_control() {
   checked_control_path=$1
@@ -2557,45 +2386,14 @@ check_selected_control() {
 }
 
 open_selected_control() {
-  # Sequential work starts at slot zero and reuses it. Concurrent dispatcher
-  # reservations spread over the bounded pool so one OpenSSH MaxSessions limit
-  # cannot serialize or reject every active agent channel.
-  preferred_control_slot=$(( selected_active % control_pool_size ))
-  preferred_control_path="$ssh_control_root/$control_key-$preferred_control_slot"
-  if check_selected_control "$preferred_control_path"; then
-    control_path=$preferred_control_path
-    return 0
-  fi
-  control_attempt=0
-  while [ "$control_attempt" -lt "$control_pool_size" ]; do
-    control_slot=$(( (preferred_control_slot + control_attempt) % control_pool_size ))
-    candidate_control_path="$ssh_control_root/$control_key-$control_slot"
-    control_lock="$candidate_control_path.lock"
-    if mkdir "$control_lock" 2>/dev/null; then
-      printf '%s\n' "$$" > "$control_lock/pid" 2>/dev/null || true
-      control_path=$candidate_control_path
-      if check_selected_control "$control_path"; then
-        rm -f -- "$control_lock/pid" 2>/dev/null || true
-        rmdir -- "$control_lock" 2>/dev/null || true
-        return 0
-      fi
-      rm -f -- "$control_path" 2>/dev/null || true
-      if [ -n "$ssh_config" ]; then
-        ssh -MNf -F "$ssh_config" -S "$control_path" \
-          -o ControlMaster=yes -o ControlPersist=600 -o BatchMode=yes -o ConnectTimeout=5 \
-          "$ssh_target" >/dev/null
-      else
-        ssh -MNf -S "$control_path" \
-          -o ControlMaster=yes -o ControlPersist=600 -o BatchMode=yes -o ConnectTimeout=5 \
-          "$ssh_target" >/dev/null
-      fi
-      control_status=$?
-      rm -f -- "$control_lock/pid" 2>/dev/null || true
-      rmdir -- "$control_lock" 2>/dev/null || true
-      [ "$control_status" -eq 0 ] && return 0
-      rm -f -- "$control_path" 2>/dev/null || true
-      return "$control_status"
-    fi
+  check_selected_control "$control_path" && return 0
+  control_lock="$control_path.lock"
+  while ! mkdir "$control_lock" 2>/dev/null; do
+    # Only master creation is exclusive: a second -MNf creator can otherwise
+    # become an unowned standalone connection when the socket is already bound.
+    # Join the live creator without opening another connection. This waits on
+    # local creation custody; it does not retry SSH or add a transport deadline.
+    check_selected_control "$control_path" && return 0
     control_lock_pid=$(sed -n '1p' "$control_lock/pid" 2>/dev/null || true)
     case "$control_lock_pid" in
       ''|*[!0-9]*) ;;
@@ -2606,24 +2404,27 @@ open_selected_control() {
         fi
         ;;
     esac
-    control_attempt=$((control_attempt + 1))
-  done
-
-  control_wait_attempt=0
-  while [ "$control_wait_attempt" -lt 50 ]; do
-    control_slot=0
-    while [ "$control_slot" -lt "$control_pool_size" ]; do
-      candidate_control_path="$ssh_control_root/$control_key-$control_slot"
-      if check_selected_control "$candidate_control_path"; then
-        control_path=$candidate_control_path
-        return 0
-      fi
-      control_slot=$((control_slot + 1))
-    done
     sleep 0.05
-    control_wait_attempt=$((control_wait_attempt + 1))
   done
-  return 1
+  printf '%s\n' "$$" > "$control_lock/pid" 2>/dev/null || true
+  if check_selected_control "$control_path"; then
+    control_status=0
+  else
+    rm -f -- "$control_path" 2>/dev/null || true
+    if [ -n "$ssh_config" ]; then
+      ssh -MNf -F "$ssh_config" -S "$control_path" \
+        -o ControlMaster=yes -o ControlPersist=600 -o BatchMode=yes -o ConnectTimeout=5 \
+        "$ssh_target" >/dev/null
+    else
+      ssh -MNf -S "$control_path" \
+        -o ControlMaster=yes -o ControlPersist=600 -o BatchMode=yes -o ConnectTimeout=5 \
+        "$ssh_target" >/dev/null
+    fi
+    control_status=$?
+  fi
+  rm -f -- "$control_lock/pid" 2>/dev/null || true
+  rmdir -- "$control_lock" 2>/dev/null || true
+  return "$control_status"
 }
 
 close_selected_control() {
@@ -2642,7 +2443,7 @@ retry_other_target_before_dispatch() {
     retry_excluded_targets="${HSTACK_EXEC_PRE_DISPATCH_EXCLUDED_TARGETS-} $selected_name"
     HSTACK_EXEC_PRE_DISPATCH_RETRY_COUNT=$retry_count \
       HSTACK_EXEC_PRE_DISPATCH_EXCLUDED_TARGETS=$retry_excluded_targets \
-      exec "$0" -- "$@"
+      restart_launcher -- "$@"
   fi
   unset HSTACK_EXEC_PRE_DISPATCH_RETRY_COUNT
   unset HSTACK_EXEC_PRE_DISPATCH_EXCLUDED_TARGETS
@@ -2706,7 +2507,7 @@ fi
 authoritative_ssh_error_log=$(create_cache_temporary "$cache_dir/authoritative-ssh" 2>/dev/null || true)
 use_control_connection=1
 if ! open_selected_control; then
-  # A contended/broken master is not target unreachability. The existing
+  # A broken master is not target unreachability. The existing
   # direct transport can still establish the authoritative command channel.
   if run_remote_ssh_probe ':' >/dev/null 2>&1; then
     use_control_connection=0
@@ -2870,9 +2671,9 @@ if [ "$status" -eq 137 ]; then
 fi
 admission_result=
 if [ "$status" -eq 75 ] && [ -n "$admission_error_log" ]; then
-  admission_result=$(grep -Ex "HSTACK_ADMISSION_(BUSY|UNAVAILABLE|DISK):$execution_id" "$admission_error_log" | head -n 1)
+  admission_result=$(grep -Fx -e "HSTACK_ADMISSION_BUSY:$admission_failure_id" -e "HSTACK_ADMISSION_UNAVAILABLE:$admission_failure_id" -e "HSTACK_ADMISSION_DISK:$admission_failure_id" "$admission_error_log" | head -n 1)
 fi
-if [ "$admission_result" = "HSTACK_ADMISSION_DISK:$execution_id" ]; then
+if [ "$admission_result" = "HSTACK_ADMISSION_DISK:$admission_failure_id" ]; then
   close_selected_control
   release_reservation
   release_custody_pipe
@@ -2881,10 +2682,10 @@ if [ "$admission_result" = "HSTACK_ADMISSION_DISK:$execution_id" ]; then
   export HSTACK_EXEC_PRE_DISPATCH_DISK_TARGETS
   printf '[preferred-execution] %s disk budget rejected %s before dispatch; selecting another worker for this class\n' "$selected_name" "$heavyweight_remote_class" >&2
   retry_other_target_before_dispatch "$@"
-  printf '%s\n' '[preferred-execution] no configured worker has measured disk headroom for this class; inspect dev-targets status' >&2
+  printf '%s\n' '[preferred-execution] no configured worker has available space on the command write filesystems; inspect dev-targets status' >&2
   exit 1
 fi
-if [ "$admission_result" = "HSTACK_ADMISSION_BUSY:$execution_id" ] && [ -z "$explicit_target_number" ]; then
+if [ "$admission_result" = "HSTACK_ADMISSION_BUSY:$admission_failure_id" ] && [ -z "$explicit_target_number" ]; then
   close_selected_control
   release_reservation
   release_custody_pipe
@@ -2894,7 +2695,7 @@ if [ "$admission_result" = "HSTACK_ADMISSION_BUSY:$execution_id" ] && [ -z "$exp
   printf '[preferred-execution] %s admission busy before dispatch; re-evaluating automatic placement\n' "$selected_name" >&2
   retry_other_target_before_dispatch "$@"
 fi
-if [ "$admission_result" = "HSTACK_ADMISSION_UNAVAILABLE:$execution_id" ]; then
+if [ "$admission_result" = "HSTACK_ADMISSION_UNAVAILABLE:$admission_failure_id" ]; then
   close_selected_control
   release_reservation
   release_custody_pipe
@@ -2919,6 +2720,20 @@ release_reservation
 completed_at_seconds=$(date +%s)
 completed_at=$((completed_at_seconds * 1000))
 duration_ms=$((completed_at - admitted_at))
+if [ -n "$typecheck_affinity_key" ]; then
+  case "$status" in
+    0|1|2)
+      # Erroring compiler checks also retain useful incremental state. Failed
+      # admission/transport/cancellation must never create a warm preference.
+      warm_path="$cache_dir/typecheck-$typecheck_affinity_key.warm"
+      warm_temporary=$(create_cache_temporary "$warm_path" 2>/dev/null || true)
+      if [ -n "$warm_temporary" ]; then
+        printf '%s\n' "$selected_name" > "$warm_temporary" && mv -f -- "$warm_temporary" "$warm_path"
+        rm -f -- "$warm_temporary" 2>/dev/null || true
+      fi
+      ;;
+  esac
+fi
 printf '{"schemaVersion":%s,"phase":"completed","executionId":"%s","timestamp":%s,"target":"%s","commandClass":"%s","exitCode":%s,"signal":null,"durationMs":%s}\n' \
   "$execution_provenance_schema_version" "$execution_id" "$completed_at" "$selected_name" "$command_class" "$status" "$duration_ms" >> "$provenance_path"
 exit "$status"

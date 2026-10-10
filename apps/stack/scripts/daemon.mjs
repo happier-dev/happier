@@ -4,6 +4,7 @@ import { coerceHappyMonorepoRootFromPath, getStacksStorageRoot } from './utils/p
 import { readLastLines } from './utils/fs/tail.mjs';
 import { ensureCliBuilt, isCliDistBuildLockActive } from './utils/proc/pm.mjs';
 import { resolveJavaScriptRuntimeCommand } from '@happier-dev/cli-common/agents/managedJavaScriptRuntime';
+import { parseDaemonLockSnapshot } from '@happier-dev/cli-common/process';
 import { readCliNodeWorkspaceRuntimeIdentityAsync } from '@happier-dev/cli-common/componentArtifacts/copyCliNodeRuntimePayload';
 import { resolveNewestReadyPinnedRunnerSnapshot } from './utils/cli/pinnedRunnerSnapshotLoader.mjs';
 import {
@@ -44,10 +45,14 @@ import {
 } from './utils/proc/cliDistBuildLock.mjs';
 import { recordStackRuntimeDaemonPid, syncStackRuntimeDaemonPidFromDaemonState } from './utils/stack/runtime_daemon_state.mjs';
 import {
+  getStackRuntimeProcessEntries,
   getStackRuntimeProcessInstanceFingerprint,
+  mutateStackRuntimeDaemonMembership,
   readStackRuntimeStateFile,
 } from './utils/stack/runtime_state.mjs';
-import { killPidOwnedByStack } from './utils/proc/ownership.mjs';
+import { applyCliRuntimeLaunchProvenanceEnv, resolveCliRuntimeLaunchSpec } from './runtime/launch/resolveCliRuntimeLaunchSpec.mjs';
+import { killPidOwnedByStack, listPidsWithEnvNeedles } from './utils/proc/ownership.mjs';
+import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 import {
   pingDaemon,
   DEFAULT_RESTART_CONFIRM_TIMEOUT_MS as DEFAULT_STACK_DAEMON_START_VERIFY_TIMEOUT_MS,
@@ -440,7 +445,7 @@ export function checkDaemonState(cliHomeDir, options = {}) {
 
   if (existsSync(lockPath)) {
     try {
-      const pid = Number(readFileSync(lockPath, 'utf-8').trim());
+      const pid = parseDaemonLockSnapshot(readFileSync(lockPath, 'utf-8')).pid;
       if (Number.isFinite(pid) && pid > 0) {
         if (alive(pid)) {
           return { status: 'starting', pid };
@@ -1800,83 +1805,6 @@ async function killDaemonPidSafely({
   return true;
 }
 
-async function readRuntimeDaemonProcessInstance(runtimeStatePath, pid) {
-  const statePath = String(runtimeStatePath ?? '').trim();
-  if (!statePath) return null;
-  const runtimeState = await readStackRuntimeStateFile(statePath).catch(() => null);
-  return getStackRuntimeProcessInstanceFingerprint(runtimeState, 'daemonPid', pid)
-    ?? getStackRuntimeProcessInstanceFingerprint(runtimeState, 'daemonPids', pid);
-}
-
-async function killDaemonFromStateFile({
-  cliHomeDir,
-  serverUrl = '',
-  env = process.env,
-  runtimeStatePath = null,
-}) {
-  const { statePath } = resolvePreferredStackDaemonStatePaths({ cliHomeDir, serverUrl, env });
-  if (!existsSync(statePath)) {
-    return false;
-  }
-
-  let pid = null;
-  try {
-    const state = JSON.parse(readFileSync(statePath, 'utf-8'));
-    const n = Number(state?.pid);
-    if (Number.isFinite(n) && n > 0) {
-      pid = n;
-    }
-  } catch {
-    pid = null;
-  }
-
-  return await killDaemonPidSafely({
-    pid,
-    cliHomeDir,
-    serverUrl,
-    env,
-    sourcePath: statePath,
-    sourceLabel: 'daemon.state.json',
-    processInstanceFingerprint: await readRuntimeDaemonProcessInstance(runtimeStatePath, pid),
-  });
-}
-
-async function killDaemonFromLockFile({
-  cliHomeDir,
-  serverUrl = '',
-  env = process.env,
-  runtimeStatePath = null,
-}) {
-  const { lockPath } = resolvePreferredStackDaemonStatePaths({ cliHomeDir, serverUrl, env });
-  if (!existsSync(lockPath)) {
-    return false;
-  }
-
-  let pid = null;
-  try {
-    const raw = readFileSync(lockPath, 'utf-8').trim();
-    const n = Number(raw);
-    if (Number.isFinite(n) && n > 0) {
-      pid = n;
-    }
-  } catch {
-    // ignore
-  }
-  if (!pid) {
-    return false;
-  }
-
-  return await killDaemonPidSafely({
-    pid,
-    cliHomeDir,
-    serverUrl,
-    env,
-    sourcePath: lockPath,
-    sourceLabel: 'lock file',
-    processInstanceFingerprint: await readRuntimeDaemonProcessInstance(runtimeStatePath, pid),
-  });
-}
-
 async function waitForCredentialsFiles({ paths, timeoutMs, isShuttingDown }) {
   const uniquePaths = Array.from(new Set((paths ?? []).map((p) => String(p ?? '').trim()).filter(Boolean)));
   const deadline = Date.now() + timeoutMs;
@@ -1963,6 +1891,17 @@ export async function stopLocalDaemon({
   cliIdentity = null,
   expectedPid = null,
 }) {
+  const runtimeState = runtimeStatePath ? await readStackRuntimeStateFile(runtimeStatePath) : null;
+  // Retirement consumes the retained execution, not the replacement bundle or
+  // the moving checkout. Keep the existing CLI launch owner authoritative.
+  if (runtimeState?.sourceRuntimeLaunch) {
+    const launch = resolveCliRuntimeLaunchSpec({ sourceRuntimeLaunch: runtimeState.sourceRuntimeLaunch });
+    cliEntrypoint = launch.entrypoint;
+    cliNodeEntrypoint = launch.nodeEntrypoint;
+    cliCommand = launch.command;
+    cliCommandArgs = launch.args;
+    env = applyCliRuntimeLaunchProvenanceEnv({ env, cliLaunchSpec: launch });
+  }
   const daemonEnv = getDaemonEnv({
     baseEnv: env,
     cliHomeDir,
@@ -1990,6 +1929,28 @@ export async function stopLocalDaemon({
     }
   }
 
+  // A CLI stop can remove/replace its state publication. Capture every retained
+  // daemon before invoking it so disappearance never becomes proof of death.
+  const { lockPath } = resolvePreferredStackDaemonStatePaths({ cliHomeDir, serverUrl: internalServerUrl, env: daemonEnv });
+  let retainedLock = null;
+  try { retainedLock = parseDaemonLockSnapshot(readFileSync(lockPath, 'utf-8')); } catch {}
+  // Starting daemons and their launch wrappers can be live before publishing
+  // state or a lock. Discover by exact stack/home/kind, never by bundle path,
+  // server port or an inferred PID. Guarded shutdown must not sweep a successor.
+  const scopedStackName = String(daemonEnv.HAPPIER_STACK_STACK ?? '').trim();
+  const unpublishedPids = expectedPid == null && scopedStackName && cliHomeDir
+    ? await listPidsWithEnvNeedles([`HAPPIER_STACK_STACK=${scopedStackName}`,
+      `HAPPIER_HOME_DIR=${cliHomeDir}`, 'HAPPIER_STACK_PROCESS_KIND=daemon']) : [];
+  const unpublishedFingerprints = new Map(unpublishedPids.map(pid => [pid, readProcessInstanceFingerprintSync(pid)]));
+  const retainedPids = [...new Set([
+    scopedDaemonState.pid,
+    retainedLock?.pid,
+    ...unpublishedPids,
+    ...getStackRuntimeProcessEntries(runtimeState)
+      .filter(({ key }) => key === 'daemonPid' || key === 'daemonPids')
+      .map(({ pid }) => pid),
+  ].filter((pid) => Number.isSafeInteger(pid) && pid > 1))];
+
   const explicitCommand = String(cliCommand ?? '').trim();
   const explicitEntrypoint = String(cliEntrypoint ?? '').trim();
   const activeCliDir = resolveActiveCliDirForDaemonLaunch(daemonEnv);
@@ -2010,24 +1971,41 @@ export async function stopLocalDaemon({
       : distEntrypoint
         ? readCliDistIntegrity(distEntrypoint)
         : { ok: false, reason: 'unknown_cli_bin' };
-  if (distIntegrity.ok && scopedDaemonState.status !== 'stopped') {
+  let stopError = null;
+  if (distIntegrity.ok && (scopedDaemonState.status !== 'stopped'
+    || retainedPids.some(isPidAlive)
+    || (!runtimeState?.sourceRuntimeLaunch && (explicitCommand || explicitEntrypoint)))) {
     try {
       const daemonCommand = resolveDaemonCommandSpec({ cliBin, cliEntrypoint, cliNodeEntrypoint, cliCommand, cliCommandArgs, env: daemonEnv });
-      await new Promise((resolve) => {
+      await new Promise((resolve, reject) => {
         const proc = spawnProc('daemon', daemonCommand.command, [...daemonCommand.argsPrefix, 'daemon', 'stop'], daemonEnv, {
           stdio: ['ignore', 'pipe', 'pipe'],
         });
-        proc.on('exit', () => resolve());
+        proc.on('exit', (code, signal) => code === 0
+          ? resolve()
+          : reject(new Error(`[local] daemon stop failed (code=${code}, signal=${signal ?? 'none'}).`)));
+        proc.once('error', reject);
       });
-    } catch {
-      // ignore
+    } catch (error) {
+      stopError = error;
     }
   }
 
-  await killDaemonFromStateFile({ cliHomeDir, serverUrl: internalServerUrl, env: daemonEnv, runtimeStatePath });
-  // If the daemon never wrote daemon.state.json (e.g. it got stuck in auth in a non-interactive context),
-  // stopLocalDaemon() can't find it. Fall back to the lock file PID.
-  await killDaemonFromLockFile({ cliHomeDir, serverUrl: internalServerUrl, env: daemonEnv, runtimeStatePath });
+  for (const pid of retainedPids) {
+    if (!isPidAlive(pid)) continue;
+    await killDaemonPidSafely({ pid, cliHomeDir, serverUrl: internalServerUrl, env: daemonEnv,
+      sourcePath: runtimeStatePath, sourceLabel: 'retained daemon owner',
+      processInstanceFingerprint: getStackRuntimeProcessInstanceFingerprint(runtimeState, 'daemonPid', pid)
+        ?? getStackRuntimeProcessInstanceFingerprint(runtimeState, 'daemonPids', pid)
+        ?? (retainedLock?.pid === pid ? retainedLock.record?.processInstanceFingerprint : null)
+        ?? unpublishedFingerprints.get(pid) });
+    if (isPidAlive(pid)) {
+      const error = new Error(`[local] daemon retirement is incomplete (pid=${pid}); refusing to replace the retained daemon.`);
+      error.code = 'daemon_stop_incomplete';
+      throw error;
+    }
+  }
+  if (stopError && runtimeState?.sourceRuntimeLaunch) throw stopError;
   await syncStackRuntimeDaemonPidFromDaemonState(
     {
       runtimeStatePath,
@@ -2180,6 +2158,25 @@ export async function startLocalDaemonWithAuth({
   };
 
   const runDaemonLifecycleWithResolvedCommand = async () => {
+  const assertSourcePublicationCurrent = async () => {
+    const guardedDistIntegrity = readCliDistIntegrity(distEntrypoint);
+    if (!guardedDistIntegrity.ok) {
+      throw new Error(formatCliDistUnavailableForDaemonStart({
+        distEntrypoint,
+        reason: guardedDistIntegrity.reason,
+      }));
+    }
+    assertFinalSourceDaemonDistAdmission({
+      admittedDistClosureFingerprint,
+      finalFingerprint: guardedDistIntegrity.fingerprint,
+    });
+    await assertSourceCliWorkspaceRuntimeStillCurrent({
+      cliBin,
+      distEntrypoint,
+      admittedWorkspaceRuntimeIdentity: admittedSourceWorkspaceRuntimeIdentity,
+    });
+    return guardedDistIntegrity;
+  };
   const runnerDistEntrypoint = runtimeBacked === true
     ? String(cliNodeEntrypoint ?? '').trim()
     : distEntrypoint;
@@ -2247,45 +2244,78 @@ export async function startLocalDaemonWithAuth({
   return await withStackDaemonLifecycleLock(
     { cliHomeDir, internalServerUrl, stackName: resolvedStackName },
     async () => {
-  if (existsSync(join(cliHomeDir, 'settings.json'))) {
-    const serverId = String(daemonEnv.HAPPIER_ACTIVE_SERVER_ID ?? '').trim();
-    if (serverId) {
-      const profileSetArgs = [
-        ...daemonCommand.argsPrefix,
-        ...buildStackServerProfileSetArgs({ serverId, internalServerUrl, publicServerUrl }),
-      ];
-      const profileSetTimeoutMs = Math.max(1, startVerifyTimeoutMs);
-      try {
-        // Profile reconciliation is part of daemon startup preflight. Its child-process budget
-        // must share the lifecycle-owned readiness deadline so a guessed shorter timeout cannot
-        // fail a valid startup before the daemon's own readiness signal is observable.
-        await run(daemonCommand.command, profileSetArgs, {
-          env: daemonEnv,
-          stdio: 'ignore',
-          timeoutMs: profileSetTimeoutMs,
-          captureFailureDiagnostic: { env: daemonEnv },
-        });
-      } catch (error) {
-        if (error?.code === 'ETIMEDOUT') {
-          const timeoutError = new Error(
-            `[local] daemon startup preflight timed out during server profile reconciliation ` +
-              `after ${profileSetTimeoutMs}ms (command=${daemonCommand.command})`,
-            { cause: error },
-          );
-          timeoutError.code = 'ETIMEDOUT';
-          timeoutError.timeoutMs = profileSetTimeoutMs;
-          timeoutError.command = daemonCommand.command;
-          throw timeoutError;
+  const reconcileServerProfile = async () => {
+    if (existsSync(join(cliHomeDir, 'settings.json'))) {
+      const serverId = String(daemonEnv.HAPPIER_ACTIVE_SERVER_ID ?? '').trim();
+      if (serverId) {
+        const profileSetArgs = [
+          ...daemonCommand.argsPrefix,
+          ...buildStackServerProfileSetArgs({ serverId, internalServerUrl, publicServerUrl }),
+        ];
+        const profileSetTimeoutMs = Math.max(1, startVerifyTimeoutMs);
+        try {
+          // Profile reconciliation is part of daemon startup preflight. Its child-process budget
+          // must share the lifecycle-owned readiness deadline so a guessed shorter timeout cannot
+          // fail a valid startup before the daemon's own readiness signal is observable.
+          await run(daemonCommand.command, profileSetArgs, {
+            env: daemonEnv,
+            stdio: 'ignore',
+            timeoutMs: profileSetTimeoutMs,
+            captureFailureDiagnostic: { env: daemonEnv },
+          });
+        } catch (error) {
+          if (error?.code === 'ETIMEDOUT') {
+            const timeoutError = new Error(
+              `[local] daemon startup preflight timed out during server profile reconciliation ` +
+                `after ${profileSetTimeoutMs}ms (command=${daemonCommand.command})`,
+              { cause: error },
+            );
+            timeoutError.code = 'ETIMEDOUT';
+            timeoutError.timeoutMs = profileSetTimeoutMs;
+            timeoutError.command = daemonCommand.command;
+            throw timeoutError;
+          }
+          throw error;
         }
-        throw error;
+        assertStackServerProfileReconciled({
+          homeDir: cliHomeDir,
+          serverId,
+          internalServerUrl,
+          publicServerUrl,
+        });
       }
-      assertStackServerProfileReconciled({
-        homeDir: cliHomeDir,
-        serverId,
-        internalServerUrl,
-        publicServerUrl,
-      });
     }
+    };
+
+  // Join source publication before any CLI child, including profile
+  // reconciliation. A build can remove dist while this lifecycle waits for
+  // admission; preserve the live daemon without invoking the missing runner.
+  // Release this lease before shutdown; the existing final start lease still
+  // prevents another generation from reaching the new child.
+  if (guardSourceCliDistRestart) {
+    let profileAdmissionComplete = false;
+    try {
+      await withSourcePublicationLease(async () => {
+        await assertSourcePublicationCurrent();
+        profileAdmissionComplete = true;
+        await reconcileServerProfile();
+      });
+    } catch (error) {
+      // Profile failures are not source admission failures; keep them observable.
+      if (profileAdmissionComplete) throw error;
+      const existing = await checkDaemonStatePingAware(cliHomeDir, { serverUrl: internalServerUrl, env: daemonEnv });
+      if (existing.status === 'running' || existing.status === 'starting') {
+        console.warn(
+          `${error instanceof Error ? error.message : String(error)}\n` +
+            `[local] Keeping the existing daemon running to avoid downtime.`
+        );
+        await syncRuntimeDaemonState({ runtimeDaemonPid: existing.pid });
+        return { started: false };
+      }
+      throw error;
+    }
+  } else {
+    await reconcileServerProfile();
   }
 
   if (distCheck.generationAdmissionRequired && distCheck.current !== true) {
@@ -2303,7 +2333,7 @@ export async function startLocalDaemonWithAuth({
           `(fingerprint=${distCheck.fallbackFingerprint ?? 'unknown'}). Source changes are not active.`
       );
       await syncRuntimeDaemonState({ runtimeDaemonPid: existingAtAdmission.pid });
-      return;
+      return { started: false };
     }
     if (!forceRestart && hasLiveDaemon) {
       console.warn(
@@ -2311,7 +2341,7 @@ export async function startLocalDaemonWithAuth({
           'preserving the already-live daemon without launching stale output.'
       );
       await syncRuntimeDaemonState({ runtimeDaemonPid: existingAtAdmission.pid });
-      return;
+      return { started: false };
     }
     if (distCheck.degraded === true) {
       console.warn(
@@ -2503,46 +2533,23 @@ export async function startLocalDaemonWithAuth({
         '; keeping existing daemon running to avoid downtime.'
     );
     await syncRuntimeDaemonState({ runtimeDaemonPid: pid, daemonDistFingerprint: currentDistFingerprint });
-    return;
+    return { started: false };
   }
-  // Join any in-flight source publication before deciding to stop the current daemon.
-  // The lease is deliberately released again before the stop command: publishers must
-  // not wait on daemon shutdown, while the existing final start lease still prevents a
-  // different generation from reaching the new child.
+  // Auth/profile work is asynchronous and releases source publication admission.
+  // Recheck the same authority immediately before retiring the retained daemon.
   if (guardSourceCliDistRestart) {
-    let sourceAdmissionError = null;
     try {
-      await withSourcePublicationLease(async () => {
-        const guardedDistIntegrity = readCliDistIntegrity(distEntrypoint);
-        if (!guardedDistIntegrity.ok) {
-          throw new Error(formatCliDistUnavailableForDaemonStart({
-            distEntrypoint,
-            reason: guardedDistIntegrity.reason,
-          }));
-        }
-        assertFinalSourceDaemonDistAdmission({
-          admittedDistClosureFingerprint,
-          finalFingerprint: guardedDistIntegrity.fingerprint,
-        });
-        await assertSourceCliWorkspaceRuntimeStillCurrent({
-          cliBin,
-          distEntrypoint,
-          admittedWorkspaceRuntimeIdentity: admittedSourceWorkspaceRuntimeIdentity,
-        });
-      });
+      await withSourcePublicationLease(assertSourcePublicationCurrent);
     } catch (error) {
-      sourceAdmissionError = error;
-    }
-    if (sourceAdmissionError) {
       if (existing.status === 'running' || existing.status === 'starting') {
         console.warn(
-          `${sourceAdmissionError instanceof Error ? sourceAdmissionError.message : String(sourceAdmissionError)}\n` +
+          `${error instanceof Error ? error.message : String(error)}\n` +
             `[local] Keeping the existing daemon running to avoid downtime.`
         );
         await syncRuntimeDaemonState({ runtimeDaemonPid: existing.pid });
-        return;
+        return { started: false };
       }
-      throw sourceAdmissionError;
+      throw error;
     }
   } else if (
     runnerDistEntrypoint &&
@@ -2554,7 +2561,7 @@ export async function startLocalDaemonWithAuth({
         `[local] Refusing to restart daemon to avoid downtime. Rebuild happier-cli first.`
     );
     await syncRuntimeDaemonState({ runtimeDaemonPid: existing.pid });
-    return;
+    return { started: false };
   }
 
   if (!forceRestart && existing.status === 'running') {
@@ -2586,7 +2593,7 @@ export async function startLocalDaemonWithAuth({
           console.log(`[daemon] already running (pid=${pid})`);
         }
         await syncRuntimeDaemonState({ runtimeDaemonPid: pid, daemonDistFingerprint: currentDistFingerprint });
-        return;
+        return { started: false };
       }
     } else if (matches === false) {
       const mismatchLabel = envMatch?.key ? `${envMatch.key} mismatch` : 'environment mismatch';
@@ -2603,7 +2610,7 @@ export async function startLocalDaemonWithAuth({
       // eslint-disable-next-line no-console
       console.warn(`[local] daemon status is running but could not verify env; not restarting (pid=${pid})`);
       await syncRuntimeDaemonState({ runtimeDaemonPid: pid, daemonDistFingerprint: currentDistFingerprint });
-      return;
+      return { started: false };
     }
   }
   if (!forceRestart && existing.status === 'starting') {
@@ -2613,21 +2620,10 @@ export async function startLocalDaemonWithAuth({
     console.warn(`[local] daemon appears stuck starting for stack home (pid=${existing.pid}); restarting...`);
   }
 
-  // Stop any existing daemon for THIS stack home dir.
-  try {
-    await new Promise((resolve) => {
-      const proc = spawnProc('daemon', daemonCommand.command, [...daemonCommand.argsPrefix, 'daemon', 'stop'], daemonEnv, {
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      proc.on('exit', () => resolve());
-    });
-  } catch {
-    // ignore
-  }
-
-  // If state is missing and stop couldn't find it, force-stop the lock PID (otherwise repeated restarts accumulate daemons).
-  await killDaemonFromStateFile({ cliHomeDir, serverUrl: internalServerUrl, env: daemonEnv, runtimeStatePath });
-  await killDaemonFromLockFile({ cliHomeDir, serverUrl: internalServerUrl, env: daemonEnv, runtimeStatePath });
+  // The same retirement owner serves explicit stop and replacement admission.
+  // Never clear retained PID custody or spawn new code before it confirms stop.
+  await stopLocalDaemon({ cliBin, cliCommand: daemonCommand.command, cliCommandArgs: daemonCommand.argsPrefix,
+    cliHomeDir, internalServerUrl, publicServerUrl, runtimeStatePath, env: daemonEnv, stackName, cliIdentity });
 
   await recordStackRuntimeDaemonPid(runtimeStatePath, null, { daemonDistFingerprint: null }).catch(() => {});
 
@@ -2646,22 +2642,7 @@ export async function startLocalDaemonWithAuth({
       }
     };
     if (guardSourceCliDistRestart) {
-      const guardedDistIntegrity = readCliDistIntegrity(distEntrypoint);
-      if (!guardedDistIntegrity.ok) {
-        throw new Error(formatCliDistUnavailableForDaemonStart({
-          distEntrypoint,
-          reason: guardedDistIntegrity.reason,
-        }));
-      }
-      assertFinalSourceDaemonDistAdmission({
-        admittedDistClosureFingerprint,
-        finalFingerprint: guardedDistIntegrity.fingerprint,
-      });
-      await assertSourceCliWorkspaceRuntimeStillCurrent({
-        cliBin,
-        distEntrypoint,
-        admittedWorkspaceRuntimeIdentity: admittedSourceWorkspaceRuntimeIdentity,
-      });
+      const guardedDistIntegrity = await assertSourcePublicationCurrent();
       // The source publisher lease makes this the single current generation that can reach the
       // spawned child. Re-read every launch-derived value after admission rather than carrying
       // the pre-stop A generation into a B publication that completed while stop was running.
@@ -2677,6 +2658,12 @@ export async function startLocalDaemonWithAuth({
       }
       daemonCommand = resolveDaemonCommandForClosure(currentDistClosure);
     }
+    const launchedEntrypoint = daemonCommand.mode === 'node'
+      ? daemonCommand.argsPrefix.find((arg) => !arg.startsWith('-'))
+      : daemonCommand.command;
+    const sourceRuntime = runtimeStatePath ? await readStackRuntimeStateFile(runtimeStatePath) : null;
+    const launchedSourceIdentity = sourceRuntime?.sourceRuntimeLaunch?.entrypoint === launchedEntrypoint
+      ? sourceRuntime.sourceRuntimeIdentities?.daemon?.selected : null;
     const proc = spawnProc('daemon', daemonCommand.command, [...daemonCommand.argsPrefix, 'daemon', 'start'], daemonEnv, {
       stdio: ['ignore', 'pipe', 'pipe'],
       // In TUI mode, stream the daemon-start output so it routes to the daemon pane.
@@ -2711,6 +2698,16 @@ export async function startLocalDaemonWithAuth({
       },
     });
     if (runningStable) {
+      // Only this successful launch can attest its retained source identity.
+      // Adopted healthy daemons never reach here, and a changed selection must
+      // not be credited with the child launched from the previous entrypoint.
+      if (launchedSourceIdentity) {
+        await mutateStackRuntimeDaemonMembership(runtimeStatePath, (current) => {
+          if (current.sourceRuntimeLaunch?.entrypoint !== launchedEntrypoint
+            || current.sourceRuntimeIdentities?.daemon?.selected !== launchedSourceIdentity) return null;
+          return { patch: { sourceRuntimeIdentities: { daemon: { loaded: launchedSourceIdentity } } } };
+        });
+      }
       return { ok: true, exitCode: resolvedExitCode, excerpt: null, logPath: null };
     }
 
@@ -2796,7 +2793,7 @@ export async function startLocalDaemonWithAuth({
       const stateAfterCreds = await checkDaemonStatePingAware(cliHomeDir, { serverUrl: internalServerUrl, env: daemonEnv });
       if (stateAfterCreds.status === 'running' || stateAfterCreds.status === 'starting') {
         await syncRuntimeDaemonState({ runtimeDaemonPid: stateAfterCreds.pid, daemonDistFingerprint: currentDistFingerprint });
-        return;
+        return { started: false };
       }
 
       console.log('[local] credentials detected, retrying daemon start...');
@@ -2867,7 +2864,7 @@ export async function startLocalDaemonWithAuth({
       });
       if (recovered && await waitForRunningStable()) {
         await syncRuntimeDaemonState({ daemonDistFingerprint: currentDistFingerprint });
-        return;
+        return { started: false };
       }
 
       const conflictExcerpt = first.startOutput || first.excerpt || '';
@@ -2903,6 +2900,7 @@ export async function startLocalDaemonWithAuth({
   } catch {
     // ignore
   }
+  return { started: true };
     },
     {
       timeoutMs: daemonLifecycleLockTimeoutMs,

@@ -18,7 +18,7 @@ const SCANNED_HOST_KEY = 'example.test ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBBBB
 const DIFFERENT_HOST_KEY = 'example.test ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC';
 
 function createFakeSsh(scenario: Readonly<{
-    outputs?: readonly Readonly<{ status?: number; stdout?: string; stderr?: string }>[];
+    outputs?: readonly Readonly<{ status?: number; stdout?: string; stderr?: string; signal?: 'SIGTERM' }>[];
 }>): Readonly<{
     binDir: string;
     cleanup: () => void;
@@ -58,7 +58,11 @@ writeFileSync(statePath, JSON.stringify(state), 'utf8');
 
 if (next.stdout) process.stdout.write(String(next.stdout));
 if (next.stderr) process.stderr.write(String(next.stderr));
+if (next.signal) {
+    process.stdout.write('', () => process.kill(process.pid, next.signal));
+} else {
 process.exit(Number(next.status ?? 0));
+}
 `,
         'utf8',
     );
@@ -353,20 +357,54 @@ describe('approveLocalRemoteAuthRequestDefault', () => {
 });
 
 describe('runRemoteBootstrapCommandDefault', () => {
+    it('continues server selection after the clean-host CLI exits 1 with its signed-out envelope', async () => {
+        const fakeSsh = createFakeSsh({ outputs: [
+            { status: 1, stdout: `${JSON.stringify({ v: 1, ok: false, kind: 'auth_status', error: { code: 'not_authenticated' } })}\n` },
+            { status: 0, stdout: `${JSON.stringify({ v: 1, ok: true, kind: 'server_set', data: { active: { id: 'remote-home' } } })}\n` },
+        ] });
+        try {
+            await withPatchedPath(fakeSsh.binDir, async () => {
+                const request = { parsed: createParsedRemoteBootstrapParams(), auth: { mode: 'agent' as const }, knownHostsMode: 'system' as const };
+                expect(await runRemoteBootstrapCommandDefault({ ...request, label: 'auth.status' }))
+                    .toEqual({ ok: true, data: { authenticated: false } });
+                expect(await runRemoteBootstrapCommandDefault({ ...request, label: 'server.configure' }))
+                    .toEqual({ ok: true, data: { active: { id: 'remote-home' } } });
+            });
+            expect(fakeSsh.readInvocations().map((args) => args.at(-1))).toEqual([
+                expect.stringContaining('auth status --json'), expect.stringContaining('server set'),
+            ]);
+        } finally { fakeSsh.cleanup(); }
+    });
+
+    it.each([
+        { name: 'transport failure with a signed-out envelope', status: 255, value: { v: 1, ok: false, kind: 'auth_status', error: { code: 'not_authenticated' } } },
+        { name: 'signal termination with a signed-out envelope', signal: 'SIGTERM' as const, value: { v: 1, ok: false, kind: 'auth_status', error: { code: 'not_authenticated' } } },
+        { name: 'unavailable auth at exit 0', status: 0, value: { v: 1, ok: false, kind: 'auth_status', error: { code: 'auth_status_unavailable' } } },
+        { name: 'unavailable auth at exit 1', status: 1, value: { v: 1, ok: false, kind: 'auth_status', error: { code: 'auth_status_unavailable' } } },
+        { name: 'missing envelope', status: 0, value: { authenticated: false } },
+        { name: 'missing version', status: 0, value: { ok: false, kind: 'auth_status', error: { code: 'not_authenticated' } } },
+        { name: 'malformed success', status: 0, value: { v: 1, ok: true, kind: 'auth_status', data: {} } },
+        { name: 'success payload despite failed process', status: 1, value: { v: 1, ok: true, kind: 'auth_status', data: { authenticated: true } } },
+        { name: 'signed-out response to server selection', status: 1, label: 'server.configure' as const, value: { v: 1, ok: false, kind: 'auth_status', error: { code: 'not_authenticated' } } },
+    ])('fails closed for $name before server selection', async ({ status, value, ...scenario }) => {
+        const fakeSsh = createFakeSsh({ outputs: [{ status, stdout: `${JSON.stringify(value)}\n`, ...scenario }] });
+        try {
+            await withPatchedPath(fakeSsh.binDir, async () => {
+                const result = await runRemoteBootstrapCommandDefault({
+                    label: scenario.label ?? 'auth.status', parsed: createParsedRemoteBootstrapParams(), auth: { mode: 'agent' }, knownHostsMode: 'system',
+                }).catch((error: unknown) => error);
+                expect(result instanceof Error || (result as { ok?: boolean }).ok === false).toBe(true);
+            });
+            expect(fakeSsh.readInvocations()).toHaveLength(1);
+        } finally { fakeSsh.cleanup(); }
+    });
+
     it('uses the channel-specific managed CLI path instead of a hardcoded bin shim path', async () => {
         const fakeSsh = createFakeSsh({
             outputs: [
                 {
                     status: 0,
-                    stdout: `${JSON.stringify({ platform: 'linux', arch: 'x86_64' })}\n`,
-                },
-                {
-                    status: 0,
-                    stdout: '\n',
-                },
-                {
-                    status: 0,
-                    stdout: `${JSON.stringify({ ok: true, data: { authenticated: false } })}\n`,
+                    stdout: `${JSON.stringify({ v: 1, ok: true, kind: 'auth_status', data: { authenticated: false } })}\n`,
                 },
             ],
         });

@@ -87,6 +87,34 @@ If hstack refuses to start because a pinned port is in use:
 
 ---
 
+## A remote Stack stop is incomplete
+
+In 0.3 development, `hstack stack stop <stack>` retires recorded remote roles
+through the target's own guarded Stack stop. A reachable cleanup failure,
+authentication rejection or ambiguous connection loss makes the command fail
+and retains `runtime.stopRequest` for a retry. `stack info --json` reports degraded
+health with `stop_cleanup_incomplete` while that request remains, even when the
+controller process has exited.
+
+If the native stop and its confirmation probe both establish that a target is
+unreachable, local shutdown can succeed and release the controller and forwards.
+The stop result reports `remoteRetirementPending`, and `stack info --json` retains
+that target in `runtime.remoteTargets` as `retirement-pending`; `runtime.stopRequest`
+is cleared. Local completion does not confirm that the remote roles stopped.
+
+Inspect `runtime.remoteTargets` and the stop command's result, restore the named
+target's SSH access or resolve the native cleanup failure, then retry
+the same `hstack stack stop <stack>`. Keep its target configuration and runtime
+record until cleanup succeeds. Removing the record or killing the daemon would
+bypass the tracked Session cleanup guard.
+
+Control and preparation commands reuse the existing SSH recovery policy for a
+refused multiplex session or connection timeout. An ambiguous disconnect after
+dispatch is not replayed; a stop can succeed after exit 255 only when a separate
+native retirement probe establishes cleanup.
+
+---
+
 ## Stack is unhealthy / can’t reach server
 
 ```bash
@@ -199,6 +227,8 @@ hstack stack service <stack> restart
 ---
 
 ## “I changed something but nothing updates”
+
+For 0.3 development source QA, edits intentionally do not update emitted server/daemon code or its default frozen web export. Use `hstack stack start <qa> --runtime=source --restart`, then verify each role's `runtime.sourceRuntimeIdentities` selected == loaded and actual readiness in `stack info --json`. This path needs neither `stack build` nor `runtime select`. Explicit `--ui=borrowed` is separate moving UI; reload its browser deliberately. See [Controlled stacks for agent QA](/hstack/stacks#controlled-stacks-for-agent-qa).
 
 In dev mode, prefer running with `--restart` at least once (so hstack owns the PIDs and can restart safely):
 

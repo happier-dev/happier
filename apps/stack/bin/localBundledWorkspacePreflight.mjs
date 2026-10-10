@@ -1,8 +1,15 @@
 import { pathToFileURL } from 'node:url';
 
 import { loadCliCommonWorkspacesModule } from '../../../scripts/workspaces/loadCliCommonWorkspacesModule.mjs';
+import { resolveWorkspaceBuildMode, WORKSPACE_BUILD_MODE_ENV } from '../../../scripts/workspaces/workspaceChildBuildEnv.mjs';
 import { resolveBundledWorkspaceSyncModulePath } from '../scripts/runtime/resolveBundledWorkspaceSyncModulePath.mjs';
 import { coerceHappyMonorepoRootFromPath } from '../scripts/utils/paths/paths.mjs';
+import { resolveStackRuntimeMode } from '../scripts/runtime/shared/runtime_mode.mjs';
+
+export function isBundledWorkspaceRuntimeInvocation(argv, env = process.env) {
+  const { mode } = resolveStackRuntimeMode({ argv, env });
+  return mode === 'require' || mode === 'source-snapshot';
+}
 
 export function isBundledWorkspaceMetadataInvocation(argv) {
   const args = Array.isArray(argv) ? argv.map((arg) => String(arg ?? '')) : [];
@@ -17,11 +24,12 @@ async function bundledWorkspacePackagesAreHealthy({
   repoRoot,
   hostPackageDir,
   ensureWorkspacePackagesBuiltByName,
+  env,
 }) {
   try {
     const cliCommonWorkspacesModule = await loadCliCommonWorkspacesModule(
       repoRoot,
-      process.env,
+      env,
       ensureWorkspacePackagesBuiltByName,
       { includeDevDependencies: false, quiet: true },
     );
@@ -42,11 +50,15 @@ export async function refreshLocalBundledWorkspacePackages(cliRootDir, opts = {}
 
   const repoRoot = coerceHappyMonorepoRootFromPath(cliRoot);
   if (!repoRoot) return;
+  const env = { ...process.env, [WORKSPACE_BUILD_MODE_ENV]: resolveWorkspaceBuildMode({
+    buildMode: process.env[WORKSPACE_BUILD_MODE_ENV] ?? 'source-dev', env: process.env,
+  }) };
   const syncModulePath = resolveBundledWorkspaceSyncModulePath(cliRoot);
   if (await bundledWorkspacePackagesAreHealthy({
     repoRoot,
     hostPackageDir: cliRoot,
     ensureWorkspacePackagesBuiltByName: opts.ensureWorkspacePackagesBuiltByName,
+    env,
   })) {
     return;
   }
@@ -62,6 +74,7 @@ export async function refreshLocalBundledWorkspacePackages(cliRootDir, opts = {}
         repoRoot,
         hostPackageDir: cliRoot,
         ensureWorkspacePackagesBuiltByName: opts.ensureWorkspacePackagesBuiltByName,
+        env,
       })) {
         return;
       }
@@ -75,5 +88,6 @@ export async function refreshLocalBundledWorkspacePackages(cliRootDir, opts = {}
   await bundleWorkspaceDeps({
     repoRoot,
     stackDir: cliRoot,
+    env,
   });
 }

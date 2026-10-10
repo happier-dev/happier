@@ -4,12 +4,16 @@ heavyweight_pressure_retry_seconds_for_pid() { printf '%s' "$(( 3 + $1 % 2 ))"; 
 heavyweight_memory_floor_kib() {
   case "$1" in
     validation) heavyweight_policy_floor='6291456' ;;
+    source-bundle) heavyweight_policy_floor='10485760' ;;
     dependency-install) heavyweight_policy_floor='6291456' ;;
     package-dist) heavyweight_policy_floor='6291456' ;;
     runtime-build) heavyweight_policy_floor='18874368' ;;
-    compilation) heavyweight_policy_floor='22020096' ;;
+    compilation) heavyweight_policy_floor='20971520' ;;
+    compilation-ui) heavyweight_policy_floor='20971520' ;;
+    compilation-cli) heavyweight_policy_floor='15728640' ;;
+    compilation-server) heavyweight_policy_floor='16777216' ;;
     targeted-validation|full-validation) heavyweight_policy_floor='6291456' ;;
-    *) heavyweight_policy_floor='22020096' ;;
+    *) heavyweight_policy_floor='20971520' ;;
   esac
   if [ "${2-}" = local ] && [ "$heavyweight_policy_floor" -lt 8388608 ]; then
     heavyweight_policy_floor='8388608'
@@ -30,8 +34,13 @@ native_command_policy_base() {
   policy_generator='0'
   policy_generatorCheck='0'
   policy_componentFromNative='0'
+  policy_localCompile='0'
+  policy_requiredTools=''
   if { [ "$policy_hasScript" = '1' ]; }; then
     policy_bootstrap='1'
+  fi
+  if { [ "$policy_workspace" = '@happier-dev/cli' ]; }; then
+    policy_componentOverride='apps/cli'
   fi
   if { [ "$policy_command" = 'git' ]; }; then
     policy_placement='primary-only'
@@ -100,6 +109,13 @@ native_command_policy_base() {
     policy_workerTool='vitest'
     policy_workerArguments='1'
   fi
+  if { [ "$policy_command" = 'node' ] || [ "$policy_command" = 'nodejs' ]; } && { [ "$policy_entry" = 'runVitestShards.mjs' ]; } && { [ "$policy_component" = 'apps/cli' ]; }; then
+    policy_validation='1'
+    policy_bootstrap='1'
+    policy_heavyClass='validation'
+    policy_runnerKnown='1'
+    policy_workerTool='vitest'
+  fi
   if { [ "$policy_managerNode" = '1' ]; } && { [ "$policy_entry" = 'run-vitest-with-heartbeat.mjs' ]; }; then
     policy_validation='1'
     policy_bootstrap='1'
@@ -124,6 +140,22 @@ native_command_policy_base() {
     policy_kind='runtime'
     policy_componentOverride='apps/stack'
   fi
+  if { [ "$policy_command" = 'node' ] || [ "$policy_command" = 'nodejs' ]; } && { [ "$policy_nativeTest" = '1' ]; } && { [ "$policy_nativeTestPath" = 'apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.test.mjs' ] || [ "$policy_nativeTestPath" = 'apps/stack/scripts/utils/dev_targets/remote_commands.test.mjs' ] || [ "$policy_nativeTestPath" = 'apps/stack/scripts/build/build_source_runtime.test.mjs' ]; }; then
+    policy_kind='source-test'
+  fi
+  if { [ "$policy_command" = 'node' ] || [ "$policy_command" = 'nodejs' ]; } && { [ "$policy_nativeTest" = '0' ]; } && { [ "$policy_workerRequest" = '1' ]; } && { [ "$policy_entryPath" = 'apps/stack/scripts/build/remote_runtime_build.mjs' ]; }; then
+    policy_validation='1'
+    policy_bootstrap='1'
+    policy_heavyClass='validation'
+    policy_kind='source-test'
+    policy_componentOverride='apps/stack'
+  fi
+  if { [ "$policy_command" = 'node' ] || [ "$policy_command" = 'nodejs' ]; } && { [ "$policy_nativeTest" = '0' ]; } && { [ "$policy_workerRequest" = '1' ]; } && { [ "$policy_entryPath" = 'scripts/build/remote_runtime_build.mjs' ]; } && { [ "$policy_component" = 'apps/stack' ]; }; then
+    policy_validation='1'
+    policy_bootstrap='1'
+    policy_heavyClass='validation'
+    policy_kind='source-test'
+  fi
   if { [ "$policy_command" = 'node' ]; } && { [ "$policy_stripTypes" = '1' ]; } && { [ "$policy_entryPath" = 'apps/cli/scripts/build-owned/generateBundledPluginEntries.ts' ] || [ "$policy_entryPath" = 'scripts/build-owned/generateBundledPluginEntries.ts' ]; }; then
     policy_generator='1'
     policy_workerTool='bundled-plugin-generator'
@@ -138,6 +170,9 @@ native_command_policy_base() {
     policy_generatorCheck='1'
     policy_componentOverride='apps/cli'
   fi
+  if { [ "$policy_command" = 'node' ]; } && { [ "$policy_stripTypes" = '1' ]; } && { [ "$policy_sourceCondition" = '1' ]; } && { [ "$policy_entryPath" = 'apps/cli/scripts/build-owned/generateBundledPluginEntries.ts' ] || [ "$policy_entryPath" = 'scripts/build-owned/generateBundledPluginEntries.ts' ]; } && { [ "$policy_mode" = 'check' ]; }; then
+    policy_kind='source-test'
+  fi
   if { [ "$policy_script" = 'check:first-party-plugins:finite' ] || [ "$policy_script" = 'check:first-party-plugins:finite:local' ] || [ "$policy_script" = 'plugins:aggregate:finite' ] || [ "$policy_script" = 'test:migration:bundled-plugin-projections' ] || [ "$policy_script" = 'test:migration:governance' ]; }; then
     policy_validation='1'
     policy_bootstrap='1'
@@ -147,6 +182,16 @@ native_command_policy_base() {
   fi
 }
 native_command_policy_finish() {
+  if { [ "$policy_component" = 'apps/cli' ]; } && { [ "$policy_workerTool" = 'vitest' ]; } && { [ "$policy_generatorCheck" = '0' ]; }; then
+    policy_requiredTools='go'
+  fi
+  if { [ "$policy_script" = 'types:check' ]; } && { [ "$policy_component" = 'apps/docs' ]; }; then
+    policy_validation='1'
+    policy_bootstrap='1'
+    policy_heavyClass='validation'
+    policy_kind='typecheck'
+    policy_workerTool='typescript-native'
+  fi
   if { [ "$policy_bootstrap" = '1' ]; } && { [ "$policy_heavyClass" = '' ]; }; then
     policy_heavyClass='dependency-install'
   fi
@@ -165,6 +210,24 @@ native_command_policy_finish() {
   if { [ "$policy_kind" = 'typecheck' ]; }; then
     policy_heavyClass='compilation'
   fi
+  if { [ "$policy_kind" = 'typecheck' ]; } && { [ "$policy_component" = 'apps/ui' ]; }; then
+    policy_heavyClass='compilation-ui'
+  fi
+  if { [ "$policy_kind" = 'typecheck' ]; } && { [ "$policy_component" = 'apps/cli' ]; }; then
+    policy_heavyClass='compilation-cli'
+  fi
+  if { [ "$policy_kind" = 'typecheck' ]; } && { [ "$policy_component" = 'apps/server' ]; }; then
+    policy_heavyClass='compilation-server'
+  fi
+  if { [ "$policy_kind" = 'typecheck' ]; } && { [ "$policy_component" = 'packages/protocol' ]; }; then
+    policy_heavyClass='runtime-build'
+  fi
+  if { [ "$policy_kind" = 'typecheck' ]; } && { [ "$policy_component" = 'packages/cli-common' ] || [ "$policy_component" = 'packages/plugin-sdk' ] || [ "$policy_component" = 'apps/docs' ]; }; then
+    policy_heavyClass='package-dist'
+  fi
+  if { [ "$policy_kind" = 'typecheck' ]; } && { [ "$policy_mixedProjects" = '1' ]; }; then
+    policy_heavyClass='compilation'
+  fi
   if { [ "$policy_command" = 'node' ] || [ "$policy_command" = 'nodejs' ]; } && { [ "$policy_nativeTest" = '0' ]; } && { [ "$policy_workerRequest" = '1' ]; } && { [ "$policy_entryPath" = 'apps/stack/scripts/build/remote_runtime_build.mjs' ]; }; then
     policy_heavyClass='runtime-build'
   fi
@@ -177,8 +240,11 @@ native_command_policy_finish() {
   if { [ "$policy_command" = 'node' ] || [ "$policy_command" = 'nodejs' ]; } && { [ "$policy_entryPath" = 'scripts/build.mjs' ] || [ "$policy_entryPath" = 'packages/cli-common/scripts/build.mjs' ]; } && { [ "$policy_component" = 'packages/cli-common' ]; }; then
     policy_heavyClass='package-dist'
   fi
-  if { [ "$policy_command" = 'node' ] || [ "$policy_command" = 'nodejs' ]; } && { [ "$policy_entry" = 'buildTypeScriptPackageDist.mjs' ]; } && { [ "$policy_component" = 'packages/protocol' ]; } && { [ "$policy_project" = 'tsconfig.json' ] || [ "$policy_project" = './tsconfig.json' ]; }; then
+  if { [ "$policy_command" = 'node' ] || [ "$policy_command" = 'nodejs' ]; } && { [ "$policy_entry" = 'buildTypeScriptPackageDist.mjs' ]; } && { [ "$policy_packageComponent" = '1' ]; } && { [ "$policy_project" = 'tsconfig.json' ] || [ "$policy_project" = './tsconfig.json' ]; } && { [ "$policy_mixedProjects" = '0' ]; }; then
     policy_heavyClass='package-dist'
+  fi
+  if { [ "$policy_command" = 'node' ] || [ "$policy_command" = 'nodejs' ]; } && { [ "$policy_entry" = 'buildTypeScriptPackageDist.mjs' ]; } && { [ "$policy_component" = 'packages/protocol' ] || [ "$policy_component" = 'packages/sdk' ]; } && { [ "$policy_project" = 'tsconfig.json' ] || [ "$policy_project" = './tsconfig.json' ]; } && { [ "$policy_mixedProjects" = '0' ]; }; then
+    policy_heavyClass='runtime-build'
   fi
   if { [ "$policy_command" = 'node' ] || [ "$policy_command" = 'nodejs' ]; } && { [ "$policy_entry" = 'buildTypeScriptPackageDist.mjs' ]; } && { [ "$policy_noCheck" = '1' ]; }; then
     policy_heavyClass='package-dist'
@@ -188,6 +254,9 @@ native_command_policy_finish() {
   fi
   if { [ "$policy_command" = 'hstack-exec' ]; } && { [ "$policy_admissionClass" = 'validation' ]; }; then
     policy_heavyClass='validation'
+  fi
+  if { [ "$policy_command" = 'hstack-exec' ]; } && { [ "$policy_admissionClass" = 'source-bundle' ]; }; then
+    policy_heavyClass='source-bundle'
   fi
   if { [ "$policy_command" = 'hstack-exec' ]; } && { [ "$policy_admissionClass" = 'dependency-install' ]; }; then
     policy_heavyClass='dependency-install'
@@ -201,14 +270,32 @@ native_command_policy_finish() {
   if { [ "$policy_command" = 'hstack-exec' ]; } && { [ "$policy_admissionClass" = 'compilation' ]; }; then
     policy_heavyClass='compilation'
   fi
+  if { [ "$policy_command" = 'hstack-exec' ]; } && { [ "$policy_admissionClass" = 'compilation-ui' ]; }; then
+    policy_heavyClass='compilation-ui'
+  fi
+  if { [ "$policy_command" = 'hstack-exec' ]; } && { [ "$policy_admissionClass" = 'compilation-cli' ]; }; then
+    policy_heavyClass='compilation-cli'
+  fi
+  if { [ "$policy_command" = 'hstack-exec' ]; } && { [ "$policy_admissionClass" = 'compilation-server' ]; }; then
+    policy_heavyClass='compilation-server'
+  fi
   if { [ "$policy_command" = 'hstack-exec' ]; } && { [ "$policy_admissionClass" = 'targeted-validation' ] || [ "$policy_admissionClass" = 'full-validation' ]; }; then
     policy_heavyClass='validation'
+  fi
+  if { [ "$policy_kind" = 'runtime' ]; } && { [ "$policy_component" = 'apps/cli' ]; } && { [ "$policy_script" = 'test' ] || [ "$policy_script" = 'test:local' ] || [ "$policy_script" = 'test:unit' ] || [ "$policy_script" = 'test:unit:local' ] || [ "$policy_script" = 'test:unit:vitest' ] || [ "$policy_script" = 'test:unit:vitest:local' ]; } && { [ "$policy_config" = 'vitest.config.ts' ]; } && { [ "$policy_resolverOverride" = '0' ]; }; then
+    policy_kind='source-test'
   fi
   if { [ "$policy_kind" = 'runtime' ]; } && { [ "$policy_runnerKnown" = '1' ]; } && { [ "$policy_component" = 'apps/cli' ] || [ "$policy_component" = 'apps/ui' ] || [ "$policy_component" = 'packages/plugins/triage' ]; } && { [ "$policy_config" = 'vitest.config.ts' ]; } && { [ "$policy_resolverOverride" = '0' ]; }; then
     policy_kind='source-test'
   fi
   if { [ "$policy_kind" = 'runtime' ]; } && { [ "$policy_runnerKnown" = '1' ]; } && { [ "$policy_component" = 'apps/cli' ]; } && { [ "$policy_config" = 'vitest.source.integration.config.ts' ]; } && { [ "$policy_resolverOverride" = '0' ]; }; then
     policy_kind='source-test'
+  fi
+  if { [ "$policy_kind" = 'runtime' ]; } && { [ "$policy_runnerKnown" = '1' ]; } && { [ "$policy_component" = 'apps/ui' ]; } && { [ "$policy_config" = 'vitest.integration.config.ts' ]; } && { [ "$policy_resolverOverride" = '0' ]; }; then
+    policy_kind='source-test'
+  fi
+  if { [ "$policy_heavyClass" = 'compilation' ] || [ "$policy_heavyClass" = 'compilation-ui' ] || [ "$policy_heavyClass" = 'compilation-cli' ] || [ "$policy_heavyClass" = 'compilation-server' ] || [ "$policy_heavyClass" = 'package-dist' ] || [ "$policy_heavyClass" = 'runtime-build' ]; }; then
+    policy_localCompile='1'
   fi
 }
 native_package_manager() { case "$1" in npm|npx|pnpm|yarn) return 0 ;; *) return 1 ;; esac; }
@@ -243,21 +330,38 @@ native_node_entry() {
       --experimental-strip-types) policy_stripTypes=1; shift ;;
       --import) shift; [ "$#" -eq 0 ] || shift ;;
       --import=*) shift ;;
+      --conditions|-C) shift; if [ "$#" -gt 0 ]; then [ "$1" != happier-source ] || policy_sourceCondition=1; shift; fi ;;
+      --conditions=happier-source) policy_sourceCondition=1; shift ;;
+      --conditions=*) shift ;;
       *) break ;;
     esac
   done
   native_entry_path=${1-}
   native_command_basename "$native_entry_path"; policy_entry=$native_basename
 }
+native_record_project_scope() {
+  native_normalize_path "$native_project"; native_scope=$native_result
+  native_project_path=$native_result
+  case "$native_project_path" in *.json) ;; *) native_project_path="$native_project_path/tsconfig.json" ;; esac
+  case "$native_project_path" in /*) ;; *) native_normalize_path "$policy_component/$native_project_path"; native_project_path=$native_result ;; esac
+  case "$native_project_path" in "$repo_root"/*) native_project_path=${native_project_path#"$repo_root"/} ;; esac
+  policy_projectPaths="$policy_projectPaths
+$native_project_path"
+  case "$native_scope" in *.json) case "$native_scope" in */*) native_scope=${native_scope%/*} ;; *) native_scope=. ;; esac ;; esac
+  case "$native_scope" in /*) ;; *) native_normalize_path "$policy_component/$native_scope"; native_scope=$native_result ;; esac
+  case "$native_scope" in "$repo_root"/*) native_scope=${native_scope#"$repo_root"/} ;; esac
+  if [ -z "$native_project_scope" ]; then native_project_scope=$native_scope
+  elif [ "$native_project_scope" != "$native_scope" ]; then policy_mixedProjects=1; fi
+}
 resolve_native_command_policy() {
   [ "${1-}" = -- ] && shift
   case "${1-}" in --script=*) native_script=${1#--script=}; shift; [ "${1-}" = -- ] && shift; set -- corepack yarn -s "$native_script" "$@" ;; esac
   native_command_basename "${1-}"; policy_command=$native_basename
   native_command_basename "${2-}"; policy_entry=$native_basename
-  policy_script=; policy_hasScript=0; policy_managerNode=0; policy_stripTypes=0
+  policy_script=; policy_hasScript=0; policy_managerNode=0; policy_stripTypes=0; policy_sourceCondition=0; policy_workspace=
   native_manager_cwd=; native_project=; policy_mode=write
   policy_nativeTest=0; policy_config=vitest.config.ts; policy_resolverOverride=0
-  policy_project=; policy_workerRequest=0
+  policy_project=; policy_projectPaths=; policy_workerRequest=0
   policy_noCheck=0
   policy_admissionClass=
   if [ "$policy_command" = hstack-exec ] && [ "${2-}" = --heavyweight-admission ]; then
@@ -279,22 +383,29 @@ resolve_native_command_policy() {
   esac
   native_normalize_path "$native_entry_path"; policy_entryPath=$native_result
   case "$policy_entryPath" in "$repo_root"/*) policy_entryPath=${policy_entryPath#"$repo_root"/} ;; esac
-  native_pending=
+  native_pending=; native_project_scope=; policy_mixedProjects=0
   for native_arg in "$@"; do
     case "$native_pending" in
       config) policy_config=$native_arg; native_pending=; continue ;;
-      project) native_project=$native_arg; native_pending=; continue ;;
+      project) native_project=$native_arg; native_record_project_scope; native_pending=; continue ;;
       mode) policy_mode=$native_arg; native_pending=; continue ;;
+      noCheck)
+        native_pending=
+        case "$native_arg" in true) policy_noCheck=1; continue ;; false) policy_noCheck=0; continue ;; esac
+        ;;
     esac
     case "$native_arg" in
       --test) policy_nativeTest=1 ;;
-      --noCheck|--noCheck=true) policy_noCheck=1 ;;
+      --noCheck) policy_noCheck=1; native_pending=noCheck ;;
+      --noCheck=true) policy_noCheck=1 ;;
+      --noCheck=false) policy_noCheck=0 ;;
       --worker-request=?*) policy_workerRequest=1 ;;
       --config|-c) native_pending=config; policy_config= ;;
       --config=*) policy_config=${native_arg#--config=} ;;
       -c?*) policy_config=${native_arg#-c} ;;
       --project|-p) native_pending=project; [ "$native_arg" = --project ] && policy_resolverOverride=1 ;;
-      --project=*) native_project=${native_arg#--project=}; policy_resolverOverride=1 ;;
+      --project=*) native_project=${native_arg#--project=}; native_record_project_scope; policy_resolverOverride=1 ;;
+      -p?*) native_project=${native_arg#-p}; native_record_project_scope ;;
       --root|--root=*|--workspace|--workspace=*|-r*) policy_resolverOverride=1 ;;
       --mode) native_pending=mode ;;
       --mode=*) policy_mode=${native_arg#--mode=} ;;
@@ -332,7 +443,7 @@ resolve_native_command_policy() {
         run|-s|--silent) shift ;;
         --cwd|-C) shift; native_manager_cwd=${1-.}; [ "$#" -gt 0 ] && shift ;;
         --cwd=*) native_manager_cwd=${1#--cwd=}; shift ;;
-        workspace) if [ "$native_manager" = yarn ]; then shift; [ "$#" -gt 0 ] && shift; else policy_script=$1; break; fi ;;
+        workspace) if [ "$native_manager" = yarn ]; then shift; policy_workspace=${1-}; [ "$#" -gt 0 ] && shift; else policy_script=$1; break; fi ;;
         -*) shift ;;
         *) policy_script=$1; if [ "$1" = node ]; then policy_managerNode=1; native_command_basename "${2-}"; policy_entry=$native_basename; fi; break ;;
       esac
@@ -341,14 +452,19 @@ resolve_native_command_policy() {
   [ -n "$policy_script" ] && policy_hasScript=1
   policy_family=${policy_script%%:*}
   native_command_policy_base
-  if [ -n "$native_manager_cwd" ]; then native_normalize_path "$policy_component/$native_manager_cwd"; policy_component=$native_result
+  if [ -n "$native_manager_cwd" ]; then
+    case "$native_manager_cwd" in /*) native_normalize_path "$native_manager_cwd" ;; *) native_normalize_path "$policy_component/$native_manager_cwd" ;; esac
+    policy_component=$native_result
   elif [ "$policy_kind" = typecheck ] && [ -n "$native_project" ]; then
     native_normalize_path "$native_project"; native_project=$native_result
     case "$native_project" in *.json) case "$native_project" in */*) native_project=${native_project%/*} ;; *) native_project=. ;; esac ;; esac
-    native_normalize_path "$policy_component/$native_project"; policy_component=$native_result
+    case "$native_project" in /*) native_normalize_path "$native_project" ;; *) native_normalize_path "$policy_component/$native_project" ;; esac
+    policy_component=$native_result
   fi
+  case "$policy_component" in "$repo_root"/*) policy_component=${policy_component#"$repo_root"/} ;; esac
   [ -n "$policy_componentOverride" ] && policy_component=$policy_componentOverride
   if [ -z "$policy_componentOverride" ] && [ "$policy_componentFromNative" = 1 ] && [ -n "$native_test_component" ]; then policy_component=$native_test_component; fi
+  case "$policy_component" in packages/*) policy_packageComponent=1 ;; *) policy_packageComponent=0 ;; esac
   native_command_policy_finish
 }
 

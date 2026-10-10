@@ -4,6 +4,7 @@ import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { resolveDevTargetMutagenRuntime } from './mutagen_runtime.mjs';
 
 import {
   inspectDevTargetSync,
@@ -28,6 +29,45 @@ const target = {
   repoDir: '/home/dev/happier',
   cliHomeDir: '/home/dev/.happier/linux',
 };
+
+test('remote preparation retries refused multiplex admission but never an ambiguous command disconnect', async () => {
+  for (const refused of [true, false]) {
+    const calls = [];
+    const result = await runDevTargetCommand({ target, stackBaseDir: '/tmp/stack', syncAlreadyVerified: true,
+      commandArgs: ['node', './apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs'], provenance: 'skip' }, {
+      spawnProcess: input => {
+        calls.push(input);
+        if (calls.length === 1) {
+          input.onLine?.({ stream: 'stderr', line: refused
+            ? 'mux_client_request_session: session request failed: Session open refused by peer' : 'Connection closed by remote host' });
+        }
+        return { completion: Promise.resolve({ code: calls.length === 1 ? 255 : 0, signal: null }) };
+      },
+    });
+    assert.equal(result.code, refused ? 0 : 255);
+    assert.equal(calls.length, refused ? 2 : 1);
+    if (refused) {
+      assert.ok(calls[1].args.includes('ControlPath=none'));
+      assert.equal(calls[1].args.at(-1), calls[0].args.at(-1), 'recovery retains the original command custody');
+    }
+  }
+});
+
+test('dependency bootstrap preserves streamed ownership refusal across process completion', async () => {
+  for (const scenario of [{ code: 1, stream: 'stderr', refused: true }, { code: 0, stream: 'stderr', refused: false }, { code: 1, stream: 'stdout', refused: false }]) {
+    const result = await runDevTargetDependencyBootstrap({ target, stackBaseDir: '/tmp/stack', syncAlreadyVerified: true }, {
+      runCommand: options => runDevTargetCommand(options, {
+        spawnProcess: ({ onLine }) => {
+          onLine({ stream: scenario.stream, line: 'Error: Expo pid=123 has no verified dependency-safe restart owner. Stop the owning Stack once on this target.' });
+          onLine({ stream: scenario.stream, line: "  code: 'HAPPIER_DEPENDENCY_METRO_RESTART_REQUIRED'" });
+          return { completion: Promise.resolve({ code: scenario.code, signal: null }) };
+        },
+      }),
+    });
+    assert.equal(result.error?.code === 'HAPPIER_DEPENDENCY_METRO_RESTART_REQUIRED', scenario.refused);
+    if (scenario.refused) assert.match(result.error.message, /Stop the owning Stack once/);
+  }
+});
 
 test('try admission reports owner denial only when exit 75 and its stderr sentinel agree', async () => {
   const sentinel = 'HSTACK_ADMISSION_BUSY:admission-test-id';
@@ -121,7 +161,9 @@ test('dependency bootstrap delegates to the cancellable remote command owner', a
   });
 
   assert.deepEqual(result, { code: 0, signal: null });
-  assert.deepEqual(calls, [{
+  assert.equal(typeof calls[0].onLine, 'function');
+  const { onLine, ...invocation } = calls[0];
+  assert.deepEqual(invocation, {
     target,
     stackBaseDir: '/tmp/stack',
     commandArgs: [
@@ -137,7 +179,7 @@ test('dependency bootstrap delegates to the cancellable remote command owner', a
     provenance: 'skip',
     syncAlreadyVerified: true,
     env: { TEST_ENV: 'project' },
-  }]);
+  });
 });
 
 test('workspace preparation delegates the component path to the cancellable remote command owner', async () => {
@@ -539,7 +581,8 @@ test('sync status and explicit sync use the target session in the stack Mutagen 
   assert.equal(synced.state, 'ready');
   const flushCall = calls.find((call) => call.args.includes('flush'));
   assert.ok(flushCall);
-  assert.ok(calls.every((call) => call.env.MUTAGEN_DATA_DIRECTORY === '/tmp/stack/mutagen/data'));
+  const runtime = resolveDevTargetMutagenRuntime({ stackBaseDir: '/tmp/stack', env: { PATH: '/test/bin' } });
+  assert.ok(calls.every((call) => call.env.MUTAGEN_DATA_DIRECTORY === runtime.dataDir));
 });
 
 test('sync inspection reports a missing named session as missing rather than unavailable', async () => {
@@ -697,7 +740,7 @@ test('remote exec refuses paused, unhealthy, and missing synchronization session
 });
 
 for (const signal of ['SIGINT', 'SIGHUP']) {
-test(`remote exec ${signal} cancels the exact remote process tree before stopping SSH and removes signal listeners`, async () => {
+test(`remote exec ${signal} awaits cancellation without a subordinate deadline before stopping SSH and removes signal listeners`, async () => {
   const signalSource = new EventEmitter();
   let releaseCompletion;
   let stopped = null;
@@ -710,9 +753,14 @@ test(`remote exec ${signal} cancels the exact remote process tree before stoppin
   const execution = runDevTargetCommand(
     { target, stackBaseDir: '/tmp/stack', commandArgs: ['long-test'], env: {} },
     {
-      runCaptureResult: async ({ command, args }) => {
+      runCaptureResult: async ({ command, args, timeoutMs }) => {
         calls.push([command, ...args]);
         if (args.includes('list')) return readyListResult();
+        // Process/transport boundary: a healthy cancellation may outlast any
+        // imposed local deadline; the containing execution still owns it.
+        if (command === 'ssh' && Number.isFinite(timeoutMs)) {
+          return { ok: false, exitCode: null, out: '', err: 'local cancellation deadline expired' };
+        }
         return { ok: true, exitCode: 0, out: '', err: '' };
       },
       spawnProcess: () => child,

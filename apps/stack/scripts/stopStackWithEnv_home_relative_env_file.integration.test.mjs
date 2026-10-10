@@ -6,9 +6,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { stopStackWithEnv } from './utils/stack/stop.mjs';
-import { isAlive, spawnOwnedSleep, waitForProcessAlive, waitForProcessExit } from './testkit/stack_stop_sweeps_testkit.mjs';
+import { isAlive, spawnOwnedSleep, waitForProcessAlive } from './testkit/stack_stop_sweeps_testkit.mjs';
 
-test('stopStackWithEnv sweeps infra tagged processes when HAPPIER_STACK_ENV_FILE uses a ~/ override', async (t) => {
+for (const kind of ['infra', 'browser']) test(`stopStackWithEnv sweeps ${kind} tagged processes when HAPPIER_STACK_ENV_FILE uses a ~/ override`, async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
 
@@ -60,7 +60,7 @@ test('stopStackWithEnv sweeps infra tagged processes when HAPPIER_STACK_ENV_FILE
       ...process.env,
       HAPPIER_STACK_STACK: stackName,
       HAPPIER_STACK_ENV_FILE: expandedEnvPath,
-      HAPPIER_STACK_PROCESS_KIND: 'infra',
+      HAPPIER_STACK_PROCESS_KIND: kind,
     },
   });
   assert.ok(Number(child.pid) > 1, 'expected child pid');
@@ -89,6 +89,5 @@ test('stopStackWithEnv sweeps infra tagged processes when HAPPIER_STACK_ENV_FILE
     preserveDaemon: true,
   });
 
-  await waitForProcessExit({ pid: child.pid, timeoutMs: 20_000, intervalMs: 50, label: 'home-relative env child (post-stop)' });
   assert.ok(!isAlive(child.pid), `expected pid ${child.pid} to be swept via the expanded env-file needle`);
 });

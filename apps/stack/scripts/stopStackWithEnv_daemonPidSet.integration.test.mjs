@@ -8,6 +8,9 @@ import { spawn } from 'node:child_process';
 
 import { completeInterruptedStackStopBeforeStart, stopStackServiceWithEnv, stopStackWithEnv } from './utils/stack/stop.mjs';
 import { isAlive, spawnOwnedSleep, waitForProcessAlive, waitForProcessExit } from './testkit/stack_stop_sweeps_testkit.mjs';
+import { writePidState } from './utils/expo/expo.mjs';
+import { getDaemonEnv } from './daemon.mjs';
+import { resolvePreferredStackDaemonStatePaths } from './utils/auth/credentials_paths.mjs';
 import {
   recordStackRuntimeStopRequest,
   withStackRuntimeStartClaim,
@@ -108,6 +111,28 @@ async function waitForFile(path) {
   await access(path);
 }
 
+test('source stack stop preserves runtime custody when retained CLI retirement fails', async (t) => {
+  const fixture = await createStopFixture(t, { stackName: 'source-stop-incomplete' });
+  const entrypoint = join(fixture.baseDir, 'source-stop.mjs');
+  await writeFile(entrypoint, 'process.exit(23);\n');
+  await writeRuntimeState(fixture.runtimeStatePath, { stackName: fixture.stackName, ownerPid: null, processes: {},
+    sourceRuntimeLaunch: { entrypoint, cliDir: join(fixture.repoRoot, 'apps', 'cli'), env: {} } });
+  const env = { ...process.env, HAPPIER_STACK_STACK: fixture.stackName,
+    HAPPIER_STACK_REPO_DIR: fixture.repoRoot, HAPPIER_STACK_CLI_HOME_DIR: fixture.cliHomeDir,
+    HAPPIER_HOME_DIR: fixture.cliHomeDir, HAPPIER_STACK_ENV_FILE: fixture.envPath };
+  const daemonEnv = getDaemonEnv({ baseEnv: env, cliHomeDir: fixture.cliHomeDir,
+    internalServerUrl: 'http://127.0.0.1:3005', publicServerUrl: 'http://127.0.0.1:3005', stackName: fixture.stackName });
+  const { lockPath } = resolvePreferredStackDaemonStatePaths({ cliHomeDir: fixture.cliHomeDir,
+    serverUrl: 'http://127.0.0.1:3005', env: daemonEnv });
+  await mkdir(dirname(lockPath), { recursive: true });
+  await writeFile(lockPath, '{');
+  const stopped = await stopStackWithEnv({ rootDir: fixture.rootDir, stackName: fixture.stackName,
+    baseDir: fixture.baseDir, env, json: true, noDocker: true, autoSweep: false });
+  assert.equal(stopped.finalization.finalized, false, 'failed source retirement must not finalize the stop');
+  const retained = JSON.parse(await readFile(fixture.runtimeStatePath, 'utf8'));
+  assert.equal(retained.sourceRuntimeLaunch.entrypoint, entrypoint);
+});
+
 test('explicit-stop fallback applies canonical grace only to persisted server process roles', async (t) => {
   const fixture = await createStopFixture(t, { stackName: 'server-role-grace' });
   const serverKeys = [
@@ -167,6 +192,24 @@ test('explicit-stop fallback applies canonical grace only to persisted server pr
     assert.equal(terminationOptions.has(key), true, `${key} must reach fallback termination`);
     assert.equal(terminationOptions.get(key)?.graceMs, undefined, `${key} must retain generic termination policy`);
   }
+});
+
+test('stop cleanup retires a real legacy Expo without runtime state and preserves another process', async (t) => {
+  const fixture = await createStopFixture(t, { stackName: 'legacy-expo-without-runner' });
+  const expo = await fixture.spawnDaemon('legacy-expo');
+  const unrelated = await fixture.spawnScript('setInterval(() => {}, 1000)', 'foreign-expo', { owned: false });
+  const expoStatePath = join(fixture.baseDir, 'expo-dev', 'legacy', 'expo.state.json');
+  await mkdir(dirname(expoStatePath), { recursive: true });
+  await writePidState(expoStatePath, { pid: expo.pid, projectDir: join(fixture.repoRoot, 'apps', 'ui') });
+  const result = await stopStackWithEnv({
+    rootDir: fixture.repoRoot, stackName: fixture.stackName, baseDir: fixture.baseDir,
+    env: { ...process.env, HAPPIER_STACK_STACK: fixture.stackName, HAPPIER_STACK_ENV_FILE: fixture.envPath,
+      HAPPIER_STACK_CLI_HOME_DIR: fixture.cliHomeDir },
+    json: true, noDocker: true, autoSweep: false,
+  });
+  await waitForProcessExit({ pid: expo.pid, timeoutMs: 2_000, intervalMs: 25, label: 'legacy Expo cleanup' });
+  assert.ok(result.expoDev.some(entry => entry.pid === expo.pid));
+  assert.equal(isAlive(unrelated.pid), true);
 });
 
 test('stop cleanup attempts a runtime-recorded Expo pid only once when Expo state repeats it', async (t) => {
@@ -294,8 +337,6 @@ test('stale Expo state pointing at a definitively unowned reused pid does not bl
     rootDir: fixture.repoRoot, stackName: fixture.stackName, baseDir: fixture.baseDir,
     env: { ...process.env, HAPPIER_STACK_STACK: fixture.stackName, HAPPIER_STACK_ENV_FILE: fixture.envPath, HAPPIER_STACK_SERVER_COMPONENT: 'happier-server' },
     json: true, noDocker: true, autoSweep: false,
-  }, {
-    killProcessGroupOwnedByStackImpl: async () => ({ killed: false, reason: 'not_owned' }),
   });
 
   assert.equal(result.finalization?.reason, 'deleted');

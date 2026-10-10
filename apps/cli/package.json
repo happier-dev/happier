@@ -128,6 +128,7 @@
     "@happier-dev/plugins-codex",
     "@happier-dev/plugins-copilot",
     "@happier-dev/plugins-cursor",
+    "@happier-dev/plugins-custom-acp",
     "@happier-dev/plugins-deepseek",
     "@happier-dev/plugins-devin",
     "@happier-dev/plugins-droid",
@@ -359,9 +360,11 @@
     "@happier-dev/plugins-machine-crabbox": "0.0.0",
     "@happier-dev/plugins-machine-docker-sandboxes": "0.0.0",
     "@happier-dev/plugins-machine-modal": "0.0.0",
-    "@happier-dev/plugins-codebuddy": "0.0.0"
+    "@happier-dev/plugins-codebuddy": "0.0.0",
+    "@happier-dev/plugins-custom-acp": "0.0.0"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "0.91.1",
     "@happier-dev/plugins-devcontainer": "0.0.0",
     "@types/archiver": "^7.0.0",
     "@types/node": ">=20",
@@ -369,6 +372,7 @@
     "@types/ws": "8.18.1",
     "cross-env": "^10.1.0",
     "dotenv": "^16.6.1",
+    "openai": "6.26.0",
     "pkgroll": "^2.27.0",
     "release-it": "^19.0.6",
     "shx": "^0.3.3",

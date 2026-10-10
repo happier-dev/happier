@@ -49,6 +49,7 @@ Managed development VM (development-only, unreleased):
 
 - Setup/reconcile: `hstack dev-vm setup` (checkout-local equivalent: `yarn dev-vm -- setup`)
 - Candidate-retirement handoff: `hstack dev-vm activate` (after the owning cutover workflow completes its required checks)
+- Command primary (0.3 development): `hstack dev-vm primary assign TARGET --stack=NAME`, or `hstack dev-vm primary assign lima` to select the retained VM again. This writes only the profile after workload preparation; see [command-primary selection](/hstack/dev-vm#select-the-command-primary).
 - Lifecycle: `hstack dev-vm start|stop`
 - Capacity: `hstack dev-vm capacity show`, `hstack dev-vm capacity set shared|dedicated [--shared-cpus=<count> --shared-memory-gib=<GiB> --dedicated-cpus=<count> --dedicated-memory-gib=<GiB>] [--force]`
 - Inspect/repair: `hstack dev-vm status|doctor [--repair-forwarding]`

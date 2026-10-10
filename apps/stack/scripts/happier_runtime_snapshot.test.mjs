@@ -80,6 +80,52 @@ test('hstack happier uses the active runtime snapshot when runtime mode is requi
   assert.match(res.stdout, /SNAPSHOT CLI HELP/);
 });
 
+test('hstack happier source snapshot uses retained code and clears native provenance', async t => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const fixture = await createRuntimeSnapshotFixture(t, { stackName: 'source-snapshot-cli' });
+  const cliDir = join(fixture.stackDir, 'source-runtime', 'bundle', 'cli');
+  const entrypoint = join(cliDir, 'src', 'index.mjs');
+  await mkdir(dirname(entrypoint), { recursive: true });
+  await writeFile(entrypoint, `{ const args = process.argv.slice(2); ${buildStubHappierServerSetSource()} }\n`
+    + 'process.stdout.write(JSON.stringify({args:process.argv.slice(2),root:process.env.HAPPIER_CLI_ROOT_DIR,native:process.env.HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED??null,child:process.env.HAPPIER_CLI_SUBPROCESS_ENTRYPOINT})+"\\n");');
+  await writeFile(join(fixture.stackDir, 'stack.runtime.json'), JSON.stringify({ version: 1, stackName: fixture.stackName,
+    ownerPid: process.pid, runtimeSnapshotId: null, sourceRuntimeIdentities: { daemon: { selected: 'code', loaded: 'code' } },
+    sourceRuntimeLaunch: { cliDir, entrypoint },
+  }));
+  for (const mode of ['--runtime=source', '--runtime']) {
+    const result = await runNode([join(rootDir, 'scripts/happier.mjs'), mode, '--version'], { cwd: rootDir,
+      env: { ...process.env, HAPPIER_STACK_STACK: fixture.stackName, HAPPIER_STACK_STORAGE_DIR: fixture.storageDir,
+        HAPPIER_STACK_ENV_FILE: join(fixture.stackDir, 'env'), HAPPIER_STACK_RUNTIME_MODE: 'require',
+        HAPPIER_HOME_DIR: join(fixture.root, '.happy-home'), HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED: '1' },
+    });
+    assert.equal(result.code, 0, result.stderr);
+    assert.ok(result.stdout.includes(entrypoint), `${mode} must use the loaded source entrypoint; stdout=${result.stdout}`);
+    const output = JSON.parse(result.stdout);
+    assert.deepEqual(output.args, ['--version']);
+    assert.equal(output.root, cliDir);
+    assert.equal(output.child, entrypoint);
+    assert.equal(output.native, null);
+  }
+});
+
+test('hstack happier refuses a missing loaded source CLI instead of selecting built code or rebuilding', async t => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const fixture = await createRuntimeSnapshotFixture(t, { stackName: 'missing-source-cli', cliEntrypoint: 'cli/happier.mjs' });
+  await writeFile(join(fixture.stackDir, 'stack.runtime.json'), JSON.stringify({
+    version: 1, stackName: fixture.stackName, ownerPid: process.pid, runtimeSnapshotId: null,
+    sourceRuntimeIdentities: { daemon: { selected: 'loaded-code', loaded: 'loaded-code' } },
+    sourceRuntimeLaunch: { cliDir: join(fixture.stackDir, 'source-runtime/cli'),
+      entrypoint: join(fixture.stackDir, 'source-runtime/cli/missing.mjs') },
+  }));
+  const result = await runNode([join(rootDir, 'scripts/happier.mjs'), '--runtime', '--version'], {
+    cwd: rootDir, env: { ...process.env, HAPPIER_STACK_STACK: fixture.stackName,
+      HAPPIER_STACK_STORAGE_DIR: fixture.storageDir, HAPPIER_STACK_ENV_FILE: join(fixture.stackDir, 'env'),
+      HAPPIER_HOME_DIR: join(fixture.root, '.happy-home') },
+  });
+  assert.equal(result.code, 1, 'missing loaded source code must fail closed');
+  assert.match(result.stderr, /loaded source CLI.*unavailable/i);
+});
+
 test('hstack happier uses source CLI for an active source-backed stack even when stack env requires snapshots', async (t) => {
   const rootDir = stackRootDirFromMeta(import.meta.url);
   const runtimeFixture = await createRuntimeSnapshotFixture(t, {

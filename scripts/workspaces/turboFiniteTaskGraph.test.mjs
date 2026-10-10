@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { resolveYarnCommandInvocation } from './execYarnCommand.mjs';
+import { createTempFixture } from '../../apps/stack/scripts/testkit/core/temp_fixture.mjs';
+import { installNativeAdmissionFixture } from '../../apps/stack/scripts/testkit/core/native_admission_fixture.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -224,6 +226,88 @@ test('finite typecheck cache and strict child environments preserve the public d
     assert.ok(turbo.tasks[task].env?.includes('HAPPIER_TYPECHECK_DISPATCHED'), task);
   }
 });
+
+test('Turbo strict tasks reuse their admitted ancestor without a second reservation',
+  { skip: process.platform !== 'linux' }, async (t) => {
+    const fixture = await createTempFixture(t, { prefix: 'happier-turbo-admission-' });
+    const native = await installNativeAdmissionFixture({ root: fixture.root });
+    const turbo = await readJson('turbo.json');
+    const rootPackage = await readJson('package.json');
+    await mkdir(fixture.path('packages', 'leaf'), { recursive: true });
+    await mkdir(fixture.path('bin'));
+    // Substitute only the worker's OS memory sample. Turbo's environment
+    // filtering, ancestry checks, locks and reservation logic remain real.
+    await writeFile(fixture.path('bin', 'awk'), `#!/bin/sh
+case "$*" in
+  */proc/meminfo*) printf '41943040 41943040\\n' ;;
+  */proc/loadavg*|*/proc/pressure/*) printf '0\\n' ;;
+  *) exec /usr/bin/awk "$@" ;;
+esac
+`);
+    await chmod(fixture.path('bin', 'awk'), 0o755);
+    await writeFile(fixture.path('package.json'), JSON.stringify({
+      name: 'turbo-admission-fixture', private: true,
+      packageManager: rootPackage.packageManager,
+      workspaces: ['packages/*'],
+    }));
+    await writeFile(fixture.path('yarn.lock'), '# yarn lockfile v1\n');
+    await writeFile(fixture.path('turbo.json'), JSON.stringify({
+      ...turbo,
+      tasks: { 'build:finite': { cache: false } },
+    }));
+    await writeFile(fixture.path('packages', 'leaf', 'package.json'), JSON.stringify({
+      name: 'admission-leaf', version: '1.0.0', private: true,
+      scripts: { 'build:finite': 'node leaf.mjs' },
+    }));
+    const observation = fixture.path('observed.json');
+    const payload = fixture.path('payload.json');
+    await writeFile(fixture.path('packages', 'leaf', 'leaf.mjs'), `
+import { writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+const env = process.env;
+writeFileSync(${JSON.stringify(observation)}, JSON.stringify({
+  token: env.HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN,
+  root: env.HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT,
+  machine: env.HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE,
+  worker: env.HAPPIER_DEV_TARGET_EXECUTION,
+  unrelated: env.HAPPIER_UNRELATED_ADMISSION_FIXTURE,
+}));
+const result = spawnSync(${JSON.stringify(native.launcher)}, [
+  '--heavyweight-admission', '--class=compilation', '--machine=local', '--no-wait', '--',
+  process.execPath, '-e', ${JSON.stringify(`const fs = require('fs'); const path = require('path');
+fs.writeFileSync(${JSON.stringify(payload)}, JSON.stringify({
+  token: process.env.HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN,
+  owners: fs.readdirSync(path.join(process.env.HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT, 'owners')),
+}));`)},
+], { env, stdio: 'inherit' });
+if (result.error) throw result.error;
+process.exit(result.status ?? 1);
+`);
+    const env = {
+      ...process.env,
+      PATH: `${fixture.path('bin')}:${process.env.PATH}`,
+      HAPPIER_DEV_TARGET_EXECUTION: '1',
+      HAPPIER_UNRELATED_ADMISSION_FIXTURE: 'must-not-pass',
+      TURBO_TELEMETRY_DISABLED: '1',
+    };
+    for (const key of Object.keys(env)) if (key.startsWith('HAPPIER_HEAVYWEIGHT_ADMISSION_')) delete env[key];
+    const result = spawnSync(native.launcher, [
+      '--heavyweight-admission', '--class=compilation', '--machine=worker', '--',
+      process.execPath, path.join(repoRoot, 'node_modules/turbo/bin/turbo'),
+      'run', 'build:finite', '--filter=admission-leaf', '--env-mode=strict', '--force', '--no-daemon',
+    ], { cwd: fixture.root, env, encoding: 'utf8' });
+    const observed = JSON.parse(await readFile(observation, 'utf8'));
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, `${JSON.stringify(observed)}\n${result.stdout}\n${result.stderr}`);
+    assert.match(observed.token, /^\d+:\d+$/u);
+    assert.equal(observed.root, native.admissionRoot);
+    assert.equal(observed.worker, '1');
+    assert.equal(typeof observed.machine, 'string');
+    assert.equal(observed.unrelated, undefined, 'retain strict filtering for unrelated environment');
+    const executed = JSON.parse(await readFile(payload, 'utf8'));
+    assert.equal(executed.token, observed.token);
+    assert.deepEqual(executed.owners, [observed.token.replace(':', '-')]);
+  });
 
 test('direct Turbo finite source task refuses without public dispatch', () => {
   const yarn = resolveYarnCommandInvocation([

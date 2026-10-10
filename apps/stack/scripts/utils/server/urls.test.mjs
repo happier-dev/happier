@@ -23,6 +23,40 @@ async function writeStackEnvAtStorageRoot(storageDir, stackName, contents) {
   await writeFile(join(stackDir, 'env'), contents, 'utf-8');
 }
 
+test('the endpoint owner uses the live external connection on a daemon-only host instead of its stale local port', async (t) => {
+  const { storageDir, stackName } = await createIsolatedStackStorage(t);
+  const runtimeState = {
+    ownerPid: process.pid,
+    ports: { server: 3010 },
+    processes: { daemonPid: process.pid },
+    placement: { server: 'external', daemon: 'local' },
+    serverConnection: {
+      internalServerUrl: 'http://127.0.0.1:3020',
+      publicServerUrl: 'http://happier-qa.localhost:3020',
+    },
+  };
+  const input = {
+    stackName,
+    env: { HAPPIER_STACK_STACK: stackName, HAPPIER_STACK_STORAGE_DIR: storageDir, HAPPIER_STACK_SERVER_PORT: '3010' },
+    runtimeState,
+    // Substitute only OS process liveness/ownership; endpoint selection remains real.
+    trustOptions: { isPidAliveImpl: () => true, isPidOwnedByStackImpl: async () => true },
+  };
+  const endpoint = await resolveStackServerEndpoint(input);
+  assert.equal(endpoint.internalServerUrl, runtimeState.serverConnection.internalServerUrl);
+  assert.equal(endpoint.port, 3020);
+  assert.equal(endpoint.runtimePort, null, 'an external connection is not a local listener');
+  assert.equal(endpoint.publicServerUrl, runtimeState.serverConnection.publicServerUrl);
+  const restarted = await resolveStackServerEndpoint({ ...input, runtimeState: {
+    ...runtimeState, serverConnection: { internalServerUrl: 'https://home.example.test', publicServerUrl: 'https://home.example.test' },
+  } });
+  assert.equal(restarted.internalServerUrl, 'https://home.example.test');
+  assert.equal(restarted.port, 443);
+  assert.equal((await resolveStackServerEndpoint({ ...input,
+    trustOptions: { ...input.trustOptions, isPidAliveImpl: () => false },
+  })).port, 3010, 'stopped runtime connection must not override current configuration');
+});
+
 test('resolveStackServerEndpoint refuses to route auth to a default port when remote listener ownership is inconclusive', async (t) => {
   const { storageDir, stackName } = await createIsolatedStackStorage(t);
   await writeStackEnvAtStorageRoot(storageDir, stackName, 'HAPPIER_STACK_SERVER_PORT=3005\n');

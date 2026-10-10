@@ -1,14 +1,16 @@
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
-const bunVersionProbe = spawnSync('bun', ['--version'], { encoding: 'utf8' });
-const hasPinnedBun = bunVersionProbe.status === 0 && bunVersionProbe.stdout.trim() === '1.3.5';
+const pinnedBunVersion = (await readFile(new URL('../../../apps/stack/scripts/provision/.bun-version', import.meta.url), 'utf8')).trim();
+const bunCommand = process.env.HAPPIER_BUN_PATH || 'bun';
+const bunVersionProbe = spawnSync(bunCommand, ['--version'], { encoding: 'utf8' });
+const hasPinnedBun = bunVersionProbe.status === 0 && bunVersionProbe.stdout.trim() === pinnedBunVersion;
 
-test('pinned Bun 1.3.5 standalone hardening disables ambient config but cannot disable BUN_BE_BUN', {
+test(`pinned Bun ${pinnedBunVersion} standalone hardening disables ambient config but cannot disable BUN_BE_BUN`, {
   skip: !hasPinnedBun || process.platform !== 'linux' || process.arch !== 'x64',
 }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-runner-bun-hardening-'));
@@ -24,7 +26,7 @@ test('pinned Bun 1.3.5 standalone hardening disables ambient config but cannot d
     await writeFile(join(root, 'ambient-preload.mjs'), 'console.log("bunfig-loaded");\n', 'utf8');
     await writeFile(join(root, 'bunfig.toml'), 'preload = ["./ambient-preload.mjs"]\n', 'utf8');
 
-    const compile = spawnSync('bun', [
+    const compile = spawnSync(bunCommand, [
       'build',
       '--compile',
       '--no-cache',

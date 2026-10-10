@@ -1,5 +1,5 @@
 const STACK_HELP_USAGE_LINES = [
-  'hstack stack new <name> [--port=NNN] [--server=happier-server|happier-server-light] [--repo=default|dev|<owner/...>|<path>] [--db-provider=pglite|sqlite|postgres|mysql] [--database-url=<url>] [--interactive] [--non-interactive] [--copy-auth-from=<stack>] [--no-copy-auth] [--if-missing] [--force-port] [--json]',
+  'hstack stack new <name> [--port=NNN] [--server=happier-server|happier-server-light] [--repo=default|dev|<owner/...>|<path>] [--db-provider=pglite|sqlite|postgres|mysql] [--database-url=<url>] [--qa] [--interactive] [--non-interactive] [--copy-auth-from=<stack>] [--no-copy-auth] [--if-missing] [--force-port] [--json]',
   'hstack stack edit <name> --interactive [--json]',
   'hstack stack list [--json]',
   'hstack stack audit [--fix] [--fix-main] [--fix-ports] [--fix-workspace] [--fix-paths] [--unpin-ports] [--unpin-ports-except=stack1,stack2] [--json]',
@@ -27,7 +27,7 @@ const STACK_HELP_USAGE_LINES = [
   'hstack stack mobile:install <name> [--name="Happier (exp1)"] [--device=...] [--app-env=production|development] [--configuration=Debug|Release] [--json]',
   'hstack stack mobile-dev-client <name> --install [--profile=internaldev|publicdev] [--platform=ios|android] [--device=...] [--clean] [--configuration=Debug|Release] [--json]',
   'hstack stack resume <name> <sessionId...> [--json]',
-  'hstack stack stop <name> [--aggressive] [--sweep-owned] [--no-docker] [--json]',
+  'hstack stack stop <name> [--aggressive] [--sweep-owned] [--no-docker] [--preserve-daemon] [--json]',
   'hstack stack code <name> [--no-stack-dir] [--include-all-components] [--include-cli-home] [--json]',
   'hstack stack cursor <name> [--no-stack-dir] [--include-all-components] [--include-cli-home] [--json]',
   'hstack stack open <name> [--no-stack-dir] [--include-all-components] [--include-cli-home] [--json]   # prefer Cursor, else VS Code',

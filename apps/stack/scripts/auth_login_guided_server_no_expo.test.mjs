@@ -234,6 +234,7 @@ function wrapSuccessfulAuthRuntimeCliScript(runtimeCliScript) {
 async function buildGuidedNoExpoFixture({
   publicServerUrl = '',
   runtimeSnapshot = false,
+  sourceSnapshot = false,
   runtimeOwnerAlive = false,
   startServer = true,
   stackName = 'main',
@@ -275,6 +276,12 @@ async function buildGuidedNoExpoFixture({
   }
 
   await mkdir(join(storageDir, stackName), { recursive: true });
+  const sourceCliDir = join(storageDir, stackName, 'source-runtime', 'bundle', 'cli');
+  const sourceEntrypoint = join(sourceCliDir, 'src', 'index.mjs');
+  if (sourceSnapshot) {
+    await mkdir(join(sourceCliDir, 'src'), { recursive: true });
+    await writeFile(sourceEntrypoint, buildSuccessfulAuthBinScript());
+  }
   const envPath = join(storageDir, stackName, 'env');
   await writeFile(
     envPath,
@@ -297,6 +304,8 @@ async function buildGuidedNoExpoFixture({
       stackName,
       ownerPid: runtimeOwnerAlive ? process.pid : undefined,
       ports: { server: port },
+      ...(sourceSnapshot ? { sourceRuntimeLaunch: { cliDir: sourceCliDir, entrypoint: sourceEntrypoint,
+        env: { HAPPIER_STACK_CLI_ROOT_DIR: sourceCliDir } } } : {}),
     }) + '\n',
     'utf-8'
   );
@@ -328,6 +337,8 @@ async function buildGuidedNoExpoFixture({
     stackName,
     server,
     port,
+    sourceCliDir,
+    sourceEntrypoint,
     env: {
       ...process.env,
       HAPPIER_STACK_STORAGE_DIR: storageDir,
@@ -337,7 +348,7 @@ async function buildGuidedNoExpoFixture({
       HAPPIER_STACK_SERVER_PORT: String(port),
       HAPPIER_STACK_CLI_HOME_DIR: cliHomeDir,
       HAPPIER_STACK_RUNTIME_STATE_PATH: join(storageDir, stackName, 'stack.runtime.json'),
-      HAPPIER_STACK_RUNTIME_MODE: runtimeSnapshot ? 'prefer' : 'source',
+      HAPPIER_STACK_RUNTIME_MODE: sourceSnapshot ? 'source-snapshot' : runtimeSnapshot ? 'prefer' : 'source',
       HAPPIER_STACK_TEST_TTY: '1',
       HAPPIER_STACK_AUTH_FLOW: '0',
       HAPPIER_STACK_AUTH_UI_READY_TIMEOUT_MS: '1',
@@ -986,6 +997,41 @@ test('printed runtime stack login preserves admitted subprocess identity', async
   assert.match(cmd, /HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED="1"/);
   assert.match(cmd, /HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT="[^"\n]+\/cli\/package-dist\/index\.mjs"/);
   assert.match(cmd, /HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT="0123456789abcdef"/);
+});
+
+test('source snapshot auth suggests source recovery while its server is still starting', async (t) => {
+  const fixture = await buildGuidedNoExpoFixture({ stackName: 'agent-qa-source', sourceSnapshot: true,
+    includeSourceCli: false, runtimeOwnerAlive: true, startServer: false });
+  t.after(() => fixture.cleanup());
+  const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));
+  const result = await runNodeCapture([authScriptPath(rootDir), 'login', '--method=web', '--webapp=hosted'], {
+    cwd: rootDir, env: { ...fixture.env, HAPPIER_STACK_AUTH_SERVER_READY_TIMEOUT_MS: '1000' }, input: '\n\n',
+  });
+  assert.notEqual(result.code, 0);
+  assert.match(result.stderr, /hstack stack start agent-qa-source --background --runtime=source/);
+  assert.doesNotMatch(result.stderr, /hstack stack dev agent-qa-source/);
+});
+
+test('printed source snapshot auth preserves the projected CLI root and clears native provenance', async (t) => {
+  const fixture = await buildGuidedNoExpoFixture({ sourceSnapshot: true, includeSourceCli: false });
+  t.after(() => fixture.cleanup());
+  const rootDir = dirname(dirname(fileURLToPath(import.meta.url)));
+  const result = await runNodeCapture([authScriptPath(rootDir), 'login', '--no-open', '--print', '--json'], {
+    cwd: rootDir, env: { ...fixture.env, HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED: '1',
+      HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT: '/moving/native/index.mjs',
+      HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT: 'ffffffffffffffff' },
+  });
+  assert.equal(result.code, 0, result.stderr);
+  const { cmd } = JSON.parse(result.stdout);
+  assert.ok(cmd.includes(`HAPPIER_CLI_ROOT_DIR="${fixture.sourceCliDir}"`));
+  assert.ok(cmd.includes(`HAPPIER_STACK_CLI_ROOT_DIR="${fixture.sourceCliDir}"`));
+  assert.ok(cmd.includes(`HAPPIER_CLI_SUBPROCESS_ENTRYPOINT="${fixture.sourceEntrypoint}"`));
+  assert.match(cmd, /HAPPIER_CLI_SUBPROCESS_PREFER_TSX="0"/);
+  assert.match(cmd, /HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK="0"/);
+  assert.match(cmd, /HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED=""/);
+  assert.match(cmd, /HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT=""/);
+  assert.match(cmd, /HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT=""/);
+  assert.ok(cmd.includes(`"${fixture.sourceEntrypoint}" "auth" "login"`));
 });
 
 test('hstack auth login --force fails closed when guided login exits without usable credentials and skips post-auth daemon start', async (t) => {

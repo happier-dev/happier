@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // @ts-check
 
-import { precompressUiWebAssets } from './lib/precompress-ui-web-assets.mjs';
+import { precompressUiWebAssets } from '../../../apps/stack/scripts/build/precompress_ui_web_assets.mjs';
 
 function readDirArg(argv) {
   const index = argv.indexOf('--dir');

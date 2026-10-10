@@ -7,8 +7,8 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
 import { ensureDevExpoServer } from './expo_dev.mjs';
-import { createBackgroundRuntimeSnapshotPublisher } from './runtimeSnapshotPublisher.mjs';
 import { getExpoStatePaths, writePidState } from '../expo/expo.mjs';
+import { withDependencyRefresh } from '../proc/dependency_refresh.mjs';
 
 async function createExpoWorkspaceFixture({ workspaceBuildFails = false } = {}) {
   const tmp = await mkdtemp(join(tmpdir(), 'hstack-expo-preflight-'));
@@ -65,6 +65,12 @@ async function createExpoWorkspaceFixture({ workspaceBuildFails = false } = {}) 
     'setTimeout(() => process.exit(0), 100);',
   ].join('\n') + '\n', 'utf-8');
   await chmod(expoBin, 0o755);
+
+  // The fixture supplies the installed package-manager boundary above; let
+  // the real dependency owner admit that tree for both full and scriptless readers.
+  await withDependencyRefresh({
+    installDir: tmp, componentDir: uiDir, env: createExpoBaseEnv(tmp),
+  }, async () => {});
 
   return { tmp, uiDir, workspaceBuildMarker, expoStartedMarker };
 }
@@ -156,7 +162,7 @@ test('ensureDevExpoServer starts from last-green outputs while the canonical UI 
         "import { setTimeout as delay } from 'node:timers/promises';",
         `export function hasUsableUiWorkspaceLastGreen() { return true; }`,
         'export async function ensureUiWorkspacePackagesBuilt() {',
-        `  while (!existsSync(${JSON.stringify(releasePath)})) await delay(10);`,
+        `  while (existsSync(${JSON.stringify(fixture.tmp)}) && !existsSync(${JSON.stringify(releasePath)})) await delay(10);`,
         `  await writeFile(${JSON.stringify(completedPath)}, 'ready\\n');`,
         '}',
       ].join('\n') + '\n',
@@ -193,62 +199,6 @@ test('ensureDevExpoServer starts from last-green outputs while the canonical UI 
   }
 });
 
-test('completed UI workspace preparation retries an in-flight failed web publication through its existing trailing pass', async () => {
-  const fixture = await createExpoWorkspaceFixture();
-  let releaseFirstPublication;
-  const firstPublicationReleased = new Promise((resolve) => { releaseFirstPublication = resolve; });
-  let resolveFirstPublicationEntered;
-  const firstPublicationEntered = new Promise((resolve) => { resolveFirstPublicationEntered = resolve; });
-  let resolveWorkspacePrepared;
-  const workspacePrepared = new Promise((resolve) => { resolveWorkspacePrepared = resolve; });
-  let retryPublication = null;
-  const resolvedRequests = [];
-  let attempts = 0;
-  const publisher = createBackgroundRuntimeSnapshotPublisher({
-    resolveComponents: async ({ requestedComponents }) => {
-      resolvedRequests.push(requestedComponents);
-      return { components: requestedComponents, currentSnapshotId: 'snapshot-old' };
-    },
-    publishComponents: async ({ components }) => {
-      attempts += 1;
-      if (attempts === 1) {
-        resolveFirstPublicationEntered();
-        await firstPublicationReleased;
-        throw new Error('dependency refresh lock unavailable');
-      }
-      return { snapshotId: 'snapshot-web-new', changedComponents: components };
-    },
-    logger: { error() {} },
-  });
-  const firstPublication = publisher.markRefreshed(['web']);
-
-  try {
-    await firstPublicationEntered;
-    await startFixtureExpo({
-      ...fixture,
-      prepareExpoWorkspace: async () => { resolveWorkspacePrepared(); },
-      hasUsableWorkspaceLastGreen: async () => true,
-      onWorkspacePrepared: () => {
-        retryPublication = publisher.markRefreshed(['web']);
-      },
-    });
-    await workspacePrepared;
-    await new Promise((resolve) => setImmediate(resolve));
-
-    assert.ok(retryPublication, 'canonical UI preparation must notify the existing publisher');
-    releaseFirstPublication();
-    await Promise.all([firstPublication, retryPublication]);
-
-    assert.equal(attempts, 2);
-    assert.deepEqual(resolvedRequests, [['web'], ['web']]);
-  } finally {
-    releaseFirstPublication();
-    await firstPublication.catch(() => {});
-    publisher.close();
-    await delay(150);
-    await rm(fixture.tmp, { recursive: true, force: true });
-  }
-});
 
 test('ensureDevExpoServer waits for the first canonical UI publication before starting Expo', async () => {
   const fixture = await createExpoWorkspaceFixture();
@@ -265,7 +215,7 @@ test('ensureDevExpoServer waits for the first canonical UI publication before st
         "import { setTimeout as delay } from 'node:timers/promises';",
         'export function hasUsableUiWorkspaceLastGreen() { return false; }',
         'export async function ensureUiWorkspacePackagesBuilt() {',
-        `  while (!existsSync(${JSON.stringify(releasePath)})) await delay(10);`,
+        `  while (existsSync(${JSON.stringify(fixture.tmp)}) && !existsSync(${JSON.stringify(releasePath)})) await delay(10);`,
         `  await writeFile(${JSON.stringify(completedPath)}, 'ready\\n');`,
         '}',
       ].join('\n') + '\n',
@@ -341,7 +291,7 @@ test('ensureDevExpoServer adopts an existing Expo process while canonical refres
         "import { setTimeout as delay } from 'node:timers/promises';",
         'export function hasUsableUiWorkspaceLastGreen() { return true; }',
         'export async function ensureUiWorkspacePackagesBuilt() {',
-        `  while (!existsSync(${JSON.stringify(releasePath)})) await delay(10);`,
+        `  while (existsSync(${JSON.stringify(fixture.tmp)}) && !existsSync(${JSON.stringify(releasePath)})) await delay(10);`,
         `  await writeFile(${JSON.stringify(canonicalMarker)}, 'ready\\n');`,
         '}',
       ].join('\n') + '\n',

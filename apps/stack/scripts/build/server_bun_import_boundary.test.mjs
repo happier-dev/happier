@@ -1,12 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
-
-import { ensureWorkspacePackagesBuiltByName } from '../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
 
@@ -35,61 +33,57 @@ function compileServer({ entrypoint, outfile }) {
   assert.ok(statSync(outfile).size > 0, `compiled server binary is empty: ${outfile}`);
 }
 
-test('the server and daemon Bun graphs do not reach Expo or React Native source', async () => {
+test('the server main and migration Bun graphs stay server-safe and their binary probes execute', async () => {
   const outputDir = mkdtempSync(join(tmpdir(), 'happier-node-bundle-import-boundary-'));
   try {
-    await ensureWorkspacePackagesBuiltByName(
-      repoRoot,
-      ['@happier-dev/iroh-native', '@happier-dev/cli-common'],
-      { quiet: false, env: process.env },
-    );
-
-    const componentArtifacts = await import(pathToFileURL(join(
-      repoRoot,
-      'packages',
-      'cli-common',
-      'dist',
-      'componentArtifacts',
-      'index.js',
-    )).href);
-    // The canonical workspace owner has prepared the two changed package roots. Keep
-    // the real installed-workspace synchronization below, but do not turn the
-    // probe into a second whole-workspace build/publisher: the remaining
-    // package roots are the already-prepared inputs to this boundary.
-    const usePreparedWorkspacePackageRoots = async (_repoRoot, packageNames) => ({
-      ok: true,
-      built: [],
-      skipped: packageNames,
+    await import(pathToFileURL(join(repoRoot, 'packages', 'cli-common', 'registerSourceRuntime.mjs')).href);
+    const componentArtifacts = await import('@happier-dev/cli-common/componentArtifacts');
+    const target = componentArtifacts.resolveCurrentBinaryTarget({
+      availableTargets: componentArtifacts.SERVER_BINARY_TARGETS,
     });
-    const preparedWorkspacePublication = await componentArtifacts
-      .prepareCliBinaryArtifactWorkspacePublication({
-        repoRoot,
-        ensureWorkspacePackagesBuiltByName: usePreparedWorkspacePackageRoots,
-      });
-
-    const packageNodeEntry = join(repoRoot, 'packages', 'iroh-native', 'dist', 'nodeNative.js');
-    const installedNodeEntry = join(
-      repoRoot,
-      'apps',
-      'cli',
-      'node_modules',
-      '@happier-dev',
-      'iroh-native',
-      'dist',
-      'nodeNative.js',
-    );
-    assert.equal(
-      readFileSync(installedNodeEntry, 'utf8'),
-      readFileSync(packageNodeEntry, 'utf8'),
-      'CLI workspace preparation must publish the current Node-only Iroh entry',
-    );
-
+    const payloadDir = join(outputDir, 'server-payload');
+    const buildDbProviders = 'all';
+    const entries = await componentArtifacts.resolveServerRuntimeSupportEntries({
+      repoRoot, target, buildDbProviders,
+    });
+    // Migration imports load Prisma before provider admission. Exercise the
+    // actual packaged support layout, not a bare code-only executable.
+    await componentArtifacts.buildServerRuntimeSupportPayload({
+      repoRoot, payloadDir, entries, target, buildDbProviders,
+    });
     for (const entrypointName of ['main.light.ts', 'main.ts']) {
+      const outfile = join(payloadDir, `happier-server-${entrypointName}${target.exeExt}`);
       compileServer({
         entrypoint: join(repoRoot, 'apps', 'server', 'sources', entrypointName),
-        outfile: join(outputDir, `happier-server-${entrypointName}`),
+        outfile,
       });
+      if (entrypointName === 'main.light.ts') {
+        const probe = spawnSync(outfile, ['--probe-runtime-capabilities'], { cwd: payloadDir, encoding: 'utf8' });
+        assert.equal(probe.status, 0, probe.stderr);
+        assert.equal(JSON.parse(probe.stdout).component, 'happier-server-light');
+      }
     }
+    const migration = join(payloadDir, `happier-server-migrate${target.exeExt}`);
+    compileServer({ entrypoint: join(repoRoot, 'apps/server/scripts/runtime/migrateFullRuntime.ts'), outfile: migration });
+    // SQLite migrations belong to the in-process SQLite owner; this process
+    // refusal probes the loaded migration graph without opening any database.
+    const refused = spawnSync(migration, [], { cwd: payloadDir, encoding: 'utf8', env: {
+      ...process.env, HAPPIER_DB_PROVIDER: 'sqlite', DATABASE_URL: '',
+    } });
+    assert.equal(refused.status, 1);
+    assert.match(refused.stderr, /unsupported database provider: sqlite/);
+  } finally {
+    rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
+test('the daemon Bun graph does not reach Expo or React Native source', async () => {
+  const outputDir = mkdtempSync(join(tmpdir(), 'happier-daemon-bundle-import-boundary-'));
+  try {
+    // The daemon probe exercises the native source owner, not an npm dist
+    // publication or a stubbed internal workspace preparer.
+    await import(pathToFileURL(join(repoRoot, 'packages', 'cli-common', 'registerSourceRuntime.mjs')).href);
+    const componentArtifacts = await import('@happier-dev/cli-common/componentArtifacts');
 
     const daemonPayloadDir = join(outputDir, 'daemon-payload');
     const daemonTarget = componentArtifacts.resolveCurrentBinaryTarget({
@@ -100,8 +94,6 @@ test('the server and daemon Bun graphs do not reach Expo or React Native source'
       payloadDir: daemonPayloadDir,
       target: daemonTarget,
       externals: [],
-      preparedWorkspacePublication,
-      ensureWorkspacePackagesBuiltByName: usePreparedWorkspacePackageRoots,
     });
     assert.ok(
       statSync(join(daemonPayloadDir, daemon.executableName)).size > 0,
@@ -109,5 +101,40 @@ test('the server and daemon Bun graphs do not reach Expo or React Native source'
     );
   } finally {
     rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
+test('server native entries consume authored workspace exports despite poisoned dist and installed copies', () => {
+  const root = mkdtempSync(join(tmpdir(), 'happier-server-source-exports-'));
+  const write = (path, value) => {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, value);
+  };
+  try {
+    write(join(root, 'apps/server/package.json'), '{"type":"module"}');
+    write(join(root, 'packages/fixture/package.json'), JSON.stringify({
+      name: '@happier-dev/fixture', type: 'module', exports: {
+        '.': { 'happier-source': './src/index.ts', default: './dist/index.js' },
+      },
+    }));
+    write(join(root, 'packages/fixture/src/index.ts'), 'export const value = "authored source";');
+    write(join(root, 'packages/fixture/dist/index.js'), 'throw new Error("workspace dist consumed");');
+    write(join(root, 'apps/server/node_modules/@happier-dev/fixture/package.json'), '{"main":"index.js"}');
+    write(join(root, 'apps/server/node_modules/@happier-dev/fixture/index.js'), 'console.log("installed shadow consumed");');
+    for (const name of ['main.light.ts', 'main.ts', 'migrateFullRuntime.ts']) {
+      const entrypoint = join(root, 'apps/server', name);
+      const outfile = join(root, `server-${name}`);
+      write(entrypoint, 'import {value} from "@happier-dev/fixture"; console.log(value);');
+      const built = spawnSync(process.env.HAPPIER_BUN_PATH || 'bun', [
+        join(repoRoot, 'packages/cli-common/scripts/buildServerBunBinary.mjs'),
+        `--target=${resolveCurrentBunTarget()}`, `--entrypoint=${entrypoint}`, `--outfile=${outfile}`,
+      ], { cwd: root, encoding: 'utf8' });
+      assert.equal(built.status, 0, built.stderr);
+      const ran = spawnSync(outfile, [], { cwd: root, encoding: 'utf8' });
+      assert.equal(ran.status, 0, ran.stderr);
+      assert.equal(ran.stdout.trim(), 'authored source');
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });

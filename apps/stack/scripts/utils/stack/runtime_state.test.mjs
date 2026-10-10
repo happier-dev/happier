@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { spawnTestProcess } from '../../testkit/core/spawn_test_process.mjs';
 
 import * as runtimeStateModule from './runtime_state.mjs';
 
@@ -34,6 +35,7 @@ import {
   createStackDevProxyRuntimePatch,
   createStackServerRuntimeProcessPatch,
   getStackRuntimeProcessEntries,
+  getStackRuntimePendingRemoteTargets,
   getStackRuntimeProcessInstanceFingerprint,
   readStackRuntimeStateFile,
   recordStackRuntimeServerPids,
@@ -49,6 +51,101 @@ import {
   withStackRuntimeStopTransaction,
 } from './runtime_state.mjs';
 
+test('preserve-daemon finalization retains remote custody without local daemon PIDs', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'hstack-runtime-remote-preserve-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const statePath = join(dir, 'stack.runtime.json');
+  await recordStackRuntimeStart(statePath, { stackName: 'remote-preserve', ownerPid: null,
+    placement: { daemon: 'linux1' }, remoteTargets: { linux1: {
+      services: { daemon: true, server: true }, status: 'running',
+      serviceStatus: { daemon: 'running', server: 'running' }, forwardPid: 999999999,
+    } } });
+  const expected = await captureStackRuntimeStopSnapshot(statePath);
+  const incomplete = await finalizeStackRuntimeStop(statePath, { expected, preserveDaemon: true });
+  assert.equal(incomplete.finalized, false, 'preservation does not exempt remote server retirement');
+  await recordStackRuntimeUpdate(statePath, { remoteTargets: { linux1: {
+    serviceStatus: { server: 'stopped' },
+  } } });
+  const result = await finalizeStackRuntimeStop(statePath, { expected, preserveDaemon: true });
+  assert.equal(result.finalized, true);
+  const retained = await readStackRuntimeStateFile(statePath);
+  assert.equal(retained.remoteTargets.linux1.serviceStatus.daemon, 'running');
+  assert.equal(retained.remoteTargets.linux1.forwardPid, null);
+  assert.equal(retained.placement.daemon, 'linux1');
+  assert.deepEqual(retained.processes, {});
+});
+
+test('finalization cannot discard a remote role whose native retirement is unconfirmed', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'hstack-runtime-remote-stop-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const statePath = join(dir, 'stack.runtime.json');
+  await recordStackRuntimeStart(statePath, { stackName: 'remote-stop', ownerPid: null,
+    placement: { daemon: 'linux1' }, remoteTargets: { linux1: { services: { daemon: true }, status: 'failed', phase: 'stop' } } });
+  const expected = await captureStackRuntimeStopSnapshot(statePath);
+  const result = await finalizeStackRuntimeStop(statePath, { expected, cleanupResults: [] });
+  assert.equal(result.finalized, false);
+  assert.equal(result.reason, 'remote_cleanup_incomplete');
+  assert.equal((await readStackRuntimeStateFile(statePath)).placement.daemon, 'linux1');
+  await recordStackRuntimeUpdate(statePath, { remoteTargets: { linux1: { status: 'stopped', serviceStatus: { daemon: 'stopped' } } } });
+  assert.equal((await finalizeStackRuntimeStop(statePath, { expected, cleanupResults: [] })).finalized, true);
+});
+
+test('finalization retains unreachable retirement obligations while releasing local stop custody', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'hstack-runtime-deferred-retirement-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const statePath = join(dir, 'stack.runtime.json');
+  await recordStackRuntimeStart(statePath, { stackName: 'deferred-retirement', ownerPid: null,
+    placement: { daemon: 'linux3' }, remoteTargets: { linux3: { services: { daemon: true },
+      runtimeMode: 'source-snapshot', status: 'retirement-pending', serviceStatus: { daemon: 'retirement-pending' },
+      forwardPid: 999999999, error: 'ssh-connect-timeout' } } });
+  const stop = await recordStackRuntimeStopRequest(statePath);
+  const incomplete = await finalizeStackRuntimeStop(statePath, { expected: stop.expected, cleanupResults: [{ ok: false }] });
+  assert.equal(incomplete.finalized, false, 'deferral cannot bypass local cleanup');
+  const result = await finalizeStackRuntimeStop(statePath, { expected: stop.expected, cleanupResults: [] });
+  assert.equal(result.finalized, true);
+  const retained = await readStackRuntimeStateFile(statePath);
+  assert.equal(retained.stopRequest, null);
+  assert.equal(retained.ownerPid, null);
+  assert.deepEqual(getStackRuntimeProcessEntries(retained), []);
+  assert.equal(getStackRuntimePendingRemoteTargets(retained)[0][0], 'linux3');
+  assert.equal(retained.remoteTargets.linux3.status, 'retirement-pending');
+  await recordStackRuntimeStart(statePath, { stackName: 'deferred-retirement', ownerPid: null,
+    placement: { daemon: 'linux1' }, remoteTargets: { linux1: { services: { daemon: true }, status: 'stopped' } } });
+  assert.equal((await readStackRuntimeStateFile(statePath)).remoteTargets.linux3.status, 'retirement-pending');
+  await recordStackRuntimeUpdate(statePath, { remoteTargets: { linux3: { status: 'stopped', serviceStatus: { daemon: 'stopped' } } } });
+  const settledStop = await recordStackRuntimeStopRequest(statePath);
+  assert.equal((await finalizeStackRuntimeStop(statePath, { expected: settledStop.expected, cleanupResults: [] })).finalized, true);
+  assert.equal(await readStackRuntimeStateFile(statePath), null);
+});
+
+test('finalization retains a placed remote role when startup failed before its first target projection', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'hstack-runtime-remote-unprojected-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const statePath = join(dir, 'stack.runtime.json');
+  await recordStackRuntimeStart(statePath, { stackName: 'remote-unprojected', ownerPid: null,
+    placement: { daemon: 'linux1', expo: 'borrowed', server: 'local' }, sourceRuntimeIdentities: {} });
+  const expected = await captureStackRuntimeStopSnapshot(statePath);
+  const result = await finalizeStackRuntimeStop(statePath, { expected, cleanupResults: [] });
+  assert.equal(result.finalized, false, 'remote placement is custody even before readiness projection');
+  await recordStackRuntimeUpdate(statePath, { remoteTargets: { linux1: { status: 'stopped', serviceStatus: { daemon: 'stopped' } } } });
+  assert.equal((await finalizeStackRuntimeStop(statePath, { expected, cleanupResults: [] })).finalized, true);
+});
+
+test('a native daemon with an external server has no remote retirement custody and can finalize its stop', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'hstack-runtime-external-server-stop-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const statePath = join(dir, 'stack.runtime.json');
+  await recordStackRuntimeStart(statePath, { stackName: 'external-server-stop', ownerPid: null,
+    placement: { server: 'external', daemon: 'local', expo: 'disabled' }, remoteTargets: {},
+    sourceRuntimeIdentities: { daemon: { selected: 'native-daemon', loaded: 'native-daemon' } } });
+  const stopped = await recordStackRuntimeStopRequest(statePath);
+  assert.deepEqual(getStackRuntimePendingRemoteTargets(stopped.runtimeState), [],
+    'an external server is connectivity, not a native role owned by this Stack');
+  const result = await finalizeStackRuntimeStop(statePath, { expected: stopped.expected, cleanupResults: [] });
+  assert.equal(result.finalized, true);
+  assert.equal(await readStackRuntimeStateFile(statePath), null);
+});
+
 test('runtime state publishes exact process-incarnation projections for lifecycle and process owners', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'hstack-runtime-process-instance-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
@@ -58,6 +155,7 @@ test('runtime state publishes exact process-incarnation projections for lifecycl
     stackName: 'process-instance',
     ownerPid: process.pid,
     processes: { daemonPid: process.pid, daemonPids: [process.pid] },
+    remoteTargets: { linux1: { forwardPid: process.pid } },
   });
 
   const runtime = await readStackRuntimeStateFile(statePath);
@@ -76,8 +174,23 @@ test('runtime state publishes exact process-incarnation projections for lifecycl
     [
       { key: 'daemonPid', pid: process.pid, processInstanceFingerprint: ownerFingerprint },
       { key: 'daemonPids', pid: process.pid, processInstanceFingerprint: ownerFingerprint },
+      { key: 'remoteTargets.linux1.forwardPid', pid: process.pid, processInstanceFingerprint: ownerFingerprint },
     ],
   );
+});
+
+test('stop finalization retains a local forward published after the stop snapshot', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'hstack-runtime-forward-successor-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const statePath = join(dir, 'stack.runtime.json');
+  await recordStackRuntimeStart(statePath, { stackName: 'forward-successor', ownerPid: null,
+    remoteTargets: { linux1: { services: { daemon: true }, status: 'stopped', forwardPid: 701 } } });
+  const stopped = await recordStackRuntimeStopRequest(statePath);
+  await recordStackRuntimeUpdate(statePath, { remoteTargets: { linux1: { forwardPid: 702 } } });
+  const result = await finalizeStackRuntimeStop(statePath, { expected: stopped.expected, cleanupResults: [] });
+  assert.equal(result.finalized, false);
+  assert.equal(result.reason, 'successor_state');
+  assert.equal((await readStackRuntimeStateFile(statePath)).remoteTargets.linux1.forwardPid, 702);
 });
 
 test('unrelated runtime updates preserve producer-recorded identity and Windows refuses a same-pid successor', async (t) => {
@@ -198,6 +311,74 @@ test('owner identity deletion cannot erase a canonical stop request', async (t) 
 
   assert.equal(await deleteStackRuntimeStateIfOwnedBy(statePath, runtime), false);
   assert.equal((await readStackRuntimeStateFile(statePath)).stopRequest?.requestedBy, 'canonical stop');
+});
+
+test('recordStackRuntimeStart replaces source identities at explicit restart and clears them for ordinary development', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'hstack-source-restart-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const statePath = join(dir, 'stack.runtime.json');
+  const base = { stackName: 'source-restart', ownerPid: process.pid, ports: {} };
+  await recordStackRuntimeStart(statePath, { ...base,
+    sourceRuntimeIdentities: { server: { selected: 'old', loaded: 'old' } },
+    sourceRuntimeLaunch: { entrypoint: '/old/index.mjs', cliDir: '/old' },
+  });
+  const restarted = await recordStackRuntimeStart(statePath, { ...base, sourceRuntimeIdentities: {} });
+  assert.deepEqual(restarted.sourceRuntimeIdentities, {});
+  assert.equal(restarted.sourceRuntimeLaunch, null);
+  const ordinary = await recordStackRuntimeStart(statePath, base);
+  assert.equal(ordinary.sourceRuntimeIdentities, null);
+});
+
+test('source start preserves only adopted execution identities, launch custody and server UI', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'hstack-source-adopted-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const stackName = 'source-adopted';
+  const { envPath } = runtimeStateModule.resolveStackRuntimeProcessTrustContext({ stackName });
+  const child = spawnTestProcess(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+    env: { ...process.env, HAPPIER_STACK_STACK: stackName,
+      HAPPIER_STACK_ENV_FILE: envPath, HAPPIER_STACK_PROCESS_KIND: 'daemon' },
+  });
+  t.after(async () => {
+    const exited = new Promise(resolve => child.once('exit', resolve));
+    child.kill();
+    await exited;
+  });
+  await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
+  const oldIdentities = { server: { selected: 'server-old', loaded: 'server-old' },
+    daemon: { selected: 'daemon-old', loaded: 'daemon-old' } };
+  const newIdentities = { server: { selected: 'server-new', loaded: null },
+    daemon: { selected: 'daemon-new', loaded: null } };
+  const oldLaunch = { entrypoint: '/old/index.mjs', cliDir: '/old', env: {} };
+  const newLaunch = { entrypoint: '/new/index.mjs', cliDir: '/new', env: {} };
+  for (const adoptedRole of ['daemon', 'server']) {
+    const statePath = join(dir, `${adoptedRole}.json`);
+    const base = { stackName, ownerPid: process.pid, ports: {} };
+    await recordStackRuntimeStart(statePath, { ...base,
+      sourceRuntimeIdentities: oldIdentities, sourceRuntimeLaunch: oldLaunch,
+      sourceUi: 'export', sourceUiLaunch: { uiDir: '/old/web' },
+      processes: { daemonPid: child.pid, daemonPids: [child.pid] } });
+    const adopted = await recordStackRuntimeStart(statePath, { ...base,
+      adoptedSourceRoles: [adoptedRole], sourceRuntimeIdentities: newIdentities,
+      sourceRuntimeLaunch: newLaunch, sourceUi: 'disabled', sourceUiLaunch: null });
+    const replacedRole = adoptedRole === 'daemon' ? 'server' : 'daemon';
+    assert.deepEqual(adopted.sourceRuntimeIdentities[adoptedRole], oldIdentities[adoptedRole]);
+    assert.deepEqual(adopted.sourceRuntimeIdentities[replacedRole], newIdentities[replacedRole]);
+    assert.deepEqual(adopted.sourceRuntimeLaunch, adoptedRole === 'daemon' ? oldLaunch : newLaunch);
+    assert.equal(adopted.sourceUi, adoptedRole === 'server' ? 'export' : 'disabled');
+    assert.deepEqual(adopted.sourceUiLaunch, adoptedRole === 'server' ? { uiDir: '/old/web' } : null);
+    assert.equal(adopted.processes.daemonPid, child.pid);
+    assert.deepEqual(adopted.processes.daemonPids, [child.pid]);
+    assert.equal(Object.hasOwn(adopted, 'adoptedSourceRoles'), false, 'adoption is an input decision, not retained metadata');
+  }
+  const unrecorded = await recordStackRuntimeStart(join(dir, 'unrecorded.json'), {
+    stackName, ownerPid: process.pid, adoptedSourceRoles: ['daemon', 'server'],
+    sourceRuntimeIdentities: newIdentities, sourceRuntimeLaunch: newLaunch,
+    sourceUi: 'export', sourceUiLaunch: { uiDir: '/new/web' },
+  });
+  assert.deepEqual(unrecorded.sourceRuntimeIdentities, {}, 'unrecorded execution must not claim newly prepared identities');
+  assert.equal(unrecorded.sourceRuntimeLaunch, null);
+  assert.equal(unrecorded.sourceUi, null);
+  assert.equal(unrecorded.sourceUiLaunch, null);
 });
 
 test('recordStackRuntimeStart clears runtime-only launch provenance when a source lifecycle replaces it', async (t) => {
@@ -746,7 +927,10 @@ test('stop finalization deletes matching state after owner exit and preserves se
   const dir = await mkdtemp(join(tmpdir(), 'hstack-runtime-stop-preserve-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const statePath = join(dir, 'stack.runtime.json');
-  const runtime = await recordStackRuntimeStart(statePath, { stackName: 'race', ownerPid: 701, processes: { serverPid: 702, daemonPid: 703, daemonPids: [703] }, daemon: { distClosureFingerprint: 'fingerprint-703' } });
+  const runtime = await recordStackRuntimeStart(statePath, { stackName: 'race', ownerPid: 701, processes: { serverPid: 702, daemonPid: 703, daemonPids: [703] }, daemon: { distClosureFingerprint: 'fingerprint-703' },
+    placement: { daemon: 'local', expo: 'linux1' }, remoteTargets: { linux1: {
+      services: { expo: true }, status: 'stopped', serviceStatus: { expo: 'stopped' },
+    } } });
   const preserveStop = await recordStackRuntimeStopRequest(statePath, { preserveDaemon: true });
   assert.equal(preserveStop.expected.startedAt, runtime.startedAt);
   const preserved = await finalizeStackRuntimeStop(statePath, { expected: preserveStop.expected, preserveDaemon: true });
@@ -755,6 +939,7 @@ test('stop finalization deletes matching state after owner exit and preserves se
   assert.equal(state.ownerPid, null);
   assert.deepEqual(state.processes, { daemonPid: 703, daemonPids: [703] });
   assert.equal(state.daemon.distClosureFingerprint, 'fingerprint-703');
+  assert.deepEqual(getStackRuntimePendingRemoteTargets(state), [], 'preserving a local daemon must not resurrect confirmed remote retirement');
   const deleteStop = await recordStackRuntimeStopRequest(statePath, { preserveDaemon: false });
   await recordStackRuntimeUpdate(statePath, { processes: { daemonPid: null, daemonPids: [] }, daemon: { distClosureFingerprint: null } });
   const deleted = await finalizeStackRuntimeStop(statePath, { expected: deleteStop.expected, preserveDaemon: false });

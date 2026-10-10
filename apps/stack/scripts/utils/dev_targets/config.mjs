@@ -11,9 +11,9 @@ import {
   resolveManagedLimaCapacityResources,
 } from '../managed_lima/capacity.mjs';
 
-const TARGET_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,31}$/;
+const TARGET_NAME_RE = /^[a-z0-9][a-z0-9._-]*$/;
 const SSH_TARGET_RE = /^(?:[A-Za-z0-9._-]+@)?[A-Za-z0-9._-]+$/;
-const LIMA_INSTANCE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/;
+const LIMA_INSTANCE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 function requireNonEmptyString(value, label) {
   const normalized = String(value ?? '').trim();
@@ -291,8 +291,8 @@ function normalizeBuildPlacement(raw, { targetNames, label = 'runtimePlacement.b
 function normalizeDurationMs(raw, fallback, label) {
   if (raw == null || String(raw).trim() === '') return fallback;
   const value = Number(raw);
-  if (!Number.isInteger(value) || value < 1_000 || value > 30 * 60_000) {
-    throw new Error(`[dev-targets] ${label} must be an integer from 1000 to 1800000`);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`[dev-targets] ${label} must be a positive safe integer`);
   }
   return value;
 }

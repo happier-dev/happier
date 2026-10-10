@@ -41,14 +41,15 @@ export async function withDependencyRefreshLock({ installDir, env = process.env 
   return await withJsonOwnerFileLock(action, {
     lockPath: resolveDependencyRefreshLockPath(installDir, env),
     errorLabel: 'dependency refresh lock',
-    allowLiveOwnerStaleReclaim: true,
+    // Synchronous package-manager children can outlive or delay heartbeats.
+    // Wait for the live installer; the existing PID check reclaims dead owners.
+    timeoutMs: Infinity,
+    staleAfterMs: 240_000,
   });
 }
 
 export function isDependencyRefreshLockActive({ installDir, env = process.env }) {
-  return isJsonOwnerFileLockActive(resolveDependencyRefreshLockPath(installDir, env), {
-    allowLiveOwnerStaleReclaim: true,
-  });
+  return isJsonOwnerFileLockActive(resolveDependencyRefreshLockPath(installDir, env));
 }
 
 async function collectPatchPaths(installDir) {

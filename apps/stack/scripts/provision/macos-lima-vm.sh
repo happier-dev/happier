@@ -275,7 +275,12 @@ limactl start "${VM_NAME}"
 
 if [[ "${VM_CREATED}" == "1" ]]; then
   echo "[lima] provisioning fresh guest (${GUEST_PROVISION_PROFILE})..."
-  limactl shell "${VM_NAME}" -- bash -s -- "--profile=${GUEST_PROVISION_PROFILE}" < "${GUEST_PROVISION_SCRIPT}"
+  guest_bun_version="${HAPPIER_PROVISION_BUN_VERSION:-}"
+  if [[ "${GUEST_PROVISION_PROFILE}" == "happier" && -z "${guest_bun_version}" ]]; then
+    guest_bun_version="$(cat "${SCRIPT_DIR}/.bun-version")"
+    guest_bun_version="${guest_bun_version%$'\r'}"
+  fi
+  limactl shell "${VM_NAME}" -- env "HAPPIER_PROVISION_BUN_VERSION=${guest_bun_version}" bash -s -- "--profile=${GUEST_PROVISION_PROFILE}" < "${GUEST_PROVISION_SCRIPT}"
 fi
 
 echo ""
@@ -302,6 +307,7 @@ Profile `happier` (recommended for most manual testing):
   - Use when: you want to run `npx ... hstack ...` and iterate quickly without relying on the official installer.
   - Run:
       curl -fsSL https://raw.githubusercontent.com/happier-dev/happier/main/apps/stack/scripts/provision/linux-ubuntu-provision.sh -o /tmp/linux-ubuntu-provision.sh \
+        && curl -fsSL https://raw.githubusercontent.com/happier-dev/happier/main/apps/stack/scripts/provision/.bun-version -o /tmp/.bun-version \
         && chmod +x /tmp/linux-ubuntu-provision.sh \
         && /tmp/linux-ubuntu-provision.sh --profile=happier
 
@@ -310,6 +316,7 @@ Profile `installer` (clean-machine installer validation):
   - Use when: you want to validate the “fresh box” experience via the official installer.
   - Run:
       curl -fsSL https://raw.githubusercontent.com/happier-dev/happier/main/apps/stack/scripts/provision/linux-ubuntu-provision.sh -o /tmp/linux-ubuntu-provision.sh \
+        && curl -fsSL https://raw.githubusercontent.com/happier-dev/happier/main/apps/stack/scripts/provision/.bun-version -o /tmp/.bun-version \
         && chmod +x /tmp/linux-ubuntu-provision.sh \
         && /tmp/linux-ubuntu-provision.sh --profile=installer
       # Then run the official installer:

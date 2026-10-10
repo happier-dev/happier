@@ -10,6 +10,7 @@ import {
 import { createRequire } from 'node:module';
 import { dirname, join, relative, resolve } from 'node:path';
 import { run } from '../../stack/scripts/utils/proc/proc.mjs';
+import { resolveWorkspaceBuildMode } from '../../../scripts/workspaces/workspaceChildBuildEnv.mjs';
 
 import { PLUGIN_HOST_SHARED_RUNTIME_PACKAGES } from './pluginHostSharedRuntimePackages.mjs';
 import {
@@ -19,19 +20,20 @@ import {
 
 const require = createRequire(import.meta.url);
 const DEFAULT_BUILD_OUTPUT_DIR = 'dist';
-const DEFAULT_PKGROLL_TIMEOUT_MS = 600_000;
 const FIRST_PARTY_STATIC_ASSETS_SOURCE_RELATIVE_PATH = 'src/plugins/projection/registry/static-assets';
 const FIRST_PARTY_STATIC_ASSETS_DIST_RELATIVE_PATH = 'dist/plugins/projection/registry/static-assets';
 
 function resolvePkgrollTimeoutMs(env, explicitTimeoutMs) {
-  if (typeof explicitTimeoutMs === 'number' && Number.isFinite(explicitTimeoutMs)) {
-    return Math.min(1_800_000, Math.max(60_000, Math.trunc(explicitTimeoutMs)));
+  const timeoutMs = typeof explicitTimeoutMs === 'number'
+    ? explicitTimeoutMs
+    : Number(String(env?.HAPPIER_CLI_PKGROLL_TIMEOUT_MS ?? '').trim());
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return undefined;
+  // Node's subprocess timer converts an overflowing delay to 1ms. Reject an
+  // unrepresentable operator budget rather than silently shortening it.
+  if (timeoutMs > 2_147_483_647) {
+    throw new RangeError('pkgroll timeout exceeds the Node timer maximum of 2147483647ms');
   }
-  const raw = String(env?.HAPPIER_CLI_PKGROLL_TIMEOUT_MS ?? '').trim();
-  if (!raw) return DEFAULT_PKGROLL_TIMEOUT_MS;
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed)) return DEFAULT_PKGROLL_TIMEOUT_MS;
-  return Math.min(1_800_000, Math.max(60_000, parsed));
+  return timeoutMs;
 }
 
 function normalizePkgrollOutputDir(value) {
@@ -145,18 +147,21 @@ function prepareRuntimeGenerationManifest(manifest, outputDir) {
   const prepared = preparePkgrollPackageManifest(manifest, outputDir);
   // Bundled internals are inlined into the host, except the packages plugins
   // also import at runtime: those stay external so host and plugins share one
-  // module instance from the packaged closure.
-  const bundledInternalPackages = new Set(
+  // module instance from the packaged closure. Inline password sodium through
+  // its authored CommonJS seam too: externalizing its require as an ESM import
+  // selects 0.7.16's export with an unshipped sibling. Other dependencies such
+  // as Ink remain external ESM imports, preserving top-level await.
+  const bundledRuntimePackages = new Set(
     (Array.isArray(manifest?.bundledDependencies) ? manifest.bundledDependencies : [])
       .map((name) => String(name))
-      .filter((name) => name.startsWith('@happier-dev/'))
+      .filter((name) => name.startsWith('@happier-dev/') || name === 'libsodium-wrappers-sumo')
       .filter((name) => !PLUGIN_HOST_SHARED_RUNTIME_PACKAGES.includes(name)),
   );
-  if (bundledInternalPackages.size === 0) return prepared;
+  if (bundledRuntimePackages.size === 0) return prepared;
 
   const dependencies = { ...(prepared.dependencies ?? {}) };
   const devDependencies = { ...(prepared.devDependencies ?? {}) };
-  for (const packageName of bundledInternalPackages) {
+  for (const packageName of bundledRuntimePackages) {
     if (!Object.prototype.hasOwnProperty.call(dependencies, packageName)) continue;
     devDependencies[packageName] = dependencies[packageName];
     delete dependencies[packageName];
@@ -244,7 +249,11 @@ function copyFirstPartyStaticAssets(packageRoot, outputDir) {
 
 async function runPkgrollCommand(command, args, { timeout, ...options }) {
   try {
-    await run(command, args, { ...options, timeoutMs: timeout, ownedProcessGroup: true });
+    await run(command, args, {
+      ...options,
+      ...(timeout !== undefined ? { timeoutMs: timeout } : {}),
+      ownedProcessGroup: true,
+    });
     return { status: 0 };
   } catch (error) {
     return { error };
@@ -291,7 +300,11 @@ async function runPkgrollBuildInStage(options = {}) {
   const srcdist = `${toSlashNormalizedRelativePath(physicalStagingDir, sourceDir)}:.`;
   const inputGroups = [
     inputPaths.filter((inputPath) => !isDeclarationOutputPath(inputPath)),
-    inputPaths.filter(isDeclarationOutputPath),
+    // Runtime consumers need executable bytes. Public package publication
+    // retains declaration generation and its TypeScript inference/diagnostics.
+    ...(resolveWorkspaceBuildMode({ env }) === 'strict'
+      ? [inputPaths.filter(isDeclarationOutputPath)]
+      : []),
   ].filter((group) => group.length > 0);
 
   let manifestWritten = false;
@@ -307,7 +320,7 @@ async function runPkgrollBuildInStage(options = {}) {
         cwd: physicalStagingDir,
         env: childEnv,
         stdio: ['ignore', 'inherit', 'inherit'],
-        timeout: timeoutMs,
+        ...(timeoutMs !== undefined ? { timeout: timeoutMs } : {}),
       });
       if (result.error) {
         const errorCode = typeof result.error?.code === 'string' ? result.error.code : '';

@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { EventEmitter } from 'node:events';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
+import { runCommandCapture } from '../../testkit/core/run_node_capture.mjs';
+import { resolveDevTargetMutagenRuntime } from '../dev_targets/mutagen_runtime.mjs';
+import { runExecutionHostBridge } from './bridge.mjs';
 
 import { mapHostCwdToGuest, prepareManagedHost, runDelegatedHstackCommand } from './delegation.mjs';
 
@@ -34,6 +41,164 @@ const namedProfile = {
     },
   ],
 };
+
+async function sshFixture(t) {
+  const fixture = await createTempFixture(t);
+  const env = { HAPPIER_STACK_STORAGE_DIR: fixture.path('stacks'), PATH: process.env.PATH };
+  const selected = { ...namedProfile, mode: 'ssh-dev-target', sshPrimary: { targetName: 'nl2', stackName: 'lane' } };
+  const target = { name: 'nl2', platform: 'posix', ssh: 'enrolled-nl2',
+    sshConfigFile: fixture.path('enrolled-config'), repoDir: namedProfile.workspaces[1].guestDir,
+    cliHomeDir: '/home/example/.happier/cli' };
+  const stackBaseDir = fixture.path('stacks', 'lane');
+  await mkdir(stackBaseDir, { recursive: true });
+  await writeFile(join(stackBaseDir, 'dev-targets.json'), JSON.stringify({ version: 3, targets: [target] }));
+  return { fixture, env, selected, target, stackBaseDir };
+}
+
+test('SSH primary delegates TUI with enrolled transport, PTY, mapped cwd and the Lima environment rules', async t => {
+  const { fixture, env, selected, target, stackBaseDir } = await sshFixture(t);
+  const { opensshDir } = resolveDevTargetMutagenRuntime({ stackBaseDir, env });
+  await mkdir(opensshDir, { recursive: true });
+  const sharedConfig = join(opensshDir, 'config');
+  await writeFile(sharedConfig, '# boundary fixture');
+  const spawns = [];
+  const probes = [];
+  const result = await runDelegatedHstackCommand({ profile: selected, argv: ['tui', 'literal $(input)', "quote'arg"],
+    cwd: '/Users/example/happier/dev/apps/stack', env: { ...env, PRIVATE_TOKEN: 'must-stay-local' },
+    boundary: {
+      async capture(command, args) {
+        probes.push({ command, args });
+        return { exitCode: args.at(-1).includes('HAPPIER_STACK_REPO_DIR') ? 3 : 0, out: '', err: '' };
+      },
+      spawn(command, args, options) {
+        spawns.push({ command, args, options });
+        const child = new EventEmitter();
+        setImmediate(() => child.emit('close', 7, null));
+        return child;
+      }, onSignal() { return () => {}; },
+    } });
+  assert.deepEqual(result, { exitCode: 7, signal: null });
+  assert.ok(probes.some(probe => probe.args.at(-1).includes('HAPPIER_STACK_REPO_DIR')),
+    'SSH delegation must discover declared Stack services through the same primary transport');
+  for (const workspace of selected.workspaces) {
+    assert.ok(probes.some(probe => probe.args.at(-1).includes('HAPPIER_STACK_REPO_DIR')
+      && probe.args.at(-1).includes(workspace.guestDir)), `must reconcile workspace ${workspace.id}`);
+  }
+  assert.ok(probes.every(probe => probe.args.includes('-T')));
+  assert.ok(probes.every(probe => probe.args.includes(sharedConfig)));
+  assert.equal(spawns.length, 1);
+  const invocation = spawns[0];
+  assert.equal(invocation.command, 'ssh');
+  assert.ok(invocation.args.includes('-tt'));
+  assert.ok(invocation.args.includes(sharedConfig));
+  assert.ok(invocation.args.includes(target.ssh));
+  assert.equal(invocation.options.stdio, 'inherit');
+  const remote = invocation.args.at(-1);
+  // Parse the transport's real shell argument into its login-shell body. This
+  // OS boundary evaluates quoting, including hostile-looking literal input.
+  const parsed = await runCommandCapture('bash', ['-c', `function bash() { printf '%s' "$2"; }; ${remote.replace(/^exec /, '')}`]);
+  assert.equal(parsed.code, 0, parsed.stderr);
+  assert.match(parsed.stdout, /HAPPIER_STACK_INVOKED_CWD=\/home\/example\/\.happier-stack\/workspace\/0\.3\/apps\/stack/);
+  assert.match(parsed.stdout, /HAPPIER_STACK_EXECUTION_HOST_REENTRY=1/);
+  assert.match(parsed.stdout, /HAPPIER_STACK_STACK=repo-dev-a1cc5e0671/);
+  assert.match(parsed.stdout, /repo_local\.mjs/);
+  assert.match(parsed.stdout, /--rescue/);
+  assert.doesNotMatch(remote, /must-stay-local/);
+  const literal = 'literal $(input)';
+  // Inspect argv without executing the selected runtime or touching a Stack.
+  const inspect = parsed.stdout.replace(/exec 'systemd-run'/, "function systemd_run() { printf '%s\\n' \"$@\"; }; systemd_run");
+  const directory = fixture.path('remote');
+  await mkdir(directory);
+  const evaluated = await runCommandCapture('bash', ['-c', inspect.replace(/cd -- '[^']*'/, `cd -- '${directory}'`)]);
+  assert.equal(evaluated.code, 0, evaluated.stderr);
+  assert.ok(evaluated.stdout.split('\n').includes(literal));
+  assert.ok(evaluated.stdout.split('\n').includes("quote'arg"));
+});
+
+test('unreachable SSH primary refuses before command dispatch with no local fallback', async t => {
+  const { env, selected } = await sshFixture(t);
+  const spawns = [];
+  await assert.rejects(runDelegatedHstackCommand({ profile: selected, argv: ['tui'],
+    cwd: '/Users/example/happier/dev', env, boundary: {
+      async capture() { return { exitCode: 255, err: 'ssh: connect to host fixture port 22: Connection refused' }; },
+      spawn(...args) { spawns.push(args); throw new Error('payload must not start'); },
+      onSignal() { return () => {}; },
+    } }), /SSH primary nl2.*unreachable/);
+  assert.deepEqual(spawns, []);
+});
+
+test('SSH cancellation uses the same scope and enrolled transport before closing the foreground SSH child', async t => {
+  const { env, selected, target } = await sshFixture(t);
+  const spawns = [];
+  const child = new EventEmitter();
+  child.kill = signal => { child.emit('close', null, signal); return true; };
+  let interrupt;
+  const result = await runDelegatedHstackCommand({ profile: selected, argv: ['tui'],
+    cwd: '/Users/example/happier/dev', env, boundary: {
+      async capture(_command, args) { return { exitCode: args.at(-1).includes('HAPPIER_STACK_REPO_DIR') ? 3 : 0 }; },
+      spawn(command, args) {
+        spawns.push({ command, args });
+        if (spawns.length === 1) { setImmediate(() => interrupt('SIGINT')); return child; }
+        const cancellation = new EventEmitter();
+        setImmediate(() => cancellation.emit('close', 0, null));
+        return cancellation;
+      }, onSignal(handler) { interrupt = handler; return () => {}; },
+    } });
+  assert.deepEqual(result, { exitCode: null, signal: 'SIGINT' });
+  assert.equal(spawns.length, 2);
+  const unit = spawns[0].args.at(-1).match(/happier-execution-host-[a-z0-9-]+\.scope/)[0];
+  assert.match(spawns[1].args.at(-1), new RegExp(unit.replaceAll('.', '\\.')));
+  assert.ok(spawns[1].args.includes('-T'));
+  assert.ok(spawns[1].args.includes(target.sshConfigFile));
+  assert.ok(spawns[1].args.includes(target.ssh));
+});
+
+test('predecessor bridge uses SSH for workspace 0.2 and keeps native commands on the Mac', async t => {
+  const { env, selected } = await sshFixture(t);
+  const spawns = [];
+  const boundary = {
+    async capture(_command, args) { return { exitCode: args.at(-1).includes('HAPPIER_STACK_REPO_DIR') ? 3 : 0 }; },
+    spawn(command, args, options) {
+      spawns.push({ command, args, options });
+      const child = new EventEmitter();
+      setImmediate(() => child.emit('close', 0, null));
+      return child;
+    }, onSignal() { return () => {}; },
+  };
+  const input = { profile: selected, workspaceId: '0.2',
+    localEntrypoint: '/Users/example/happier/remote-dev/apps/stack/scripts/repo_local.mjs',
+    cwd: '/Users/example/happier/remote-dev', env, platform: 'darwin', boundary };
+  const delegated = await runExecutionHostBridge({ ...input, argv: ['tui'] });
+  assert.equal(delegated.delegated, true);
+  assert.equal(spawns[0].command, 'ssh');
+  assert.match(spawns[0].args.at(-1), /workspace\/0\.2\/apps\/stack\/scripts\/repo_local\.mjs/);
+  const native = await runExecutionHostBridge({ ...input, argv: ['mobile'] });
+  assert.equal(native.delegated, false);
+  assert.equal(spawns[1].command, process.execPath);
+  assert.deepEqual(spawns[1].args, [input.localEntrypoint, 'mobile']);
+  assert.equal(spawns[1].options.env.HAPPIER_STACK_EXECUTION_HOST_ADAPTER_REENTRY, '1');
+});
+
+test('dispatched SSH failure is returned once without replay or fallback', async t => {
+  const { env, selected } = await sshFixture(t);
+  let launches = 0;
+  const warnings = [];
+  const result = await runDelegatedHstackCommand({ profile: selected, argv: ['tui'],
+    cwd: '/Users/example/happier/dev', env, boundary: {
+      async capture(_command, args) { return { exitCode: args.at(-1).includes('HAPPIER_STACK_REPO_DIR') ? 3 : 0 }; },
+      spawn(command) {
+        launches += 1;
+        assert.equal(command, 'ssh');
+        const child = new EventEmitter();
+        setImmediate(() => child.emit('close', 255, null));
+        return child;
+      }, onSignal() { return () => {}; }, reportWarning(message) { warnings.push(message); },
+    } });
+  assert.equal(result.exitCode, 255);
+  assert.equal(launches, 1);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /no replay or local fallback/);
+});
 
 test('active host delegation maps only the non-authoritative mirror into the guest workspace', () => {
   assert.equal(
@@ -577,4 +742,59 @@ test('execution-host delegation cancels the complete guest scope when the host i
   assert.ok(spawns[1].args.some((arg) => String(arg).includes('systemctl --user kill')));
   assert.ok(spawns[1].args.some((arg) => String(arg).includes(delegatedUnit.slice('--unit='.length))));
   assert.ok(spawns[1].args.some((arg) => String(arg).includes('-lt 150')));
+});
+
+test('active host preparation retains a running VM with pending resource or toolchain updates', async (t) => {
+  for (const [name, changes] of [
+    ['toolchain', { guestToolchain: { ok: false, error: 'Bun 1.4.2 is required in the managed Lima guest' } }],
+    ['capacity', { drift: { creation: [], resources: [{ field: 'memory', expected: 72, actual: 48 }], configuration: [] } }],
+  ]) {
+    await t.test(name, async () => {
+      const warnings = [];
+      const calls = [];
+      await prepareManagedHost({ ...namedProfile, autoMount: true }, {
+        workspaceId: '0.2',
+        executor: { kind: 'test-executor' },
+        start: async () => { calls.push('start'); },
+        doctor: async () => ({
+          ok: false, exists: true, status: 'Running',
+          drift: { creation: [], resources: [], configuration: [] },
+          guestLoginManager: { ok: true }, guestToolchain: { ok: true }, ...changes,
+        }),
+        reconcileServiceTunnel: async () => { calls.push('tunnel'); },
+        mount: async () => { calls.push('mount'); },
+        reportWarning: (message) => warnings.push(message),
+      });
+      assert.deepEqual(calls, ['start', 'tunnel', 'mount']);
+      assert.equal(warnings.length, 1);
+      assert.match(warnings[0], name === 'toolchain' ? /Bun 1\.4\.2/ : /memory/);
+    });
+  }
+});
+
+test('managed host preparation still rejects unavailable, unsafe, and candidate hosts', async (t) => {
+  for (const [name, changes, activation] of [
+    ['candidate', {}, 'candidate'],
+    ['missing', { exists: false }],
+    ['unknown failure', { guestToolchain: { ok: true } }],
+    ['stopped', { status: 'Stopped' }],
+    ['login failure', { guestLoginManager: { ok: false, error: 'login unavailable' } }],
+    ['creation drift', { drift: { creation: [{ field: 'arch' }], resources: [], configuration: [] } }],
+    ['unsafe configuration', { drift: { creation: [], resources: [], configuration: [{ field: 'ssh.forwardAgent' }] } }],
+  ]) {
+    await t.test(name, async () => {
+      let reachedGuest = false;
+      await assert.rejects(prepareManagedHost({ ...namedProfile, activation: activation ?? 'active' }, {
+        executor: { kind: 'test-executor' }, start: async () => {},
+        doctor: async () => ({
+          ok: false, exists: true, status: 'Running',
+          drift: { creation: [], resources: [], configuration: [] },
+          guestLoginManager: { ok: true },
+          guestToolchain: { ok: false, error: 'Bun update pending' }, ...changes,
+        }),
+        reconcileServiceTunnel: async () => { reachedGuest = true; },
+      }), /doctor reported drift/);
+      assert.equal(reachedGuest, false);
+    });
+  }
 });

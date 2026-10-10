@@ -8,7 +8,6 @@ import { resolvePersonalHomeRuntimeLayout } from '@happier-dev/cli-common/firstP
 
 import { getServerLightDataDirFromEnvOrDefault } from '../stack/dirs.mjs';
 import { hasTrustedStackRuntimeLifecycle, withStackRuntimeStartClaim } from '../stack/runtime_state.mjs';
-import { spawnProc } from '../proc/proc.mjs';
 import { runDevTargetCommand } from './executor.mjs';
 import { loadDevTargetsConfig } from './config.mjs';
 import { resolveRemoteStackStatePaths, resolveRemoteServerRuntimeConfig } from './remote_commands.mjs';
@@ -119,15 +118,14 @@ export async function importRetainedServerData({ archivePath, dataDir, stackBase
 
 async function runRetainedServerDataCommand(options) {
   let out = '';
-  const result = await runDevTargetCommand(options, {
-    spawnProcess: ({ label, command, args, env }) => spawnProc(label, command, args, env, {
-      persistOutput: false,
-      lineFilter: ({ stream, line }) => {
-        if (stream !== 'stdout') return true;
-        out += `${line}\n`;
-        return false;
-      },
-    }),
+  const result = await runDevTargetCommand({
+    ...options,
+    persistOutput: false,
+    lineFilter: ({ stream, line }) => {
+      if (stream !== 'stdout') return true;
+      out += `${line}\n`;
+      return false;
+    },
   });
   return { ...result, out };
 }
@@ -145,7 +143,7 @@ export async function ensureRemoteServerDataReady({ target, stackName, stackBase
       throw new Error('[shared-db] source server host and env reference are required');
     }
     // The consumer has only derived server state, not its own database tree.
-    // Its server resolves the existing source authority before opening SQLite.
+    // Its server resolves the existing source authority before opening the database.
     return { retainedRemoteData: true };
   }
   const sourceDir = getServerLightDataDirFromEnvOrDefault({ stackBaseDir, env });

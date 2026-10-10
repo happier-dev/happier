@@ -7,6 +7,7 @@ import { mkdtemp, chmod, mkdir, readFile, rm, writeFile, stat } from 'node:fs/pr
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { once } from 'node:events';
 
 import {
   checkDaemonState,
@@ -31,6 +32,64 @@ const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const rootDir = dirname(scriptsDir);
 const DAEMON_TEST_PROCESS_HELPER_PATH = join(rootDir, 'scripts', 'testkit', 'core', 'spawn_daemon_like_process.mjs');
 const PROCESS_BACKED_DAEMON_FIXTURE_TIMEOUT_MS = '15000';
+
+test('source launch retires unpublished daemon generations before starting and replacing its successor', async (t) => {
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-source-daemon-supersede-'));
+  const cliHomeDir = join(tmp, 'cli');
+  const stackName = 'source-supersede';
+  const internalServerUrl = 'http://127.0.0.1:4301';
+  const pids = [];
+  const pidPath = join(tmp, 'spawned-pid');
+  t.after(async () => {
+    for (const pid of pids) killDetachedProcessGroup(pid, 'SIGKILL');
+    if (existsSync(pidPath)) killDetachedProcessGroup(Number(await readFile(pidPath, 'utf8')), 'SIGKILL');
+    await rm(tmp, { recursive: true, force: true });
+  });
+  await mkdir(cliHomeDir, { recursive: true });
+  await writeFile(join(cliHomeDir, 'access.key'), 'fixture-credential\n');
+  for (let generation = 0; generation < 2; generation++) {
+    const child = spawnDetachedTestProcess(process.execPath,
+      ['-e', "process.send('ready'); process.disconnect(); setInterval(() => {}, 1000);", 'daemon', 'start-sync'], {
+        stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+        env: { ...process.env, HAPPIER_STACK_STACK: stackName, HAPPIER_HOME_DIR: cliHomeDir,
+          HAPPIER_STACK_PROCESS_KIND: 'daemon', HAPPIER_SERVER_URL: internalServerUrl },
+      });
+    pids.push(child.pid);
+    await once(child, 'message');
+  }
+  const entrypoint = join(tmp, 'source-main.mjs');
+  await writeFile(entrypoint, `
+import { writeFileSync } from 'node:fs';
+import { spawnDaemonLikeProcess } from ${JSON.stringify(DAEMON_TEST_PROCESS_HELPER_PATH)};
+const [command, action] = process.argv.slice(2);
+if (command === 'daemon' && action === 'start') {
+  for (const pid of ${JSON.stringify(pids)}) {
+    try { process.kill(pid, 0); process.exit(77); } catch {}
+  }
+  const child = spawnDaemonLikeProcess({ cliHomeDir: process.env.HAPPIER_HOME_DIR,
+    statePaths: [${JSON.stringify(join(cliHomeDir, 'servers', `stack_${stackName}__id_default`, 'daemon.state.json'))}],
+    internalServerUrl: process.env.HAPPIER_SERVER_URL });
+  writeFileSync(${JSON.stringify(pidPath)}, String(child.pid));
+}
+process.exit(0);
+`);
+  const options = { cliBin: entrypoint, cliEntrypoint: entrypoint, cliHomeDir, internalServerUrl,
+    publicServerUrl: internalServerUrl, stackName, forceRestart: true, isShuttingDown: () => false,
+    env: { ...process.env, HAPPIER_STACK_REPO_DIR: '', HAPPIER_STACK_STACK: stackName,
+      HAPPIER_STACK_AUTO_AUTH_SEED: '0', HAPPIER_STACK_MIGRATE_CREDENTIALS: '0',
+      HAPPIER_STACK_DAEMON_START_VERIFY_TIMEOUT_MS: PROCESS_BACKED_DAEMON_FIXTURE_TIMEOUT_MS,
+      HAPPIER_STACK_DAEMON_START_VERIFY_STABLE_MS: '0' } };
+  assert.equal((await startLocalDaemonWithAuth(options)).started, true);
+  const first = Number(await readFile(pidPath, 'utf8'));
+  pids.push(first);
+  for (const pid of pids.slice(0, 2)) assert.throws(() => process.kill(pid, 0));
+  assert.equal((await startLocalDaemonWithAuth(options)).started, true);
+  const second = Number(await readFile(pidPath, 'utf8'));
+  pids.push(second);
+  assert.notEqual(second, first);
+  assert.throws(() => process.kill(first, 0), 'replacement must retire the previously ready generation');
+  assert.doesNotThrow(() => process.kill(second, 0));
+});
 
 function buildDelayedDaemonStartCliScript({
   cliHomeDir,
@@ -2234,6 +2293,7 @@ test('startLocalDaemonWithAuth preserves an existing running daemon when request
       runnerPath,
       `
 import { spawn } from 'node:child_process';
+import assert from 'node:assert/strict';
 import http from 'node:http';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -2279,8 +2339,9 @@ writeFileSync(
 );
 
 try {
-  await startLocalDaemonWithAuth({
+  const outcome = await startLocalDaemonWithAuth({
     cliBin: ${JSON.stringify(cliBin)},
+    cliEntrypoint: ${JSON.stringify(join(cliDir, 'dist', 'index.mjs'))},
     cliHomeDir,
     internalServerUrl,
     publicServerUrl,
@@ -2300,6 +2361,7 @@ try {
     stackName: 'dev',
     cliIdentity: 'default',
   });
+  assert.deepEqual(outcome, { started: false });
   process.kill(dummy.pid, 0);
   console.log('dummy-alive');
 } finally {

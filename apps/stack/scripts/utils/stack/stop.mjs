@@ -5,15 +5,23 @@ import { join } from 'node:path';
 import { getComponentDir, resolveExplicitStackEnvFilePath } from '../paths/paths.mjs';
 import { isPidAlive, readPidState } from '../expo/expo.mjs';
 import { loadDevTargetsConfig } from '../dev_targets/config.mjs';
+import { retireStackDevTarget } from '../dev_targets/retirement.mjs';
+import { prepareDevTargetOpenSsh, runDevTargetControlProcess } from '../dev_targets/sync_project.mjs';
+import { resolveDevTargetMutagenRuntime } from '../dev_targets/mutagen_runtime.mjs';
+import { loadControlledRuntimeConfig } from '../dev_targets/service_placement.mjs';
+import { stopStackQaBrowsers } from '../dev_targets/qa_browser.mjs';
+import { runCaptureResult } from '../proc/proc.mjs';
 import { listListenPidsWithStatus } from '../net/ports.mjs';
 import { stopLocalDaemon } from '../../daemon.mjs';
 import { stopHappyServerManagedInfra } from '../server/infra/happy_server_infra.mjs';
 import {
   finalizeStackRuntimeStop,
   getStackRuntimeProcessEntries,
+  getStackRuntimePendingRemoteTargets,
   getStackRuntimeProcessInstanceFingerprint,
   readStackRuntimeStateFile,
   recordStackRuntimeStopRequest,
+  recordStackRuntimeUpdate,
   withStackRuntimeStopTransaction,
 } from './runtime_state.mjs';
 import {
@@ -524,6 +532,7 @@ async function stopStackWithEnvInternal({
   listListenPidsWithStatusImpl = listListenPidsWithStatus,
   loadDevTargetsConfigImpl = loadDevTargetsConfig,
   requestLifecycleOwnerShutdownImpl = requestLifecycleOwnerShutdown,
+  runCaptureResultImpl = runCaptureResult,
 } = {}, runtimeStopTransaction = null) {
   const resolvedStopAttribution = {
     requestedBy: String(stopAttribution?.requestedBy ?? 'stack stop'),
@@ -602,6 +611,55 @@ async function stopStackWithEnvInternal({
   }
   const runnerPid = Number(runtimeState?.ownerPid);
   const processEntries = getStackRuntimeProcessEntries(runtimeState);
+
+  try {
+    actions.browsers = await stopStackQaBrowsers({ stackName, baseDir,
+      sourceDir: String(env.HAPPIER_STACK_REPO_DIR ?? rootDir), env }, { capture: runCaptureResultImpl });
+    for (const warning of actions.browsers.warnings) console.warn(`[stack] ${warning.code}: ${warning.error}`);
+  } catch (error) {
+    actions.errors.push({ step: 'browsers', error: error instanceof Error ? error.message : String(error) });
+    actions.finalization = { finalized: false, reason: 'browser_cleanup_incomplete' };
+    return actions;
+  }
+
+  // Retire native roles while the controller's forwards still exist. The same
+  // target-owned stop guards Sessions. Unreachable targets retain their remote
+  // retirement obligation, but must not strand the local controller and forwards.
+  const deferredRetirements = [];
+  for (const [name, state] of getStackRuntimePendingRemoteTargets(runtimeState)) {
+    const runtimeMode = state.runtimeMode ?? runtimeState.runtimeMode ?? (runtimeState.sourceRuntimeIdentities ? 'source-snapshot'
+      : runtimeState.runtimeSnapshotId || state.runtimeSnapshotId ? 'controlled' : 'source');
+    try {
+      const sourceDir = String(env.HAPPIER_STACK_REPO_DIR ?? rootDir);
+      const loaded = runtimeMode === 'source' ? await loadDevTargetsConfig({ stackName, path: join(baseDir, 'dev-targets.json'), env })
+        : await loadControlledRuntimeConfig({ stackName, sourceDir, initializeQaDaemonPlacement: false, env });
+      const target = loaded.config.targets.find(candidate => candidate.name === name);
+      if (!target) throw new Error(`[dev-targets] recorded runtime target ${name} is missing from configuration`);
+      const syncRuntime = resolveDevTargetMutagenRuntime({ stackBaseDir: baseDir, sourceDir, env });
+      const prepared = await prepareDevTargetOpenSsh({ targets: loaded.config.targets, mutagenDir: syncRuntime.mutagenDir, env });
+      // Retirement controls the already-loaded native runtime. Source sync is
+      // startup admission and must not prevent cleanup of existing processes.
+      await retireStackDevTarget({ target, sshArgs: prepared.sshArgs, env: syncRuntime.env,
+        options: { stackName, services: state.services, serverUrl: internalServerUrl,
+          runtimeMode } },
+      { runProcess: input => runDevTargetControlProcess(input, { capture: runCaptureResultImpl }) });
+      await recordStackRuntimeUpdate(runtimeStatePath, { remoteTargets: { [name]: {
+        status: 'stopped', phase: null, error: null,
+        serviceStatus: Object.fromEntries(Object.entries(state.services).filter(([, enabled]) => enabled === true).map(([service]) => [service, 'stopped'])),
+      } } });
+    } catch (error) {
+      if (error?.code === 'EDEVTARGETUNREACHABLE') {
+        const message = error instanceof Error ? error.message : String(error);
+        deferredRetirements.push({ name, services: state.services, runtimeMode, error: message });
+        actions.remoteRetirementPending ??= [];
+        actions.remoteRetirementPending.push({ target: name, error: message });
+        continue;
+      }
+      actions.errors.push({ step: 'remote-stop', target: name, error: error instanceof Error ? error.message : String(error) });
+      actions.finalization = { finalized: false, reason: 'remote_cleanup_incomplete' };
+      return actions;
+    }
+  }
 
   if (!preserveDaemon) {
     try {
@@ -702,21 +760,18 @@ async function stopStackWithEnvInternal({
 
   if (!preserveDaemon) {
     try {
-      // If happier-cli isn't built yet (common in repo checkouts), running `happier.mjs` can fail noisily.
-      // Stopping stack infra should still work without the daemon stop step.
-      const cliDistIndex = join(cliDir, 'dist', 'index.mjs');
-      if (existsSync(cliDistIndex)) {
-        await stopLocalDaemon({
-          cliBin,
-          internalServerUrl,
-          cliHomeDir,
-          runtimeStatePath,
-          stackName,
-        });
-        actions.daemonStopped = true;
-      }
+      await stopLocalDaemon({
+        cliBin,
+        internalServerUrl,
+        cliHomeDir,
+        runtimeStatePath,
+        stackName,
+        env,
+      });
+      actions.daemonStopped = true;
     } catch (e) {
       actions.errors.push({ step: 'daemon', error: e instanceof Error ? e.message : String(e) });
+      cleanupResults.push({ ok: false, step: 'daemon', reason: 'cleanup_unconfirmed' });
     }
   }
 
@@ -937,6 +992,16 @@ async function stopStackWithEnvInternal({
     }
 
     actions.sweep = { pids: swept, skipped: sweepSkipped, auto: shouldAutoSweep && !sweepOwned };
+  }
+
+  // Publish after controller shutdown: its final supervisor projection must
+  // not overwrite the owed retirement. Preserve process membership until the
+  // finalizer checks that this is still the authorized local incarnation.
+  for (const { name, services, runtimeMode, error } of deferredRetirements) {
+    await recordStackRuntimeUpdate(runtimeStatePath, { remoteTargets: { [name]: {
+      services, runtimeMode, status: 'retirement-pending', phase: 'stop', error,
+      serviceStatus: Object.fromEntries(Object.entries(services).filter(([, enabled]) => enabled === true).map(([service]) => [service, 'retirement-pending'])),
+    } } });
   }
 
   actions.finalization = await (runtimeStopTransaction

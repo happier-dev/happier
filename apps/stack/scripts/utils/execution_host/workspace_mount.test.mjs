@@ -33,6 +33,53 @@ test('workspace mount defaults to the Mac-side guest-home mount path', () => {
   assert.equal(resolved.mountDir, '/Users/leeroy/.happier-stack/vm-home');
 });
 
+test('SSH primary mounts the enrolled home separately from Lima and adopts an existing manual mount', async t => {
+  const fixture = await createTempFixture(t);
+  const env = { HAPPIER_STACK_HOME_DIR: fixture.path('home'), HAPPIER_STACK_STORAGE_DIR: fixture.path('stacks') };
+  const selected = { ...profile(fixture.path('lima')), version: 2, mode: 'ssh-dev-target',
+    sshPrimary: { targetName: 'nl2', stackName: 'lane' },
+    workspaces: [{ id: '0.3', guestDir: '/home/guest/workspace/0.3' }] };
+  await mkdir(fixture.path('stacks', 'lane'), { recursive: true });
+  await writeFile(fixture.path('stacks', 'lane', 'dev-targets.json'), JSON.stringify({ version: 3,
+    targets: [{ name: 'nl2', platform: 'posix', ssh: 'enrolled-nl2', sshConfigFile: fixture.path('ssh-config'),
+      repoDir: '/home/guest/workspace/0.3', cliHomeDir: '/home/guest/.happier/cli' }] }));
+  const mountDir = fixture.path('home', 'nl2-home');
+  let mounted = false;
+  const launches = [];
+  const boundary = {
+    async capture(command) {
+      if (command === 'mount') return { exitCode: 0, out: mounted ? `enrolled-nl2:/home/guest on ${mountDir} (macfuse)` : '' };
+      if (command === 'ls' || command === 'sshfs') return { exitCode: 0, out: '' };
+      throw new Error(`must preserve manual mount: ${command}`);
+    },
+    async start(command, args) { launches.push({ command, args }); mounted = true; return { exitCode: null }; },
+  };
+  const executor = { async capture(command, args) {
+    assert.equal(command, 'ssh');
+    assert.ok(args.includes('enrolled-nl2'));
+    assert.ok(args.includes(fixture.path('ssh-config')));
+    return { exitCode: 0, out: '/home/guest' };
+  } };
+  const options = { profile: selected, env, boundary, executor, platform: 'darwin', fileExists: () => true };
+  const first = await mountExecutionHostWorkspace(options);
+  assert.equal(first.mountDir, mountDir);
+  assert.equal(first.remote, 'enrolled-nl2:/home/guest');
+  assert.ok(launches[0].args.some(arg => arg.includes('volname=Happier nl2')));
+  assert.ok(launches[0].args.includes(fixture.path('ssh-config')));
+  await mountExecutionHostWorkspace(options);
+  assert.equal(launches.length, 1);
+  boundary.capture = async command => command === 'mount'
+    ? { exitCode: 0, out: `enrolled-nl2:/home/guest on ${mountDir} (macfuse)` }
+    : command === 'ls' ? { exitCode: 1, err: 'Device not configured' }
+      : assert.fail(`must never replace the manual mount: ${command}`);
+  await assert.rejects(mountExecutionHostWorkspace(options), /leaving.*mount.*in place/i);
+  assert.equal(launches.length, 1);
+  boundary.capture = async command => command === 'mount'
+    ? { exitCode: 0, out: `lima-other:/home/guest on ${mountDir} (macfuse)` }
+    : { exitCode: 0, out: '' };
+  await assert.rejects(mountExecutionHostWorkspace(options), /different.*source/i);
+});
+
 test('workspace mount resolves the complete current guest home, refreshes SSH config, and is idempotent', async (t) => {
   const fixture = await createTempFixture(t, { prefix: 'execution-host-workspace-mount-' });
   const limaHome = fixture.path('lima');

@@ -1,6 +1,6 @@
 import os from 'node:os';
 import { join } from 'node:path';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { describe, expect, it, vi } from 'vitest';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 
@@ -66,6 +66,12 @@ describe('resolveBackendIsolationBundle', () => {
       expect(bundle.env.HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON).toBeUndefined();
       expect(bundle.env.HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_JSON).toBeUndefined();
       expect(bundle.env.HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT).toBeUndefined();
+      await writeFile(join(bundle.env.XDG_STATE_HOME!, 'native.db'), 'resume state');
+      await bundle.cleanup?.();
+      await expect(stat(root)).resolves.toBeTruthy();
+      await rm(join(bundle.env.XDG_STATE_HOME!, 'native.db'));
+      await bundle.cleanup?.();
+      await expect(stat(root)).rejects.toMatchObject({ code: 'ENOENT' });
     } finally {
       vi.resetModules();
       await rm(homeDir, { recursive: true, force: true });

@@ -13,6 +13,7 @@ import {
   classifyVitestShardTermination,
   summarizeVitestShardOutcomes,
 } from '../../../scripts/testing/vitestShardOutcomes.mjs';
+import { resolveYarnCommandInvocation } from '../../../scripts/workspaces/execYarnCommand.mjs';
 import { resolveMaxOldSpaceSizeMb, upsertMaxOldSpaceSize } from './withNodeHeapLimit.mjs';
 
 function parsePositiveInt(raw) {
@@ -37,6 +38,8 @@ export function resolveVitestShardRange(env, shardCount) {
 }
 
 export function resolveVitestConfigPath(argv) {
+  const inline = argv.find(arg => arg.startsWith('--config='));
+  if (inline) return inline.slice('--config='.length).trim() || null;
   const idx = argv.indexOf('--config');
   if (idx === -1) return null;
   const value = argv[idx + 1];
@@ -44,11 +47,15 @@ export function resolveVitestConfigPath(argv) {
 }
 
 export function resolveVitestForwardArgs(argv) {
-  const idx = argv.indexOf('--config');
-  if (idx === -1) return [];
-  const valueIndex = idx + 1;
-  if (valueIndex >= argv.length) return [];
-  return argv.slice(valueIndex + 1);
+  const forwarded = [];
+  for (let index = 2; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === '--config') { index += 1; continue; }
+    if (arg.startsWith('--config=') || arg === '--unit-checks') continue;
+    forwarded.push(arg);
+  }
+  if (forwarded[0] === '--') forwarded.shift();
+  return forwarded;
 }
 
 /**
@@ -63,9 +70,7 @@ export function buildVitestShardArgs({ configPath, shardSpec, vitestArgs }) {
     '--config',
     configPath,
     ...(vitestArgs ?? []),
-    '--passWithNoTests',
-    '--shard',
-    shardSpec,
+    ...(shardSpec ? ['--passWithNoTests', '--shard', shardSpec] : []),
   ];
 }
 
@@ -181,6 +186,15 @@ async function main(argv) {
   const nodeOptions = upsertMaxOldSpaceSize(process.env.NODE_OPTIONS, sizeMb);
   const vitestArgs = resolveVitestForwardArgs(argv);
 
+  // Explicit caller scope runs once. Only the default whole-suite lane needs
+  // collection admission, CI partitioning and empty-shard tolerance.
+  if (vitestArgs.length > 0) {
+    const result = await spawnVitestRun({ configPath, nodeOptions, vitestArgs });
+    if (!result.ok) throw result.error;
+    process.exitCode = classifyVitestShardTermination(result).exitCode;
+    return;
+  }
+
   const admission = await resolveCliVitestLaneAdmission({ configPath, nodeOptions, vitestArgs });
   if (!admission.admitted) {
     // eslint-disable-next-line no-console
@@ -204,7 +218,24 @@ async function main(argv) {
     // eslint-disable-next-line no-console
     console.log(line);
   }
-  if (summary.exitCode !== 0) process.exit(summary.exitCode);
+  if (summary.exitCode !== 0) {
+    process.exitCode = summary.exitCode;
+    return;
+  }
+  if (argv.includes('--unit-checks')) {
+    // These are the existing unit lane's post-suite checks. Keeping them with
+    // the runner lets Yarn append caller filters to one command on every OS.
+    for (const invocation of [
+      { command: process.execPath, args: ['--test', 'scripts/prepack-script.test.mjs', 'scripts/stageManagedRuntimeArchives.test.mjs', 'scripts/runWorkspaceSyncRealIntegration.test.mjs'] },
+      resolveYarnCommandInvocation(['-s', 'test:import-cycles']),
+    ]) {
+      const { windowsVerbatimArguments, ...command } = invocation;
+      const result = await runManagedChildCommand({ ...command, spawnOptions: { stdio: 'inherit', windowsVerbatimArguments } });
+      if (!result.ok) throw result.error;
+      process.exitCode = classifyVitestShardTermination(result).exitCode;
+      if (process.exitCode !== 0) return;
+    }
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

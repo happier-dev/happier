@@ -83,13 +83,11 @@ describe('Vitest lane separation', () => {
         ].join('\n');
 
         expect(unitWrapper).toContain('--script=test:unit:local');
-        expect(unitLocal).toContain('test:unit:vitest:local');
+        expect(unitLocal).toContain('node scripts/runVitestShards.mjs --config vitest.config.ts --unit-checks');
         expect(unitVitestWrapper).toContain('--script=test:unit:vitest:local');
         expect(unitVitestLocal).toContain(
             'node scripts/runVitestShards.mjs --config vitest.config.ts',
         );
-        expect(unitLocal).toContain('test:import-cycles');
-        expect(unitLocal).toContain('node --test scripts/prepack-script.test.mjs scripts/stageManagedRuntimeArchives.test.mjs');
         expect(integrationWrapper).toContain('--script=test:integration:local');
         expect(integrationLocal).toContain(
             'node scripts/runVitestShards.mjs --config vitest.integration.config.ts',
@@ -123,7 +121,7 @@ describe('Vitest lane separation', () => {
             'yarn workspace @happier-dev/cli test:import-cycles',
         );
         expect(cliPackageJson.scripts?.['test:unit']).toContain('--script=test:unit:local');
-        expect(cliPackageJson.scripts?.['test:unit:local']).toContain('test:import-cycles');
+        expect(cliPackageJson.scripts?.['test:unit:local']).toContain('--unit-checks');
     });
 
     it('keeps build-output dist verification out of the unit lane', () => {

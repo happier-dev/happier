@@ -2,7 +2,7 @@ import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 const SOURCE_ROOTS = ['src', 'sources', 'scripts'];
-const TEST_DIRECTORY_NAMES = new Set(['__fixtures__', '__tests__', 'fixtures', 'test', 'testkit', 'tests', 'test-support']);
+const TEST_DIRECTORY_NAMES = new Set(['__fixtures__', '__snapshots__', '__tests__', 'fixtures', 'test', 'testkit', 'tests', 'test-support']);
 
 export function isWorkspaceBuildSourcePath(path) {
   return SOURCE_ROOTS.includes(String(path).replaceAll('\\', '/').split('/')[0]);

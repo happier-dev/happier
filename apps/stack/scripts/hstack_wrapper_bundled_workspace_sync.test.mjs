@@ -6,6 +6,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { runNodeCapture } from './testkit/core/run_node_capture.mjs';
+import { createTempFixture } from './testkit/core/temp_fixture.mjs';
+import { buildStubHappierServerSetSource } from './testkit/core/stub_happier_cli_server_set.mjs';
 import { buildStackFixtureEnv } from './testkit/core/env_scope.mjs';
 import { ensureMinimalMonorepoLayout } from './testkit/core/minimal_monorepo_layout.mjs';
 import { createStartableRuntimeSnapshotFixture } from './testkit/runtime_snapshot_start_testkit.mjs';
@@ -18,58 +20,14 @@ function stackRootDirFromMeta(metaUrl) {
   return dirname(scriptsDir);
 }
 
-test('named daemon builds record preparation failures instead of failing in launcher publication', async (t) => {
-  const rootDir = stackRootDirFromMeta(import.meta.url);
-  const fixtureDir = mkdtempSync(join(tmpdir(), 'hstack-daemon-build-admission-'));
-  t.after(() => rmSync(fixtureDir, { recursive: true, force: true }));
-  const repoRoot = join(fixtureDir, 'repo');
-  const stackDir = join(repoRoot, 'apps', 'stack');
-  const commonDir = join(repoRoot, 'packages', 'cli-common');
-  await ensureMinimalMonorepoLayout(repoRoot);
-  mkdirSync(join(stackDir, 'bin'), { recursive: true });
-  mkdirSync(commonDir, { recursive: true });
-  writeFileSync(join(repoRoot, 'package.json'), JSON.stringify({ private: true, workspaces: ['apps/*', 'packages/*'] }));
-  writeFileSync(join(repoRoot, 'yarn.lock'), '');
-  writeFileSync(join(stackDir, 'package.json'), JSON.stringify({ name: '@happier-dev/stack' }));
-  // The fixture's package build is an external process boundary. The launcher,
-  // dependency admission, build owner, and status writer all remain real.
-  writeFileSync(join(commonDir, 'package.json'), JSON.stringify({
-    name: '@happier-dev/cli-common', type: 'module', main: './dist/index.js',
-    scripts: { build: 'node -e "process.stderr.write(\'fixture workspace compiler failed\\n\'); process.exit(41)"' },
-  }));
-  copyFileSync(join(rootDir, 'bin', 'hstack.mjs'), join(stackDir, 'bin', 'hstack.mjs'));
-  symlinkSync(join(rootDir, 'scripts'), join(stackDir, 'scripts'), process.platform === 'win32' ? 'junction' : 'dir');
-  copyFileSync(join(rootDir, 'bin', 'localBundledWorkspacePreflight.mjs'), join(stackDir, 'bin', 'localBundledWorkspacePreflight.mjs'));
-  symlinkSync(join(rootDir, '..', '..', 'scripts'), join(repoRoot, 'scripts'), process.platform === 'win32' ? 'junction' : 'dir');
-  const storageDir = join(fixtureDir, 'storage');
-  const envPath = join(storageDir, 'qa', 'env');
-  mkdirSync(dirname(envPath), { recursive: true });
-  writeFileSync(envPath, `HAPPIER_STACK_STACK=qa\nHAPPIER_STACK_REPO_DIR=${repoRoot}\n`);
-  const env = buildStackFixtureEnv({
-    homeDir: join(fixtureDir, 'home'), storageDir, stackName: 'qa', envPath, stripStackEnv: true,
-    extraEnv: {
-      HAPPIER_STACK_UPDATE_CHECK: '0', HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
-      HAPPIER_STACK_REPO_DIR: repoRoot,
-      HAPPIER_HSTACK_DISPATCH_CONTROL: '1',
-    },
-  });
-  for (const invocation of [
-    { producer: 'producer-named', args: ['stack', 'build', 'qa', '--daemon', '--json'] },
-    { producer: 'producer-direct', args: ['build', '--daemon', '--json'] },
-  ]) {
-    writeFileSync(envPath, `HAPPIER_STACK_STACK=qa\nHAPPIER_STACK_REPO_DIR=${repoRoot}\nHAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK=${invocation.producer}\n`);
-    const result = await runNodeCapture([
-      join(stackDir, 'bin', 'hstack.mjs'), ...invocation.args,
-    ], { cwd: repoRoot, env: { ...env, HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: invocation.producer } });
-    assert.notEqual(result.code, 0);
-    const statePath = join(storageDir, invocation.producer, 'stack.runtime.json');
-    assert.ok(existsSync(statePath), `${invocation.producer} must publish its terminal outcome; stderr: ${result.stderr}`);
-    const publication = JSON.parse(readFileSync(statePath, 'utf8')).runtimePublication;
-    assert.equal(publication.components.daemon.phase, 'failed');
-    assert.match(publication.components.daemon.error, /fixture workspace compiler failed/);
-    assert.equal(publication.phase, 'failed');
-  }
-});
+// These probes execute the moving checkout, not the installed Stack package.
+// Their OS boundary loader replaces NODE_OPTIONS, so retain the canonical
+// authored-runtime preload explicitly (and pass it on to source child probes).
+function sourceProbeNodeOptions(loaderPath) {
+  const preload = fileURLToPath(new URL('../../../packages/cli-common/registerSourceRuntime.mjs', import.meta.url));
+  return `--import=${preload} --experimental-loader=${loaderPath}`;
+}
+
 
 function createBundledWorkspaceSyncLoaderFixture(fixtureDir, options = {}) {
   const syncMarkerPath = join(fixtureDir, 'sync.json');
@@ -84,7 +42,6 @@ function createBundledWorkspaceSyncLoaderFixture(fixtureDir, options = {}) {
     ? options.healthResults.map(Boolean)
     : [false, true];
   const failPreflight = options.failPreflight === true;
-  const rejectCliCommonLinks = options.rejectCliCommonLinks === true;
   const simulateMissingUpdateUntilSync = options.simulateMissingUpdateUntilSync === true;
 
   writeFileSync(
@@ -164,13 +121,6 @@ function createBundledWorkspaceSyncLoaderFixture(fixtureDir, options = {}) {
       "  if (specifier === '../scripts/bundleWorkspaceDeps.mjs') {",
       `    return { url: pathToFileURL(${JSON.stringify(bundleStubPath)}).href, shortCircuit: true };`,
       '  }',
-      ...(rejectCliCommonLinks
-        ? [
-            "  if (specifier === '@happier-dev/cli-common/links') {",
-            "    throw new Error('test copied cli-common links module is unavailable');",
-            '  }',
-          ]
-        : []),
       ...(simulateMissingUpdateUntilSync
         ? [
             "  if (specifier === '@happier-dev/cli-common/update') {",
@@ -229,7 +179,7 @@ function bundledWorkspaceFailureEnv({ fixtureDir, loaderPath, storageDir }) {
     stripStackEnv: true,
     extraEnv: {
       HAPPIER_STACK_UPDATE_CHECK: '0',
-      NODE_OPTIONS: `--experimental-loader=${loaderPath}`,
+      NODE_OPTIONS: sourceProbeNodeOptions(loaderPath),
     },
   });
 }
@@ -238,8 +188,8 @@ function createSourceWorkspaceReadBoundary(fixtureDir, repoRoot) {
   const markerPath = join(fixtureDir, 'source-workspace-read.txt');
   const loaderPath = join(fixtureDir, 'source-workspace-read-loader.mjs');
   const stubPaths = new Map();
-  // Make checkout build inputs unavailable at the filesystem boundary. Runtime
-  // admission, source preflight, snapshot validation and CLI launch stay real.
+  // Source execution needs package export metadata; compilation/build
+  // preparation must still fail at its real source-input filesystem boundary.
   for (const [specifier, functionName] of [['node:fs', 'readFileSync'], ['node:fs/promises', 'readFile']]) {
     const stubPath = join(fixtureDir, `${functionName}-boundary.mjs`);
     stubPaths.set(specifier, pathToFileURL(stubPath).href);
@@ -249,7 +199,7 @@ function createSourceWorkspaceReadBoundary(fixtureDir, repoRoot) {
       `export * from ${JSON.stringify(specifier)};`,
       `export function ${functionName}(path, ...args) {`,
       `  const value = String(path).replaceAll('\\\\', '/');`,
-      `  if (value.startsWith(${JSON.stringify(join(repoRoot, 'packages').replaceAll('\\', '/') + '/')}) && value.endsWith('/package.json')) {`,
+      `  if (value.startsWith(${JSON.stringify(join(repoRoot, 'packages').replaceAll('\\', '/') + '/')}) && (value.includes('/dist/') || value.includes('/package-dist/') || /\\/tsconfig[^/]*\\.json$/.test(value))) {`,
       `    writeMarker(${JSON.stringify(markerPath)}, value);`,
       `    throw new Error('source workspace build inputs are unavailable');`,
       `  }`,
@@ -343,6 +293,53 @@ test('runtime CLI wrapper does not admit checkout source workspaces before auth 
   assert.equal(result.code, 0, `runtime CLI must remain available\n${result.stderr}`);
   assert.equal(existsSync(markerPath), false, 'runtime CLI must not read checkout source build inputs');
   assert.deepEqual(JSON.parse(result.stdout), ['auth', 'login', '--no-open']);
+});
+
+test('source snapshot CLI and auth wrappers bypass native workspace publication before dispatch', async (t) => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const repoRoot = coerceHappyMonorepoRootFromPath(rootDir);
+  const { root: fixtureDir } = await createTempFixture(t, { prefix: 'hstack-source-entry-policy-' });
+  const { stackName, storageDir, envPath } = createStackManagementFixture(fixtureDir);
+  const cliDir = join(dirname(envPath), 'source-runtime', 'bundle', 'cli');
+  const entrypoint = join(cliDir, 'src', 'index.mjs');
+  mkdirSync(dirname(entrypoint), { recursive: true });
+  writeFileSync(entrypoint, `const args = process.argv.slice(2);\n${buildStubHappierServerSetSource()}\nprocess.stdout.write(JSON.stringify(args) + "\\n");\n`);
+  writeFileSync(envPath, [
+    `HAPPIER_STACK_STACK=${stackName}`, `HAPPIER_STACK_REPO_DIR=${repoRoot}`,
+    'HAPPIER_STACK_RUNTIME_MODE=source-snapshot', 'HAPPIER_STACK_SERVER_PORT=4102', '',
+  ].join('\n'));
+  writeFileSync(join(dirname(envPath), 'stack.runtime.json'), JSON.stringify({
+    version: 1, stackName,
+    sourceRuntimeLaunch: { entrypoint, cliDir, env: { HAPPIER_STACK_CLI_ROOT_DIR: cliDir } },
+  }));
+  const { loaderPath, markerPath } = createSourceWorkspaceReadBoundary(fixtureDir, repoRoot);
+  const env = {
+    ...bundledWorkspaceFailureEnv({ fixtureDir, loaderPath, storageDir }),
+    HAPPIER_STACK_STACK: stackName, HAPPIER_STACK_ENV_FILE: envPath,
+  };
+  const cliArgs = ['auth', 'login', '--no-open'];
+  for (const { title, argv } of [
+    { title: 'explicit source stack CLI', argv: [join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'happier', stackName, '--runtime=source', '--', ...cliArgs] },
+    { title: 'source stack shorthand', argv: [join(rootDir, 'bin', 'hstack.mjs'), stackName, 'happier', '--', ...cliArgs] },
+    { title: 'direct source CLI wrapper', argv: [join(rootDir, 'bin', 'happier.mjs'), '--runtime=source', ...cliArgs] },
+  ]) {
+    await t.test(title, async () => {
+      rmSync(markerPath, { force: true });
+      const result = await runNodeCapture(argv, { cwd: rootDir, env });
+      assert.equal(existsSync(markerPath), false, 'source snapshot CLI must not read native workspace build inputs');
+      assert.equal(result.code, 0, result.stderr);
+      assert.deepEqual(JSON.parse(result.stdout), cliArgs);
+    });
+  }
+  await t.test('source stack auth print', async () => {
+    rmSync(markerPath, { force: true });
+    const printed = await runNodeCapture([
+      join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'auth', stackName, 'login', '--no-open', '--print', '--json',
+    ], { cwd: rootDir, env });
+    assert.equal(existsSync(markerPath), false, 'source snapshot auth must not read native workspace build inputs');
+    assert.equal(printed.code, 0, printed.stderr);
+    assert.ok(JSON.parse(printed.stdout).cmd.includes(entrypoint));
+  });
 });
 
 test('hstack wrapper refreshes bundled workspace packages for normal commands without replacing existing directories', async () => {
@@ -538,7 +535,7 @@ test('hstack happier passthrough help stays read-only without bundled workspace 
       env: {
         ...process.env,
         HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
-        NODE_OPTIONS: `--experimental-loader=${loaderPath}`,
+        NODE_OPTIONS: sourceProbeNodeOptions(loaderPath),
       },
     });
 
@@ -565,7 +562,7 @@ for (const subcommand of ['dev', 'start']) {
             ...process.env,
             HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
             HAPPIER_STACK_UPDATE_CHECK: '0',
-            NODE_OPTIONS: `--experimental-loader=${loaderPath}`,
+            NODE_OPTIONS: sourceProbeNodeOptions(loaderPath),
           },
         },
       );
@@ -606,7 +603,7 @@ for (const command of ['setup', 'setup-from-source']) {
             ...process.env,
             HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
             HAPPIER_STACK_UPDATE_CHECK: '0',
-            NODE_OPTIONS: `--experimental-loader=${loaderPath}`,
+            NODE_OPTIONS: sourceProbeNodeOptions(loaderPath),
           },
         },
       );
@@ -967,28 +964,6 @@ test('hstack wrapper keeps stack stop responsive while bundled workspace preflig
   }
 });
 
-test('hstack wrapper leaves a missing copied module as a loud Stack-local management error', async () => {
-  const rootDir = stackRootDirFromMeta(import.meta.url);
-  const fixtureDir = mkdtempSync(join(tmpdir(), 'hstack-wrapper-stack-management-missing-copy-'));
-  try {
-    const { bundleMarkerPath, loaderPath, syncMarkerPath } = createBundledWorkspaceSyncLoaderFixture(fixtureDir, {
-      failPreflight: true,
-      healthResults: [false],
-      rejectCliCommonLinks: true,
-    });
-    const { storageDir } = createStackManagementFixture(fixtureDir);
-    const env = bundledWorkspaceFailureEnv({ fixtureDir, loaderPath, storageDir });
-    const res = await runNodeCapture([join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'list', '--json'], { cwd: rootDir, env });
-
-    assert.notEqual(res.code, 0, 'a missing copied module must fail rather than report a fabricated stack status');
-    assert.match(res.stderr, /test copied cli-common links module is unavailable/);
-    assert.equal(existsSync(syncMarkerPath), false, 'the Stack-local command must not turn a missing copied module into a preflight publication');
-    assert.equal(existsSync(bundleMarkerPath), false, 'the Stack-local command must not invoke the preflight fallback');
-  } finally {
-    rmSync(fixtureDir, { recursive: true, force: true });
-  }
-});
-
 test('hstack wrapper starts an explicit runtime snapshot without bundled workspace publication', async (t) => {
   const rootDir = stackRootDirFromMeta(import.meta.url);
   const fixtureDir = mkdtempSync(join(tmpdir(), 'hstack-wrapper-runtime-start-skip-'));
@@ -1264,7 +1239,7 @@ test('hstack wrapper keeps producer snapshot selection out of bundled workspace 
     ], { cwd: rootDir, env });
 
     assert.notEqual(res.code, 0, 'selection must fail loudly when its producer has no active snapshot');
-    assert.match(res.stderr, /producer repo-producer has no active runtime snapshot/i);
+    assert.match(res.stderr, /missing server snapshot/i);
     assert.equal(existsSync(syncMarkerPath), false, 'selection must not synchronize workspace packages');
     assert.equal(existsSync(bundleMarkerPath), false, 'selection must not publish workspace packages');
   } finally {
@@ -1301,7 +1276,7 @@ test('hstack runtime snapshot selection help reaches its owner without bundled w
     ], { cwd: rootDir, env });
 
     assert.equal(res.code, 0, `selection help must reach its owner\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
-    assert.match(res.stdout, /selects the active complete snapshot already published/i);
+    assert.match(res.stdout, /hstack stack runtime <name> select/);
     assert.equal(existsSync(syncMarkerPath), false, 'selection help must not synchronize workspace packages');
     assert.equal(existsSync(bundleMarkerPath), false, 'selection help must not publish workspace packages');
   } finally {

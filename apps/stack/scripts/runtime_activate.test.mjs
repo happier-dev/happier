@@ -195,7 +195,6 @@ test('runtime activation discovers artifacts outside the snapshot lock and commi
     'resolve-server',
     'validate-current',
     'publish-manifest',
-    'select-producer',
     'retention',
     'select-consumer',
     'runtime-mode',

@@ -1,6 +1,4 @@
-import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { mkdir, rm, symlink } from 'node:fs/promises';
+import { lstat, mkdir, readdir, rm, symlink } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
 
 import {
@@ -12,10 +10,6 @@ import {
   writeCliBinaryArtifactRuntimeAssetBuildManifest,
 } from '@happier-dev/cli-common/componentArtifacts';
 import { withWorkspaceBundleLock } from '@happier-dev/cli-common/workspaceBundleLock';
-import { resolveWorkspaceBundlesFromPackageJson } from '@happier-dev/cli-common/workspaces';
-
-import { readWorkspacePackageInputFingerprint } from '../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
-import { resolveBundledPluginGeneratorInputPaths } from '../../../cli/scripts/build-owned/bundledPlugins/authoringInputs.mjs';
 import { createWorkspaceBuildWaitNotifier } from '../utils/proc/workspaceBuildWaitNotifier.mjs';
 
 import {
@@ -43,33 +37,6 @@ function resolveDaemonArtifactRepoDir({ rootDir, sourceMetadata }) {
   return String(sourceMetadata?.repoDir ?? rootDir ?? '').trim();
 }
 
-export function readDaemonWorkspaceSourceFingerprint({ repoDir, stalePackages = [] }) {
-  const hash = createHash('sha256');
-  hash.update('happier:daemon-workspace-source:v1\0');
-  const bundles = resolveWorkspaceBundlesFromPackageJson({
-    repoRoot: repoDir,
-    hostPackageDir: join(repoDir, 'apps', 'cli'),
-  });
-  for (const { packageName, srcDir } of bundles) {
-    hash.update(`${packageName}\0${readWorkspacePackageInputFingerprint({
-      packageDir: srcDir,
-      includeShippedFiles: true,
-      excludeGeneratedPluginManifest: true,
-    })}\0`);
-  }
-  // Packaged plugin resources are derived from the single publisher and its
-  // build-owned helpers. Reuse the source input owner so renderer-only edits
-  // invalidate support too, while tests and generated outputs stay excluded.
-  for (const input of resolveBundledPluginGeneratorInputPaths({ repoDir })) {
-    const relativeInput = relative(join(repoDir, 'apps', 'cli'), input).replaceAll('\\', '/');
-    if (relativeInput !== 'scripts/build-owned/generateBundledPluginEntries.ts') hash.update(`${relativeInput}\0`);
-    hash.update(readFileSync(input));
-  }
-  if (stalePackages.length) hash.update(`qa-last-green\0${JSON.stringify(stalePackages
-    .map(({ packageName, outputIdentity }) => ({ packageName, outputIdentity }))
-    .sort((a, b) => a.packageName.localeCompare(b.packageName)))}`);
-  return hash.digest('hex');
-}
 
 export async function readDaemonSupportGoVersion({
   repoDir,
@@ -94,13 +61,11 @@ export async function readDaemonSupportGoVersion({
 export async function resolveDaemonSupportArtifactFingerprint({
   rootDir,
   sourceMetadata,
-  workspaceSourceFingerprint,
   target: runtimeTarget = { platform: process.platform, arch: process.arch },
   env = process.env,
   runCaptureImpl = runCapture,
   resolveCurrentBinaryTargetImpl = resolveCurrentBinaryTarget,
   readCliBinaryArtifactSupportIdentityImpl = readCliBinaryArtifactSupportIdentity,
-  readDaemonWorkspaceSourceFingerprintImpl = readDaemonWorkspaceSourceFingerprint,
 } = {}) {
   const repoDir = resolveDaemonArtifactRepoDir({ rootDir, sourceMetadata });
   if (!repoDir) throw new Error('[build] daemon support identity requires a repository directory.');
@@ -114,8 +79,6 @@ export async function resolveDaemonSupportArtifactFingerprint({
     repoRoot: repoDir,
     target,
     goVersion,
-    workspaceSourceFingerprint: workspaceSourceFingerprint
-      ?? readDaemonWorkspaceSourceFingerprintImpl({ repoDir }),
   });
   const fingerprint = String(identity?.fingerprint ?? '').trim();
   if (!fingerprint) throw new Error('[build] daemon support identity did not produce a fingerprint.');
@@ -138,6 +101,7 @@ export async function linkDaemonSupportPayload({
 } = {}) {
   await mkdirImpl(codePayloadDir, { recursive: true });
   for (const name of DAEMON_SUPPORT_DIRECTORIES) {
+    if (name === 'node_modules') continue;
     const linkPath = join(codePayloadDir, name);
     await rmImpl(linkPath, { recursive: true, force: true });
     await symlinkImpl(
@@ -146,14 +110,42 @@ export async function linkDaemonSupportPayload({
       platform === 'win32' ? 'junction' : 'dir',
     );
   }
+  const supportModules = join(supportPayloadDir, 'node_modules');
+  const codeModules = join(codePayloadDir, 'node_modules');
+  const entries = await readdir(supportModules, { withFileTypes: true }).catch(error => {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  });
+  const linkDependency = async (source, destination) => {
+    const existing = await lstat(destination).catch(error => {
+      if (error.code === 'ENOENT') return null;
+      throw error;
+    });
+    if (existing?.isDirectory()) {
+      for (const child of await readdir(source)) {
+        await linkDependency(join(source, child), join(destination, child));
+      }
+      return;
+    }
+    if (existing) throw new Error('[build] daemon support conflicts with a code-owned dependency: ' + destination);
+    await mkdirImpl(dirname(destination), { recursive: true });
+    await symlinkImpl(platform === 'win32' ? source : relative(dirname(destination), source), destination,
+      platform === 'win32' ? 'junction' : 'dir');
+  };
+  for (const entry of entries) {
+    const source = join(supportModules, entry.name);
+    if (entry.name.startsWith('@') && entry.isDirectory()) {
+      for (const dependency of await readdir(source)) {
+        await linkDependency(join(source, dependency), join(codeModules, entry.name, dependency));
+      }
+    } else await linkDependency(source, join(codeModules, entry.name));
+  }
 }
 
 async function buildDaemonSupportArtifact({
   stackBaseDir,
   supportArtifactFingerprint,
   sourceMetadata,
-  workspaceSourceFingerprint,
-  expectedWorkspaceRuntimeIdentity,
   target,
   runtimeTarget,
   env,
@@ -203,8 +195,6 @@ async function buildDaemonSupportArtifact({
         env,
         supportArtifactFingerprint,
         goVersion,
-        workspaceSourceFingerprint,
-        expectedWorkspaceRuntimeIdentity,
       });
       await writeArtifactManifest({
         artifactDir: tmpArtifactDir,
@@ -247,10 +237,6 @@ export async function buildDaemonArtifact({
   supportArtifactFingerprint,
   sourceMetadata,
   target: runtimeTarget = { platform: process.platform, arch: process.arch },
-  stalePackages = [],
-  preparedWorkspacePublication,
-  requiredCliDistInputFingerprint,
-  workspaceSourceFingerprint,
   forceRebuild = false,
   env = process.env,
   resolveDaemonSupportArtifactFingerprintImpl = resolveDaemonSupportArtifactFingerprint,
@@ -261,14 +247,6 @@ export async function buildDaemonArtifact({
 }) {
   void forceRebuild;
   const existing = await readReusableArtifactManifest({ artifactDir, artifactFingerprint });
-  // Existing pre-split artifacts have no reference and remain valid legacy
-  // self-contained artifacts until normal retention removes them. Reusing one
-  // must not require either the current producer store or a current support
-  // identity: both may have disappeared after an upgrade.
-  if (existing && existing.daemonSupportArtifactFingerprint == null) {
-    return { artifactDir, manifest: existing };
-  }
-
   const resolvedStackBaseDir = String(stackBaseDir ?? '').trim();
   if (!resolvedStackBaseDir) {
     throw new Error('[build] daemon runtime artifact requires its producer artifact store path.');
@@ -276,7 +254,7 @@ export async function buildDaemonArtifact({
   const repoDir = resolveDaemonArtifactRepoDir({ rootDir, sourceMetadata });
   const resolvedSupportArtifactFingerprint = String(
     supportArtifactFingerprint
-      ?? await resolveDaemonSupportArtifactFingerprintImpl({ rootDir, sourceMetadata, workspaceSourceFingerprint, env, target: runtimeTarget }),
+      ?? await resolveDaemonSupportArtifactFingerprintImpl({ rootDir, sourceMetadata, env, target: runtimeTarget }),
   ).trim();
   if (!resolvedSupportArtifactFingerprint) {
     throw new Error('[build] daemon runtime artifact requires a daemon support identity.');
@@ -306,14 +284,11 @@ export async function buildDaemonArtifact({
     .filter(Boolean);
   await buildIntoTempThenReplace(artifactDir, async (tmpArtifactDir) => {
     const payloadDir = artifactPayloadDir(tmpArtifactDir);
-    // Publish or repair support through its existing owner before compiling
-    // code; both must consume the same prepared workspace frame.
+    // Native dependencies and authored code have separate output owners.
     const supportArtifact = await buildDaemonSupportArtifact({
       stackBaseDir: resolvedStackBaseDir,
       supportArtifactFingerprint: resolvedSupportArtifactFingerprint,
       sourceMetadata,
-      workspaceSourceFingerprint,
-      expectedWorkspaceRuntimeIdentity: preparedWorkspacePublication?.workspaceRuntimeIdentity,
       target,
       runtimeTarget,
       env,
@@ -326,16 +301,7 @@ export async function buildDaemonArtifact({
       target,
       externals,
       env,
-      preparedWorkspacePublication,
-      requiredCliDistInputFingerprint,
     });
-    if (preparedWorkspacePublication
-      && built.workspaceRuntimeIdentity !== preparedWorkspacePublication.workspaceRuntimeIdentity) {
-      throw new Error(
-        '[component-artifacts] daemon code does not match its prepared workspace runtime frame; restart the phase '
-        + `(expected ${preparedWorkspacePublication.workspaceRuntimeIdentity}, found ${built.workspaceRuntimeIdentity})`,
-      );
-    }
     await linkDaemonSupportPayload({
       codePayloadDir: payloadDir,
       supportPayloadDir: supportArtifact.payloadDir,
@@ -343,7 +309,6 @@ export async function buildDaemonArtifact({
     writeCliBinaryArtifactRuntimeAssetBuildManifestImpl({
       payloadDir,
       relativePath: built.runtimeAssetRelativePath,
-      workspaceRuntimeIdentity: supportArtifact.workspaceRuntimeIdentity,
     });
     await writeArtifactManifest({
       artifactDir: tmpArtifactDir,
@@ -356,8 +321,6 @@ export async function buildDaemonArtifact({
         sourceFingerprint: sourceMetadata.sourceFingerprint,
         createdAt: sourceMetadata.builtAt,
         source: sourceMetadata,
-        ...(stalePackages.length || built.stalePackages?.length
-          ? { stalePackages: [...stalePackages, ...(built.stalePackages ?? [])] } : {}),
         payloadDir: 'payload',
         entrypoint: built.entrypoint,
       },

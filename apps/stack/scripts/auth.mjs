@@ -72,17 +72,6 @@ function resolveGuidedStartAction({ healthOk = false, runtimeOwnerAlive = false,
   return 'prompt';
 }
 
-function resolveGuidedStackStartCommand({ stackName, startKind = 'dev' } = {}) {
-  const name = String(stackName ?? '').trim() || 'main';
-  if (startKind === 'runtime') {
-    return `hstack stack start ${name} --background --runtime`;
-  }
-  if (startKind === 'start') {
-    return `hstack stack start ${name} --background`;
-  }
-  return `hstack stack dev ${name} --background`;
-}
-
 async function getAuthServerEndpoint() {
   const { port, internalServerUrl } = await resolveStackServerEndpoint();
   return { port, url: internalServerUrl };
@@ -1573,7 +1562,8 @@ async function cmdLogin({ argv, json }) {
   const { envWebappUrl } = getWebappUrlEnvOverride({ env: process.env, stackName });
   const expoWebappUrl = await resolveWebappUrlFromRunningExpo({ rootDir, stackName, env: process.env });
   const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv: [], env: process.env });
-  const runtimeSnapshotActive = Boolean(runtimeLaunchContext.snapshot);
+  const controlledRuntimeActive = Boolean(runtimeLaunchContext.snapshot)
+    || runtimeLaunchContext.runtimeMode.mode === 'source-snapshot';
 
   const serviceMode = (process.env.HAPPIER_STACK_SERVICE_MODE ?? '').toString().trim() === '1';
   const prefersExpoAuthInAuto =
@@ -1583,26 +1573,26 @@ async function cmdLogin({ argv, json }) {
     method !== 'mobile' &&
     tty &&
     !serviceMode &&
-    !runtimeSnapshotActive;
+    !controlledRuntimeActive;
   const effectiveWebappMode =
     prefersExpoAuthInAuto && expoWebappUrl
       ? 'expo'
       : requestedWebappMode;
-  const shouldUseRuntimeStart = runtimeSnapshotActive && effectiveWebappMode !== 'expo';
+  const shouldUseRuntimeStart = Boolean(runtimeLaunchContext.snapshot) && effectiveWebappMode !== 'expo';
   const shouldStartDevForAutoAuth =
     !shouldUseRuntimeStart &&
     requestedWebappMode === 'auto' &&
     prefersExpoAuthInAuto;
-  const guidedStartKind =
-    shouldUseRuntimeStart
-      ? 'runtime'
-      : effectiveWebappMode === 'expo' || shouldStartDevForAutoAuth
-        ? 'dev'
-        : 'start';
-  const guidedStartCommand = resolveGuidedStackStartCommand({
+  const authSafeStartSpec = buildAuthSafeStackStartSpec({
+    rootDir,
     stackName,
-    startKind: guidedStartKind,
+    shouldUseRuntimeStart,
+    runtimeMode: runtimeLaunchContext.runtimeMode.mode,
+    effectiveWebappMode,
+    shouldStartDevForAutoAuth,
+    baseEnv: process.env,
   });
+  const guidedStartCommand = `hstack stack ${authSafeStartSpec.args[1].slice(1).join(' ')}`;
 
   const publicServerUrlForAuth = effectiveWebappMode === 'stack' ? defaultPublicUrl : publicServerUrl;
 
@@ -1679,11 +1669,24 @@ async function cmdLogin({ argv, json }) {
 
   if (wantPrint) {
     const invocation = await buildLoginInvocation(loginEnv);
-    const provenanceEnv = [
+    const sourceSnapshot = runtimeLaunchContext.runtimeMode.mode === 'source-snapshot';
+    const nativeProvenanceKeys = [
       'HAPPIER_CLI_SUBPROCESS_RUNTIME_BACKED',
       'HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT',
       'HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT',
-    ].filter((key) => invocation.env[key]).map((key) => `${key}="${invocation.env[key]}" `).join('');
+    ];
+    const launchEnvKeys = sourceSnapshot
+      ? [...new Set([
+        ...Object.keys(runtimeLaunchContext.cliLaunchSpec.env ?? {}),
+        'HAPPIER_CLI_ROOT_DIR',
+        'HAPPIER_CLI_SUBPROCESS_ENTRYPOINT',
+        'HAPPIER_CLI_SUBPROCESS_PREFER_TSX',
+        'HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK',
+        ...nativeProvenanceKeys,
+      ])]
+      : nativeProvenanceKeys.filter((key) => invocation.env[key]);
+    const provenanceEnv = launchEnvKeys
+      .map((key) => `${key}="${invocation.env[key] ?? ''}" `).join('');
     const cmd =
       `HAPPIER_HOME_DIR="${cliHomeDir}" ` +
       `HAPPIER_SERVER_URL="${internalServerUrl}" ` +
@@ -1731,14 +1734,6 @@ async function cmdLogin({ argv, json }) {
   const shouldAutoStart = flags.has('--start-if-needed');
   let startedStackForExpoAuth = false;
   const guidedReadyTimeoutMs = resolveGuidedServerReadyTimeoutMs(process.env);
-  const authSafeStartSpec = buildAuthSafeStackStartSpec({
-    rootDir,
-    stackName,
-    shouldUseRuntimeStart,
-    effectiveWebappMode,
-    shouldStartDevForAutoAuth,
-    baseEnv: process.env,
-  });
   const waitForGuidedServerReadyOrThrow = async (reason) => {
     const ready = await waitForHappierHealthOk(internalServerUrl, {
       timeoutMs: guidedReadyTimeoutMs,

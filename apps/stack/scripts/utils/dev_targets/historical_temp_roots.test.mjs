@@ -84,6 +84,11 @@ test('count-retention owners can reclaim recent unheld candidates while retainin
   await mkdir(proc);
   await writeFile(join(parent, 'obsolete', 'data'), 'x'.repeat(8192));
   await link(join(parent, 'obsolete', 'data'), join(parent, 'obsolete', 'alias'));
+  // Count retention still requires strictly past mtimes. Set them after the
+  // hard link updates the directory, avoiding fresh/future filesystem timestamps.
+  const recent = new Date(Date.now() - 60 * 1000);
+  await utimes(join(parent, 'obsolete', 'data'), recent, recent);
+  await utimes(join(parent, 'obsolete'), recent, recent);
   const allocatedBytes = ((await stat(join(parent, 'obsolete'))).blocks + (await stat(join(parent, 'obsolete', 'data'))).blocks) * 512;
   const options = { candidateNames: ['obsolete'], minimumAgeMs: 0 };
   assert.equal(reapHistoricalTempRoots(parent, proc, { ...options, ownerUid: process.getuid() + 1 }).reclaimedRoots, 0);

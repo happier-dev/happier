@@ -10,7 +10,7 @@ import { resolveRemoteStackStorageDir } from '../dev_targets/stack_paths.mjs';
 export const EXPO_DEPENDENCY_BARRIER_VERSION = 1;
 
 function restartRequired(message) {
-  const error = new Error(`${message} Restart the managed Stack with the current source before refreshing dependencies.`);
+  const error = new Error(`${message} Stop the owning Stack once on this target, verify its recorded Expo process has exited, then start again. If ownership cannot be verified, inspect the recorded Expo state and process identity before stopping it.`);
   error.code = 'HAPPIER_DEPENDENCY_METRO_RESTART_REQUIRED';
   return error;
 }

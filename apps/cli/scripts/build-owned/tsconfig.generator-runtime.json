@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    // Compiler-only SDK declaration aliases must not override source exports.
+    "paths": {
+      "@/*": ["../../src/*"]
+    }
+  }
+}

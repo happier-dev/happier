@@ -147,4 +147,37 @@ test('stack env shared-db opts a fresh QA stack into source server placement wit
   assert.equal(repeated.code, 0, repeated.stderr);
   const pinned = JSON.parse(await readFile(join(storage, fixture.stackName, 'dev-targets.json'), 'utf8'));
   assert.deepEqual(pinned.runtimePlacement.daemon, { mode: 'local' }, 'an existing explicit daemon placement remains authoritative');
+
+  // Existing shared consumers retain private state during a source provider switch.
+  const retained = join(storage, fixture.stackName, 'server-light');
+  await mkdir(retained, { recursive: true });
+  await writeFile(join(retained, 'private-state'), 'retained QA state');
+  // The controller carries only provider metadata; the URL stays on the source host.
+  await writeFile(join(storage, 'dev', 'env'), 'HAPPIER_DB_PROVIDER=postgres\nHANDY_MASTER_SECRET=fixture-only-secret\n');
+  const activated = await runNodeCapture([join(rootDir, 'scripts', 'stack.mjs'), 'env', fixture.stackName, 'shared-db', 'dev', '--json'], { cwd: rootDir, env: fixture.baseEnv });
+  assert.equal(activated.code, 0, activated.stderr);
+  const postgresConsumer = await readFile(fixture.envPath, 'utf8');
+  assert.doesNotMatch(postgresConsumer + activated.stdout + activated.stderr, /fixture-pg-secret|fixture-only-secret|DATABASE_URL=/);
+  assert.equal(await readFile(join(retained, 'private-state'), 'utf8'), 'retained QA state');
+  assert.deepEqual(JSON.parse(await readFile(join(storage, fixture.stackName, 'dev-targets.json'), 'utf8')).runtimePlacement.daemon, { mode: 'local' });
+
+  // After a host move, a local source env owns the database and file settings.
+  await writeFile(join(storage, 'dev', 'dev-targets.json'), JSON.stringify({ version: 3,
+    targets: [], runtimePlacement: { server: { mode: 'local' } } }));
+  const local = await runNodeCapture([join(rootDir, 'scripts', 'stack.mjs'), 'env', fixture.stackName, 'shared-db', 'dev', '--json'], { cwd: rootDir, env: fixture.baseEnv });
+  assert.equal(local.code, 0, local.stderr);
+  const localEnv = await readFile(fixture.envPath, 'utf8');
+  const localConfig = JSON.parse(await readFile(join(storage, fixture.stackName, 'dev-targets.json'), 'utf8'));
+  assert.ok(localEnv.includes(`HAPPIER_STACK_SHARED_DB_SOURCE_ENV_FILE=${join(storage, 'dev', 'env')}\n`));
+  assert.deepEqual(localConfig.runtimePlacement.server, { mode: 'local' });
+  assert.deepEqual(localConfig.runtimePlacement.daemon, { mode: 'local' });
+  assert.equal(localConfig.targets.find(target => target.name === 'own-worker').ssh, 'own-worker');
+  assert.doesNotMatch(localEnv + local.stdout + local.stderr, /fixture-only-secret|DATABASE_URL=/);
+  assert.equal(await readFile(join(retained, 'private-state'), 'utf8'), 'retained QA state');
+
+  // A retained standalone consumer is still refused; same-source replay is the only exception.
+  await writeFile(fixture.envPath, 'HAPPIER_DB_PROVIDER=sqlite\n');
+  const refused = await runNodeCapture([join(rootDir, 'scripts', 'stack.mjs'), 'env', fixture.stackName, 'shared-db', 'dev', '--json'], { cwd: rootDir, env: fixture.baseEnv });
+  assert.equal(refused.code, 1);
+  assert.match(refused.stderr, /fresh consumer|retained server data/);
 });

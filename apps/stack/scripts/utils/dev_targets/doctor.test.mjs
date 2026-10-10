@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { runDevTargetsDoctor } from './doctor.mjs';
+import { resolveDevTargetMutagenRuntime } from './mutagen_runtime.mjs';
 
 const targets = [
   {
@@ -48,13 +49,11 @@ test('dev-target doctor checks Mutagen and each target through passwordless SSH'
     label: 'mutagen',
     command: 'mutagen',
     args: ['version'],
-    env: { PATH: '/test/bin' },
+    env: resolveDevTargetMutagenRuntime({ stackBaseDir: '/unused', env: { PATH: '/test/bin' } }).env,
   });
-  assert.deepEqual(calls[1].args.slice(0, 7), [
+  assert.deepEqual(calls[1].args.slice(0, 5), [
     '-F',
     '/tmp/linux-ssh.config',
-    '-o',
-    'ControlMaster=no',
     '-o',
     'BatchMode=yes',
     '-o',

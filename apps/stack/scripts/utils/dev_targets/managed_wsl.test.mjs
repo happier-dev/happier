@@ -1,11 +1,31 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { provisionManagedWslDevTarget } from './managed_wsl.mjs';
+import { provisionManagedWslDevTarget, runManagedWslOperation } from './managed_wsl.mjs';
 import { renderSshConfig } from './provision.mjs';
+
+test('WSL provisioning streams the canonical Bun version and preserves an explicit override', async () => {
+  const pinnedVersion = (await readFile(new URL('../../provision/.bun-version', import.meta.url), 'utf8')).trim();
+  const target = { name: 'fixture', managedRuntime: { kind: 'wsl', instance: 'fixture', user: 'happier',
+    host: { ssh: 'fixture', sshConfigFile: '/fixture/config' },
+    capacity: { mode: 'dedicated', shared: { cpus: 8, memoryGiB: 8 }, dedicated: { cpus: 12, memoryGiB: 12 } } } };
+  for (const explicit of ['', '9.9.9']) {
+    await runManagedWslOperation({ target, action: 'Provision', env: { HAPPIER_PROVISION_BUN_VERSION: explicit } }, {
+      // Only the remote SSH/PowerShell process boundary is simulated.
+      runCaptureResult: async (_command, _args, { input }) => {
+        const command = Buffer.from(input.trim(), 'base64').toString('utf8');
+        const encodedProvision = command.match(/-ProvisionBase64 '([A-Za-z0-9+/=]+)'/)?.[1];
+        assert.ok(encodedProvision);
+        const provision = Buffer.from(encodedProvision, 'base64').toString('utf8');
+        assert.ok(provision.startsWith(`export HAPPIER_PROVISION_BUN_VERSION=${explicit || pinnedVersion}\n`));
+        return { exitCode: 0, out: '__HAPPIER_WSL__=' + JSON.stringify({ exists: true, status: 'Running', ok: true, guestToolchain: { ok: true } }) };
+      },
+    });
+  }
+});
 
 test('WSL workers on different Windows hosts cannot share an SSH multiplex connection', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-wsl-ssh-'));

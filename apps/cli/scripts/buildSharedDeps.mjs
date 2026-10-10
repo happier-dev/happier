@@ -229,6 +229,7 @@ export async function runCanonicalBundledPluginArtifactPublisher({
   mode = String(env?.HAPPIER_DEV_TARGET_EXECUTION ?? '').trim() === '1' ? 'check' : 'write',
   aggregateOnly = false,
   compilerInputsOnly = false,
+  scope,
   targetOwnedOnly = false,
   pluginFailures = [],
   publicationMode = 'live',
@@ -238,16 +239,33 @@ export async function runCanonicalBundledPluginArtifactPublisher({
     throw new Error(`Canonical bundled plugin artifact publisher is missing: ${generatorPath}`);
   }
 
+  if (mode === 'write' && !aggregateOnly && !compilerInputsOnly && scope !== 'projections') {
+    // Package-artifact publication consumes compiler outputs. A cold replica
+    // must admit them here, not wait for the caller's later dependency pass.
+    const failedWorkspaceNames = new Set(pluginFailures.map(({ packageName }) => (
+      packageName.replace(/^@happier-dev\//, '')
+    )));
+    const selectedWorkspaceNames = workspaceNames.length > 0 ? workspaceNames
+      : resolveCliBundledWorkspacePackageNames({ repoRoot }).filter(name => name.startsWith(PLUGINS_WORKSPACE_PREFIX));
+    const prepared = await prepareBundledWorkspaceDependenciesForCli({
+      repoRoot, env, quiet, publicationMode,
+      workspaceNames: selectedWorkspaceNames.filter(name => !failedWorkspaceNames.has(name)),
+    });
+    pluginFailures = [...pluginFailures, ...prepared.failedPluginBuilds];
+  }
+
   const command = process.execPath;
   const args = [
     resolve(repoRoot, 'apps', 'cli', 'scripts', 'withNodeHeapLimit.mjs'),
     process.execPath,
+    '--conditions=happier-source',
     '--experimental-strip-types',
     generatorPath,
     '--root',
     repoRoot,
     '--mode',
     mode,
+    ...(scope === 'projections' ? ['--scope', 'projections'] : mode === 'write' && !aggregateOnly && !compilerInputsOnly ? ['--package-artifacts'] : []),
     ...(pluginFailures.length > 0 ? ['--inherited-failures-stdin'] : []),
     ...(compilerInputsOnly
       ? ['--compiler-inputs']
@@ -1926,10 +1944,12 @@ export async function syncSharedDepsForSourceDev(opts = {}) {
   const withLock = opts.withBuildSharedDepsLockImpl ?? withBuildSharedDepsLock;
   const ensureWorkspacePackagesBuilt =
     opts.ensureWorkspacePackagesBuiltByNameImpl ?? ensureWorkspacePackagesBuiltByName;
+  const workspaceNamesToPrepare = workspaceNames.filter((workspaceName) => (
+    opts.preserveBundledPluginArtifacts !== true || !workspaceName.startsWith(PLUGINS_WORKSPACE_PREFIX)
+  ));
+  const workspaceNamesToPrepareSet = new Set(workspaceNamesToPrepare);
   const selectWorkspaceBuilds = (staleBuilds) => (
-    opts.preserveBundledPluginArtifacts === true
-      ? staleBuilds.filter(({ workspaceName }) => !workspaceName.startsWith('plugins-'))
-      : staleBuilds
+    staleBuilds.filter(({ workspaceName }) => workspaceNamesToPrepareSet.has(workspaceName))
   );
   const buildWorkspaceCandidates = async (workspaceBuilds, staleBuilds) => {
     if (workspaceBuilds.length === 0) {
@@ -1948,7 +1968,11 @@ export async function syncSharedDepsForSourceDev(opts = {}) {
     const activeBuilds = new Map();
     return await ensureWorkspacePackagesBuiltWithPluginIsolation({
       repoRoot,
-      workspaceNames: workspaceBuilds.map(({ workspaceName }) => workspaceName),
+      // The pre-scan observes dependency outputs before stale producers rebuild.
+      // Admit the requested closure once so the graph can refresh downstream
+      // runtime outputs, or compile changed declarations, after their producers.
+      // Current siblings still skip compilation at the package owner.
+      workspaceNames: workspaceNamesToPrepare,
       ensureWorkspacePackagesBuiltByNameImpl: ensureWorkspacePackagesBuilt,
       buildOptions: {
         quiet: opts.quiet !== false,
@@ -2001,7 +2025,7 @@ export async function syncSharedDepsForSourceDev(opts = {}) {
   const staleBuildsBeforeLock = collectStaleBuilds();
   const workspaceBuildsBeforeLock = selectWorkspaceBuilds(staleBuildsBeforeLock);
   const workspaceNamesPreparedBeforeLock = new Set(
-    workspaceBuildsBeforeLock.map(({ workspaceName }) => workspaceName),
+    workspaceBuildsBeforeLock.length > 0 ? workspaceNamesToPrepare : [],
   );
   reportSourceDevSharedDepsProgress(reportProgress, {
     stage: 'stale-scan',
@@ -2388,9 +2412,9 @@ export async function prepareBundledWorkspaceDependenciesForCli(opts = {}) {
     opts.ensureWorkspacePackagesBuiltByNameImpl ?? ensureWorkspacePackagesBuiltByName;
   const buildResult = await ensureWorkspacePackagesBuiltWithPluginIsolation({
     repoRoot: resolvedRepoRoot,
-    // The runtime entrypoint defers Plugin builds until the generator has
-    // serialized source manifests. The generator then calls this preparation
-    // owner directly to compile the selected Plugins once.
+    // The runtime entrypoint defers Plugin compilation to the canonical
+    // artifact publisher, which admits its selected compiler outputs through
+    // this same workspace build owner before consuming them.
     workspaceNames: opts.deferPluginBuildToGenerator === true
       ? workspaceNames.filter((name) => !name.startsWith(PLUGINS_WORKSPACE_PREFIX))
       : workspaceNames,

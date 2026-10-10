@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import test from 'node:test';
 
 import YAML from 'yaml';
@@ -14,6 +14,21 @@ const sharedCommands = JSON.parse(execFileSync(process.execPath, [
 ], { encoding: 'utf8' }));
 const checkoutAction = 'actions/checkout@11d5960a326750d5838078e36cf38b85af677262';
 const setupBunAction = 'oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6';
+
+test('every CI and release Bun setup consumes the canonical provisioning version file', async () => {
+  for (const file of await readdir(new URL('.github/workflows/', root))) {
+    if (!/\.ya?ml$/.test(file)) continue;
+    const workflow = YAML.parse(await readFile(new URL(`.github/workflows/${file}`, root), 'utf8'));
+    for (const job of Object.values(workflow?.jobs ?? {})) {
+      for (const step of job.steps ?? []) {
+        if (!String(step.uses ?? '').startsWith('oven-sh/setup-bun@')) continue;
+        assert.equal(step.uses, setupBunAction, file);
+        assert.equal(step.with?.['bun-version-file'], 'apps/stack/scripts/provision/.bun-version', file);
+        assert.equal(step.with?.['bun-version'], undefined, file);
+      }
+    }
+  }
+});
 const stableDiscovery = Object.freeze({
   repository: 'happier-dev/happier',
   discoveryRef: 'cli-stable',
@@ -77,7 +92,8 @@ test('shared package CI materializes the current stable agent discovery baseline
   assert.equal(baselineCheckout?.with?.['persist-credentials'], false);
   assert.match(String(baselineCheckout?.with?.['sparse-checkout'] ?? ''), /packages\/agents\/src/);
   assert.equal(bunSetup?.uses, setupBunAction);
-  assert.equal(bunSetup?.with?.['bun-version'], '1.3.5');
+  assert.equal(bunSetup?.with?.['bun-version-file'], 'apps/stack/scripts/provision/.bun-version');
+  assert.equal(bunSetup?.with?.['bun-version'], undefined);
   assert.equal(
     sharedPackageRun?.env?.HAPPIER_SHIPPED_TREE,
     `\${{ github.workspace }}/${stableDiscovery.path}`,

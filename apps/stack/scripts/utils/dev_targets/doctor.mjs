@@ -1,22 +1,9 @@
 import { spawnProc } from '../proc/proc.mjs';
 import { buildRemoteDoctorCommand, REMOTE_DOCTOR_RUNTIME_TARGET_PREFIX } from './remote_commands.mjs';
 import { doctorManagedDevTargetRuntime } from './managed_runtime.mjs';
-
-const MAX_SSH_DOCTOR_ATTEMPTS = 2;
-
-function classifySshDoctorDiagnosticLine(line) {
-  const diagnostic = String(line ?? '').trim();
-  if (/^ssh: connect to host .+ port \d+: Connection timed out$/i.test(diagnostic)) {
-    return 'ssh-connect-timeout';
-  }
-  if (/permission denied \(|host key verification failed|too many authentication failures/i.test(diagnostic)) {
-    return 'ssh-authentication-failed';
-  }
-  if (/mux_client_request_session: session request failed: Session open refused by peer/i.test(diagnostic)) {
-    return 'ssh-multiplex-session-refused';
-  }
-  return null;
-}
+import { resolveDevTargetMutagenRuntime, resolveDevTargetSshConfigFile } from './mutagen_runtime.mjs';
+import { DEV_TARGET_SYNC_EXECUTOR_REPO } from './mutagen_project.mjs';
+import { classifyDevTargetSshDiagnostic, resolveDevTargetSshDiagnostic, runDevTargetSshProcess } from './ssh_transport.mjs';
 
 async function defaultRunProcess({ label, command, args, env }) {
   let diagnosticReason = null;
@@ -25,7 +12,7 @@ async function defaultRunProcess({ label, command, args, env }) {
     silent: true,
     onLine({ stream, line }) {
       if (command === 'ssh' && stream === 'stderr') {
-        diagnosticReason ??= classifySshDoctorDiagnosticLine(line);
+        diagnosticReason ??= classifyDevTargetSshDiagnostic(line);
       }
       if (command === 'ssh' && stream === 'stdout' && line.startsWith(REMOTE_DOCTOR_RUNTIME_TARGET_PREFIX)) {
         runtimeTargetLines.push(line);
@@ -54,19 +41,6 @@ function readObservedRuntimeTarget(result) {
   }
 }
 
-function resolveSshDoctorDiagnosticReason(result) {
-  if (result?.code === 0) return null;
-  if (result?.code === 255) {
-    if (result?.diagnosticReason) return result.diagnosticReason;
-    for (const line of [result?.stderr, result?.err].filter(Boolean).flatMap((value) => String(value).split(/\r?\n/))) {
-      const diagnosticReason = classifySshDoctorDiagnosticLine(line);
-      if (diagnosticReason) return diagnosticReason;
-    }
-    return 'ssh-connection-failed';
-  }
-  return result?.error?.code ? 'ssh-process-failed' : 'remote-doctor-failed';
-}
-
 function processResult(result, { diagnosticReason } = {}) {
   return {
     ok: result?.code === 0,
@@ -77,7 +51,7 @@ function processResult(result, { diagnosticReason } = {}) {
 }
 
 export async function runDevTargetsDoctor(
-  { targets, env = process.env },
+  { targets, stackBaseDir, env = process.env },
   {
     runProcess = defaultRunProcess,
     doctorManagedRuntime = doctorManagedDevTargetRuntime,
@@ -88,44 +62,28 @@ export async function runDevTargetsDoctor(
       label: 'mutagen',
       command: 'mutagen',
       args: ['version'],
-      env,
+      env: resolveDevTargetMutagenRuntime({ stackBaseDir: stackBaseDir ?? DEV_TARGET_SYNC_EXECUTOR_REPO, env }).env,
     }),
   );
   const targetResults = [];
   for (const target of targets) {
+    const sshConfigFile = resolveDevTargetSshConfigFile(target, { stackBaseDir, env });
     const managedRuntime = target.managedRuntime
       ? await doctorManagedRuntime({ target, env })
       : null;
-    let sshProcessResult;
-    let diagnosticReason;
-    for (let attempt = 1; attempt <= MAX_SSH_DOCTOR_ATTEMPTS; attempt += 1) {
-      const sshArgs = [
-        ...(target.sshConfigFile ? ['-F', target.sshConfigFile] : []),
-        '-o',
-        'ControlMaster=no',
-        ...(attempt > 1 ? ['-o', 'ControlPath=none'] : []),
+    const sshProcessResult = await runDevTargetSshProcess({
+      label: `remote:${target.name}`, command: 'ssh', env,
+      args: [
+        ...(sshConfigFile ? ['-F', sshConfigFile] : []),
         '-o',
         'BatchMode=yes',
         '-o',
         'ConnectTimeout=10',
         target.ssh,
         buildRemoteDoctorCommand(target),
-      ];
-      sshProcessResult = await runProcess({
-        label: `remote:${target.name}`,
-        command: 'ssh',
-        args: sshArgs,
-        env,
-      });
-      diagnosticReason = resolveSshDoctorDiagnosticReason(sshProcessResult);
-      if (
-        sshProcessResult?.code === 0
-        || !['ssh-connect-timeout', 'ssh-multiplex-session-refused'].includes(diagnosticReason)
-        || attempt === MAX_SSH_DOCTOR_ATTEMPTS
-      ) {
-        break;
-      }
-    }
+      ],
+    }, runProcess);
+    const diagnosticReason = resolveDevTargetSshDiagnostic(sshProcessResult);
     const sshResult = processResult(sshProcessResult, { diagnosticReason });
     const runtimeTarget = readObservedRuntimeTarget(sshProcessResult);
     targetResults.push({

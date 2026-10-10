@@ -29,7 +29,7 @@ test('hstack auth login does not pass --force by default', async () => {
   });
   try {
     const parsed = await runLoginPrintJson({ rootDir, fixture });
-    assert.doesNotMatch(parsed.cmd, /\s--force(\s|$)/, `expected command to omit --force by default\n${parsed.cmd}`);
+    assert.doesNotMatch(parsed.cmd, /"--force"|\s--force(\s|$)/, `expected command to omit --force by default\n${parsed.cmd}`);
   } finally {
     await fixture.cleanup();
   }

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdir, readFile, writeFile, access } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { installNativeAdmissionFixture } from '../../testkit/core/native_admission_fixture.mjs';
 import { writeFakeBin } from '../../testkit/core/fake_bin_harness.mjs';
@@ -11,6 +11,31 @@ import { writeFakeBin } from '../../testkit/core/fake_bin_harness.mjs';
 const custody = new URL('./remote_execution_custody.sh', import.meta.url).pathname;
 const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
 const tempHelper = new URL('../../../../../scripts/testing/process/temporaryDirectories.mjs', import.meta.url).href;
+
+test('routed scratch defaults beneath the disk-backed worker home and preserves an explicit TMPDIR', async t => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-worker-scratch-' });
+  const workerHome = join(root, 'worker-home');
+  const env = { ...process.env };
+  delete env.TMPDIR;
+  delete env.TMP;
+  delete env.TEMP;
+  const explicit = join(root, 'explicit');
+  await mkdir(explicit);
+  for (const tmpdir of [undefined, '', explicit]) {
+    const invocationEnv = { ...env, ...(tmpdir === undefined ? {} : { TMPDIR: tmpdir }) };
+    const result = spawnSync('/bin/bash', [custody, 'run', join(workerHome, 'remote-exec/scratch.pid'), 'scratch',
+      process.execPath, '--input-type=module', '-e', `
+        import { mkdtempSync, rmSync } from 'node:fs';
+        import { tmpdir } from 'node:os';
+        import { join } from 'node:path';
+        const scratch = mkdtempSync(join(tmpdir(), 'hstack-payload-scratch-'));
+        console.log(scratch);
+        rmSync(scratch, { recursive: true });
+      `], { env: invocationEnv, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(dirname(result.stdout.trim()), tmpdir || join(workerHome, 'tmp'));
+  }
+});
 
 test('dispatch reclaims marked dead temp owners while retaining live groups, reused PIDs and unmarked neighbors', { skip: process.platform !== 'linux' }, async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-temp-custody-' });

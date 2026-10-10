@@ -5,7 +5,51 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { inspectDependencyRefresh, withDependencyRefresh } from './dependency_refresh.mjs';
+import { inspectDependencyRefresh, isDependencyRefreshLockActive, withDependencyRefresh, withDependencyRefreshLock } from './dependency_refresh.mjs';
+
+test('dependency refresh waits for its live owner beyond the former acquisition cutoff', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-dependency-owner-lifetime-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  let clock = Date.now();
+  t.mock.method(Date, 'now', () => clock);
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  let releaseOwner;
+  let markOwnerStarted;
+  const held = new Promise(resolve => { releaseOwner = resolve; });
+  const started = new Promise(resolve => { markOwnerStarted = resolve; });
+  const owner = withDependencyRefreshLock({ installDir: root }, async () => {
+    markOwnerStarted();
+    await held;
+  });
+  await started;
+  let payloadStarts = 0;
+  let outcome = 'pending';
+  const contender = withDependencyRefreshLock({ installDir: root }, async () => { payloadStarts += 1; })
+    .then(() => { outcome = 'completed'; }, error => { outcome = error.message; });
+  try {
+    // OS clock/timer boundaries advance the waiting duration while retaining
+    // the real owner's fresh heartbeat and real filesystem lock.
+    clock += 240_001;
+    t.mock.timers.tick(5_000);
+    await new Promise(resolve => setTimeout(resolve, 300));
+    assert.equal(outcome, 'pending', 'a live dependency owner governs admission, not a subordinate acquisition deadline');
+    assert.equal(payloadStarts, 0, 'a waiting contender must not start authoritative installation');
+    // The real bootstrap uses synchronous Yarn subprocesses, which can delay
+    // this owner's JavaScript heartbeat without ending its installation.
+    clock += 240_001;
+    await new Promise(resolve => setTimeout(resolve, 300));
+    assert.equal(outcome, 'pending', 'a delayed heartbeat must not let a contender replace a live installer');
+    assert.equal(payloadStarts, 0);
+    assert.equal(isDependencyRefreshLockActive({ installDir: root }), true);
+    releaseOwner();
+    await Promise.all([owner, contender]);
+    assert.equal(outcome, 'completed');
+    assert.equal(payloadStarts, 1);
+  } finally {
+    releaseOwner();
+    await Promise.allSettled([owner, contender]);
+  }
+});
 
 test('dependency readiness is published only after postinstall completion and remains stale on failure', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-dependency-postinstall-publication-'));
@@ -84,8 +128,8 @@ test('UI password codec source changes invalidate remote install readiness', asy
   assert.equal((await inspectDependencyRefresh({ installDir: root })).required, false);
 });
 
-test('dependency refresh reclaims a stale lock after its pid is reused', async (t) => {
-  const fixtureRoot = await mkdtemp(join(tmpdir(), 'happier-dependency-lock-reused-pid-'));
+test('dependency refresh reclaims a lock whose owner exited', async (t) => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), 'happier-dependency-lock-exited-owner-'));
   t.after(async () => {
     await rm(fixtureRoot, { recursive: true, force: true });
   });
@@ -106,13 +150,16 @@ test('dependency refresh reclaims a stale lock after its pid is reused', async (
   const script = [
     "import { mkdir, writeFile } from 'node:fs/promises';",
     "import { dirname } from 'node:path';",
+    "import { spawnSync } from 'node:child_process';",
     `import { withDependencyRefresh } from ${JSON.stringify(moduleUrl)};`,
     `const lockPath = ${JSON.stringify(lockPath)};`,
     'await mkdir(dirname(lockPath), { recursive: true });',
+    'const exitedOwner = spawnSync(process.execPath, ["-e", ""], { stdio: "ignore" });',
+    'if (exitedOwner.status !== 0) throw new Error("fixture owner did not exit successfully");',
     'await writeFile(lockPath, JSON.stringify({',
-    '  pid: process.pid,',
-    '  createdAtMs: Date.now() - 300_000,',
-    '  updatedAtMs: Date.now() - 300_000,',
+    '  pid: exitedOwner.pid,',
+    '  createdAtMs: Date.now(),',
+    '  updatedAtMs: Date.now(),',
     '}), "utf8");',
     `await withDependencyRefresh({ installDir: ${JSON.stringify(fixtureRoot)} }, async () => {});`,
     'process.stdout.write("refreshed\\n");',
@@ -133,7 +180,7 @@ test('dependency refresh reclaims a stale lock after its pid is reused', async (
   const result = await new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       child.kill('SIGKILL');
-      reject(new Error('dependency refresh did not reclaim the stale reused-pid lock'));
+      reject(new Error('dependency refresh did not reclaim the exited-owner lock'));
     }, 5_000);
     child.once('error', (error) => {
       clearTimeout(timeout);

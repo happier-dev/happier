@@ -1,6 +1,5 @@
 import { cp, mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
-import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 import { transferOpenSshFile } from '@happier-dev/cli-common/ssh';
@@ -128,7 +127,10 @@ export async function packControlledRuntimeSnapshot({ snapshot, target, archiveP
 }
 
 export async function importControlledRuntimeArchive({ archivePath, stackBaseDir, snapshotId, target = { platform: process.platform, arch: process.arch }, env, requiredComponents }) {
-  const temporary = await mkdtemp(join(tmpdir(), 'hstack-runtime-import-'));
+  // Stage the artifact closure on its destination filesystem. System temp can
+  // be quota-limited tmpfs even when the retained Stack store has ample space.
+  await mkdir(stackBaseDir, { recursive: true });
+  const temporary = await mkdtemp(join(stackBaseDir, '.runtime-import-'));
   try {
     await runRuntimeArchiveCommand(['-xf', archivePath, '-C', temporary], { env });
     const paths = resolveStackRuntimePaths({ stackBaseDir: temporary, snapshotId });

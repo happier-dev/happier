@@ -1,3 +1,4 @@
+import { unexpectedProjectNativeAdapterResolution } from "@/plugins/testkit/unexpectedProjectNativeAdapterResolution";
 import { unexpectedCaptureSourceResolution } from "@/plugins/testkit/unexpectedCaptureSourceResolution";
 import { PluginAgentContributionV2Schema } from '@happier-dev/protocol';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -38,6 +39,7 @@ describe('Agent CLI resolution from the admitted catalog', () => {
       hookHandlersByHookId: new Map(), agentRuntimesByAgentId: new Map(), scmHostingProvidersById: new Map(),
       pluginDiagnosticsByPluginId: {}, activatedPluginIds: new Set<string>(),
       resolveCaptureSource: unexpectedCaptureSourceResolution,
+      resolveProjectNativeAdapter: unexpectedProjectNativeAdapterResolution,
       activateContributionsOnDemand: async () => [], resolvePromptAssetBlocks: async () => [],
       createAgentInvocationServices: async () => { throw new Error('No plugin invocation in this catalog fixture'); },
       retireConsumers: () => {}, dispose: async () => {},

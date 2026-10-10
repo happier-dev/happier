@@ -18,7 +18,6 @@ import {
 } from '@happier-dev/cli-common/componentArtifacts';
 import { withWorkspaceBundleLock } from '@happier-dev/cli-common/workspaceBundleLock';
 import { runCapture } from '../utils/proc/proc.mjs';
-import { ensureWorkspacePackagesBuiltForComponent } from '../utils/proc/pm.mjs';
 
 const SERVER_RUNTIME_SUPPORT_ENTRYPOINT = '.happier-server-support.json';
 const SERVER_RUNTIME_SUPPORT_DIRECTORIES = Object.freeze(['generated', 'prisma', 'node_modules', 'runtime']);
@@ -75,9 +74,6 @@ export async function resolveServerRuntimeSupportInputs({
     serverComponent,
     env,
   });
-  // Captures omit dist. Admit the server's workspace closure before reading
-  // sidecar bytes, including the Iroh wrapper, through the package-build owner.
-  await ensureWorkspacePackagesBuiltForComponent(join(sourceMetadata.repoDir, 'apps', 'server'), { env });
   const entries = await resolveServerRuntimeSupportEntries({
     repoRoot: sourceMetadata.repoDir,
     target,

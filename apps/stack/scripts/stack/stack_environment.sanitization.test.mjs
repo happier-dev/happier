@@ -9,6 +9,7 @@ import { withStackEnv } from './stack_environment.mjs';
 import { resolveStackServerEndpoint } from '../utils/server/urls.mjs';
 import { applyStackCacheEnv } from '../utils/proc/pm.mjs';
 import { resolveCommandPath } from '../utils/proc/commands.mjs';
+import { spawnProc } from '../utils/proc/proc.mjs';
 
 async function withTempStackEnvFixture(fn, { includeServerPort = true } = {}) {
   const tmp = await mkdtemp(join(tmpdir(), 'hstack-stack-env-sanitize-'));
@@ -42,6 +43,42 @@ async function withTempStackEnvFixture(fn, { includeServerPort = true } = {}) {
     await rm(tmp, { recursive: true, force: true });
   }
 }
+
+test('withStackEnv persists runtime stdout and stderr in the selected stack logs', async () => {
+  await withTempStackEnvFixture(async ({ stackName, storageDir }) => {
+    const previous = process.env.HAPPIER_STACK_LOG_TEE_DIR;
+    process.env.HAPPIER_STACK_LOG_TEE_DIR = join(storageDir, 'foreign-stack', 'logs');
+    try {
+      await withStackEnv({
+        stackName,
+        reconcileDaemonRuntimeState: false,
+        fn: async ({ env }) => {
+          // Stack's run entry loads this environment again in its child process.
+          const script = `
+            await import(${JSON.stringify(new URL('../utils/env/env.mjs', import.meta.url).href)});
+            const { spawnProc } = await import(${JSON.stringify(new URL('../utils/proc/proc.mjs', import.meta.url).href)});
+            for (const label of ['server', 'daemon']) {
+              const child = spawnProc(label, process.execPath,
+                ['-e', 'console.log("runtime stdout"); console.error("runtime stderr")'], process.env, { silent: true });
+              if ((await child.completion).code !== 0) process.exitCode = 1;
+            }
+          `;
+          const entry = spawnProc('stack-start', process.execPath, ['--input-type=module', '-e', script], env,
+            { silent: true, persistOutput: false });
+          assert.equal((await entry.completion).code, 0);
+          for (const label of ['server', 'daemon']) {
+            const log = await readFile(join(storageDir, stackName, 'logs', `${label}.log`), 'utf8');
+            assert.match(log, /runtime stdout/);
+            assert.match(log, /runtime stderr/);
+          }
+        },
+      });
+    } finally {
+      if (previous === undefined) delete process.env.HAPPIER_STACK_LOG_TEE_DIR;
+      else process.env.HAPPIER_STACK_LOG_TEE_DIR = previous;
+    }
+  });
+});
 
 test('withStackEnv clears leaked unprefixed server/home env vars from caller scope', async () => {
   await withTempStackEnvFixture(async ({ stackName }) => {
@@ -484,12 +521,14 @@ test('withStackEnv preserves an explicit package cache root while scrubbing unre
   await withTempStackEnvFixture(async ({ stackName, storageDir }) => {
     const keys = [
       'HAPPIER_STACK_PM_CACHE_BASE_DIR',
+      'YARN_CACHE_FOLDER',
       'HAPPIER_STACK_UNRELATED_CALLER_VALUE',
     ];
     const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
     const cacheBaseDir = join(storageDir, 'remote-package-cache');
 
     process.env.HAPPIER_STACK_PM_CACHE_BASE_DIR = cacheBaseDir;
+    delete process.env.YARN_CACHE_FOLDER;
     process.env.HAPPIER_STACK_UNRELATED_CALLER_VALUE = 'must-not-leak';
 
     try {

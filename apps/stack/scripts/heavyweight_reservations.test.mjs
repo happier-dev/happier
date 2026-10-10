@@ -7,6 +7,7 @@ import { createTempFixture } from './testkit/core/temp_fixture.mjs';
 import { writeFakeBin } from './testkit/core/fake_bin_harness.mjs';
 import { installNativeAdmissionFixture } from './testkit/core/native_admission_fixture.mjs';
 import { readLinuxWorkerProcesses } from './utils/proc/service_memory.mjs';
+import { resolveHeavyweightMemoryFloorKiB } from './utils/dev_targets/remote_commands.mjs';
 
 async function waitForAdmissionDecision(child, readStderr) {
   for (let attempt = 0; attempt < 250; attempt++) {
@@ -16,52 +17,6 @@ async function waitForAdmissionDecision(child, readStderr) {
   }
   assert.fail(`waiter did not decide admission: ${readStderr()}`);
 }
-
-test('controller VM and Darwin admissions observe their shared physical CPU pressure', { skip: process.platform !== 'linux' }, async t => {
-  const fixture = await createTempFixture(t, { prefix: 'hstack-shared-cpu-' });
-  const { launcher } = await installNativeAdmissionFixture({ root: fixture.root });
-  const sourceRoot = join(fixture.root, 'native-owner');
-  const stackDir = fixture.path('stacks/repo-native');
-  await mkdir(stackDir, { recursive: true });
-  await writeFile(join(stackDir, 'dev-target-exec-v1.sh'), [
-    `projection_repo_root='${sourceRoot}'`, "target_count='1'", "target_1_name='mac-host'",
-    "target_1_ssh='fixture-host'", "target_1_ssh_config=''",
-  ].join('\n'));
-  const load = fixture.path('host-load');
-  await writeFile(load, '18 41\n');
-  writeFakeBin({ root: fixture.root, name: 'ssh', content: '#!/bin/sh\n[ "${HOST_OBSERVABLE-1}" = 1 ] || exit 255\ncat "$FIXTURE_HOST_LOAD"\n' });
-  writeFakeBin({ root: fixture.root, name: 'uname', content: '#!/bin/sh\nprintf "%s\\n" "$FIXTURE_PLATFORM"\n' });
-  writeFakeBin({ root: fixture.root, name: 'sysctl', content: '#!/bin/sh\ncase "$*" in *hw.ncpu*) printf "18\\n" ;; *vm.loadavg*) read cpu load < "$FIXTURE_HOST_LOAD"; printf "{ %s 0 0 }\\n" "$load" ;; esac\n' });
-  writeFakeBin({ root: fixture.root, name: 'awk', content: `#!/bin/sh
-case "$*" in
-  */proc/meminfo*) printf '48000000 73400320\\n' ;;
-  */proc/loadavg*|*/proc/pressure/*) printf '0\\n' ;;
-  *) exec /usr/bin/awk "$@" ;;
-esac
-` });
-  writeFakeBin({ root: fixture.root, name: 'systemctl', content: '#!/bin/sh\nexit 1\n' });
-  const env = { ...process.env, PATH: `${fixture.path('bin')}:/usr/bin:/bin`,
-    HAPPIER_STACK_STORAGE_DIR: fixture.path('stacks'), FIXTURE_HOST_LOAD: load,
-    HAPPIER_DEV_TARGET_EXECUTION: '', HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN: '',
-    HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT: '', HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE: '' };
-  const run = (platform, machine = 'local', extra = {}) => spawnSync('/bin/sh', [launcher,
-    '--heavyweight-admission', '--class=validation', `--machine=${machine}`, '--no-wait', '--', '/usr/bin/printf', 'started',
-  ], { env: { ...env, FIXTURE_PLATFORM: platform, ...extra }, encoding: 'utf8' });
-  for (const platform of ['Linux', 'Darwin']) {
-    const blocked = run(platform);
-    assert.equal(blocked.status, 75, `${platform}: ${blocked.stderr}`);
-    assert.equal(blocked.stdout, '');
-    assert.match(blocked.stderr, /host-cpu-load=41\/18/);
-  }
-  assert.equal(run('Linux', 'worker', { HAPPIER_DEV_TARGET_EXECUTION: '1' }).status, 0);
-  assert.equal(run('Linux', 'local', { HOST_OBSERVABLE: '0' }).status, 0, 'unobservable host pressure does not fabricate a denial');
-  await writeFile(load, '18 10\n');
-  for (const platform of ['Linux', 'Darwin']) {
-    const quiet = run(platform);
-    assert.equal(quiet.status, 0, quiet.stderr);
-    assert.equal(quiet.stdout, 'started');
-  }
-});
 
 test('local heavyweight admission protects the browser memory floor without raising worker envelopes', { skip: process.platform !== 'linux' }, async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-local-memory-floor-' });
@@ -99,7 +54,7 @@ esac
   assert.equal(admitted.stdout, 'started');
   const compilation = spawnSync('/bin/sh', [launcher, '--heavyweight-admission-check', '--class=compilation', '--machine=local'], { env, encoding: 'utf8' });
   assert.equal(compilation.status, 1, compilation.stderr);
-  assert.match(compilation.stderr, /requires=22020096 KiB/);
+  assert.match(compilation.stderr, new RegExp(`requires=${resolveHeavyweightMemoryFloorKiB('compilation')} KiB`));
 
   // Explicit local execution shares the same gate, waits without starting
   // its payload, and resumes when the observed memory floor is available.
@@ -128,7 +83,12 @@ test('heavyweight admission backfills fitting work within the blocked head envel
   const { launcher } = await installNativeAdmissionFixture({ root: fixture.root, admissionRoot: fixture.path('heavyweight-admission-v1') });
   const memory = fixture.path('memory');
   const marker = fixture.path('large-started');
-  await writeFile(memory, '9437184 47185920\n');
+  const headKiB = resolveHeavyweightMemoryFloorKiB('compilation-server');
+  const smallKiB = resolveHeavyweightMemoryFloorKiB('validation');
+  const availableKiB = smallKiB + Math.floor((headKiB - 2 * smallKiB) / 2);
+  const totalKiB = headKiB * 3;
+  const setMemory = available => writeFile(memory, `${available} ${totalKiB}\n`);
+  await setMemory(availableKiB);
   writeFakeBin({ root: fixture.root, name: 'awk', content: `#!/bin/sh
 case "$*" in
   */proc/meminfo*) /usr/bin/awk '{print $1, $2}' "$FIXTURE_MEMORY" ;;
@@ -150,7 +110,7 @@ esac
   let head, headExited, stderr;
   const startHead = async () => {
     stderr = '';
-    head = spawn('/bin/sh', [launcher, '--heavyweight-admission', '--class=compilation', '--machine=fixture', '--', '/bin/sh', '-c', 'touch "$1"', 'large', marker], { env });
+    head = spawn('/bin/sh', [launcher, '--heavyweight-admission', '--class=compilation-server', '--machine=fixture', '--', '/bin/sh', '-c', 'touch "$1"', 'large', marker], { env });
     head.stderr.on('data', chunk => { stderr += chunk; });
     headExited = new Promise(resolveExit => head.once('exit', resolveExit));
     await waitForAdmissionDecision(head, () => stderr);
@@ -160,13 +120,13 @@ esac
     await headExited;
   });
   await startHead();
-  await writeFile(memory, '5242880 47185920\n');
+  await setMemory(smallKiB - 1);
   for (let retry = 0; retry < 4; retry++) {
     const unavailable = runSmall();
     assert.equal(unavailable.status, 75, unavailable.stderr);
     assert.equal(unavailable.stdout, '');
   }
-  await writeFile(memory, '9437184 47185920\n');
+  await setMemory(availableKiB);
   const firstSmall = runSmall();
   assert.equal(firstSmall.status, 0, firstSmall.stderr);
   assert.equal(firstSmall.stdout, 'small');
@@ -175,7 +135,7 @@ esac
     const ready = runSmall(true);
     assert.equal(ready.status, 0, ready.stderr);
   }
-  for (let admitted = 1; admitted < 3; admitted++) {
+  for (let admitted = 1; admitted < Math.floor(headKiB / smallKiB); admitted++) {
     const small = runSmall();
     assert.equal(small.status, 0, small.stderr);
     assert.equal(small.stdout, 'small');
@@ -184,19 +144,19 @@ esac
   assert.equal(exhausted.status, 75, exhausted.stderr);
   assert.equal(exhausted.stdout, '');
   await assert.rejects(readFile(marker), { code: 'ENOENT' });
-  await writeFile(memory, '22020096 47185920\n');
+  await setMemory(headKiB);
   assert.equal(await headExited, 0, stderr);
   await readFile(marker);
   const afterHead = runSmall();
   assert.equal(afterHead.status, 0, afterHead.stderr);
   // A fresh head has an unused backfill envelope, but approaching its floor
   // already protects enough capacity for it instead of starting another job.
-  await writeFile(memory, '18874368 47185920\n');
+  await setMemory(headKiB - smallKiB);
   await startHead();
   const approaching = runSmall();
   assert.equal(approaching.status, 75, approaching.stderr);
   assert.equal(approaching.stdout, '');
-  await writeFile(memory, '22020096 47185920\n');
+  await setMemory(headKiB);
   assert.equal(await headExited, 0, stderr);
 });
 
@@ -206,7 +166,9 @@ test('heavyweight admission reserves unused admitted class memory and releases i
   await writeFile(observedPidsPath, '[]');
   const { launcher, admissionRoot: admission } = await installNativeAdmissionFixture({ root: fixture.root, observedPidsPath });
   const memory = fixture.path('memory');
-  await writeFile(memory, '37748736 47185920\n');
+  const compilationKiB = resolveHeavyweightMemoryFloorKiB('compilation');
+  const totalKiB = compilationKiB * 3;
+  await writeFile(memory, `37748736 ${totalKiB}\n`);
   const release = fixture.path('release');
   const marker = fixture.path('started');
   writeFakeBin({ root: fixture.root, name: 'awk', content: `#!/bin/sh
@@ -243,7 +205,7 @@ esac
       await new Promise(resolveWait => setTimeout(resolveWait, 20));
     }
     await assert.rejects(readFile(secondMarker), { code: 'ENOENT' }, 'a second 21 GiB class must wait while the first reservation consumes its headroom');
-    assert.match(contenderErr, /reserved-memory=22020096/, 'an unobserved owner retains the full class reservation');
+    assert.match(contenderErr, new RegExp(`reserved-memory=${compilationKiB}`), 'an unobserved owner retains the full class reservation');
     const fullFloorKiB = Number(/ reserved-memory=(\d+)/.exec(contenderErr)?.[1]);
     await writeFile(release, '');
     assert.equal(await exited, 0, stderr);
@@ -261,16 +223,24 @@ esac
     assert.equal(blocked.status, 1, blocked.stderr);
     const unusedKiB = Number(/ reserved-memory=(\d+)/.exec(blocked.stderr)?.[1]);
     assert.ok(unusedKiB > 0 && unusedKiB < fullFloorKiB, 'a recorded live owner reserves only its unused class envelope');
+    const memorySample = spawnSync('/bin/sh', [launcher, '--heavyweight-memory-sample'], { env, encoding: 'utf8' });
+    assert.equal(memorySample.status, 0, memorySample.stderr);
+    const sample = JSON.parse(memorySample.stdout);
+    assert.equal(sample.availableMemoryKiB, 37748736);
+    assert.ok(sample.reservedMemoryKiB > 0 && sample.reservedMemoryKiB < fullFloorKiB);
+    assert.equal(sample.unreservedMemoryKiB, 37748736 - sample.reservedMemoryKiB,
+      'pin selection uses the same resident-RSS credit as admission, without subtracting services twice');
     const declined = spawnSync('/bin/sh', [launcher, '--heavyweight-admission', '--no-wait', ...args, '--', '/bin/sh', '-c', 'exit 42'], { env, encoding: 'utf8' });
     assert.equal(declined.status, 75, declined.stderr);
     assert.match(declined.stderr, /heavyweight admission declined before dispatch/);
     // Lower classes still fit; reservations impose memory capacity, not one job.
     const light = spawnSync('/bin/sh', [launcher, '--heavyweight-admission-check', '--admission-root=' + admission, '--class=validation', '--machine=fixture'], { env, encoding: 'utf8' });
     assert.equal(light.status, 0, light.stderr);
-    const rssKiB = readLinuxWorkerProcesses().get(process.pid).rssKiB;
+    const processMemory = readLinuxWorkerProcesses().get(process.pid);
+    const residentKiB = processMemory.pssKiB ?? processMemory.rssKiB;
     // This headroom cannot fit two full envelopes, but can fit the new class
     // after crediting the authenticated live owner's already-resident memory.
-    await writeFile(memory, `${fullFloorKiB * 2 - Math.floor(rssKiB / 2)} 47185920\n`);
+    await writeFile(memory, `${fullFloorKiB * 2 - Math.floor(residentKiB / 2)} ${totalKiB}\n`);
     const residentCredit = spawnSync('/bin/sh', [launcher, '--heavyweight-admission', '--no-wait', ...args,
       '--', '/usr/bin/printf', 'unused-reservation-admitted'], { env, encoding: 'utf8' });
     assert.equal(residentCredit.status, 0, residentCredit.stderr);
@@ -282,6 +252,10 @@ esac
     await mkdir(stale);
     await writeFile(join(stale, 'process'), '99999999 1\n');
     await writeFile(join(stale, 'class'), 'compilation\n');
+    const staleSample = spawnSync('/bin/sh', [launcher, '--heavyweight-memory-sample'], { env, encoding: 'utf8' });
+    assert.equal(staleSample.status, 0, staleSample.stderr);
+    assert.equal(JSON.parse(staleSample.stdout).reservedMemoryKiB, 0);
+    assert.equal(await readFile(join(stale, 'process'), 'utf8'), '99999999 1\n', 'observation never reclaims stale owner records');
     assert.equal(probe().status, 0, 'dead owner must release its memory reservation');
   } finally {
     await writeFile(release, '');

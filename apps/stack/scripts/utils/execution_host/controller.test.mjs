@@ -38,7 +38,7 @@ function fakeExecutor({ status = 'Stopped', doctorOk = true } = {}) {
     },
     async run(command, args) {
       calls.push({ kind: 'run', command, args });
-      if (args[0] === 'start') status = 'Running';
+      if (args[0] === 'restart') status = 'Running';
       return { exitCode: 0 };
     },
     doctorOk,
@@ -61,7 +61,7 @@ test('candidate host execution starts only an existing retained VM and runs in a
 
   assert.equal(result.exitCode, 0);
   assert.deepEqual(executor.calls.filter((call) => call.kind === 'run').map((call) => call.args), [
-    ['start', profile.instance],
+    ['restart', profile.instance],
   ]);
   assert.deepEqual(guestArgs.slice(0, 5), ['shell', '--workdir', '/home/example/.happier-stack/workspace/dev', profile.instance, '--']);
   assert.deepEqual(guestArgs.slice(-3), ['rg', 'needle', 'path with spaces']);
@@ -98,6 +98,17 @@ test('execution host inspection is read-only and keeps candidate status explicit
   assert.equal(doctorInput.diskImageFormat, 'asif');
 });
 
+test('retained Lima inspection does not claim VM authority while SSH is the selected primary', async () => {
+  const result = await inspectExecutionHost({
+    profile: { ...profile, version: 2, activation: 'active', mode: 'ssh-dev-target',
+      sshPrimary: { targetName: 'nl2', stackName: 'lane' } },
+    executor: fakeExecutor(),
+  });
+  assert.equal(result.authoritative, false);
+  assert.equal(result.profile.mode, 'ssh-dev-target');
+  assert.equal(result.doctor.status, 'Stopped');
+});
+
 test('execution host inspection evaluates the active capacity preset', async () => {
   let doctorInput;
   await inspectExecutionHost({
@@ -127,6 +138,19 @@ test('ordinary delegation requires active mode and stays disabled in recursion, 
   assert.equal(shouldDelegateToActiveExecutionHost({ profile: active, argv: ['typecheck'], platform: 'darwin', env: { CI: '1' } }), false);
   assert.equal(shouldDelegateToActiveExecutionHost({ profile: active, argv: ['typecheck'], platform: 'darwin', env: { HAPPIER_STACK_SANDBOX_DIR: '/tmp/s' } }), false);
   assert.equal(shouldDelegateToActiveExecutionHost({ profile: active, argv: ['typecheck'], platform: 'darwin', env: { HAPPIER_STACK_EXECUTION_HOST_REENTRY: '1' } }), false);
+});
+
+test('SSH primary uses the same Mac delegation admission and host-only exceptions', () => {
+  const active = { ...profile, version: 2, activation: 'active', mode: 'ssh-dev-target',
+    sshPrimary: { targetName: 'nl2', stackName: 'repo-dev' } };
+  assert.equal(shouldDelegateToActiveExecutionHost({ profile: active, argv: ['tui'], platform: 'darwin', env: {} }), true);
+  for (const argv of [['dev-vm', 'primary', 'assign', 'lima'], ['mobile'], ['eas'], ['tools', 'managed-lima']]) {
+    assert.equal(shouldDelegateToActiveExecutionHost({ profile: active, argv, platform: 'darwin', env: {} }), false);
+  }
+  for (const env of [{ CI: '1' }, { HAPPIER_STACK_EXECUTION_HOST_REENTRY: '1' }]) {
+    assert.equal(shouldDelegateToActiveExecutionHost({ profile: active, argv: ['tui'], platform: 'darwin', env }), false);
+  }
+  assert.equal(shouldDelegateToActiveExecutionHost({ profile: active, argv: ['tui'], platform: 'linux', env: {} }), false);
 });
 
 
@@ -168,4 +192,45 @@ test('explicit guest execution cancels its guest job before closing the host tra
   } });
   assert.equal(guestRunning, false, 'interrupting the host must not detach a live guest job');
   assert.deepEqual(result, { exitCode: null, signal: 'SIGINT' });
+});
+
+test('active explicit guest execution retains pending updates but rejects unsafe configuration', async (t) => {
+  for (const unsafe of [false, true]) {
+    await t.test(unsafe ? 'unsafe configuration' : 'pending toolchain', async () => {
+      const executor = fakeExecutor({ status: 'Running' });
+      const capture = executor.capture.bind(executor);
+      executor.capture = async (command, args) => {
+        const result = await capture(command, args);
+        if (args[0] === 'list' && unsafe) {
+          const instance = JSON.parse(result.out);
+          instance.config.ssh.forwardAgent = true;
+          return { ...result, out: JSON.stringify(instance) };
+        }
+        if (args[0] === 'shell' && args.some((arg) => String(arg).includes('bun --version'))) {
+          return { exitCode: 1, out: '', err: 'Bun update pending' };
+        }
+        return result;
+      };
+      let launched = false;
+      const warnings = [];
+      const run = () => executeCandidateHostCommand({
+        profile: { ...profile, activation: 'active' }, executor,
+        guestCwd: profile.guestWorkspaceDir, command: 'bash',
+        boundary: {
+          spawn() { launched = true; const child = new EventEmitter(); setImmediate(() => child.emit('close', 0, null)); return child; },
+          onSignal() { return () => {}; },
+          reportWarning(message) { warnings.push(message); },
+        },
+      });
+      if (unsafe) {
+        await assert.rejects(run(), /doctor reported drift/);
+        assert.equal(launched, false);
+      } else {
+        assert.equal((await run()).exitCode, 0);
+        assert.equal(launched, true);
+        assert.equal(warnings.length, 1);
+        assert.match(warnings[0], /Bun update pending/);
+      }
+    });
+  }
 });

@@ -26,6 +26,7 @@ import { resolveRemoteCommandPolicy } from '../../apps/stack/scripts/utils/dev_t
 import { assertNoMissingLocalImports } from './distLocalImports.mjs';
 import { copyDirectoryContents } from './copyDirectoryContents.mjs';
 import {
+  WORKSPACE_PACKAGE_BUILD_INPUT_RECORD,
   collectPackageBuildOutputTargets,
   isLocalPackageBuildOutputTarget,
   resolvePackageBuildOutputTargetMatches,
@@ -34,7 +35,7 @@ import {
 import { resolveYarnCommandInvocation } from './execYarnCommand.mjs';
 import { resolveTypeScriptCliInvocation } from './resolveTypeScriptCliInvocation.mjs';
 import { resolveTypeScriptProjectPathFromArgs } from './prepareTypeScriptProjectBuild.mjs';
-import { resolveWorkspaceBuildMode } from './workspaceChildBuildEnv.mjs';
+import { resolveWorkspaceBuildMode, resolveWorkspaceTypeScriptCompilerArgs, WORKSPACE_DIST_CHECK_ONLY_ENV } from './workspaceChildBuildEnv.mjs';
 import { withWorkspaceBundleLock } from './workspaceBundleLock.mjs';
 import { resolveWorkspacePackageBuildLockPath } from './workspacePackageBuildLock.mjs';
 import {
@@ -44,6 +45,7 @@ import {
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const STAGED_OUTPUT_SCRIPT_FLAG = '--happier-staged-output-script';
+const DIST_BUILD_ADMISSION_ENTERED_ENV = 'HAPPIER_WORKSPACE_DIST_BUILD_ADMISSION_ENTERED';
 const PERSISTENT_COMPILER_WORK_DIR_NAME = '.happier';
 const PERSISTENT_COMPILER_WORK_SUBDIR = 'typescript-package-build';
 const DIST_TEST_EXCLUDES = ['test', 'spec', 'testSupport', 'test-d']
@@ -120,13 +122,11 @@ async function verifyStagedRuntimeImportClosure({ packageDir, outputDir, package
     .filter((target) => !target.includes('*'))
     .filter((target) => /\.(?:mjs|cjs|js)$/.test(target));
 
-  for (const target of entryTargets) {
-    await assertNoMissingLocalImports({
-      distDir: outputDir,
-      entryPath: resolvePackageBuildOutputTargetPath({ packageDir, outputDir, target }),
-      label: `${packageJson?.name ?? packageDir} staged dist build`,
-    });
-  }
+  await assertNoMissingLocalImports({
+    distDir: outputDir,
+    entryPaths: entryTargets.map(target => resolvePackageBuildOutputTargetPath({ packageDir, outputDir, target })),
+    label: `${packageJson?.name ?? packageDir} staged dist build`,
+  });
 }
 
 function parseBuildArgs(args) {
@@ -239,9 +239,6 @@ async function replaceDistWithStagedBuild({ distDir, stagedDistDir, backupDir })
 function withOutputCompilerArgs(args, outputDir, tsBuildInfoFile) {
   return [
     ...args,
-    // Protocol's measured native checker replicas dominate cold build RSS.
-    // Keep package builds within one checker unless the caller sizes it explicitly.
-    ...(args.includes('--singleThreaded') ? [] : ['--singleThreaded']),
     '--outDir',
     outputDir,
     '--tsBuildInfoFile',
@@ -249,8 +246,8 @@ function withOutputCompilerArgs(args, outputDir, tsBuildInfoFile) {
   ];
 }
 
-async function withDistProjectCompilerArgs(args, compilerWorkTree) {
-  const { projectPath, workDir } = compilerWorkTree;
+export async function withDistProjectCompilerArgs(args, compilerWorkTree) {
+  const { projectPath, workDir, compilerOptions = {} } = compilerWorkTree;
   const projectDir = dirname(projectPath);
   // The retained TypeScript API owns config parsing and effective type roots.
   // Compilation and option validation use resolveTypeScriptCliInvocation.
@@ -269,13 +266,21 @@ async function withDistProjectCompilerArgs(args, compilerWorkTree) {
     // An isolated compiler tree lives outside the package. Default @types
     // lookup follows the top-level config, so anchor it to the original project.
     // Explicit roots retain the path base of the config that defines them.
-    ...(!config.options.typeRoots ? {
-      compilerOptions: {
+    compilerOptions: {
+      ...(!config.options.typeRoots ? {
         typeRoots: ts.getEffectiveTypeRoots(config.options, {
           getCurrentDirectory: () => projectDir,
         }),
-      },
-    } : {}),
+      } : {}),
+      ...compilerOptions,
+      ...(compilerOptions.paths ? {
+        paths: {
+          ...Object.fromEntries(Object.entries(config.options.paths ?? {}).map(([key, targets]) => [key,
+            targets.map(target => resolve(config.options.baseUrl ?? config.options.pathsBasePath ?? projectDir, target))])),
+          ...compilerOptions.paths,
+        },
+      } : {}),
+    },
     exclude: [...exclude, ...DIST_TEST_EXCLUDES].map((path) => resolve(projectDir, path)),
     // Explicit roots are not affected by exclude; preserve production roots
     // while removing test roots even when a package uses a files list.
@@ -299,7 +304,12 @@ async function withDistProjectCompilerArgs(args, compilerWorkTree) {
       compilerArgs.push(value);
     }
   }
-  return [...compilerArgs, '--project', distProjectPath];
+  // Declaration inference still constructs checkers under --noCheck. Keep
+  // every dist emitter (including source author closures) within one checker
+  // unless the caller sizes it explicitly; Protocol replicas dominate RSS.
+  return [...compilerArgs,
+    ...(compilerArgs.includes('--singleThreaded') ? [] : ['--singleThreaded']),
+    '--project', distProjectPath];
 }
 
 function resolvePersistentCompilerWorkTree({ packageDir, compilerArgs, outputMode }) {
@@ -544,7 +554,7 @@ async function rewritePromotedTypeScriptSourceMaps({
   }
 }
 
-async function directoryTreesMatch(leftDir, rightDir) {
+async function directoryTreesMatch(leftDir, rightDir, atDistRoot = true) {
   let leftEntries;
   let rightEntries;
   try {
@@ -554,6 +564,16 @@ async function directoryTreesMatch(leftDir, rightDir) {
     ]);
   } catch {
     return false;
+  }
+
+  if (atDistRoot) {
+    // The package admission owner, not the compiler, writes this receipt.
+    // Identical emitted bytes must retain it; its owner still checks source
+    // and dependency currentness. Any changed emitted tree replaces dist and
+    // drops the old receipt as before. Nested files remain ordinary output.
+    const isCompilerOutput = (entry) => entry.name !== WORKSPACE_PACKAGE_BUILD_INPUT_RECORD || !entry.isFile();
+    leftEntries = leftEntries.filter(isCompilerOutput);
+    rightEntries = rightEntries.filter(isCompilerOutput);
   }
 
   leftEntries.sort((left, right) => left.name.localeCompare(right.name));
@@ -571,7 +591,7 @@ async function directoryTreesMatch(leftDir, rightDir) {
     if ((leftInfo.mode & 0o777) !== (rightInfo.mode & 0o777)) return false;
 
     if (leftInfo.isDirectory() && rightInfo.isDirectory()) {
-      if (!await directoryTreesMatch(leftPath, rightPath)) return false;
+      if (!await directoryTreesMatch(leftPath, rightPath, false)) return false;
       continue;
     }
     if (leftInfo.isFile() && rightInfo.isFile()) {
@@ -616,14 +636,19 @@ export async function buildTypeScriptPackageDist({
   const backupDir = join(resolvedPackageDir, `.dist.backup.${buildId}`);
   const commandEnv = { ...process.env, ...env };
   const buildMode = resolveWorkspaceBuildMode({ env: commandEnv });
+  // Only the package admission owner requests this after proving the existing
+  // emitted tree's current input, dependency and complete output digests.
+  const checkOnly = commandEnv[WORKSPACE_DIST_CHECK_ONLY_ENV] === '1';
+  if (checkOnly && (buildMode !== 'strict' || !explicitOutputDir)) {
+    throw new Error('Checking existing package output requires strict staged package admission');
+  }
   // Source runtimes consume emitted JS and declarations. Their dependency
   // refresh must not repeat the full checker owned by strict/package builds.
   // Include these options in the existing cache identity so checked and
   // emit-only compilations never share incremental state.
-  const effectiveCompilerArgs = [
-    ...parsedArgs.compilerArgs,
-    ...(buildMode !== 'strict' ? ['--noCheck', '--incremental'] : []),
-  ];
+  const effectiveCompilerArgs = resolveWorkspaceTypeScriptCompilerArgs({
+    compilerArgs: parsedArgs.compilerArgs, env: commandEnv, checkOnly,
+  });
   const persistentCompilerWorkTree = resolvePersistentCompilerWorkTree({
     packageDir: resolvedPackageDir,
     compilerArgs: effectiveCompilerArgs,
@@ -644,13 +669,13 @@ export async function buildTypeScriptPackageDist({
     : persistentCompilerWorkTree;
 
   const runBuild = async (buildEnv) => {
-    await rm(stagedDistDir, { recursive: true, force: true });
+    if (!checkOnly) await rm(stagedDistDir, { recursive: true, force: true });
     await mkdir(stagedDistDir, { recursive: true });
     await rm(backupDir, { recursive: true, force: true });
     try {
-      await preparePersistentCompilerWorkTree(compilerWorkTree, {
-        packageDir: resolvedPackageDir,
-        packageJson,
+      if (checkOnly) await mkdir(compilerWorkTree.workDir, { recursive: true });
+      else await preparePersistentCompilerWorkTree(compilerWorkTree, {
+        packageDir: resolvedPackageDir, packageJson,
       });
       const stagedBuildEnv = {
         ...buildEnv,
@@ -692,6 +717,8 @@ export async function buildTypeScriptPackageDist({
         await rm(compilerWorkTree.workDir, { recursive: true, force: true });
         throw error;
       }
+
+      if (checkOnly) return { outputDir: stagedDistDir, promoted: false, checked: true };
 
       await copyDirectoryContents(compilerWorkTree.outputDir, stagedDistDir);
       // HAPPIER_WORKSPACE_DIST_OUTPUT_DIR is an outer publisher's temporary
@@ -769,6 +796,37 @@ export async function buildTypeScriptPackageDist({
 }
 
 export async function main() {
+  const env = process.env;
+  const requiresAdmission = process.platform === 'linux'
+    && (!env.CI || env.HAPPIER_DEV_TARGET_EXECUTION === '1'
+      || Boolean(env.HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN));
+  if (requiresAdmission && env[DIST_BUILD_ADMISSION_ENTERED_ENV] !== '1') {
+    const args = process.argv.slice(2);
+    const admissionClass = resolveRemoteCommandPolicy(
+      [process.execPath, fileURLToPath(import.meta.url), ...args],
+      { cwd: relative(repoRoot, process.cwd()).replaceAll('\\', '/') || '.' },
+    ).heavyClass;
+    const result = await runCommand(
+      resolve(repoRoot, 'apps/stack/bin/hstack-exec'),
+      [
+        '--heavyweight-admission',
+        `--class=${admissionClass}`,
+        `--machine=${env.HAPPIER_DEV_TARGET_EXECUTION === '1' ? 'worker' : 'local'}`,
+        '--',
+        process.execPath,
+        fileURLToPath(import.meta.url),
+        ...args,
+      ],
+      {
+        cwd: process.cwd(),
+        env: { ...env, [DIST_BUILD_ADMISSION_ENTERED_ENV]: '1' },
+        stdio: 'inherit',
+        ownedProcessGroup: true,
+      },
+    );
+    exitWithCommandResult(result);
+    return;
+  }
   await buildTypeScriptPackageDist();
 }
 

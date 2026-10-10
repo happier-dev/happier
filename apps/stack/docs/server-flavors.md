@@ -27,6 +27,30 @@ Key env vars (stored in the stack env file):
 - `HAPPIER_SERVER_LIGHT_FILES_DIR`
 - `HAPPIER_SERVER_LIGHT_DB_DIR`
 
+### Operator-provided Postgres (0.3 development)
+
+The light flavor also accepts `HAPPIER_DB_PROVIDER=postgres` with an explicit
+`DATABASE_URL` using `postgres://` or `postgresql://`. It keeps local public/private
+files and the existing at-rest master secret; Redis and S3 are not required.
+Provision Postgres separately. Use the Stack env owner to set both values before
+restarting, and supply credentials through a private input rather than command
+arguments or logs. Switching the provider does not copy SQLite data.
+
+Retain the original SQLite file and URL for an explicit rollback: stop the affected
+writers, set `HAPPIER_DB_PROVIDER=sqlite` and the original `DATABASE_URL`, then restart.
+Once Postgres has accepted writes, repointing to the old SQLite file alone loses
+those new writes; reconcile that delta before rollback.
+
+`hstack stack env <consumer> shared-db <source>` remains the single shared-db preset.
+It stores a source-env reference and puts the consumer server on the source server
+host. At startup the consumer reads the source's provider, URL, master secret and
+file paths there; credentials are not copied into consumer settings or remote
+commands. SQLite and Postgres are supported, and provider/URL disagreement fails
+closed. Reapplying the same source preserves retained QA state; adopting a different
+source still requires a fresh consumer. Shared consumers skip migrations and metrics;
+the source owns canonical migration deployment. This is development behavior, not
+a statement that a retained database has been cut over.
+
 ### `happier-server` (full server)
 
 - Docker-managed infra per stack (Postgres + Redis + Minio/S3)
@@ -93,6 +117,7 @@ Notes:
   - for `happier-server-light`:
     - SQLite uses the server package’s canonical `migrate:sqlite:deploy` script.
     - PGlite uses the server package’s `migrate:light:deploy` script.
+    - External Postgres uses the canonical Postgres migration/launch path.
 
 Important: for a given run (`hstack start` / `hstack dev`) you choose **one** flavor.
 

@@ -694,6 +694,7 @@ export async function runCaptureResult(cmd, args, options = {}) {
   const {
     timeoutMs,
     streamLabel,
+    stdoutDiagnosticStream = process.stdout,
     teeFile,
     teeLabel,
     teeMaxBytes = DEFAULT_TEE_MAX_BYTES,
@@ -738,7 +739,7 @@ export async function runCaptureResult(cmd, args, options = {}) {
     let resolved = false;
 
     function writeKeepaliveLine(line) {
-      if (shouldStream) process.stdout.write(`${prefix}${line}\n`);
+      if (shouldStream) stdoutDiagnosticStream.write(`${prefix}${line}\n`);
       if (shouldTee && teeStream) teeStream.write(`${teePrefix}${line}\n`);
     }
 
@@ -746,7 +747,7 @@ export async function runCaptureResult(cmd, args, options = {}) {
       if (resolved) return;
       resolved = true;
       if (shouldStream) {
-        flushPrefixed(process.stdout, prefix, outState);
+        flushPrefixed(stdoutDiagnosticStream, prefix, outState);
         flushPrefixed(process.stderr, prefix, errState);
       }
       if (shouldTee && teeStream) {
@@ -775,7 +776,7 @@ export async function runCaptureResult(cmd, args, options = {}) {
       : null;
     proc.stdout?.on('data', (d) => {
       out += d.toString();
-      if (shouldStream) writeWithPrefix(process.stdout, prefix, outState, d);
+      if (shouldStream) writeWithPrefix(stdoutDiagnosticStream, prefix, outState, d);
       if (shouldTee && teeStream) writeWithPrefix(teeStream, teePrefix, teeOutState, d);
     });
     proc.stderr?.on('data', (d) => {

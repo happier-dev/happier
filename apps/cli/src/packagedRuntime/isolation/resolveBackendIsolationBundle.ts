@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import { configuration } from '@/configuration';
 import { stripInheritedConnectedServiceEnvironment } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
+import { hasLocalConnectedServiceResumeState } from '@/daemon/connectedServices/stateSharing/connectedServiceStateSharingManifest';
 import type { BackendIsolationBundle, BackendIsolationRequest } from './types';
 
 function readDefinedProcessEnv(): Record<string, string> {
@@ -44,6 +45,7 @@ export function resolveBackendIsolationBundle(request: BackendIsolationRequest):
       XDG_DATA_HOME: xdgData,
     },
     cleanup: async () => {
+      if (await hasLocalConnectedServiceResumeState(root)) return;
       await rm(root, { recursive: true, force: true }).catch(() => {});
     },
   };

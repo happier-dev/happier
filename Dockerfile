@@ -176,7 +176,7 @@ COPY packages/protocol ./packages/protocol
 COPY packages/release-runtime ./packages/release-runtime
 COPY packages/transfers ./packages/transfers
 COPY scripts/pipeline/release/precompress-ui-web-assets.mjs ./scripts/pipeline/release/precompress-ui-web-assets.mjs
-COPY scripts/pipeline/release/lib/precompress-ui-web-assets.mjs ./scripts/pipeline/release/lib/precompress-ui-web-assets.mjs
+COPY apps/stack/scripts/build/precompress_ui_web_assets.mjs ./apps/stack/scripts/build/precompress_ui_web_assets.mjs
 
 RUN yarn workspace @happier-dev/protocol postinstall:real \
     && yarn workspace @happier-dev/release-runtime postinstall:real \

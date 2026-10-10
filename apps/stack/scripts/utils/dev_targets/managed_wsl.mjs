@@ -13,9 +13,15 @@ export async function runManagedWslOperation(
   const resources = resolveManagedRuntimeCapacityResources(runtime);
   if (runtime?.kind !== 'wsl' || !resources) throw new Error('[dev-targets] configured WSL runtime and capacity required');
   const script = await readFile(new URL('../../provision/windows-wsl-worker.ps1', import.meta.url), 'utf8');
-  const provision = action === 'Provision'
-    ? await readFile(new URL('../../provision/linux-ubuntu-provision.sh', import.meta.url), 'utf8')
-    : '';
+  let provision = '';
+  if (action === 'Provision') {
+    const bunVersion = String(env.HAPPIER_PROVISION_BUN_VERSION ?? '').trim()
+      || (await readFile(new URL('../../provision/.bun-version', import.meta.url), 'utf8')).trim();
+    if (!/^[0-9]+\.[0-9]+\.[0-9]+$/.test(bunVersion)) throw new Error('[dev-targets] invalid Bun provision version');
+    // The guest receives a streamed script, not this package's adjacent files.
+    provision = `export HAPPIER_PROVISION_BUN_VERSION=${bunVersion}\n`
+      + await readFile(new URL('../../provision/linux-ubuntu-provision.sh', import.meta.url), 'utf8');
+  }
   const invocation = [
     '-Action ' + powershellQuote(action),
     '-Instance ' + powershellQuote(runtime.instance),

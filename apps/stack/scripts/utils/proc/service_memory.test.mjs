@@ -1,15 +1,133 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import childProcess from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
 import { readdirSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import { access, chmod, copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { installNativeAdmissionFixture } from '../../testkit/core/native_admission_fixture.mjs';
 import { recordStackRuntimeStart, recordStackRuntimeUpdate } from '../stack/runtime_state.mjs';
 import { writePidState } from '../expo/expo.mjs';
 import { readLinuxWorkerProcesses, readWorkerMemoryReservations, renderWorkerMemoryReservationRows, writeRuntimeAdmissionPhase } from './service_memory.mjs';
+
+test('scale process observation authenticates generations without a subprocess per Stack binding', t => {
+  const count = 500;
+  let forks = 0;
+  let rollups = 0;
+  // OS boundaries only; parsing, binding discovery and generation admission
+  // remain real. ps supplies its requested schema, just as the actual OS does.
+  t.mock.method(childProcess, 'spawnSync', (command, args) => {
+    forks++;
+    if (command === 'ps') {
+      const columns = args[args.indexOf('-o') + 1].split(',').map(value => value.replaceAll('=', ''));
+      return { status: 0, stdout: Array.from({ length: count }, (_, i) => {
+        const row = { pid: i + 100, ppid: i === 0 ? 1 : 100, rss: 1024, etimes: 10, times: 2, uid: process.getuid(), stat: 'S', comm: 'node' };
+        return columns.map(column => row[column]).join(' ');
+      }).join('\n') };
+    }
+    return { status: 0, stdout: '12345' };
+  });
+  t.mock.method(fs, 'readFileSync', path => {
+    if (/^\/proc\/\d+\/environ$/.test(path)) return 'HOME=/tmp\0HAPPIER_STACK_STACK=scale-fixture\0HAPPIER_STACK_ENV_FILE=/tmp/scale-fixture/env\0'
+      + (path === '/proc/100/environ' ? 'HAPPIER_STACK_PROCESS_KIND=browser\0' : '');
+    if (/^\/proc\/\d+\/stat$/.test(path)) return `${path.split('/')[2]} (node (worker)) S ${Array(18).fill('0').join(' ')} 12345 0 0\n`;
+    if (/^\/proc\/\d+\/smaps_rollup$/.test(path)) { rollups++; return 'Pss: 512 kB\n'; }
+    throw Object.assign(new Error('vanished'), { code: 'ENOENT' });
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  const processes = readLinuxWorkerProcesses();
+  assert.equal(processes.size, count);
+  assert.equal(processes.get(100).fingerprint, 'linux-proc:12345');
+  assert.ok(forks <= 1, `500 Stack bindings launched ${forks} OS subprocesses; observation must not fork per PID`);
+  const budget = count * 1024;
+  const sample = readWorkerMemoryReservations({ admissionRoot: '/tmp/scale-admission', readProcesses: () => processes, serviceMemoryCeilingKiB: budget });
+  assert.equal(sample.servicePids.length, count);
+  assert.equal(sample.serviceRssKiB, budget, 'a proven non-constraining RSS envelope is sufficient for admission');
+  assert.equal(rollups, 0, 'non-constraining service memory must not walk 500 page tables');
+  const constrained = readWorkerMemoryReservations({ admissionRoot: '/tmp/scale-admission', readProcesses: () => processes, serviceMemoryCeilingKiB: budget - 1 });
+  assert.equal(constrained.serviceRssKiB, count * 512, 'a potentially constraining RSS envelope requires exact PSS');
+  assert.equal(rollups, count);
+});
+
+test('service and admitted trees account shared resident pages by PSS and expose unreadable rollup fallback', { skip: process.platform !== 'linux' }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-pss-' });
+  const envPath = fixture.path('stack', 'env');
+  await mkdir(fixture.path('stack'));
+  await writeFile(envPath, '');
+  const owner = await admittedOwner(t, fixture, { root: fixture.path('admission'),
+    env: { ...process.env, HAPPIER_STACK_STACK: 'pss-fixture', HAPPIER_STACK_ENV_FILE: envPath,
+      HAPPIER_STACK_PROCESS_KIND: 'browser' } });
+  // Only procfs is substituted: real enumeration, process identity, ancestry,
+  // Stack binding and admission records establish both accounted trees.
+  const readSmapsRollup = path => path === `/proc/${owner.child.pid}/smaps_rollup`
+    || path === `/proc/${owner.descendantPid}/smaps_rollup` ? 'Rss: 8192 kB\nPss: 4096 kB\n' : 'Pss: 0 kB\n';
+  const workerSnapshot = options => {
+    const all = readLinuxWorkerProcesses(options);
+    return new Map([owner.child.pid, owner.descendantPid].map(pid => [pid, all.get(pid)]));
+  };
+  const snapshot = workerSnapshot({ readSmapsRollup });
+  const observe = () => readWorkerMemoryReservations({ admissionRoot: owner.root,
+    readProcesses: () => snapshot, includeAdmittedRss: true });
+  assert.equal(observe().serviceRssKiB, 8192, 'two shares of the same 8192 KiB mapping must count it once');
+  assert.equal(observe().admittedOwners[0].rssKiB, 8192, 'admitted credits must use the same proportional accounting');
+  const upper = snapshot.get(owner.child.pid).rssKiB + snapshot.get(owner.descendantPid).rssKiB;
+  const bounded = readWorkerMemoryReservations({ admissionRoot: owner.root, readProcesses: () => snapshot,
+    includeAdmittedRss: true, serviceMemoryCeilingKiB: upper });
+  assert.equal(bounded.serviceRssKiB, upper);
+  assert.equal(bounded.admittedOwners[0].rssKiB, 8192, 'an RSS service envelope must never over-credit admitted memory');
+  const fallback = workerSnapshot({ readSmapsRollup: path => {
+    if (path === `/proc/${owner.descendantPid}/smaps_rollup`) throw Object.assign(new Error('unreadable'), { code: 'EACCES' });
+    return readSmapsRollup(path);
+  } });
+  const sample = readWorkerMemoryReservations({ admissionRoot: owner.root, readProcesses: () => fallback, includeAdmittedRss: true });
+  assert.equal(sample.serviceRssKiB, 4096 + fallback.get(owner.descendantPid).rssKiB);
+  assert.equal(sample.admittedOwners[0].rssKiB, sample.serviceRssKiB);
+  assert.deepEqual(sample.rssFallbackPids, [owner.descendantPid]);
+  const readProcFile = fs.readFileSync;
+  let statErrorCode = 'ENOENT';
+  t.mock.method(fs, 'readFileSync', (path, ...args) => {
+    if (path === `/proc/${owner.descendantPid}/stat`) throw Object.assign(new Error('unavailable'), { code: statErrorCode });
+    return readProcFile(path, ...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  const gone = workerSnapshot({ readSmapsRollup: path => {
+    if (path === `/proc/${owner.descendantPid}/smaps_rollup`) throw Object.assign(new Error('vanished'), { code: 'ENOENT' });
+    return readSmapsRollup(path);
+  } });
+  const afterExit = readWorkerMemoryReservations({ admissionRoot: owner.root, readProcesses: () => gone, includeAdmittedRss: true });
+  assert.equal(afterExit.serviceRssKiB, 4096, 'vanished descendants must not retain stale RSS');
+  assert.equal(afterExit.admittedOwners[0].rssKiB, 4096);
+  assert.deepEqual(afterExit.rssFallbackPids, [], 'vanished PIDs are not unreadable live memory maps');
+  statErrorCode = 'EACCES';
+  const unreadable = workerSnapshot({ readSmapsRollup: path => {
+    if (path === `/proc/${owner.descendantPid}/smaps_rollup`) throw Object.assign(new Error('unavailable'), { code: 'ENOENT' });
+    return readSmapsRollup(path);
+  } });
+  const conservative = readWorkerMemoryReservations({ admissionRoot: owner.root, readProcesses: () => unreadable, includeAdmittedRss: true });
+  assert.equal(conservative.serviceRssKiB, 4096 + unreadable.get(owner.descendantPid).rssKiB);
+  assert.deepEqual(conservative.rssFallbackPids, [owner.descendantPid], 'unavailable generation observation is not proof of exit');
+});
+
+test('native kernel generation observation does not fork per waiting PID', { skip: process.platform !== 'linux' }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-native-identity-scale-' });
+  await mkdir(fixture.path('bin'));
+  const marker = fixture.path('forked');
+  await writeFile(fixture.path('bin', 'awk'), `#!/bin/sh\nprintf fork >> '${marker}'\nexec /usr/bin/awk "$@"\n`);
+  await chmod(fixture.path('bin', 'awk'), 0o755);
+  const processFingerprint = readProcessInstanceFingerprintSync(process.pid);
+  const result = spawnSync('/bin/sh', ['-c', '. "$1"; i=0; while [ "$i" -lt 500 ]; do heavyweight_process_is_current "$2" "$3" || exit 1; i=$((i + 1)); done',
+    'kernel-generation-observation', identity, String(process.pid), processFingerprint.slice('linux-proc:'.length)],
+  { env: { ...process.env, PATH: `${fixture.path('bin')}:/usr/bin:/bin` }, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  await assert.rejects(access(marker), { code: 'ENOENT' }, '500 live waiters must not launch 500 OS identity probes under the global lock');
+});
 
 const policy = fileURLToPath(new URL('../dev_targets/native_command_policy.sh', import.meta.url));
 const identity = fileURLToPath(new URL('./native_process_identity.sh', import.meta.url));
@@ -26,7 +144,9 @@ case "$*" in
 esac
 `);
   await chmod(awkPath, 0o755);
-  const env = { ...process.env, PATH: `${fixture.path('bin')}:/usr/bin:/bin`, TMPDIR: fixture.root };
+  // This remapped admission root is a worker, not the primary controller's
+  // browser-protection floor. Preserve the class envelopes exercised below.
+  const env = { ...process.env, PATH: `${fixture.path('bin')}:/usr/bin:/bin`, TMPDIR: fixture.root, HAPPIER_DEV_TARGET_EXECUTION: '1' };
   for (const key of Object.keys(env)) {
     if (key.startsWith('HAPPIER_HEAVYWEIGHT_ADMISSION_')) delete env[key];
   }
@@ -91,13 +211,16 @@ async function admittedOwner(t, fixture, {
 
 test('native memory observation authenticates live owners before workspace dependencies are installed', { skip: process.platform !== 'linux' }, async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-fresh-memory-observer-' });
-  const procDir = fixture.path('fresh', 'proc');
-  const pathsDir = fixture.path('fresh', 'paths');
+  const sourceDir = fixture.path('fresh', 'apps', 'stack', 'scripts', 'utils');
+  const procDir = `${sourceDir}/proc`;
+  const pathsDir = `${sourceDir}/paths`;
   await Promise.all([mkdir(procDir, { recursive: true }), mkdir(pathsDir, { recursive: true })]);
-  await mkdir(fixture.path('fresh', 'dev_targets'));
+  await mkdir(`${sourceDir}/dev_targets`);
   for (const relative of ['proc/service_memory.mjs', 'proc/native_process_identity.sh', 'paths/canonical_home.mjs', 'paths/paths.mjs', 'dev_targets/heavyweight_pressure_cadence.mjs']) {
-    await copyFile(fileURLToPath(new URL(`../${relative}`, import.meta.url)), fixture.path('fresh', relative));
+    await copyFile(fileURLToPath(new URL(`../${relative}`, import.meta.url)), `${sourceDir}/${relative}`);
   }
+  await mkdir(fixture.path('fresh', 'packages', 'cli-common'), { recursive: true });
+  await copyFile(fileURLToPath(new URL('../../../../../packages/cli-common/processInstance.mjs', import.meta.url)), fixture.path('fresh', 'packages', 'cli-common', 'processInstance.mjs'));
   await assert.rejects(access(fixture.path('fresh', 'node_modules')), { code: 'ENOENT' });
   const admissionRoot = fixture.path('admission');
   const stackDir = fixture.path('stack');
@@ -111,7 +234,7 @@ test('native memory observation authenticates live owners before workspace depen
   const statePath = fixture.path('stack', 'stack.runtime.json');
   await recordStackRuntimeStart(statePath, { stackName: 'fresh-memory-fixture', ownerPid: process.pid });
   await recordStackRuntimeUpdate(statePath, { processes: { serverPid: owner.child.pid } });
-  const observe = () => spawnSync(process.execPath, [fixture.path('fresh', 'proc', 'service_memory.mjs'),
+  const observe = () => spawnSync(process.execPath, [`${procDir}/service_memory.mjs`,
     `--admission-root=${admissionRoot}`, '--include-admitted-rss'], { encoding: 'utf8' });
   const sample = observe();
   assert.equal(sample.status, 0, sample.stderr);
@@ -163,15 +286,19 @@ test('admission diagnostics authenticate owner class, age and recent tree CPU pr
   'unobservable owner state must not be advertised as no live holders');
 });
 
-test('runtime holder diagnostics distinguish awaiting ACK from acknowledged work and release their phase on cancellation', { skip: process.platform !== 'linux', timeout: 15000 }, async t => {
+test('native runtime phase writer distinguishes waiting from work and releases its phase on cancellation', { skip: process.platform !== 'linux', timeout: 15000 }, async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-runtime-phase-' });
   const native = await installNativeAdmissionFixture({ root: fixture.root });
   const env = await memoryBoundary(fixture, { availableKiB: 28000000, totalKiB: 30000000 });
-  const fifo = fixture.path('request.json');
-  assert.equal(spawnSync('mkfifo', [fifo]).status, 0);
-  const entry = fileURLToPath(new URL('../../build/remote_runtime_build.mjs', import.meta.url));
+  // Physical worker boundary. Exercise the real phase writer under native
+  // custody; runtime transport itself is covered by remote_runtime_build tests.
+  const worker = `import { writeRuntimeAdmissionPhase } from ${JSON.stringify(new URL('./service_memory.mjs', import.meta.url).href)};
+writeRuntimeAdmissionPhase('awaiting-runtime-request');
+process.stdout.write('worker-ready\\n');
+process.stdin.once('data', () => { writeRuntimeAdmissionPhase('building-runtime'); });
+setInterval(() => {}, 1000);`;
   const child = spawn('/bin/sh', [native.launcher, '--heavyweight-admission', '--class=runtime-build', '--',
-    'env', process.execPath, entry, '--worker-request=stdin', `--artifact-target=${process.platform}-${process.arch}`],
+    'env', process.execPath, '--input-type=module', '-e', worker],
   { cwd: fixture.root, env, stdio: ['pipe', 'pipe', 'pipe'] });
   const completion = new Promise(resolve => child.once('close', resolve));
   t.after(async () => { if (child.exitCode === null) child.kill('SIGTERM'); await completion; });
@@ -187,12 +314,12 @@ test('runtime holder diagnostics distinguish awaiting ACK from acknowledged work
         || record.env.HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT === native.admissionRoot));
     },
   }).ownerProgress.owners;
-  for (let attempt = 0; attempt < 500 && !stdout.includes('HAPPIER_RUNTIME_BUILD_READY='); attempt++) await new Promise(resolve => setTimeout(resolve, 20));
-  assert.match(stdout, /HAPPIER_RUNTIME_BUILD_READY=/, stderr);
+  for (let attempt = 0; attempt < 500 && !stdout.includes('worker-ready'); attempt++) await new Promise(resolve => setTimeout(resolve, 20));
+  assert.match(stdout, /worker-ready/, stderr);
   assert.equal(observe()[0]?.phase, 'awaiting-runtime-request');
-  child.stdin.write(JSON.stringify({ requestPath: fifo }) + '\n');
+  child.stdin.write('begin-work\n');
   for (let attempt = 0; attempt < 500 && observe()[0]?.phase !== 'building-runtime'; attempt++) await new Promise(resolve => setTimeout(resolve, 20));
-  assert.equal(observe()[0]?.phase, 'building-runtime', 'an ACK is observable before the real filesystem request read can proceed');
+  assert.equal(observe()[0]?.phase, 'building-runtime');
   child.kill('SIGTERM');
   await completion;
   assert.deepEqual(observe(), []);
@@ -233,14 +360,14 @@ test('native admission preserves available headroom already consumed by an admit
   const owner = await admittedOwner(t, fixture, { root: admissionRoot, resident: true });
   await writeFile(observedPidsPath, JSON.stringify([owner.child.pid, owner.descendantPid]));
   const processes = readLinuxWorkerProcesses();
-  const ownerRssKiB = processes.get(owner.child.pid).rssKiB;
-  const descendantRssKiB = processes.get(owner.descendantPid).rssKiB;
-  assert.ok(descendantRssKiB > 64 * 1024, 'the real untagged descendant consumes memory');
+  const ownerMemoryKiB = processes.get(owner.child.pid).pssKiB ?? processes.get(owner.child.pid).rssKiB;
+  const descendantMemoryKiB = processes.get(owner.descendantPid).pssKiB ?? processes.get(owner.descendantPid).rssKiB;
+  assert.ok(descendantMemoryKiB > 64 * 1024, 'the real untagged descendant consumes memory');
   const suiteKiB = classFloor('validation');
   const buildKiB = classFloor('runtime-build');
-  // Owner RSS alone is insufficient: the actual descendant must also release
+  // Owner memory alone is insufficient: the actual descendant must also release
   // its already-consumed portion of the envelope from future reservations.
-  const availableKiB = buildKiB + suiteKiB - ownerRssKiB - Math.floor(descendantRssKiB / 2);
+  const availableKiB = buildKiB + suiteKiB - ownerMemoryKiB - Math.floor(descendantMemoryKiB / 2);
   const env = await memoryBoundary(fixture, { availableKiB, totalKiB: buildKiB + suiteKiB * 2 });
   const admitted = spawnSync('/bin/sh', [launcher, '--heavyweight-admission',
     '--class=validation', '--machine=local', '--no-wait', '--',
@@ -248,7 +375,7 @@ test('native admission preserves available headroom already consumed by an admit
   assert.equal(admitted.status, 0, admitted.stderr);
   assert.equal(admitted.stdout, 'resident-headroom-admitted\n');
   const busyEnv = await memoryBoundary(fixture, {
-    availableKiB: buildKiB + suiteKiB - ownerRssKiB - descendantRssKiB - 64 * 1024,
+    availableKiB: buildKiB + suiteKiB - ownerMemoryKiB - descendantMemoryKiB - 64 * 1024,
     totalKiB: buildKiB + suiteKiB * 2,
   });
   const busy = spawnSync('/bin/sh', [launcher, '--heavyweight-admission',
@@ -317,12 +444,11 @@ test('native admission rejects a compilation that cannot fit beside a recorded l
   const statePath = fixture.path('stack', 'stack.runtime.json');
   await recordStackRuntimeStart(statePath, { stackName: 'service-fixture', ownerPid: process.pid });
   await recordStackRuntimeUpdate(statePath, { processes: { serverPid: service.pid } });
-  const resident = spawnSync('ps', ['-o', 'rss=', '-p', String(service.pid)], { encoding: 'utf8' });
-  assert.equal(resident.status, 0, resident.stderr);
-  const serviceRssKiB = Number(resident.stdout.trim());
-  assert.ok(serviceRssKiB > 0);
+  const resident = readLinuxWorkerProcesses().get(service.pid);
+  const serviceMemoryKiB = resident.pssKiB ?? resident.rssKiB;
+  assert.ok(serviceMemoryKiB > 0);
   const compilationKiB = classFloor('compilation');
-  const totalKiB = compilationKiB + Math.floor(serviceRssKiB / 2);
+  const totalKiB = compilationKiB + Math.floor(serviceMemoryKiB / 2);
   // Only the OS resource boundary is replaced; process discovery, canonical
   // runtime PID recording, generation checks and native admission remain real.
   const env = await memoryBoundary(fixture, { availableKiB: totalKiB, totalKiB });
@@ -338,11 +464,11 @@ test('native admission rejects a compilation that cannot fit beside a recorded l
     '/usr/bin/printf', 'smaller-suite-admitted\n'], { env, encoding: 'utf8' });
   assert.equal(admitted.status, 0, admitted.stderr);
   assert.equal(admitted.stdout, 'smaller-suite-admitted\n');
-  // MemAvailable already reflects resident service memory. Removing RSS from
+  // MemAvailable already reflects resident service memory. Removing it from
   // it again would reject this valid suite despite sufficient physical capacity.
   const availableEnv = await memoryBoundary(fixture, {
-    availableKiB: suiteKiB + Math.floor(serviceRssKiB / 2),
-    totalKiB: suiteKiB + serviceRssKiB * 2,
+    availableKiB: suiteKiB + Math.floor(serviceMemoryKiB / 2),
+    totalKiB: suiteKiB + serviceMemoryKiB * 2,
   });
   const available = spawnSync('/bin/sh', [launcher, '--heavyweight-admission',
     '--class=validation', '--machine=local', '--no-wait', '--',
@@ -422,7 +548,8 @@ test('service RSS uses current canonical generations and counts overlapping root
   const observe = () => readWorkerMemoryReservations({ admissionRoot: fixture.path('admission'), readProcesses: () => snapshot });
   const sample = observe();
   assert.deepEqual(new Set(sample.servicePids), new Set([service.pid, descendantPid]));
-  assert.equal(sample.serviceRssKiB, snapshot.get(service.pid).rssKiB + snapshot.get(descendantPid).rssKiB);
+  assert.equal(sample.serviceRssKiB, (snapshot.get(service.pid).pssKiB ?? snapshot.get(service.pid).rssKiB)
+    + (snapshot.get(descendantPid).pssKiB ?? snapshot.get(descendantPid).rssKiB));
   for (const instance of Object.values(recorded.processInstances.processes)) {
     instance.fingerprint = 'linux-proc:0';
   }
@@ -434,6 +561,19 @@ test('service RSS uses current canonical generations and counts overlapping root
   assert.deepEqual(new Set(observe().servicePids), new Set([service.pid, descendantPid]), 'standalone Expo uses its existing canonical PID writer');
   await writeFile(expoState, JSON.stringify({ pid: service.pid, processInstanceFingerprint: 'linux-proc:0' }));
   assert.equal(observe().serviceRssKiB, 0, 'standalone Expo also rejects a reused PID');
+  await recordStackRuntimeUpdate(statePath, { processes: {
+    serverPid: null, serverWrapperPid: null, expoPid: null,
+    daemonPid: service.pid, daemonPids: [service.pid],
+  } });
+  assert.deepEqual(new Set(observe().servicePids), new Set([service.pid, descendantPid]),
+    'the daemon Machine and its untagged children reserve service RSS independently of servers');
+  await recordStackRuntimeUpdate(statePath, { processes: { daemonPid: null, daemonPids: [] } });
+  assert.equal(observe().serviceRssKiB, 0);
+  snapshot.get(service.pid).env.HAPPIER_STACK_PROCESS_KIND = 'browser';
+  assert.deepEqual(new Set(observe().servicePids), new Set([service.pid, descendantPid]),
+    'a live Stack-bound browser runner reserves its entire process tree');
+  delete snapshot.get(service.pid).env.HAPPIER_STACK_ENV_FILE;
+  assert.equal(observe().serviceRssKiB, 0, 'an unscoped process-kind label is not service authority');
 });
 
 test('legacy observation validates the original owner, deduplicates inherited tokens and ignores current-root owners', { skip: process.platform !== 'linux' }, async t => {
@@ -452,7 +592,8 @@ test('legacy observation validates the original owner, deduplicates inherited to
   const observeRss = admissionRoot => readWorkerMemoryReservations({ admissionRoot, readProcesses: () => snapshot, includeAdmittedRss: true });
   const expected = [{
     pid: owner.child.pid, token: owner.token,
-    rssKiB: snapshot.get(owner.child.pid).rssKiB + snapshot.get(owner.descendantPid).rssKiB,
+    rssKiB: (snapshot.get(owner.child.pid).pssKiB ?? snapshot.get(owner.child.pid).rssKiB)
+      + (snapshot.get(owner.descendantPid).pssKiB ?? snapshot.get(owner.descendantPid).rssKiB),
   }];
   assert.deepEqual(observeRss(fixture.path('current')).admittedOwners, expected);
   assert.deepEqual(observeRss(owner.root).admittedOwners, expected, 'canonical owners use the same authenticated RSS observation');
@@ -471,10 +612,10 @@ test('legacy observation validates the original owner, deduplicates inherited to
   snapshot.get(owner.descendantPid).parentPid = 1;
   assert.deepEqual(observeRss(fixture.path('current')).admittedOwners, expected,
     'inherited authenticated custody is counted even after reparenting');
-  const rss = snapshot.get(owner.descendantPid).rssKiB;
-  snapshot.get(owner.descendantPid).rssKiB = undefined;
+  const descendant = snapshot.get(owner.descendantPid);
+  snapshot.set(owner.descendantPid, { ...descendant, rssKiB: undefined, pssKiB: null });
   assert.deepEqual(observeRss(owner.root).admittedOwners, [], 'unavailable tree RSS must not release the reservation');
-  snapshot.get(owner.descendantPid).rssKiB = rss;
+  snapshot.set(owner.descendantPid, descendant);
   await writeFile(`${owner.ownerPath}/process`, `${owner.child.pid} 0\n`);
   assert.deepEqual(observe(fixture.path('current')).legacyOwners, [], 'a live inherited token cannot authorize a mismatched owner record');
   assert.deepEqual(observeRss(owner.root).admittedOwners, [], 'mismatched canonical records also cannot grant RSS credit');

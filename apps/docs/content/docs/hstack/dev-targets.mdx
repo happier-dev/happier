@@ -12,6 +12,19 @@ localhost ports remain on the editing machine.
 This is intended for maintainers who want macOS, Linux, and Windows daemons connected to the same
 development server while editing one checkout.
 
+The host-onboarding options below describe the 0.3 development checkout. Ordinary unmanaged
+SSH enrollment leaves host preparation to these explicit operator actions. Managed Lima and
+WSL enrollment instead opts into provisioning a whole VM, including its existing power policy.
+
+## Move the primary
+
+Use the development-only
+[primary standby sync, status, prerequisite verification and switch dry-run](/hstack/dev-vm#move-the-primary)
+to prepare portable home state and inspect a whole-workload handoff. Service placement and worker mirrors do not move the
+primary or prove a standby replica. Actual switching and restore verification
+remain unavailable; prerequisite inspection and the dry-run leave your current
+workload in place.
+
 ## Prerequisites
 
 On the computer running `yarn dev` or `yarn tui`:
@@ -23,13 +36,14 @@ On the computer running `yarn dev` or `yarn tui`:
 On every target:
 
 - run an OpenSSH server;
-- install Node.js 22 or newer and Corepack;
+- install Node.js 22 or newer and Corepack before running development commands; a fresh Linux
+  host can be enrolled first and prepared with `host prepare --toolchain`;
 - install any native developer tools remote commands will use, such as ripgrep (`rg`);
 - allow enough disk space for a source mirror, target-local dependencies, and build output.
 
-Stack deliberately does not install or update the host's SSH server, Node.js, Corepack, or Mutagen
-CLI. Those are machine prerequisites. Mutagen automatically installs its own small synchronization
-agent over SSH when a project starts.
+Stack requires an existing SSH server. Explicit Linux `--toolchain` preparation installs Node.js
+and Corepack; macOS and Windows toolchain setup remains a machine prerequisite. Mutagen
+automatically installs its own small synchronization agent over SSH when a project starts.
 
 The PATH-provided `mutagen` process and its `MUTAGEN_DATA_DIRECTORY` belong only to Stack's
 development-target mirror. Happier workspace relationships use the separately managed,
@@ -78,7 +92,8 @@ The command:
 - checks whether that dedicated key already works;
 - when necessary, runs `ssh-copy-id` through that same isolated target configuration so the remote
   account password can be entered once;
-- verifies non-interactive dedicated-key authentication;
+- verifies non-interactive dedicated-key authentication through a fresh connection, with
+  `ControlMaster=no` and `ControlPath=none`;
 - discovers the remote home, operating system, login-shell `PATH`, Node.js, and Corepack;
 - rewrites the target config from first-contact `accept-new` to strict host-key checking, proves the
   strict connection, and registers the target only after those checks pass.
@@ -101,9 +116,10 @@ binary beside Node's actual `process.execPath`. Rerunning the
 same command reuses the target-specific key and refreshes the connection facts. This provisioning
 shortcut currently supports macOS and Linux targets; configure Windows targets explicitly as below.
 
-The local machine needs `ssh`, `ssh-keygen`, and `ssh-copy-id`. Provisioning never installs Node.js,
-Corepack, package managers, or system services on the remote host; it diagnoses missing prerequisites
-and stops before registering a target.
+The local machine needs `ssh`, `ssh-keygen`, and `ssh-copy-id`. Enrollment accepts a host without
+Node.js or Corepack and prints the exact `hstack dev-targets host prepare NAME --toolchain`
+next step. Development commands still require that toolchain. Unmanaged `--host` enrollment does
+not install packages or change system services; explicit managed enrollment provisions its VM.
 
 ### Explicit setup
 
@@ -146,6 +162,352 @@ hstack dev-targets add linux \
 
 When both Lima options are present, Stack runs `limactl start` before SSH preparation. It does not
 stop the VM when the TUI exits, so target-local dependency and build caches remain warm.
+
+### Prepare Linux worker hosts explicitly
+
+In the 0.3 development checkout, host preparation is a separate owner action.
+Unmanaged SSH enrollment never grows the root filesystem or installs passwordless sudo policy.
+Choose the workers and the changes you want:
+
+```bash
+hstack dev-targets host prepare linux1 linux2 linux3 --grow-root --no-sleep --stack=repo-dev
+```
+
+Use `--all-linux` instead of names to prepare every configured Linux target;
+macOS and native Windows targets are skipped. Hosts run one at a time with an
+SSH TTY, so you can enter the sudo password when needed. Host preparation uses
+the existing SSH configuration and does not require a source mirror to be ready.
+
+#### Bring up a fresh Linux server
+
+Start with a reachable SSH server and its initial account password. Keep provider-console access
+available while changing authentication or the firewall. The first command enrolls a dedicated key;
+the second explicitly chooses the machine changes:
+
+```bash
+hstack dev-targets add nl1 --host=<ip> --user=root
+hstack dev-targets host prepare nl1 \
+  --create-user=happier --toolchain --tailscale --lockdown=tailscale-only \
+  --passwordless-sudo --no-sleep --disk-tmp --inotify --fleet-ssh --auto-updates
+hstack dev-targets qa setup nl1
+./apps/stack/bin/hstack-exec --target=nl1 -- true
+```
+
+`--toolchain` reuses the Ubuntu worker provisioning profile: NodeSource Node.js 24, Corepack,
+pinned Yarn, Go (used by CLI test setup), and ripgrep.
+It checks the installed toolchain first. Use an Ubuntu host supported by that profile rather than
+assuming every Linux distribution has the same package setup.
+
+`--create-user=happier` creates the non-root account, installs this target's dedicated public key,
+enables passwordless sudo for that account, and switches the target's SSH configuration to it.
+This account has general root access through sudo. For a matching home across your development
+machines, use `--create-user=leeroy.guest --home=/home/leeroy.guest`; `--home` must be absolute.
+For a second worker with that account and home, run the same explicit recipe:
+
+```bash
+hstack dev-targets add nl2 --host=<ip> --user=root
+hstack dev-targets host prepare nl2 \
+  --create-user=leeroy.guest --home=/home/leeroy.guest \
+  --toolchain --tailscale --lockdown=tailscale-only \
+  --passwordless-sudo --no-sleep --disk-tmp --inotify --fleet-ssh --auto-updates
+hstack dev-targets qa setup nl2
+./apps/stack/bin/hstack-exec --target=nl2 -- true
+```
+
+The default home is `/home/NAME`. An existing account must already use that home; preparation
+refuses to move its data. It also refuses an existing UID-zero account alias or a requested home
+already used by another account, including dot-path and symlink aliases, before changing SSH keys.
+Default mirror and CLI-home paths follow the new account's home, while
+explicit paths are preserved. The sudoers filename encodes the account name without dots, so names
+such as `leeroy.guest` work with sudo's included-directory rules. Before switching the target,
+preparation proves both fresh key login and `sudo -n true` through the candidate account.
+
+`--tailscale` installs through the official Tailscale package repository and joins the tailnet.
+Without an auth key, follow the login URL printed by `tailscale up`. An already joined host skips
+the join. Preparation switches the target's SSH host to its tailnet address. For unattended
+joining, add `--tailscale-authkey-stdin` and supply the key on standard input; never put it in
+command arguments, shell history, or logs. This form needs root or existing passwordless sudo;
+it cannot also read a sudo password from stdin. Package installation supports Ubuntu and Debian.
+
+`--lockdown` defaults to `tailscale-only`: UFW denies incoming connections by default and allows
+traffic arriving on `tailscale0`. `--lockdown=ssh-public` also allows public TCP port 22.
+Both disable password and keyboard-interactive SSH authentication and set
+`PermitRootLogin prohibit-password`. Both modes require UFW already installed, Tailscale up,
+and a fresh key connection through the tailnet address before applying the policy. Allow time
+for the printed Tailscale login before expecting the combined preparation command to finish.
+
+Every SSH-server or firewall policy change first requires a fresh key login that cannot reuse a control master.
+Preparation schedules an automatic rollback after five minutes before applying the change and
+cancels it only after a fresh post-change key login succeeds. It validates SSH configuration with
+`sshd -t`. If verification fails or the controller disconnects, leave the rollback armed, recover
+through the original endpoint or provider console, and rerun preparation after fixing key access.
+Lockdown manages `/etc/ssh/sshd_config.d/40-happier-no-password.conf` through the same host-preparation
+owner as the fleet SSH policy, adopting an existing copy of that restriction.
+
+`--auto-updates` supports Ubuntu and enables unattended security upgrades without automatic reboot. Repeating the
+same preparation checks existing state and keeps the requested configuration.
+
+`qa setup` prepares the Agent CLIs, managed JavaScript runtime, and browser through the existing QA
+owner. The final exact-target command proves that the enrolled worker can execute a routed command.
+Choose its command or QA placement afterward through the existing placement settings on this page.
+New QA stacks created with `--qa` or an `agent-qa-` name include `nl1` and `nl2` among the default daemon and
+browser candidates. The daemon gets one initial Machine pin; browser lifetimes rank the candidate
+pool independently. Existing Machine pins and explicitly configured candidate pools are preserved.
+
+#### Recover a key installation hidden by an SSH master
+
+An old password-authenticated control master can make ordinary SSH commands succeed even when
+the dedicated public key is missing from the remote account's `authorized_keys`. The message
+`Number of key(s) added: 1` alone is insufficient. Inspect `dev-targets show NAME` for the generated
+configuration and test a new key-only connection:
+
+```bash
+ssh -F /absolute/path/to/generated/ssh.config \
+  -o ControlMaster=no -o ControlPath=none -o BatchMode=yes \
+  -o PreferredAuthentications=publickey -o IdentityAgent=none \
+  happier-dev-target-nl1 true
+```
+
+If that fails, rerun the target's `add --host` command while password login is available. If password
+authentication was already disabled, use the provider console or another verified administrator
+connection to install the target's `.pub` key into the intended account's `authorized_keys`, with
+the normal SSH ownership and permissions, then repeat the fresh probe. Do not disable password
+authentication or apply lockdown until that probe succeeds. Current enrollment and preparation
+use this independent verification themselves.
+If an `SSH_ASKPASS` helper invokes another `ssh` command, give that inner command `-n` so it
+cannot consume the outer command's public-key input. That input-loss failure is separate from
+an existing master hiding failed key authentication.
+
+For a development fleet whose connections share one Tailscale source address,
+opt into its SSH server policy separately:
+
+```bash
+hstack dev-targets host prepare linux1 linux2 linux3 --fleet-ssh --stack=repo-dev
+```
+
+`--fleet-ssh` installs `/etc/ssh/sshd_config.d/50-happier-fleet.conf` with
+`MaxSessions 64` and `MaxStartups 100:30:200`. The session limit permits up to
+64 concurrent shell or subsystem sessions per multiplexed connection, avoiding
+OpenSSH's default limit of 10. On OpenSSH 9.8 or newer, it also writes
+`PerSourcePenaltyExemptList 100.64.0.0/10`; older versions omit this unsupported
+keyword. The exemption covers the tailnet CGNAT range only and changes connection
+penalties, not authentication. See the [OpenSSH configuration reference](https://man.openbsd.org/sshd_config#MaxSessions)
+and [OpenSSH 9.8 release notes](https://www.openssh.org/txt/release-9.8).
+
+The host must include the drop-in directory. Preparation validates with `sshd -t`,
+checks the effective settings, and reloads `ssh` only when the file changes.
+Validation failure restores the previous drop-in, or removes a rejected first
+installation, before returning an error. Repeating the command leaves the same
+configuration. Enrollment never installs it.
+
+Existing ControlMaster connections retain their old server limits after reload.
+Run `ssh -O stop <alias>` with the same SSH configuration to make subsequent
+commands open a new connection:
+
+```bash
+ssh -F /absolute/path/to/generated/ssh.config -O stop happier-dev-target-linux1
+```
+
+This [stops the master accepting new multiplexed sessions](https://man.openbsd.org/ssh#O)
+while existing sessions continue. Host preparation does not stop masters automatically.
+Remove this specific policy interactively:
+
+```bash
+sudo rm -- /etc/ssh/sshd_config.d/50-happier-fleet.conf
+sudo sshd -t && sudo systemctl reload ssh
+```
+
+For existing Linux workers or WSL Linux guests running many Agent processes,
+opt into persisted inotify instance capacity separately:
+
+```bash
+hstack dev-targets host prepare linux1 windows1-linux --inotify --stack=repo-dev
+```
+
+Use the enrolled Linux guest's target name, not a native Windows host entry.
+`--inotify` installs `/etc/sysctl.d/60-happier-inotify.conf` containing only
+`fs.inotify.max_user_instances=1024` and applies it immediately if needed.
+It leaves `fs.inotify.max_user_watches` and all other sysctls alone. Repeating
+it keeps the same file and value; combine it with other preparation flags to
+share the existing single sudo session. Enrollment does not install the policy
+on unmanaged workers; managed Lima guest provisioning does.
+
+On systemd-based guests, sysctl.d is loaded at boot. A WSL guest whose init
+does not load sysctl.d needs its existing boot policy to do so, or the explicit
+preparation command must be rerun after it boots. Verify
+`sysctl -n fs.inotify.max_user_instances` after any restart.
+Remove only this drop-in interactively:
+
+```bash
+sudo rm -- /etc/sysctl.d/60-happier-inotify.conf
+```
+
+Removal does not reset the live kernel value. It takes effect at the next boot
+that loads the distribution defaults; to restore a live value sooner, determine
+the prior machine-specific value and use `sudo sysctl -w` for this key only.
+Do not reset unrelated sysctls or assume a universal default. Explicit managed
+Lima provisioning reinstalls the policy.
+
+For Linux workers where systemd mounts `/tmp` as a RAM-backed filesystem, opt
+into disk-backed scratch separately:
+
+```bash
+hstack dev-targets host prepare linux1 linux2 linux3 --disk-tmp --stack=repo-dev
+```
+
+`--disk-tmp` masks `tmp.mount` and installs `/etc/tmpfiles.d/tmp.conf` containing
+`q /tmp 1777 root root 3d`. Disk-backed `/tmp` takes effect at the next reboot;
+preparation never unmounts a live `/tmp` or deletes current scratch files. The
+override sets the systemd tmpfiles cleanup age to three days. Repeating the
+command keeps the same settings. You can combine it with the other preparation
+flags in the same single sudo session per host. Enrollment never installs it.
+Remove the policy interactively; returning to the default mount also takes
+effect at the next reboot:
+
+```bash
+sudo systemctl unmask tmp.mount
+sudo rm -- /etc/tmpfiles.d/tmp.conf
+```
+
+`--grow-root` uses `lvextend -r -l +100%FREE` only for the mounted root LVM volume
+when its volume group has free extents. LVM inspection and conditional growth run
+together in one sudo invocation per host. Repeating it still authenticates for
+inspection, but does not run `lvextend` when there are no free extents. Non-LVM
+roots keep their layout; it does not enlarge disks or partitions.
+`--no-sleep` uses the existing power owner to mask `sleep.target`, `suspend.target`,
+`hibernate.target`, `hybrid-sleep.target`, and `suspend-then-hibernate.target`.
+When only sleep prevention is requested, already-masked hosts return successfully
+without sudo, including during `qa setup` and `power no-sleep`.
+`--passwordless-sudo` is optional: it is not needed for these
+checks or for browser setup when the browser and dependencies are already installed.
+
+To let agents repeat the existing power operations without a password, add
+`--passwordless-sudo`. It writes `/etc/sudoers.d/happier-worker` for the connected
+worker user after `visudo -cf` validates the candidate. The grants use discovered
+absolute command paths and the exact arguments for the five-target `systemctl mask`,
+each `systemctl is-enabled`, root-specific `lvs`/`vgs` discovery, and the root-specific
+`lvextend -r -l +100%FREE`. It grants no general shell or `NOPASSWD: ALL`.
+
+Initial unattended browser setup also needs package installation. Enable that
+separately and explicitly:
+
+```bash
+hstack dev-targets host prepare linux1 --no-sleep --passwordless-sudo --passwordless-provisioning --stack=repo-dev
+```
+
+`--passwordless-provisioning` requires `--passwordless-sudo` and is effectively
+root access: package installation runs privileged code, and Corepack can reside
+in a worker-writable tool directory. It adds only the browser owners' command
+forms: `apt-get update` (with or without `-y`), `apt-get install --simulate`,
+`apt-get install -y` (with or without `--no-install-recommends`), Playwright's
+`sh -c` recipe containing only apt update followed by dependency installation,
+and Corepack's global agent-browser installation with its existing flags,
+invoked through the discovered absolute Node executable and Corepack entry via
+`env COREPACK_ENABLE_PROJECT_SPEC=0` inside sudo. This bypasses the checkout's
+Yarn `packageManager` for the global install; the grant permits only that exact
+environment assignment, not arbitrary elevated environment variables.
+Package-name and version arguments are constrained; arbitrary shell commands
+are not granted. The full `happier` toolchain provisioner still runs interactively.
+After this preparation, `qa setup` browser installation and `power no-sleep` can
+run without a terminal password prompt. Existing toolchain and SSH prerequisites
+still apply.
+
+Existing workers with an older narrow grant, rather than general `NOPASSWD: ALL`,
+need an explicit policy refresh before browser installation:
+
+```bash
+hstack dev-targets host prepare NAME --passwordless-sudo --passwordless-provisioning
+hstack dev-targets qa setup NAME
+```
+
+QA setup never elevates the policy automatically. The full `--create-user` recipes
+above already grant general passwordless sudo and do not need this refresh.
+
+Re-running the same preparation converges on the same policy. Re-running
+`--passwordless-sudo` without `--passwordless-provisioning` removes the broader
+browser-install grants. To remove the drop-in entirely, connect interactively
+and run:
+
+```bash
+sudo rm -- /etc/sudoers.d/happier-worker
+sudo visudo -c
+```
+
+To undo the sleep policy, run `sudo systemctl unmask sleep.target suspend.target
+hibernate.target hybrid-sleep.target suspend-then-hibernate.target`. Removing
+these policies leaves an expanded root filesystem at its new size.
+
+### Connect to a worker interactively
+
+In the 0.3 development checkout, generated SSH configs and the shared mirror
+configuration enable OpenSSH multiplexing. Short commands, probes and execution
+channels reuse the target's control socket, which remains available for ten idle
+minutes. Enrollment and controller-key verification authenticate independently
+so an existing master cannot hide a missing key or bypass strict host-key checks.
+Native execution uses that same configured socket, including managed
+Lima/WSL targets. Existing explicit SSH policies remain authoritative. Refresh
+an older enrolled target with its existing `add --host` command, or refresh the
+shared config with the normal synchronization-service setup.
+
+Stack service forwards and browser SOCKS/CDP forwards keep dedicated connections:
+their foreground owner must remove its listeners on stop without terminating
+another session's shared master. This leaves one connection per forward owner,
+rather than one new authenticated connection for every readiness probe.
+
+The convenience command is a thin wrapper over the existing exact-target executor:
+
+```bash
+hstack dev-targets ssh linux1 --stack=repo-dev
+hstack dev-targets exec linux1 --tty --stack=repo-dev -- bash -l
+```
+
+Both use the configured target, source-sync barrier, and execution transport.
+If the mirror is unavailable, inspect `dev-targets show linux1 --stack=repo-dev`
+for its SSH configuration file and alias, then connect directly:
+
+```bash
+ssh -F /absolute/path/to/generated/ssh.config happier-dev-target-linux1
+```
+
+### Apply native NAT to a retained Lima worker
+
+New managed VZ workers in the 0.3 development checkout use
+[Lima's native NAT](https://lima-vm.io/docs/config/network/vmnet/). Existing
+workers require an explicit operator action on their outer Mac host:
+
+```bash
+hstack tools managed-lima network apply --instance=WORKER_INSTANCE \
+  --lima-home=/absolute/lima/home --force
+```
+
+You can instead run this owner from the editing controller with the worker's
+configured outer-host connection, provided `limactl` is available in that
+SSH session's PATH (otherwise use the outer-Mac terminal above):
+
+```bash
+hstack tools managed-lima network apply --instance=WORKER_INSTANCE \
+  --lima-home=/absolute/lima/home \
+  --host-ssh=OUTER_HOST_ALIAS --host-ssh-config=/absolute/outer-host/ssh.config \
+  --force
+```
+
+Use the instance, Lima home, and outer-host connection reported by
+`hstack dev-targets show WORKER --stack=repo-dev`. The operation gracefully
+stops only that retained worker, edits only networking, then starts it; every
+process inside it is interrupted. Resources, disk identity, SSH policy, and
+forwarding rules are preserved. Without `--force`, a required change is refused;
+an already configured worker is a no-op. An edit failure leaves it stopped with
+an error so the operator can correct the problem and rerun the same operation.
+If editing succeeds but startup fails, inspect the retained worker and use
+`hstack dev-targets start WORKER --stack=repo-dev` to recover it; applying
+networking again is a no-op when its configuration already matches.
+Afterward, `hstack dev-targets start WORKER --stack=repo-dev` refreshes its
+generated SSH endpoint through the existing worker lifecycle. Confirm SSH and
+Mutagen reconnect before scheduling commands there.
+
+For fleet traffic, authenticate Tailscale inside each guest using its own
+tailnet identity. See [development VM networking](/hstack/dev-vm#use-native-nat-for-vm-traffic)
+for routing, DNS, host-access checks, and the owner-run login workflow.
 
 ### Set shared and dedicated capacity for a managed Lima target
 
@@ -206,6 +568,18 @@ The repo-local wrapper selects that checkout's Stack automatically.
 
 ## Choose where work runs
 
+In current 0.3 development, compilation-class requests prefer the worker that
+most recently completed the same project scope when it has immediate capacity. A
+busy worker falls back to the normal pool choice. Identical in-flight requests
+share one check only after each caller synchronizes and the worker verifies
+matching source, configuration, compiler, options and installed declarations.
+Each caller receives the full output and exit status, including failures;
+canceling a follower does not cancel the leader. Later requests run the compiler
+again and reuse its existing worker-local incremental state. Input equality
+includes authored generator inputs and installed declarations; the worker may
+reuse dependency-file digests with unchanged filesystem identity, never a
+completed compiler result. Unsupported external project scopes run independently.
+
 Placement settings are supported by the stack-scoped target configuration. Managed Lima ownership
 and per-target capacity use its current version 3 shape. Use the command owner instead of editing
 JSON:
@@ -241,11 +615,25 @@ node ./apps/stack/scripts/repo_local.mjs dev-targets placement show
 Runtime surfaces accept `local` or one configured target name. `build` and `qa` also accept `ordered`
 with `--targets=NAME,...` and local fallback. `qa` additionally accepts `auto` over its configured
 pool, using the existing least-load command selector without competing local execution.
-Fresh controlled QA stacks keep their daemon local. A daemon is the Machine identity for sessions,
+New `--qa` and `agent-qa-*` stacks compare available memory after live reservations across linux3,
+linux2 and linux1. The placement owner chooses once before runtime selection and persists
+an explicit daemon pin. Existing stacks retain their placement until their owner changes it before
+the next restart. A daemon is the Machine identity for sessions,
 resume and writable workspaces; it cannot follow a command pool between starts. An explicit per-stack
 `daemon` pin selects one named host and fails closed if that host is unavailable. `qa` placement can
 select the server, but cannot override that Machine pin.
 Defaults are resolved on the next start; changing placement does not move running services.
+In 0.3 development, `stack stop` can finish local cleanup when a remote target's SSH
+connection is unreachable. Its retirement remains recorded as `retirement-pending`
+in the stack's runtime state; remote Sessions are not confirmed stopped. The next
+start on that host retires its previous runtime before recreating forwards. You can
+stop locally, change the daemon pin to a healthy host, and start there while the
+old host's retirement remains owed. This selects a different Machine; it does not
+migrate existing Sessions or workspaces. A reachable host whose runtime or Session
+cleanup fails still blocks stop.
+After a host reboot, retained runtime metadata whose recorded processes are gone
+does not prevent retirement. An interrupted stop can also finish once a fresh probe
+confirms the prior runtime is absent; a missing exit status alone is not confirmation.
 Retained local server data always requires the
 explicit data handoff, even when that consumer has an explicit QA policy.
 `commands` additionally accepts
@@ -419,8 +807,10 @@ authority. A network database does not remove the light-server/SQLite placement 
 
 A [controlled QA stack](/hstack/stacks#controlled-stacks-for-agent-qa) started with
 `stack start --runtime` resolves `runtimePlacement.qa` from its own dev-targets
-config, defaulting to local. Its daemon defaults to local independently of QA and command pools.
-Only an explicit consumer `daemon` pin can select a different Machine host.
+config, defaulting to local server placement. New QA creation requests rank linux3, linux2,
+linux1, nl1 and nl2 by observed unreserved memory once and persist an explicit consumer `daemon` pin,
+independently of QA and command pools.
+Unmarked existing consumers keep their existing Machine placement.
 Build placement belongs to the producer: changing a consumer's `qa` chooses its runtime host,
 while the producer's `build` setting chooses compilation workers. Neither `qa` nor `build` can
 override the consumer's Machine pin. Changing `build` never moves
@@ -434,9 +824,9 @@ opening a fresh local database. A local QA override cannot bypass it.
 worker's observed platform and architecture. Explicit snapshot ids remain exact pins and must
 match that target. If none exists, build a matching snapshot through the producer; do not relabel
 ARM64 bytes as x64. Windows WSL workers consume Linux snapshots, not native Windows snapshots.
-The first complete target publication uses `stack build <qa> --all --activate-runtime --target=linux-x64`;
-later narrow component builds reuse that target's other published components. This initial shared
-publication is not a per-QA build, and borrowing Expo does not make a foreign snapshot portable.
+For split-host shared-DB QA, request only a missing component through the producer, such as
+`stack build <qa> --daemon --target=linux-x64`; component subsets select independently. Borrowed
+Expo requires no web publication and does not make a foreign daemon snapshot portable.
 Shared-DB QA selects the server snapshot for its authoritative database host and independently selects
 a daemon snapshot matching its daemon placement host, including the controller for a local daemon.
 Start, select, activate and doctor share this component selection through the placement-owned build
@@ -450,6 +840,31 @@ The existing supervisor transfers and validates each selected component/support 
 the snapshot lifecycle rather than source watch, and reuses the existing SSH forwards. Each stack
 has separate CLI state and a writable session workspace outside the one-way source replica.
 Observe the selected and remotely loaded snapshot identities before claiming remote QA success.
+
+Run `dev-targets qa setup <target> --stack=<qa>` for idempotent QA tools, scratch, power and retention
+preparation. Run `dev-targets browser start <lane-session> --stack=<qa> --url=<qa-ui-url>` in a retained foreground
+handle to start Chromium on the QA pool host with the most actually available memory after live
+reservations, without initializing or changing daemon placement. It uses
+`HAPPIER_STACK_QA_DAEMON_TARGETS`, defaulting to the configured members of nl1, nl2, linux3, linux2,
+linux1, in that order. Explicit candidate lists remain exact and reject unknown targets; an empty default pool
+fails without a controller-local browser. Windows1 remains excluded while outer Windows C: disk
+health is unverified. Browser selection is only for that foreground
+lifetime and writes no persistent pin. Use the returned local CDP endpoint with agent-browser
+or Playwright on the controller, opening the returned browser-facing `url` with lane-owned ports.
+Dedicated QA-host Chromium uses `--no-sandbox` under the approved policy for Happier's own QA app.
+Existing supervisor forwards carry the consumer server and borrowed
+Expo; interrupt the exact browser handle to remove its browser/profile and forwards after QA.
+In current 0.3 development source, controller loss also closes the remote browser through its
+existing lifetime pipe. `stack stop <qa>` retires that Stack's browsers on configured POSIX targets
+even when the Stack has no runtime state. Cleanup waits for the browser worker to close its session;
+an unreachable target reports `browser_cleanup_unconfirmed:<target>` and allows stop to proceed
+without claiming the browser was retired. A reachable target reporting browser cleanup failure
+still leaves stop incomplete.
+An unavailable selected host or unusable pool fails closed: QA never launches a controller-local
+browser as fallback. Service memory reserves
+live daemon/browser trees through the same observer as server/Expo; validation can use spare memory
+while heavier classes retain their measured admission envelopes. No user Agent credentials are
+copied by provisioning; the paired daemon materializes its Account's connected services.
 This is development-source behavior, not certification of every target or a released availability
 claim.
 
@@ -531,6 +946,10 @@ For a broad command without a public package entry point, use the launcher direc
 
 `./apps/stack/bin/hstack-exec --local -- <command> [args...]` keeps one invocation local without
 pinning later descendant commands to the local host.
+In current 0.3 development, heavyweight compilation on the Linux controller refuses this escape
+by default. Use AUTO by omitting `--local`, or explicitly authorize
+`--local --allow-local-compilation -- <command> [args...]`. The override retains memory admission
+and the local floor, including under CI; already-placed workers do not require it.
 The checkout-local `./apps/stack/bin/hstack-exec -- ...` launcher exposes that same owner for
 potentially broad read-only repository work (`rg`, `find`, inventories/counts), tests, typechecks,
 lint/static analysis, and builds that write only ignored artifacts. Keep tracked-source or Git
@@ -541,9 +960,9 @@ Automatic routing is also best-effort. It probes configured targets concurrently
 by CPU count, adds a low-memory penalty, and randomly distributes commands among near-equal hosts.
 Healthy samples are cached briefly (15 seconds by default); unavailable samples are cached longer
 (2 minutes by default). Refreshes are coalesced with a lightweight filesystem lock, so concurrent
-agents do not each probe the same host. The selector excludes a target that cannot launch the
-requested top-level executable or does not have enough filesystem scratch space, and adjusts
-each cached score for commands already dispatched there
+agents do not each probe the same host. The selector excludes a target when the requested
+top-level executable or a declared prerequisite (Go for CLI Vitest) is missing, or filesystem
+scratch space is insufficient. It adjusts each cached score for commands already dispatched there
 but not yet visible in its next load sample. Pass the executable directly when practical: wrapping
 it in `sh -lc` hides inner tool requirements from this preflight. If the selected host cannot
 establish its command connection, the launcher temporarily excludes it and tries another configured
@@ -594,18 +1013,35 @@ QA/source-development package dist refreshes use incremental emit-only compilati
 output records distinguish QA mode, so strict and release builds cannot reuse that output as proof
 of a completed full typecheck. Full semantic checks remain owned by the strict build/typecheck lanes.
 
+In 0.3 development, both modes compile captured package inputs. Edits during compilation do not
+hold completion behind a quiet checkout: the output record identifies the capture, and newer
+source remains eligible for the next build. Strict builds keep their live-input drift checks.
+
 In 0.3 development, the shared command policy sizes admission by workload. Measured cli-common
 and Protocol dist builds use the 6 GiB package-dist envelope. Canonical runtime worker requests
 use an 18 GiB runtime-build envelope: a successful full daemon build peaked at about
 15.68 GiB of process-tree RSS. Adding at least the measured package envelope's 1.53 GiB of
-spare headroom and rounding up to whole GiB gives 18 GiB. Full typechecks and unmeasured
-builds retain the conservative 21 GiB compilation envelope. Focused validation and dependency
+spare headroom and rounding up to whole GiB gives 18 GiB. UI typechecks reserve 29 GiB after a
+controller check was stopped at 26.6 GB RSS; conservatively treating GB as GiB and adding that
+same measured headroom gives 29 GiB rounded up. A stopped run is a lower bound, not a proven
+maximum. A full CLI check peaked at about 21.62 GiB RSS; adding the same headroom and rounding
+up raises its reservation to 24 GiB. Server retains 21 GiB: its observed peak was about 12.02 GiB,
+but incomplete checks do not justify lowering the floor. Neither check completed without
+diagnostics. Unscoped/mixed-package checks and unmeasured builds reserve 29 GiB because they may
+include UI; serial projects in one package retain that package's reservation. Focused validation and dependency
 installation retain their existing 6 GiB envelope. Automatic routing excludes workers whose
 total RAM cannot hold the selected class, including cached samples and local candidates.
 Linux and WSL keep each admitted job's class envelope until exit or orphan reclamation, but subtract
 only its unused part from available memory: the envelope minus authenticated process-tree resident
-memory, floored at zero. Resident pages are already absent from available memory; unavailable RSS
-observation retains the full envelope. Authenticated nested commands share their parent's reservation,
+memory, floored at zero. In current 0.3 development source, service/browser and admitted trees use
+Linux PSS so shared pages contribute each process's share rather than being counted repeatedly.
+Native admission skips service page-table walks only when their summed RSS upper bound
+cannot constrain available memory or the selected class's physical capacity. Admitted-owner
+credits always retain exact PSS. Kernel generation checks do not spawn a process per PID;
+vanished processes contribute zero rather than stale RSS.
+Unavailable PSS for a live process falls back to RSS and reports the affected PIDs. Resident pages are already absent
+from available memory; missing memory observation retains the full envelope.
+Authenticated nested commands share their parent's reservation,
 and escalation credits its existing resident memory. Memory-wait and capacity-exclusion diagnostics name the
 class, required memory and existing reservations. These requirements reserve admission headroom;
 they do not limit the command's actual memory use.
@@ -629,7 +1065,7 @@ head's existing class envelope or when one candidate envelope would bridge its c
 Only successful starts consume this allowance, not retries or readiness probes. This protects the
 older job from starvation without adding a timeout.
 
-Explicit `--local` changes placement and uses the same Linux admission owner: heavyweight work
+Explicit `--local --allow-local-compilation` changes compilation placement and uses the same Linux admission owner: heavyweight work
 waits for local memory to recover, while light commands run immediately. A class that cannot fit
 total local memory minus service reservations fails immediately with an instruction to route it
 remotely. It does not bypass
@@ -661,14 +1097,16 @@ When a Linux target has a ready systemd user manager and a loaded `happier-jobs.
 job runs in a transient user scope in that slice at nice level 10. The launcher does not create or
 configure the slice; targets without that prepared boundary run the same admitted command directly.
 
-In current 0.3 development, Linux worker admission measures its existing dependency tree, shared
-caches and retained build workspace against the available bytes on their filesystems. Live peers'
-disk envelopes share the existing admission lock. If headroom is insufficient, cleanup tries stale
+In current 0.3 development, Linux worker admission checks available bytes on the command's known
+write filesystems and refuses an already-exhausted filesystem. Cleanup tries stale
 staging across stacks, Yarn entries absent from protected lockfiles, then lane scratch older than
-24 hours. Unknown holder visibility preserves data. AUTO selects another worker for that command
+24 hours. Unknown UID or same-UID holder visibility preserves data; processes whose status identifies
+only foreign UIDs do not block this user's reclamation. AUTO selects another worker for that command
 class if space is still insufficient; an explicit target reports the failure. `dev-targets status`
-shows the measured runtime envelope and available bytes. Source searches require a filesystem with
-free space but do not reserve a build envelope. These resident measurements do not establish temporal
+shows available bytes and the admission reason. Routed POSIX commands default `TMPDIR` to `tmp`
+beneath the configured worker CLI home, on its disk-backed filesystem instead of RAM-backed `/tmp`;
+explicit `TMPDIR` is preserved. Source searches require a filesystem with free space but do not
+reserve a build envelope. These observations do not establish temporal
 install/build peaks or account for filesystem quotas; the development workflow still needs those
 live measurements before claiming protection against every `ENOSPC` failure.
 
@@ -769,9 +1207,9 @@ health; the separately reported startup preparation history can retain an earlie
 In current 0.3 development, runtime-build targets share one package-manager cache and Iroh Cargo
 target directory per worker CLI home. Linux runtime requests also check for stale staging and
 historical temporary roots: reclamation requires at least 24 hours since the newest modification
-and proof that no live process holds the root. Cache cleanup preserves resolutions used by every
+and proof that no live same-UID process holds the root. Cache cleanup preserves resolutions used by every
 configured mirror sharing that cache, including the 0.2 command mirror, and retained build
-workspaces. Unknown process visibility or unavailable lockfiles preserve data; a full worker may
+workspaces. Unknown UID or same-UID process visibility or unavailable lockfiles preserve data; a full worker may
 therefore require maintenance with sufficient process-observation permissions. Checkout-local
 logs and temporary outputs under `.project/logs` and `.project/tmp` are excluded from synchronization.
 Current development dispatch recovers scan-only problems on an otherwise connected, scanned session

@@ -47,7 +47,7 @@ test('alpha watching follows service roles while command and captured-build work
   const renderModes = (config) => {
     const rendered = renderMutagenProject({ sourceDir: '/source', targets: configuredTargets, config });
     return Object.fromEntries(configuredTargets.map(({ name }) => {
-      const session = rendered.split(`  ${resolveMutagenSessionName(name)}:\n`)[1].split('\n  happier-')[0];
+      const session = rendered.split(`  ${resolveMutagenSessionName(name, '/source')}:\n`)[1].split('\n  happier-')[0];
       return [name, session.match(/configurationAlpha:\n\s+watch:\n\s+mode: "([^"]+)"/)?.[1]];
     }));
   };
@@ -277,12 +277,52 @@ test('buildMutagenProjectArgs isolates global configuration and addresses the ge
 
 test('resolveMutagenSessionName matches the generated project session key', () => {
   assert.equal(resolveMutagenSessionName('linux'), 'happier-linux');
-  const distinctNames = ['qa.linux', 'qa-linux', 'qa_linux'].map(resolveMutagenSessionName);
+  const distinctNames = ['qa.linux', 'qa-linux', 'qa_linux'].map(name => resolveMutagenSessionName(name));
   assert.equal(new Set(distinctNames).size, distinctNames.length);
   assert.ok(distinctNames.every((name) => /^[A-Za-z][A-Za-z0-9-]*$/.test(name)));
-  const escapedName = resolveMutagenSessionName('qa.linux');
+  const escapedName = resolveMutagenSessionName('qa.linux', '/source');
   assert.match(
     renderMutagenProject({ sourceDir: '/source', targets: [{ ...targets[0], name: 'qa.linux' }] }),
     new RegExp(`${escapedName}:`),
   );
+});
+test('scoped standby keeps Git and dirty source at identical paths without a home copy', () => {
+  const root = '/home/dev/workspace/0.2';
+  const rendered = renderMutagenProject({ sourceDir: root, targets: [], standby: {
+    scopeDir: root, localSource: true, homeDir: '/home/dev',
+    standby: { ssh: 'nl2', homeDir: '/home/dev', scopeDir: root },
+  } });
+  assert.match(rendered, /alpha: "\/home\/dev\/workspace\/0\.2"/);
+  assert.match(rendered, /beta: "nl2:\/home\/dev\/workspace\/0\.2"/);
+  assert.match(rendered, /vcs: false/);
+  assert.match(rendered, /one-way-safe/);
+  assert.ok(rendered.includes('**/.project/tmp'));
+  assert.ok(rendered.includes('**/.project/cache'));
+  assert.ok(rendered.includes('**/.runner-snapshots'));
+  assert.ok(rendered.includes('**/apps/cli/tools/unpacked'));
+  assert.equal([...rendered.matchAll(/^    alpha:/gm)].length, 1);
+  assert.ok(!rendered.includes('alpha: "/home/dev"'));
+  assert.throws(() => renderMutagenProject({ sourceDir: root, targets: [], standby: {
+    scopeDir: root, localSource: true, homeDir: '/home/dev',
+    standby: { ssh: 'nl2', homeDir: '/home/dev', scopeDir: '/home/dev/other' },
+  } }), /scope.*identical/i);
+});
+
+test('standby SSH copies retain target access control in home and scoped forms', () => {
+  const homeDir = '/home/dev';
+  const full = renderMutagenProject({ sourceDir: '/source', targets: [], standby: {
+    ssh: 'primary', homeDir, standby: { ssh: 'nl2', homeDir },
+  } });
+  const scoped = renderMutagenProject({ sourceDir: `${homeDir}/.ssh`, targets: [], standby: {
+    localSource: true, scopeDir: `${homeDir}/.ssh`, homeDir,
+    standby: { ssh: 'nl2', homeDir, scopeDir: `${homeDir}/.ssh` },
+  } });
+  for (const name of ['authorized_keys', 'authorized_keys2']) {
+    assert.ok(full.includes(`- ".ssh/${name}"`));
+    assert.ok(scoped.includes(`- "${name}"`));
+  }
+  for (const name of ['config', 'known_hosts', 'id_ed25519']) {
+    assert.ok(!full.includes(`- ".ssh/${name}"`));
+    assert.ok(!scoped.includes(`- "${name}"`));
+  }
 });

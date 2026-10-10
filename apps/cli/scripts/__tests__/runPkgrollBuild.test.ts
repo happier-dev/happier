@@ -8,6 +8,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { spawn as spawnChildProcess } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -116,6 +117,36 @@ async function runPhysicalPackageAlias(aliasKind: 'directory' | 'file') {
 }
 
 describe('runPkgrollBuild', () => {
+  it('emits public declarations with the real pkgroll compiler during publication', async () => {
+    const fixture = writeIsolatedPkgrollRepo('happier-cli-pkgroll-public-types-');
+    try {
+      writeFileSync(fixture.packageJsonPath, JSON.stringify({
+        name: '@happier-dev/pkgroll-fixture', version: '0.0.0',
+        main: './dist/index.cjs', module: './dist/index.mjs', types: './dist/index.d.cts',
+      }));
+      mkdirSync(join(fixture.packageRoot, 'src'));
+      mkdirSync(join(fixture.packageRoot, 'node_modules'));
+      // Pkgroll resolves its optional TypeScript API peer from this package.
+      symlinkSync(dirname(createRequire(import.meta.url).resolve('typescript/package.json')),
+        join(fixture.packageRoot, 'node_modules', 'typescript'), process.platform === 'win32' ? 'junction' : 'dir');
+      writeFileSync(join(fixture.packageRoot, 'src', 'index.ts'), 'export const runtime: string = "public";\n');
+      writeFileSync(join(fixture.packageRoot, 'tsconfig.json'), JSON.stringify({
+        compilerOptions: { strict: true, types: [], skipLibCheck: true },
+        include: ['src/index.ts'],
+      }));
+      await runPkgrollBuild({
+        packageJsonPath: fixture.packageJsonPath,
+        outputDir: fixture.outputDir,
+        env: { ...process.env, HAPPIER_WORKSPACE_BUILD_MODE: 'qa-runtime', npm_lifecycle_event: 'prepack' },
+      });
+      expect(readFileSync(join(fixture.stagingDir, 'index.d.cts'), 'utf8')).toContain('runtime: string');
+      expect(existsSync(join(fixture.stagingDir, 'index.cjs'))).toBe(true);
+      expect(existsSync(join(fixture.stagingDir, 'index.mjs'))).toBe(true);
+    } finally {
+      rmSync(fixture.repoRoot, { recursive: true, force: true });
+    }
+  });
+
   it('converges a directory symlink or junction alias on the physical package stage', async () => {
     await runPhysicalPackageAlias('directory');
   }, 20_000);
@@ -348,7 +379,7 @@ await runPkgrollBuild({
       return { status: 0 };
     });
 
-    await runPkgrollBuild({ cwd: dir, outputDir, pkgrollCliPath, spawn });
+    await runPkgrollBuild({ cwd: dir, outputDir, pkgrollCliPath, spawn, env: {} });
 
     expect(spawn).toHaveBeenCalledWith(
       process.execPath,
@@ -365,9 +396,9 @@ await runPkgrollBuild({
       expect.objectContaining({
         cwd: realpathSync.native(join(dir, outputDir)),
         stdio: ['ignore', 'inherit', 'inherit'],
-        timeout: 600_000,
       }),
     );
+    expect(spawn.mock.calls[0]?.[2]).not.toHaveProperty('timeout');
     expect(manifestObservedByPkgroll).toMatchObject({
       main: './index.cjs',
       exports: {
@@ -433,7 +464,12 @@ await runPkgrollBuild({
     );
   });
 
-  it('applies bounded timeout override from environment for Windows stall protection', async () => {
+  it.each([
+    { timeoutMs: 1, env: {}, expected: 1 },
+    { timeoutMs: 3_600_000, env: {}, expected: 3_600_000 },
+    { env: { HAPPIER_CLI_PKGROLL_TIMEOUT_MS: '1' }, expected: 1 },
+    { env: { HAPPIER_CLI_PKGROLL_TIMEOUT_MS: '3600000' }, expected: 3_600_000 },
+  ])('preserves the configured operator budget $expected without clamping', async ({ timeoutMs, env, expected }) => {
     const dir = createTempDirSync('happier-cli-pkgroll-timeout-');
     const packageJsonPath = join(dir, 'package.json');
     const pkgrollCliPath = join(dir, 'pkgroll-cli.mjs');
@@ -447,7 +483,8 @@ await runPkgrollBuild({
       outputDir: 'dist.staging.timeout',
       pkgrollCliPath,
       spawn,
-      env: { HAPPIER_CLI_PKGROLL_TIMEOUT_MS: '120000' },
+      timeoutMs,
+      env,
     });
 
     expect(spawn).toHaveBeenCalledWith(
@@ -461,9 +498,43 @@ await runPkgrollBuild({
         'index.mjs',
       ],
       expect.objectContaining({
-        timeout: 120_000,
+        timeout: expected,
       }),
     );
+  });
+
+  it('rejects an operator budget that would overflow the subprocess timer instead of shortening it', async () => {
+    const fixture = writeIsolatedPkgrollRepo('happier-cli-pkgroll-timer-range-');
+    const spawn = vi.fn(() => ({ status: 0 }));
+    try {
+      await expect(runPkgrollBuild({
+        packageJsonPath: fixture.packageJsonPath,
+        outputDir: fixture.outputDir,
+        pkgrollCliPath: fixture.pkgrollCliPath,
+        timeoutMs: 2_147_483_648,
+        spawn,
+      })).rejects.toThrow(/timer.*2147483647/i);
+      expect(spawn).not.toHaveBeenCalled();
+    } finally {
+      rmSync(fixture.repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('reports a configured operator deadline without losing cleanup of the stage manifest', async () => {
+    const fixture = writeIsolatedPkgrollRepo('happier-cli-pkgroll-operator-deadline-');
+    const spawn = vi.fn(() => ({ error: Object.assign(new Error('boundary deadline'), { code: 'ETIMEDOUT' }) }));
+    try {
+      await expect(runPkgrollBuild({
+        packageJsonPath: fixture.packageJsonPath,
+        outputDir: fixture.outputDir,
+        pkgrollCliPath: fixture.pkgrollCliPath,
+        timeoutMs: 1,
+        spawn,
+      })).rejects.toThrow('pkgroll timed out after 1ms');
+      expect(existsSync(join(fixture.stagingDir, 'package.json'))).toBe(false);
+    } finally {
+      rmSync(fixture.repoRoot, { recursive: true, force: true });
+    }
   });
 
   it('gives pkgroll the canonical Node heap budget while preserving existing Node options', async () => {

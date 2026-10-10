@@ -15,6 +15,8 @@ import {
   writeCandidateExecutionHostProfile,
 } from './utils/execution_host/config.mjs';
 import { executeCandidateHostCommand, inspectExecutionHost } from './utils/execution_host/controller.mjs';
+import { assignExecutionHostPrimary, describePrimarySwitch, formatPrimaryWorkload, inspectPrimaryWorkload, syncPrimaryWorkload, verifyPrimaryWorkload } from './utils/execution_host/primary.mjs';
+import { resolveRepoStackIdentity } from './utils/stack/repo_stack_identity.mjs';
 import {
   adoptLegacyExecutionHostCandidate,
   inspectExecutionHostCandidateRetirement,
@@ -27,7 +29,7 @@ import {
   syncExecutionHostCandidateMirror,
 } from './utils/execution_host/candidate_repository.mjs';
 import { createManagedLimaHostExecutor } from './utils/managed_lima/host_executor.mjs';
-import { startManagedLimaInstance, stopManagedLimaInstance } from './utils/managed_lima/lifecycle.mjs';
+import { applyManagedLimaNetworking, startManagedLimaInstance, stopManagedLimaInstance } from './utils/managed_lima/lifecycle.mjs';
 import { setupManagedLimaInstance, setupManagedLimaRuntime } from './utils/managed_lima/manager.mjs';
 import {
   normalizeManagedLimaCapacity,
@@ -82,17 +84,25 @@ function flagValue(argv, name) {
 function usage(json) {
   printResult({
     json,
-    data: { commands: ['setup', 'activate', 'capacity', 'mirror', 'mount', 'unmount', 'backup', 'forward', 'recovery', 'skills', 'status', 'doctor', 'start', 'stop', 'restart', 'shell', 'exec'] },
+    data: { commands: ['setup', 'activate', 'capacity', 'network', 'mirror', 'mount', 'unmount', 'backup', 'forward', 'recovery', 'skills', 'status', 'doctor', 'start', 'stop', 'restart', 'shell', 'exec', 'primary'] },
     text: [
       '[dev-vm] usage:',
       '  hstack dev-vm setup [--instance=happier-agent-primary] [--profile=balanced] [--disk-image-format=raw|asif] [--workspace=ID=/absolute/source ...] [--workspace-stack=ID=STACK_NAME ...] [--json]',
       '  hstack dev-vm activate [--json]',
+      '  hstack dev-vm primary status [--source=SOURCE --stack=NAME] [--json]',
+      '  hstack dev-vm primary assign TARGET|lima [--stack=NAME] [--json]',
+      '  hstack dev-vm primary sync TARGET --source=SOURCE --home=/identical/home --stack=NAME [--json]',
+      '  hstack dev-vm primary switch TARGET --dry-run [--pause-agents --pause-timeout=SECONDS] [--stack=NAME] [--force] [--json]',
+      '  hstack dev-vm primary verify TARGET --source=SOURCE --home=/identical/home --stack=NAME --work-stack=NAME --work-repo=/home/path/to/0.2 [--json]',
+      '    Verify inspects public prerequisites only; workload switching and native restore certification are not yet available.',
       '  hstack dev-vm mirror [--workspace-id=ID] [--source-dir=/absolute/path/to/repo] [--json]',
       '  hstack dev-vm mirror status|sync|stop|adopt-legacy|recover [--workspace-id=ID] [--json]',
       '  hstack dev-vm status|doctor [--repair-forwarding] [--json]',
       '  hstack dev-vm start [--json]',
       '  hstack dev-vm stop [--force] [--json]',
       '  hstack dev-vm restart [--force] [--json]',
+      '  hstack dev-vm network apply [--force] [--json]',
+      '    --force authorizes stop, network-only edit and start; all guest processes are interrupted.',
       '  hstack dev-vm capacity show [--json]',
       '  hstack dev-vm capacity set shared|dedicated [--shared-cpus=N --shared-memory-gib=N --dedicated-cpus=N --dedicated-memory-gib=N] [--force] [--json]',
       '  hstack dev-vm mount [status|enable|disable] [--mount-dir=/absolute/path] [--json]',
@@ -232,6 +242,45 @@ async function main() {
   const json = wantsJson(argv);
   const command = argv.find((arg) => !arg.startsWith('-')) ?? '';
   if (!command || command === 'help' || wantsHelp(argv)) return usage(json);
+
+  if (command === 'primary') {
+    const action = argv[argv.indexOf(command) + 1];
+    if (!['status', 'sync', 'switch', 'verify', 'assign'].includes(action)) throw new Error('[dev-vm] primary requires status, assign TARGET|lima, sync TARGET, switch TARGET --dry-run, or verify TARGET with explicit source/home/work Stack');
+    if (action === 'switch' && !argv.includes('--dry-run')) {
+      throw new Error('[dev-vm] PRIMARY_SWITCH_NOT_READY: workload switching is unavailable; use --dry-run to inspect its steps');
+    }
+    if (action === 'verify' && argv.includes('--restore-test')) {
+      // Fail before profile/configuration access or any transport. Verification
+      // of prerequisites cannot become an implied restore/switch permission.
+      return await verifyPrimaryWorkload({ restoreTest: true });
+    }
+    const stackName = flagValue(argv, '--stack').trim() || process.env.HAPPIER_STACK_STACK
+      || resolveRepoStackIdentity({ repoRoot: process.cwd(), createIfMissing: false }).stackName;
+    if (action === 'assign') {
+      const result = await assignExecutionHostPrimary({ targetName: argv[argv.indexOf(action) + 1], stackName });
+      return printResult({ json, data: result,
+        text: `[dev-vm] command primary assigned: ${result.primary.targetName ?? result.primary.instance}; workload unchanged` });
+    }
+    if (action === 'sync' || action === 'verify') {
+      const targetName = argv[argv.indexOf(action) + 1];
+      const input = { targetName, sourceName: flagValue(argv, '--source').trim(), homeDir: flagValue(argv, '--home').trim(), stackName };
+      const result = action === 'verify' ? await verifyPrimaryWorkload({ ...input,
+        workStackName: flagValue(argv, '--work-stack').trim(), workRepoDir: flagValue(argv, '--work-repo').trim(),
+        ...(flagValue(argv, '--work-stack-storage').trim() ? { workStackStorageDir: flagValue(argv, '--work-stack-storage').trim() } : {}) })
+        : await syncPrimaryWorkload(input);
+      return printResult({ json, data: result,
+        text: action === 'verify' ? formatPrimaryWorkload(result)
+          : `[dev-vm] standby ready: ${result.sessionName}; Agent SQLite captured ${result.agentSqliteCapturedAt}; database replica UNVERIFIED; primary assignment unchanged` });
+    }
+    const status = await inspectPrimaryWorkload({ profile: readExecutionHostProfile(process.env), stackName,
+      sourceName: action === 'status' ? flagValue(argv, '--source').trim() : '' });
+    const targetName = argv[argv.indexOf(action) + 1];
+    const result = action === 'switch'
+      ? describePrimarySwitch(status, targetName?.startsWith('-') ? '' : targetName, { force: argv.includes('--force'),
+        pauseAgents: argv.includes('--pause-agents'), pauseTimeoutSeconds: flagValue(argv, '--pause-timeout').trim() })
+      : status;
+    return printResult({ json, data: result, text: formatPrimaryWorkload(result) });
+  }
 
   if (command === 'setup') {
     const stackHome = getHappyStacksHomeDir(process.env);
@@ -377,6 +426,18 @@ async function main() {
     return;
   }
   if (!profile) throw new Error('[dev-vm] execution host is not configured; run `hstack dev-vm setup` explicitly');
+  if (command === 'network') {
+    if (argv[argv.indexOf(command) + 1] !== 'apply') throw new Error('[dev-vm] expected network apply');
+    const executor = executorFor(profile);
+    const result = await applyManagedLimaNetworking({
+      executor,
+      instance: profile.instance,
+      force: argv.includes('--force'),
+      stopInstance: () => stopExecutionHostVm({ profile, executor, force: false }),
+      startInstance: () => startExecutionHostVm({ argv, profile, executor }),
+    });
+    return printResult({ json, data: result, text: `[dev-vm] native NAT: ${result.changed ? 'applied; VM restarted' : 'already configured'}` });
+  }
   if (command === 'capacity') {
     const capacityArgument = argv[argv.indexOf(command) + 1] ?? '';
     const action = capacityArgument.startsWith('-') ? '' : capacityArgument;

@@ -686,37 +686,6 @@ test('build-server-binaries prepares ui-web exactly once before its multi-target
   assert.match(raw, /buildServerBinaryArtifactPayload\s*\(\s*\{[\s\S]*?\buiWebDistPath\b/);
 });
 
-test('release binary scripts load cli-common artifact builders through the lazy dist loader', async () => {
-  const cliBuildPath = join(repoRoot, 'scripts', 'pipeline', 'release', 'build-cli-binaries.mjs');
-  const serverBuildPath = join(repoRoot, 'scripts', 'pipeline', 'release', 'build-server-binaries.mjs');
-  const binaryReleaseLibPath = join(repoRoot, 'scripts', 'pipeline', 'release', 'lib', 'binary-release.mjs');
-
-  const cliBuildRaw = await readFile(cliBuildPath, 'utf8');
-  const serverBuildRaw = await readFile(serverBuildPath, 'utf8');
-  const binaryReleaseLibRaw = await readFile(binaryReleaseLibPath, 'utf8');
-
-  assert.doesNotMatch(
-    cliBuildRaw,
-    /@happier-dev\/cli-common\/componentArtifacts/,
-    'expected build-cli-binaries to avoid direct cli-common dist imports'
-  );
-  assert.doesNotMatch(
-    serverBuildRaw,
-    /@happier-dev\/cli-common\/componentArtifacts/,
-    'expected build-server-binaries to avoid direct cli-common dist imports'
-  );
-  assert.match(
-    binaryReleaseLibRaw,
-    /loadCliCommonDistModule\(\{[\s\S]*?\bforce:\s*true,[\s\S]*?\}\)/,
-    'expected binary-release helpers to force-admit cli-common before loading artifact helpers'
-  );
-  assert.match(
-    binaryReleaseLibRaw,
-    /buildServerBinaryArtifactPayload/,
-    'expected binary-release helpers to re-export the shared server artifact builder'
-  );
-});
-
 test('remote install shims keep npm cache bounded across repeated setup runs', async () => {
   const remoteHostPath = join(smokeDir, 'bin', 'remote-host-entrypoint.sh');
   const remoteHostSystemdPath = join(smokeDir, 'bin', 'remote-host-systemd-entrypoint.sh');

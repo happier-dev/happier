@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { spawnRuntimeServerAfterMigration } from './runServerRuntimeMigration.mjs';
+import { resolveServerRuntimeLaunchSpec } from './resolveServerRuntimeLaunchSpec.mjs';
+import { spawnProc } from '../../utils/proc/proc.mjs';
 
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'hstack-runtime-migration-'));
@@ -69,6 +71,43 @@ test('in-process and disabled migration modes start without resolving a sidecar'
       cwd: serverDir,
     }]);
   }
+});
+
+test('source migration runs retained JS without executable bits and rejects an escaped sidecar', async t => {
+  const { serverDir } = await fixture(t);
+  await mkdir(join(serverDir, 'scripts'));
+  const command = join(serverDir, 'scripts/migrate.mjs');
+  const migrationMarker = join(serverDir, 'migration-ran');
+  const serverMarker = join(serverDir, 'server-ran');
+  const entrypoint = join(serverDir, 'main.mjs');
+  const markerScript = "import {writeFile} from 'node:fs/promises'; await writeFile(process.argv[2], 'ran');\n";
+  await writeFile(command, markerScript);
+  await writeFile(entrypoint, markerScript);
+  await chmod(command, 0o644);
+  await chmod(entrypoint, 0o644);
+  const sourceSpec = resolveServerRuntimeLaunchSpec({ sourceRuntimeLaunch: {
+    runtimeCommand: entrypoint, entrypoint, serverDir, args: [serverMarker],
+    migration: { mode: 'external', command, args: [migrationMarker], cwd: serverDir },
+  } });
+  const events = [];
+  const spawnProcImpl = (label, command, args, env, options) => {
+    events.push({ label, command, args });
+    return spawnProc(label, command, args, env, options);
+  };
+  const child = await spawnRuntimeServerAfterMigration({ serverLaunchSpec: sourceSpec, env: {}, children: [], spawnProcImpl });
+  assert.equal((await child.completion).code, 0);
+  assert.equal(await readFile(migrationMarker, 'utf8'), 'ran');
+  assert.equal(await readFile(serverMarker, 'utf8'), 'ran');
+  assert.deepEqual(events, [
+    { label: 'server-migrate', command: process.execPath, args: [command, migrationMarker] },
+    { label: 'server', command: process.execPath, args: [entrypoint, serverMarker] },
+  ]);
+  events.length = 0;
+  await assert.rejects(spawnRuntimeServerAfterMigration({
+    serverLaunchSpec: { ...sourceSpec, migration: { ...sourceSpec.migration, command: join(serverDir, '..', 'migrate.mjs') } },
+    env: {}, children: [], spawnProcImpl,
+  }), error => error.code === 'ERUNTIMESERVERMIGRATIONUNAVAILABLE');
+  assert.deepEqual(events, []);
 });
 
 test('migration admission failures are typed and never spawn the normal server', async (t) => {

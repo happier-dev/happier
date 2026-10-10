@@ -38,8 +38,6 @@ vi.mock('@happier-dev/cli-common/relayAccess', async () => {
     };
 });
 
-import { createSecureAccessTailscaleHandler } from './secureAccessTailscale.js';
-
 async function collectHandlerRun(
     params: Readonly<{
         handler: (input: Record<string, unknown>, context?: Readonly<{ signal?: AbortSignal }>) => AsyncGenerator<unknown, unknown, void>;

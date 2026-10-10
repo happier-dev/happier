@@ -188,6 +188,25 @@ test('named execution host profiles preserve two explicit workspace mappings', a
   assert.deepEqual(readExecutionHostProfile(env), profile);
 });
 
+test('named SSH primary profiles retain workspace and Lima configuration and reject unbound transport fields', async (t) => {
+  const fixture = await createTempFixture(t);
+  const env = { HAPPIER_STACK_HOME_DIR: fixture.path('stack-home') };
+  await writeCandidateExecutionHostProfile(namedCandidate(), env);
+  const profile = namedCandidate({ activation: 'active', mode: 'ssh-dev-target',
+    sshPrimary: { targetName: 'nl2', stackName: 'repo-dev-a1cc5e0671' } });
+  const path = resolveExecutionHostProfilePath(env);
+  await writeFile(path, JSON.stringify(profile));
+  assert.deepEqual(readExecutionHostProfile(env), profile);
+  for (const sshPrimary of [{ targetName: '-oProxyCommand=bad', stackName: 'repo-dev' },
+    { targetName: 'nl2', stackName: '../other' },
+    { targetName: 'nl2', stackName: 'repo-dev', ssh: 'parallel-authority' }]) {
+    await writeFile(path, JSON.stringify({ ...profile, sshPrimary }));
+    assert.throws(() => readExecutionHostProfile(env), /SSH primary/);
+  }
+  await writeFile(path, JSON.stringify({ ...profile, version: 1 }));
+  assert.throws(() => readExecutionHostProfile(env), /named active/);
+});
+
 test('active execution host profiles persist shared and dedicated managed Lima capacity', async (t) => {
   const fixture = await createTempFixture(t, { prefix: 'execution-host-capacity-' });
   const env = { HAPPIER_STACK_HOME_DIR: fixture.path('stack-home') };

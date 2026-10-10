@@ -10,6 +10,49 @@ import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { ensureWorkspacePackagesBuiltForComponent } from '../../../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
 
 import { prepareRemoteValidationWorkspace } from './remote_validation_preparation.mjs';
+import { resolveCliBundledWorkspacePackageNames } from '../../../../cli/scripts/buildSharedDeps.mjs';
+
+test('cold CLI artifact publication builds the selected plugin before invoking its artifact consumer', async t => {
+  const { root } = await createTempFixture(t, { prefix: 'hstack-cold-plugin-dist-' });
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ private: true, type: 'module', workspaces: ['apps/*', 'packages/plugins/*'] }));
+  writeFileSync(join(root, 'yarn.lock'), '# fixture\n');
+  const cli = join(root, 'apps/cli');
+  const plugin = join(root, 'packages/plugins/claude');
+  for (const name of ['ui', 'server']) {
+    mkdirSync(join(root, 'apps', name), { recursive: true });
+    writeFileSync(join(root, 'apps', name, 'package.json'), JSON.stringify({ name: `@fixture/${name}` }));
+  }
+  mkdirSync(join(cli, 'scripts/build-owned'), { recursive: true });
+  mkdirSync(join(plugin, 'src'), { recursive: true });
+  writeFileSync(join(cli, 'package.json'), JSON.stringify({ name: '@happier-dev/cli', type: 'module',
+    bundledDependencies: ['@happier-dev/plugins-claude'], dependencies: { '@happier-dev/plugins-claude': 'workspace:*' } }));
+  writeFileSync(join(plugin, 'package.json'), JSON.stringify({ name: '@happier-dev/plugins-claude',
+    version: '0.0.0', type: 'module', main: './dist/index.js', types: './dist/index.d.ts',
+    scripts: { build: 'node compile.mjs' } }));
+  writeFileSync(join(plugin, 'src/manifest.ts'), 'export const PLUGIN_MANIFEST = { id: "happier.agent.claude", runtime: { apiVersion: 1 }, contributes: {} };\n');
+  writeFileSync(join(plugin, 'src/index.ts'), 'export const generation = 1;\n');
+  writeFileSync(join(plugin, 'tsconfig.json'), JSON.stringify({ compilerOptions: { outDir: 'dist' }, include: ['src'] }));
+  // Compiler and generator subprocesses are system boundaries. Real membership,
+  // package build ordering, output admission and publication dispatch stay live.
+  writeFileSync(join(plugin, 'compile.mjs'), `import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+const out = process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR; mkdirSync(out, { recursive: true });
+writeFileSync(out + '/index.js', readFileSync('src/index.ts')); writeFileSync(out + '/index.d.ts', 'export declare const generation: number;');`);
+  const heapLauncher = fileURLToPath(new URL('../../../../cli/scripts/withNodeHeapLimit.mjs', import.meta.url));
+  writeFileSync(join(cli, 'scripts/withNodeHeapLimit.mjs'), `import { spawnSync } from 'node:child_process';
+const result = spawnSync(process.execPath, [${JSON.stringify(heapLauncher)}, ...process.argv.slice(2)], { stdio: 'inherit', env: process.env });
+if (result.error) throw result.error; process.exit(result.status ?? 1);`);
+  writeFileSync(join(cli, 'scripts/build-owned/generateBundledPluginEntries.ts'), `import { readFileSync, writeFileSync } from 'node:fs';
+const root = process.argv[process.argv.indexOf('--root') + 1];
+const dist = readFileSync(root + '/packages/plugins/claude/dist/index.js', 'utf8');
+writeFileSync(root + '/published-plugin', dist);`);
+  const prepare = () => prepareRemoteValidationWorkspace({ repoDir: root, componentRelativeDir: 'apps/cli', validationKind: 'typecheck' });
+  assert.deepEqual(resolveCliBundledWorkspacePackageNames({ repoRoot: root }), ['plugins-claude']);
+  await prepare();
+  assert.equal(readFileSync(join(root, 'published-plugin'), 'utf8'), 'export const generation = 1;\n');
+  writeFileSync(join(plugin, 'src/index.ts'), 'export const generation = 2;\n');
+  await prepare();
+  assert.equal(readFileSync(join(root, 'published-plugin'), 'utf8'), 'export const generation = 2;\n');
+});
 
 test('source-test preparation does not admit emitted outputs on cold, current or stale replicas', async (t) => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-source-preparation-' });

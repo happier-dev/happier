@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { appendFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { appendFile, chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -32,7 +32,7 @@ async function withUnavailableMetroEndpoint() {
   };
 }
 
-async function spawnStackOwnedHealthServer(t, { stackName, envPath, cliHomeDir }) {
+async function spawnStackOwnedHealthServer(t, { stackName, envPath, cliHomeDir, serveUi = false }) {
   const child = spawn(process.execPath, ['-e', `
     const http = require('node:http');
     const server = http.createServer((req, res) => {
@@ -40,6 +40,11 @@ async function spawnStackOwnedHealthServer(t, { stackName, envPath, cliHomeDir }
         res.statusCode = 200;
         res.setHeader('content-type', 'application/json');
         res.end(JSON.stringify({ status: 'ok', service: 'happier-server' }));
+        return;
+      }
+      if (${serveUi} && req.url === '/') {
+        res.setHeader('content-type', 'text/html');
+        res.end('<!doctype html><html><body>source UI fixture</body></html>');
         return;
       }
       res.statusCode = 404;
@@ -78,6 +83,73 @@ async function spawnStackOwnedHealthServer(t, { stackName, envPath, cliHomeDir }
   return { child, pid: child.pid, port };
 }
 
+test('source snapshot doctor does not inspect native selection or require a static web artifact', async t => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const fixture = await createRuntimeSnapshotFixture(t);
+  const result = await runNode([join(rootDir, 'scripts/doctor.mjs'), '--runtime=source', '--json'], {
+    cwd: rootDir, env: { ...process.env, HAPPIER_STACK_STACK: fixture.stackName,
+      HAPPIER_STACK_STORAGE_DIR: fixture.storageDir, HAPPIER_STACK_ENV_FILE: join(fixture.stackDir, 'env'),
+      HAPPIER_STACK_REPO_DIR: rootDir },
+  });
+  assert.equal(result.code, 0, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.runtime.mode, 'source-snapshot');
+  assert.equal(report.runtime.activeSnapshotId, null);
+  assert.equal(report.runtime.components, null);
+  assert.equal(report.uiBuildDir, null);
+  assert.equal(report.checks.runtimeSnapshot, undefined);
+  await writeFile(join(fixture.stackDir, 'env'), 'HAPPIER_STACK_RUNTIME_MODE=source-snapshot\n');
+  const wrapped = await runNode([join(rootDir, 'bin/hstack.mjs'), 'stack', 'doctor', fixture.stackName, '--json'], {
+    cwd: rootDir, env: { ...process.env, HAPPIER_STACK_STORAGE_DIR: fixture.storageDir },
+  });
+  assert.equal(wrapped.code, 0, wrapped.stderr);
+  assert.equal(JSON.parse(wrapped.stdout).runtime.mode, 'source-snapshot');
+});
+
+test('source snapshot doctor observes the server-host export endpoint and only borrows Expo when recorded explicitly', async t => {
+  const rootDir = stackRootDirFromMeta(import.meta.url);
+  const fixture = await createRuntimeSnapshotFixture(t, { stackName: 'source-ui-doctor' });
+  const producerStackName = 'source-ui-producer';
+  const sourceUiLaunch = { uiDir: '/remote/server/source-export/ui' };
+  const envPath = join(fixture.stackDir, 'env');
+  const cliHomeDir = join(fixture.stackDir, 'cli');
+  await appendFile(envPath, `HAPPIER_STACK_EXPO_SOURCE_STACK=${producerStackName}\n`);
+  const runtimeServer = await spawnStackOwnedHealthServer(t, { stackName: fixture.stackName, envPath, cliHomeDir, serveUi: true });
+  const env = { ...process.env, HAPPIER_STACK_STACK: fixture.stackName, HAPPIER_STACK_STORAGE_DIR: fixture.storageDir,
+    HAPPIER_STACK_ENV_FILE: envPath, HAPPIER_STACK_REPO_DIR: rootDir, HAPPIER_STACK_CLI_HOME_DIR: cliHomeDir,
+    HAPPIER_STACK_EXPO_SOURCE_STACK: producerStackName };
+  const runtimeState = { version: 1, stackName: fixture.stackName, processes: { serverPid: runtimeServer.pid },
+    ports: { server: runtimeServer.port }, placement: { server: 'mac' },
+    remoteTargets: { mac: { status: 'running', services: { server: true }, sourceUi: 'export', sourceUiLaunch } },
+    sourceRuntimeIdentities: { server: { selected: 'server-source', loaded: 'server-source' } },
+  };
+  await writeFile(join(fixture.stackDir, 'stack.runtime.json'), JSON.stringify(runtimeState));
+  const result = await runNode([join(rootDir, 'scripts/doctor.mjs'), '--runtime=source', '--json'], { cwd: rootDir, env });
+  assert.equal(result.code, 0, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.runtime.borrowedExpo, null);
+  assert.equal(report.runtime.sourceUi, 'export');
+  assert.deepEqual(report.runtime.sourceUiLaunch, sourceUiLaunch);
+  assert.equal(report.uiBuildDir, sourceUiLaunch.uiDir);
+  assert.equal(report.checks.uiServing.ok, true);
+  assert.equal(report.checks.uiServing.url, `http://127.0.0.1:${runtimeServer.port}/`);
+  assert.equal(report.checks.uiServing.remoteTarget, 'mac');
+  assert.equal(report.checks.uiBuildDir, undefined);
+  assert.equal(report.checks.runtimeSnapshot, undefined);
+  await writeFile(join(fixture.stackDir, 'stack.runtime.json'), JSON.stringify({ ...runtimeState, sourceUi: 'borrowed' }));
+  const borrowed = await runNode([join(rootDir, 'scripts/doctor.mjs'), '--runtime=source', '--json'], { cwd: rootDir, env });
+  assert.equal(borrowed.code, 0, borrowed.stderr);
+  assert.equal(JSON.parse(borrowed.stdout).runtime.borrowedExpo.producerStackName, producerStackName);
+  assert.equal(JSON.parse(borrowed.stdout).runtime.sourceUi, 'borrowed');
+  assert.equal(JSON.parse(borrowed.stdout).checks.uiServing.mode, 'borrowed');
+  await writeFile(join(fixture.stackDir, 'stack.runtime.json'), JSON.stringify({ ...runtimeState, sourceUi: 'disabled' }));
+  const disabled = await runNode([join(rootDir, 'scripts/doctor.mjs'), '--runtime=source', '--json'], { cwd: rootDir, env });
+  assert.equal(disabled.code, 0, disabled.stderr);
+  assert.equal(JSON.parse(disabled.stdout).checks.uiServing.mode, 'disabled');
+  assert.equal(JSON.parse(disabled.stdout).runtime.borrowedExpo, null);
+  assert.equal(JSON.parse(disabled.stdout).uiBuildDir, null);
+});
+
 test('doctor --json reports the active runtime snapshot', async (t) => {
   const rootDir = stackRootDirFromMeta(import.meta.url);
   const fixture = await createRuntimeSnapshotFixture(t);
@@ -112,12 +184,23 @@ test('doctor accepts the selected foreign server-only shared database snapshot',
   delete manifest.components.web;
   delete manifest.components.daemon;
   await writeFile(manifestPath, JSON.stringify(manifest));
-  await appendFile(join(fixture.stackDir, 'env'), 'HAPPIER_STACK_SHARED_DB_SOURCE_STACK=dev-source\n');
+  await appendFile(join(fixture.stackDir, 'env'), 'HAPPIER_STACK_SHARED_DB_SOURCE_STACK=dev-source\nHAPPIER_STACK_DAEMON=0\n');
+  await writeFile(join(fixture.stackDir, 'dev-targets.json'), JSON.stringify({ version: 3,
+    targets: [{ name: 'mac', platform: 'posix', ssh: 'fixture-mac', repoDir: '/fixture/repo', cliHomeDir: '/fixture/cli' }],
+    runtimePlacement: { server: { mode: 'prefer-target', target: 'mac' }, daemon: { mode: 'local' } },
+    commandExecution: { mode: 'local' },
+  }));
+  // Replace the external native executor's host observation, while doctor,
+  // placement policy and snapshot validation continue through their real owners.
+  await mkdir(join(fixture.root, 'apps/stack/bin'), { recursive: true });
+  const executorPath = join(fixture.root, 'apps/stack/bin/hstack-exec');
+  await writeFile(executorPath, '#!/bin/sh\nprintf \'HSTACK_QA_HOST={"platform":"darwin","arch":"arm64","remote":true}\\n\'\n');
+  await chmod(executorPath, 0o755);
   const res = await runNode([join(rootDir, 'scripts', 'doctor.mjs'), '--runtime', '--json'], {
     cwd: rootDir,
     env: { ...process.env, HAPPIER_STACK_STACK: fixture.stackName,
       HAPPIER_STACK_STORAGE_DIR: fixture.storageDir,
-      HAPPIER_STACK_ENV_FILE: join(fixture.stackDir, 'env'), HAPPIER_STACK_REPO_DIR: rootDir },
+      HAPPIER_STACK_ENV_FILE: join(fixture.stackDir, 'env'), HAPPIER_STACK_REPO_DIR: fixture.root },
   });
   assert.equal(res.code, 0, res.stderr);
   const parsed = JSON.parse(res.stdout);

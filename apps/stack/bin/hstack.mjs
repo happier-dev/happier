@@ -19,6 +19,7 @@ import { shouldDelegateToActiveExecutionHost } from '../scripts/utils/execution_
 import { runDelegatedHstackCommand } from '../scripts/utils/execution_host/delegation.mjs';
 import {
   isBundledWorkspaceMetadataInvocation,
+  isBundledWorkspaceRuntimeInvocation,
   refreshLocalBundledWorkspacePackages,
 } from './localBundledWorkspacePreflight.mjs';
 
@@ -353,7 +354,8 @@ function shouldSkipBundledWorkspacePreflight(argv) {
   // help/version query into a workspace publication or wait behind one.
   if (command === 'happier') {
     const commandIndex = preSeparatorArgs.indexOf(command);
-    return isBundledWorkspaceMetadataInvocation(preSeparatorArgs.slice(commandIndex + 1));
+    const wrapperArgs = preSeparatorArgs.slice(commandIndex + 1);
+    return isBundledWorkspaceMetadataInvocation(wrapperArgs) || isBundledWorkspaceRuntimeInvocation(wrapperArgs);
   }
 
   // Help renders the already-installed Stack control plane. It must never turn
@@ -387,12 +389,18 @@ function shouldSkipBundledWorkspacePreflight(argv) {
     });
   }
 
-  if (command !== 'stack') return false;
+  if (command !== 'stack') {
+    return (command === 'start' || command === 'daemon') && isBundledWorkspaceRuntimeInvocation(preSeparatorArgs);
+  }
 
   const commandIndex = args.indexOf(command);
   const rest = commandIndex >= 0 ? args.slice(commandIndex + 1) : [];
   const positionals = rest.filter((arg) => arg !== '--' && !String(arg).startsWith('-'));
   const subcommand = positionals[0] ?? '';
+  const { envPath: selectedStackEnvPath } = resolveStackEnvPath(positionals[1] ?? '', process.env);
+  const selectedStackRuntimeMode = dotenvGetQuick(selectedStackEnvPath, 'HAPPIER_STACK_RUNTIME_MODE');
+  // Named-stack preflight reads the named stack's mode, not a caller's foreign stack selection.
+  const runtimeEnv = { HAPPIER_STACK_RUNTIME_MODE: selectedStackRuntimeMode };
 
   // Artifact admission belongs to the build owner, which records preparation
   // failures in the producer projection. A launcher-wide source publication
@@ -424,7 +432,7 @@ function shouldSkipBundledWorkspacePreflight(argv) {
   // Explicit runtime start and daemon commands consume already-admitted artifacts. Keep
   // lifecycle availability independent of unrelated source workspace publication;
   // the existing bundled Stack control plane still fails loudly if it is unusable.
-  if ((subcommand === 'start' || subcommand === 'daemon') && preSeparatorArgs.includes('--runtime')) return true;
+  if ((subcommand === 'start' || subcommand === 'daemon') && isBundledWorkspaceRuntimeInvocation(preSeparatorArgs, runtimeEnv)) return true;
 
   // These management paths only inspect or edit Stack-owned metadata. Keep the
   // positive list narrow so dependency-consuming commands still repair bundled
@@ -436,8 +444,7 @@ function shouldSkipBundledWorkspacePreflight(argv) {
     if (!positionals[1]) return false;
     if (positionals[2] === 'status') return true;
     if (positionals[2] === 'login') {
-      const { envPath } = resolveStackEnvPath(positionals[1], process.env);
-      return dotenvGetQuick(envPath, 'HAPPIER_STACK_RUNTIME_MODE').trim().toLowerCase() === 'require';
+      return isBundledWorkspaceRuntimeInvocation(preSeparatorArgs, runtimeEnv);
     }
     return false;
   }
@@ -462,13 +469,10 @@ function shouldSkipBundledWorkspacePreflight(argv) {
   // dispatch defeats that contract and can block read-only snapshot commands
   // behind an unrelated source build.
   if (subcommand === 'happier') {
-    if (preSeparatorArgs.includes('--runtime')) return true;
+    if (isBundledWorkspaceRuntimeInvocation(preSeparatorArgs, runtimeEnv)) return true;
     if (!preSeparatorArgs.includes('--source')) {
       const stackName = positionals[1] ?? '';
       const { envPath } = resolveStackEnvPath(stackName, process.env);
-      if (dotenvGetQuick(envPath, 'HAPPIER_STACK_RUNTIME_MODE').trim().toLowerCase() === 'require') {
-        return true;
-      }
       const selectedRepoDir = dotenvGetQuick(envPath, 'HAPPIER_STACK_REPO_DIR');
       const selectedEntrypoint = resolveStackHappierPassthroughEntrypoint({
         rootDir: getCliRootDir(),

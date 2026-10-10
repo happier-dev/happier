@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readdirSync } from 'node:fs';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { runExecutionHostBridge, runNativeExecutionHostBridge } from './bridge.mjs';
 
@@ -46,6 +47,22 @@ function boundaryWithExit(exitCode, calls) {
     onSignal() { return () => {}; },
   };
 }
+
+test('predecessor primary assignment stays on the shared controller rather than the 0.2 command registry', async () => {
+  const calls = [];
+  const result = await runExecutionHostBridge({
+    profile: { ...profile, activation: 'active' }, workspaceId: '0.2',
+    localEntrypoint: '/Users/example/happier/remote-dev/apps/stack/scripts/repo_local.mjs',
+    argv: ['dev-vm', 'primary', 'assign', 'nl2', '--stack=lane', '--json'],
+    cwd: '/Users/example/happier/remote-dev', env: {}, platform: 'darwin',
+    boundary: boundaryWithExit(0, calls),
+  });
+  assert.deepEqual(result, { exitCode: 0, signal: null, delegated: false });
+  assert.deepEqual(calls[0].args, [
+    fileURLToPath(new URL('../../host.mjs', import.meta.url)),
+    'primary', 'assign', 'nl2', '--stack=lane', '--json',
+  ]);
+});
 
 test('native bridge retains dispatcher flags and package cwd on the authoritative host', async () => {
   const calls = [];
