@@ -3,7 +3,7 @@ import * as React from 'react';
 import type { ContextMenuItem } from '@/components/ui/forms/dropdown/ContextMenu';
 import { Modal } from '@/modal';
 import { sync } from '@/sync/sync';
-import { sessionExecutionRunStop } from '@/sync/ops/sessionExecutionRuns';
+import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { resolveSubagentStructuredSend } from '@/sync/domains/input/subagents/resolveSubagentStructuredSend';
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -29,12 +29,14 @@ export function useSessionSubagentActions(params: Readonly<{
 }>): Readonly<{
     items: readonly ContextMenuItem[];
     select: (itemId: string) => void;
+    approval: ReturnType<typeof useMountedActionExecution>['approval'];
 }> {
     const { subagent, sessionId } = params;
     const exactServerId = params.serverId?.trim() || null;
     const runId = subagent.runRef?.runId?.trim() || null;
     const teammate = subagent.recipient?.kind === 'agent_team_member' ? subagent.recipient : null;
     const pendingRef = React.useRef(false);
+    const stopExecution = useMountedActionExecution(exactServerId);
 
     const canStop = exactServerId !== null && subagent.capabilities.canStop && runId !== null;
     const canDelete = subagent.capabilities.canDelete && teammate !== null;
@@ -66,18 +68,19 @@ export function useSessionSubagentActions(params: Readonly<{
         pendingRef.current = true;
         fireAndForget((async () => {
             try {
-                const result = await sessionExecutionRunStop(sessionId, { runId }, { serverId: exactServerId });
-                const failed = result as { ok?: boolean; error?: unknown } | null | undefined;
-                if (failed?.ok === false) {
-                    Modal.alert(t('common.error'), String(failed.error ?? t('runs.stop.failedToStopRun')));
+                const result = await stopExecution.execute('execution.run.stop', { sessionId, runId });
+                if (!result.ok && stopExecution.isCurrent()) {
+                    Modal.alert(t('common.error'), result.error || t('runs.stop.failedToStopRun'));
                 }
             } catch (error) {
-                Modal.alert(t('common.error'), error instanceof Error ? error.message : t('runs.stop.failedToStopRun'));
+                if (stopExecution.isCurrent()) {
+                    Modal.alert(t('common.error'), error instanceof Error ? error.message : t('runs.stop.failedToStopRun'));
+                }
             } finally {
                 pendingRef.current = false;
             }
         })(), { tag: 'useSessionSubagentActions.stopRun' });
-    }, [exactServerId, runId, sessionId]);
+    }, [exactServerId, runId, sessionId, stopExecution.execute, stopExecution.isCurrent]);
 
     const deleteTeammate = React.useCallback(() => {
         if (!teammate || pendingRef.current) return;
@@ -114,5 +117,5 @@ export function useSessionSubagentActions(params: Readonly<{
         else if (id === 'delete') deleteTeammate();
     }, [deleteTeammate, onOpenAdvanced, onOpenFull, stopRun]);
 
-    return { items, select };
+    return { items, select, approval: stopExecution.approval };
 }

@@ -54,7 +54,7 @@ export function SessionWalkthroughWidgetContent(props: Readonly<{
     const comparison = React.useMemo(() => ({ kind: props.comparisonKind }), [props.comparisonKind]);
     const result = useSessionScmWalkthrough(props.sessionId, comparison, 'walkthrough', props.serverId);
     const captured = result?.comparison ?? null;
-    const marks = useWalkthroughReviewedMarks({ comparison: captured, serverId: props.serverId });
+    const marks = useWalkthroughReviewedMarks({ comparison: captured, serverId: props.serverId, host: { sessionId: props.sessionId } });
     const reading = React.useMemo(() => captured ? buildWalkthroughReadingProgress({ comparison: captured,
         walkthrough: result?.outputs?.walkthrough ?? null, reviewed: marks.record,
     }) : null, [captured, result?.outputs?.walkthrough, marks.record]);

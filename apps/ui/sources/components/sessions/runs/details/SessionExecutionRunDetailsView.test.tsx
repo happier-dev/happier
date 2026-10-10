@@ -567,7 +567,8 @@ describe('SessionExecutionRunDetailsView — real Home, transcript and interacti
 describe('Neighboring user Run Stop admission', () => {
     async function mountStopSurface(surface: 'runs' | 'machine' | 'subagent') {
         const { setServerProfileIdentityForUrl } = await import('@/sync/domains/server/serverProfiles');
-        await setServerProfileIdentityForUrl(home.homes.home!.serverUrl, serverId);
+        const profile = await setServerProfileIdentityForUrl(home.homes.home!.serverUrl, serverId);
+        expect(profile?.serverIdentityId).toBe(serverId);
         const original = boundary.call.getMockImplementation()!;
         boundary.call.mockImplementation(async (method, input) => method === RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST
             ? { runs: [{ ...runState,
@@ -598,7 +599,8 @@ describe('Neighboring user Run Stop admission', () => {
         const Screen = surface === 'runs' ? (await import('@/app/(app)/runs')).default
             : (await import('@/app/(app)/machine/[id]')).default;
         screen = await renderScreen(<InjectedAuthProvider credentials={credentials}><AppPaneProvider><Screen /></AppPaneProvider></InjectedAuthProvider>);
-        await vi.waitFor(() => expect(screen.findAllByProps({ accessibilityLabel: 'runs.stop.stopRunA11y' }).length).toBeGreaterThan(0));
+        await vi.waitFor(() => expect(screen.findAllByProps({ accessibilityLabel: 'runs.stop.stopRunA11y' }).length,
+            screen.getTextContent()).toBeGreaterThan(0));
         return async () => { await act(async () => {
             await screen.findAllByProps({ accessibilityLabel: 'runs.stop.stopRunA11y' })[0]!.props.onPress();
         }); };
@@ -609,11 +611,13 @@ describe('Neighboring user Run Stop admission', () => {
             'execution.run.stop': { enabled: false, enabledPlacements: [], disabledSurfaces: [], disabledPlacements: [] },
         } } } }));
         const stop = await mountStopSurface(surface);
+        const listsBeforeStop = calls(RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST).length;
         await stop();
         expect(calls(SESSION_RPC_METHODS.EXECUTION_RUN_STOP)).toEqual([]);
         await vi.waitFor(() => expect(vi.mocked(Modal.alert)).toHaveBeenCalled());
         expect(calls(RPC_METHODS.STOP_SESSION)).toEqual([]);
         expect(vi.mocked(Modal.confirm)).not.toHaveBeenCalled();
+        expect(calls(RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST)).toHaveLength(listsBeforeStop);
     });
 
     it.each(['runs', 'machine', 'subagent'] as const)('sends admitted %s Stop to the exact Session and Home', async surface => {

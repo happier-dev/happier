@@ -3,10 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 
-import type { SystemTaskEvent, SystemTaskResult } from '@happier-dev/protocol';
-
 import type { SystemTaskPromptEnvelope } from '../prompts/readLatestSystemTaskPrompt';
-import type { SystemTaskRunState, SystemTaskRunner } from '../types';
 
 const modalSpies = vi.hoisted(() => ({
     confirm: vi.fn(async () => false),
@@ -34,52 +31,19 @@ vi.mock('@/text', async () => {
     });
 });
 
-function createRunnerStub() {
-    const respond = vi.fn(async (_taskId: string, _answer: unknown) => {});
-    const cancel = vi.fn(async (_taskId: string) => {});
-    const runner: SystemTaskRunner = {
-        ...createManualSystemTaskRunner('dev').runner,
-        mode: 'dev',
-        start: async () => 'task-1',
-        cancel,
-        respond,
-        getSnapshot: () => null,
-        subscribe(
-            _taskId: string,
-            _listenerOrOnEvent?: (() => void) | ((event: SystemTaskEvent) => void),
-            _onResult?: (result: SystemTaskResult) => void,
-        ) {
-            return () => {};
-        },
-    };
-    return { runner, respond, cancel };
-}
-
-function createSnapshot(taskId: string): SystemTaskRunState {
-    return {
-        taskId,
-        status: 'running',
-        currentStepId: 'ssh.auth',
-        latestMessage: null,
-        awaitingInput: true,
-        cancelRequested: false,
-        events: [],
-        result: null,
-    };
-}
-
 async function renderPrompt(prompt: SystemTaskPromptEnvelope) {
     const { useSshSystemTaskPromptModals } = await import('./useSshSystemTaskPromptModals');
-    const taskId = 'task-1';
-    const { runner, respond, cancel } = createRunnerStub();
+    const manual = createManualSystemTaskRunner('dev');
+    const taskId = await manual.runner.start({ protocolVersion: 1, kind: 'relay.runtime.status.v1', params: {} });
+    manual.emitEvent(taskId, { type: 'prompt', message: prompt.message, data: { ...prompt.data, kind: prompt.kind } });
     await renderHook(() => useSshSystemTaskPromptModals({
-        runner,
+        runner: manual.runner,
         taskId,
-        snapshot: createSnapshot(taskId),
+        snapshot: manual.runner.getSnapshot(taskId),
         prompt,
     }));
     await flushHookEffects();
-    return { taskId, respond, cancel };
+    return { taskId, respond: manual.bridge.respond, cancel: manual.bridge.cancel };
 }
 
 afterEach(() => {
@@ -91,6 +55,32 @@ afterEach(() => {
 });
 
 describe('useSshSystemTaskPromptModals', () => {
+    it('keeps answering SSH prompts through terminal settlement after the starting view unmounts', async () => {
+        const { useSshSystemTaskPromptModals } = await import('./useSshSystemTaskPromptModals');
+        const manual = createManualSystemTaskRunner('dev');
+        const taskId = await manual.runner.start({ protocolVersion: 1, kind: 'relay.runtime.status.v1', params: {} });
+        const hook = await renderHook(() => useSshSystemTaskPromptModals({
+            runner: manual.runner,
+            taskId,
+            snapshot: manual.runner.getSnapshot(taskId),
+            prompt: null,
+        }));
+        await hook.unmount();
+        modalSpies.confirm.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+        manual.emitEvent(taskId, { type: 'prompt', data: {
+            kind: 'ssh.trustHost', promptId: 'trust-1', host: 'remote.test', fingerprint: 'SHA256:remote',
+        } });
+        await flushHookEffects();
+        expect(manual.bridge.respond).toHaveBeenCalledWith(taskId, { trusted: true });
+        modalSpies.prompt.mockResolvedValueOnce('password');
+        manual.emitEvent(taskId, { type: 'prompt', data: { kind: 'ssh.password', promptId: 'password-1' } });
+        await flushHookEffects();
+        expect(manual.bridge.respond).toHaveBeenLastCalledWith(taskId, { password: 'password' });
+        manual.emitResult(taskId, { protocolVersion: 1, taskId, ok: true, data: {} });
+        expect(manual.runner.getSnapshot(taskId)?.status).toBe('succeeded');
+        expect(manual.runner.listPromptContinuations?.()).toEqual([]);
+    });
+
     it('keeps remote service replacement and release-channel switching as separate prompt answers', async () => {
         modalSpies.confirm.mockResolvedValueOnce(true);
         const servicePrompt = await renderPrompt({

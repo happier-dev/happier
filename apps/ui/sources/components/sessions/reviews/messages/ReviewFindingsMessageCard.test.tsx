@@ -214,7 +214,9 @@ beforeEach(async () => {
     const served = await serveActionHomes({
         homes: [
             { key: 'other', serverUrl: 'https://review-card-other.test', accountId: 'account-2' },
-            { key: 'home', serverUrl: 'https://review-card-home.test', accountId: 'account-1' },
+            { key: 'home', serverUrl: 'https://review-card-home.test', accountId: 'account-1', settings: {
+                actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'execution.run.action': ['ui'] } },
+            } },
         ],
         route: (request) => homeRoute.current?.(request),
     });
@@ -422,7 +424,7 @@ describe('ReviewFindingsMessageCard', () => {
             runId: 'run_1',
             actionId: 'review.follow_up',
             input: { findingIds: ['f1'], threadId: 'thread_f1', messageMarkdown: 'Narrow it to iOS?' },
-        }, { serverId: home.serverId, scope: { serverId: home.serverId, accountId: 'account-1' } });
+        }, expect.objectContaining({ serverId: home.serverId, scope: { serverId: home.serverId, accountId: 'account-1' } }));
     });
 
     it('shows Ask about this disabled, with the reason, when the review cannot take follow-ups', async () => {
@@ -585,7 +587,7 @@ describe('ReviewFindingsMessageCard', () => {
 
         expect(sessionExecutionRunActionSpy).toHaveBeenCalledWith('sess_1', {
             runId: 'run_1', actionId: 'review.follow_up', input: { findingIds: [], messageMarkdown: 'Is the key per tenant?' },
-        }, { serverId: home.serverId, scope: { serverId: home.serverId, accountId: 'account-1' } });
+        }, expect.objectContaining({ serverId: home.serverId, scope: { serverId: home.serverId, accountId: 'account-1' } }));
         expect(composerPart(screen, 'review-findings-follow-up', 'new-session-composer-input', 'onChangeText').props.value)
             .toBe('Is the key per tenant?');
 

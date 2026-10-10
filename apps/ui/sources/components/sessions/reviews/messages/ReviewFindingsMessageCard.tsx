@@ -1,6 +1,7 @@
 import React from 'react';
 import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useRouter } from 'expo-router';
 
 import type {
     ReviewCommentV1,
@@ -13,6 +14,8 @@ import { REVIEW_FINDINGS_VERIFY_AND_FIX_INSTRUCTIONS_V1, renderReviewFindingsFor
 import { ReviewFollowUpFailureCodeSchema } from '@happier-dev/protocol/execution/runs/index';
 
 import { hasAgentIconMark } from '@/agents/catalog/catalog';
+import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
+import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { buildSessionExecutionRunRouteHref } from '@/components/sessions/agents/navigation/buildSessionExecutionRunRouteHref';
@@ -64,7 +67,6 @@ import {
     loadReviewRunComments,
     readReviewRunComments,
 } from '@/sync/domains/reviews/comments/reviewRunComments';
-import { sessionExecutionRunAction } from '@/sync/ops/sessionExecutionRuns';
 import { areServerAccountScopesEqual, type ServerAccountScope, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useServerCredentialAccountScopeBinding, useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
@@ -216,6 +218,8 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
     const presentation = props.presentation ?? 'message';
     const isPage = presentation === 'page';
     const { transcriptSource, scope, accountLifetime, sessionMessages, workspacePath } = props;
+    const router = useRouter();
+    const followUpExecution = useMountedActionExecution(scope);
     const find = useStructuredFindState();
     const notifyLayout = useTranscriptRowLayoutMutation();
     const openFindingsHref = buildSessionExecutionRunRouteHref({ sessionId: props.sessionId, runId: props.payload.runRef.runId, serverId: props.serverId ?? null });
@@ -369,10 +373,11 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
         threadId?: string;
         replyToQuestionId?: string;
     }>): Promise<boolean> => {
-        if (!scope) return false;
+        if (!scope || !accountLifetime?.isCurrent()) return false;
         try {
             // The question goes to the review run that reported the finding.
-            const result = await sessionExecutionRunAction(sessionId, {
+            const result = await followUpExecution.execute('execution.run.action', {
+                sessionId,
                 runId: params.runId,
                 actionId: 'review.follow_up',
                 input: {
@@ -381,7 +386,8 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
                     ...(params.replyToQuestionId ? { replyToQuestionId: params.replyToQuestionId } : {}),
                     messageMarkdown: params.messageMarkdown,
                 },
-            }, { serverId: scope.serverId, scope });
+            });
+            if (!accountLifetime.isCurrent()) return false;
             if (!result.ok) {
                 const code = ReviewFollowUpFailureCodeSchema.safeParse('errorCode' in result ? result.errorCode : undefined);
                 setError(describeReviewFollowUpFailure(code.success ? code.data : undefined));
@@ -389,10 +395,11 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
             }
             return true;
         } catch {
+            if (!accountLifetime.isCurrent()) return false;
             setError(describeReviewFollowUpFailure(undefined));
             return false;
         }
-    }, [sessionId, scope]);
+    }, [accountLifetime, followUpExecution.execute, sessionId, scope]);
 
     /** Sends to each target; accepted when at least one reviewer took it (the others say why not). */
     const sendToEach = React.useCallback(async (targets: readonly Parameters<typeof sendFollowUp>[0][]) => {
@@ -805,6 +812,11 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
                 </View>
             )) : null}
 
+            {followUpExecution.approval.approvalPending && followUpExecution.approval.approvalId && scope ? (
+                <ActionApprovalPendingNotice testID="review-findings-follow-up-approval"
+                    message={t('approvals.title')}
+                    onOpenApproval={() => router.push(`/inbox/approvals/${encodeURIComponent(followUpExecution.approval.approvalId!)}?serverId=${encodeURIComponent(scope.serverId)}`)} />
+            ) : null}
             {error ? <Text style={styles.errorText}>{error}</Text> : null}
         </ExecutionRunResultLayout>
     );

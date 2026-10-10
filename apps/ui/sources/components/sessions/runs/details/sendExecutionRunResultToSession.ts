@@ -1,5 +1,4 @@
 import { applySendToSessionTemplate } from '@/components/sessions/transcript/messageSelection/applySendToSessionTemplate';
-import type { SessionInitialPromptV1 } from '@/sync/domains/sessionInitialPrompt/sessionInitialPromptV1';
 
 /**
  * ⋯ → Send to ⟨lead⟩ (lab `convo-C1`/`D1`): the run's result goes into the lead Session's composer as
@@ -14,8 +13,7 @@ export async function sendExecutionRunResultToSession(params: Readonly<{
     /** The run's title, offered to the person's send-to-session template as its source. */
     runTitle: string | null;
     template: string;
-    nowMs: () => number;
-    writeInitialPrompt: (input: Readonly<{ destinationSessionId: string; serverId: string; prompt: SessionInitialPromptV1 }>) => Promise<void>;
+    appendDraft: (input: Readonly<{ sessionId: string; serverId: string; text: string; sourceSessionId: string }>) => Promise<boolean>;
     revealPrimaryComposer: () => void | Promise<void>;
     focusPrimaryComposer: () => boolean | void | Promise<boolean | void>;
 }>): Promise<boolean> {
@@ -28,17 +26,13 @@ export async function sendExecutionRunResultToSession(params: Readonly<{
         sourceSessionName: params.runTitle,
     });
     if (!promptText.trim()) return false;
-    await params.writeInitialPrompt({
-        destinationSessionId: params.sessionId,
+    const appended = await params.appendDraft({
+        sessionId: params.sessionId,
         serverId: params.serverId,
-        prompt: {
-            v: 1,
-            text: promptText,
-            mode: 'append',
-            createdAtMs: params.nowMs(),
-            sourceSessionId: params.sessionId,
-        },
+        text: promptText,
+        sourceSessionId: params.sessionId,
     });
+    if (!appended) return false;
     await params.revealPrimaryComposer();
     await params.focusPrimaryComposer();
     return true;
