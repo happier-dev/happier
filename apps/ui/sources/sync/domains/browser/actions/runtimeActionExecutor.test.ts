@@ -19,6 +19,7 @@ import type { BrowserControlCommandDispatchResult, BrowserControlState } from '.
 import { applyBrowserControlEvent, createBrowserControlState } from '../control';
 import type { BrowserDaemonControlDispatchClientResult } from '../control/machineRpc';
 import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { unavailableDesktopWebViewNativeAvailability } from '../adapters/desktopWebView';
 
 // OS browser handoff is a genuine platform boundary; keep selection and dispatch real.
 vi.mock('@/utils/url/openExternalUrl', () => ({ openExternalUrl: vi.fn(async () => true) }));
@@ -147,7 +148,7 @@ describe('browser runtime action executor', () => {
             readState: () => state,
             applyDispatchResult: () => {},
             readDispatchOptions: () => ({ targetPolicyDecision: { targetKind: 'externalUrl', state: 'allowed' },
-                desktopWebViewAvailability: null }),
+                desktopWebViewAvailability: unavailableDesktopWebViewNativeAvailability('desktop_webview_unsupported_platform') }),
         } });
         const result = await execute(runtimeArgs({ actionId: 'browser.view.open', input: {
             kind: 'openView', commandId: 'external-handoff', browserSessionId: 'browser_session_1',
@@ -178,7 +179,8 @@ describe('browser runtime action executor', () => {
         const execute = createBrowserRuntimeActionExecutor({ control: {
             readState: createBrowserControlState,
             applyDispatchResult: () => {},
-            readDispatchOptions: () => ({ targetPolicyDecision: { targetKind: 'externalUrl', state: 'allowed' } }),
+            readDispatchOptions: () => ({ targetPolicyDecision: { targetKind: 'externalUrl', state: 'allowed' },
+                desktopWebViewAvailability: unavailableDesktopWebViewNativeAvailability('desktop_webview_unsupported_platform') }),
         } });
         expect(await execute(runtimeArgs({ actionId: 'browser.view.open', input: {
             kind: 'openView', commandId: 'refused-handoff', browserSessionId: 'browser_session_1',

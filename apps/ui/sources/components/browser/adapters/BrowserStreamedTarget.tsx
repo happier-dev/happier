@@ -234,6 +234,8 @@ export function resolveBrowserStreamedSurfaceState(state: BrowserStreamedSurface
 export function BrowserStreamedTarget(props: Readonly<{
     runtime: BrowserStreamedSurfaceRuntime | null;
     agentName: string;
+    onOpenPageHere?: () => void;
+    onClosePage?: () => void;
     /**
      * Where the page is drawn while the picture is up (`null` otherwise). The frame is fitted with
      * `contain`, so the agent cursor and viewer input both map through this one rect.
@@ -281,6 +283,10 @@ export function BrowserStreamedTarget(props: Readonly<{
                     iconName="browsers"
                     title={t('browserPresence.stream.endedTitle', { agent: props.agentName })}
                     reason={t('browserPresence.stream.endedBody')}
+                    action={props.onOpenPageHere ? { label: t('browserPresence.stream.openPageHere'), onPress: props.onOpenPageHere,
+                        testID: `${props.testID}-ended-open` } : undefined}
+                    secondaryAction={props.onClosePage ? { label: t('detailsPanel.closeTabA11y'), onPress: props.onClosePage,
+                        testID: `${props.testID}-ended-close` } : undefined}
                 />
             </View>
         );

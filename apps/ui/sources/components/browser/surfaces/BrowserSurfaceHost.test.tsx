@@ -60,6 +60,17 @@ import { PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY } from '@/sync/domains/plugins/ui/pro
 
 installTerminalRouteCommonModuleMocks();
 
+// Metro's lazy require is a module-loading boundary absent in Vitest. Inject the
+// actual executor through the existing port; policy and Browser owners stay real.
+vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>();
+    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+    return { ...actual, createFrontDoorActionExecute: (
+        executor?: Parameters<typeof actual.createFrontDoorActionExecute>[0],
+        options?: Parameters<typeof actual.createFrontDoorActionExecute>[1],
+    ) => actual.createFrontDoorActionExecute(executor ?? createDefaultActionExecutor(options), options) };
+});
+
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 
 vi.mock('@/text', async () => {
