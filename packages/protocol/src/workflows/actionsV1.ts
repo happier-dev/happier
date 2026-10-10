@@ -4,6 +4,7 @@ import { WorkflowDestinationsV1Schema } from './workflowDestinationsV1.js';
 import {
   WorkflowTriggerListRequestV1Schema, WorkflowTriggerAddRequestV1Schema,
   WorkflowTriggerUpdateRequestV1Schema, WorkflowTriggerRemoveRequestV1Schema,
+  WorkflowTriggerRunNowRequestV1Schema,
   WorkflowTriggerListResultV1Schema, WorkflowTriggerWriteResultV1Schema,
   SessionTriggerListRequestV1Schema, SessionTriggerAddRequestV1Schema,
   SessionTriggerUpdateRequestV1Schema, SessionTriggerRemoveRequestV1Schema, SessionTriggerListResultV1Schema,
@@ -11,6 +12,7 @@ import {
 } from './triggers/workflowTriggerActionsV1.js';
 
 import { OPAQUE_CURSOR_SCHEMA } from '../automations/automationActionSpecsV1.js';
+import { AutomationV3RunMutationResponseSchema } from '../automations/automationApiV3.js';
 import {
   WORKFLOW_ACTION_IDS_V1,
   type WorkflowActionIdV1,
@@ -63,6 +65,7 @@ import {
 } from './workflowIdsV1.js';
 import { WorkflowInputNameSchema } from './workflowReferenceV1.js';
 import { WorkflowDefinitionEditRequestV1Schema, WorkflowDefinitionEditResultV1Schema } from './workflowDefinitionEditV1.js';
+import { WorkflowDocumentV1Schema, WorkflowDocumentParseFailureV1Schema } from './workflowDocumentSchemasV1.js';
 import { WorkflowDefinitionRefV1StringSchema, parseWorkflowDefinitionRefV1 } from './workflowDefinitionRefV1.js';
 import { WorkflowPluginSourceV1Schema } from './workflowPluginSourceContractV1.js';
 export { WorkflowDefinitionEditRequestV1Schema, WorkflowDefinitionEditResultV1Schema } from './workflowDefinitionEditV1.js';
@@ -418,6 +421,16 @@ export const WorkflowDefinitionUpdateRequestV1Schema = lazyZodSchema(() => z.obj
 export const WorkflowDefinitionUpdateResultV1Schema = WorkflowDefinitionGetResultV1Schema;
 export const WorkflowDefinitionDeleteRequestV1Schema = lazyZodSchema(() => z.object({ definitionId: WorkflowDefinitionIdV1Schema }).strict());
 export const WorkflowDefinitionDeleteResultV1Schema = lazyZodSchema(() => z.object({ deleted: z.literal(true), definitionId: WorkflowDefinitionIdV1Schema }).strict());
+export const WorkflowDefinitionImportRequestV1Schema = lazyZodSchema(() => z.object({ json: z.string() }).strict());
+export const WorkflowDefinitionImportResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true), classification: z.literal('unsaved_definition'), document: WorkflowDocumentV1Schema }).strict(),
+  WorkflowDocumentParseFailureV1Schema,
+]));
+export const WorkflowDefinitionExportRequestV1Schema = WorkflowDefinitionGetRequestV1Schema;
+export const WorkflowDefinitionExportResultV1Schema = lazyZodSchema(() => z.object({
+  definitionId: WorkflowDefinitionIdV1Schema, revision: WorkflowArtifactRevisionV1Schema,
+  metadata: WorkflowDefinitionMetadataV1Schema, document: WorkflowDocumentV1Schema, json: z.string(),
+}).strict());
 
 export { WORKFLOW_ACTION_IDS_V1, type WorkflowActionIdV1 };
 
@@ -443,10 +456,13 @@ export const WorkflowActionInputSchemasV1 = {
   'workflow.definition.update': WorkflowDefinitionUpdateRequestV1Schema,
   'workflow.definition.edit': WorkflowDefinitionEditRequestV1Schema,
   'workflow.definition.delete': WorkflowDefinitionDeleteRequestV1Schema,
+  'workflow.definition.import': WorkflowDefinitionImportRequestV1Schema,
+  'workflow.definition.export': WorkflowDefinitionExportRequestV1Schema,
   'workflow.trigger.list': WorkflowTriggerListRequestV1Schema,
   'workflow.trigger.add': WorkflowTriggerAddRequestV1Schema,
   'workflow.trigger.update': WorkflowTriggerUpdateRequestV1Schema,
   'workflow.trigger.remove': WorkflowTriggerRemoveRequestV1Schema,
+  'workflow.trigger.run_now': WorkflowTriggerRunNowRequestV1Schema,
   'session.trigger.list': SessionTriggerListRequestV1Schema,
   'session.trigger.add': SessionTriggerAddRequestV1Schema,
   'session.trigger.update': SessionTriggerUpdateRequestV1Schema,
@@ -475,10 +491,13 @@ export const WorkflowActionOutputSchemasV1 = {
   'workflow.definition.update': WorkflowDefinitionUpdateResultV1Schema,
   'workflow.definition.edit': WorkflowDefinitionEditResultV1Schema,
   'workflow.definition.delete': WorkflowDefinitionDeleteResultV1Schema,
+  'workflow.definition.import': WorkflowDefinitionImportResultV1Schema,
+  'workflow.definition.export': WorkflowDefinitionExportResultV1Schema,
   'workflow.trigger.list': WorkflowTriggerListResultV1Schema,
   'workflow.trigger.add': WorkflowTriggerWriteResultV1Schema,
   'workflow.trigger.update': WorkflowTriggerWriteResultV1Schema,
   'workflow.trigger.remove': WorkflowTriggerWriteResultV1Schema,
+  'workflow.trigger.run_now': AutomationV3RunMutationResponseSchema,
   'session.trigger.list': SessionTriggerListResultV1Schema,
   'session.trigger.add': WorkflowTriggerWriteResultV1Schema,
   'session.trigger.update': WorkflowTriggerWriteResultV1Schema,
@@ -522,4 +541,8 @@ export type WorkflowDefinitionUpdateRequestV1 = z.infer<typeof WorkflowDefinitio
 export type WorkflowDefinitionUpdateResultV1 = z.infer<typeof WorkflowDefinitionUpdateResultV1Schema>;
 export type WorkflowDefinitionDeleteRequestV1 = z.infer<typeof WorkflowDefinitionDeleteRequestV1Schema>;
 export type WorkflowDefinitionDeleteResultV1 = z.infer<typeof WorkflowDefinitionDeleteResultV1Schema>;
+export type WorkflowDefinitionImportRequestV1 = z.infer<typeof WorkflowDefinitionImportRequestV1Schema>;
+export type WorkflowDefinitionImportResultV1 = z.infer<typeof WorkflowDefinitionImportResultV1Schema>;
+export type WorkflowDefinitionExportRequestV1 = z.infer<typeof WorkflowDefinitionExportRequestV1Schema>;
+export type WorkflowDefinitionExportResultV1 = z.infer<typeof WorkflowDefinitionExportResultV1Schema>;
 import { ArtifactCallerAccessV1Schema } from '../artifacts/artifactAccessV1.js';

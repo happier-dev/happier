@@ -79,6 +79,103 @@ describe('workflow input option sources', () => {
 });
 
 describe('workflow definition normalization', () => {
+  it('admits inputless fresh Session creation while refusing reused conversations and hidden input', () => {
+    const definition = { defaults: { agentTarget: CLAUDE_AGENT_TARGET, conversation: { kind: 'fresh' } },
+      blocks: [textStep('create', '', { inputMode: 'none' })] };
+    expect(validateWorkflowDefinition(definition).valid).toBe(true);
+    expect(validateWorkflowDefinition({ ...definition, defaults: { ...definition.defaults,
+      conversation: { kind: 'existing_session', sessionId: 'session', machineId: 'machine' } } }).valid).toBe(true);
+    expect(validateWorkflowDefinition({ ...definition, defaults: { ...definition.defaults,
+      conversation: { kind: 'origin_session' } } }).valid).toBe(false);
+    expect(validateWorkflowDefinition({ ...definition, blocks: [textStep('create', 'hidden prompt', { inputMode: 'none' })] }).valid).toBe(false);
+    expect(validateWorkflowDefinition({ ...definition, defaults: { ...definition.defaults,
+      executionTarget: { kind: 'detached_run' } } }).valid).toBe(false);
+  });
+  it('requires actual text for a required Action value while preserving optional empty values and future bindings', () => {
+    const definition = (message: unknown) => ({ defaults: { agentTarget: CLAUDE_AGENT_TARGET },
+      blocks: [{ kind: 'action', id: 'notify', actionId: 'notifications.notify_me', input: {
+        message, title: { kind: 'literal', value: '' }, channels: { kind: 'literal', value: [] },
+      } }] });
+    for (const value of ['', '  \n ']) {
+      const result = validateWorkflowDefinition(definition({ kind: 'literal', value }));
+      expect(result.valid).toBe(false);
+      expect(result.issues).toContainEqual(expect.objectContaining({ code: 'invalid_input', path: '/blocks/0/input/message', blockId: 'notify' }));
+    }
+    expect(validateWorkflowDefinition(definition({ kind: 'literal', value: 'Done' })).valid).toBe(true);
+    expect(validateWorkflowDefinition({ ...definition({ kind: 'input', name: 'message' }),
+      inputs: [{ name: 'message', valueType: 'string', required: true }] }).valid).toBe(true);
+  });
+  it('returns every issue in one pass: structural empty prompts together with Action field issues (DESIGN-7 P3)', () => {
+    const result = validateWorkflowDefinition({ defaults: { agentTarget: CLAUDE_AGENT_TARGET }, blocks: [
+      textStep('draft', ''),
+      { kind: 'wait', id: 'hold', document: { text: '', references: [], attachments: [] } },
+      { kind: 'action', id: 'notify', actionId: 'notifications.notify_me', input: { message: { kind: 'literal', value: '' } } },
+    ] });
+    expect(result.valid).toBe(false);
+    const paths = result.issues.filter((entry) => entry.severity === 'error').map((entry) => entry.path);
+    // The two prompts (structural) and the blank required Message (semantic) are counted at once,
+    // so "N things to fix" and Start's refusal never grow after the prompts are written.
+    expect(paths).toEqual(expect.arrayContaining(['/blocks/0/document/text', '/blocks/1/document/text', '/blocks/2/input/message']));
+    expect(new Set(paths).size).toBe(paths.length);
+    // A stand-in used only to reach the semantic walk never surfaces as a normalized definition.
+    expect(result.normalizedDefinition).toBeUndefined();
+    // With the prompts written, the count is exactly what is left.
+    const written = validateWorkflowDefinition({ defaults: { agentTarget: CLAUDE_AGENT_TARGET }, blocks: [
+      textStep('draft', 'Write it'),
+      { kind: 'wait', id: 'hold', document: { text: 'Check', references: [], attachments: [] } },
+      { kind: 'action', id: 'notify', actionId: 'notifications.notify_me', input: { message: { kind: 'literal', value: '' } } },
+    ] });
+    expect(written.issues.filter((entry) => entry.severity === 'error').map((entry) => entry.path)).toEqual(['/blocks/2/input/message']);
+  });
+  it('retains contextual issues with an empty prompt and other structural failures without a persistable stand-in', () => {
+    const contextual = {
+      code: 'unsupported_persisted_attachment' as const,
+      severity: 'error' as const,
+      path: '/blocks/draft/document/attachments/0/content',
+      message: 'The attachment still has staged bytes.',
+      blockId: 'draft',
+    };
+    for (const blocks of [[textStep('draft', '')], [{ kind: 'step', id: 'draft', document: { text: 42 } }]]) {
+      const result = validateWorkflowDefinition({ defaults: { agentTarget: CLAUDE_AGENT_TARGET }, blocks }, {
+        targetIssues: [contextual], targetValidation: 'unavailable',
+      });
+      expect(result.valid).toBe(false);
+      expect(result.normalizedDefinition).toBeUndefined();
+      expect(result.issues).toContainEqual(contextual);
+      expect(result.issues.some((entry) => entry.path === '/blocks/0/document/text')).toBe(true);
+      expect(result.targetValidation).toBe('unavailable');
+    }
+    const written = validateWorkflowDefinition({ defaults: { agentTarget: CLAUDE_AGENT_TARGET }, blocks: [textStep('draft', 'Write it')] }, {
+      targetIssues: [contextual],
+    });
+    expect(written.valid).toBe(false);
+    expect(written.issues).toEqual([contextual]);
+  });
+  it('uses the same missing-value contract for required child inputs, without rejecting optional blank text', () => {
+    const definition = (title: string) => ({ defaults: { agentTarget: CLAUDE_AGENT_TARGET }, blocks: [{
+      kind: 'workflow', id: 'child', workflowRef: 'builtin:open-a-pull-request', input: {
+        base: { kind: 'literal', value: 'main' }, title: { kind: 'literal', value: title }, body: { kind: 'literal', value: '' },
+      },
+    }] });
+    expect(validateWorkflowDefinition(definition('  ')).issues).toContainEqual(expect.objectContaining({
+      code: 'invalid_input', path: '/blocks/0/input/title', blockId: 'child',
+    }));
+    expect(validateWorkflowDefinition(definition('Release')).valid).toBe(true);
+  });
+  it('round-trips run when through canonical, ingress, insertion and stored block parsing', () => {
+    for (const runWhen of ['success', 'failure', 'always']) {
+      const block = { ...textStep('work', 'Prompt'), runWhen };
+      expect(WorkflowBlockSchema.parse(block)).toMatchObject({ runWhen });
+      expect(WorkflowInsertBlockV1Schema.parse(block)).toMatchObject({ runWhen });
+      expect(createStoredReadSchema(WorkflowBlockSchema).parse({ ...block, future: true })).toMatchObject({ runWhen });
+      expect(validateWorkflowDefinition({ defaults: { agentTarget: CLAUDE_AGENT_TARGET }, blocks: [block] }).valid).toBe(true);
+    }
+    expect(WorkflowBlockSchema.safeParse({ ...textStep('work', 'Prompt'), runWhen: 'cancelled' }).success).toBe(false);
+    expect(WorkflowBlockSchema.parse(textStep('work', 'Prompt'))).not.toHaveProperty('runWhen');
+    const evaluator = { ...textStep('judge', 'Decide'), result: { kind: 'decision', decisions: ['continue', 'done'] }, runWhen: 'failure' };
+    expect(WorkflowBlockSchema.safeParse({ kind: 'loop', id: 'repeat', body: [textStep('work', 'Work')],
+      repetition: { kind: 'evaluate', maxIterations: 2, history: 'none', evaluator } }).success).toBe(false);
+  });
   it('round-trips authored names on every block kind while stored readers drop unknown fields', () => {
     const leaf = textStep('work', 'Prompt');
     const blocks = [leaf,
@@ -1200,6 +1297,23 @@ describe('workflow authoring selection round trip', () => {
       blocks: [textStep('a', 'x', { execution: { executionTarget: { kind: 'detached_run' } } })],
     });
     expect(runtimeKind.valid).toBe(true);
+  });
+
+  it.each([
+    { kind: 'action', actionId: 'notifications.notify_me', input: {} },
+    { kind: 'workflow', workflowRef: 'builtin:child', input: {} },
+    { kind: 'wait', document: { text: 'Choose', references: [], attachments: [] } },
+  ])('refuses explicit Agent-only launch selection on a $kind leaf', (leaf) => {
+    for (const execution of [
+      { launchEnvironment: { values: { TOKEN: 'value' }, unset: [] } },
+      { providerSessionResume: { kind: 'provider_session.v1', providerSessionId: 'native-session' } },
+    ]) {
+      const result = validateWorkflowDefinition({ defaults: { agentTarget: CLAUDE_AGENT_TARGET },
+        blocks: [{ ...leaf, id: 'non-agent', execution }],
+      });
+      expect(result.valid).toBe(false);
+      expect(codesOf(result)).toContain('invalid_input');
+    }
   });
 
   it('blocks a staged-media attachment with the exact repairable reason', () => {

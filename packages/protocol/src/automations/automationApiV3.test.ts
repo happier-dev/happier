@@ -30,6 +30,24 @@ const recipe = {
     },
   },
 };
+const workflowRecipe = { v: 2 as const, templateVersion: 3, triggerEvidence: null,
+  workflow: { t: 'plain' as const, v: { workspace: { directory: '/repo' }, executionTarget: { kind: 'session' as const } } } };
+
+it('admits only Workflow recipes at current definition mutation boundaries while retaining classic history reads', () => {
+  const create = { automationId: 'workflow-only', name: 'Workflow only', enabled: true,
+    assignments: [{ machineId: 'machine-1' }], triggers: [] };
+  const reconcile = { expectedTemplateVersion: 2, name: 'Workflow only', description: null, enabled: true,
+    assignments: [{ machineId: 'machine-1' }], triggers: [], removedTriggers: [] };
+  for (const [schema, input] of [
+    [Api.AutomationDefinitionCreateRequestSchema, create],
+    [Api.AutomationDefinitionPatchRequestSchema, { expectedTemplateVersion: 2 }],
+    [Api.AutomationDefinitionReconcileRequestSchema, reconcile],
+  ] as const) {
+    expect(schema.safeParse({ ...input, executionRecipe: workflowRecipe }).success).toBe(true);
+    expect(schema.safeParse({ ...input, executionRecipe: recipe }).success).toBe(false);
+  }
+  expect(Api.AutomationDefinitionDetailSchema.safeParse({ ...listDefinition, executionRecipe: recipe, triggers: [] }).success).toBe(true);
+});
 
 const scheduleInput = {
   kind: 'schedule' as const,
@@ -178,7 +196,7 @@ describe('Automation versioned API schemas', () => {
       automationId: 'automation-create-1',
       name: 'On demand task',
       enabled: true,
-      executionRecipe: recipe,
+      executionRecipe: workflowRecipe,
       assignments: [{ machineId: 'machine-1' }],
     };
     expect(Api.AutomationDefinitionCreateRequestSchema.parse({ ...base, triggers: [] }).triggers)
@@ -273,7 +291,7 @@ describe('Automation versioned API schemas', () => {
     }).success).toBe(false);
     expect(Api.AutomationDefinitionReconcileRequestSchema.parse({
       ...request,
-      executionRecipe: { ...recipe, templateVersion: 4 },
+      executionRecipe: { ...workflowRecipe, templateVersion: 4 },
     }).executionRecipe?.templateVersion).toBe(4);
   });
 
@@ -292,28 +310,12 @@ describe('Automation versioned API schemas', () => {
       name: 'Encrypted Event task',
       enabled: true,
       executionRecipe: {
-        ...recipe,
-        template: { t: 'encrypted' as const, c: 'opaque-template' },
+        ...workflowRecipe,
+        workflow: { t: 'encrypted' as const, c: 'opaque-template' },
       },
       triggers: [{ triggerId: 'trigger-encrypted-1', trigger: encrypted }],
     };
-    expect(Api.AutomationDefinitionCreateRequestSchema.parse(request)).toEqual({
-      ...request,
-      executionRecipe: {
-        ...request.executionRecipe,
-        target: {
-          ...request.executionRecipe.target,
-          request: {
-            ...request.executionRecipe.target.request,
-            backendTarget: {
-              kind: 'backend',
-              backendId: 'codex',
-              sourceKind: 'built_in',
-            },
-          },
-        },
-      },
-    });
+    expect(Api.AutomationDefinitionCreateRequestSchema.parse(request)).toEqual(request);
     expect(Api.AutomationTriggerCreateRequestSchema.parse(request.triggers[0])).toEqual(request.triggers[0]);
     expect(Api.AutomationTriggerCreateRequestSchema.safeParse({
       ...request.triggers[0],
@@ -668,6 +670,12 @@ describe('Automation versioned API schemas', () => {
       assignments: [{ machineId: 'machine-1', automationId: listDefinition.id, nextClaimAt: timestamp }],
     };
     expect(Api.AutomationV3WorkerAssignmentsResponseSchema.parse(assignments)).toEqual(assignments);
+    for (const executionRecipeVersion of [2, null] as const) {
+      const projected = { ...assignments, assignments: [{ ...assignments.assignments[0], executionRecipeVersion }] };
+      expect(Api.AutomationV3WorkerAssignmentsResponseSchema.parse(projected)).toEqual(projected);
+    }
+    expect(Api.AutomationV3WorkerAssignmentsResponseSchema.safeParse({ ...assignments,
+      assignments: [{ ...assignments.assignments[0], executionRecipeVersion: 1 }] }).success).toBe(false);
     expect(Api.AutomationV3SettingsSchema.parse(settings)).toEqual(settings);
     expect(Api.AutomationV3SettingsUpdateRequestSchema.parse(settings)).toEqual(settings);
     expect(Api.DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE).toBe(4);

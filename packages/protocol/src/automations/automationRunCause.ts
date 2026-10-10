@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { AutomationRunLifecycleConfigurationSchema, type AutomationRunLifecycleSource } from './automationRunLifecycle.js';
 
@@ -40,7 +41,7 @@ export {
 
 const IDENTIFIER_SCHEMA = z.string().trim().min(1).max(191);
 
-const AutomationScheduleRunCauseSchema = z.object({
+const AutomationScheduleRunCauseSchema = lazyZodSchema(() => z.object({
   kind: z.literal('trigger'),
   triggerId: AutomationTriggerIdSchema,
   triggerRevision: AutomationTriggerRevisionSchema,
@@ -50,9 +51,9 @@ const AutomationScheduleRunCauseSchema = z.object({
   evidence: z.object({
     scheduledFor: AutomationOccurredAtV1Schema,
   }).strict(),
-}).strict();
+}).strict());
 
-const AutomationPluginEventRunCauseSchema = z.object({
+const AutomationPluginEventRunCauseSchema = lazyZodSchema(() => z.object({
   kind: z.literal('trigger'),
   triggerId: AutomationTriggerIdSchema,
   triggerRevision: AutomationTriggerRevisionSchema,
@@ -63,7 +64,7 @@ const AutomationPluginEventRunCauseSchema = z.object({
     eventRef: asProtocolZod(PluginContributionIdentityV1Schema),
     sourceSelectorId: AutomationSourceSelectorIdV1Schema,
   }).strict(),
-}).strict();
+}).strict());
 
 const AUTOMATION_SESSION_LIFECYCLE_RUN_CAUSE_SHAPE = {
   kind: z.literal('trigger'),
@@ -74,7 +75,7 @@ const AUTOMATION_SESSION_LIFECYCLE_RUN_CAUSE_SHAPE = {
   occurredAt: AutomationOccurredAtV1Schema,
 } as const;
 
-const AutomationSessionLifecycleRunCauseSchema = z.object({
+const AutomationSessionLifecycleRunCauseSchema = lazyZodSchema(() => z.object({
   ...AUTOMATION_SESSION_LIFECYCLE_RUN_CAUSE_SHAPE,
   evidence: z.discriminatedUnion('event', [
     z.object({
@@ -97,26 +98,29 @@ const AutomationSessionLifecycleRunCauseSchema = z.object({
       policy: AutomationSessionLifecyclePolicySnapshotSchema,
     }).strict(),
   ]),
-}).strict();
+}).strict());
 
-const AutomationManualRunCauseSchema = z.object({
+const AutomationManualRunCauseSchema = lazyZodSchema(() => z.object({
   kind: z.literal('manual'),
   invokedAt: AutomationOccurredAtV1Schema,
-}).strict();
+}).strict());
 
-const AutomationRunLifecycleRunCauseSchema = z.object({
+const AutomationRunLifecycleRunCauseSchema = lazyZodSchema(() => z.object({
   kind: z.literal('trigger'), triggerId: AutomationTriggerIdSchema,
   triggerRevision: AutomationTriggerRevisionSchema, triggerKind: z.literal('runLifecycle'),
   occurrenceKey: AutomationOccurrenceKeyV1Schema, occurredAt: AutomationOccurredAtV1Schema,
-  evidence: AutomationRunLifecycleConfigurationSchema.extend({ sourceRevision: z.number().int().nonnegative().safe() }).strict(),
-}).strict();
+  evidence: AutomationRunLifecycleConfigurationSchema.extend({
+    sourceRevision: z.number().int().nonnegative().safe(),
+    originRunId: IDENTIFIER_SCHEMA.optional(),
+  }).strict(),
+}).strict());
 
-const AutomationConversationRunCauseSchema = z.object({
+const AutomationConversationRunCauseSchema = lazyZodSchema(() => z.object({
   kind: z.literal('conversation'),
   triggerId: AutomationTriggerIdSchema.optional(),
   occurrenceKey: AutomationOccurrenceKeyV1Schema,
   occurredAt: AutomationOccurredAtV1Schema,
-}).strict();
+}).strict());
 
 /**
  * Immutable, bounded Run provenance. This is the sole current cause owner;
@@ -177,7 +181,7 @@ export type AutomationRunCause = Readonly<
   }
   | { kind: 'trigger'; triggerId: AutomationTriggerId; triggerRevision: AutomationTriggerRevision;
     triggerKind: 'runLifecycle'; occurrenceKey: AutomationOccurrenceKeyV1; occurredAt: AutomationOccurredAtV1;
-    evidence: Readonly<{ source: AutomationRunLifecycleSource; condition: 'terminal' | 'needs_attention'; sourceRevision: number }> }
+    evidence: Readonly<{ source: AutomationRunLifecycleSource; condition: 'terminal' | 'needs_attention'; sourceRevision: number; originRunId?: string }> }
   | { kind: 'manual'; invokedAt: AutomationOccurredAtV1 }
   | {
     kind: 'conversation';
@@ -261,7 +265,7 @@ export type AutomationRunCauseDeclarationV1 = Readonly<
     triggerKind: 'runLifecycle'; occurrenceKey: string; occurredAt: number;
     evidence: Readonly<{ source: Readonly<{ kind: 'workflow_run'; runId: string }>
       | Readonly<{ kind: 'execution_run'; machineId: string; runId: string; sessionId?: string }>;
-      condition: 'terminal' | 'needs_attention'; sourceRevision: number }> }
+      condition: 'terminal' | 'needs_attention'; sourceRevision: number; originRunId?: string }> }
   | { kind: 'manual'; invokedAt: number }
   | {
     kind: 'conversation';

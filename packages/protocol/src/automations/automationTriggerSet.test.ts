@@ -8,21 +8,21 @@ import {
 } from './automationApiV3.js';
 
 const executionRecipe = {
-  v: 1,
+  v: 2,
   templateVersion: 1,
-  template: { t: 'plain', v: { v: 1, prompt: 'Run.' } },
   triggerEvidence: null,
-  target: {
-    kind: 'executionRun',
-    request: {
-      intent: 'task',
-      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-      permissionMode: 'read_only',
-      retentionPolicy: 'ephemeral',
-      runClass: 'bounded',
-      ioMode: 'request_response',
+  workflow: { t: 'plain', v: {
+    workspace: { directory: '/repo' },
+    executionTarget: { kind: 'detached_run' },
+    inlineDefinition: {
+      version: 1,
+      inputs: [],
+      defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+        permissionMode: 'read-only' },
+      blocks: [{ kind: 'step', id: 'step', document: { text: 'Run.', references: [], attachments: [] },
+        input: [], result: { kind: 'text' } }],
     },
-  },
+  } },
 } as const;
 
 describe('Automation trigger-set API', () => {

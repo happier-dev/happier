@@ -18,7 +18,9 @@ import {
 } from './workflowComposerDocumentV1.js';
 import {
   WorkflowStepComposerDocumentSchema as workflowDefinitionComposerDocumentSchema,
+  WorkflowLeafExecutionTargetV1Schema,
 } from './workflowV1.js';
+import { WorkflowRunExecutionTargetV1Schema } from './workflowDefinitionV1.js';
 
 describe('Workflow public exports', () => {
   it('re-exports the canonical portable composer attachment contract', () => {
@@ -37,5 +39,11 @@ describe('Workflow public exports', () => {
       .toBe(canonicalWorkflowStepComposerDocumentSchema);
     expect(workflowDefinitionComposerDocumentSchema)
       .toBe(canonicalWorkflowStepComposerDocumentSchema);
+  });
+
+  it('retains one execution-target parser for Workflow leaves and admitted Runs', () => {
+    expect(WorkflowRunExecutionTargetV1Schema).toBe(WorkflowLeafExecutionTargetV1Schema);
+    expect(WorkflowRunExecutionTargetV1Schema.parse({ kind: 'detached_run' })).toEqual({ kind: 'detached_run' });
+    expect(WorkflowRunExecutionTargetV1Schema.safeParse({ kind: 'detached_run', extra: true }).success).toBe(false);
   });
 });

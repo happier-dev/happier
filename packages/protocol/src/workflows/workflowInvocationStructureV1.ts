@@ -32,7 +32,8 @@ export async function resolveWorkflowRetainedConversationAttemptV1(params: Reado
   const seen = new Set([row.index.id]);
   while (true) {
     if (row.progress.blockKind !== 'step' || row.index.attempt !== row.progress.attempt) return undefined;
-    if (row.progress.execution?.kind === 'session' || row.progress.execution?.kind === 'detached_run') return row;
+    if (row.progress.execution?.kind === 'session' || row.progress.execution?.kind === 'session_ready'
+      || row.progress.execution?.kind === 'detached_run') return row;
     const previousId = row.progress.previousAttemptRecordId;
     if (row.progress.recovery?.conversation !== 'same_conversation' || !previousId || seen.has(previousId)) return undefined;
     const previous = await params.readInvocation(previousId);

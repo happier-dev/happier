@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { WorkflowDefinitionV1Schema, type WorkflowDefinitionV1 } from './workflowV1.js';
 import { WorkflowProgressEnvelopeV1Schema, WorkflowRunInvocationIndexV1Schema } from './workflowProgressV1.js';
-import { resolveWorkflowInvocationStructureV1, type WorkflowInvocationBindingRowV1 } from './workflowInvocationStructureV1.js';
+import { resolveWorkflowInvocationStructureV1, resolveWorkflowRetainedConversationAttemptV1, type WorkflowInvocationBindingRowV1 } from './workflowInvocationStructureV1.js';
 
 const runId = '11111111-1111-4111-8111-111111111111';
 const ids = ['22222222-2222-4222-8222-222222222222', '33333333-3333-4333-8333-333333333333',
   '44444444-4444-4444-8444-444444444444', '55555555-5555-4555-8555-555555555555',
   '66666666-6666-4666-8666-666666666666'];
 const document = { text: 'Work', references: [], attachments: [] };
+it('recovers an inputless Session from its real creation correspondence', async () => {
+  const created = row(1, 0, '0', 'step', 'create', { execution: { kind: 'session_ready', sessionId: 'session-1' } });
+  expect(await resolveWorkflowRetainedConversationAttemptV1({ invocation: created, readInvocation: async () => undefined })).toBe(created);
+});
 function row(position: number, parent: number | null, ordinal: string, blockKind: WorkflowInvocationBindingRowV1['progress']['blockKind'], blockId: string,
   fields: Partial<WorkflowInvocationBindingRowV1['progress']> = {}): WorkflowInvocationBindingRowV1 {
   return {

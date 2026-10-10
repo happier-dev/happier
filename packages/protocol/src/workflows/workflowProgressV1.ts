@@ -31,6 +31,7 @@ import {
 } from './workflowV1.js';
 import { WorkflowProjectTargetV1Schema, WorkflowWorkspaceProgressV1Schema } from './workflowWorkspaceV1.js';
 import { WorkflowResolvedInputsV1Schema, WorkflowRunStartedByV1Schema, WorkflowDefinitionContentUnavailableReasonV1Schema } from './workflowDefinitionV1.js';
+import { WorkflowDestinationsV1Schema } from './workflowDestinationsV1.js';
 
 export {
   WorkflowDefinitionIdV1Schema,
@@ -53,6 +54,7 @@ export const WORKFLOW_INVOCATION_LIFECYCLES_V1 = [
 ] as const;
 export const WorkflowInvocationLifecycleV1Schema = lazyZodSchema(() => z.enum(WORKFLOW_INVOCATION_LIFECYCLES_V1));
 export type WorkflowInvocationLifecycleV1 = z.infer<typeof WorkflowInvocationLifecycleV1Schema>;
+export const WorkflowInvocationBlockKindV1Schema = lazyZodSchema(() => z.enum(['root', 'step', 'action', 'wait', 'workflow', 'parallel', 'loop', 'if']));
 
 /** Lifecycle eligibility only; the authorized host validates exact initial-input and frozen leaf evidence. */
 export function isWorkflowDraftPublicationLifecycleV1(lifecycle: WorkflowInvocationLifecycleV1): boolean {
@@ -155,6 +157,17 @@ export type WorkflowInvocationRecoveryAvailabilityV1 = z.infer<typeof WorkflowIn
 export const WorkflowRunStepProgressV1Schema = lazyZodSchema(() => z.object({
   completed: z.number().int().nonnegative().safe(),
   total: z.number().int().nonnegative().safe(),
+  /** Accepted writers and their exact last observed facts; absence never means pending or completed. */
+  destinations: z.array(WorkflowDestinationsV1Schema.shape.leaves.element.extend({
+    observation: z.object({
+      recordId: WorkflowInvocationRecordIdSchema,
+      sequence: WorkflowDecimalV1Schema,
+      attempt: WorkflowDecimalV1Schema,
+      contentRevision: WorkflowDecimalV1Schema,
+      lifecycle: WorkflowInvocationLifecycleV1Schema,
+      blockKind: WorkflowInvocationBlockKindV1Schema.optional(),
+    }).strict().optional(),
+  }).strict()).optional(),
   currentLoop: z.object({
     completed: z.number().int().nonnegative().safe(),
     total: z.number().int().nonnegative().safe(),
@@ -497,7 +510,7 @@ export const WorkflowProgressEnvelopeV1Schema = lazyZodSchema(() => z.object({
   kind: z.literal('happier.workflow-progress.v1'),
   invocationPath: WorkflowInvocationPathV1Schema,
   frame: WorkflowInvocationFrameV1Schema.optional(),
-  blockKind: z.enum(['root', 'step', 'action', 'wait', 'workflow', 'parallel', 'loop', 'if']),
+  blockKind: WorkflowInvocationBlockKindV1Schema,
   /** Executing worker's private authored-step projection, retained on the root row only. */
   stepProgress: WorkflowRunStepProgressV1Schema.optional(),
   /** Evaluated Notify me conditions keyed by the exact physical result, retained only on the mutable root. */
@@ -719,7 +732,7 @@ export const WorkflowInvocationRetryInputV1Schema = lazyZodSchema(() => z.object
 export type WorkflowInvocationRetryInputV1 = z.infer<typeof WorkflowInvocationRetryInputV1Schema>;
 
 export const WORKFLOW_OPERATION_ERROR_CODES_V1 = [
-  'invalid_input', 'run_not_found', ...AGENT_START_REFUSAL_CODES_V1,
+  'invalid_input', 'run_not_found', 'not_authenticated', ...AGENT_START_REFUSAL_CODES_V1,
   'currentness_conflict', 'missing_reference', 'invalid_reference_scope',
   'workflow_input_too_large', 'workflow_outcome_unresolved',
   'workflow_interaction_capacity_exceeded',
@@ -734,6 +747,7 @@ export const WorkflowOperationErrorCodeV1Schema = lazyZodSchema(() => z.enum(WOR
 export type WorkflowOperationErrorCodeV1 = z.infer<typeof WorkflowOperationErrorCodeV1Schema>;
 
 const WORKFLOW_OPERATION_ERROR_CODES_WITHOUT_DETAILS_V1 = [
+  'not_authenticated',
   'run_not_found',
   'missing_reference', 'invalid_reference_scope',
   'workflow_input_too_large', 'workflow_outcome_unresolved',

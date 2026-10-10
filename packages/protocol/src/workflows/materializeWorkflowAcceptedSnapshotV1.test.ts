@@ -3,11 +3,15 @@ import { admitAgentStartV1, type AgentStartContextV1 } from '../account/settings
 import { DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1 } from '../account/settings/sessionAgentSpawnPolicyV1.js';
 import { AutomationRunCauseSchema } from '../automations/automationRunCause.js';
 import type { ActionCaller } from '../actions/executor/types.js';
+import { getActionSpec } from '../actions/actionSpecs.js';
+import { zodSchemaToJsonSchemaObject } from '../actions/actionInputJsonSchema.js';
+import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { LaunchProfileV2Schema } from '../profiles/v2/schema.js';
 import { REVIEW_AND_CONVERGE_WORKFLOW_V1 } from './builtins/reviewAndConverge.js';
 import { PLAN_WITH_A_PANEL_WORKFLOW_V1 } from './builtins/planWithAPanel.js';
 import { materializeWorkflowAcceptedSnapshotV1, materializeWorkflowDefinitionAuthorityV1, readWorkflowAcceptedAgentStartLeavesV1, type MaterializeWorkflowAcceptedSnapshotV1Input } from './materializeWorkflowAcceptedSnapshotV1.js';
 import { WorkflowAcceptedSnapshotV1Schema } from './workflowDefinitionV1.js';
+import { validateWorkflowDefinition } from './workflowValidationV1.js';
 
 const agentTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
 const context = {
@@ -17,6 +21,22 @@ const context = {
 };
 const definition = { version: 1, defaults: { agentTarget }, blocks: [{ kind: 'step', id: 'work', document: { text: 'Work', references: [], attachments: [] } }] };
 const available = async () => true;
+const finiteWorkspace = { workspaceId: 'workspace-a', serverId: 'home', machineId: 'machine-a', rootPath: '/project' };
+function finiteInput(actionId: 'projects.script.run' | 'projects.compute.exec') {
+  const workspace = { kind: 'literal' as const, value: finiteWorkspace };
+  return actionId === 'projects.script.run'
+    ? { workspace, selection: { kind: 'literal' as const, value: { kind: 'named', name: 'test' } } }
+    : { workspace, executable: { kind: 'literal' as const, value: '/tools/echo' },
+      argv: { kind: 'literal' as const, value: [] }, cwd: { kind: 'literal' as const, value: '/project' } };
+}
+async function finiteContract(actionId: 'projects.script.run' | 'projects.compute.exec') {
+  const spec = getActionSpec(actionId);
+  if (!spec.outputSchema) throw new Error('finite work requires its canonical result contract');
+  return {
+    inputSchema: StrictJsonValueSchema.parse(zodSchemaToJsonSchemaObject(spec.inputSchema, { target: 'draft-7' })),
+    outputSchema: StrictJsonValueSchema.parse(zodSchemaToJsonSchemaObject(spec.outputSchema, { target: 'draft-7' })),
+  };
+}
 function materialize(overrides: Partial<MaterializeWorkflowAcceptedSnapshotV1Input> = {}) {
   return materializeWorkflowAcceptedSnapshotV1({ definition, context, admission: { kind: 'user' }, effects: { resolveTargetAvailability: available }, ...overrides });
 }
@@ -27,6 +47,143 @@ const policyContext: AgentStartContextV1 = {
 };
 
 describe('materializeWorkflowAcceptedSnapshotV1', () => {
+  it.each(['projects.script.run', 'projects.compute.exec'] as const)('freezes the accepted Machine into %s without implicit pool reselection', async (actionId) => {
+    const acceptedMachine = 'machine-a';
+    const result = await materialize({
+      definition: { version: 1, defaults: {}, blocks: [{ kind: 'action', id: 'finite', actionId, input: finiteInput(actionId) }] },
+      context: { ...context, machineId: acceptedMachine,
+        workspaceTarget: { project: { ...context.workspaceTarget.project, machineId: acceptedMachine } } },
+      effects: { resolveTargetAvailability: available,
+        readActionContract: async () => finiteContract(actionId) },
+    });
+    expect(result).toMatchObject({ ok: true, snapshot: { materializedLeaves: [{
+      actionInput: { choice: { kind: 'primary' } },
+    }] } });
+    if (!result.ok) throw new Error(result.error.code);
+    const replay = await materialize({ definition: result.snapshot.definition, replay: { snapshot: result.snapshot },
+      context: { ...context, machineId: 'machine-b',
+        workspaceTarget: { project: { ...context.workspaceTarget.project, machineId: 'machine-b' } } },
+      effects: { resolveTargetAvailability: available, readActionContract: async () => finiteContract(actionId) },
+    });
+    expect(replay).toMatchObject({ ok: true, snapshot: { machineId: acceptedMachine, materializedLeaves: [{
+      actionInput: { choice: { kind: 'primary' } },
+    }] } });
+  });
+
+  it.each(['projects.script.run', 'projects.compute.exec'] as const)('keeps a distinct accepted worker exact for %s', async (actionId) => {
+    const result = await materialize({
+      definition: { version: 1, defaults: {}, blocks: [{ kind: 'action', id: 'finite', actionId, input: finiteInput(actionId) }] },
+      context: { ...context, machineId: 'worker-a',
+        workspaceTarget: { project: { ...context.workspaceTarget.project, machineId: 'worker-a' } } },
+      effects: { resolveTargetAvailability: available, readActionContract: async () => finiteContract(actionId) },
+    });
+    expect(result).toMatchObject({ ok: true, snapshot: { materializedLeaves: [{
+      actionInput: { choice: { kind: 'workers', destination: { kind: 'machine', machineId: 'worker-a' } } },
+    }] } });
+  });
+
+  it('defers the finite default until a referenced workspace has actually resolved', async () => {
+    const actionId = 'projects.script.run';
+    const result = await materialize({
+      definition: { version: 1, defaults: { agentTarget }, blocks: [definition.blocks[0], {
+        kind: 'action', id: 'finite', actionId, input: { ...finiteInput(actionId),
+          workspace: { kind: 'result', producer: { blockId: 'work', scope: { kind: 'current' } }, path: [] },
+        },
+      }] },
+      context: { ...context, machineId: finiteWorkspace.machineId,
+        workspaceTarget: { project: { ...context.workspaceTarget.project, machineId: finiteWorkspace.machineId } } },
+      effects: { resolveTargetAvailability: available, readActionContract: async () => finiteContract(actionId) },
+    });
+    expect(result).toMatchObject({ ok: true });
+    if (!result.ok) throw new Error(result.error.code);
+    expect(result.snapshot.materializedLeaves[1]?.actionInput?.workspace).toEqual({ kind: 'unresolved' });
+    expect(result.snapshot.materializedLeaves[1]?.actionInput).not.toHaveProperty('choice');
+  });
+
+  it.each([
+    { kind: 'primary' },
+    { kind: 'workers', destination: { kind: 'machine', machineId: 'machine-b' } },
+  ])('retains an explicit finite target choice in the accepted snapshot: %j', async (choice) => {
+    const result = await materialize({
+      definition: { version: 1, defaults: {}, blocks: [{ kind: 'action', id: 'finite', actionId: 'projects.script.run',
+        input: { ...finiteInput('projects.script.run'), choice: { kind: 'literal', value: choice } } }] },
+      context: { ...context, machineId: finiteWorkspace.machineId,
+        workspaceTarget: { project: { ...context.workspaceTarget.project, machineId: finiteWorkspace.machineId } } },
+      effects: { resolveTargetAvailability: available,
+        readActionContract: async () => finiteContract('projects.script.run') },
+    });
+    expect(result).toMatchObject({ ok: true, snapshot: { materializedLeaves: [{ actionInput: { choice } }] } });
+  });
+
+  it('freezes native continuation and launch environment into the accepted leaf', async () => {
+    const spawn = { conversation: { kind: 'fresh' }, launchEnvironment: { values: { OPENAI_API_KEY: 'retained-value' }, unset: [] },
+      providerSessionResume: { kind: 'provider_session.v1', providerSessionId: 'native-session' } };
+    const result = await materialize({ definition: { ...definition, defaults: { ...definition.defaults, ...spawn } } });
+    expect(result).toMatchObject({ ok: true, snapshot: { materializedLeaves: [{ selection: spawn }] } });
+    if (!result.ok) return;
+    expect(WorkflowAcceptedSnapshotV1Schema.parse(result.snapshot).materializedLeaves[0]?.selection).toMatchObject(spawn);
+  });
+  it('checks the existing Agent-start environment policy for a Workflow launch environment', async () => {
+    const result = await materialize({ definition: { ...definition, defaults: { ...definition.defaults,
+      conversation: { kind: 'fresh' }, launchEnvironment: { values: { TOKEN: 'retained-value' }, unset: [] } } },
+      admission: { kind: 'agent', admitLeaf: async (leaf) => admitAgentStartV1(
+        { ...DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, allowEnvironmentVariables: false },
+        { kind: 'workflow_run_leaf', leaf }, policyContext,
+      ) },
+    });
+    expect(result).toMatchObject({ ok: false, error: { code: 'policy_denied_field', field: 'environmentVariables' } });
+  });
+  it.each([
+    { launchEnvironment: { values: { TOKEN: 'retained-value' }, unset: [] } },
+    { providerSessionResume: { kind: 'provider_session.v1', providerSessionId: 'native-session' } },
+  ])('refuses Session-only launch configuration on a detached leaf: %j', async (spawn) => {
+    expect(await materialize({ definition: { ...definition, defaults: { ...definition.defaults, conversation: { kind: 'fresh' }, ...spawn } },
+      context: { ...context, executionTarget: { kind: 'detached_run' } },
+    })).toMatchObject({ ok: false, error: { code: 'target_unavailable', blockId: 'work' } });
+  });
+  it('refuses launch environment removal that the Workflow Session spawn owner cannot apply', async () => {
+    expect(await materialize({ definition: { ...definition, defaults: { ...definition.defaults,
+      launchEnvironment: { values: {}, unset: ['TOKEN'] } } },
+    })).toMatchObject({ ok: false, error: { code: 'invalid_input' } });
+  });
+  it.each(['existing_session', 'origin_session', 'shared_run'] as const)('admits existing Session restart intent while refusing other reused launch configuration (%s)', async (kind) => {
+    const conversation = kind === 'existing_session' ? { kind, sessionId: 'origin', machineId: 'machine' } : { kind };
+    for (const spawn of [
+      { launchEnvironment: { values: { TOKEN: 'retained-value' }, unset: [] } },
+      { providerSessionResume: { kind: 'provider_session.v1', providerSessionId: 'native-session' } },
+    ]) {
+      const result = await materialize({ definition: { ...definition, blocks: [{ ...definition.blocks[0], execution: { conversation, ...spawn } }] },
+        context: { ...context, origin: { kind: 'direct', originSessionId: 'origin' } },
+      });
+      expect(result).toMatchObject(kind === 'existing_session'
+        ? { ok: true, snapshot: { materializedLeaves: [{ selection: spawn }] } }
+        : { ok: false, error: { code: 'target_unavailable', blockId: 'work' } });
+    }
+  });
+  it('refuses native continuation when reusing an earlier step conversation', async () => {
+    expect(await materialize({ definition: { ...definition, blocks: [definition.blocks[0], { ...definition.blocks[0], id: 'follow',
+      execution: { conversation: { kind: 'from_step', producer: { blockId: 'work', scope: { kind: 'current' } } },
+        providerSessionResume: { kind: 'provider_session.v1', providerSessionId: 'native-session' } },
+    }] } })).toMatchObject({ ok: false, error: { code: 'target_unavailable', blockId: 'follow' } });
+  });
+  it('refuses fresh-launch configuration on an implicit shared conversation', async () => {
+    expect(await materialize({ definition: { ...definition, defaults: { ...definition.defaults,
+      providerSessionResume: { kind: 'provider_session.v1', providerSessionId: 'native-session' } },
+    } })).toMatchObject({ ok: false, error: { code: 'target_unavailable', blockId: 'work' } });
+  });
+  it('keeps launch defaults on Agent leaves without projecting them onto a human Wait', async () => {
+    const result = await materialize({ definition: { ...definition,
+      defaults: { ...definition.defaults, conversation: { kind: 'fresh' },
+        launchEnvironment: { values: { TOKEN: 'retained-value' }, unset: [] } },
+      blocks: [definition.blocks[0], { kind: 'wait', id: 'approve', document: { text: 'Approve', references: [], attachments: [] } }],
+    } });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.snapshot.materializedLeaves[0]?.selection.launchEnvironment)
+      .toEqual({ values: { TOKEN: 'retained-value' }, unset: [] });
+    expect(result.snapshot.materializedLeaves[1]?.selection.launchEnvironment).toBeUndefined();
+    expect(validateWorkflowDefinition(result.snapshot.definition).valid).toBe(true);
+  });
   it.each(['origin_session', 'existing_session', 'fresh'] as const)('charges start capacity only for a new Agent (%s)', async kind => {
     const conversation = kind === 'existing_session'
       ? { kind, sessionId: 'origin', machineId: 'machine' } : { kind };
@@ -86,10 +243,10 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
 
   it('rebinds edited inputs and only one explicit Agent override while rechecking current policy', async () => {
     const authored = { ...definition, inputs: [{ name: 'request', valueType: 'string', required: true }], blocks: [
-      definition.blocks[0], { kind: 'action', id: 'record', actionId: 'session.goal.set', input: { goal: { kind: 'input', name: 'request' } } },
+      definition.blocks[0], { kind: 'action', id: 'record', actionId: 'session.goal.set', input: { objective: { kind: 'input', name: 'request' } } },
     ] };
     const effects = { resolveTargetAvailability: available, readActionContract: async () => ({
-      inputSchema: { type: 'object', properties: { goal: { type: 'string' } }, required: ['goal'] }, outputSchema: {},
+      inputSchema: { type: 'object', properties: { objective: { type: 'string' } }, required: ['objective'] }, outputSchema: {},
     }) };
     const original = await materialize({ definition: authored, context: { ...context, inputs: { request: 'Before' } }, effects });
     if (!original.ok) throw new Error(original.error.code);
@@ -100,7 +257,7 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
     expect(await materialize(replayInput)).toMatchObject({ ok: true, snapshot: {
       inputs: { request: 'After' }, materializedLeaves: [
         { blockId: 'work', selection: { agentTarget: override.engine.agentTarget } },
-        { blockId: 'record', actionInput: { goal: 'After' } },
+        { blockId: 'record', actionInput: { objective: 'After' } },
       ],
     } });
     expect(await materialize({ ...replayInput, admission: { kind: 'agent', admitLeaf: async leaf => admitAgentStartV1(
@@ -138,7 +295,7 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
     ] }, effects: { resolveTargetAvailability: available,
       readWorkflowDefinition: async () => ({ sourceKey: 'builtin:child', definition: { ...definition, blocks: [
         { kind: 'action', id: 'review', actionId: 'review.start', execution: { engine: { agentTarget: explicit } },
-          input: { engineIds: { kind: 'literal', value: ['agent:happier.agent.codex/codex'] } } },
+          input: { instructions: { kind: 'literal', value: 'Review the changes' }, engineIds: { kind: 'literal', value: ['agent:happier.agent.codex/codex'] } } },
       ] } }), readActionContract: async () => ({ inputSchema: { type: 'object' }, outputSchema: {} }),
     } });
     if (!original.ok) throw new Error(original.error.code);
@@ -208,11 +365,7 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
       error: { code: 'work_depth_exceeded', blockId: 'work' } });
   });
 
-  // Quarantine: ORC U3 / Workflow finalization B3; expires 2026-10-18.
-  // Authority: .project/plans/automation-workflows-and-steps/finalization/PLAN.md:692
-  // and .project/plans/automation-workflows-and-steps/finalization/impl/FIN-ADMIT.md.
-  // The ORC owner removes this quarantine when B3 lands; keep the intended RED assertions.
-  it.skip.each([
+  it.each([
     ['Review & converge', REVIEW_AND_CONVERGE_WORKFLOW_V1, { engines: ['agent:happier.agent.codex/codex'] }, 'review'],
     ['Plan with a panel', PLAN_WITH_A_PANEL_WORKFLOW_V1, { request: 'Plan the change', engines: ['agent:happier.agent.codex/codex'] }, 'plan'],
   ] as const)('admits an agent start of %s with runtime-bound Action engines', async (_name, authored, inputs, actionBlockId) => {
@@ -312,9 +465,9 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
 
   it('validates literal Action payloads even when their JSON contains unresolved-shaped data', async () => {
     const result = await materialize({ definition: { version: 1, blocks: [{ kind: 'action', id: 'goal', actionId: 'session.goal.set',
-      input: { goal: { kind: 'literal', value: { kind: 'unresolved' } } } }] },
+      input: { objective: { kind: 'literal', value: { kind: 'unresolved' } } } }] },
       effects: { resolveTargetAvailability: available, readActionContract: async () => ({
-        inputSchema: { type: 'object', properties: { goal: { type: 'string' } }, required: ['goal'] }, outputSchema: {},
+        inputSchema: { type: 'object', properties: { objective: { type: 'string' } }, required: ['objective'] }, outputSchema: {},
       }) } });
     expect(result).toMatchObject({ ok: false, error: { code: 'invalid_input', blockId: 'goal' } });
   });
@@ -322,7 +475,7 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
   it('preserves a bound root input null as an actual Action selection clear', async () => {
     const result = await materialize({ context: { ...context, inputs: { services: null } },
       definition: { ...definition, inputs: [{ name: 'services', valueType: 'json', required: true }], blocks: [{ kind: 'action', id: 'review', actionId: 'review.start',
-        input: { engineIds: { kind: 'literal', value: ['agent:happier.agent.codex/codex'] }, connectedServices: { kind: 'input', name: 'services' } } }] },
+        input: { instructions: { kind: 'literal', value: 'Review the changes' }, engineIds: { kind: 'literal', value: ['agent:happier.agent.codex/codex'] }, connectedServices: { kind: 'input', name: 'services' } } }] },
       effects: { resolveTargetAvailability: available, readActionContract: async () => ({ inputSchema: { type: 'object' }, outputSchema: {} }) } });
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, agentStartLeaves: [{ facts: { connectedServices: null } }],
       snapshot: { materializedLeaves: [{ actionInput: { connectedServices: null } }] } });
@@ -341,7 +494,7 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
     const explicit = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };
     const result = await materialize({ definition: { ...definition, blocks: [{ kind: 'action', id: 'review', actionId: 'review.start',
       execution: { engine: { agentTarget: explicit } },
-      input: { engineIds: { kind: 'literal', value: ['agent:happier.agent.codex/codex'] }, modelId: { kind: 'literal', value: 'native-model' } } }] },
+      input: { instructions: { kind: 'literal', value: 'Review the changes' }, engineIds: { kind: 'literal', value: ['agent:happier.agent.codex/codex'] }, modelId: { kind: 'literal', value: 'native-model' } } }] },
       effects: { resolveTargetAvailability: available, readActionContract: async () => ({ inputSchema: { type: 'object' }, outputSchema: {} }) } });
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, agentStartLeaves: [{ engine: { agentTargetKey: 'agent:happier.agent.claude/claude' } }],
       snapshot: { materializedLeaves: [{ actionInput: { engineIds: ['agent:happier.agent.claude/claude'] } }] } });
@@ -425,14 +578,14 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
 
   it('freezes an explicit origin Session binding and refuses the same binding without an origin', async () => {
     const authored = { version: 1, blocks: [{ kind: 'action', id: 'goal', actionId: 'session.goal.set',
-      input: { goal: { kind: 'literal', value: 'Finish' }, sessionId: { kind: 'origin_session_id' } } }] };
+      input: { objective: { kind: 'literal', value: 'Finish' }, sessionId: { kind: 'origin_session_id' } } }] };
     const effects = { resolveTargetAvailability: available, readActionContract: async () => ({ inputSchema: { type: 'object' }, outputSchema: {} }) };
     expect(await materialize({ definition: authored, context: { ...context, origin: { kind: 'direct', originSessionId: 'origin' } }, effects }))
-      .toMatchObject({ ok: true, snapshot: { materializedLeaves: [{ actionInput: { goal: 'Finish', sessionId: 'origin' } }] } });
+      .toMatchObject({ ok: true, snapshot: { materializedLeaves: [{ actionInput: { objective: 'Finish', sessionId: 'origin' } }] } });
     expect(await materialize({ definition: authored, effects })).toMatchObject({ ok: false, error: { code: 'invalid_input', blockId: 'goal' } });
-    const implicit = { version: 1, blocks: [{ ...authored.blocks[0], input: { goal: { kind: 'literal', value: 'Finish' } } }] };
+    const implicit = { version: 1, blocks: [{ ...authored.blocks[0], input: { objective: { kind: 'literal', value: 'Finish' } } }] };
     expect(await materialize({ definition: implicit, context: { ...context, origin: { kind: 'direct', originSessionId: 'origin' } }, effects }))
-      .toMatchObject({ ok: true, snapshot: { materializedLeaves: [{ actionInput: { goal: 'Finish' } }] } });
+      .toMatchObject({ ok: true, snapshot: { materializedLeaves: [{ actionInput: { objective: 'Finish' } }] } });
   });
 
   it('preserves explicit null clears for authority comparisons instead of inheriting caller selections', async () => {
@@ -465,7 +618,7 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
 
   it('checks run-machine availability of the actual Action Agent targets', async () => {
     const result = await materialize({ definition: { ...definition, blocks: [{ kind: 'action', id: 'review', actionId: 'review.start',
-      input: { engineIds: { kind: 'literal', value: ['agent:happier.agent.claude/claude'] } } }] },
+      input: { instructions: { kind: 'literal', value: 'Review the changes' }, engineIds: { kind: 'literal', value: ['agent:happier.agent.claude/claude'] } } }] },
       effects: { readActionContract: async () => ({ inputSchema: { type: 'object' }, outputSchema: {} }),
         resolveTargetAvailability: async (leaf) => leaf.selection.agentTarget?.identity.localId !== 'claude' } });
     expect(result).toMatchObject({ ok: false, error: { code: 'target_unavailable', blockId: 'review' } });
@@ -480,7 +633,7 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
 
   it('checks every explicit Action fan-out target instead of replacing it with Workflow defaults', async () => {
     const result = await materialize({ definition: { ...definition, blocks: [{ kind: 'action', id: 'review', actionId: 'review.start',
-      input: { engineIds: { kind: 'literal', value: ['agent:happier.agent.codex/codex', 'agent:happier.agent.claude/claude'] } } }] },
+      input: { instructions: { kind: 'literal', value: 'Review the changes' }, engineIds: { kind: 'literal', value: ['agent:happier.agent.codex/codex', 'agent:happier.agent.claude/claude'] } } }] },
       effects: { resolveTargetAvailability: available, readActionContract: async () => ({ inputSchema: { type: 'object' }, outputSchema: {} }) },
       admission: { kind: 'agent', admitLeaf: async (leaf) => admitAgentStartV1(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, { kind: 'workflow_run_leaf', leaf }, {
         ...policyContext, allowLists: { v: 1, allowedRoleIds: null, allowedAgentTargetKeys: ['agent:happier.agent.codex/codex'] },
@@ -490,7 +643,7 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
 
   it('defers human dynamic Action selections but refuses agent authority that cannot be proved', async () => {
     const options: Partial<MaterializeWorkflowAcceptedSnapshotV1Input> = { definition: { ...definition, blocks: [definition.blocks[0],
-      { kind: 'action', id: 'review', actionId: 'review.start', input: { engineIds: { kind: 'result', producer: { blockId: 'work', scope: { kind: 'current' } }, path: [] } } }] },
+      { kind: 'action', id: 'review', actionId: 'review.start', input: { instructions: { kind: 'literal', value: 'Review the changes' }, engineIds: { kind: 'result', producer: { blockId: 'work', scope: { kind: 'current' } }, path: [] } } }] },
       effects: { resolveTargetAvailability: available, readActionContract: async () => ({ inputSchema: { type: 'object' }, outputSchema: {} }) } };
     expect(await materialize(options)).toMatchObject({ ok: true, snapshot: { workDepth: 0 } });
     expect(await materialize({ ...options, admission: { kind: 'agent', admitLeaf: async (leaf) => admitAgentStartV1(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
@@ -504,6 +657,8 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
         { kind: 'action', id: 'start', actionId: 'execution.run.start', input: {
           backendTarget: { kind: 'result', producer: { blockId: 'target', scope: { kind: 'current' } }, path: [] },
           intent: { kind: 'literal', value: 'delegate' },
+          retentionPolicy: { kind: 'literal', value: 'ephemeral' }, runClass: { kind: 'literal', value: 'bounded' },
+          ioMode: { kind: 'literal', value: 'request_response' },
           ...(source === 'action' ? { permissionMode: { kind: 'literal', value: 'yolo' } } : {}),
         } },
       ] },
@@ -598,7 +753,7 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
 
   it('refuses unavailable engines and Actions with the exact block and never calls admission for a user', async () => {
     expect(await materialize({ effects: { resolveTargetAvailability: async () => false } })).toMatchObject({ ok: false, error: { code: 'target_unavailable', blockId: 'work' } });
-    expect(await materialize({ definition: { version: 1, blocks: [{ kind: 'action', id: 'notify', actionId: 'notifications.notify_me', input: {} }] },
+    expect(await materialize({ definition: { version: 1, blocks: [{ kind: 'action', id: 'notify', actionId: 'notifications.notify_me', input: { message: { kind: 'literal', value: 'Done' } } }] },
       effects: { resolveTargetAvailability: available, readActionContract: async () => null } })).toMatchObject({ ok: false, error: { code: 'target_unavailable', blockId: 'notify' } });
     expect(await materialize()).toMatchObject({ ok: true, snapshot: { workDepth: 0 } });
   });

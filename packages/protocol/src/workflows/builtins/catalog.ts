@@ -24,11 +24,11 @@ type CatalogEntryFieldsV1 = Readonly<{
 export const BUILTIN_WORKFLOW_CATALOG_V1 = Object.freeze([
   { id: 'builtin:keep-going', version: 1,
     titleKey: 'workflows.builtins.keepGoing.title',
-    descriptionKey: 'workflows.builtins.runsInsideSession', purpose: 'goal', requiresOriginSession: true,
+    descriptionKey: 'workflows.builtins.keepGoing.description', purpose: 'goal', requiresOriginSession: true,
     definition: KEEP_GOING_WORKFLOW_V1 },
   { id: 'builtin:review-and-converge', version: 1,
     titleKey: 'workflows.builtins.reviewAndConverge.title',
-    descriptionKey: 'workflows.builtins.runsInsideSession', purpose: 'review', requiresOriginSession: true,
+    descriptionKey: 'workflows.builtins.reviewAndConverge.description', purpose: 'review', requiresOriginSession: true,
     definition: REVIEW_AND_CONVERGE_WORKFLOW_V1 },
   { id: 'builtin:plan-with-a-panel', version: 1,
     titleKey: 'workflows.builtins.planWithAPanel.title',

@@ -1,8 +1,27 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { parseClaudeWorkflowFact } from './correlation.js';
+import { normalizeClaudeProviderTaskEvent } from '../runtime/remote/sdk/providerActivity.js';
 
 describe('parseClaudeWorkflowFact', () => {
+  it('issue506 maps native typed task_updated killed to cancelled without dropping workflow identity', () => {
+    // Installed Claude SDK 0.2.123 SDKTaskUpdatedMessage.patch.status includes killed.
+    const nativeUpdate = {
+      type: 'system', subtype: 'task_updated', session_id: 'native-killed-workflow',
+      task_id: 'workflow-task', tool_use_id: 'workflow-tool', task_type: 'local_workflow',
+      patch: { status: 'killed' }, uuid: 'native-killed-task-update',
+    };
+    expect(normalizeClaudeProviderTaskEvent(nativeUpdate).activity).toMatchObject({
+      type: 'terminal', terminalStatus: 'stopped', sessionId: 'native-killed-workflow', taskId: 'workflow-task',
+    });
+    const fact = parseClaudeWorkflowFact(nativeUpdate);
+    expect(fact).toMatchObject({
+      kind: 'task-lifecycle', subtype: 'task_updated', status: 'cancelled',
+      taskId: 'workflow-task', toolUseId: 'workflow-tool', taskType: 'local_workflow',
+      sourceSessionId: 'native-killed-workflow', uuid: 'native-killed-task-update',
+    });
+  });
+
   it('extracts an explicit Workflow tool-use start without leaking the script body', () => {
     const fact = parseClaudeWorkflowFact({
       type: 'assistant',
@@ -190,6 +209,7 @@ await parallel([
   it('extracts a task_notification user message into a terminal task-lifecycle fact', () => {
     const fact = parseClaudeWorkflowFact({
       type: 'user',
+      origin: { kind: 'task-notification' },
       session_id: 'claude-session-1',
       message: {
         content: [
@@ -216,6 +236,7 @@ await parallel([
   it('extracts a task_notification when user message content is a plain string', () => {
     const fact = parseClaudeWorkflowFact({
       type: 'user',
+      origin: { kind: 'task-notification' },
       session_id: 'claude-session-1',
       message: {
         content:
@@ -236,15 +257,15 @@ await parallel([
   it('extracts task-notification XML from queued command envelopes in persisted JSONL', () => {
     for (const message of [
       {
-        type: 'queue-operation',
-        operation: 'enqueue',
-        content:
-          '<task-notification><task-id>t1</task-id><tool-use-id>toolu_wf</tool-use-id><status>completed</status><summary>Done</summary></task-notification>',
+        type: 'user',
+        origin: { kind: 'task-notification' },
+        message: { content: '<task-notification><task-id>t1</task-id><tool-use-id>toolu_wf</tool-use-id><status>completed</status><summary>Done</summary></task-notification>' },
       },
       {
         type: 'attachment',
         attachment: {
           type: 'queued_command',
+          commandMode: 'task-notification',
           prompt:
             '<task-notification><task-id>t2</task-id><tool-use-id>toolu_wf_2</tool-use-id><status>failed</status><summary>Failed</summary></task-notification>',
         },

@@ -183,6 +183,7 @@ function taskNotification(params: Readonly<{
   const result = params.result ?? '{"subsystemsAnalyzed":8}';
   return {
     type: 'user',
+    origin: { kind: 'task-notification' },
     session_id: params.sessionId ?? 'claude-session-1',
     message: {
       content: [{
@@ -890,4 +891,252 @@ await parallel([
     expect(snapshot?.agents[0]?.updatedAt).toBe(4_000);
     expect(snapshot?.agents[1]).toMatchObject({ id: 'workflow-agent:2', status: 'cancelled' });
   });
+});
+
+
+describe('plain subagent outcomes', () => {
+  it('settles failed Workflow and child tool error envelopes without affecting another run', () => {
+    const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+    tracker.observe(workflowToolUse({ id: 'wf-failed', name: 'Failed' }), { updatedAt: 10 });
+    tracker.observe(workflowToolUse({ id: 'wf-live', name: 'Live' }), { updatedAt: 11 });
+    tracker.observe(subagentTask({ id: 'failed-child', description: 'child', parentToolUseId: 'wf-failed' }), { updatedAt: 12 });
+    tracker.observe({ type: 'user', session_id: 'claude-session-1', message: { content: [{
+      type: 'tool_result', tool_use_id: 'failed-child',
+      content: '<tool_use_error>Child launch rejected</tool_use_error>',
+    }] } }, { updatedAt: 20 });
+    expect(tracker.getRunSnapshot('wf-failed')?.agents[0]).toMatchObject({ status: 'failed', resultPreview: 'Child launch rejected' });
+    tracker.observe({ type: 'user', session_id: 'claude-session-1', message: { content: [{
+      type: 'tool_result', tool_use_id: 'wf-failed', is_error: true,
+      content: [{ type: 'text', text: '<tool_use_error>Workflow launch rejected</tool_use_error>' }],
+    }] } }, { updatedAt: 30 });
+    expect(tracker.getRunSnapshot('wf-failed')).toMatchObject({ status: 'failed' });
+    expect(tracker.getRunSnapshot('wf-live')?.status).toBe('active');
+  });
+
+  const result = (id: string, isError = false) => ({
+    type: 'user', session_id: 'claude-session-1',
+    message: { content: [{ type: 'tool_result', tool_use_id: id, is_error: isError, content: 'done' }] },
+    toolUseResult: { totalDurationMs: 1234 },
+  });
+
+  it('folds every child launch and synchronous result block', () => {
+    const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+    const launch = subagentTask({ id: 'child-a', description: 'A' });
+    launch.message.content.push(subagentTask({ id: 'child-b', description: 'B' }).message.content[0]);
+    tracker.observe(launch, { updatedAt: 10 });
+    const completion = result('child-a');
+    completion.message.content.push(result('child-b').message.content[0]);
+    tracker.observe(completion, { updatedAt: 20 });
+    const run = tracker.getRunSnapshot('implicit:agent-activity');
+    expect(run?.agents.map(agent => [agent.id, agent.status])).toEqual([['child-a', 'complete'], ['child-b', 'complete']]);
+    expect(run?.status).toBe('complete');
+  });
+
+  it('remembers a buffered result and original start across duplicate starts and promotion', () => {
+    const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+    const launch = subagentTask({ id: 'child-a', description: 'A' });
+    tracker.observe(launch, { updatedAt: 10 });
+    tracker.observe(result('child-a'), { updatedAt: 20 });
+    tracker.observe(launch, { updatedAt: 30 });
+    expect(tracker.getRunSnapshotMap().size).toBe(0);
+    tracker.observe(subagentTask({ id: 'child-b', description: 'B' }), { updatedAt: 40 });
+    expect(tracker.getRunSnapshot('implicit:agent-activity')?.agents[0]).toMatchObject({
+      status: 'complete', startedAt: 10, completedAt: 20, updatedAt: 20, resultPreview: 'done', timeUsedSeconds: 1.234,
+    });
+  });
+
+  it('routes task-only child outcomes before and after promotion without closing siblings', () => {
+    const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+    tracker.observe(subagentTask({ id: 'child-a', description: 'A' }), { updatedAt: 10 });
+    tracker.observe(taskStarted({ toolUseId: 'child-a', taskId: 'native-a', taskType: 'local_agent' }), { updatedAt: 11 });
+    tracker.observe(taskUpdatedCompleted({ taskId: 'native-a' }), { updatedAt: 20 });
+    tracker.observe(subagentTask({ id: 'child-b', description: 'B' }), { updatedAt: 30 });
+    tracker.observe(taskStarted({ toolUseId: 'child-b', taskId: 'native-b', taskType: 'local_agent' }), { updatedAt: 31 });
+    expect(tracker.getRunSnapshot('implicit:agent-activity')?.agents.map(agent => [agent.id, agent.status])).toEqual([
+      ['child-a', 'complete'], ['child-b', 'active'],
+    ]);
+    expect(tracker.getRunSnapshot('implicit:agent-activity')?.status).toBe('active');
+    tracker.observe(taskUpdatedCompleted({ taskId: 'native-b' }), { updatedAt: 40 });
+    expect(tracker.getRunSnapshot('implicit:agent-activity')?.status).toBe('complete');
+  });
+
+  it('keeps an explicit parent active when its child fails synchronously', () => {
+    const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+    tracker.observe(workflowToolUse({ id: 'wf-parent', name: 'Parent' }), { updatedAt: 10 });
+    tracker.observe(subagentTask({ id: 'child-a', description: 'A', parentToolUseId: 'wf-parent' }), { updatedAt: 11 });
+    tracker.observe(result('child-a', true), { updatedAt: 20 });
+    expect(tracker.getRunSnapshot('wf-parent')?.agents[0]?.status).toBe('failed');
+    expect(tracker.getRunSnapshot('wf-parent')?.status).toBe('active');
+  });
+
+  it('ignores async launch acknowledgements and unrelated results, then reopens for new work', () => {
+    const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+    tracker.observe(subagentTask({ id: 'child-a', description: 'A' }), { updatedAt: 10 });
+    tracker.observe(subagentTask({ id: 'child-b', description: 'B' }), { updatedAt: 11 });
+    tracker.observe({ ...result('child-a'), toolUseResult: { status: 'async_launched', isAsync: true, agentId: 'native-a' } }, { updatedAt: 12 });
+    tracker.observe(result('unrelated'), { updatedAt: 13 });
+    expect(tracker.getRunSnapshot('implicit:agent-activity')?.agents.every(agent => agent.status === 'active')).toBe(true);
+    tracker.observe(result('child-a'), { updatedAt: 20 });
+    tracker.observe(result('child-b', true), { updatedAt: 21 });
+    expect(tracker.getRunSnapshot('implicit:agent-activity')?.status).toBe('failed');
+    tracker.observe(subagentTask({ id: 'child-c', description: 'C' }), { updatedAt: 30 });
+    expect(tracker.getRunSnapshot('implicit:agent-activity')).toMatchObject({ status: 'active' });
+    expect(tracker.getRunSnapshot('implicit:agent-activity')?.completedAt).toBeUndefined();
+  });
+
+  it.each(['complete', 'failed', 'stopped'] as const)('preserves a %s recovery seed and native child sidechain', (runTerminalStatus) => {
+    const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+    tracker.reconcileInterruptedRunFromHeadline({
+      runId: 'wf-recovered', title: 'Recovered', workflowToolUseId: 'wf-recovered',
+      runTerminalStatus, totalAgents: 1, completedAgents: 0,
+      orphanAgents: [{ agentId: 'child-a', title: 'A', sidechainId: 'native-a', updatedAt: 20, startedAt: 10 }],
+    }, { updatedAt: 100 });
+    expect(tracker.getRunSnapshot('wf-recovered')).toMatchObject({
+      status: runTerminalStatus,
+      agents: [{ id: 'child-a', sidechainId: 'native-a', status: 'cancelled', updatedAt: 20, startedAt: 10, completedAt: 20 }],
+    });
+    expect(tracker.getRunSnapshot('wf-recovered')?.statusReason).toBeUndefined();
+  });
+});
+
+
+describe('stale child lifecycle envelope', () => {
+  it('ignores bare queue XML even when it names an admitted native child', () => {
+    const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+    tracker.observe(subagentTask({ id: 'child-a', description: 'A' }), { updatedAt: 1 });
+    tracker.observe(subagentTask({ id: 'child-b', description: 'B' }), { updatedAt: 2 });
+    tracker.observe({ type: 'user', sessionId: 'claude-session-1',
+      message: { content: [{ type: 'tool_result', tool_use_id: 'child-a', content: 'launched' }] },
+      toolUseResult: { status: 'async_launched', agentId: 'native-a' },
+    }, { updatedAt: 3 });
+    tracker.observe({ type: 'queue-operation', operation: 'enqueue', sessionId: 'claude-session-1',
+      content: '<task-notification><task-id>native-a</task-id><status>completed</status></task-notification>',
+    }, { updatedAt: 4 });
+    expect(tracker.getRunSnapshot('implicit:agent-activity')).toMatchObject({
+      status: 'active', agents: [{ id: 'child-a', status: 'active' }, { id: 'child-b', status: 'active' }],
+    });
+  });
+
+  it('cancels still-live children at a terminal parent while preserving finished children', () => {
+    const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+    tracker.observe(workflowToolUse({ id: 'wf-terminal', name: 'Parent' }), { updatedAt: 10 });
+    tracker.observe(taskProgress({ toolUseId: 'wf-terminal', workflowProgress: [
+      { type: 'workflow_agent', agentId: 'done-child', label: 'Done', state: 'completed' },
+      { type: 'workflow_agent', agentId: 'live-child', label: 'Live', state: 'running' },
+    ] }), { updatedAt: 20 });
+    tracker.observe(taskNotification({ toolUseId: 'wf-terminal', taskId: 'w1', summary: 'Done' }), { updatedAt: 30 });
+    expect(tracker.getRunSnapshot('wf-terminal')).toMatchObject({
+      status: 'complete', agents: [{ status: 'complete' }, { status: 'cancelled', completedAt: 20 }],
+    });
+  });
+
+  it('routes a trusted native notification through the async alias and keeps peer handback active', () => {
+    const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+    tracker.observe(subagentTask({ id: 'child-a', description: 'A' }), { updatedAt: 10 });
+    tracker.observe(subagentTask({ id: 'child-b', description: 'B' }), { updatedAt: 11 });
+    tracker.observe({ type: 'user', sessionId: 'claude-session-1',
+      message: { content: [{ type: 'tool_result', tool_use_id: 'child-a', content: 'launched' }] },
+      toolUseResult: { status: 'async_launched', agentId: 'native-a' },
+    }, { updatedAt: 12 });
+    tracker.observe({ type: 'user', sessionId: 'claude-session-1', origin: {
+      kind: 'peer', senderTaskId: 'native-a', from: 'native-a', handback: true,
+    }, message: { content: '<agent-message agent_id="native-a">report</agent-message>' } }, { updatedAt: 13 });
+    expect(tracker.getRunSnapshot('implicit:agent-activity')?.agents[0]?.status).toBe('active');
+    tracker.observe({ type: 'user', origin: { kind: 'task-notification' }, sessionId: 'claude-session-1',
+      message: { content: '<task-notification><task-id>native-a</task-id><status>completed</status><summary>done</summary></task-notification>' },
+    }, { updatedAt: 20 });
+    expect(tracker.getRunSnapshot('implicit:agent-activity')).toMatchObject({
+      status: 'active', agents: [{ id: 'child-a', status: 'complete' }, { id: 'child-b', status: 'active' }],
+    });
+  });
+});
+
+describe('native child resumption', () => {
+  it.each(['tie', 'missing-receipt', 'missing-terminal-time'] as const)('keeps an ambiguous startup invocation unknown without degrading its fresh sibling (%s)', (kind) => {
+    const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+    for (const id of ['a', 'b']) {
+      tracker.observe(subagentTask({ id, description: id }), { updatedAt: 100, live: false });
+      tracker.observe({ ...{ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content: 'launched' }] } }, toolUseResult: { status: 'async_launched', agentId: `native-${id}` } }, { updatedAt: 200, live: false });
+      tracker.observe({ type: 'attachment', attachment: { type: 'task_status', taskId: `native-${id}`, status: 'completed' } },
+        { updatedAt: 1_000, live: false, historicalTimestampAvailable: kind !== 'missing-terminal-time' || id !== 'a' });
+    }
+    tracker.observe({ hook_event_name: 'SubagentStart', session_id: 'claude-session-1', agent_id: 'native-b' },
+      { updatedAt: 2_000, authenticatedHook: true, startupReplay: true, receiptAvailable: true });
+    const observation = tracker.observe({ hook_event_name: 'SubagentStart', session_id: 'claude-session-1', agent_id: 'native-a' },
+      { updatedAt: kind === 'tie' ? 1_000 : 2_000, authenticatedHook: true, startupReplay: true, receiptAvailable: kind !== 'missing-receipt' });
+    expect(observation.providerTaskActivities).toEqual([{ type: 'started', admission: 'resume',
+      sessionId: 'claude-session-1', taskId: 'native-a', confirmsActivity: false }]);
+    expect([...tracker.getRunSnapshotMap().values()][0]?.agents.map(agent => [agent.id, agent.status])).toEqual([['a', 'unknown'], ['b', 'active']]);
+  });
+
+  it('orders a captured native invocation start against historical outcomes learned during startup', () => {
+    const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+    // The startup bridge drains native history before forwarding its captured receipt.
+    for (const id of ['a', 'b']) {
+      tracker.observe(subagentTask({ id, description: id }), { updatedAt: 100, live: false });
+      const launch = { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content: 'launched' }] } };
+      tracker.observe({ ...launch, toolUseResult: { status: 'async_launched', agentId: `native-${id}` } }, { updatedAt: 200, live: false });
+      tracker.observe({ type: 'attachment', attachment: { type: 'task_status', taskId: `native-${id}`, status: 'completed' } }, { updatedAt: 1_000, live: false });
+    }
+    tracker.observe({ hook_event_name: 'SubagentStart', agent_id: 'native-a' }, { updatedAt: 2_000, startupReplay: true, receiptAvailable: true });
+    let run = [...tracker.getRunSnapshotMap().values()][0];
+    expect(run?.agents.map(agent => [agent.id, agent.status])).toEqual([['a', 'active'], ['b', 'complete']]);
+    tracker.observe({ type: 'attachment', attachment: { type: 'task_status', taskId: 'native-a', status: 'completed' } }, { updatedAt: 3_000 });
+    tracker.observe({ hook_event_name: 'SubagentStart', agent_id: 'native-a' }, { updatedAt: 2_000, startupReplay: true, receiptAvailable: true });
+    run = [...tracker.getRunSnapshotMap().values()][0];
+    expect(run?.status).toBe('complete');
+  });
+
+  it('reconciles trusted native completion before the async acknowledgement supplies its child alias', () => {
+    const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+    for (const id of ['a', 'b']) tracker.observe(subagentTask({ id, description: id }), { updatedAt: 1 });
+    for (const id of ['a', 'b']) {
+      const xml = `<task-notification><task-id>native-${id}</task-id><status>completed</status></task-notification>`;
+      tracker.observe(id === 'a' ? { type: 'user', sessionId: 'claude-session-1', origin: { kind: 'task-notification' },
+        message: { content: xml } } : { type: 'attachment', sessionId: 'claude-session-1', attachment: {
+          type: 'queued_command', commandMode: 'task-notification', prompt: xml } }, { updatedAt: 2 });
+      const launch = { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content: 'launched' }] } };
+      tracker.observe({ ...launch, toolUseResult: { status: 'async_launched', agentId: `native-${id}` } }, { updatedAt: 3 });
+    }
+    expect([...tracker.getRunSnapshotMap().values()][0]?.agents.map(agent => agent.status)).toEqual(['complete', 'complete']);
+    expect([...tracker.getRunSnapshotMap().values()][0]?.status).toBe('complete');
+  });
+
+
+  it('admits an authenticated async launch for a known child before implicit fanout promotion', () => {
+    const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+    tracker.observe(subagentTask({ id: 'solo', description: 'Worker' }), { updatedAt: 1 });
+    const observation = tracker.observe({
+      hook_event_name: 'PostToolUse', session_id: 'claude-session-1', tool_name: 'Agent', tool_use_id: 'solo',
+      tool_response: { status: 'async_launched', agentId: 'native-solo' },
+    }, { updatedAt: 2, authenticatedHook: true });
+    expect(observation.providerTaskActivities).toEqual([{
+      type: 'started', admission: 'launch', sessionId: 'claude-session-1', taskId: 'native-solo',
+    }]);
+  });
+
+  it('reopens only the exact native child on a successful resumed invocation and settles its trusted native outcome', () => {
+    const tracker = createClaudeWorkflowActivityTracker({ backendId: 'claude' });
+    for (const id of ['a', 'b']) {
+      tracker.observe(subagentTask({ id, description: id }), { updatedAt: 1 });
+      const launch = { type: 'user', sessionId: 'claude-session-1', message: { content: [{ type: 'tool_result', tool_use_id: id, content: 'launched' }] } };
+      tracker.observe({ ...launch, toolUseResult: { status: 'async_launched', agentId: `native-${id}` } }, { updatedAt: 2 });
+    }
+    const complete = (id: string) => ({ type: 'user', origin: { kind: 'task-notification' }, sessionId: 'claude-session-1',
+      message: { content: `<task-notification><task-id>native-${id}</task-id><tool-use-id>send-message-${id}</tool-use-id><status>completed</status></task-notification>` } });
+    tracker.observe(complete('a'), { updatedAt: 3 });
+    tracker.observe(complete('b'), { updatedAt: 4 });
+    expect([...tracker.getRunSnapshotMap().values()][0]?.status).toBe('complete');
+    tracker.observe({ type: 'user', sessionId: 'claude-session-1', toolUseResult: { success: false, resumedAgentId: 'native-a' } }, { updatedAt: 5 });
+    expect([...tracker.getRunSnapshotMap().values()][0]?.status).toBe('complete');
+    tracker.observe({ type: 'user', sessionId: 'claude-session-1', toolUseResult: { success: true, resumedAgentId: 'native-a' } }, { updatedAt: 6 });
+    let run = [...tracker.getRunSnapshotMap().values()][0];
+    expect(run?.status).toBe('active');
+    expect(run?.agents.map(agent => [agent.id, agent.status])).toEqual([['a', 'active'], ['b', 'complete']]);
+    expect(run?.agents[0]?.completedAt).toBeUndefined();
+    tracker.observe(complete('a'), { updatedAt: 7 });
+    run = [...tracker.getRunSnapshotMap().values()][0];
+    expect(run?.status).toBe('complete');
+  });
+
 });

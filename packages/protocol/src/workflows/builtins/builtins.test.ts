@@ -56,6 +56,7 @@ describe('built-in workflow catalog', () => {
     const examples = catalog.getWorkflowStarterExamplesV1();
     expect(examples.map((entry) => entry.key)).toEqual([
       'ask-once', 'review-pull-request', 'work-through-each-file', 'repair-until-it-passes', 'triage-an-issue', 'morning-digest',
+      'notify-when-agent-waits', 'daily-summary-in-session', 'memory-upkeep-in-session', 'install-deps-in-worktree', 'test-after-every-turn',
     ]);
     for (const example of examples) {
       expect(WorkflowDefinitionBaseSchema.safeParse(example.definition).success, example.key).toBe(true);
@@ -64,6 +65,30 @@ describe('built-in workflow catalog', () => {
       expect(parseWorkflowDefinitionRefV1(example.key)).toBeNull();
       expect(catalog.resolveBuiltinWorkflowDefinitionV1(example.key)).toBeNull();
     }
+  });
+
+  it('seeds notification and test habits with the actual lifecycle events, rather than only example bodies', () => {
+    const examples = catalog.getWorkflowStarterExamplesV1();
+    const notify = examples.find((entry) => entry.key === 'notify-when-agent-waits');
+    const tests = examples.find((entry) => entry.key === 'test-after-every-turn');
+    expect(notify).toMatchObject({ triggerSeed: { kind: 'sessionLifecycle', enabled: true,
+      events: ['userActionRequired'], policy: { kind: 'everyMatch' } },
+      definition: { blocks: [{ kind: 'action', actionId: 'notifications.notify_me' }] } });
+    expect(tests).toMatchObject({ triggerSeed: { kind: 'sessionLifecycle', enabled: true,
+      events: ['parentTurnCompleted', 'parentTurnFailed', 'parentTurnCancelled'], policy: { kind: 'everyMatch' } },
+      definition: { blocks: [{ kind: 'action', actionId: 'machines.command.run', input: { command: { kind: 'literal' } } }] } });
+  });
+
+  it('makes the daily summary a session conversation and installation a real new-worktree command', () => {
+    const examples = catalog.getWorkflowStarterExamplesV1();
+    expect(examples.find((entry) => entry.key === 'daily-summary-in-session')).toMatchObject({
+      triggerSeed: { kind: 'schedule', enabled: true, schedule: { kind: 'cron', everyMs: null } },
+      definition: { defaults: { conversation: { kind: 'origin_session' } }, blocks: [{ kind: 'step' }] },
+    });
+    const install = examples.find((entry) => entry.key === 'install-deps-in-worktree');
+    expect(install).toMatchObject({ definition: { blocks: [{ kind: 'action', actionId: 'machines.command.run',
+      input: { command: { kind: 'literal' } }, execution: { workspace: { kind: 'new_worktree', source: { kind: 'original' } } } }] } });
+    expect(install).not.toHaveProperty('triggerSeed');
   });
 
   it('preserves authored block names when built-ins and starter examples cross the definition boundary', () => {

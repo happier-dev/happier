@@ -22,7 +22,6 @@ import {
   UNSIGNED_DECIMAL_BIGINT_SCHEMA,
 } from './automationActionSpecsV1.js';
 import {
-  AutomationStoredDefinitionExecutionRecipeV1Schema,
   AutomationStoredDefinitionExecutionRecipeV1ReadSchema,
 } from './automationRunExecutionRecipeV1.js';
 import { AutomationStoredWorkflowDefinitionRecipeV2Schema, AutomationStoredWorkflowDefinitionRecipeV2ReadSchema } from './automationWorkflowRecipeV2.js';
@@ -143,10 +142,7 @@ export type AutomationAssignmentUpdateRequest = z.infer<typeof AutomationAssignm
  * adding kind-owned evidence only when the cause has private input. The rule
  * belongs to the recipe owner so every authoring surface shares it.
  */
-const AutomationDefinitionExecutionRecipeSchema = lazyZodSchema(() => z.union([
-  AutomationStoredDefinitionExecutionRecipeV1Schema,
-  AutomationStoredWorkflowDefinitionRecipeV2Schema,
-]));
+const AutomationDefinitionExecutionRecipeSchema = AutomationStoredWorkflowDefinitionRecipeV2Schema;
 
 export const AutomationTriggerCreateRequestSchema = lazyZodSchema(() => z.object({
   triggerId: AutomationTriggerIdSchema,
@@ -207,7 +203,7 @@ export type AutomationDefinitionPatchRequest = z.infer<
  * One retained row in a full-editor save. Omitting both mutation fields keeps
  * the row byte-for-byte unchanged while still supplying its exact CAS witness.
  */
-export const AutomationTriggerReconcileExistingItemSchema = z.object({
+export const AutomationTriggerReconcileExistingItemSchema = lazyZodSchema(() => z.object({
   kind: z.literal('existing'),
   triggerId: AutomationTriggerIdSchema,
   expectedRevision: AutomationTriggerRevisionSchema,
@@ -225,7 +221,7 @@ export const AutomationTriggerReconcileExistingItemSchema = z.object({
       message: 'A resealed trigger definition accompanies only an enable-only patch',
     });
   }
-});
+}));
 export type AutomationTriggerReconcileExistingItem = z.infer<
   typeof AutomationTriggerReconcileExistingItemSchema
 >;
@@ -459,6 +455,8 @@ export const AutomationV3WorkerAssignmentSchema = lazyZodSchema(() => z.object({
   machineId: IDENTIFIER_SCHEMA,
   automationId: IDENTIFIER_SCHEMA,
   nextClaimAt: TIMESTAMP_SCHEMA.nullable(),
+  /** Current V3 projection; null or an older omitted field needs canonical reconciliation. */
+  executionRecipeVersion: z.literal(2).nullable().optional(),
 }).strict());
 export type AutomationV3WorkerAssignment = z.infer<typeof AutomationV3WorkerAssignmentSchema>;
 
@@ -882,11 +880,25 @@ export const AUTOMATION_V3_RUN_DETAIL_MAX_EVENTS = 100;
  * private failure-detail envelopes. Opaque reply routing/receipt content
  * remains Channels-owned.
  */
+const AutomationWorkflowRunCorrespondenceSchema = lazyZodSchema(() => z.object({
+  recipeKind: z.literal('workflow-v2'),
+  workflowRunId: IDENTIFIER_SCHEMA,
+}).strict());
+
+function addWorkflowRunCorrespondenceIssue(value: Readonly<{ id: string; workflowRun?: Readonly<{ workflowRunId: string }> }>, context: z.RefinementCtx): void {
+  if (value.workflowRun && value.workflowRun.workflowRunId !== value.id) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['workflowRun', 'workflowRunId'],
+      message: 'Workflow correspondence must identify the same Run' });
+  }
+}
+
 export const AutomationV3RunDetailSchema = lazyZodSchema(() => z.object({
   ...AutomationV3RunListItemShape,
   triggerEvidenceEnvelope: z.string().min(1).nullable(),
   executionInputEnvelope: z.string().min(1).nullable(),
   resultEnvelope: z.string().min(1).nullable(),
+  /** Full accepted snapshot/progress belongs to the canonical Workflow Run reader. */
+  workflowRun: AutomationWorkflowRunCorrespondenceSchema.optional(),
   legacySummaryCiphertext: z.string().min(1).nullable(),
   /**
    * The native execution this Run started. It is the only pointer back to work
@@ -912,6 +924,7 @@ export const AutomationV3RunDetailSchema = lazyZodSchema(() => z.object({
   errorDetailEnvelope: z.string().min(1).max(MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES).nullable().optional(),
 }).strict().superRefine((value, context) => {
   addRunTriggerCauseCorrespondenceIssue(value, context);
+  addWorkflowRunCorrespondenceIssue(value, context);
   if (value.resultEnvelope !== null && value.legacySummaryCiphertext !== null) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
@@ -955,18 +968,9 @@ export type AutomationV3RunReplyHandoffRedeliverRequest = z.infer<
 
 export const AutomationV3RunMutationResponseSchema = lazyZodSchema(() => z.object({
   run: AutomationV3RunListItemSchema,
-  workflowRun: z.object({
-    recipeKind: z.literal('workflow-v2'),
-    workflowRunId: IDENTIFIER_SCHEMA,
-  }).strict().optional(),
+  workflowRun: AutomationWorkflowRunCorrespondenceSchema.optional(),
 }).strict().superRefine((value, context) => {
-  if (value.workflowRun && value.workflowRun.workflowRunId !== value.run.id) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['workflowRun', 'workflowRunId'],
-      message: 'Workflow Run correspondence must identify the returned Run',
-    });
-  }
+  addWorkflowRunCorrespondenceIssue({ id: value.run.id, workflowRun: value.workflowRun }, context);
 }));
 export type AutomationV3RunMutationResponse = z.infer<typeof AutomationV3RunMutationResponseSchema>;
 

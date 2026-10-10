@@ -11,7 +11,8 @@ import {
 
 import type { ClaudeProviderTaskActivity } from '../runtime/remote/sdk/providerActivity.js';
 import {
-  parseClaudeWorkflowFact,
+  parseClaudeWorkflowFacts,
+  type SubagentResultFact,
   type ClaudeWorkflowShapeDriftReporter,
   type SubagentStartFact,
   type TaskLifecycleFact,
@@ -58,6 +59,7 @@ type MutablePhase = {
 type MutableAgent = {
   id: string;
   vendorRef?: string;
+  sidechainId?: string;
   title: string;
   status: SessionWorkflowAgentStatusV1;
   attempt?: number;
@@ -119,6 +121,7 @@ type MutableRun = {
 /** One agent a dead process published as running, named by the roster it left behind. */
 export type WorkflowInterruptedAgentSeed = Readonly<{
   agentId: string;
+  sidechainId?: string;
   title: string;
   /** The agent's own last observed instant — never the moment recovery ran. */
   updatedAt: number;
@@ -129,6 +132,7 @@ export type WorkflowInterruptedRunSeed = Readonly<{
   runId: string;
   title: string;
   workflowToolUseId?: string;
+  runTerminalStatus?: Extract<SessionWorkflowRunStatusV1, 'complete' | 'failed' | 'stopped' | 'cancelled'>;
   totalAgents: number;
   completedAgents: number;
   failedAgents?: number;
@@ -145,7 +149,7 @@ export type WorkflowInterruptedRunSeed = Readonly<{
 
 export type ClaudeWorkflowActivityTracker = Readonly<{
   /** Fold one raw transcript value; returns the per-run change observation for the publisher. */
-  observe(value: unknown, params: Readonly<{ updatedAt: number; live?: boolean }>): WorkflowActivityObservation;
+  observe(value: unknown, params: Readonly<{ updatedAt: number; live?: boolean; authenticatedHook?: true; startupReplay?: true; receiptAvailable?: boolean; historicalTimestampAvailable?: boolean }>): WorkflowActivityObservation;
   /** Materialize one stale persisted headline as a terminal run after startup replay missed it. */
   reconcileInterruptedRunFromHeadline(
     run: WorkflowInterruptedRunSeed,
@@ -233,6 +237,14 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
   // Claude `task_updated` terminal events carry only `task_id` (no `tool_use_id`), so the run's
   // provider task id is learned from earlier lifecycle events that carry both and used to route.
   const runIdByTaskId = new Map<string, string>();
+  const childToolUseIdByTaskId = new Map<string, {
+    toolUseId?: string;
+    background: boolean;
+    liveInvocationAt?: number;
+    terminalTimeKnown?: boolean;
+    unroutedTerminal?: Readonly<{ fact: TaskLifecycleFact; updatedAt: number; historicalTimestampAvailable?: boolean }>;
+  }>();
+  const subagentToolUseIds = new Set<string>();
   const liveObservedRunIds = new Set<string>();
   let implicitRunId: string | undefined;
 
@@ -335,9 +347,11 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
   function upsertAgent(run: MutableRun, agent: Readonly<{
     id: string;
     vendorRef?: string;
+    sidechainId?: string;
     title: string;
     status: SessionWorkflowAgentStatusV1;
     attempt?: number;
+    resumed?: true;
     parentId?: string;
     phaseIndex?: number;
     phaseTitle?: string;
@@ -359,6 +373,7 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
       const created: MutableAgent = {
         id: rowId,
         ...(vendorRef ? { vendorRef } : {}),
+        ...(agent.sidechainId ? { sidechainId: agent.sidechainId } : {}),
         title: agent.title,
         status: agent.status,
         ...(agent.attempt !== undefined ? { attempt: agent.attempt } : {}),
@@ -372,8 +387,10 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
         ...(agent.tokensUsed !== undefined ? { tokensUsed: agent.tokensUsed } : {}),
         ...(agent.toolCalls !== undefined ? { toolCalls: agent.toolCalls } : {}),
         ...(agent.timeUsedSeconds !== undefined ? { timeUsedSeconds: agent.timeUsedSeconds } : {}),
-        ...(agent.startedAt !== undefined ? { startedAt: agent.startedAt } : {}),
-        ...(agent.completedAt !== undefined ? { completedAt: agent.completedAt } : {}),
+        ...(agent.startedAt !== undefined ? { startedAt: agent.startedAt }
+          : !isTerminalAgentStatus(agent.status) ? { startedAt: agent.updatedAt } : {}),
+        ...(agent.completedAt !== undefined ? { completedAt: agent.completedAt }
+          : isTerminalAgentStatus(agent.status) ? { completedAt: agent.updatedAt } : {}),
       };
       run.agentsById.set(rowId, created);
       run.agentOrder.push(rowId);
@@ -386,18 +403,20 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
       && (existingAttempt === undefined || incomingAttempt > existingAttempt);
     const shouldPreserveTerminalStatus = isTerminalAgentStatus(existing.status)
       && !isTerminalAgentStatus(agent.status)
-      && !isNewAttempt;
+      && !isNewAttempt
+      && !agent.resumed;
 
     // Latest-wins merge for identity/detail fields; terminal status is sticky unless Claude reports
     // a strictly newer retry attempt. This suppresses stale progress replay after a done/failed row.
     existing.title = agent.title || existing.title;
     if (vendorRef) existing.vendorRef = vendorRef;
+    if (agent.sidechainId) existing.sidechainId = agent.sidechainId;
     if (incomingAttempt !== undefined && (existingAttempt === undefined || incomingAttempt >= existingAttempt)) {
       existing.attempt = incomingAttempt;
     }
     if (!shouldPreserveTerminalStatus) {
       existing.status = agent.status;
-      if (isNewAttempt && !isTerminalAgentStatus(agent.status)) {
+      if ((isNewAttempt || agent.resumed) && !isTerminalAgentStatus(agent.status)) {
         delete existing.resultPreview;
         delete existing.summary;
         delete existing.completedAt;
@@ -415,6 +434,7 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     if (agent.timeUsedSeconds !== undefined) existing.timeUsedSeconds = agent.timeUsedSeconds;
     if (agent.startedAt !== undefined) existing.startedAt = agent.startedAt;
     if (agent.completedAt !== undefined) existing.completedAt = agent.completedAt;
+    else if (isTerminalAgentStatus(existing.status) && existing.completedAt === undefined) existing.completedAt = agent.updatedAt;
     assignAgentToPhase(run, rowId, agent.phaseIndex);
   }
 
@@ -534,6 +554,12 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     }
     if (!isTerminalRunStatus(run.status)) run.status = 'active';
     run.updatedAt = updatedAt;
+    const native = fact.taskId ? childToolUseIdByTaskId.get(fact.taskId) : undefined;
+    if (native?.unroutedTerminal) {
+      const terminal = native.unroutedTerminal;
+      delete native.unroutedTerminal;
+      applyTaskLifecycle(terminal.fact, terminal.updatedAt, providerTaskActivities, terminal);
+    }
     return run.runId;
   }
 
@@ -541,9 +567,93 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     fact: TaskLifecycleFact,
     updatedAt: number,
     providerTaskActivities: ClaudeProviderTaskActivity[],
+    context: Readonly<{ live?: boolean; authenticatedHook?: true; startupReplay?: true; receiptAvailable?: boolean; historicalTimestampAvailable?: boolean }>,
   ): string | null {
     if (isForeignSource(fact.sourceSessionId)) return null;
-    const toolUseId = fact.toolUseId;
+    const knownToolUseId = fact.toolUseId && (
+      subagentToolUseIds.has(fact.toolUseId)
+      || runIdByWorkflowToolUseId.has(fact.toolUseId)
+      || runIdByChildToolUseId.has(fact.toolUseId)
+      || runs.get(fact.toolUseId)?.explicit === true
+    ) ? fact.toolUseId : undefined;
+    // Resumed-agent notifications can name the SendMessage invocation rather than the Agent
+    // launch. That tool is not a child identity; the already correlated native task still is.
+    const toolUseId = knownToolUseId
+      ?? (fact.taskId ? childToolUseIdByTaskId.get(fact.taskId)?.toolUseId : undefined)
+      ?? fact.toolUseId;
+    const observedInvocation = fact.taskId ? childToolUseIdByTaskId.get(fact.taskId) : undefined;
+    if (context.live === false && observedInvocation?.liveInvocationAt !== undefined
+      && isTerminalRunStatus(runStatusFromSignal(fact.status))
+      && (context.historicalTimestampAvailable === false || updatedAt <= observedInvocation.liveInvocationAt)) return null;
+    if (fact.taskId && isTerminalRunStatus(runStatusFromSignal(fact.status)) && !fact.knownOnly
+      && !knownToolUseId && !childToolUseIdByTaskId.get(fact.taskId)?.toolUseId && !runIdByTaskId.has(fact.taskId)) {
+      // Trusted SDK/native delivery can settle while parent PostToolUse still awaits its ACK.
+      // Keep that fact in the same native correlation record; it cannot synthesize a child.
+      childToolUseIdByTaskId.set(fact.taskId, { background: false,
+        unroutedTerminal: { fact, updatedAt, historicalTimestampAvailable: context.historicalTimestampAvailable } });
+      return null;
+    }
+    if (toolUseId && subagentToolUseIds.has(toolUseId)) {
+      if (fact.taskId) {
+        const prior = childToolUseIdByTaskId.get(fact.taskId);
+        childToolUseIdByTaskId.set(fact.taskId, { ...prior, toolUseId,
+          background: prior?.background === true || fact.subtype === 'async-launch'
+            || (fact.resumed === true && fact.knownOnly !== true),
+          ...(isTerminalRunStatus(runStatusFromSignal(fact.status)) ? { terminalTimeKnown: context.historicalTimestampAvailable !== false } : {}) });
+      }
+      const pending = pendingImplicitSubagents.get(toolUseId);
+      const native = fact.taskId ? childToolUseIdByTaskId.get(fact.taskId) : undefined;
+      if (native?.unroutedTerminal) {
+        const terminal = native.unroutedTerminal;
+        delete native.unroutedTerminal;
+        return applyTaskLifecycle({ ...terminal.fact, toolUseId }, terminal.updatedAt, providerTaskActivities, terminal);
+      }
+      if (context.authenticatedHook && fact.subtype === 'async-launch' && fact.taskId && fact.sourceSessionId) {
+        providerTaskActivities.push({ type: 'started', admission: 'launch',
+          sessionId: fact.sourceSessionId, taskId: fact.taskId });
+      }
+      const owningRunId = runIdByChildToolUseId.get(toolUseId);
+      const existing = pending ?? (owningRunId ? runs.get(owningRunId)?.agentsById.get(resolveAgentRowId(runs.get(owningRunId)!, toolUseId, toolUseId)) : undefined);
+      if (fact.resumed && existing) {
+        const terminal = isTerminalAgentStatus(existing.status);
+        if (context.startupReplay && terminal && native?.terminalTimeKnown !== false && context.receiptAvailable !== false && updatedAt < existing.updatedAt) return null;
+        // Startup receipts and native history use the existing wall-clock convention. A tie or
+        // unavailable receipt cannot identify which invocation owns the terminal outcome.
+        const ambiguous = context.startupReplay === true
+          && (context.receiptAvailable === false || (terminal && (native?.terminalTimeKnown === false || updatedAt === existing.updatedAt)));
+        if (context.startupReplay && existing.status === 'active' && native?.liveInvocationAt !== undefined
+          && (context.receiptAvailable === false || updatedAt <= native.liveInvocationAt)) return null;
+        if (context.authenticatedHook && native?.background && fact.taskId && fact.sourceSessionId) {
+          providerTaskActivities.push({ type: 'started', admission: 'resume',
+            sessionId: fact.sourceSessionId, taskId: fact.taskId,
+            ...(ambiguous ? { confirmsActivity: false as const } : {}) });
+          if (!ambiguous) native.liveInvocationAt = updatedAt;
+        }
+        if (pending) {
+          const { resultPreview: _resultPreview, timeUsedSeconds: _timeUsedSeconds, ...prior } = pending;
+          pendingImplicitSubagents.set(toolUseId, { ...prior, status: ambiguous ? 'unknown' : 'active', updatedAt });
+        } else if (ambiguous && owningRunId) {
+          const owner = runs.get(owningRunId)!;
+          const child = owner.agentsById.get(resolveAgentRowId(owner, toolUseId, toolUseId))!;
+          upsertAgent(owner, { id: child.id, title: child.title, status: 'unknown', resumed: true, updatedAt });
+          owner.updatedAt = updatedAt;
+          rollUpImplicitRunStatus(owner);
+          return owner.runId;
+        }
+      }
+      if (pending) {
+        if (isTerminalRunStatus(runStatusFromSignal(fact.status))) {
+          pendingImplicitSubagents.set(toolUseId, {
+            ...pending,
+            status: fact.status === 'unknown' ? 'unknown' : fact.status,
+            updatedAt,
+            ...(fact.summary ? { summary: fact.summary } : {}),
+            ...(fact.resultPreview ? { resultPreview: fact.resultPreview } : {}),
+          });
+        }
+        return null;
+      }
+    }
     // Route to an explicit Workflow run if the tool-use id names one, else to a child's owning run,
     // else via the run's learned provider task id (terminal `task_updated` carries only `task_id`).
     let run: MutableRun | undefined;
@@ -565,8 +675,43 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
       && run.providerTaskId
       && fact.taskId !== run.providerTaskId
       && !runIdByTaskId.has(fact.taskId)
+      && !childToolUseIdByTaskId.has(fact.taskId)
     ) {
       return null;
+    }
+
+    // A lifecycle event addressed to a CHILD agent's tool-use id closes that agent, never the run.
+    // Without this, one failed subagent inside a fan-out marked the whole run failed, and a plain
+    // subagent's own `task_notification` closed the synthesized "Agent activity" run around it.
+    if (
+      toolUseId
+      && toolUseId !== run.runId
+      && toolUseId !== run.workflowToolUseId
+      && runIdByChildToolUseId.get(toolUseId) === run.runId
+      && run.agentsById.has(resolveAgentRowId(run, toolUseId, toolUseId))
+    ) {
+      const childStatus = runStatusFromSignal(fact.status);
+      if (!isTerminalRunStatus(childStatus)) {
+        if (fact.resumed) {
+          const child = run.agentsById.get(resolveAgentRowId(run, toolUseId, toolUseId));
+          if (child) {
+            upsertAgent(run, { id: child.id, title: child.title, status: 'active', resumed: true, updatedAt });
+            run.updatedAt = updatedAt;
+            rollUpImplicitRunStatus(run);
+          }
+        }
+        return run.runId;
+      }
+      applyChildAgentTerminal(run, {
+        agentId: resolveAgentRowId(run, toolUseId, toolUseId),
+        status: fact.status === 'unknown' ? 'unknown' : fact.status,
+        updatedAt,
+        ...(fact.summary ? { summary: fact.summary } : {}),
+        ...(fact.resultPreview ? { resultPreview: fact.resultPreview } : {}),
+        ...(fact.completedAt !== undefined ? { completedAt: fact.completedAt } : {}),
+        ...(fact.usage.timeUsedSeconds !== undefined ? { timeUsedSeconds: fact.usage.timeUsedSeconds } : {}),
+      });
+      return run.runId;
     }
 
     // Learn the run's provider task id so a later id-only terminal event can route back to it.
@@ -601,6 +746,9 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
       delete run.reconciledCounts;
     } else if (!isTerminalRunStatus(run.status)) {
       run.status = runSignal === 'unknown' ? run.status : runSignal;
+    }
+    if (!isTerminalRunStatus(priorStatus) && isTerminalRunStatus(run.status)) {
+      terminalizeRunAgents(run, updatedAt);
     }
     if (
       !isTerminalRunStatus(priorStatus)
@@ -755,6 +903,7 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
 
   function applySubagentStart(fact: SubagentStartFact, updatedAt: number): string | null {
     if (isForeignSource(fact.sourceSessionId)) return null;
+    subagentToolUseIds.add(fact.toolUseId);
     // A child whose explicit parent is a known Workflow run attaches there (explicit-wins).
     if (fact.parentToolUseId) {
       const parentRunId = runIdByWorkflowToolUseId.get(fact.parentToolUseId)
@@ -782,7 +931,14 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
 
   // Plain subagents that are not (yet) owned by an explicit run. They become an implicit run only
   // once >= threshold are seen, so a single plain subagent stays a task (CWF4).
-  const pendingImplicitSubagents = new Map<string, SubagentStartFact & { updatedAt: number }>();
+  type PendingImplicitSubagent = SubagentStartFact & {
+    updatedAt: number;
+    startedAt: number;
+    status: SessionWorkflowAgentStatusV1;
+    resultPreview?: string;
+    timeUsedSeconds?: number;
+  };
+  const pendingImplicitSubagents = new Map<string, PendingImplicitSubagent>();
 
   function promoteImplicitSubagent(fact: SubagentStartFact, updatedAt: number): string | null {
     if (implicitRunId) {
@@ -792,11 +948,18 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
         run.childToolUseIds.add(fact.toolUseId);
         runIdByChildToolUseId.set(fact.toolUseId, run.runId);
         run.updatedAt = updatedAt;
+        // The synthesized run has no lifecycle of its own: its agents decide its status in BOTH
+        // directions. Without this, a run closed when its last subagent finished stays `complete`
+        // around live work, and the new agent is drawn as a loose live row outside a finished card.
+        rollUpImplicitRunStatus(run);
         return run.runId;
       }
     }
 
-    pendingImplicitSubagents.set(fact.toolUseId, { ...fact, updatedAt });
+    // A duplicate start must preserve any buffered outcome and its original observation time.
+    if (!pendingImplicitSubagents.has(fact.toolUseId)) {
+      pendingImplicitSubagents.set(fact.toolUseId, { ...fact, updatedAt, startedAt: updatedAt, status: 'active' });
+    }
     if (pendingImplicitSubagents.size < CLAUDE_IMPLICIT_WORKFLOW_AGENT_THRESHOLD) {
       return null;
     }
@@ -810,13 +973,114 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
       startedAt: updatedAt,
     });
     for (const pending of pendingImplicitSubagents.values()) {
-      upsertAgent(run, { id: pending.toolUseId, title: pending.title, status: 'active', updatedAt: pending.updatedAt });
+      upsertAgent(run, {
+        id: pending.toolUseId,
+        title: pending.title,
+        status: pending.status,
+        updatedAt: pending.updatedAt,
+        startedAt: pending.startedAt,
+        ...(pending.resultPreview ? { resultPreview: pending.resultPreview } : {}),
+        ...(pending.timeUsedSeconds !== undefined ? { timeUsedSeconds: pending.timeUsedSeconds } : {}),
+      });
       run.childToolUseIds.add(pending.toolUseId);
       runIdByChildToolUseId.set(pending.toolUseId, run.runId);
     }
     pendingImplicitSubagents.clear();
     run.updatedAt = updatedAt;
+    rollUpImplicitRunStatus(run);
     return run.runId;
+  }
+
+  /**
+   * A plain subagent's `Task` tool_result — the only terminal evidence a SYNCHRONOUS subagent emits.
+   *
+   * Applied strictly to tool-use ids already observed as `subagent-start`, so a `Read`/`Bash` result
+   * (which parses identically) can never close an agent. Success and error results close only
+   * their correlated child; the explicit parent owns its separate workflow lifecycle.
+   */
+  function applySubagentResult(fact: SubagentResultFact, updatedAt: number): string | null {
+    if (isForeignSource(fact.sourceSessionId)) return null;
+
+    const pending = pendingImplicitSubagents.get(fact.toolUseId);
+    if (pending) {
+      // Not promoted yet: remember the outcome so a later promotion publishes the truth, but do not
+      // synthesize a run for it (CWF4 — a single plain subagent is a task, not a run).
+      pendingImplicitSubagents.set(fact.toolUseId, {
+        ...pending,
+        status: fact.status,
+        updatedAt,
+        ...(fact.resultPreview ? { resultPreview: fact.resultPreview } : {}),
+        ...(fact.timeUsedSeconds !== undefined ? { timeUsedSeconds: fact.timeUsedSeconds } : {}),
+      });
+      return null;
+    }
+
+    const runId = runIdByChildToolUseId.get(fact.toolUseId);
+    if (!runId) return null;
+    const run = runs.get(runId);
+    if (!run?.agentsById.has(fact.toolUseId)) return null;
+
+    applyChildAgentTerminal(run, {
+      agentId: fact.toolUseId,
+      status: fact.status,
+      updatedAt,
+      ...(fact.resultPreview ? { resultPreview: fact.resultPreview } : {}),
+      ...(fact.timeUsedSeconds !== undefined ? { timeUsedSeconds: fact.timeUsedSeconds } : {}),
+    });
+    return run.runId;
+  }
+
+  /**
+   * Close ONE agent inside a run. A child's outcome never decides its parent run's status: an
+   * explicit run's status is owned by its own workflow lifecycle events, and the synthesized
+   * implicit run is closed only by the all-children-terminal roll-up below.
+   */
+  function applyChildAgentTerminal(run: MutableRun, params: Readonly<{
+    agentId: string;
+    status: SessionWorkflowAgentStatusV1;
+    updatedAt: number;
+    summary?: string;
+    resultPreview?: string;
+    completedAt?: number;
+    timeUsedSeconds?: number;
+  }>): void {
+    const existing = run.agentsById.get(params.agentId);
+    upsertAgent(run, {
+      id: params.agentId,
+      title: existing?.title ?? params.agentId,
+      status: params.status,
+      updatedAt: params.updatedAt,
+      ...(params.summary ? { summary: params.summary } : {}),
+      ...(params.resultPreview ? { resultPreview: params.resultPreview } : {}),
+      ...(params.completedAt !== undefined ? { completedAt: params.completedAt } : {}),
+      ...(params.timeUsedSeconds !== undefined ? { timeUsedSeconds: params.timeUsedSeconds } : {}),
+    });
+    run.updatedAt = params.updatedAt;
+    rollUpImplicitRunStatus(run);
+  }
+
+  /**
+   * The implicit "Agent activity" run is a synthesized grouping of plain subagents, so it has no
+   * lifecycle events of its own. Without this it would claim liveness forever once created. Explicit
+   * runs are untouched — their status comes from real Workflow lifecycle evidence.
+   */
+  function rollUpImplicitRunStatus(run: MutableRun): void {
+    if (run.explicit || run.runId !== implicitRunId) return;
+    const agents = [...run.agentsById.values()];
+    if (agents.length === 0) return;
+    if (!agents.every((agent) => isTerminalAgentStatus(agent.status))) {
+      if (!isTerminalRunStatus(run.status)) return;
+      // A previously-closed run gained live work again (a resumed/new subagent).
+      run.status = 'active';
+      delete run.completedAt;
+      return;
+    }
+    run.status = agents.some((agent) => agent.status === 'failed')
+      ? 'failed'
+      : agents.every((agent) => agent.status === 'cancelled')
+        ? 'cancelled'
+        : 'complete';
+    run.completedAt = run.updatedAt;
   }
 
   function projectPhases(run: MutableRun): SessionWorkflowPhaseSnapshotV1[] {
@@ -837,6 +1101,7 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
       .map((agent) => ({
         id: agent.id,
         ...(agent.vendorRef ? { vendorRef: agent.vendorRef } : {}),
+        ...(agent.sidechainId ? { sidechainId: agent.sidechainId } : {}),
         title: agent.title,
         status: agent.status,
         updatedAt: agent.updatedAt,
@@ -937,16 +1202,18 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
         statusChangedRunIds: [existing.runId],
       };
     }
+    const reconciledRunStatus = seed.runTerminalStatus ?? 'stopped';
     const run = existing ?? ensureRun(seed.runId, {
       title: seed.title,
       explicit: true,
-      status: 'stopped',
+      status: reconciledRunStatus,
       ...(seed.workflowToolUseId ? { workflowToolUseId: seed.workflowToolUseId } : {}),
       updatedAt: reconcileParams.updatedAt,
       startedAt: reconcileParams.updatedAt,
     });
-    run.status = 'stopped';
-    run.statusReason = 'interrupted';
+    run.status = reconciledRunStatus;
+    if (seed.runTerminalStatus) delete run.statusReason;
+    else run.statusReason = 'interrupted';
     run.completedAt = reconcileParams.updatedAt;
     run.updatedAt = reconcileParams.updatedAt;
     // Attached BEFORE the sweep, so the agents the previous process left running are resolved by the
@@ -998,6 +1265,7 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
       upsertAgent(run, {
         id: orphan.agentId,
         title: orphan.title,
+        ...(orphan.sidechainId ? { sidechainId: orphan.sidechainId } : {}),
         status: 'cancelled',
         // The agent's own last evidence, not the moment recovery ran: stamping the sweep clock here
         // would inflate every rebuilt row's elapsed time by however long the session was down.
@@ -1067,10 +1335,10 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
 
   function observe(
     value: unknown,
-    observeParams: Readonly<{ updatedAt: number; live?: boolean }>,
+    observeParams: Readonly<{ updatedAt: number; live?: boolean; authenticatedHook?: true; startupReplay?: true; receiptAvailable?: boolean; historicalTimestampAvailable?: boolean }>,
   ): WorkflowActivityObservation {
-    const fact = parseClaudeWorkflowFact(value, params.reportShapeDrift);
-    if (!fact) {
+    const facts = parseClaudeWorkflowFacts(value, params.reportShapeDrift, (toolUseId) => subagentToolUseIds.has(toolUseId));
+    if (facts.length === 0) {
       return { changedRunIds: [], startedRunIds: [], terminalRunIds: [], statusChangedRunIds: [] };
     }
 
@@ -1078,27 +1346,33 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     const priorStatusByRun = new Map<string, SessionWorkflowRunStatusV1>();
     for (const [runId, run] of runs) priorStatusByRun.set(runId, run.status);
 
-    let touchedRunId: string | null = null;
+    const touchedRunIds = new Set<string>();
     const providerTaskActivities: ClaudeProviderTaskActivity[] = [];
-    if (fact.kind === 'workflow-start') {
-      touchedRunId = applyWorkflowStart(fact, observeParams.updatedAt);
-    } else if (fact.kind === 'workflow-launch') {
-      touchedRunId = applyWorkflowLaunch(fact, observeParams.updatedAt, providerTaskActivities);
-    } else if (fact.kind === 'task-lifecycle') {
-      touchedRunId = applyTaskLifecycle(fact, observeParams.updatedAt, providerTaskActivities);
-    } else if (fact.kind === 'workflow-run-record') {
-      touchedRunId = applyWorkflowRunRecord(fact, observeParams.updatedAt);
-    } else if (fact.kind === 'workflow-journal') {
-      touchedRunId = applyWorkflowJournal(fact, observeParams.updatedAt);
-    } else {
-      touchedRunId = applySubagentStart(fact, observeParams.updatedAt);
+    for (const fact of facts) {
+      let touchedRunId: string | null = null;
+      if (fact.kind === 'workflow-start') {
+        touchedRunId = applyWorkflowStart(fact, observeParams.updatedAt);
+      } else if (fact.kind === 'workflow-launch') {
+        touchedRunId = applyWorkflowLaunch(fact, observeParams.updatedAt, providerTaskActivities);
+      } else if (fact.kind === 'task-lifecycle') {
+        touchedRunId = applyTaskLifecycle(fact, observeParams.updatedAt, providerTaskActivities, observeParams);
+      } else if (fact.kind === 'workflow-run-record') {
+        touchedRunId = applyWorkflowRunRecord(fact, observeParams.updatedAt);
+      } else if (fact.kind === 'workflow-journal') {
+        touchedRunId = applyWorkflowJournal(fact, observeParams.updatedAt);
+      } else if (fact.kind === 'subagent-result') {
+        touchedRunId = applySubagentResult(fact, observeParams.updatedAt);
+      } else {
+        touchedRunId = applySubagentStart(fact, observeParams.updatedAt);
+      }
+      if (touchedRunId) {
+        touchedRunIds.add(touchedRunId);
+        if (observeParams.live !== false) liveObservedRunIds.add(touchedRunId);
+      }
     }
-
-    if (!touchedRunId) {
-      return { changedRunIds: [], startedRunIds: [], terminalRunIds: [], statusChangedRunIds: [] };
-    }
-    if (observeParams.live !== false) {
-      liveObservedRunIds.add(touchedRunId);
+    if (touchedRunIds.size === 0) {
+      return { changedRunIds: [], startedRunIds: [], terminalRunIds: [], statusChangedRunIds: [],
+        ...(providerTaskActivities.length > 0 ? { providerTaskActivities } : {}) };
     }
 
     // Migration may have dropped the implicit run; recompute change set across all current runs that
@@ -1108,7 +1382,7 @@ export function createClaudeWorkflowActivityTracker(params: Readonly<{
     const terminalRunIds: string[] = [];
     const statusChangedRunIds: string[] = [];
 
-    const candidateRunIds = new Set<string>([touchedRunId]);
+    const candidateRunIds = new Set(touchedRunIds);
     // The implicit run may have lost an agent this event; re-project it too so counts stay correct.
     if (implicitRunId && runs.has(implicitRunId)) candidateRunIds.add(implicitRunId);
 

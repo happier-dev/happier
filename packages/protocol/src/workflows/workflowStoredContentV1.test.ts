@@ -54,6 +54,20 @@ const finalResultBinding = {
 };
 
 describe('Workflow stored Account content', () => {
+  it('projects retained finite completion addresses while preserving arbitrary Action output JSON', () => {
+    const target = { key: 'command', serverId: 'home', machineId: 'worker', operationId: 'finite' };
+    const output = { arbitraryFutureOutput: { preserve: true } };
+    const execution = { kind: 'action' as const, actionId: 'projects.prepare', actionRequestId: 'request',
+      localInputId: 'request', input: {}, output, awaitedOperations: [target] };
+    const progress = { kind: 'happier.workflow-progress.v1' as const, invocationPath: { blockId: 'prepare', scope: [] },
+      blockKind: 'action' as const, attempt: '0', logicalInvocationRecordId: 'row-1', execution };
+    const envelope = { t: 'plain', v: { v: 2, binding: progressBinding, content: { ...progress,
+      execution: { ...execution, future: true, awaitedOperations: [{ ...target, future: true }] } } } };
+    expect(openWorkflowProgressStoredEnvelopeV1({ mode: 'plain', binding: progressBinding, envelope }))
+      .toEqual({ kind: 'available', content: progress });
+    expect(() => sealWorkflowProgressStoredEnvelopeV1({ mode: 'plain', binding: progressBinding,
+      progress: { ...progress, execution: { ...execution, future: true } } })).toThrow();
+  });
   it('opens unknown checkpoint fields without weakening required fields, binding or writes', () => {
     const checkpoint = { kind: 'happier.workflow-checkpoint.v1' as const, rootRecordId: 'row-1',
       nextSequence: '1', frontier: { nextBlockOrdinal: 1, paused: false } };

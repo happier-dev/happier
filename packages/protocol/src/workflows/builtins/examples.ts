@@ -1,6 +1,8 @@
 import type { WorkflowDefinitionV1 } from '../workflowV1.js';
 import type { AutomationScheduleTriggerInput, AutomationSessionLifecycleTriggerInput } from '../../automations/automationTriggerDefinition.js';
 import { agent, input, literal, result } from './definitionParts.js';
+import { setWorkflowDefaultField, setWorkflowStepExecutionField, walkWorkflowBlocks } from '../workflowDefinitionEditV1.js';
+import type { AutomationTriggerDefinitionInput } from '../../automations/automationTriggerDefinition.js';
 
 export const WORKFLOW_STARTER_EXAMPLE_KEYS_V1 = [
   'ask-once', 'review-pull-request', 'work-through-each-file', 'repair-until-it-passes',
@@ -169,4 +171,39 @@ export const WORKFLOW_STARTER_EXAMPLES_V1: readonly WorkflowStarterExampleV1[] =
 
 export function getWorkflowStarterExamplesV1(): readonly WorkflowStarterExampleV1[] {
   return WORKFLOW_STARTER_EXAMPLES_V1;
+}
+
+export type WorkflowStarterSessionTarget = Readonly<{ sessionId: string; machineId: string }>;
+export type WorkflowStarterExampleSelection = WorkflowStarterExampleV1 & Readonly<{
+  trigger?: AutomationTriggerDefinitionInput;
+  sessionTarget?: WorkflowStarterSessionTarget;
+}>;
+
+/** Materialize authoring seeds without guessing a Session or a firing origin. */
+export function materializeWorkflowStarterExample(example: WorkflowStarterExampleV1, context?: Readonly<{
+  session?: WorkflowStarterSessionTarget;
+  timezone?: string | null;
+}>): Readonly<{ status: 'requires_session' }> | Readonly<{ status: 'ready'; example: WorkflowStarterExampleSelection }> {
+  const session = context?.session;
+  if (session === undefined) return example.triggerSeed === undefined
+    ? { status: 'ready', example } : { status: 'requires_session' };
+  const sessionTarget = { sessionId: session.sessionId, machineId: session.machineId };
+  const seed = example.triggerSeed;
+  const trigger: AutomationTriggerDefinitionInput | undefined = seed === undefined ? undefined : seed.kind === 'sessionLifecycle'
+    ? { ...seed, sourceSessionId: session.sessionId }
+    : { ...seed, schedule: { ...seed.schedule, timezone: context?.timezone ?? seed.schedule.timezone } };
+  let draft = { name: '', ...example.definition };
+  const conversation = { kind: 'existing_session' as const, ...sessionTarget };
+  if (draft.defaults.conversation === undefined || draft.defaults.conversation.kind === 'origin_session') {
+    draft = setWorkflowDefaultField(draft, 'conversation', conversation);
+  }
+  for (const block of walkWorkflowBlocks(example.definition.blocks)) {
+    const selectedConversation = block.kind === 'step' ? block.execution?.conversation ?? example.definition.defaults.conversation : undefined;
+    if (block.kind === 'step' && (selectedConversation === undefined || selectedConversation.kind === 'origin_session')) {
+      // Inline insertion keeps the receiving draft's defaults, so bind the leaf too.
+      draft = setWorkflowStepExecutionField(draft, block.id, 'conversation', conversation);
+    }
+  }
+  return { status: 'ready', example: { ...example, ...(trigger === undefined ? {} : { trigger }), sessionTarget,
+    definition: { ...example.definition, defaults: draft.defaults, blocks: draft.blocks } } };
 }

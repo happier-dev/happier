@@ -1,19 +1,27 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import type { WorkflowMaterializedLeafV1 } from './workflowDefinitionV1.js';
 import type { WorkflowBlock, WorkflowDefinitionV1, WorkflowLeafV1, WorkflowStepExecutionSelection } from './workflowV1.js';
+import { listWorkflowBlockOrdinalsV1, workflowBlockReferenceLabel } from './workflowStepLabel.js';
 import { z } from 'zod';
 
 /** Authored structure has one leaf traversal for admission and destination projections. */
 export function collectWorkflowLeavesV1(definition: WorkflowDefinitionV1): WorkflowLeafV1[] {
-  const leaves: WorkflowLeafV1[] = [];
-  const pending: WorkflowBlock[] = [...definition.blocks].reverse();
+  return collectWorkflowLeafPositionsV1(definition).map(entry => entry.leaf);
+}
+
+function collectWorkflowLeafPositionsV1(definition: WorkflowDefinitionV1): Array<{ leaf: WorkflowLeafV1; ordinal: number }> {
+  const leaves: Array<{ leaf: WorkflowLeafV1; ordinal: number }> = [];
+  const ordinals = listWorkflowBlockOrdinalsV1(definition.blocks);
+  const siblings = (blocks: readonly WorkflowBlock[]) => [...blocks].reverse();
+  const pending = siblings(definition.blocks);
   while (pending.length > 0) {
     const block = pending.pop()!;
-    if (block.kind === 'parallel') pending.push(...block.branches.flatMap(branch => branch.blocks).reverse());
-    else if (block.kind === 'if') pending.push(...[...block.then, ...block.otherwise].reverse());
+    if (block.kind === 'parallel') pending.push(...block.branches.slice().reverse().flatMap(branch => siblings(branch.blocks)));
+    else if (block.kind === 'if') pending.push(...siblings(block.otherwise), ...siblings(block.then));
     else if (block.kind === 'loop') {
       if (block.repetition.kind === 'evaluate') pending.push(block.repetition.evaluator);
-      pending.push(...block.body.slice().reverse());
-    } else leaves.push(block);
+      pending.push(...siblings(block.body));
+    } else leaves.push({ leaf: block, ordinal: Number(ordinals.get(block.id)) });
   }
   return leaves;
 }
@@ -32,12 +40,13 @@ export function readWorkflowLeafTargetSessionIdsV1(selection: Pick<WorkflowStepE
  * `unresolvedWorkflowRefs`: a reference cannot be projected until its current definition has been read.
  * The type is the wire schema's, so a projection result is assignable wherever the schema's shape is.
  */
-export const WorkflowDestinationsV1Schema = z.object({
+export const WorkflowDestinationsV1Schema = lazyZodSchema(() => z.object({
   targetSessionIds: z.array(z.string().min(1)), usesOriginSession: z.boolean(),
   unresolvedWorkflowRefs: z.array(z.string().min(1)),
   leaves: z.array(z.object({ sourceKey: z.string().min(1), blockId: z.string().min(1),
+    ordinal: z.number().int().positive().optional(), name: z.string().optional(),
     sessionIds: z.array(z.string().min(1)) }).strict()),
-}).strict();
+}).strict());
 
 export type WorkflowDestinationsV1 = z.infer<typeof WorkflowDestinationsV1Schema>;
 
@@ -66,19 +75,25 @@ export function deriveWorkflowDestinationsV1(input: Readonly<{
   materializedLeaves?: readonly WorkflowMaterializedLeafV1[];
   originSessionId?: string;
 }>): WorkflowDestinationsV1 {
-  const leaves: Array<{ sourceKey: string; blockId: string; sessionIds: string[] }> = [];
+  const leaves: WorkflowDestinationsV1['leaves'] = [];
   const targetSessionIds = new Set<string>();
   const unresolved = new Set<string>();
   let usesOriginSession = false;
-  const visit = (sourceKey: string, blockId: string, selection: Pick<WorkflowStepExecutionSelection, 'conversation'>) => {
+  const visit = (sourceKey: string, blockId: string, selection: Pick<WorkflowStepExecutionSelection, 'conversation'>,
+    position?: { leaf: WorkflowLeafV1; ordinal: number }) => {
     usesOriginSession ||= selection.conversation?.kind === 'origin_session';
     const sessionIds = readWorkflowLeafTargetSessionIdsV1(selection,
       selection.conversation?.kind === 'origin_session' ? input.originSessionId : undefined);
     for (const sessionId of sessionIds) targetSessionIds.add(sessionId);
-    leaves.push({ sourceKey, blockId, sessionIds });
+    leaves.push({ sourceKey, blockId, sessionIds, ...(position ? { ordinal: position.ordinal,
+      name: workflowBlockReferenceLabel(position.leaf) } : {}) });
   };
   if (input.materializedLeaves) {
-    for (const leaf of input.materializedLeaves) visit(leaf.sourceKey, leaf.blockId, leaf.selection);
+    const positions = new Map<string, ReturnType<typeof collectWorkflowLeafPositionsV1>>();
+    positions.set('$root', collectWorkflowLeafPositionsV1(input.definition));
+    for (const [key, definition] of Object.entries(input.children ?? {})) positions.set(key, collectWorkflowLeafPositionsV1(definition));
+    for (const leaf of input.materializedLeaves) visit(leaf.sourceKey, leaf.blockId, leaf.selection,
+      positions.get(leaf.sourceKey)?.find(position => position.leaf.id === leaf.blockId));
   } else {
     const pending = [{ sourceKey: '$root', definition: input.definition }];
     const visited = new Set<string>();
@@ -86,8 +101,9 @@ export function deriveWorkflowDestinationsV1(input: Readonly<{
       const frame = pending.pop()!;
       if (visited.has(frame.sourceKey)) continue;
       visited.add(frame.sourceKey);
-      for (const leaf of collectWorkflowLeavesV1(frame.definition)) {
-        visit(frame.sourceKey, leaf.id, { conversation: leaf.execution?.conversation ?? frame.definition.defaults.conversation });
+      for (const position of collectWorkflowLeafPositionsV1(frame.definition)) {
+        const leaf = position.leaf;
+        visit(frame.sourceKey, leaf.id, { conversation: leaf.execution?.conversation ?? frame.definition.defaults.conversation }, position);
         if (leaf.kind !== 'workflow') continue;
         const child = input.children?.[leaf.workflowRef];
         if (child) pending.push({ sourceKey: leaf.workflowRef, definition: child });

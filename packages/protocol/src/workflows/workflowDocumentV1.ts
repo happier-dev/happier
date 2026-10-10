@@ -2,19 +2,14 @@ import { z } from 'zod';
 
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import {
-  WorkflowDefinitionV1Schema,
   type WorkflowDefinitionV1,
   type WorkflowIngressContextV1,
   type WorkflowValidationIssue,
 } from './workflowV1.js';
 import { validateWorkflowDefinition } from './workflowValidationV1.js';
 
-export const WorkflowDocumentV1Schema = z.object({
-  kind: z.literal('happier.workflow'),
-  version: z.literal(1),
-  definition: WorkflowDefinitionV1Schema,
-}).strict();
-export type WorkflowDocumentV1 = z.infer<typeof WorkflowDocumentV1Schema>;
+import { WorkflowDocumentV1Schema, type WorkflowDocumentV1 } from './workflowDocumentSchemasV1.js';
+export { WorkflowDocumentV1Schema, WorkflowDocumentParseFailureV1Schema, type WorkflowDocumentV1 } from './workflowDocumentSchemasV1.js';
 
 export type WorkflowDocumentParseErrorCodeV1 =
   | 'workflow_document_invalid_json'

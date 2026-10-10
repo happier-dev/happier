@@ -11,6 +11,103 @@ const workflow = { kind: 'workflow', id: 'child', workflowRef: 'builtin:review-a
 const wait = { kind: 'wait', id: 'review', document: { text: 'Choose a value', references: [], attachments: [] }, result: { kind: 'text' } };
 
 describe('workflow leaf seam', () => {
+  it('reports missing and invalid literal Action inputs through canonical validity', () => {
+    const check = (input: unknown) => validateWorkflowDefinition({ blocks: [{
+      kind: 'action', id: 'notify', actionId: 'notifications.notify_me', input,
+    }] });
+    for (const input of [
+      {},
+      { message: { kind: 'literal', value: 42 } },
+      { message: { kind: 'literal', value: '' } },
+      { message: { kind: 'literal', value: ' \t\n ' } },
+    ]) {
+      expect(check(input).valid).toBe(false);
+      expect(check(input).issues).toEqual(expect.arrayContaining([expect.objectContaining({
+        code: 'invalid_input', blockId: 'notify', path: '/blocks/0/input/message',
+      })]));
+    }
+    expect(check({ message: { kind: 'literal', value: 'Done' } }).valid).toBe(true);
+    expect(check({
+      message: { kind: 'literal', value: 'Done' },
+      title: { kind: 'literal', value: '' },
+    }).valid).toBe(true);
+  });
+
+  it('keeps future Action bindings valid while checking other known fields', () => {
+    const check = (input: unknown) => validateWorkflowDefinition({
+      inputs: [{ name: 'message', valueType: 'string', required: true }],
+      blocks: [{ kind: 'action', id: 'notify', actionId: 'notifications.notify_me', input }],
+    });
+    expect(check({ message: { kind: 'input', name: 'message' } }).valid).toBe(true);
+    expect(check({ message: { kind: 'input', name: 'message' }, title: { kind: 'literal', value: 42 } }).issues)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ path: '/blocks/0/input/title', code: 'invalid_input' })]));
+    expect(check({ title: { kind: 'input', name: 'message' } }).issues)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ path: '/blocks/0/input/message', code: 'invalid_input' })]));
+  });
+
+  it('checks required built-in child bindings and literal values without requiring optional defaults', () => {
+    const check = (input: unknown) => validateWorkflowDefinition({
+      inputs: [{ name: 'engines', valueType: 'json', required: true }],
+      blocks: [{ kind: 'workflow', id: 'child', workflowRef: 'builtin:review-and-converge', input }],
+    });
+    expect(check({}).issues).toEqual(expect.arrayContaining([expect.objectContaining({
+      code: 'invalid_input', blockId: 'child', path: '/blocks/0/input/engines',
+    })]));
+    expect(check({ engines: { kind: 'input', name: 'engines' } }).valid).toBe(true);
+    expect(check({ engines: { kind: 'literal', value: ['engine'] }, maxRounds: { kind: 'literal', value: 'three' } }).issues)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ path: '/blocks/0/input/maxRounds', code: 'invalid_input' })]));
+    expect(check({ engines: { kind: 'literal', value: ['engine'] }, apply: { kind: 'literal', value: 'other' } }).issues)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ path: '/blocks/0/input/apply', code: 'invalid_input' })]));
+  });
+
+  it('validates Action inputs after the canonical Workflow selection projection', () => {
+    const definition = { defaults: { permissionMode: 'yolo' }, inputs: [{ name: 'agent', valueType: 'json', required: true }],
+      blocks: [{ kind: 'action', id: 'start', actionId: 'execution.run.start', input: {
+        backendTarget: { kind: 'input', name: 'agent' }, intent: { kind: 'literal', value: 'delegate' },
+        retentionPolicy: { kind: 'literal', value: 'ephemeral' }, runClass: { kind: 'literal', value: 'bounded' },
+        ioMode: { kind: 'literal', value: 'request_response' },
+      } }] };
+    expect(validateWorkflowDefinition(definition).valid).toBe(true);
+    const { retentionPolicy: _retentionPolicy, ...missingRequired } = definition.blocks[0]!.input;
+    expect(validateWorkflowDefinition({ ...definition, blocks: [{ ...definition.blocks[0], input: missingRequired }] }).issues)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ path: '/blocks/0/input/retentionPolicy', code: 'invalid_input' })]));
+  });
+
+  it('leaves non-built-in child contract resolution to materialization', () => {
+    for (const workflowRef of ['builtin:external', 'plugin:example.plugin/child', '11111111-1111-4111-8111-111111111111']) {
+      expect(validateWorkflowDefinition({ blocks: [{ kind: 'workflow', id: 'child', workflowRef, input: {} }] }).valid).toBe(true);
+    }
+  });
+
+  it('leaves role resolution at admission while validating Action bindings', () => {
+    expect(validateWorkflowDefinition({ defaults: { engine: { role: 'account_builder' } }, blocks: [{
+      kind: 'action', id: 'notify', actionId: 'notifications.notify_me', input: { message: { kind: 'literal', value: 'Done' } },
+    }] }).valid).toBe(true);
+  });
+
+  it('defers only missing role-selected Action targets to admission', () => {
+    const check = (input: unknown) => validateWorkflowDefinition({ defaults: { engine: { role: 'account_builder' } }, blocks: [{
+      kind: 'action', id: 'review', actionId: 'review.start', input,
+    }] });
+    expect(check({ instructions: { kind: 'literal', value: 'Review the changes' } }).valid).toBe(true);
+    expect(check({}).issues).toEqual(expect.arrayContaining([expect.objectContaining({
+      code: 'invalid_input', path: '/blocks/0/input/instructions',
+    })]));
+    expect(check({ instructions: { kind: 'literal', value: 'Review the changes' }, engineIds: { kind: 'literal', value: 42 } }).issues)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ code: 'invalid_input', path: '/blocks/0/input/engineIds' })]));
+  });
+
+  it('accepts native Action targets supplied by the canonical Workflow selection', () => {
+    const defaults = { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }, permissionMode: 'yolo' };
+    expect(validateWorkflowDefinition({ defaults, blocks: [{ kind: 'action', id: 'review', actionId: 'review.start',
+      input: { instructions: { kind: 'literal', value: 'Review the changes' } },
+    }] }).valid).toBe(true);
+    expect(validateWorkflowDefinition({ defaults, blocks: [{ kind: 'action', id: 'start', actionId: 'execution.run.start', input: {
+      intent: { kind: 'literal', value: 'delegate' }, retentionPolicy: { kind: 'literal', value: 'ephemeral' },
+      runClass: { kind: 'literal', value: 'bounded' }, ioMode: { kind: 'literal', value: 'request_response' },
+    } }] }).valid).toBe(true);
+  });
+
   it('admits an Action evaluator through the frozen definition owner', () => {
     const evaluator = { ...action, input: { message: { kind: 'literal', value: 'Done' } }, pauseForReview: true };
     const loop = {

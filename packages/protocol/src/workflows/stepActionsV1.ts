@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import type { PreNormalizedActionSpec } from '../actions/actionSpecs.js';
@@ -5,19 +6,20 @@ import type { PreNormalizedActionSpec } from '../actions/actionSpecs.js';
 export const WORKFLOW_EFFECT_ACTION_IDS_V1 = ['webhooks.call', 'machines.command.run'] as const;
 export type WorkflowEffectActionIdV1 = typeof WORKFLOW_EFFECT_ACTION_IDS_V1[number];
 
-export const WorkflowWebhookInputV1Schema = z.object({
+export const WorkflowWebhookInputV1Schema = lazyZodSchema(() => z.object({
   url: z.string().trim().url().refine((url) => /^https?:/u.test(url), 'Use HTTP or HTTPS'),
   body: StrictJsonValueSchema,
-}).strict();
-export const WorkflowWebhookOutputV1Schema = z.object({ status: z.number().int(), body: z.string() }).strict();
-export const WorkflowMachineCommandInputV1Schema = z.object({
+}).strict());
+export const WorkflowWebhookOutputV1Schema = lazyZodSchema(() => z.object({ status: z.number().int(), body: z.string() }).strict());
+export const WorkflowMachineCommandInputV1Schema = lazyZodSchema(() => z.object({
   command: z.string().min(1).refine((value) => !value.includes('\0'), 'Commands cannot contain NUL'),
   env: z.record(z.string().min(1).refine((key) => !/[=\0]/u.test(key), 'Invalid environment key'),
     z.string().refine((value) => !value.includes('\0'), 'Environment values cannot contain NUL')).optional(),
-}).strict();
-export const WorkflowMachineCommandOutputV1Schema = z.object({
+}).strict());
+export const WorkflowMachineCommandOutputV1Schema = lazyZodSchema(() => z.object({
   exitCode: z.number().int(), stdout: z.string(), stderr: z.string(),
-}).strict();
+  stdoutTruncated: z.boolean().optional(), stderrTruncated: z.boolean().optional(),
+}).strict());
 
 /** Authored shell syntax is never resolved from event/input/result data. */
 export function isWorkflowActionLiteralFieldV1(actionId: string, field: string): boolean {

@@ -1,12 +1,16 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { listActionSpecs } from '../actions/actionSpecs.js';
+import { resolveEffectiveActionInputFields } from '../actions/actionInputHintsRuntime.js';
+import { readInputPath } from '../inputs/inputPredicates.js';
 
 import {
   WorkflowBlockSchema,
   WorkflowInputDefinitionSchema,
   WorkflowStepSelectionV1Schema,
   type WorkflowBlock,
+  type WorkflowInputDefinition,
   type WorkflowDefinitionV1,
   type WorkflowIngressContextV1,
   type WorkflowStep,
@@ -30,6 +34,9 @@ import { readWorkflowWorkspaceProducerRef } from './workflowWorkspaceV1.js';
 import { resolveWorkflowStepSelectionV1 } from './workflowStepSelectionV1.js';
 import { WorkflowRoleV1Schema } from '../prompts/roles/rolesV1.js';
 import { MENTION_KIND_V1, readMentionRefOpaqueForKindV1 } from '../runtime/input/mentionRefV1.js';
+import { parseWorkflowDefinitionRefV1 } from './workflowDefinitionRefV1.js';
+import { resolveBuiltinWorkflowDefinitionV1 } from './builtins/catalog.js';
+import { projectActionWorkflowSelectionInputV1, readActionWorkflowTargetInputFieldV1 } from '../actions/executor/agentStartAdmission.js';
 
 /**
  * Normalization and semantic validation for the canonical workflow definition.
@@ -46,14 +53,14 @@ const BLOCK_ID_PATTERN = /^[A-Za-z][A-Za-z0-9_-]*$/;
  * their own canonical schemas below so each failure keeps its exact path and
  * issue code instead of collapsing into one union error.
  */
-const WorkflowIngressEnvelopeSchema = z.object({
+const WorkflowIngressEnvelopeSchema = lazyZodSchema(() => z.object({
   version: z.literal(1).optional(),
   inputs: z.array(WorkflowInputDefinitionSchema).optional(),
   defaults: z.unknown().optional(),
   roles: z.array(WorkflowRoleV1Schema).optional(),
   blocks: z.array(z.unknown()).min(1),
   finalOutput: WorkflowAuthoredResultReferenceSchema.optional(),
-}).strict();
+}).strict());
 
 function issue(
   code: WorkflowValidationIssueCode,
@@ -586,6 +593,20 @@ function validateStepExecution(state: WalkState, step: WorkflowLeafV1, path: str
   }
 
   const effectiveConversation = effective.conversation;
+  if (step.kind === 'step' && step.inputMode === 'none'
+    && ((effectiveConversation?.kind !== 'fresh' && effectiveConversation?.kind !== 'existing_session') || execution?.executionTarget?.kind === 'detached_run'
+      || state.workflowDefaults.executionTarget?.kind === 'detached_run'
+      || step.document.text !== '' || step.document.references.length !== 0 || step.document.attachments.length !== 0
+      || step.input.length !== 0 || step.result.kind !== 'text')) {
+    state.issues.push(issue('invalid_input', joinPath(path, 'inputMode'),
+      'Inputless acquisition requires a fresh or existing Session and no input or structured result.', step.id));
+  }
+  if (step.kind === 'step' && effectiveConversation?.kind !== 'fresh' && effectiveConversation?.kind !== 'existing_session') {
+    for (const field of ['launchEnvironment', 'providerSessionResume'] as const) {
+      if (effective[field] !== undefined) state.issues.push(issue('target_unavailable',
+        joinPath(path, 'execution', field), 'Agent launch configuration requires a fresh or existing Session conversation.', step.id));
+    }
+  }
   if ((effectiveConversation?.kind === 'existing_session' || effectiveConversation?.kind === 'origin_session')
     && execution?.workspace?.kind === 'new_worktree') {
     state.issues.push(issue(
@@ -672,10 +693,15 @@ function validateNonAgentLeaf(
   allowAggregateCondition = false,
 ): void {
   validateStepExecution(state, leaf, path);
+  for (const field of ['launchEnvironment', 'providerSessionResume'] as const) {
+    if (leaf.execution?.[field] !== undefined) state.issues.push(issue('invalid_input',
+      joinPath(path, 'execution', field), 'Agent launch configuration belongs to an Agent step.', leaf.id));
+  }
   if (leaf.onlyWhen !== undefined) {
     validateCondition(state, leaf.onlyWhen, joinPath(path, 'onlyWhen'), leaf.id, allowAggregateCondition);
   }
   if (leaf.kind === 'wait') return;
+  validateLeafInputContract(state, leaf, path);
   for (const [field, binding] of Object.entries(leaf.input)) {
     const references = binding.kind === 'list' ? binding.items : [binding];
     references.forEach((reference, index) => {
@@ -685,6 +711,83 @@ function validateNonAgentLeaf(
           { allowSessionContext: leaf.kind === 'action' });
       }
     });
+  }
+}
+
+function matchesWorkflowInputValue(input: WorkflowInputDefinition, value: unknown): boolean {
+  return (input.valueType === 'json' || typeof value === input.valueType)
+    && (input.enum === undefined || (typeof value === 'string' && input.enum.includes(value)));
+}
+
+/** Check only authored facts; future bindings are validated when their values exist. */
+function validateLeafInputContract(
+  state: WalkState,
+  leaf: Extract<WorkflowLeafV1, { kind: 'action' | 'workflow' }>,
+  path: string,
+): void {
+  const values: Record<string, unknown> = {};
+  const deferredFields = new Set<string>();
+  for (const [field, binding] of Object.entries(leaf.input)) {
+    if (binding.kind === 'literal') values[field] = binding.value;
+    else if (binding.kind === 'list' && binding.items.every((item) => item.kind === 'literal')) {
+      values[field] = binding.items.map((item) => item.kind === 'literal' ? item.value : undefined);
+    } else deferredFields.add(field);
+  }
+  if (leaf.kind === 'action') {
+    const spec = listActionSpecs().find((candidate) => candidate.id === leaf.actionId);
+    if (!spec) return; // Contributed contracts are resolved by the admission materializer.
+    for (const field of Object.keys(spec.contextualDefaults ?? {})) {
+      if (!Object.hasOwn(leaf.input, field)) deferredFields.add(field);
+    }
+    const engine = leaf.execution?.engine ?? state.workflowDefaults.engine;
+    const targetField = readActionWorkflowTargetInputFieldV1(leaf.actionId);
+    // Admission resolves the authored Role and supplies its native target.
+    // Explicit target bindings and all other required inputs remain checked.
+    if (engine && 'role' in engine && targetField && !Object.hasOwn(leaf.input, targetField)) deferredFields.add(targetField);
+    const selection = resolveWorkflowStepSelectionV1({ defaults: state.workflowDefaults, step: leaf.execution, purpose: 'authoring' }).selection;
+    const projected = projectActionWorkflowSelectionInputV1(leaf.actionId, values, selection);
+    // A future authored value overrides selection; do not validate inherited
+    // data as though it were that binding's final value.
+    for (const field of deferredFields) delete projected[field];
+    const parsed = spec.inputSchema.safeParse(projected);
+    // A required text field has not been supplied by an empty editor value.
+    // Keep optional empty text and future references intact; this is the same
+    // authoring contract consumed by Ready, Save and Run admission.
+    for (const field of resolveEffectiveActionInputFields(spec, projected)) {
+      if (!field.required || deferredFields.has(field.path.split('.')[0]!)) continue;
+      const value = readInputPath(projected, field.path);
+      if (typeof value === 'string' && value.trim().length === 0
+        && (parsed.success || !parsed.error.issues.some(error => error.path.map(String).join('.') === field.path))) {
+        state.issues.push(issue('invalid_input', joinPath(path, 'input', ...field.path.split('.')),
+          `Input "${field.path}" needs a value.`, leaf.id));
+      }
+    }
+    if (parsed.success) return;
+    for (const error of parsed.error.issues) {
+      // A missing future-bound field is not a missing authored binding. Root
+      // refinements cannot decide a partially bound input either.
+      if ((error.path.length === 0 && deferredFields.size > 0)
+        || deferredFields.has(String(error.path[0]))) continue;
+      state.issues.push(issue('invalid_input', joinPath(path, 'input', ...error.path.map(String)), error.message, leaf.id));
+    }
+    return;
+  }
+  const ref = parseWorkflowDefinitionRefV1(leaf.workflowRef);
+  const child = ref?.kind === 'builtin' ? resolveBuiltinWorkflowDefinitionV1(ref.id) : null;
+  if (!child) return; // Saved/plugin/unavailable children do not imply an empty input contract.
+  for (const input of child.definition.inputs) {
+    if (deferredFields.has(input.name)) continue;
+    const value = values[input.name];
+    if (!Object.hasOwn(values, input.name)) {
+      if (input.required) state.issues.push(issue('invalid_input', joinPath(path, 'input', input.name),
+        `Input "${input.name}" needs a binding.`, leaf.id));
+    } else if (input.required && typeof value === 'string' && value.trim().length === 0) {
+      state.issues.push(issue('invalid_input', joinPath(path, 'input', input.name),
+        `Input "${input.name}" needs a value.`, leaf.id));
+    } else if (!matchesWorkflowInputValue(input, value)) {
+      state.issues.push(issue('invalid_input', joinPath(path, 'input', input.name),
+        `Input "${input.name}" does not match its declared values.`, leaf.id));
+    }
   }
 }
 
@@ -943,11 +1046,7 @@ function validateInputs(state: WalkState, definition: WorkflowDefinitionV1): voi
       state.issues.push(issue('invalid_input', joinPath(path, 'optionsSourceId'), 'This Action options source is not registered.'));
     }
     if (input.default !== undefined) {
-      const matches = input.valueType === 'json'
-        || (input.valueType === 'string' && typeof input.default === 'string')
-        || (input.valueType === 'number' && typeof input.default === 'number')
-        || (input.valueType === 'boolean' && typeof input.default === 'boolean');
-      if (!matches) {
+      if (!matchesWorkflowInputValue(input, input.default)) {
         state.issues.push(issue(
           'invalid_input',
           joinPath(path, 'default'),
@@ -1030,12 +1129,31 @@ export function validateWorkflowDefinition(
   options: ValidateWorkflowDefinitionOptions = {},
 ): WorkflowValidationResult {
   const targetValidation = options.targetValidation ?? 'not_requested';
+  const targetIssues = options.targetIssues ?? [];
   const normalized = normalizeWorkflowIngress(input, options.context);
   if (normalized.kind === 'issues') {
-    return { valid: false, issues: normalized.issues, targetValidation };
+    // One pass reports every issue (DESIGN-7 P3): when the only structural faults are prompts not
+    // written yet, the semantic walk still runs over the same draft with those prompts stood in,
+    // so field issues are counted now rather than surfacing after the prompts are written. The
+    // stand-in never becomes a normalized definition.
+    const standIn = withEmptyPromptsStoodIn(input, normalized.issues);
+    const reparsed = standIn === null ? null : normalizeWorkflowIngress(standIn, options.context);
+    if (reparsed === null || reparsed.kind !== 'parsed') {
+      return { valid: false, issues: [...normalized.issues, ...targetIssues], targetValidation };
+    }
+    const structural = new Set(normalized.issues.map((entry) => entry.path));
+    const semantic = collectSemanticIssues(reparsed.definition).filter((entry) => !structural.has(entry.path));
+    return { valid: false, issues: [...normalized.issues, ...semantic, ...targetIssues], targetValidation };
   }
 
   const definition = normalized.definition;
+  const issues = [...collectSemanticIssues(definition), ...targetIssues];
+  const valid = issues.every((entry) => entry.severity !== 'error');
+  return { valid, normalizedDefinition: definition, issues, targetValidation };
+}
+
+/** The canonical semantic walk over a parsed definition: inputs, ids, blocks, final output. */
+function collectSemanticIssues(definition: WorkflowDefinitionV1): WorkflowValidationIssue[] {
   const state: WalkState = {
     issues: [],
     seenIds: new Map<string, string>(),
@@ -1045,14 +1163,34 @@ export function validateWorkflowDefinition(
     levels: [],
     positions: [],
   };
-
   validateInputs(state, definition);
   collectDeclaredIds(state, definition.blocks, '/blocks');
   validateBlockList(state, buildScopeLevel(definition.blocks, null), '/blocks');
   validateFinalOutput(state, definition);
+  return state.issues;
+}
 
-  const targetIssues = options.targetIssues ?? [];
-  const issues = [...state.issues, ...targetIssues];
-  const valid = issues.every((entry) => entry.severity !== 'error');
-  return { valid, normalizedDefinition: definition, issues, targetValidation };
+/** Any non-empty text satisfies the composer document schema; it is never shown or stored. */
+const EMPTY_PROMPT_STAND_IN = '.';
+
+/**
+ * A copy of the ingress with each empty prompt (`…/document/text`, the only structural issue an
+ * editor draft routinely carries) replaced by a stand-in, or `null` when an issue is anything else
+ * (then the walk cannot see the draft as authored and only the structural issues are reported).
+ */
+function withEmptyPromptsStoodIn(input: unknown, issues: readonly WorkflowValidationIssue[]): unknown | null {
+  if (issues.length === 0 || !issues.every((entry) => entry.path.endsWith('/document/text'))) return null;
+  const copy: unknown = structuredClone(input);
+  for (const entry of issues) {
+    let node: unknown = copy;
+    const segments = entry.path.split('/').filter((segment) => segment.length > 0);
+    for (const segment of segments.slice(0, -1)) {
+      node = typeof node === 'object' && node !== null ? (node as Record<string, unknown>)[segment] : undefined;
+    }
+    if (typeof node !== 'object' || node === null) return null;
+    const document = node as Record<string, unknown>;
+    if (typeof document.text !== 'string' || document.text.trim().length > 0) return null;
+    document.text = EMPTY_PROMPT_STAND_IN;
+  }
+  return copy;
 }

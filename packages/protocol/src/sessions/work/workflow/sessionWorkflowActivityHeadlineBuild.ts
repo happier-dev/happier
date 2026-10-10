@@ -25,7 +25,9 @@ const TERMINAL_WORKFLOW_RUN_STATUSES: ReadonlySet<SessionWorkflowRunStatusV1> = 
   'cancelled',
 ]);
 
-export function isTerminalWorkflowRunStatus(status: SessionWorkflowRunStatusV1): boolean {
+export function isTerminalWorkflowRunStatus(
+  status: SessionWorkflowRunStatusV1,
+): status is Extract<SessionWorkflowRunStatusV1, 'complete' | 'failed' | 'stopped' | 'cancelled'> {
   return TERMINAL_WORKFLOW_RUN_STATUSES.has(status);
 }
 

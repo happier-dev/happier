@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { WorkflowAuthoredResultReferenceSchema, WorkflowBlockIdSchema, type WorkflowAuthoredResultReference } from './workflowReferenceV1.js';
 import { WorkflowArtifactRevisionV1Schema, WorkflowDefinitionMetadataV1Schema } from './workflowDefinitionV1.js';
@@ -278,6 +279,24 @@ export function setWorkflowBlockName<TDraft extends WorkflowDefinitionDraftV1>(
     if (block.name === normalized) return block;
     const { name: _name, ...unnamed } = block;
     return normalized === undefined ? unnamed : { ...unnamed, name: normalized };
+  });
+}
+
+/** Names one lane of a Side by side group; a blank name restores its "Lane {n}" caption. */
+export function setWorkflowParallelBranchName<TDraft extends WorkflowDefinitionDraftV1>(
+  draft: TDraft, parallelId: string, branchId: string, name: string | undefined,
+): TDraft {
+  const normalized = WorkflowBlockNameV1Schema.parse(name);
+  return updateWorkflowBlock(draft, parallelId, (block) => {
+    if (block.kind !== 'parallel') return block;
+    let changed = false;
+    const branches = block.branches.map((branch) => {
+      if (branch.id !== branchId || branch.name === normalized) return branch;
+      changed = true;
+      const { name: _name, ...unnamed } = branch;
+      return normalized === undefined ? unnamed : { ...unnamed, name: normalized };
+    });
+    return changed ? { ...block, branches } : block;
   });
 }
 
@@ -939,13 +958,13 @@ function materializeInsertedBlock(input: unknown, takenIds: ReadonlySet<string>)
   }
   return WorkflowBlockSchema.safeParse(parsed.data);
 }
-export const WorkflowBlockListRefV1Schema = z.discriminatedUnion('kind', [
+export const WorkflowBlockListRefV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('root') }).strict(),
   z.object({ kind: z.literal('loopBody'), loopId: WorkflowBlockIdSchema }).strict(),
   z.object({ kind: z.literal('ifThen'), ifId: WorkflowBlockIdSchema }).strict(),
   z.object({ kind: z.literal('ifOtherwise'), ifId: WorkflowBlockIdSchema }).strict(),
   z.object({ kind: z.literal('parallelBranch'), parallelId: WorkflowBlockIdSchema, branchId: WorkflowBlockIdSchema }).strict(),
-]);
+]));
 
 type WorkflowSelectionEdit<TKind extends string> = {
   [TField in keyof WorkflowStepExecutionSelection]-?: { kind: TKind; field: TField; value?: WorkflowStepExecutionSelection[TField] }
@@ -961,7 +980,7 @@ function selectionEditSchema<TKind extends 'set_default' | 'set_step_setting'>(k
   >;
 }
 
-export const WorkflowDefinitionEditOpV1Schema = z.union([
+export const WorkflowDefinitionEditOpV1Schema = lazyZodSchema(() => z.union([
   z.object({ kind: z.literal('insert_block'), list: WorkflowBlockListRefV1Schema, block: WorkflowInsertBlockV1Schema, afterBlockId: WorkflowBlockIdSchema.optional() }).strict(),
   z.object({ kind: z.literal('replace_block'), blockId: WorkflowBlockIdSchema, block: WorkflowBlockSchema }).strict(),
   z.object({ kind: z.literal('remove_block'), blockId: WorkflowBlockIdSchema }).strict(),
@@ -974,20 +993,20 @@ export const WorkflowDefinitionEditOpV1Schema = z.union([
   z.object({ kind: z.literal('set_inputs'), inputs: z.array(WorkflowInputDefinitionSchema) }).strict(),
   z.object({ kind: z.literal('set_final_output'), finalOutput: WorkflowAuthoredResultReferenceSchema.nullable() }).strict(),
   z.object({ kind: z.literal('rename'), name: z.string().trim().min(1) }).strict(),
-]);
+]));
 export type WorkflowDefinitionEditOpV1 = z.infer<typeof WorkflowDefinitionEditOpV1Schema>;
 
-export const WorkflowDefinitionEditRequestV1Schema = z.object({
+export const WorkflowDefinitionEditRequestV1Schema = lazyZodSchema(() => z.object({
   definitionId: WorkflowDefinitionIdV1Schema,
   expectedRevision: WorkflowArtifactRevisionV1Schema,
   ops: z.array(WorkflowDefinitionEditOpV1Schema).min(1),
-}).strict();
-export const WorkflowDefinitionEditResultV1Schema = z.object({
+}).strict());
+export const WorkflowDefinitionEditResultV1Schema = lazyZodSchema(() => z.object({
   definition: WorkflowDefinitionV1Schema,
   revision: WorkflowArtifactRevisionV1Schema,
   metadata: WorkflowDefinitionMetadataV1Schema,
   changedBlockIds: z.array(WorkflowBlockIdSchema),
-}).strict();
+}).strict());
 export type WorkflowDefinitionEditRequestV1 = z.infer<typeof WorkflowDefinitionEditRequestV1Schema>;
 export type WorkflowDefinitionEditResultV1 = z.infer<typeof WorkflowDefinitionEditResultV1Schema>;
 

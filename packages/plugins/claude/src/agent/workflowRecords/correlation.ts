@@ -15,7 +15,7 @@ import {
   type ClaudeWorkflowUsageMetrics,
 } from './metrics.js';
 import { readClaudeProviderIdentityValue } from '../../protocol/providerIdentity.js';
-import { parseClaudeTaskNotification } from '../transcripts/taskNotification.js';
+import { readClaudeTaskLifecycleEnvelope } from '../transcripts/taskNotification.js';
 
 /**
  * Claude-native event parsing for the workflow normalizer (CWF2).
@@ -98,6 +98,8 @@ export type TaskLifecycleFact = Readonly<{
   kind: 'task-lifecycle';
   /** subtype: task_started | task_progress | task_updated | task_notification */
   subtype: string;
+  resumed?: true;
+  knownOnly?: true;
   taskId?: string;
   /** The workflow/subagent tool-use id the task belongs to (correlation hook). */
   toolUseId?: string;
@@ -123,6 +125,16 @@ export type SubagentStartFact = Readonly<{
   toolUseId: string;
   title: string;
   parentToolUseId?: string;
+  sourceSessionId?: string;
+  uuid?: string;
+}>;
+
+export type SubagentResultFact = Readonly<{
+  kind: 'subagent-result';
+  toolUseId: string;
+  status: ClaudeActivityStatusSignal;
+  resultPreview?: string;
+  timeUsedSeconds?: number;
   sourceSessionId?: string;
   uuid?: string;
 }>;
@@ -188,6 +200,7 @@ export type ClaudeWorkflowFact =
   | WorkflowLaunchFact
   | TaskLifecycleFact
   | SubagentStartFact
+  | SubagentResultFact
   | WorkflowJournalFact
   | WorkflowRunRecordFact;
 
@@ -420,6 +433,43 @@ function readToolResultContentText(block: Record<string, unknown>): string | nul
   return parts.length > 0 ? parts.join('\n') : null;
 }
 
+function normalizeWorkflowToolResultErrorPreview(contentText: string | null): string | undefined {
+  if (!contentText) return undefined;
+  const xmlMatch = contentText.match(/<tool_use_error>([\s\S]*?)<\/tool_use_error>/);
+  return normalizeResultPreview(xmlMatch?.[1] ?? contentText);
+}
+
+function parseFailedWorkflowToolResult(message: Record<string, unknown>): TaskLifecycleFact | null {
+  if (message.type !== 'user') return null;
+  const nested = readRecord(message.message);
+  const content = nested?.content;
+  if (!Array.isArray(content)) return null;
+
+  const sourceSessionId = readSourceSessionId(message);
+  const uuid = readString(message.uuid) ?? undefined;
+  for (const part of content) {
+    const block = readRecord(part);
+    if (block?.type !== 'tool_result') continue;
+    const toolUseId = readString(block.tool_use_id);
+    if (!toolUseId) continue;
+    const contentText = readToolResultContentText(block);
+    const hasToolUseErrorEnvelope = contentText?.includes('<tool_use_error>') === true;
+    if (block.is_error !== true && !hasToolUseErrorEnvelope) continue;
+    const resultPreview = normalizeWorkflowToolResultErrorPreview(contentText);
+    return {
+      kind: 'task-lifecycle',
+      subtype: 'workflow_tool_result',
+      toolUseId,
+      status: 'failed',
+      ...(resultPreview ? { resultPreview } : {}),
+      usage: {},
+      ...(sourceSessionId ? { sourceSessionId } : {}),
+      ...(uuid ? { uuid } : {}),
+    };
+  }
+  return null;
+}
+
 function parseWorkflowLaunchResult(message: Record<string, unknown>): WorkflowLaunchFact | null {
   if (message.type !== 'user') return null;
   const nested = readRecord(message.message);
@@ -499,6 +549,43 @@ function parseSuccessfulWorkflowTaskStopResult(message: Record<string, unknown>)
   };
 }
 
+function parseSubagentToolResult(
+  message: Record<string, unknown>,
+  isKnownSubagentToolUseId: ((toolUseId: string) => boolean) | undefined,
+): SubagentResultFact | null {
+  if (!isKnownSubagentToolUseId) return null;
+  if (message.type !== 'user') return null;
+  const nested = readRecord(message.message);
+  const content = nested?.content;
+  if (!Array.isArray(content)) return null;
+
+  const sourceSessionId = readSourceSessionId(message);
+  const uuid = readString(message.uuid) ?? undefined;
+  const toolUseResult = readRecord(message.toolUseResult) ?? readRecord(message.tool_use_result);
+  if (readClaudeTaskLifecycleEnvelope(message)?.subtype === 'async-launch') return null;
+  const timeUsedSeconds = readDurationSecondsFromMs(
+    toolUseResult?.totalDurationMs ?? toolUseResult?.total_duration_ms,
+  );
+
+  for (const part of content) {
+    const block = readRecord(part);
+    if (block?.type !== 'tool_result') continue;
+    const toolUseId = readString(block.tool_use_id);
+    if (!toolUseId || !isKnownSubagentToolUseId(toolUseId)) continue;
+    const resultPreview = normalizeResultPreview(readToolResultContentText(block));
+    return {
+      kind: 'subagent-result',
+      toolUseId,
+      status: block.is_error === true ? 'failed' : 'complete',
+      ...(resultPreview ? { resultPreview } : {}),
+      ...(timeUsedSeconds !== undefined ? { timeUsedSeconds } : {}),
+      ...(sourceSessionId ? { sourceSessionId } : {}),
+      ...(uuid ? { uuid } : {}),
+    };
+  }
+  return null;
+}
+
 function parseSubagentUse(message: Record<string, unknown>): SubagentStartFact | null {
   if (message.type !== 'assistant') return null;
   const nested = readRecord(message.message);
@@ -530,37 +617,27 @@ function parseSubagentUse(message: Record<string, unknown>): SubagentStartFact |
   return null;
 }
 
-/**
- * Parse the `<task-notification>` user message Claude Code persists when a backgrounded Workflow/Task
- * completes. This is the ONLY terminal lifecycle signal in the persisted transcript for backgrounded
- * runs (no `task_updated` row is written), so without it an explicit Workflow run never closes and the
- * work-state badge stays stuck "Running". It routes to the run via `<tool-use-id>` like a system
- * `task_*` event, so the tracker needs no change.
- */
+/** Native delivery and settled lifecycle envelopes use the canonical transcript reader. */
 function parseTaskNotificationEnvelope(message: Record<string, unknown>): TaskLifecycleFact | null {
-  const notification = parseClaudeTaskNotification(message);
-  if (!notification) return null;
-  const { taskId, toolUseId } = notification;
-  // Without a tool-use-id there is no correlation hook; do not synthesize a run.
-  if (!toolUseId) return null;
-
-  const status = normalizeClaudeActivityStatusSignal(notification.status, 'task_notification');
+  if (message.type === 'system' && (message.subtype === 'task_started' || message.subtype === 'task_notification')) return null;
+  const notification = readClaudeTaskLifecycleEnvelope(message);
+  if (!notification || (!notification.toolUseId && !notification.taskId)) return null;
   const summary = normalizeSummary(notification.summary);
   const resultPreview = normalizeResultPreview(notification.result ?? notification.summary);
-  const sourceSessionId = notification.sourceSessionId;
-  const uuid = notification.uuid;
-
   return {
     kind: 'task-lifecycle',
-    subtype: 'task_notification',
-    ...(taskId ? { taskId } : {}),
-    toolUseId,
-    status,
+    subtype: notification.subtype,
+    status: notification.status,
+    ...(notification.taskId ? { taskId: notification.taskId } : {}),
+    ...(notification.toolUseId ? { toolUseId: notification.toolUseId } : {}),
+    ...(notification.taskType ? { taskType: notification.taskType } : {}),
+    ...(notification.resumed ? { resumed: true } : {}),
+    ...(notification.knownOnly ? { knownOnly: true } : {}),
     ...(summary ? { summary } : {}),
     ...(resultPreview ? { resultPreview } : {}),
     usage: {},
-    ...(sourceSessionId ? { sourceSessionId } : {}),
-    ...(uuid ? { uuid } : {}),
+    ...(notification.sourceSessionId ? { sourceSessionId: notification.sourceSessionId } : {}),
+    ...(notification.uuid ? { uuid: notification.uuid } : {}),
   };
 }
 
@@ -730,20 +807,53 @@ function parseWorkflowJournalFact(message: Record<string, unknown>): WorkflowJou
  * stream — the tracker — supplies it, so an undeclared field going unreadable is observed exactly
  * once rather than at every reader that happens to look.
  */
-export function parseClaudeWorkflowFact(
+function parseSingleClaudeWorkflowFact(
   value: unknown,
   report?: ClaudeWorkflowShapeDriftReporter,
+  isKnownSubagentToolUseId?: (toolUseId: string) => boolean,
 ): ClaudeWorkflowFact | null {
   const message = readRecord(value);
   if (!message) return null;
   return (
-    parseTaskNotificationEnvelope(message)
-    ?? parseWorkflowJournalFact(message)
-    ?? parseWorkflowRunRecordFact(message, report)
+    parseFailedWorkflowToolResult(message)
     ?? parseSuccessfulWorkflowTaskStopResult(message)
     ?? parseWorkflowLaunchResult(message)
+    ?? parseTaskNotificationEnvelope(message)
+    ?? parseWorkflowJournalFact(message)
+    ?? parseWorkflowRunRecordFact(message, report)
     ?? parseWorkflowToolUse(message)
     ?? parseTaskLifecycle(message, report)
     ?? parseSubagentUse(message)
+    ?? parseSubagentToolResult(message, isKnownSubagentToolUseId)
   );
+}
+
+/** Fold every content block; the single-fact accessor remains for shape-inspecting callers. */
+export function parseClaudeWorkflowFacts(
+  value: unknown,
+  report?: ClaudeWorkflowShapeDriftReporter,
+  isKnownSubagentToolUseId?: (toolUseId: string) => boolean,
+): readonly ClaudeWorkflowFact[] {
+  const record = readRecord(value);
+  const message = readRecord(record?.message);
+  const content = message?.content;
+  if (record && message && Array.isArray(content) && content.length > 1
+    && content.some(part => {
+      const block = readRecord(part);
+      return block?.type === 'tool_use' || block?.type === 'tool_result';
+    })) {
+    return content.flatMap(part => {
+      const fact = parseSingleClaudeWorkflowFact({ ...record, message: { ...message, content: [part] } }, report, isKnownSubagentToolUseId);
+      return fact ? [fact] : [];
+    });
+  }
+  const fact = parseSingleClaudeWorkflowFact(value, report, isKnownSubagentToolUseId);
+  return fact ? [fact] : [];
+}
+
+export function parseClaudeWorkflowFact(
+  value: unknown,
+  report?: ClaudeWorkflowShapeDriftReporter,
+): ClaudeWorkflowFact | null {
+  return parseClaudeWorkflowFacts(value, report)[0] ?? null;
 }

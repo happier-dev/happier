@@ -5,7 +5,7 @@ import {
   applyWorkflowDefinitionEditsV1, createWorkflowBlock, createWorkflowLeafBlock, duplicateWorkflowBlock, insertWorkflowBlock, moveWorkflowBlock,
   removeWorkflowBlock, setWorkflowDefaultField, setWorkflowFinalOutput, setWorkflowInputs,
   setWorkflowStepExecutionField, setWorkflowStepText, setWorkflowStepTimeout, updateWorkflowBlock,
-  setWorkflowBlockOnlyWhen, setWorkflowLeafPauseForReview, setWorkflowStepExecutionTarget,
+  setWorkflowBlockOnlyWhen, setWorkflowLeafPauseForReview, setWorkflowStepExecutionTarget, setWorkflowParallelBranchName,
   WorkflowDefinitionEditOpV1Schema, WorkflowInsertBlockV1Schema,
   type WorkflowDefinitionDraftV1, type WorkflowDefinitionEditOpV1,
 } from './workflowDefinitionEditV1.js';
@@ -19,6 +19,22 @@ function fixture(): WorkflowDefinitionDraftV1 {
 }
 
 describe('typed workflow definition edits', () => {
+  it('names a Side by side lane, keeps the name through the canonical schema, and clears a blank one (07 lane captions)', () => {
+    const group = createWorkflowBlock('parallel', new Set());
+    if (group.kind !== 'parallel') throw new Error('unreachable');
+    const lane = group.branches[0]!;
+    let draft: WorkflowDefinitionDraftV1 = { name: 'Release', inputs: [], defaults: {}, blocks: [group] };
+    for (const branch of group.branches) for (const block of branch.blocks) draft = setWorkflowStepText(draft, block.id, 'Write');
+    const named = setWorkflowParallelBranchName(draft, group.id, lane.id, '  Changelog  ');
+    const parsed = WorkflowBlockSchema.parse(named.blocks[0]);
+    expect(parsed.kind === 'parallel' ? parsed.branches[0] : null).toMatchObject({ id: lane.id, name: 'Changelog' });
+    const cleared = setWorkflowParallelBranchName(named, group.id, lane.id, '   ');
+    expect((cleared.blocks[0] as typeof group).branches[0]).not.toHaveProperty('name');
+    const blank = named.blocks[0] as typeof group;
+    const reparsed = WorkflowBlockSchema.parse({ ...blank, branches: blank.branches.map((branch) => ({ ...branch, name: ' ' })) });
+    expect(reparsed.kind === 'parallel' ? reparsed.branches[0] : null).not.toHaveProperty('name');
+  });
+
   it('edits and clears a block name through the typed Action operations without changing its prompt', () => {
     const draft = fixture();
     const block = draft.blocks[0]!;

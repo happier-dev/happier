@@ -31,6 +31,16 @@ import {
 } from './workflowProgressV1.js';
 
 describe('workflow progress v1', () => {
+  it('retains destination labels and exact last-observed invocation facts in private root progress', () => {
+    const progress = { kind: 'happier.workflow-progress.v1', blockKind: 'root', invocationPath: { blockId: '$root', scope: [] },
+      attempt: '0', logicalInvocationRecordId: 'root', stepProgress: { completed: 0, total: 1, destinations: [
+        { sourceKey: '$root', blockId: 'write', sessionIds: ['session-1'], ordinal: 1, name: 'Write',
+          observation: { recordId: 'writer', sequence: '3', attempt: '0', contentRevision: '4', lifecycle: 'running' } },
+        { sourceKey: 'builtin:child', blockId: 'later', sessionIds: ['session-2'], ordinal: 1, name: 'Later' },
+      ] } };
+    expect(WorkflowProgressEnvelopeV1Schema.parse(progress)).toEqual(progress);
+    expect(WorkflowProgressEnvelopeV1Schema.safeParse({ ...progress, stepProgress: { completed: 0, total: 1 } }).success).toBe(true);
+  });
   it('retains exact result condition annotations on the root, merges reported results, and tolerates only stored extras', () => {
     const root = { kind: 'happier.workflow-progress.v1', blockKind: 'root', invocationPath: { blockId: '$root', scope: [] },
       attempt: '0', logicalInvocationRecordId: 'root', resultProvenance: { report: { notificationCondition: 'suppressed' } } };

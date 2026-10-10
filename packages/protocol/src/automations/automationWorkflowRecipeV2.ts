@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';
 
@@ -17,7 +18,7 @@ import {
 
 const UTF8_ENCODER = new TextEncoder();
 
-export const AutomationStoredWorkflowDefinitionV2Schema = z.object({
+export const AutomationStoredWorkflowDefinitionV2Schema = lazyZodSchema(() => z.object({
   workspace: z.object({
     directory: z.string().min(1),
     workspaceRefId: preservedBoundedNfcString(191, 'Workspace reference ids').optional(),
@@ -28,7 +29,7 @@ export const AutomationStoredWorkflowDefinitionV2Schema = z.object({
   roleOverrides: WorkflowRoleOverridesV1Schema.optional(),
   inlineDefinition: WorkflowDefinitionV1Schema.optional(),
   onComplete: z.object({ kind: z.literal('originating_session') }).strict().optional(),
-}).strict();
+}).strict());
 export type AutomationStoredWorkflowDefinitionV2 = z.infer<typeof AutomationStoredWorkflowDefinitionV2Schema>;
 export type WorkflowTriggerContextV1 = AutomationStoredWorkflowDefinitionV2;
 export const AutomationStoredWorkflowDefinitionV2ReadSchema = createStoredReadSchema(AutomationStoredWorkflowDefinitionV2Schema);
@@ -36,7 +37,7 @@ export const AutomationStoredWorkflowDefinitionV2ReadSchema = createStoredReadSc
 /**
  * The current Automation definition recipe for managed workflows.
  *
- * The V1 one-shot recipe is a separate current format. This recipe has no synthetic
+ * The V1 one-shot recipe is retained only for historical reads. This recipe has no synthetic
  * one-shot target. The assignment owns the machine; this payload owns run
  * context and an inline target's definition. Workflow references resolve live
  * at claim and are never copied into this payload.

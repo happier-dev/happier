@@ -157,7 +157,7 @@ export type ClaudeUnifiedWorkflowRuntime = Readonly<{
   /** Observe one raw transcript value (same raw channel as the goal source). Non-workflow noise ignored. */
   observeTranscriptMessage(
     message: unknown,
-    context?: Readonly<{ historicalReplay?: boolean }>,
+    context?: Readonly<{ historicalReplay?: boolean; observedAt?: number; authenticatedHook?: true; startupReplay?: true }>,
   ): WorkflowActivityObservation;
   /** Workflow-owned subagent tool-use ids — the CWF4 hook to suppress duplicate work-state rows. */
   getWorkflowOwnedAgentToolUseIds(): ReadonlySet<string>;
@@ -314,15 +314,19 @@ export function createClaudeUnifiedWorkflowRuntime(params: Readonly<{
 
   const observeTrackerValue = (
     message: unknown,
-    context?: Readonly<{ historicalReplay?: boolean }>,
+    context?: Readonly<{ historicalReplay?: boolean; observedAt?: number; authenticatedHook?: true; startupReplay?: true }>,
   ): WorkflowActivityObservation => {
     const historicalReplay = context?.historicalReplay === true;
+    const historicalTimestamp = historicalReplay ? readClaudeRecordTimestampMs(message) : undefined;
     const observation = tracker.observe(message, {
       // Resumed work is not fresh work: a replayed row is dated by the record itself, so reopening a
       // transcript cannot move a workflow's start to the moment it was re-read. A live row's instant
       // IS the clock, and records without a timestamp still fall back to it.
-      updatedAt: (historicalReplay ? readClaudeRecordTimestampMs(message) : undefined) ?? Date.now(),
+      updatedAt: historicalTimestamp ?? context?.observedAt ?? Date.now(),
       live: !historicalReplay,
+      ...(historicalReplay ? { historicalTimestampAvailable: historicalTimestamp !== undefined } : {}),
+      ...(context?.authenticatedHook ? { authenticatedHook: true as const } : {}),
+      ...(context?.startupReplay ? { startupReplay: true as const, receiptAvailable: context.observedAt !== undefined } : {}),
     });
     if (!historicalReplay) {
       publishProviderTaskActivities(observation.providerTaskActivities);
@@ -370,27 +374,45 @@ export function createClaudeUnifiedWorkflowRuntime(params: Readonly<{
         title: entry.title,
         updatedAt: entry.updatedAt,
         ...(entry.startedAt !== undefined ? { startedAt: entry.startedAt } : {}),
+        ...(entry.sidechainId !== undefined ? { sidechainId: entry.sidechainId } : {}),
       });
       orphanAgentsByRunId.set(ref.runId, orphans);
     }
   }
-  const startupCandidates: WorkflowInterruptedRunSeed[] = parsedStartupHeadline.success
-    ? parsedStartupHeadline.data.activeRuns
-        .filter((run) => !isTerminalWorkflowRunStatus(run.status))
-        .map((run) => {
-          const orphanAgents = orphanAgentsByRunId.get(run.runId);
-          return {
-            runId: run.runId,
-            title: run.title,
-            totalAgents: run.totalAgents,
-            completedAgents: run.completedAgents,
-            ...(run.workflowToolUseId !== undefined ? { workflowToolUseId: run.workflowToolUseId } : {}),
-            ...(run.failedAgents !== undefined ? { failedAgents: run.failedAgents } : {}),
-            ...(run.blockedAgents !== undefined ? { blockedAgents: run.blockedAgents } : {}),
-            ...(orphanAgents?.length ? { orphanAgents } : {}),
-          };
-        })
-    : [];
+  const runHeadlinesById = new Map(
+    (parsedStartupHeadline.success
+      ? [...parsedStartupHeadline.data.activeRuns, ...(parsedStartupHeadline.data.recentRuns ?? [])]
+      : []).map((run) => [run.runId, run]),
+  );
+  const runTitlesFromRoster = new Map<string, string>();
+  if (parsedAgentHeadline.success) {
+    for (const entry of [...parsedAgentHeadline.data.activeEntries, ...(parsedAgentHeadline.data.recentEntries ?? [])]) {
+      if (entry.kind !== 'workflow_run') continue;
+      const ref = parseAgentActivityEntryId(entry.entryId);
+      if (ref?.kind === 'workflow_run') runTitlesFromRoster.set(ref.runId, entry.title);
+    }
+  }
+  const startupRunIds = new Set(orphanAgentsByRunId.keys());
+  if (parsedStartupHeadline.success) {
+    for (const run of parsedStartupHeadline.data.activeRuns) {
+      if (!isTerminalWorkflowRunStatus(run.status)) startupRunIds.add(run.runId);
+    }
+  }
+  const startupCandidates: WorkflowInterruptedRunSeed[] = [...startupRunIds].map((runId) => {
+    const run = runHeadlinesById.get(runId);
+    const orphanAgents = orphanAgentsByRunId.get(runId);
+    return {
+      runId,
+      title: run?.title ?? runTitlesFromRoster.get(runId) ?? runId,
+      totalAgents: run?.totalAgents ?? 0,
+      completedAgents: run?.completedAgents ?? 0,
+      ...(run?.workflowToolUseId !== undefined ? { workflowToolUseId: run.workflowToolUseId } : {}),
+      ...(run?.failedAgents !== undefined ? { failedAgents: run.failedAgents } : {}),
+      ...(run?.blockedAgents !== undefined ? { blockedAgents: run.blockedAgents } : {}),
+      ...(run && isTerminalWorkflowRunStatus(run.status) ? { runTerminalStatus: run.status } : {}),
+      ...(orphanAgents?.length ? { orphanAgents } : {}),
+    };
+  });
   let startupReconcileTimer: ReturnType<typeof setTimeout> | null = null;
   if (startupCandidates.length > 0) {
     const graceMs = Math.max(

@@ -673,6 +673,51 @@ describe('createClaudeUnifiedWorkflowRuntime live bind', () => {
     runtime.dispose();
   });
 
+  it.each(['complete', 'failed', 'stopped', 'aged-out'] as const)(
+    'reconciles orphan agents under a %s workflow without rewriting known parent outcomes', async (status) => {
+      const systemRecordCalls: SystemRecordCall[] = [];
+      const runtime = createClaudeUnifiedWorkflowRuntime({
+        backendId: 'claude', agentId: 'claude',
+        getCurrentClaudeSessionId: () => 'claude-session-1',
+        initialWorkflowActivityHeadline: {
+          v: 1, backendId: 'claude', updatedAt: 1000, activeRuns: [],
+          recentRuns: status === 'aged-out' ? [] : [{
+            runId: 'wf_finished', title: 'Finished workflow', status,
+            workflowToolUseId: 'toolu_finished', updatedAt: 1000,
+            recordRevision: '4', recordUpdatedAt: 1000, totalAgents: 2, completedAgents: 1,
+          }],
+        },
+        initialAgentActivityHeadline: {
+          v: 1, backendId: 'claude', updatedAt: 1000,
+          activeEntries: [{
+            entryId: 'workflow_agent:wf_finished:workflow-agent%3A1', kind: 'workflow_agent',
+            title: 'Researcher', status: 'running', updatedAt: 900, startedAt: 800,
+            runId: 'wf_finished', parentId: 'workflow_run:wf_finished', sidechainId: 'native-child-1',
+          }],
+          recentEntries: [{
+            entryId: 'workflow_run:wf_finished', kind: 'workflow_run', title: 'Finished workflow',
+            status: 'succeeded', updatedAt: 1000, runId: 'wf_finished',
+          }],
+        },
+        startupReconcileGraceMs: 0, debounceMs: 60_000,
+        writeSystemRecord: async (request) => { systemRecordCalls.push(request); },
+        publishHeadlines: async () => {},
+      });
+      try {
+        await waitForCondition(() => systemRecordCalls.length > 0);
+        expect(systemRecordCalls.at(-1)?.payload).toMatchObject({
+          runId: 'wf_finished', title: 'Finished workflow',
+          status: status === 'aged-out' ? 'stopped' : status,
+          ...(status === 'aged-out' ? { statusReason: 'interrupted' } : {}),
+          agents: [{
+            id: 'workflow-agent:1', title: 'Researcher', status: 'cancelled',
+            updatedAt: 900, startedAt: 800, sidechainId: 'native-child-1',
+          }],
+        });
+      } finally { runtime.dispose(); }
+    },
+  );
+
   it('contains a failed startup metadata flush and retries the stale-run reconciliation', async () => {
     let metadataAttempts = 0;
     let metadata: Record<string, unknown> = {};
