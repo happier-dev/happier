@@ -222,6 +222,7 @@ export type AgentCatalogEntry = Readonly<{
   connectedServiceIds?: readonly ConnectedServiceId[];
   /** Service identity derived only from the Agent's public connectedAccounts declaration. */
   connectedAccountServiceIds?: readonly ConnectedAccountServiceKey[];
+  connectedAccountGenerationApplicationScope?: 'per_session_runtime' | 'shared_group_auth_surface';
   connectedAccountRequestAuthUses?: readonly ConnectedAccountRequestAuthUseV1[];
   connectedAccountFileEnvironmentUses?: readonly AgentConnectedAccountFileEnvironmentUseV1[];
   connectedAccountEnvironmentUses?: readonly AgentConnectedAccountEnvironmentUseV1[];

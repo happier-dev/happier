@@ -5,9 +5,10 @@ import { join, delimiter as PATH_DELIMITER } from 'path';
 import { AGENTS } from '@/agent/catalog/registry';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import type { CliDetectSpec } from '@/agent/catalog/types';
-import type { CliAuthSpec, CliAuthStatus } from '@/capabilities/cliAuth/types';
+import type { CliAuthStatus } from '@/capabilities/cliAuth/types';
 import { CapabilityError } from '@/capabilities/errors';
 import { detectNativeAgentCliAuthStatus } from '@/capabilities/cliAuth/detectNativeAgentCliAuthStatus';
+import { resolveCliSnapshotProbeTimeoutMs } from './cliSnapshotProbeTimeout';
 import {
     resolveAgentCliCommandForRuntime,
     resolveAgentCliJavaScriptRuntimeOnDaemonPath as resolveJavaScriptRuntimeExecutableForCliSnapshot,
@@ -128,28 +129,7 @@ const cliSnapshotCache = new AsyncTtlCache<DetectCliSnapshot>({
     errorTtlMs: 2_000,
 });
 
-const DEFAULT_CLI_SNAPSHOT_PROBE_TIMEOUT_MS = 3_000;
-const DEFAULT_CLI_SNAPSHOT_LOGIN_STATUS_PROBE_TIMEOUT_MS = process.env.CI ? 7_000 : 6_500;
 const CLI_SNAPSHOT_PROBE_TIMEOUT = Symbol('CLI_SNAPSHOT_PROBE_TIMEOUT');
-
-function resolveCliSnapshotProbeTimeoutMs(slowProbes: boolean): number {
-    if (slowProbes) {
-        const rawLoginStatus = process.env.HAPPIER_CLI_SNAPSHOT_LOGIN_STATUS_PROBE_TIMEOUT_MS;
-        const parsedLoginStatus = typeof rawLoginStatus === 'string' ? Number(rawLoginStatus) : Number.NaN;
-        if (Number.isFinite(parsedLoginStatus) && parsedLoginStatus > 0) {
-            return parsedLoginStatus;
-        }
-    }
-
-    const raw = process.env.HAPPIER_CLI_SNAPSHOT_PROBE_TIMEOUT_MS;
-    const parsed = typeof raw === 'string' ? Number(raw) : Number.NaN;
-    if (Number.isFinite(parsed) && parsed > 0) {
-        return parsed;
-    }
-    return slowProbes
-        ? DEFAULT_CLI_SNAPSHOT_LOGIN_STATUS_PROBE_TIMEOUT_MS
-        : DEFAULT_CLI_SNAPSHOT_PROBE_TIMEOUT_MS;
-}
 
 async function withCliSnapshotProbeTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | typeof CLI_SNAPSHOT_PROBE_TIMEOUT> {
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -285,7 +265,6 @@ function defaultVersionArgsToTry(): Array<string[]> {
 }
 
 const cliDetectCache = new Map<DetectCliName, CliDetectSpec | null>();
-const cliAuthSpecCache = new Map<DetectCliName, CliAuthSpec | null>();
 
 async function resolveCliDetectSpec(name: DetectCliName): Promise<CliDetectSpec | null> {
     if (cliDetectCache.has(name)) {
@@ -307,22 +286,6 @@ async function resolveCliVersionArgsToTry(name: DetectCliName): Promise<Array<st
     const spec = (await resolveCliDetectSpec(name))?.versionArgsToTry;
     if (!spec || spec.length === 0) return defaultVersionArgsToTry();
     return spec.map((v) => [...v]);
-}
-
-async function resolveCliAuthSpec(name: DetectCliName): Promise<CliAuthSpec | null> {
-    if (cliAuthSpecCache.has(name)) {
-        return cliAuthSpecCache.get(name) ?? null;
-    }
-
-    const entry = AGENTS[name];
-    if (!entry?.getCliAuthSpec) {
-        cliAuthSpecCache.set(name, null);
-        return null;
-    }
-
-    const spec = await entry.getCliAuthSpec();
-    cliAuthSpecCache.set(name, spec);
-    return spec;
 }
 
 async function probeCliExecution(params: { name: DetectCliName; resolvedPath: string; timeoutMs: number; env?: NodeJS.ProcessEnv; signal?: AbortSignal; execFile?: typeof execFileWithDeadline }): Promise<Readonly<{ installed?: boolean; version: string | null; detectionError?: DetectCliEntry['detectionError'] }>> {
@@ -552,11 +515,11 @@ async function detectTmuxVersion(params: { resolvedPath: string }): Promise<stri
     }
 }
 
-async function detectCliAuthStatus(params: { name: DetectCliName; resolvedPath: string }): Promise<CliAuthStatus | null> {
+async function detectCliAuthStatus(params: { name: DetectCliName; resolvedPath: string; timeoutMs: number }): Promise<CliAuthStatus | null> {
     return detectNativeAgentCliAuthStatus({
         agentId: params.name,
         resolvedPath: params.resolvedPath,
-        authSpec: await resolveCliAuthSpec(params.name),
+        timeoutMs: params.timeoutMs,
     });
 }
 
@@ -656,7 +619,7 @@ export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest): Pro
                 probeCliExecution({ name, resolvedPath, timeoutMs: probeTimeoutMs }),
                 includeLoginStatus
                     ? withCliSnapshotProbeTimeout(
-                        detectCliAuthStatus({ name, resolvedPath }),
+                        detectCliAuthStatus({ name, resolvedPath, timeoutMs: probeTimeoutMs }),
                         probeTimeoutMs,
                     )
                     : Promise.resolve(null),

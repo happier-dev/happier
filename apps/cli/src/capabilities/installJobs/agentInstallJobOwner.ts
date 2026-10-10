@@ -13,6 +13,8 @@ import { getRuntimeInstallableAdapter } from '@/packagedRuntime/installables/reg
 import { resolveAgentRuntimeManagedDependencyId, resolveExecutableManagedDependenciesRegistry, selectExecutableManagedDependencies } from '@/plugins/projection/registry/managedDependencyExecutables';
 import { executeInstallCommand } from './executeInstallCommand';
 import { resolveAgentSetupPlatform } from '@happier-dev/protocol/agents/setup';
+import type { LiveWorkItemV1, LiveWorkProducerV1 } from '@/daemon/lifecycle/managedActivity';
+import type { DaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 
 export type AgentInstallJobRegistry = Readonly<{
   agents: readonly Pick<ResolvedAgentContribution, 'id' | 'runtimeSpec' | 'pluginId' | 'richDefinition' | 'hostAccess' | 'cliMetadata'>[];
@@ -25,6 +27,7 @@ export type AgentInstallJobOwnerOptions = Readonly<{
   platform?: NodeJS.Platform;
   arch?: string;
   installerDeps?: Parameters<typeof installAgentCliForRuntime>[0]['deps'];
+  admissionDrain?: Pick<DaemonAdmissionDrain, 'isQuiescing' | 'isFinalShutdown'>;
 }>;
 
 type JobRecord = {
@@ -52,6 +55,7 @@ function failureCode(code: string): AgentInstallJobFailureCode {
 }
 
 export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions = {}) {
+  let admissionDrain = options.admissionDrain;
   const readRegistry = options.readRegistry ?? readCurrentContributionRegistry;
   const env = options.env ?? process.env;
   const installerDeps = { execFileWithDeadline: executeInstallCommand, ...options.installerDeps };
@@ -61,6 +65,24 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
   // Reconnection needs the active job and the latest completed attempt, not an
   // unbounded daemon-lifetime audit trail. Each agent retains one terminal job.
   const recentByAgent = new Map<string, JobRecord>();
+  const activityListeners = new Set<() => void>();
+  const notifyActivity = (): void => {
+    for (const listener of activityListeners) {
+      try { listener(); } catch { /* Observation cannot alter installer custody. */ }
+    }
+  };
+  const activity: LiveWorkProducerV1 = {
+    read: () => ({ coverage: 'complete', items: [...jobs.values()].map((job): LiveWorkItemV1 => ({
+      category: 'setup', ownerRef: job.snapshot.jobId, attribution: { kind: 'unknown' },
+      // A public terminal result is not process-terminal evidence when the
+      // actual installer owner retained a failed-containment writer.
+      state: job.cleanupError ? 'unknown' : job.snapshot.done ? 'settled' : 'active',
+    })) }),
+    subscribe: listener => {
+      activityListeners.add(listener);
+      return () => { activityListeners.delete(listener); };
+    },
+  };
   let shuttingDown = false;
 
   const emit = (job: JobRecord, event: AgentInstallJobEvent) => {
@@ -208,9 +230,14 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
     const previous = recentByAgent.get(agent.id);
     if (previous) jobs.delete(previous.snapshot.jobId);
     recentByAgent.set(agent.id, job);
+    notifyActivity();
   };
 
   return {
+    activity,
+    bindAdmissionDrain(drain: NonNullable<AgentInstallJobOwnerOptions['admissionDrain']>): void {
+      admissionDrain = drain;
+    },
     start(input: DaemonAgentInstallStartRequest): DaemonAgentInstallStartResponse {
       const parsed = DaemonAgentInstallStartRequestSchema.safeParse(input);
       if (!parsed.success) return { ok: false, errorCode: 'invalid_request', error: 'Invalid install request.' };
@@ -218,6 +245,8 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
       const active = activeByAgent.get(input.agentId);
       if (active?.cleanupError) return { ok: false, errorCode: 'install_unavailable', error: 'The previous install process cleanup could not be verified. Stop that process manually and restart the daemon before retrying.' };
       if (active) return { ok: true, jobId: active.snapshot.jobId };
+      if (admissionDrain?.isQuiescing()) return { ok: false, errorCode: 'install_unavailable',
+        error: admissionDrain.isFinalShutdown() ? 'The daemon is shutting down.' : 'The daemon is draining.' };
       let registry: AgentInstallJobRegistry;
       try { registry = readRegistry(); } catch {
         return { ok: false, errorCode: 'install_unavailable', error: 'The agent registry is unavailable.' };
@@ -240,6 +269,7 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
       // Start on the next microtask so admission publishes the active record
       // before even a synchronously rejected install can settle.
       job.completion = Promise.resolve().then(() => run(job, parsed.data, registry, agent));
+      notifyActivity();
       return { ok: true, jobId: job.snapshot.jobId };
     },
     read(input: DaemonAgentInstallReadRequest): DaemonAgentInstallReadResponse {
@@ -274,6 +304,8 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
 
 export type AgentInstallJobOwner = ReturnType<typeof createAgentInstallJobOwner>;
 let daemonOwner: AgentInstallJobOwner | null = null;
-export function getDaemonAgentInstallJobOwner(): AgentInstallJobOwner {
-  return daemonOwner ??= createAgentInstallJobOwner();
+export function getDaemonAgentInstallJobOwner(options?: Pick<AgentInstallJobOwnerOptions, 'admissionDrain'>): AgentInstallJobOwner {
+  const owner = daemonOwner ??= createAgentInstallJobOwner(options);
+  if (options?.admissionDrain) owner.bindAdmissionDrain(options.admissionDrain);
+  return owner;
 }

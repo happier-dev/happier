@@ -17,7 +17,7 @@ describe('createAcpClientHandlers permission pre-prompt decisions', () => {
       new Error('Workflow interaction exceeds durable capacity'),
       { code: 'workflow_interaction_capacity_exceeded', recoverable: true as const },
     );
-    const failTurn = vi.fn();
+    const cancel = vi.fn(async (_failure?: Error) => undefined);
     const handlerContext = createHandlerContext();
     const client = createAcpClientHandlers({
       onSessionUpdate: () => undefined,
@@ -27,13 +27,12 @@ describe('createAcpClientHandlers permission pre-prompt decisions', () => {
       createHandlerContext: () => handlerContext,
       getToolNameContext: () => ({ recentPromptHadChangeTitle: false, toolCallCountSincePrompt: 0 }),
       getActiveSessionId: () => 'session-1',
-      cancel: vi.fn(async () => undefined),
+      capturePermissionRequest: () => ({ scope: 'turn', isCurrent: () => true, cancel }),
       emitPermissionResponse: vi.fn(async () => undefined),
       clearTrackedToolCall: vi.fn(),
       incrementToolCallCountSincePrompt: vi.fn(),
       toolCalls: handlerContext.toolCalls,
       lastSelectedPermissionOptionIdByToolCallId: new Map(),
-      failTurn,
     });
 
     await client.requestPermission({
@@ -42,7 +41,7 @@ describe('createAcpClientHandlers permission pre-prompt decisions', () => {
       options: [{ optionId: 'deny', kind: 'reject_once', name: 'Deny' }],
     } as never);
 
-    expect(failTurn).toHaveBeenCalledWith(capacityError);
+    expect(cancel).toHaveBeenCalledWith(capacityError);
   });
 
   it('starts cancellation before publishing a denied permission response', async () => {
@@ -56,7 +55,7 @@ describe('createAcpClientHandlers permission pre-prompt decisions', () => {
       createHandlerContext: () => handlerContext,
       getToolNameContext: () => ({ recentPromptHadChangeTitle: false, toolCallCountSincePrompt: 0 }),
       getActiveSessionId: () => 'session-1',
-      cancel: async () => { order.push('cancel'); },
+      capturePermissionRequest: () => ({ scope: 'turn', isCurrent: () => true, cancel: async () => { order.push('cancel'); } }),
       emitPermissionResponse: async () => { order.push('response'); },
       clearTrackedToolCall: () => { order.push('terminalize'); },
       incrementToolCallCountSincePrompt: () => undefined,
@@ -70,7 +69,7 @@ describe('createAcpClientHandlers permission pre-prompt decisions', () => {
       options: [{ optionId: 'deny', kind: 'reject_once', name: 'Deny' }],
     } as never);
 
-    expect(order).toEqual(['cancel', 'response', 'terminalize']);
+    expect(order).toEqual(['cancel', 'response']);
   });
 
   it('denies permission requests when no permission handler is wired', async () => {
@@ -91,7 +90,7 @@ describe('createAcpClientHandlers permission pre-prompt decisions', () => {
         toolCallCountSincePrompt: 0,
       }),
       getActiveSessionId: () => 'session-1',
-      cancel,
+      capturePermissionRequest: () => ({ scope: 'turn', isCurrent: () => true, cancel }),
       emitPermissionResponse,
       clearTrackedToolCall,
       incrementToolCallCountSincePrompt: vi.fn(),
@@ -119,8 +118,7 @@ describe('createAcpClientHandlers permission pre-prompt decisions', () => {
 
     expect(emitted).not.toContainEqual(expect.objectContaining({ type: 'permission-request' }));
     expect(emitPermissionResponse).toHaveBeenCalledWith('tool-1', false);
-    expect(cancel).toHaveBeenCalledWith('session-1');
-    expect(clearTrackedToolCall).toHaveBeenCalledWith('tool-1', 'permission handler missing');
+    expect(cancel).toHaveBeenCalledWith(undefined);
   });
 
   it('preserves an exact nonblank opaque tool-call id across permission correlation', async () => {
@@ -139,7 +137,7 @@ describe('createAcpClientHandlers permission pre-prompt decisions', () => {
         toolCallCountSincePrompt: 0,
       }),
       getActiveSessionId: () => 'session-1',
-      cancel: vi.fn(async () => undefined),
+      capturePermissionRequest: () => ({ scope: 'turn', isCurrent: () => true, cancel: vi.fn(async () => undefined) }),
       emitPermissionResponse,
       clearTrackedToolCall,
       incrementToolCallCountSincePrompt: vi.fn(),
@@ -157,7 +155,6 @@ describe('createAcpClientHandlers permission pre-prompt decisions', () => {
     } as never);
 
     expect(emitPermissionResponse).toHaveBeenCalledWith(opaqueToolCallId, false);
-    expect(clearTrackedToolCall).toHaveBeenCalledWith(opaqueToolCallId, 'permission handler missing');
     expect(emitted).not.toContainEqual(expect.objectContaining({ type: 'permission-request' }));
   });
 
@@ -183,7 +180,7 @@ describe('createAcpClientHandlers permission pre-prompt decisions', () => {
         toolCallCountSincePrompt: 0,
       }),
       getActiveSessionId: () => 'session-1',
-      cancel: vi.fn(async () => undefined),
+      capturePermissionRequest: () => ({ scope: 'turn', isCurrent: () => true, cancel: vi.fn(async () => undefined) }),
       emitPermissionResponse,
       clearTrackedToolCall: vi.fn(),
       incrementToolCallCountSincePrompt: vi.fn(),
@@ -232,7 +229,7 @@ describe('createAcpClientHandlers permission pre-prompt decisions', () => {
       createHandlerContext: () => handlerContext,
       getToolNameContext: () => ({ recentPromptHadChangeTitle: false, toolCallCountSincePrompt: 1 }),
       getActiveSessionId: () => 'session-1',
-      cancel: vi.fn(async () => undefined),
+      capturePermissionRequest: () => ({ scope: 'turn', isCurrent: () => true, cancel: vi.fn(async () => undefined) }),
       emitPermissionResponse: vi.fn(async () => undefined),
       clearTrackedToolCall: vi.fn(),
       incrementToolCallCountSincePrompt,
@@ -269,7 +266,7 @@ describe('createAcpClientHandlers permission pre-prompt decisions', () => {
       createHandlerContext: () => handlerContext,
       getToolNameContext: () => ({ recentPromptHadChangeTitle: false, toolCallCountSincePrompt: 0 }),
       getActiveSessionId: () => 'session-1',
-      cancel: async () => { order.push('cancel'); },
+      capturePermissionRequest: () => ({ scope: 'turn', isCurrent: () => true, cancel: async () => { order.push('cancel'); } }),
       emitPermissionResponse: async () => { order.push('response'); },
       clearTrackedToolCall: () => { order.push('terminalize'); },
       incrementToolCallCountSincePrompt: vi.fn(),
@@ -283,6 +280,6 @@ describe('createAcpClientHandlers permission pre-prompt decisions', () => {
       options: [{ optionId: 'allow-once', kind: 'allow_once', name: 'Allow' }],
     } as never)).resolves.toEqual({ outcome: { outcome: 'cancelled' } });
 
-    expect(order).toEqual(['cancel', 'response', 'terminalize']);
+    expect(order).toEqual(['cancel', 'response']);
   });
 });

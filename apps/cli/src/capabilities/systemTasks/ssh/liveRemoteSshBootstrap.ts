@@ -409,6 +409,7 @@ async function runSshJson<T extends JsonRecord>(params: Readonly<{
   knownHostsPath?: string;
   knownHostsMode?: 'app' | 'system';
   remoteCommand: readonly string[];
+  authStatus?: boolean;
   signal?: AbortSignal;
   timeoutMs?: number;
 }>): Promise<T> {
@@ -432,7 +433,8 @@ async function runSshJson<T extends JsonRecord>(params: Readonly<{
   });
   const stdout = result.stdout;
   const parsed = parseJsonLinesBestEffort<T>(stdout);
-  if (parsed) {
+  if (parsed && (result.status === 0
+    || (params.authStatus === true && systemTasks.isRemoteBootstrapUnauthenticatedCliResult(parsed, result.status)))) {
     return parsed;
   }
   if (result.status === 0) {
@@ -454,6 +456,7 @@ async function runSshPosixJson<T extends JsonRecord>(params: Readonly<{
   knownHostsPath?: string;
   knownHostsMode?: 'app' | 'system';
   shellCommand: string;
+  authStatus?: boolean;
   signal?: AbortSignal;
   timeoutMs?: number;
 }>): Promise<T> {
@@ -463,6 +466,7 @@ async function runSshPosixJson<T extends JsonRecord>(params: Readonly<{
     knownHostsPath: params.knownHostsPath,
     knownHostsMode: params.knownHostsMode,
     remoteCommand: ['bash', '-lc', safeBashSingleQuote(params.shellCommand)],
+    authStatus: params.authStatus,
     signal: params.signal,
     timeoutMs: params.timeoutMs,
   });
@@ -682,7 +686,7 @@ async function resolveLiveRemoteHostTrust(params: Readonly<{
   signal?: AbortSignal;
 }>): Promise<RemoteHostTrustResolution> {
   params.signal?.throwIfAborted();
-  if (params.knownHostsMode === 'system') return { status: 'trusted' };
+  if (params.knownHostsMode === 'system' && !params.ssh.hostKeyEvidence) return { status: 'trusted' };
   const knownHostsPath = resolveKnownHostsPath(params.ssh, params.knownHostsMode);
   const existingKnownHostsText = readKnownHostsText(knownHostsPath);
   const parsedTarget = resolveSshEndpoint({ ssh: params.ssh });
@@ -694,6 +698,15 @@ async function resolveLiveRemoteHostTrust(params: Readonly<{
   const scanned = systemTasks.extractFirstScannedSshKnownHostLine(keyscanOutput);
   const normalizedHost = formatKnownHostsHostToken(parsedTarget);
   const scannedHostKeyLine = normalizedHost ? `${normalizedHost} ${scanned.keyType} ${scanned.key}` : scanned.line;
+  if (params.ssh.hostKeyEvidence) {
+    const evidence = params.ssh.hostKeyEvidence;
+    const expected = systemTasks.parseSshKnownHostLine(evidence.hostKey);
+    const match = systemTasks.resolveSshKnownHostTrust({ scannedHostKeyLine, trustedHostKey: evidence.hostKey });
+    if (!expected || expected.fingerprint !== evidence.fingerprint || match.status !== 'trusted') {
+      throw new systemTasks.SystemTaskExecutionError('host_key_evidence_mismatch', 'The SSH host does not match the reported bootstrap evidence.');
+    }
+  }
+  if (params.knownHostsMode === 'system') return { status: 'trusted' };
   const trust = systemTasks.resolveSshKnownHostTrust({
     knownHostsText: existingKnownHostsText,
     scannedHostKeyLine,
@@ -995,8 +1008,9 @@ export function createLiveRemoteSshManageHostTaskKind() {
   });
 }
 
-export function createLiveRemoteSshBootstrapTaskKind() {
+export function createLiveRemoteSshBootstrapTaskKind(options: Pick<systemTasks.RemoteSshBootstrapMachineDeps, 'assertManagedEnrollmentCurrent'> = {}) {
   const baseKind = systemTasks.createRemoteSshBootstrapMachineTaskKind({
+    ...options,
     resolveHostTrust: resolveLiveRemoteHostTrust,
     installRemoteCli: async ({ parsed, auth, knownHostsMode, signal }) => await installLiveRemoteCli({
       ssh: parsed.ssh, auth: auth as SshAuth, knownHostsMode, channel: parsed.channel ?? 'stable', signal,
@@ -1125,6 +1139,7 @@ export function createLiveRemoteSshBootstrapTaskKind() {
         auth: auth as SshAuth,
         knownHostsPath,
         knownHostsMode,
+        authStatus: label === 'auth.status',
         shellCommand: (() => {
           const localServerUrl = typeof data?.localServerUrl === 'string' ? data.localServerUrl.trim() : '';
           return buildRemoteBootstrapCommand({
@@ -1141,30 +1156,7 @@ export function createLiveRemoteSshBootstrapTaskKind() {
         })(),
         signal,
       });
-      if (label === 'auth.status') {
-        if (result.ok === false) {
-          return {
-            ok: true,
-            data: { authenticated: false },
-          };
-        }
-        if (typeof result.data === 'object' && result.data != null) {
-          return {
-            ok: true,
-            data: result.data as JsonRecord,
-          };
-        }
-      }
-      if (typeof result.data === 'object' && result.data != null) {
-        return {
-          ok: result.ok !== false,
-          data: result.data as JsonRecord,
-        };
-      }
-      return {
-        ok: result.ok !== false,
-        data: result,
-      };
+      return systemTasks.normalizeRemoteBootstrapCliJsonResult(result, label === 'auth.status');
     },
   });
 

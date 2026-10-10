@@ -65,7 +65,12 @@ export async function resolveInactiveSessionUsageLimitRecoveryControls(
   if (!catalogId) return null;
   const entry = findCatalogEntry(catalogId);
   const backoffPolicy = entry?.sessionUsageLimitRecoveryBackoffPolicy ?? null;
-  const native = resolveInactiveCapabilities(catalogId).usage;
+  const definition = readAgentCatalogSnapshot().agentDefinitionsById.get(catalogId)?.richDefinition?.definition;
+  const declaredRuntime = definition && 'runtime' in definition ? definition.runtime : null;
+  const hostBackoff = declaredRuntime?.kind === 'acp' && declaredRuntime.definition?.usageLimitRecoveryBackoff !== undefined;
+  const capabilities = resolveInactiveCapabilities(catalogId).usage;
+  // A declarative ACP policy is executed by the host; custom native facets retain their readiness probe.
+  const native = { ...capabilities, checkNow: capabilities.checkNow && !hostBackoff };
   if (!backoffPolicy && !native.checkNow && !native.consumeResetCredit) return null;
   return createNativeInactiveUsageAdapter({
     agentId: catalogId,

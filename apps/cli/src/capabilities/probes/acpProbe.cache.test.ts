@@ -55,10 +55,11 @@ await connection.closed;
       timeoutMs: 2_000,
     };
 
-    await probeAcpAgentCapabilities(base);
+    const first = await probeAcpAgentCapabilities(base);
+    expect(first).toMatchObject({ ok: true, agentCapabilities: { loadSession: false } });
     const afterFirst = (await readFile(countFile, 'utf8')).length;
 
-    await probeAcpAgentCapabilities(base);
+    expect(await probeAcpAgentCapabilities(base)).toEqual(first);
     const afterSecond = (await readFile(countFile, 'utf8')).length;
 
     expect(afterSecond).toBe(afterFirst);

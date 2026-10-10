@@ -3,10 +3,14 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setImmediate as nextIoTurn } from 'node:timers/promises';
+import { projectMachineAgentsDetectResponse } from '@happier-dev/protocol';
 
 import { createProbeTempDir } from '@/capabilities/probes/agentModelsProbe.testkit';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { detectNativeAgentCliAuthStatus } from '@/capabilities/cliAuth/detectNativeAgentCliAuthStatus';
+import { probeAgentSignInStatus } from '@/capabilities/cliAuth/agentSignIn';
+import { buildCliCapabilityData } from '@/capabilities/probes/cliBase';
 import { reloadConfiguration } from '@/configuration';
 import { applyEnvValues, restoreEnvValues, snapshotEnvValues } from '@/testkit/env/envSnapshot';
 import { writeExecutableShim } from '@/testkit/fs/executableShim';
@@ -78,6 +82,54 @@ describe('detectCliSnapshotOnDaemonPath (cache)', () => {
     requestedCliNames: [name], includeLoginStatus,
   });
   const invocations = async () => (await readFile(countFile, 'utf8')).length;
+
+  it('acquires native auth for a cold Agent in on-demand and inventory probes', async () => {
+    const path = await cli('codex', 'if (process.argv.includes("--version")) process.stdout.write("1.2.3\\n"); else process.exit(0);');
+    nativeRuntime ??= await createAdmittedPluginRuntimeFixture({
+      controller: pluginReloadController, runtimeOptions: { pluginIds: [] },
+    });
+    const native = await detectNativeAgentCliAuthStatus({ agentId: 'codex', resolvedPath: path });
+    const inventory = await detect({ ...request('codex', true), bypassCache: true });
+    expect({ native: native?.state, inventory: inventory.clis.codex.authStatus?.state }).toEqual({
+      native: 'logged_in', inventory: 'logged_in',
+    });
+    await cli('codex', 'if (process.argv.includes("--version")) process.stdout.write("1.2.3\\n"); else process.exit(1);');
+    expect((await detectNativeAgentCliAuthStatus({ agentId: 'codex', resolvedPath: path }))?.state).toBe('logged_out');
+    expect((await detect({ ...request('codex', true), bypassCache: true })).clis.codex.isLoggedIn).toBe(false);
+  });
+
+  it('publishes Claude native command facts through cold inventory and on-demand sign-in', async () => {
+    // Claude Code 2.1.292 on LIVE-7 linux2 emits this JSON and exits 1 when
+    // logged out. The only substituted boundary is the external executable.
+    const writeStatus = async (output: string, exitCode: number) => cli('claude', [
+      'if (process.argv.includes("--version")) process.stdout.write("2.1.292\\n");',
+      'else if (JSON.stringify(process.argv.slice(2)) === JSON.stringify(["auth", "status", "--json"])) {',
+      // Stay inside inventory's existing login-status budget, but beyond the
+      // command helper's competing one-second default.
+      'setTimeout(() => { process.stdout.write(' + JSON.stringify(output) + '); process.exitCode = ' + exitCode + '; }, 1700);',
+      '} else process.exitCode = 2;',
+    ].join('\n'));
+    await writeStatus('{"loggedIn":false,"authMethod":"none","apiProvider":"firstParty"}', 1);
+    nativeRuntime ??= await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController });
+    const readInventory = async () => {
+      const snapshot = await detect({ ...request('claude', true), bypassCache: true });
+      const data = buildCliCapabilityData({
+        request: { id: 'cli.claude', params: { includeLoginStatus: true } }, entry: snapshot.clis.claude,
+      });
+      return projectMachineAgentsDetectResponse({
+        agents: [{ agentId: 'claude', title: 'Claude' }],
+        response: { protocolVersion: 1, results: { 'cli.claude': { ok: true, data } } },
+      }).items[0];
+    };
+    expect(await readInventory()).toMatchObject({ installed: true, signIn: { status: 'signedOut' } });
+    expect(await probeAgentSignInStatus('claude')).toMatchObject({ status: 'signedOut' });
+    await writeStatus('{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty"}', 0);
+    expect(await readInventory()).toMatchObject({ installed: true, signIn: { status: 'signedIn' } });
+    expect(await probeAgentSignInStatus('claude')).toMatchObject({ status: 'signedIn' });
+    await writeStatus('unparseable status', 0);
+    expect(await readInventory()).toMatchObject({ installed: true, signIn: { status: 'unknown' } });
+    expect(await probeAgentSignInStatus('claude')).toMatchObject({ status: 'unknown' });
+  });
 
   it('returns a timed-out auth status instead of hanging when a CLI auth probe never settles', async () => {
     const startedFile = join(fixture.dir, 'auth-started');
@@ -183,7 +235,11 @@ describe('detectCliSnapshotOnDaemonPath (cache)', () => {
   );
 
   it('invalidates cache when auth environment changes login status', async () => {
-    await cli('claude');
+    await cli('claude', [
+      'if (process.argv.includes("--version")) process.stdout.write("2.1.292\\n");',
+      'else { process.stdout.write(JSON.stringify({ loggedIn: false, authMethod: "none", apiProvider: "firstParty" })); process.exitCode = 1; }',
+    ].join('\n'));
+    nativeRuntime ??= await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController });
     const first = await detect(request('claude', true));
     const firstCount = await invocations();
     expect(first.clis.claude.isLoggedIn).toBe(false);
@@ -195,7 +251,14 @@ describe('detectCliSnapshotOnDaemonPath (cache)', () => {
   }, 20_000);
 
   it('invalidates cache when HOME changes auth-file lookup', async () => {
-    await cli('claude');
+    // Native file interpretation is external Claude behavior. Keep the real
+    // plugin parser and model that executable's HOME lookup at the boundary.
+    await cli('claude', [
+      'if (process.argv.includes("--version")) process.stdout.write("2.1.292\\n");',
+      'else { const loggedIn = fs.existsSync(require("node:path").join(process.env.HOME, ".claude", ".credentials.json"));',
+      'process.stdout.write(JSON.stringify({ loggedIn })); process.exitCode = loggedIn ? 0 : 1; }',
+    ].join('\n'));
+    nativeRuntime ??= await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController });
     const homeB = join(fixture.dir, 'home-b');
     await mkdir(join(homeB, '.claude'), { recursive: true });
     await writeFile(join(homeB, '.claude', '.credentials.json'), JSON.stringify({ accessToken: 'token' }));
@@ -206,7 +269,7 @@ describe('detectCliSnapshotOnDaemonPath (cache)', () => {
     process.env.USERPROFILE = homeB;
     const second = await detect(request('claude', true));
     expect(second.clis.claude.isLoggedIn).toBe(true);
-    expect(second.clis.claude.authStatus).toMatchObject({ state: 'logged_in', method: 'credentials_file', source: 'file' });
+    expect(second.clis.claude.authStatus).toMatchObject({ state: 'logged_in', source: 'command' });
     expect(await invocations()).toBeGreaterThan(firstCount);
   }, 20_000);
 });

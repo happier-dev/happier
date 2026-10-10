@@ -51,6 +51,60 @@ When you choose a specific model, Happier stores its Agent target, exact Provide
 
 For running-session apply timing, see [Permissions](/sessions/permissions).
 
+## Account-only browsing in 0.3 development
+
+The unreleased 0.3 integration lets an Agent's Models settings show its native
+static choices alongside compatible declared and manually added Provider models,
+even with no machine selected. You can manage manual entries where the connection
+allows them and preserve an exact model choice; browsing alone does not start a
+session, fetch live models or establish permission to run them.
+
+Provider rows in this view are unverified. Their declared compatibility is not
+runtime confirmation, their endpoint health is unchecked, and their load state
+is unknown. Runtime confirmation and model-loading controls require the selected
+machine's evidence. An unavailable source or missing selected model remains a
+setup/recovery state rather than silently switching to native CLI settings.
+
+See [Account Provider setup](/agents/provider-integrations#account-setup-in-03-development)
+for connection configuration without a machine. The live refresh behavior below
+still runs from the selected machine.
+
+## Child choices in 0.3 development
+
+The unreleased model-picker integration distinguishes a source's discovery visibility
+from its permission to run models. Aggregators default to hidden from ordinary browsing;
+direct, cloud, local and custom sources default to shown. Exact current, default and
+favorite choices remain identifiable when their source is hidden. Turning a source off
+does not change a running session or revoke credentials. In development builds the
+model picker lists hidden sources under the models; choosing one browses its models
+in place, and only picking a model changes the session. A model whose name appears
+in more than one source shows which source it comes from. The composer's account chip
+reads **Runs through** followed by where the session's models come from, and
+**Now via … · Change pending** while a requested change waits for a restart. The
+Account-wide visibility control is still being integrated, so this is not yet a
+released Settings workflow.
+
+The unreleased child-session integration lets an attached delegate, plan, review
+or conversation inherit the model and source actually running in its parent
+session. A pending model change does not become the child's choice. Choosing an
+explicit model or native CLI settings overrides inheritance, as do model choices
+in a Workflow definition or role.
+
+Inheritance is part of ordinary child launch admission in 0.3 development builds,
+without a separate capability toggle. The one-way 0.3 upgrade updates all
+components together; older session processes and mixed 0.2/0.3 operation are
+unsupported. Unavailable applied state never falls back to Account defaults.
+
+Choosing another Agent still requires a compatible model and source. If that
+choice cannot be admitted, Happier asks for a choice instead of changing the
+model or billing source. Independent detached or scheduled work uses its own
+choices or Account defaults. Resuming a child keeps that child's retained choice,
+even after its parent changes.
+
+Voice's **Session model** choice follows the same admission rule; custom chat
+and commit model choices remain explicit. Native children created by an Agent
+continue to follow its definitions and model rules.
+
 ## Live model lists
 
 Provider connections and some native Agent runtimes expose models dynamically. Happier probes from the selected machine and shows the current merged catalog.

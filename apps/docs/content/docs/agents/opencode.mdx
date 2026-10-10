@@ -166,6 +166,18 @@ is unavailable; it does not substitute ambient credentials. Opening an independe
 TUI through standalone attach for a Plain account remains unsupported pending a private local
 credential transport. Restoring the TUI inside its running terminal host reuses runner-local access.
 
+**Native subagents in development source.** A background subagent keeps its own output,
+permissions and questions after the main reply finishes. Its success, failure or cancellation
+closes its pending prompts; a reply to an old prompt cannot affect a resumed invocation. A
+background launch acknowledgement does not mark the subagent complete.
+
+Child outcomes follow the [OpenCode 2.0.20 execution contract](https://github.com/anomalyco/opencode/blob/84c9be93a56304a108f1a22df0c5d62c26d5b6ca/packages/schema/src/session-event.ts).
+After reconnecting, Happier reads the child's saved outcome when available and reports missing
+outcome evidence instead of guessing successful completion. Shutdown preserves work for resume.
+The native child lifecycle has host test coverage; validation against a running native child
+remains outstanding. Child approval requests can be answered, but the server path does not yet
+link an approval card to its exact launch tool row.
+
 ### What V2 does not support yet
 
 These are current development gaps. They are not settings you can turn on:

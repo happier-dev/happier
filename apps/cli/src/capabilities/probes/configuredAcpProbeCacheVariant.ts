@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto';
 
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
+import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 
-import { resolveConfiguredAcpBackendFromAccountSettings } from '@/agent/acp/catalog/configured/resolveBackend';
+import { AcpCatalogUnavailableError, requireReadyAcpCatalog, resolveConfiguredAcpBackendFromAccountSettings } from '@/agent/acp/catalog/configured/resolveBackend';
 import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
+import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { isConfiguredAcpProbeTarget } from './isConfiguredAcpProbeTarget';
 
 function sortJsonValue(value: unknown): unknown {
@@ -24,18 +26,25 @@ export async function resolveConfiguredAcpProbeCacheVariant(params: Readonly<{
   agentId: CatalogAgentLookupId;
   backendTarget?: BackendTargetRefV1;
   accountSettings?: Readonly<Record<string, unknown>> | null;
+  catalogSnapshot?: AcpCatalogSnapshotV1;
 }>): Promise<string | null> {
   if (!isConfiguredAcpProbeTarget(params)) {
     return null;
   }
 
+  const active = getActiveAccountSettingsSnapshot();
+  const catalog = requireReadyAcpCatalog(params.catalogSnapshot ?? (
+    active && params.accountSettings === active.settings ? active.acpCatalog : undefined
+  ));
+
   const backendId = params.backendTarget.backendId.trim();
   if (!backendId) {
-    return 'configuredAcp:missing-backend-id';
+    throw new AcpCatalogUnavailableError('backend-id-missing');
   }
   const backend = resolveConfiguredAcpBackendFromAccountSettings(
     params.accountSettings ?? {},
     backendId,
+    catalog,
   );
   if (!backend) {
     if (!params.accountSettings) {
@@ -50,6 +59,7 @@ export async function resolveConfiguredAcpProbeCacheVariant(params: Readonly<{
     args: backend.args,
     env: backend.env,
     auth: backend.auth,
+    runtime: backend.runtime,
     capabilities: backend.capabilities,
     defaultMode: backend.defaultMode,
     defaultModel: backend.defaultModel,

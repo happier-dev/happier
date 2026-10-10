@@ -1,5 +1,8 @@
 import type { AgentCliSessionCommandPluginSettingsV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { RuntimeDescriptorV1 } from '@happier-dev/protocol';
+import type { AgentConfigOptionsProbeObservation } from '@happier-dev/protocol/capabilities';
+import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
 import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
 import { AsyncTtlCache } from '@happier-dev/protocol/common/asyncTtlCache';
@@ -22,9 +25,8 @@ export type ProbedAgentConfigOptionValue = ProbedCatalogOptionValue;
 
 export type ProbedAgentConfigOption = ProbedCatalogOption;
 
-export type ProbedAgentConfigOptionsResult = Readonly<{
+export type ProbedAgentConfigOptionsResult = Readonly<AgentConfigOptionsProbeObservation & {
   agentId: CatalogAgentLookupId;
-  configOptions: ReadonlyArray<ProbedAgentConfigOption>;
   source: 'dynamic' | 'static' | 'unavailable';
 }>;
 
@@ -78,6 +80,8 @@ export async function probeAgentConfigOptionsBestEffort(params: {
   cwd: string;
   timeoutMs?: number;
   accountSettings?: Readonly<Record<string, unknown>> | null;
+  acpCatalogSnapshot?: AcpCatalogSnapshotV1;
+  savedSecretOperationContext?: SavedSecretOperationContextV1;
   pluginSettings?: AgentCliSessionCommandPluginSettingsV1;
   credentials?: StoredCredentials | null;
   env?: NodeJS.ProcessEnv;
@@ -96,6 +100,7 @@ export async function probeAgentConfigOptionsBestEffort(params: {
     probeKind: 'configOptions',
     backendTarget: params.backendTarget,
     accountSettings: params.accountSettings,
+    acpCatalogSnapshot: params.acpCatalogSnapshot,
     pluginSettings: params.pluginSettings,
     env: params.env,
   });

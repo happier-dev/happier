@@ -4,7 +4,7 @@ import type { AcpToolIdentity } from './types';
 
 type AcpToolIdentityInput = Readonly<{
     sessionId: string;
-    turnId: string;
+    turnId: string | null;
     sidechainId: string | null;
     toolCallId: string;
 }>;
@@ -44,7 +44,7 @@ function operationalId(domain: 'call' | 'result', encodedIdentity: Buffer): stri
 
 export function createAcpToolIdentity(input: AcpToolIdentityInput): AcpToolIdentity {
     assertNonBlankOpaqueIdentity('session', input.sessionId);
-    assertNonBlankOpaqueIdentity('turn', input.turnId);
+    if (input.turnId !== null) assertNonBlankOpaqueIdentity('turn', input.turnId);
     assertNonBlankOpaqueIdentity('call', input.toolCallId);
     if (input.sidechainId !== null) {
         assertNonBlankOpaqueIdentity('sidechain', input.sidechainId);

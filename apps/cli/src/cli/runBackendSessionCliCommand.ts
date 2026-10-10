@@ -5,6 +5,8 @@ import { errorFrame, warn } from '@happier-dev/cli-common/output';
 import { isLaunchProfileV2 } from '@happier-dev/protocol/profiles/read';
 import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
+import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 import type { BackendTargetRefV2Input, PluginSourceCustodyV1, ProviderErrorV1 } from '@happier-dev/protocol';
 
 import type { StoredCredentials } from '@/persistence';
@@ -22,7 +24,10 @@ import {
   expandProfileEnvOverlay,
 } from '@/settings/profiles/buildProfileEnvOverlay';
 import { readAccountLaunchProfiles } from '@/settings/profiles/readProfilesFromAccountSettings';
-import { resolveProfileForAgent } from '@/settings/profiles/resolveProfileForAgent';
+import { ProviderProfileMigrationFactsUnavailableError, resolveProfileForAgent } from '@/settings/profiles/resolveProfileForAgent';
+import { prepareProviderConnectionsCatalogForCli } from '@/providers/settings/hydrate';
+import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { isPermissionMode, type PermissionMode } from '@/api/types';
 import {
   applyDeprecatedSessionStartAliasesForAgent,
@@ -243,6 +248,8 @@ Provider CLI Options:
       const resume = parsed.resume;
       const profileQuery = parsed.profileQuery ?? '';
       const extraOptions = params.resolveExtraOptions ? params.resolveExtraOptions(params.context.args, parsed) : ({} as Extra);
+      const agentTarget = extraOptions.agentTarget === undefined ? undefined : AgentExecutionTargetV1Schema.parse(extraOptions.agentTarget);
+      const runtimeDescriptorV1 = extraOptions.runtimeDescriptorV1 === undefined ? undefined : RuntimeDescriptorV1Schema.parse(extraOptions.runtimeDescriptorV1);
       const startedBy = resolved.startedBy ?? 'terminal';
       const isExplicitCliSubcommand = params.isExplicitCliSubcommand
         ?? (params.context.args[0] === cliArgumentAgentId);
@@ -327,12 +334,20 @@ Provider CLI Options:
               } = await readAccountLaunchProfiles(
                 accountSettingsContext.settings, credentials,
               );
-              return resolveProfileForAgent({
-                agentId: profileAgentId,
-                query: profileQuery,
-                customProfiles: visibleProfiles,
-                terminalMigratedProfileIds,
-              });
+              try {
+                return resolveProfileForAgent({
+                  agentId: profileAgentId, query: profileQuery, customProfiles: visibleProfiles, terminalMigratedProfileIds,
+                });
+              } catch (error) {
+                if (!(error instanceof ProviderProfileMigrationFactsUnavailableError)) throw error;
+                // Only this affected retained selection consumes Provider migration facts.
+                // Listing and independent modern Profiles never demand the Provider catalog.
+                const catalog = await prepareProviderConnectionsCatalogForCli({ expectedScopeKey: resolveAccountSettingsScopeKey(credentials) });
+                if (catalog.status !== 'ready') throw error;
+                const refreshed = await readAccountLaunchProfiles(getActiveAccountSettingsSnapshot()?.settings, credentials);
+                return resolveProfileForAgent({ agentId: profileAgentId, query: profileQuery,
+                  customProfiles: refreshed.visibleProfiles, terminalMigratedProfileIds: refreshed.terminalMigratedProfileIds });
+              }
             })()
           : null;
       const preferredProfileModelSelection =
@@ -428,7 +443,12 @@ Provider CLI Options:
             backendTarget: readBackendTargetRefV2(
               modelSelectionBackendTargetInput,
             ),
+            ...(agentTarget ? { agentTarget } : {}),
+            ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
             ...(selectedProfile ? { profileId: selectedProfile.id } : {}),
+            ...(selectedProfile?.profileRecordRevision !== undefined
+              ? { profileRecordRevision: selectedProfile.profileRecordRevision }
+              : {}),
             ...(selectedProfile && accountSettingsContext?.scopeKey
               ? {
                   accountSettingsScopeKey: accountSettingsContext.scopeKey,

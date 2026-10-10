@@ -25,5 +25,7 @@ export type CliAuthSpec = Readonly<{
     resolvedPath: string;
     /** Host-private final child environment; never forwarded to Agent callbacks. */
     processEnv?: NodeJS.ProcessEnv;
+    /** Host-owned containing probe budget; never exposed to Agent callbacks. */
+    timeoutMs?: number;
   }>) => Promise<CliAuthStatusDraft>;
 }>;

@@ -1,3 +1,4 @@
+import { unexpectedProjectNativeAdapterResolution } from "@/plugins/testkit/unexpectedProjectNativeAdapterResolution";
 import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -45,6 +46,7 @@ describe('machine agent inventory on the daemon', () => {
             activateContributionsOnDemand: async () => [], resolvePromptAssetBlocks: async () => [],
             createAgentInvocationServices: async () => { throw new Error('No plugin invocation in this inventory fixture'); },
             resolveCaptureSource: async () => null,
+            resolveProjectNativeAdapter: unexpectedProjectNativeAdapterResolution,
             retireConsumers: () => {}, dispose: async () => {},
         } satisfies ResolvedExecutablePluginRuntimeRegistry;
         await pluginReloadController.adoptPreparedRuntimeRegistry({

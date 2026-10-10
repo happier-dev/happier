@@ -1,3 +1,6 @@
+import { writeFileSync } from 'node:fs';
+import { readFile as readFileAsync } from 'node:fs/promises';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { AcpBackend } from '../AcpBackend';
@@ -6,6 +9,8 @@ import { withTempDir } from '@/testkit/fs/tempDir';
 
 function writeFakeAcpAgentScript(params: { dir: string }): string {
   const src = `
+    import { existsSync, writeFileSync } from 'node:fs';
+    import { join } from 'node:path';
     const decoder = new TextDecoder();
     let buf = '';
 
@@ -51,6 +56,7 @@ function writeFakeAcpAgentScript(params: { dir: string }): string {
         // Handle client response to permission request
         if (waitingForPermResponse && req.id === 'perm-1') {
           waitingForPermResponse = false;
+          writeFileSync(join(${JSON.stringify(params.dir)}, 'withdrawn-permission.json'), JSON.stringify(req.result));
           continue;
         }
 
@@ -72,7 +78,11 @@ function writeFakeAcpAgentScript(params: { dir: string }): string {
           ok(id, {});
           // Emit stderr *after* prompt is accepted so the client is already waiting for a response.
           process.stderr.write('FATAL: simulated transport failure\\n');
-          setTimeout(sendPermissionRequest, 10);
+          const releasePermission = setInterval(() => {
+            if (!existsSync(join(${JSON.stringify(params.dir)}, 'fatal-observed'))) return;
+            clearInterval(releasePermission);
+            sendPermissionRequest();
+          }, 10);
           continue;
         }
 
@@ -172,64 +182,43 @@ function writeFakeAcpAgentScriptPermissionFirst(params: { dir: string }): string
 }
 
 describe('AcpBackend response completion error preservation', () => {
-  it('still throws after idle is emitted if a fatal stderr error was recorded', async () => {
+  it('preserves a fatal stderr error when an unowned late permission request is withdrawn', async () => {
     await withTempDir('happier-acp-stderr-fatal-', async (dir) => {
-      const scriptPath = writeFakeAcpAgentScript({ dir });
-      let backendForCleanup: AcpBackend | undefined;
-
-      try {
-        const backend = new AcpBackend({
-          agentName: 'test',
-          cwd: dir,
-          command: process.execPath,
-          args: [scriptPath],
-          transportHandler: createAcpTestTransportHandler({
-            idleTimeoutMs: 1,
-            handleStderr: () => ({
-              message: { type: 'status', status: 'error', detail: 'simulated transport error' },
-            }),
+      let permissionDecisions = 0;
+      const backend = new AcpBackend({
+        agentName: 'test',
+        cwd: dir,
+        command: process.execPath,
+        args: [writeFakeAcpAgentScript({ dir })],
+        transportHandler: createAcpTestTransportHandler({
+          idleTimeoutMs: 1,
+          handleStderr: () => ({
+            message: { type: 'status', status: 'error', detail: 'simulated transport error' },
           }),
-          permissionHandler: {
-            async handleToolCall() {
-              return { decision: 'denied' as const };
-            },
+        }),
+        permissionHandler: {
+          async handleToolCall() {
+            permissionDecisions++;
+            return { decision: 'denied' as const };
           },
+        },
+      });
+      try {
+        // The genuine process releases its late request only after the host observed fatal stderr.
+        backend.onMessage((message) => {
+          if (message.type === 'status' && message.status === 'error' && message.detail === 'simulated transport error') {
+            writeFileSync(join(dir, 'fatal-observed'), '');
+          }
         });
-        backendForCleanup = backend;
-
-        // In real-world scenarios, stderr and stdout events can be delivered in either order
-        // (especially under parallel test load). We only require that:
-        // - the transport surfaces a fatal stderr error via status:error
-        // - an idle status is eventually emitted after the prompt begins
-        // - waitForResponseComplete still throws (error is preserved) even after idle is observed
-        let promptStarted = false;
-        let sawStderrErrorStatus = false;
-        let sawIdleAfterPrompt = false;
-        const errorAndIdleSeen = new Promise<void>((resolve, reject) => {
-          const timeout = setTimeout(() => reject(new Error('Timed out waiting for error+idle statuses')), 10_000);
-          backend.onMessage((msg) => {
-            if (msg.type !== 'status') return;
-            if (msg.status === 'error' && msg.detail === 'simulated transport error') {
-              sawStderrErrorStatus = true;
-            }
-            if (msg.status === 'idle' && promptStarted) {
-              sawIdleAfterPrompt = true;
-            }
-            if (sawStderrErrorStatus && sawIdleAfterPrompt) {
-              clearTimeout(timeout);
-              resolve();
-            }
-          });
-        });
-
         const started = await backend.startSession();
-        promptStarted = true;
         await backend.sendPrompt(started.sessionId, 'hi');
-        await errorAndIdleSeen;
-
+        await expect.poll(async () => JSON.parse(
+          await readFileAsync(join(dir, 'withdrawn-permission.json'), 'utf8'),
+        )).toEqual({ outcome: { outcome: 'cancelled' } });
+        expect(permissionDecisions).toBe(0);
         await expect(backend.waitForResponseComplete(1_000)).rejects.toThrow('simulated transport error');
       } finally {
-        await backendForCleanup?.dispose().catch(() => {});
+        await backend.dispose();
       }
     });
   }, 20_000);
@@ -261,18 +250,18 @@ describe('AcpBackend response completion error preservation', () => {
 
         let promptStarted = false;
         let sawStderrErrorStatus = false;
-        let sawIdleAfterPrompt = false;
-        const errorAndIdleSeen = new Promise<void>((resolve, reject) => {
-          const timeout = setTimeout(() => reject(new Error('Timed out waiting for error+idle statuses')), 10_000);
+        let sawStoppedAfterPrompt = false;
+        const errorAndStoppedSeen = new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error('Timed out waiting for error+stopped statuses')), 10_000);
           backend.onMessage((msg) => {
             if (msg.type !== 'status') return;
             if (msg.status === 'error' && msg.detail === 'simulated transport error') {
               sawStderrErrorStatus = true;
             }
-            if (msg.status === 'idle' && promptStarted) {
-              sawIdleAfterPrompt = true;
+            if (msg.status === 'stopped' && promptStarted) {
+              sawStoppedAfterPrompt = true;
             }
-            if (sawStderrErrorStatus && sawIdleAfterPrompt) {
+            if (sawStderrErrorStatus && sawStoppedAfterPrompt) {
               clearTimeout(timeout);
               resolve();
             }
@@ -282,7 +271,7 @@ describe('AcpBackend response completion error preservation', () => {
         const started = await backend.startSession();
         promptStarted = true;
         await backend.sendPrompt(started.sessionId, 'hi');
-        await errorAndIdleSeen;
+        await errorAndStoppedSeen;
 
         await expect(backend.waitForResponseComplete(1_000)).rejects.toThrow('simulated transport error');
       } finally {

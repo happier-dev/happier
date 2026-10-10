@@ -1,4 +1,5 @@
 import type { SecretReferenceOverlayV1 } from '@happier-dev/protocol';
+import type { ProfileCatalogSnapshotV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
 import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
 import type { StoredCredentials } from '@/persistence';
 import { readForegroundProfileRequiredSecretNamesMissingBinding, resolveForegroundProfileSavedSecretEnvironment } from '@/daemon/agentRuntime/resolveForegroundProfileSavedSecretEnvironment';
@@ -19,6 +20,7 @@ export async function resolveProfileProbeEnvironment(params: Readonly<{
   profileId?: unknown;
   secretReferenceOverlay?: SecretReferenceOverlayV1;
   accountSettings: Readonly<Record<string, unknown>> | null;
+  profileCatalog?: ProfileCatalogSnapshotV1;
   credentials: StoredCredentials | null;
   processEnv: NodeJS.ProcessEnv;
 }>): Promise<ProfileProbeEnvironment | null> {
@@ -28,9 +30,9 @@ export async function resolveProfileProbeEnvironment(params: Readonly<{
     throw new Error('The selected profile cannot be resolved for this preflight probe');
   }
 
-  const profileSnapshot = await readAccountLaunchProfiles(params.accountSettings, params.credentials);
+  const profileSnapshot = await readAccountLaunchProfiles(params.accountSettings, params.credentials, undefined, params.profileCatalog);
   const profile = profileSnapshot.visibleProfiles.find((candidate) => candidate.id === profileId);
-  if (!profile) {
+  if (!profile || profile.enabled === false) {
     throw new Error(`Profile "${profileId}" is unavailable for this preflight probe`);
   }
   const requiredSecretRequirementNamesMissingBinding = new Set(

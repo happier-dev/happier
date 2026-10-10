@@ -1,9 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import {
-    PROTOCOL_VERSION,
-    type InitializeRequest,
-    type InitializeResponse,
-} from '@agentclientprotocol/sdk';
+import type { InitializeRequest, InitializeResponse } from '@agentclientprotocol/sdk';
 
 import { logger } from '@/ui/logger';
 import type { TransportHandler } from '@/agent/transport';
@@ -13,10 +9,7 @@ import { createAcpNdJsonStream } from '@/agent/acp/createAcpNdJsonStream';
 import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
 import { AsyncTtlCache } from '@happier-dev/protocol/common/asyncTtlCache';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
-import {
-    createAcpClientConnection,
-    type AcpClientConnection,
-} from '@/agent/acp/connection/createAcpClientConnection';
+import type { AcpClientConnection } from '@/agent/acp/connection/createAcpClientConnection';
 
 export type AcpProbeResult =
     | { ok: true; checkedAt: number; agentCapabilities: InitializeResponse['agentCapabilities'] }
@@ -111,6 +104,12 @@ export async function probeAcpAgentCapabilities(params: {
     let connection: AcpClientConnection | null = null;
     let spawnErrorPromise: Promise<never> | null = null;
     try {
+        // Readiness registration does not need the SDK's schema graph until a
+        // probe is requested. Keep the shared probe/cache owner unchanged.
+        const [{ PROTOCOL_VERSION }, { createAcpClientConnection }] = await Promise.all([
+            import('@agentclientprotocol/sdk'),
+            import('@/agent/acp/connection/createAcpClientConnection'),
+        ]);
         const env = { ...process.env, ...params.env };
         const invocation = resolveWindowsCommandInvocation({
             command: params.command,

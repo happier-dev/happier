@@ -60,14 +60,16 @@ export function createAcpClientHandlers(params: Readonly<{
   createHandlerContext: () => HandlerContext;
   getToolNameContext: () => ToolNameContext;
   getActiveSessionId: () => string | null;
-  cancel: (sessionId: string) => Promise<void>;
+  capturePermissionRequest: (sessionId: string) => Readonly<{
+    scope: 'session' | 'turn';
+    isCurrent: () => boolean;
+    cancel: (failure?: Error) => Promise<void>;
+  }>;
   emitPermissionResponse: (requestId: string, approved: boolean) => Promise<void>;
   clearTrackedToolCall: (toolCallId: string, reason: string) => void;
   incrementToolCallCountSincePrompt: () => void;
   toolCalls: LegacyAcpToolRuntime;
   lastSelectedPermissionOptionIdByToolCallId: Map<string, string>;
-  /** Host-private turn failure witness; never crosses the ACP wire. */
-  failTurn?: (error: Error) => void;
 }>): Pick<AcpClientConnectionHandlers, 'sessionUpdate' | 'requestPermission'> {
   return {
     sessionUpdate: async (notification: SessionNotification) => {
@@ -81,16 +83,27 @@ export function createAcpClientHandlers(params: Readonly<{
         ?? readNonBlankOpaqueIdentifier(toolCall?.id)
         ?? randomUUID();
       const permissionId = toolCallId;
-      const knownCall = params.toolCalls.readCall(toolCallId);
       const requestSessionId =
         typeof (extendedParams as { sessionId?: unknown }).sessionId === 'string'
           ? String((extendedParams as { sessionId?: string }).sessionId)
           : (params.getActiveSessionId() ?? '');
-      const cancelAndTerminalize = async (reason: string): Promise<void> => {
-        const cancelPromise = params.cancel(requestSessionId);
+      const permissionRequest = params.capturePermissionRequest(requestSessionId);
+      const tracksForeground = permissionRequest.scope === 'turn';
+      const withdraw = (): RequestPermissionResponse => {
+        logger.warn('[AcpBackend] Withdrew permission request without current ownership', {
+          reason: requestSessionId !== params.getActiveSessionId() ? 'session_mismatch'
+            : tracksForeground ? 'inactive_turn' : 'missing_permission_handler',
+        });
+        return { outcome: { outcome: 'cancelled' } };
+      };
+      if (!permissionRequest.isCurrent()) return withdraw();
+      const knownCall = tracksForeground ? params.toolCalls.readCall(toolCallId) : undefined;
+      const cancelOwnedPrompt = async (failure?: Error): Promise<void> => {
+        const cancelPromise = permissionRequest.cancel(failure);
         await params.emitPermissionResponse(permissionId, false);
-        void cancelPromise.catch((error) => logger.debug('[AcpBackend] Permission cancellation failed:', error));
-        params.clearTrackedToolCall(toolCallId, reason);
+        void cancelPromise.catch((error: unknown) => logger.warn('[AcpBackend] Permission cancellation failed', {
+          errorType: error instanceof Error ? 'Error' : typeof error,
+        }));
       };
       const fallbackInput = knownCall?.rawInput && typeof knownCall.rawInput === 'object' && !Array.isArray(knownCall.rawInput)
         ? knownCall.rawInput as Record<string, unknown>
@@ -107,24 +120,26 @@ export function createAcpClientHandlers(params: Readonly<{
         mappedToolName: knownCall?.toolName,
       });
 
-      const cachedOptionId = params.lastSelectedPermissionOptionIdByToolCallId.get(toolCallId);
+      const cachedOptionId = tracksForeground ? params.lastSelectedPermissionOptionIdByToolCallId.get(toolCallId) : undefined;
       if (cachedOptionId && options.some((opt) => opt.optionId === cachedOptionId)) {
         logger.debug(`[AcpBackend] Duplicate permission prompt for ${toolCallId}, reusing cached optionId=${cachedOptionId}`);
         return { outcome: { outcome: 'selected', optionId: cachedOptionId } };
       }
 
-      toolName = params.transport.determineToolName?.(toolName, toolCallId, input, params.getToolNameContext()) ?? toolName;
+      toolName = params.transport.determineToolName?.(toolName, toolCallId, input, tracksForeground ? params.getToolNameContext() : { recentPromptHadChangeTitle: false, toolCallCountSincePrompt: 0 }) ?? toolName;
 
       if (toolName !== (toolCall?.kind || toolCall?.toolName || extendedParams.kind || 'Unknown tool')) {
         logger.debug(`[AcpBackend] Detected tool name: ${toolName} from toolCallId: ${toolCallId}`);
       }
 
       if (knownCall && shouldReplaceCachedPermissionToolName(knownCall.toolName, toolName)) {
-        toolName = params.transport.determineToolName?.(toolName, toolCallId, input, params.getToolNameContext()) ?? toolName;
+        toolName = params.transport.determineToolName?.(toolName, toolCallId, input, tracksForeground ? params.getToolNameContext() : { recentPromptHadChangeTitle: false, toolCallCountSincePrompt: 0 }) ?? toolName;
       }
-      params.toolCalls.observePermission({ toolCallId, toolName, input });
-      markToolCallWaitingForPermission(toolCallId, params.createHandlerContext());
-      if (!knownCall) params.incrementToolCallCountSincePrompt();
+      if (tracksForeground) {
+        params.toolCalls.observePermission({ toolCallId, toolName, input });
+        markToolCallWaitingForPermission(toolCallId, params.createHandlerContext());
+        if (!knownCall) params.incrementToolCallCountSincePrompt();
+      }
 
       const inputKeys = input && typeof input === 'object' && !Array.isArray(input)
         ? Object.keys(input as Record<string, unknown>)
@@ -144,7 +159,7 @@ export function createAcpClientHandlers(params: Readonly<{
       if (!params.permissionHandler) {
         const outcome = pickPermissionOutcome(options, 'denied');
         params.lastSelectedPermissionOptionIdByToolCallId.delete(toolCallId);
-        await cancelAndTerminalize('permission handler missing');
+        await cancelOwnedPrompt();
         return { outcome };
       }
 
@@ -163,9 +178,12 @@ export function createAcpClientHandlers(params: Readonly<{
         ) ?? null;
       } catch (error) {
         logger.debug('[AcpBackend] Error resolving immediate permission decision:', error);
-        await cancelAndTerminalize('permission decision hook error');
+        if (!permissionRequest.isCurrent()) return withdraw();
+        await cancelOwnedPrompt();
         return { outcome: { outcome: 'cancelled' } };
       }
+
+      if (!permissionRequest.isCurrent()) return withdraw();
 
       if (!immediateDecision) {
         params.emit({
@@ -190,6 +208,7 @@ export function createAcpClientHandlers(params: Readonly<{
       if (params.permissionHandler) {
         try {
           const result = prePromptDecision ?? await params.permissionHandler.handleToolCall(toolCallId, toolName, input);
+          if (!permissionRequest.isCurrent()) return withdraw();
           const isApproved =
             result.decision === 'approved'
             || result.decision === 'approved_for_session'
@@ -215,29 +234,30 @@ export function createAcpClientHandlers(params: Readonly<{
             }
             return pickPermissionOutcome(options, resolvedDecision);
           })();
-          if (outcome.outcome === 'selected') {
+          if (tracksForeground && outcome.outcome === 'selected') {
             params.lastSelectedPermissionOptionIdByToolCallId.set(toolCallId, outcome.optionId);
-          } else {
+          } else if (tracksForeground) {
             params.lastSelectedPermissionOptionIdByToolCallId.delete(toolCallId);
           }
 
           if (result.decision === 'denied' || result.decision === 'abort') {
-            await cancelAndTerminalize(`permission decision=${result.decision}`);
+            await cancelOwnedPrompt();
             return { outcome };
           }
 
           await params.emitPermissionResponse(permissionId, isApproved);
+          if (!permissionRequest.isCurrent()) return withdraw();
 
-          if (isApproved) {
+          if (tracksForeground && isApproved) {
             markToolCallRunningAfterPermission(toolCallId, params.createHandlerContext());
-          } else {
+          } else if (tracksForeground) {
             params.clearTrackedToolCall(toolCallId, `permission decision=${result.decision}`);
           }
           return { outcome };
         } catch (error) {
           logger.debug('[AcpBackend] Error in permission handler:', error);
-          if (isWorkflowInteractionCapacityError(error)) params.failTurn?.(error);
-          await cancelAndTerminalize('permission handler error');
+          if (!permissionRequest.isCurrent()) return withdraw();
+          await cancelOwnedPrompt(isWorkflowInteractionCapacityError(error) ? error : undefined);
           return { outcome: { outcome: 'cancelled' } };
         }
       }

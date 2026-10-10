@@ -7,10 +7,17 @@ import type { DetectCliSnapshot } from '../snapshots/cliSnapshot';
 import { createEnvKeyScope } from '../../testkit/env/envScope';
 import { withTempDir } from '../../testkit/fs/tempDir';
 import { AccountSettingsSchema, ExecutionRunIntentSchema } from '@happier-dev/protocol';
+import { AcpCatalogRecordV1Schema, type AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import * as engineRegistry from '../../agent/runtime/registry/engineRegistry';
 import type { ResolvedAgentContribution } from '../../plugins/projection/registry/types';
 import { buildExecutionRunProfileCatalog, type ExecutionRunProfileContributionCatalogInput } from '../../agent/executionRuns/profiles/intentRegistry';
 import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '../../settings/accountSettings/activeAccountSettingsSnapshot';
+
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  const { createBundledPluginPublicationFsFixture } = await import('@/plugins/projection/registry/builtIn/locators.testkit');
+  return createBundledPluginPublicationFsFixture(actual);
+});
 
 function makeCliSnapshot(overrides: Partial<DetectCliSnapshot['clis']>, path = ''): DetectCliSnapshot {
   return {
@@ -74,6 +81,11 @@ describe('executionRunsCapability', () => {
 
   beforeEach(() => {
     resetActiveAccountSettingsSnapshotForTests();
+    setActiveAccountSettingsSnapshot({
+      source: 'cache', settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [],
+      settings: AccountSettingsSchema.parse({}),
+      acpCatalog: { status: 'ready', revision: 1, record: { v: 1, definitions: [] } },
+    });
     envScope.restore();
     envScope.patch({
       HAPPIER_CODEX_BACKEND_MODE: undefined,
@@ -125,15 +137,15 @@ describe('executionRunsCapability', () => {
     expect(result.backends['plugin.review']?.intents).toContain('review');
   });
 
-  it('projects a configured ACP review target from active Account settings', async () => {
+  it('projects a configured ACP review target from the active catalog row and current preferences', async () => {
+    const record = AcpCatalogRecordV1Schema.parse({ v: 1, definitions: [{
+      id: 'review-bot', name: 'review-bot', title: 'Review Bot', command: 'review-bot',
+      createdAt: 1, updatedAt: 1,
+    }] });
     setActiveAccountSettingsSnapshot({
       source: 'cache', settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [],
-      settings: AccountSettingsSchema.parse({
-        acpCatalogSettingsV1: { v: 2, backends: [{
-          id: 'review-bot', name: 'review-bot', title: 'Review Bot', command: 'review-bot',
-          createdAt: 1, updatedAt: 1,
-        }] },
-      }),
+      settings: AccountSettingsSchema.parse({}),
+      acpCatalog: { status: 'ready', revision: 1, record },
     });
 
     const result = await executionRunsCapability.detect({
@@ -148,12 +160,9 @@ describe('executionRunsCapability', () => {
     setActiveAccountSettingsSnapshot({
       source: 'cache', settingsVersion: 2, loadedAtMs: 2, settingsSecretsReadKeys: [],
       settings: AccountSettingsSchema.parse({
-        acpCatalogSettingsV1: { v: 2, backends: [{
-          id: 'review-bot', name: 'review-bot', title: 'Review Bot', command: 'review-bot',
-          createdAt: 1, updatedAt: 2,
-        }] },
         backendEnabledByTargetKey: { 'backend:review-bot:configured:review-bot': false },
       }),
+      acpCatalog: { status: 'ready', revision: 1, record },
     });
     const disabledResult = await executionRunsCapability.detect({
       context: { cliSnapshot: makeCliSnapshot({}) },
@@ -163,7 +172,22 @@ describe('executionRunsCapability', () => {
     expect(disabledResult.backends['backend:review-bot:configured:review-bot']?.intents).not.toContain('review');
   });
 
+  it('does not publish a complete execution inventory while ACP authority is unavailable', async () => {
+    vi.restoreAllMocks();
+    const unavailable: AcpCatalogSnapshotV1 = { status: 'unavailable', reason: 'account-unavailable' };
+    setActiveAccountSettingsSnapshot({
+      source: 'cache', settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [],
+      settings: AccountSettingsSchema.parse({}), acpCatalog: unavailable,
+    });
+    await expect(executionRunsCapability.detect({
+      context: { cliSnapshot: makeCliSnapshot({}) },
+      request: { id: 'tool.executionRuns' },
+    })).rejects.toMatchObject({ code: 'ACP_CATALOG_UNAVAILABLE' });
+  });
+
   it('advertises the exact V2 facts required before detached or start-and-wait dispatch', async () => {
+    // Exercise the real catalog/projection below the filesystem boundary.
+    vi.restoreAllMocks();
     const result = await executionRunsCapability.detect({
       context: { cliSnapshot: makeCliSnapshot({ codex: { available: true } }) },
       request: { id: 'tool.executionRuns' },

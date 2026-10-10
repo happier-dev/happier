@@ -7,13 +7,47 @@ import {
 } from '@happier-dev/protocol';
 
 import { resolveProfileProbeEnvironment } from './resolveProfileProbeEnvironment';
+const predecessorCatalog = { status: 'ready' as const, source: 'legacy' as const, authority: 'inactive' as const, control: null,
+  controlRevision: 'absent' as const, referenceGuardRevision: 'absent' as const, diagnostics: [], records: [] };
 
 describe('resolveProfileProbeEnvironment', () => {
   afterEach(() => vi.restoreAllMocks());
+  it('probes the destination Profile row rather than a retained Settings definition', async () => {
+    vi.spyOn(axios, 'get').mockImplementation(async (url) => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/artifacts') return { status: 200, data: [] };
+      if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+      if (path === '/v1/account/authoring-memory/lastUsedProfile') return { status: 200, data: { status: 'absent' } };
+      if (path === '/v2/account/settings') return { status: 200, data: { content: null, version: 1 } };
+      throw new Error(`Unexpected profile probe HTTP path: ${path}`);
+    });
+    const request = {
+      agentId: 'codex', profileId: 'work', accountSettings: { profiles: [{ v: 2, id: 'work', name: 'Stale',
+        extraEnvironmentVariables: [{ name: 'TEAM_FLAG', value: 'stale' }], createdAt: 1, updatedAt: 1 }] },
+      credentials: { token: 'token', encryption: null }, processEnv: {},
+      profileCatalog: { status: 'ready' as const, source: 'destination' as const, authority: 'active' as const, controlRevision: 1,
+        control: { revision: 1, record: { v: 1 as const, phase: 'active' as const, sourceSettingsVersion: 1, migratedLogicalRevision: 1, inventory: [] } },
+        referenceGuardRevision: 4, diagnostics: [], records: [{ revision: 4,
+        record: { v: 1 as const, id: 'work', enabled: true, promptStack: [], secretBindings: {},
+          definition: { kind: 'inline' as const, profile: { v: 2 as const, id: 'work', name: 'Work',
+            extraEnvironmentVariables: [{ name: 'TEAM_FLAG', value: 'destination' }],
+            defaultPermissionModeByTargetKey: {}, defaultPersistenceModeByTargetKey: {}, compatibilityByTargetKey: {},
+            createdAt: 1, updatedAt: 1 } } } }] },
+    };
+    await expect(resolveProfileProbeEnvironment(request)).resolves.toEqual({ cacheKey: 'work',
+      env: { TEAM_FLAG: 'destination', HAPPIER_SESSION_PROFILE_ID: 'work' } });
+    await expect(resolveProfileProbeEnvironment({ ...request,
+      profileCatalog: { ...request.profileCatalog, records: request.profileCatalog.records.map((row) => ({
+        ...row, record: { ...row.record, enabled: false },
+      })) },
+    })).rejects.toThrow();
+  });
+
   it('materializes a one-launch strict saved-secret reference for an otherwise unbound profile requirement', async () => {
     // Account HTTP transport is the system boundary; profile parsing and secret materialization stay real.
     vi.spyOn(axios, 'get').mockImplementation(async (url) => {
       const path = new URL(String(url)).pathname;
+      if (path === '/v1/artifacts') return { status: 200, data: [] };
       if (path === '/v2/account/settings') return { status: 200, data: { content: null, version: 1 } };
       if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'e2ee', updatedAt: 1 } };
       if (path === '/v1/account/authoring-memory/lastUsedProfile') return { status: 200, data: { status: 'absent' } };
@@ -24,6 +58,7 @@ describe('resolveProfileProbeEnvironment', () => {
     const encryptedValue = encryptSecretStringV1('selected-secret', settingsKey, (length) => new Uint8Array(length).fill(3));
     const request = {
       agentId: 'codex', profileId: 'work',
+      profileCatalog: predecessorCatalog,
       accountSettings: {
         profiles: [{ id: 'work', name: 'Work', environmentVariables: [{ name: 'OPENAI_API_KEY', value: '${PROFILE_KEY}' }],
           envVarRequirements: [{ name: 'PROFILE_KEY', kind: 'secret', required: true }],
@@ -45,6 +80,7 @@ describe('resolveProfileProbeEnvironment', () => {
     vi.spyOn(axios, 'get').mockImplementation(async (url, options) => {
       expect(options?.headers?.Authorization).toBe('Bearer token');
       const path = new URL(String(url)).pathname;
+      if (path === '/v1/artifacts') return { status: 200, data: [] };
       if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'e2ee', updatedAt: 1 } };
       if (path === '/v1/account/authoring-memory/lastUsedProfile') return { status: 200, data: { status: 'absent' } };
       if (path === '/v2/account/settings') return { status: 200, data: { content: null, version: 1 } };
@@ -105,6 +141,7 @@ describe('resolveProfileProbeEnvironment', () => {
         agentId,
         profileId: 'work',
         accountSettings,
+        profileCatalog: predecessorCatalog,
         credentials,
         processEnv: { HOME: '/home/alice' },
       })).resolves.toEqual(expected);

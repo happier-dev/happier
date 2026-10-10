@@ -35,6 +35,7 @@ export function listAdvertisedSystemTaskKinds(params: Readonly<{ canUpdateCliRem
 type SystemTasksRunnerAdapter = Readonly<{
   start: (params: Record<string, unknown>) => Promise<unknown>;
   poll: (params: Record<string, unknown>) => Promise<unknown>;
+  wait: (params: Readonly<{ taskId: string }>) => Promise<unknown>;
   respond: (params: Record<string, unknown>) => Promise<void>;
 }>;
 
@@ -44,6 +45,9 @@ function createUnsupportedRunner(): SystemTasksRunnerAdapter {
       throw new Error('systemTasks runner is not initialized');
     },
     poll: async () => {
+      throw new Error('systemTasks runner is not initialized');
+    },
+    wait: async () => {
       throw new Error('systemTasks runner is not initialized');
     },
     respond: async () => {
@@ -56,6 +60,7 @@ export function createProtocolSystemTasksRunnerAdapter(
   runner: Readonly<{
     start: (params: Readonly<{ taskId: string; kind: string; params: SystemTaskJsonValue }>) => Promise<unknown>;
     poll: (params: Readonly<{ taskId: string; cursor: number }>) => Promise<unknown>;
+    wait: (params: Readonly<{ taskId: string }>) => Promise<unknown>;
     respond: (params: Readonly<{ taskId: string; answer: unknown }>) => Promise<void>;
   }>,
   params: Readonly<{
@@ -64,6 +69,7 @@ export function createProtocolSystemTasksRunnerAdapter(
 ): SystemTasksRunnerAdapter {
   const createTaskId = params.createTaskId ?? (() => `system-task:${Date.now()}`);
   return {
+    wait: (input) => runner.wait({ taskId: input.taskId.trim() }),
     start: async (input) => {
       const parsed = SystemTaskSpecSchema.parse((input as { spec?: unknown }).spec);
       return await runner.start({
@@ -101,13 +107,14 @@ export function createSystemTasksCapability(
       methods: {
         start: { title: 'Start' },
         poll: { title: 'Poll' },
+        wait: { title: 'Wait for completion' },
         respond: { title: 'Respond' },
       },
     },
     detect: async () => ({
       available: true,
       kinds: listAdvertisedSystemTaskKinds({ canUpdateCliRemotely: canUpdateCliRemotely() }),
-      methods: ['start', 'poll', 'respond'],
+      methods: ['start', 'poll', 'respond', 'wait'],
       taskGroups: [
         {
           id: 'ssh-tunnel-supervisor',
@@ -146,6 +153,12 @@ export function createSystemTasksCapability(
           ok: true,
           result: await runner.poll(params ?? {}),
         };
+      }
+
+      if (method === 'wait') {
+        const taskId = typeof params?.taskId === 'string' ? params.taskId.trim() : '';
+        if (!taskId) return { ok: false, error: { code: 'invalid-system-task-id', message: 'System task id is required' } };
+        return { ok: true, result: await runner.wait({ taskId }) };
       }
 
       if (method === 'respond') {

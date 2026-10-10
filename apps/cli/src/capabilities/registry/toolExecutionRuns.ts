@@ -96,8 +96,10 @@ export const executionRunsCapability: Capability = {
     const knownBuiltInAgentIds = AGENT_IDS;
     const reviewEngineAgentIds = selectReviewEngineAgentIds(cliEngineRegistry.contributions);
     const exactPathReviewEngineAgentIds = selectReviewEngineAgentIds(cliEngineRegistry.contributions, 'paths');
+    const accountSnapshot = getActiveAccountSettingsSnapshot();
     const configuredBackends = await buildConfiguredAcpBackendInventoryItems(
-      getActiveAccountSettingsSnapshot()?.settings ?? null,
+      accountSnapshot?.settings ?? null,
+      accountSnapshot?.acpCatalog,
     );
     const backendIds = Array.from(new Set([
       ...knownBuiltInAgentIds,

@@ -45,6 +45,7 @@ function buildConfiguredDefinitionInit(params: Readonly<{
       },
     },
     launchEnv: params.launchEnv ?? {},
+    ...(params.backend.runtime?.stderrRules ? { stderrRules: params.backend.runtime.stderrRules } : {}),
     capabilities: {
       supportsResume: capabilities.supportsLoadSession,
       supportsModes: normalizeSupportFlag(capabilities.supportsModes),

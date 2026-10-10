@@ -35,6 +35,9 @@ export function normalizePluginDeclarativeAcpRuntime(
       ...(parsed.definition.modelConfigOptionId
         ? { modelConfigOptionId: parsed.definition.modelConfigOptionId }
         : {}),
+      ...(parsed.definition.usageLimitDiagnostic
+        ? { usageLimitDiagnostic: parsed.definition.usageLimitDiagnostic }
+        : {}),
       ...(parsed.definition.stderrRules
         ? { stderrRules: parsed.definition.stderrRules }
         : {}),

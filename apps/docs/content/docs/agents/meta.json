@@ -4,6 +4,7 @@
     "index",
     "capabilities",
     "model-and-engine-selection",
+    "roles",
     "provider-authentication",
     "profiles",
     "claude",

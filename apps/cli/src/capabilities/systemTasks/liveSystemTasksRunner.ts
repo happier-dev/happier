@@ -205,6 +205,8 @@ type SystemTasksRunnerAdapter = Readonly<{
   poll: (params: Record<string, unknown>) => Promise<unknown>;
   respond: (params: Record<string, unknown>) => Promise<void>;
   cancel: (params: Record<string, unknown>) => Promise<void>;
+  startAdmitted: (kind: import('@happier-dev/cli-common/systemTasks').InteractiveSystemTaskKind) => Promise<Readonly<{ taskId: string }>>;
+  wait: ReturnType<typeof createSystemTasksRunner>['wait'];
 }>;
 
 let liveRunnerAdapter: SystemTasksRunnerAdapter | null = null;
@@ -417,6 +419,8 @@ function createLiveSystemTasksRunnerAdapter(params: Readonly<{
   });
 
   return {
+    startAdmitted: async (kind) => await runner.startAdmitted({ taskId: `system-task:${randomUUID()}`, kind: 'remote.ssh.bootstrapMachine.v1', params: {} }, kind),
+    wait: runner.wait,
     start: async (params) => {
       const spec = SystemTaskSpecSchema.parse(params.spec ?? null);
       return await runner.start({

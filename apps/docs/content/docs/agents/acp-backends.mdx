@@ -11,6 +11,15 @@ Custom ACP gives you one user-facing building block:
 
 The result is that custom ACP agents show up in Happier as real backend choices, not as ad-hoc command snippets.
 
+<Callout>
+  In unreleased 0.3 development builds, every configured choice runs through the
+  same **Custom ACP Agent** integration. Choices remain distinct in saved
+  session drafts. Deleting a selected definition does not switch the draft to
+  another CLI: restore the definition or explicitly choose an available Agent
+  before launching. An unavailable ACP catalog also prevents that choice from
+  launching, without making unrelated built-in Agents unavailable.
+</Callout>
+
 ## What this is for
 
 Use ACP backends when you want to:
@@ -100,6 +109,19 @@ Practical advice:
 - make the title match how you want it to appear in pickers
 - create multiple custom backends if you want multiple variants of the same CLI
 - use environment bindings for tokens or machine-specific values when needed
+
+### Configure with an Agent in development
+
+In current 0.3 development source, Agent-assisted configuration opens an
+ordinary New Session draft with an editable request to configure a custom ACP
+backend. It preserves the selected administration machine when one is chosen;
+the ordinary composer owns the remaining folder and launch selections.
+
+Review the prompt, Agent, model, profile and approval options before pressing
+**Send**. Opening the draft does not start a Session or save an ACP backend.
+The Agent uses the normal backend Actions after Send, with their ordinary
+validation and approval policy. A changed Account or administration target
+requires opening authoring again for the current selection.
 
 ## How custom ACP backends appear in Happier
 

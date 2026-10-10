@@ -1,5 +1,9 @@
 import type { AgentCliSessionCommandPluginSettingsV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { RuntimeDescriptorV1 } from '@happier-dev/protocol';
+import type { AgentProbeMode, AgentSessionModesProbeObservation } from '@happier-dev/protocol/capabilities';
+import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
+import { AcpCatalogUnavailableError } from '@/agent/acp/catalog/configured/resolveBackend';
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
 import type { AcpProbeBackend } from '@/agent/acp/runtime/acpRuntimeBackendContract';
 import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
@@ -17,11 +21,10 @@ import { withPreflightSessionControlsProbeEnvironment } from './preflightSession
 import { resolveAgentCliLaunchSpec } from '@/packagedRuntime/managedTools/requireAgentCliLaunchSpec';
 import { z } from 'zod';
 
-export type ProbedAgentMode = Readonly<{ id: string; name: string; description?: string }>;
+export type ProbedAgentMode = Readonly<AgentProbeMode>;
 
-export type ProbedAgentModesResult = Readonly<{
+export type ProbedAgentModesResult = Readonly<AgentSessionModesProbeObservation & {
   agentId: CatalogAgentLookupId;
-  availableModes: ReadonlyArray<ProbedAgentMode>;
   source: 'dynamic' | 'static' | 'unavailable';
 }>;
 
@@ -183,6 +186,8 @@ export async function probeAgentModesBestEffort(params: {
   cwd: string;
   timeoutMs?: number;
   accountSettings?: Readonly<Record<string, unknown>> | null;
+  acpCatalogSnapshot?: AcpCatalogSnapshotV1;
+  savedSecretOperationContext?: SavedSecretOperationContextV1;
   pluginSettings?: AgentCliSessionCommandPluginSettingsV1;
   credentials?: StoredCredentials | null;
   env?: NodeJS.ProcessEnv;
@@ -201,6 +206,7 @@ export async function probeAgentModesBestEffort(params: {
     probeKind: 'modes',
     backendTarget: params.backendTarget,
     accountSettings: params.accountSettings,
+    acpCatalogSnapshot: params.acpCatalogSnapshot,
     pluginSettings: params.pluginSettings,
     env: params.env,
   });
@@ -277,6 +283,8 @@ export async function probeAgentModesBestEffort(params: {
         cwd,
         accountSettings: params.accountSettings,
         credentials: params.credentials,
+        acpCatalogSnapshot: params.acpCatalogSnapshot,
+        savedSecretOperationContext: params.savedSecretOperationContext,
         processEnv: params.env,
         onBackend: async (backend) => await probeModesFromAcpBackend({ backend, timeoutMs }).catch(() => null),
       });
@@ -297,7 +305,8 @@ export async function probeAgentModesBestEffort(params: {
       }
       agentModesProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODES_FAILURE_TTL_MS });
       return fallback;
-    } catch {
+    } catch (error) {
+      if (error instanceof AcpCatalogUnavailableError) throw error;
       agentModesProbeCache.setSuccess(cacheKey, fallback, { nowMs: nowMs2, ttlMs: PROBE_MODES_FAILURE_TTL_MS });
       return fallback;
     }

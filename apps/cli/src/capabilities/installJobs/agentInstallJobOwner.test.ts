@@ -16,6 +16,7 @@ import cliTestConfig from '../../../vitest.config';
 import { killProcessTree } from '@/agent/runtime/process/killProcessTree';
 import type { ResolvedInstallableContribution } from '@/plugins/projection/registry/types';
 import { createAgentInstallJobOwner, type AgentInstallJobOwner } from './agentInstallJobOwner';
+import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 
 const fixtureWaitTimeout = cliTestConfig.test?.testTimeout;
 if (typeof fixtureWaitTimeout !== 'number') throw new Error('CLI unit test timeout must be configured');
@@ -59,11 +60,13 @@ function registryWith(runtimeSpec: AgentCliRuntimeDescriptor) {
   return { agents: [{ id: runtimeSpec.id, runtimeSpec, pluginId: 'fixture.plugin' }], managedDependencies: [] };
 }
 
-test.skipIf(process.platform === 'win32')('plugin agent job streams bytes, dedupes starts, verifies its CLI and retains its outcome', async () => {
+test.skipIf(process.platform === 'win32')('plugin agent job streams bytes, rejects fresh closed-drain starts and preserves accepted installation custody', async () => {
   const root = await mkdtemp(join(tmpdir(), 'agent-job-'));
   let owner: AgentInstallJobOwner | undefined;
   const binary = Buffer.from('#!/bin/sh\nprintf "fixture-agent 1.2.3\\n"\n');
   const transport: { response: ServerResponse | null } = { response: null };
+  const admissionDrain = createDaemonAdmissionDrain();
+  let releaseRequests = 0;
   const server = createServer((_req, res) => { transport.response = res; res.writeHead(200, { 'content-length': binary.length }); });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   try {
@@ -76,6 +79,7 @@ test.skipIf(process.platform === 'win32')('plugin agent job streams bytes, dedup
       managedInstall: { kind: 'github_release_binary', githubRepo: 'fixture/plugin', binaryName: 'fixture-agent' },
     };
     owner = createAgentInstallJobOwner({
+      admissionDrain,
       readRegistry: () => ({
         agents: [{ ...registryWith(runtimeSpec).agents[0], hostAccess: {
           required: [{ id: 'optional-mode-process', capability: 'process', reason: 'Permit a different runtime mode', scope: {
@@ -90,16 +94,23 @@ test.skipIf(process.platform === 'win32')('plugin agent job streams bytes, dedup
       env: { HOME: root, HAPPIER_HOME_DIR: root, PATH: join(root, 'empty-path') },
       installerDeps: {
         // The release-service transport is the only substituted system boundary.
-        fetchGitHubLatestRelease: async () => ({ assets: [{
+        fetchGitHubLatestRelease: async () => { releaseRequests += 1; return { assets: [{
           name: `fixture-agent-${process.platform}-${process.arch}`,
           browser_download_url: `http://127.0.0.1:${address.port}/binary`,
           digest: `sha256:${createHash('sha256').update(binary).digest('hex')}`,
-        }] }),
+        }] }; },
       },
     });
+    admissionDrain.beginUnusedStopDrain();
+    expect(owner.start({ agentId: runtimeSpec.id, intent: 'install', consent: { vendorRecipe: false } }))
+      .toMatchObject({ ok: false, errorCode: 'install_unavailable' });
+    expect(owner.list()).toEqual({ ok: true, jobs: [] });
+    expect(releaseRequests).toBe(0);
+    admissionDrain.resumeUnusedStop();
     const started = owner.start({ agentId: runtimeSpec.id, intent: 'install', consent: { vendorRecipe: false } });
     expect(started.ok).toBe(true);
     if (!started.ok) return;
+    admissionDrain.beginUnusedStopDrain();
     expect(owner.start({ agentId: runtimeSpec.id, intent: 'update', consent: { vendorRecipe: false } })).toEqual(started);
     await vi.waitFor(() => {
       const read = owner!.read({ jobId: started.jobId, cursor: 0 });
@@ -118,6 +129,8 @@ test.skipIf(process.platform === 'win32')('plugin agent job streams bytes, dedup
     ]) });
     if (read.ok) expect(owner.read({ jobId: started.jobId, cursor: read.nextCursor })).toMatchObject({ events: [], done: true });
     expect(owner.list()).toMatchObject({ jobs: [expect.objectContaining({ jobId: started.jobId, done: true })] });
+    expect(owner.start({ agentId: runtimeSpec.id, intent: 'update', consent: { vendorRecipe: false } }))
+      .toMatchObject({ ok: false, errorCode: 'install_unavailable' });
   } finally {
     await stopFixture(owner);
     server.closeAllConnections();
@@ -136,9 +149,19 @@ test('manual-only agent job exposes install_not_available with its guide', async
       managedInstall: null, acceptsJavaScriptFileOverride: false, installGuideUrl: 'https://example.com/guide',
     };
     owner = createAgentInstallJobOwner({ readRegistry: () => registryWith(spec), env: { HOME: root, HAPPIER_HOME_DIR: root, PATH: '' } });
+    const activityEdges: unknown[] = [];
+    const currentOwner = owner;
+    const unsubscribe = owner.activity.subscribe(() => activityEdges.push(currentOwner.activity.read()));
     const start = owner.start({ agentId: spec.id, intent: 'install', consent: { vendorRecipe: false } });
     expect(start.ok).toBe(true);
-    if (start.ok) expect(await outcome(owner, start.jobId)).toMatchObject({ kind: 'failed', code: 'install_not_available', guideUrl: spec.installGuideUrl });
+    if (start.ok) {
+      expect(owner.activity.read()).toEqual({ coverage: 'complete', items: [{ category: 'setup',
+        ownerRef: start.jobId, attribution: { kind: 'unknown' }, state: 'active' }] });
+      expect(await outcome(owner, start.jobId)).toMatchObject({ kind: 'failed', code: 'install_not_available', guideUrl: spec.installGuideUrl });
+      expect(owner.activity.read()).toMatchObject({ items: [{ ownerRef: start.jobId, state: 'settled' }] });
+      expect(activityEdges).toContainEqual(expect.objectContaining({ items: [expect.objectContaining({ state: 'settled' })] }));
+    }
+    unsubscribe();
     const retry = owner.start({ agentId: spec.id, intent: 'install', consent: { vendorRecipe: false } });
     expect(retry.ok).toBe(true);
     if (retry.ok && start.ok) {
@@ -495,6 +518,8 @@ test.skipIf(process.platform === 'win32')('failed process termination is visible
     await vi.waitFor(() => access(marker), { timeout: fixtureWaitTimeout });
     expect(await owner.cancel({ jobId: start.jobId })).toMatchObject({ ok: false, errorCode: 'install_unavailable' });
     expect(await outcome(owner, start.jobId)).toMatchObject({ kind: 'failed', code: 'install_failed' });
+    expect(owner.activity.read()).toEqual({ coverage: 'complete', items: [{ category: 'setup',
+      ownerRef: start.jobId, attribution: { kind: 'unknown' }, state: 'unknown' }] });
     expect(owner.start(input)).toMatchObject({ ok: false, errorCode: 'install_unavailable' });
     await expect(owner.shutdown()).rejects.toMatchObject({ name: 'ExecFileTerminationError' });
   } finally {

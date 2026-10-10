@@ -3,7 +3,7 @@ title: Agent capabilities
 description: What each coding agent supports in Happier — session modes, resuming, handoff, listing and forking — generated from the bundled agent definitions.
 ---
 
-Happier drives 21 coding agents, and they do not all support the same
+Happier drives 22 coding agents, and they do not all support the same
 things. This page is generated from the agent definitions the app ships with, so
 it says what your build actually does rather than what an agent's own
 documentation claims.
@@ -28,12 +28,13 @@ than only when starting one.
 
 | Agent | Session modes | Switching mid-session |
 | --- | --- | --- |
-| Antigravity CLI | No ACP modes | No runtime switch |
+| Antigravity CLI | ACP agent modes | ACP setSessionMode |
 | Auggie CLI | No ACP modes | No runtime switch |
 | Claude Code CLI | Static agent modes | Agent native |
 | CodeBuddy Code CLI | ACP agent modes | ACP setSessionMode |
 | CodeRabbit | No ACP modes | No runtime switch |
 | Cursor Agent CLI | ACP agent modes | ACP setSessionMode |
+| custom-acp | ACP agent modes | ACP setSessionMode |
 | DeepSec | No ACP modes | No runtime switch |
 | Devin CLI | ACP agent modes | ACP setSessionMode |
 | Factory Droid CLI | ACP agent modes | ACP setSessionMode |
@@ -68,6 +69,7 @@ works and is not yet considered settled.
 | CodeBuddy Code CLI | Supported | Not supported | Not supported | Not supported |
 | CodeRabbit | Not supported | Not supported | Not supported | Not supported |
 | Cursor Agent CLI | Supported (experimental) | Not supported | Not supported | Not supported |
+| custom-acp | Supported | Not supported | Not supported | Not supported |
 | DeepSec | Not supported | Not supported | Not supported | Not supported |
 | Devin CLI | Supported | Not supported | Not supported | Not supported |
 | Factory Droid CLI | Supported | Not supported | Not supported | Not supported |

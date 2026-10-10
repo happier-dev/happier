@@ -172,6 +172,7 @@ vi.mock('@happier-dev/cli-common/systemTasks', async () => {
 import { createLiveRemoteSshBootstrapTaskKind, createLiveRemoteSshManageHostTaskKind } from './liveRemoteSshBootstrap';
 import { createServer } from 'node:http';
 import { encodeHomeQrInviteV2Payload, type HomeQrInviteV2 } from '@happier-dev/protocol';
+import { parseSshKnownHostLine } from '@happier-dev/cli-common/systemTasks';
 
 function jsonResult(data: Record<string, unknown>) {
   return {
@@ -195,6 +196,40 @@ let remoteEnrollmentCompleted = false;
 	const UNBRACKETED_PORT_KEYSCAN_OUTPUT = '127.0.0.1 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC';
 
 describe('createLiveRemoteSshBootstrapTaskKind', () => {
+  it('does not treat provider host-key evidence as permission to replace saved trust', async () => {
+    readFileSync.mockReturnValue(`${MISMATCHED_TRUSTED_HOST_KEY}\n`);
+    const prompt = vi.fn(async (request: Readonly<{ kind: string }>) => {
+      expect(request.kind).toBe('ssh.replaceHostKey');
+      return { trusted: false };
+    });
+    await expect(createLiveRemoteSshBootstrapTaskKind().run({
+      params: {
+        ssh: { target: 'dev@example.test', auth: 'agent', hostKeyEvidence: {
+          hostKey: TRUSTED_HOST_KEY, fingerprint: parseSshKnownHostLine(TRUSTED_HOST_KEY)!.fingerprint,
+        } },
+        relay: { relayUrl: 'https://relay.example.test' }, serviceMode: 'none',
+      }, emit: () => undefined, prompt,
+    })).rejects.toMatchObject({ code: 'host_trust_declined' });
+    expect(prompt).toHaveBeenCalled();
+    expect(writeFileSync).not.toHaveBeenCalled();
+    expect(transferOpenSshFile).not.toHaveBeenCalled();
+  });
+
+  it('refuses provider host-key evidence that does not match the fresh scan', async () => {
+    const prompt = vi.fn(async () => ({ trusted: true }));
+    await expect(createLiveRemoteSshBootstrapTaskKind().run({
+      params: {
+        ssh: { target: 'dev@example.test', auth: 'agent', hostKeyEvidence: {
+          hostKey: MISMATCHED_TRUSTED_HOST_KEY, fingerprint: parseSshKnownHostLine(MISMATCHED_TRUSTED_HOST_KEY)!.fingerprint,
+        } },
+        relay: { relayUrl: 'https://relay.example.test' }, serviceMode: 'none',
+      }, emit: () => undefined, prompt,
+    })).rejects.toMatchObject({ code: 'host_key_evidence_mismatch' });
+    expect(prompt).not.toHaveBeenCalled();
+    expect(writeFileSync).not.toHaveBeenCalled();
+    expect(transferOpenSshFile).not.toHaveBeenCalled();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     lastInstallRemoteFirstPartyDeps.current = null;
@@ -285,7 +320,9 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
       }
       if (remoteCommand.includes('auth status --json')) {
         return jsonResult({
+          v: 1,
           ok: true,
+          kind: 'auth_status',
           data: {
             authenticated: remoteEnrollmentCompleted,
             credentialState: remoteEnrollmentCompleted ? 'valid' : 'missing',
@@ -1164,6 +1201,34 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
         },
       }),
     ).rejects.toThrow(/remote installer failed/i);
+  });
+
+  it.each([
+    { name: 'SSH transport failure', status: 255, value: { v: 1, ok: false, kind: 'auth_status', error: { code: 'not_authenticated' } } },
+    { name: 'unexpected process failure', status: 2, value: { v: 1, ok: false, kind: 'auth_status', error: { code: 'not_authenticated' } } },
+    { name: 'unavailable auth', status: 0, value: { v: 1, ok: false, kind: 'auth_status', error: { code: 'auth_status_unavailable' } } },
+    { name: 'missing auth envelope', status: 0, value: { authenticated: false } },
+    { name: 'malformed auth success', status: 0, value: { v: 1, ok: true, kind: 'auth_status', data: {} } },
+    { name: 'signed-out response to server selection', status: 1, match: 'server set', value: { v: 1, ok: false, kind: 'auth_status', error: { code: 'not_authenticated' } } },
+  ])('refuses $name before remote pairing', async ({ status, value, ...scenario }) => {
+    const previousImplementation = spawnSync.getMockImplementation();
+    if (!previousImplementation) throw new Error('Missing spawnSync mock implementation');
+    spawnSync.mockImplementation((command: string, args: readonly string[] = []) => {
+      if (command === 'ssh' && String(args.at(-1) ?? '').includes(scenario.match ?? 'auth status --json')) {
+        return { status, stdout: `${JSON.stringify(value)}\n`, stderr: '' };
+      }
+      return previousImplementation(command, args);
+    });
+    await expect(createLiveRemoteSshBootstrapTaskKind().run({
+      params: {
+        ssh: { target: 'dev@example.test', auth: 'agent' }, relay: { relayUrl: 'https://relay.example.test' },
+        channel: 'preview', knownHostsMode: 'system', serviceMode: 'none',
+      },
+      emit: () => undefined,
+      prompt: async () => ({ approved: true }),
+    })).rejects.toThrow();
+    expect(approveTerminalAuthRequest).not.toHaveBeenCalled();
+    expect(remoteEnrollmentCompleted).toBe(false);
   });
 
   it('parses JSON output even when the remote command exits non-zero (auth status not authenticated)', async () => {

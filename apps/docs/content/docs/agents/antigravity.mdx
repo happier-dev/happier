@@ -8,14 +8,21 @@ official `agy_acp_server`, which Happier installs and manages for you. The
 interactive `agy` CLI is a separate surface — Happier uses it for the terminal
 and for discovering existing CLI conversations, not for its own sessions.
 
+## Availability
+
+These are unreleased 0.3 development features. The managed server pin is 1.3.0,
+with negotiated modes before session creation and live mode updates through the
+shared ACP controls. Authenticated composer, context-usage and account-switch
+validation is still in progress.
+
 ## Requirements
 
 For Happier sessions, nothing to install by hand. Happier downloads the pinned
 Antigravity ACP server the first time you select Antigravity, verifies it
 against a pinned SHA-256, and reuses the cached copy afterwards. Google
-publishes it for macOS (Apple silicon), Linux (x64 and arm64) and Windows (x64
-and arm64); there is no Intel-macOS build, so that combination is reported as
-unsupported rather than emulated.
+publishes 1.3.0 for macOS, Linux and Windows on x64 and arm64, including Intel
+Mac. A cached older managed version is replaced through the existing ensure path;
+explicit executable overrides retain their own negotiated capabilities.
 
 For the **terminal** surface and external-session discovery you also need the
 Antigravity CLI installed locally:
@@ -71,14 +78,19 @@ Happier does not probe Antigravity's login state in the background — the agent
 exposes no safe non-interactive signal — so the status may read **Unknown** even
 when you are signed in. Use **Check now** after logging in.
 
-You can also attach a Gemini Connected Account to Antigravity to supply model
-credentials to the ACP server.
+Gemini Connected Accounts do not authenticate Antigravity personal sessions.
+The development integration adds Google Antigravity accounts through the existing
+Connected Accounts flow, with isolated authentication and configurable shared ACP
+history. Authenticated sign-in, quota attribution and switching are not yet
+verified. See [Connected services](/accounts/connected-services#google-antigravity-in-03-development).
 
 ## What Happier can drive
 
 - **Model selection** is supported.
 - **Resume** is supported through Antigravity's own session state.
-- **Session modes** are not exposed to Happier, so there is no mode picker.
+- **Session modes** come from authenticated ACP discovery. Choose an advertised
+  starting mode in the new-session composer; it is applied before the first prompt.
+  An unavailable discovery result does not create mode choices.
 - **Handoff, listing and forking** are not supported.
 
 ## Terminal and existing CLI conversations
@@ -91,6 +103,12 @@ ACP sessions and `agy` CLI conversations are **separate identities**. Opening th
 terminal from a Happier ACP session starts a fresh `agy` conversation rather than
 reattaching to the ACP one, and external CLI sessions are read-only — Happier
 does not claim writer safety or takeover for them.
+
+The official 1.3.0 server restricts Happier's model catalog to Gemini models.
+Happier uses its own client identity and displays the negotiated catalog. After a
+turn, reported context usage feeds the existing context indicator; older executable
+overrides may not send those counts. Native-auth discovery sessions can leave empty
+conversations in the ACP history.
 
 The full matrix is on [Agent capabilities](/agents/capabilities).
 

@@ -4,6 +4,7 @@ import type { AgentCatalogEntry } from '@/agent/catalog/types';
 import { AGENTS } from '@/agent/catalog/registry';
 import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
+import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 
 import { resolveConfiguredAcpProbeCacheVariant } from './configuredAcpProbeCacheVariant';
 import type { PreflightSessionControlsProbeKind } from './preflightSessionControlsProbeAdapterTypes';
@@ -17,6 +18,7 @@ export async function resolveAgentProbeVariant(params: Readonly<{
   runtimeDescriptorV1?: RuntimeDescriptorV1;
   runtimeKindOverride?: string;
   accountSettings?: Readonly<Record<string, unknown>> | null;
+  acpCatalogSnapshot?: AcpCatalogSnapshotV1;
   pluginSettings?: AgentCliSessionCommandPluginSettingsV1;
   env?: NodeJS.ProcessEnv;
 }>): Promise<string> {
@@ -24,6 +26,7 @@ export async function resolveAgentProbeVariant(params: Readonly<{
     agentId: params.agentId,
     backendTarget: params.backendTarget,
     accountSettings: params.accountSettings,
+    catalogSnapshot: params.acpCatalogSnapshot,
   });
 
   const entry = params.catalogEntry === undefined ? AGENTS[params.agentId] : params.catalogEntry;

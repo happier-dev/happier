@@ -107,9 +107,9 @@ describe.skipIf(process.platform === 'win32')('withAgentCliUpdates (K6)', () => 
     expect(fetchLatestVersion).toHaveBeenCalledTimes(2);
   });
 
-  it('reports an unknown latest version without caching the failure', async () => {
+  it('preserves detected CLI facts after a 403 latest-version failure without caching it', async () => {
     const fetchLatestVersion = vi.fn(async () => {
-      throw new Error('registry unavailable');
+      throw new Error('GitHub latest release lookup failed (403)');
     });
     const cap = withAgentCliUpdates(
       createInstalledCliCapability({ resolvedPath: launcher, version: () => '2.1.0' }),
@@ -118,7 +118,10 @@ describe.skipIf(process.platform === 'win32')('withAgentCliUpdates (K6)', () => 
     );
     const request = { id: 'cli.claude' as const, params: { includeLatestVersion: true } };
 
-    await expect(cap.detect({ request, context: { cliSnapshot: null } })).resolves.toMatchObject({ latestVersion: null });
+    await expect(cap.detect({ request, context: { cliSnapshot: null } })).resolves.toMatchObject({
+      available: true, version: '2.1.0', resolvedPath: launcher, resolutionSource: 'system',
+      updateSupported: true, latestVersion: null,
+    });
     await cap.detect({ request, context: { cliSnapshot: null } });
     expect(fetchLatestVersion).toHaveBeenCalledTimes(2);
   });

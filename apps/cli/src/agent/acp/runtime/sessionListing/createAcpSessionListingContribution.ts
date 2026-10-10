@@ -14,7 +14,6 @@ import {
 } from '@happier-dev/plugin-sdk/sessions/external';
 
 import type { AcpBackend } from '@/agent/acp/AcpBackend';
-import { createAcpBackend } from '@/agent/acp/createAcpBackend';
 import { createAcpTransportHandlerFromDefinition } from '@/agent/acp/runtime/definition/transport';
 import type { NormalizedPluginDeclarativeAcpRuntime } from '@/agent/acp/runtime/definition/plugin';
 import {
@@ -172,6 +171,7 @@ export function createAcpSessionListingOwner(params: Readonly<{
     });
     if (launch.kind === 'stdio') owned.adoptRelease(launch.release);
     const timeouts = launch.timeouts;
+    const { createAcpBackend } = await import('@/agent/acp/createAcpBackend');
     return owned.adoptBackend(createAcpBackend({
       agentName: params.agentId,
       // Only the child process working directory. This connection issues

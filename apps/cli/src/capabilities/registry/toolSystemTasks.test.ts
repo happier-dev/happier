@@ -3,6 +3,7 @@ import {
   SYSTEM_TASK_PROTOCOL_VERSION,
 } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
+import { SystemTaskResultSchema } from '@happier-dev/protocol/system/tasks/spec';
 
 import {
   createProtocolSystemTasksRunnerAdapter,
@@ -30,6 +31,26 @@ async function waitForResult(
 }
 
 describe('systemTasksCapability', () => {
+  it('waits for the same admitted task to settle and preserves terminal failure', async () => {
+    let failRestart!: () => void;
+    const restart = new Promise<void>((resolve) => { failRestart = resolve; });
+    const runner = createSystemTasksRunner({ kinds: {
+      'relay.runtime.restart.v1': { async run() { await restart; throw new Error('Runtime could not start'); } },
+    } });
+    const capability = createSystemTasksCapability(createProtocolSystemTasksRunnerAdapter(runner, { createTaskId: () => 'restart-task' }));
+    await capability.invoke?.({ method: 'start', params: { spec: { protocolVersion: 1, kind: 'relay.runtime.restart.v1', params: {} } } });
+    let settled = false;
+    const waiting = capability.invoke?.({ method: 'wait', params: { taskId: 'restart-task' } }).then((result) => { settled = true; return result; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    failRestart();
+    const waited = await waiting;
+    expect(waited?.ok).toBe(true);
+    if (!waited?.ok) throw new Error('Task completion was not returned');
+    expect(SystemTaskResultSchema.parse(waited.result)).toEqual({ protocolVersion: 1, taskId: 'restart-task', ok: false,
+      error: { code: 'system_task_failed', message: 'Runtime could not start' } });
+  });
+
   it('advertises the remote cli.update.v1 only where this machine can update its CLI remotely (K5)', async () => {
     const detect = async (canUpdate: boolean) => await createSystemTasksCapability(undefined, () => canUpdate).detect({
       request: { id: 'tool.systemTasks' },
@@ -69,7 +90,7 @@ describe('systemTasksCapability', () => {
         'relay.runtime.personal_home.relocation_destination.commit.v1',
         'relay.runtime.personal_home.relocation_destination.abort.v1',
       ],
-      methods: ['start', 'poll', 'respond'],
+      methods: ['start', 'poll', 'respond', 'wait'],
       taskGroups: [
         {
           id: 'ssh-tunnel-supervisor',
@@ -150,6 +171,7 @@ describe('systemTasksCapability', () => {
   it('delegates start, poll, and respond through the stateful runner', async () => {
     const calls: Array<Readonly<{ method: string; params: Record<string, unknown> }>> = [];
     const capability = createSystemTasksCapability({
+      wait: async () => ({ protocolVersion: 1, taskId: 'task-1', ok: true }),
       start: async (params) => {
         calls.push({ method: 'start', params: params as Record<string, unknown> });
         return { taskId: 'task-1' };

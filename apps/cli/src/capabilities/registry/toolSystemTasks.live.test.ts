@@ -20,6 +20,7 @@ describe('createProtocolSystemTasksRunnerAdapter', () => {
             result: null,
           };
         },
+        wait: async () => ({ protocolVersion: 1, taskId: 'relay-task-1', ok: true }),
         respond: async (params) => {
           calls.push({ method: 'respond', params: params as Record<string, unknown> });
         },

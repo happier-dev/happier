@@ -1,3 +1,4 @@
+import type { AgentAcpRuntimeDefinition } from '@happier-dev/plugin-sdk/agents/runtime';
 import { DefaultTransport, type TransportHandler } from '@/agent/transport';
 import { pickPermissionOptionId } from '@/agent/acp/permissions/permissionMapping';
 import type { AgentMessage } from '@/agent/core/AgentMessage';
@@ -22,6 +23,7 @@ export type AcpTransportBehaviorDefinition = Pick<
   | 'stderrRules'
   | 'permissionOptionSelection'
 > & Readonly<{
+  permissions?: AgentAcpRuntimeDefinition['permissions'];
   callbacks?: Pick<AcpRuntimeDefinition['callbacks'], 'toolNameResolver'>;
   sanitizeToolUpdateContent?: NonNullable<TransportHandler['sanitizeToolUpdateContent']>;
 }>;
@@ -240,6 +242,7 @@ export function createAcpTransportHandlerFromDefinition(
 
   const handler: TransportHandler = {
     agentName: base.agentName,
+    getPermissionRequestScope: () => definition.permissions?.scope ?? 'turn',
     getInitTimeout: () => initMs ?? base.getInitTimeout(),
     ...(initDelayMs !== undefined ? { getInitDelayMs: () => initDelayMs } : {}),
     filterStdoutLine: (line) => {

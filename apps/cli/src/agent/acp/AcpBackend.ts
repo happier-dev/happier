@@ -121,7 +121,7 @@ import type {
   AcpExtensionContextFactory,
   AcpExtensionRegistration,
 } from './connection/types';
-import { handleAcpSessionNotification } from './updates/handleSessionNotification';
+import { handleAcpSessionNotification, isPromptTurnSessionUpdate } from './updates/handleSessionNotification';
 import type { AcpTurnOutcome } from './turn/outcome';
 import { mapStopReasonToAcpTurnOutcome, readPromptStopReason } from './turn/completion';
 import { abortPendingAcpPermissionRequests } from './permissions/permissionFinalization';
@@ -230,15 +230,6 @@ type MutableSessionNotificationEnvelope = Omit<SessionNotification, 'update'> & 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
-}
-
-function isPromptTurnSessionUpdateType(sessionUpdateType: string | undefined): boolean {
-  return sessionUpdateType === 'user_message_chunk'
-    || sessionUpdateType === 'agent_message_chunk'
-    || sessionUpdateType === 'agent_thought_chunk'
-    || sessionUpdateType === 'tool_call'
-    || sessionUpdateType === 'tool_call_update'
-    || sessionUpdateType === 'plan';
 }
 
 function getString(obj: Record<string, unknown>, key: string): string | null {
@@ -981,7 +972,27 @@ export class AcpBackend implements CatalogAcpBackend {
         toolCallCountSincePrompt: this.toolCallCountSincePrompt,
       }),
       getActiveSessionId: () => this.acpSessionId,
-      cancel: async (sessionId) => this.cancel(sessionId),
+      capturePermissionRequest: (sessionId) => {
+        const turnGeneration = this.turnGeneration;
+        const scope = this.transport.getPermissionRequestScope?.() ?? 'turn';
+        const admitted = sessionId === this.acpSessionId && !this.disposed
+          && (scope === 'turn'
+            ? this.waitingForResponse && !this.isCurrentTurnGenerationClosed()
+            : this.options.permissionHandler !== undefined);
+        const isCurrent = () => admitted && sessionId === this.acpSessionId && !this.disposed
+          && (scope === 'session' || (turnGeneration === this.turnGeneration
+            && this.waitingForResponse && !this.isCurrentTurnGenerationClosed()));
+        return {
+          scope,
+          isCurrent,
+          cancel: async (failure) => {
+            if (scope !== 'turn' || !isCurrent()) return;
+            // Check ownership before atomically failing and cancelling this exact prompt.
+            if (failure) this.failPendingResponseWait(failure);
+            await this.cancel(sessionId);
+          },
+        };
+      },
       emitPermissionResponse: async (requestId, approved) => {
         logger.debug(`[AcpBackend] Permission response event (UI only): ${requestId} = ${approved}`);
         this.emit({ type: 'permission-response', id: requestId, approved });
@@ -992,7 +1003,6 @@ export class AcpBackend implements CatalogAcpBackend {
       },
       toolCalls: this.toolCalls,
       lastSelectedPermissionOptionIdByToolCallId: this.lastSelectedPermissionOptionIdByToolCallId,
-      failTurn: (error) => this.failPendingResponseWait(error),
     });
 
     const fsEnabled = this.options.fsEnabled ?? isAcpFsEnabled();
@@ -1609,10 +1619,10 @@ export class AcpBackend implements CatalogAcpBackend {
           && sessionUpdateType === 'tool_call_update'
           && typeof record?.toolCallId === 'string'
           && this.toolCalls.readCall(record.toolCallId) !== null;
-        if (dropClosedTurnUpdates && isPromptTurnSessionUpdateType(sessionUpdateType) && !isRetainedClosedTurnToolUpdate) {
+        if (dropClosedTurnUpdates && isPromptTurnSessionUpdate(update) && !isRetainedClosedTurnToolUpdate) {
           continue;
         }
-        if (!isPromptTurnSessionUpdateType(sessionUpdateType)) {
+        if (!isPromptTurnSessionUpdate(update)) {
           processable.push(update);
           continue;
         }
@@ -1682,16 +1692,19 @@ export class AcpBackend implements CatalogAcpBackend {
       replayCapture: this.replayCapture,
       sessionUpdateShapeLogger: this.sessionUpdateShapeLogger,
       waitingForResponse: this.waitingForResponse,
-      onResponseTrafficObserved: () => {
+      onResponseTrafficObserved: (observedPromptTurnEffect) => {
         this.sawSessionUpdateSincePrompt = true;
         const observedTurnGeneration = this.turnGeneration;
         // Let the ACP peer finish dispatching the current transport batch before
         // classifying update-only custody. A request-scoped response delivered in
         // the same batch is stronger evidence: success proves acceptance, while a
         // rejection after output proves only unknown custody.
-        setImmediate(() => {
-          this.settlePendingPromptSubmissionEffect(observedTurnGeneration);
-        }).unref?.();
+        if (observedPromptTurnEffect) {
+          this.sawPromptTurnEffectSincePrompt = true;
+          setImmediate(() => {
+            this.settlePendingPromptSubmissionEffect(observedTurnGeneration);
+          }).unref?.();
+        }
         if (this.postPromptCompletionIdleTimeout) {
           clearTimeout(this.postPromptCompletionIdleTimeout);
           this.postPromptCompletionIdleTimeout = null;
@@ -1880,6 +1893,7 @@ export class AcpBackend implements CatalogAcpBackend {
   private postPromptCompletionIdleTimeout: NodeJS.Timeout | null = null;
   private postIdleWithoutAssistantMessageTimeout: NodeJS.Timeout | null = null;
   private sawSessionUpdateSincePrompt = false;
+  private sawPromptTurnEffectSincePrompt = false;
   private sawAssistantMessageSincePrompt = false;
   private pendingPromptSubmissionTurnGeneration: number | null = null;
   private pendingPromptSubmissionEffectResolver: ((evidence: 'provider-effect' | 'completion') => void) | null = null;
@@ -2227,6 +2241,7 @@ export class AcpBackend implements CatalogAcpBackend {
     this.waitingForResponse = true;
     this.responseCompletionError = null;
     this.sawSessionUpdateSincePrompt = false;
+    this.sawPromptTurnEffectSincePrompt = false;
     this.sawAssistantMessageSincePrompt = false;
     this.pendingPromptSubmissionTurnGeneration = null;
     this.pendingPromptSubmissionEffectResolver = null;
@@ -2275,6 +2290,17 @@ export class AcpBackend implements CatalogAcpBackend {
       });
 
       return normalizedError;
+    };
+
+    const classifyPromptSubmissionError = (error: unknown): AcpPromptSubmissionSettledResult => {
+      const normalizedError = handlePromptError(error);
+      if (this.sawPromptTurnEffectSincePrompt) {
+        return { kind: 'effect_observed_without_prompt_response' };
+      }
+      if (error instanceof RequestError) {
+        return { kind: 'rejected_before_effect', error: normalizedError };
+      }
+      return { kind: 'effect_may_have_occurred', error: normalizedError };
     };
 
     try {
@@ -2464,11 +2490,7 @@ export class AcpBackend implements CatalogAcpBackend {
       const settlement = settlePromptSubmission().catch((error: unknown) => {
         this.pendingPromptSubmissionEffectResolver = null;
         this.pendingPromptSubmissionTurnGeneration = null;
-        const normalizedError = handlePromptError(error);
-        if (error instanceof RequestError && !this.sawSessionUpdateSincePrompt) {
-          return { kind: 'rejected_before_effect' as const, error: normalizedError };
-        }
-        return { kind: 'effect_may_have_occurred' as const, error: normalizedError };
+        return classifyPromptSubmissionError(error);
       }).finally(() => {
         promptTransportWriteReceipt.cancel();
       });
@@ -2489,11 +2511,7 @@ export class AcpBackend implements CatalogAcpBackend {
     } catch (error) {
       this.pendingPromptSubmissionEffectResolver = null;
       this.pendingPromptSubmissionTurnGeneration = null;
-      const normalizedError = handlePromptError(error);
-      if (error instanceof RequestError && !this.sawSessionUpdateSincePrompt) {
-        return { kind: 'rejected_before_effect', error: normalizedError };
-      }
-      return { kind: 'effect_may_have_occurred', error: normalizedError };
+      return classifyPromptSubmissionError(error);
     }
   }
 
@@ -2971,7 +2989,7 @@ export class AcpBackend implements CatalogAcpBackend {
     }
   }
 
-  async dispose(): Promise<void> {
+  async dispose(options?: Readonly<{ preserveProviderSession: boolean }>): Promise<void> {
     if (this.disposed) return;
     
     logger.debug('[AcpBackend] Disposing backend');
@@ -2990,7 +3008,7 @@ export class AcpBackend implements CatalogAcpBackend {
       this.stderrAppender = null;
     }
     // Try graceful shutdown first
-    if (this.connection && this.acpSessionId) {
+    if (options?.preserveProviderSession !== true && this.connection && this.acpSessionId) {
       try {
         // Send cancel to stop any ongoing work
         await withGracefulTeardownBound(
