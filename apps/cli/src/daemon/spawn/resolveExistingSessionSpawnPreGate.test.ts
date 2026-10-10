@@ -8,6 +8,11 @@ import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import type { TrackedSession } from '../types';
 import { serializeWindowsCommandLine } from '../platform/windows/windowsCommandLine';
+import { configuration } from '@/configuration';
+import { createSessionMetadata } from '@/agent/runtime/createSessionMetadata';
+import { createOnHappySessionWebhook } from '../sessions/onHappySessionWebhook';
+import { waitForSessionWebhook } from './waitForSessionWebhook';
+import type { SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 
 vi.mock('@/session/transport/http/sessionsHttp', () => ({ fetchSessionByIdCompat: vi.fn() }));
 vi.mock('@/api/client/connectedServiceCredentialApi', () => ({
@@ -200,6 +205,76 @@ describe('existing-session process evidence admission', () => {
 
 
 describe('pending fresh runner admission before its webhook', () => {
+  it('rejoins repeated Resume before the first webhook and completes only the original startup waiter', async () => {
+    const sessionId = 'sess-fresh-retry-before-report';
+    const identity = await readProcessIdentityByPid(process.pid);
+    if (identity?.processStartTimeMs === undefined) throw new Error('Test requires OS generation evidence');
+    const metadata = createSessionMetadata({
+      flavor: 'test-agent', machineId: 'machine-fresh-startup', startedBy: 'daemon',
+      hostProcessStartTimeMs: identity.processStartTimeMs,
+      launchControlMetadata: {},
+    }).metadata;
+    const tracked: TrackedSession = {
+      pid: process.pid, startedBy: 'daemon', happySessionId: `PID-${process.pid}`,
+      spawnOptions: { directory: metadata.path, spawnNonce: 'original-fresh-launch' },
+      processStartTimeMs: identity.processStartTimeMs,
+    };
+    const sessions = new Map([[process.pid, tracked]]);
+    const awaiters = new Map<number, (session: TrackedSession) => void>();
+    const resolvers = new Map<number, (result: SpawnSessionResult) => void>();
+    const timeouts = new Map<number, ReturnType<typeof setTimeout>>();
+    const completion = waitForSessionWebhook({
+      pid: process.pid, pidToTrackedSession: sessions, pidToAwaiter: awaiters,
+      pidToSpawnResultResolver: resolvers, pidToSpawnWebhookTimeout: timeouts,
+      timeoutErrorMessage: 'Fixture webhook timeout',
+    });
+    const originalAwaiter = awaiters.get(process.pid);
+    vi.mocked(fetchSessionByIdCompat).mockResolvedValue(createSessionRecordFixture({
+      id: sessionId, encryptionMode: 'plain', metadata: JSON.stringify(metadata), dataEncryptionKey: null,
+    }));
+    try {
+      const admission = {
+        existingSessionId: sessionId, pidToTrackedSession: sessions,
+        probeSessionRunnerPresence: async (id: string) => await readRunnerPresence({
+          sessionId: id, trackedSessions: sessions.values(), readProcessIdentityByPid,
+          readSessionRunnerLockStatus: async () => ({ ok: false as const, reason: 'not_found' as const }),
+        }),
+        pendingSessionStartup: {
+          pidToAwaiter: awaiters, machineId: 'machine-fresh-startup', happyHomeDir: configuration.happyHomeDir,
+          readSessionMetadata: async (id: string) => {
+            const context = await resolveExistingSessionAttachContext({ token: 'test', sessionId: id, credentials: null });
+            if (!context.ok) throw new Error(context.reason);
+            return context.metadata;
+          },
+        },
+        waitForExitTimeoutMs: 0, waitForExitPollIntervalMs: 1, logDebug: vi.fn(), logWarn: vi.fn(),
+      };
+      for (let retry = 0; retry < 2; retry++) {
+        await expect(resolveExistingSessionSpawnPreGate(admission)).resolves.toMatchObject({
+          shortCircuitResult: { type: 'success', sessionId },
+        });
+        expect(sessions.size).toBe(1);
+        expect(awaiters.get(process.pid)).toBe(originalAwaiter);
+        expect(completion.isPending()).toBe(true);
+        expect(tracked.happySessionMetadataFromLocalWebhook).toBeUndefined();
+        expect(tracked.spawnStartupCanonicalSessionId).toBeUndefined();
+      }
+      const report = createOnHappySessionWebhook({
+        pidToTrackedSession: sessions, pidToAwaiter: awaiters,
+        readProcessIdentityByPidFn: readProcessIdentityByPid,
+        writeSessionMarkerFn: async () => {}, listSessionMarkersFn: async () => [], readCredentialsFn: async () => null,
+      });
+      await report(sessionId, metadata);
+      await expect(completion).resolves.toMatchObject({ type: 'success', sessionId });
+      expect(awaiters.size).toBe(0);
+      expect(tracked.happySessionMetadataFromLocalWebhook).toEqual(metadata);
+    } finally {
+      completion.settleFailure({ type: 'error', errorCode: 'UNEXPECTED', errorMessage: 'Fixture cleanup' });
+      await Promise.allSettled([completion, tracked.reportMarkerCustody?.pending]);
+      for (const timeout of timeouts.values()) clearTimeout(timeout);
+    }
+  });
+
   it.each(['current', 'stale', 'legacy', 'other_machine', 'other_home', 'unknown', 'stopped', 'dead', 'retired'] as const)('uses %s generation evidence without completing startup readiness', async (generation) => {
     const sessionId = 'sess-published-before-webhook';
     const identity = await readProcessIdentityByPid(process.pid);

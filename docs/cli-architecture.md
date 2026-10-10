@@ -2586,9 +2586,13 @@ readiness reconciliation, and the original spawn awaiter. Pending Windows
 Terminal launches retain custody when only the launcher exits. The
 shared presence owner uses one paired runner PID/generation fact for ordinary
 wrappers and exact Windows launches, preserving launcher identity until normal
-marker promotion. Heartbeat and visible-console observations delegate retirement
-to the canonical exit owner; the console poll does not independently settle
-startup. Missing process evidence keeps existing startup finalization or
+marker promotion. A distinct reported runner PID stays unproven while its OS
+generation read is pending; the dead wrapper cannot prove that runner absent,
+and pending startup custody cannot promote it before the paired identity arrives.
+An older asynchronous report or OS probe cannot replace or prove absence of a
+newer reported runner. Heartbeat, visible-console, and regular-child observations
+delegate retirement to the canonical exit owner; retained wrapper custody does
+not independently fail startup. Missing process evidence keeps existing startup finalization or
 cancellation authoritative, and a reused runner PID cannot be promoted. Stop and
 retirement retain their existing lifecycle checks. Startup failure and normal runner exit
 release the scope's locks; process-exit cleanup uses the same owner.

@@ -738,7 +738,8 @@ export function createOnHappySessionWebhook(params: Readonly<{
           await persistSessionMarker(beforeStartupReadiness);
           return;
         }
-        if (runnerIdentity?.processStartTimeMs !== undefined && typeof runnerIdentity.command === 'string' && runnerIdentity.command.trim()) {
+        if ((trackedForPid.sessionRunnerPid === undefined || trackedForPid.sessionRunnerPid === pid)
+          && runnerIdentity?.processStartTimeMs !== undefined && typeof runnerIdentity.command === 'string' && runnerIdentity.command.trim()) {
           adoptTrackedSessionRunnerIdentity(trackedForPid, {
             pid: runnerIdentity.pid,
             processStartTimeMs: runnerIdentity.processStartTimeMs,

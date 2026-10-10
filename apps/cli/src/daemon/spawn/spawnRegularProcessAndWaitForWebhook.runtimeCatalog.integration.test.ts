@@ -1055,6 +1055,10 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
       getApiMachineForSessions: () => null,
       promoteSessionMarkerFn,
       removeSessionMarkerFn: vi.fn(async () => undefined),
+      processPresenceDependencies: {
+        readProcessRunState: async (pid) => pid === runnerPid ? 'servable' : 'dead',
+        readProcessIdentityByPid: async (pid) => ({ pid, processStartTimeMs: 2_000, command: 'runner command' }),
+      },
     } as never);
     const { createOnHappySessionWebhook } =
       await import('../sessions/onHappySessionWebhook');
@@ -1096,6 +1100,12 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
 
     child.emit('exit', 0, null);
     releaseMarker();
+    await vi.waitFor(() => {
+      expect(params.pidToTrackedSession.get(wrapperPid)?.runnerProcessIdentity?.pid).toBe(runnerPid);
+    });
+    // The existing heartbeat repeats missing-wrapper observations after a held
+    // report captures its runner generation; startup keeps the same exit owner.
+    await onChildExited(wrapperPid, { reason: 'process-missing', code: null, signal: null });
     await vi.waitFor(() => {
       expect(params.pidToTrackedSession.get(runnerPid))
         .toBeDefined();

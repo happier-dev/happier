@@ -107,13 +107,19 @@ export async function classifyTrackedSessionProcessPresence(params: Readonly<{
 }>): Promise<SessionRunnerProcessPresence> {
   const childPid = typeof params.tracked.childProcess?.pid === 'number' ? params.tracked.childProcess.pid : null;
   const exactRunner = params.tracked.runnerProcessIdentity;
+  const reportedRunnerPid = params.tracked.sessionRunnerPid;
+  // A report records the runner PID before its OS generation read completes.
+  // The wrapper's lifetime and generation cannot establish that runner's absence.
+  if (params.tracked.sessionRunnerPid !== undefined
+    && exactRunner?.pid !== params.tracked.sessionRunnerPid
+    && params.tracked.sessionRunnerPid !== params.tracked.pid) return 'unknown';
   if (params.tracked.windowsTerminalLaunchCustody && !exactRunner
     && (params.tracked.startupCustody || params.tracked.cancelStartupLaunchBeforeAck)) {
     return 'unknown';
   }
   const pidToCheck = exactRunner?.pid ?? childPid ?? params.tracked.pid;
   const runState = await params.readProcessRunState(pidToCheck).catch(() => null);
-  return await classifyStoredProcessPresence({
+  const presence = await classifyStoredProcessPresence({
     runState,
     storedProcessStartTimeMs: exactRunner?.processStartTimeMs ?? params.tracked.processStartTimeMs,
     storedProcessCommandHash: exactRunner?.processCommandHash ?? params.tracked.processCommandHash,
@@ -121,6 +127,11 @@ export async function classifyTrackedSessionProcessPresence(params: Readonly<{
     readProcessIdentityByPid: params.readProcessIdentityByPid,
     readProcessInstanceFingerprint: params.readProcessInstanceFingerprint ?? ((pid, expectedFingerprint) => readProcessInstanceFingerprintSync(pid, { expectedFingerprint })),
   });
+  // Reports can replace runner evidence while either OS read is awaiting.
+  // A result for the previous runner cannot establish the latest one's absence.
+  if (params.tracked.sessionRunnerPid !== reportedRunnerPid
+    || params.tracked.runnerProcessIdentity !== exactRunner) return 'unknown';
+  return presence;
 }
 
 export async function isSessionRunnerActive(params: Readonly<{
