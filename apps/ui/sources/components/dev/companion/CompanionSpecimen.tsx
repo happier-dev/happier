@@ -1,3 +1,4 @@
+import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import * as React from 'react';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -84,7 +85,7 @@ const BOARD = projectSessionBoard({
     layout: undefined,
     items: new Map([
         ['note', boardItem('Open question', { kind: 'declarative', document: createSessionSurfaceNoteDocumentV1('Does the phone sheet need the same key?') })],
-        ['relay', boardItem('Relay retries, last 90 min', { kind: 'hostedHtml', source: { kind: 'html', html: '<main></main>' }, requestedCapabilities: {} })],
+        ['relay', boardItem('Relay retries, last 90 min', { kind: 'hostedHtml', source: artifactHtmlBundleFromBodyV1('<main></main>'), requestedCapabilities: {} })],
         ['conv', boardItem('External conversations', { kind: 'widget', instance: { v: 1, id: 'conv',
             definition: { kind: 'installed', surface: { pluginId: 'happier.channels', localId: 'conversations' } }, bindings: {} } })],
     ]),

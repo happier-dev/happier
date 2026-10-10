@@ -322,14 +322,13 @@ export type AgentUiBehavior = Readonly<{
             getSourceOptions?: (ctx: {
                 agentId: ExternalSessionsAgentId;
                 profile: Pick<AccountProfile, 'connectedServicesV2'> | null | undefined;
-                settings: Settings;
+                labelsByKey: Readonly<Record<string, string | undefined>>;
             }) => readonly ExternalSessionBrowseSourceOption[];
             resolveLockedSourceOption?: (ctx: {
                 agentId: ExternalSessionsAgentId;
                 sourceOptions: readonly ExternalSessionBrowseSourceOption[];
                 agentOptionState?: Record<string, unknown> | null;
                 profile: Pick<AccountProfile, 'connectedServicesV2'> | null | undefined;
-                settings: Settings;
             }) => ExternalSessionBrowseSourceOption | null;
             buildLinkEnsureRequestExtras?: (ctx: {
                 agentId: ExternalSessionsAgentId;
@@ -573,7 +572,8 @@ function buildDefaultAgentUiBehaviorFromCore(core: Pick<AgentCoreConfig, 'permis
 }
 
 function buildDefaultAgentUiBehavior(agentId: BundledAgentId): AgentUiBehavior {
-    return buildDefaultAgentUiBehaviorFromCore(getAgentCore(agentId));
+    const core = getAgentCore(agentId);
+    return core ? buildDefaultAgentUiBehaviorFromCore(core) : {};
 }
 
 function resolveGeneratedAgentUiBehavior(agentId: CanonicalAgentId): AgentUiBehavior {

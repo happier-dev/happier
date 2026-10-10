@@ -49,8 +49,15 @@ function resolveRowStatusLabel(row: AgentCollectionRow): string | undefined {
         case 'disabled': return t('settingsAgents.stateDisabled');
         case 'needsSignIn': return t('machineAgents.needsSignIn');
         case 'ready':
-        case 'updateAvailable':
+        case 'updateAvailable': {
+            if (row.signIn?.status === 'signedIn') {
+                const via = row.signIn.via;
+                if (via?.kind === 'connected') return t('machineAgents.signedInWith', { label: via.profileLabel ?? via.title });
+                if (via?.accountLabel) return t('machineAgents.signedInAs', { label: via.accountLabel });
+                return t('machineAgents.signedInHere');
+            }
             return t('settingsAgents.collection.ready');
+        }
         case 'installing': return t('machineAgents.installing');
         case 'failed': return t('agentInstallJob.failed');
         case 'unsupported': return t('machineAgents.unsupportedOs');
@@ -265,10 +272,22 @@ export const AgentCollectionList = React.memo(function AgentCollectionList(props
         />
     );
 
-    // With no machine chosen nothing was detected anywhere, so the list carries no "On <machine>" claim.
-    const onMachineTitle = machineLabel
-        ? t('settingsAgents.collection.onMachine', { machine: machineLabel })
-        : undefined;
+    // With no machine chosen nothing was detected anywhere, so the list makes no "On <machine>"
+    // claim: it groups by what the Account has enabled, which needs no machine.
+    const groups: ReadonlyArray<Readonly<{ key: string; title: string; rows: readonly AgentCollectionRow[] }>> = machineLabel
+        ? [
+            { key: 'onMachine', title: t('settingsAgents.collection.onMachine', { machine: machineLabel }), rows: collection.onMachine },
+            { key: 'available', title: t('settingsAgents.collection.availableToInstall'), rows: collection.available },
+        ]
+        : [
+            { key: 'enabled', title: t('settingsAgents.collection.enabledGroup'), rows: collection.onMachine.filter((row) => row.status !== 'disabled') },
+            {
+                key: 'more',
+                title: t('settingsAgents.collection.moreAgents'),
+                rows: [...collection.onMachine.filter((row) => row.status === 'disabled'), ...collection.available],
+            },
+        ];
+    const firstGroupKey = groups.find((group) => group.rows.length > 0)?.key ?? null;
     const total = collection.total + customBackends.length;
     const searchable = total > SEARCH_THRESHOLD;
     const noMatches = total > 0
@@ -297,14 +316,9 @@ export const AgentCollectionList = React.memo(function AgentCollectionList(props
                     />
                 ) : null}
                 {emptyRow ? <ItemGroup>{emptyRow}</ItemGroup> : null}
-                {collection.onMachine.length > 0 ? (
-                    <ItemGroup title={onMachineTitle}>{collection.onMachine.map(renderRow)}</ItemGroup>
-                ) : null}
-                {collection.available.length > 0 ? (
-                    <ItemGroup title={t('settingsAgents.collection.availableToInstall')}>
-                        {collection.available.map(renderRow)}
-                    </ItemGroup>
-                ) : null}
+                {groups.map((group) => group.rows.length > 0 ? (
+                    <ItemGroup key={group.key} title={group.title}>{group.rows.map(renderRow)}</ItemGroup>
+                ) : null)}
                 {visibleCustomBackends.length > 0 ? (
                     <ItemGroup title={t('settingsAgents.collection.customAgents')}>
                         {visibleCustomBackends.map(renderCustomRow)}
@@ -329,18 +343,12 @@ export const AgentCollectionList = React.memo(function AgentCollectionList(props
         >
             {customAcpRoute?.kind === 'draft' ? <CustomAcpDraftRow /> : null}
             {emptyRow}
-            {collection.onMachine.length > 0 && onMachineTitle ? (
-                <CollectionListGroupLabel title={onMachineTitle} count={collection.onMachine.length} first />
-            ) : null}
-            {collection.onMachine.map(renderRow)}
-            {collection.available.length > 0 ? (
-                <CollectionListGroupLabel
-                    title={t('settingsAgents.collection.availableToInstall')}
-                    count={collection.available.length}
-                    first={collection.onMachine.length === 0}
-                />
-            ) : null}
-            {collection.available.map(renderRow)}
+            {groups.map((group) => group.rows.length > 0 ? (
+                <React.Fragment key={group.key}>
+                    <CollectionListGroupLabel title={group.title} count={group.rows.length} first={group.key === firstGroupKey} />
+                    {group.rows.map(renderRow)}
+                </React.Fragment>
+            ) : null)}
             {visibleCustomBackends.length > 0 ? (
                 <CollectionListGroupLabel
                     title={t('settingsAgents.collection.customAgents')}

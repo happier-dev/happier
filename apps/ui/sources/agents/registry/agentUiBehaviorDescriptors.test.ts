@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
+import { ConnectedPresentationRecordV1Schema, projectConnectedPresentationLabelsV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
@@ -159,7 +160,6 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
                         {
                             serviceId: 'openai-codex',
                             keyPrefix: 'codex:connected-service',
-                            detailSettingsKey: { scope: 'host', localId: 'connectedServicesProfileLabelByKey' },
                             source: { kind: 'codexHome', home: 'connectedService' },
                         },
                     ],
@@ -195,6 +195,7 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
         expect(sessionExtras).not.toHaveProperty('metadataCandidates');
         expect(JSON.stringify(generated)).not.toContain('agentRuntimeDescriptorV1');
         expect(JSON.stringify(generated)).not.toContain('providerExtra');
+        expect(JSON.stringify(generated)).not.toContain('connectedServicesProfileLabelByKey');
 
         const { behavior, diagnostics } = createAgentUiBehaviorFromDescriptor(generated, 'codex');
 
@@ -221,11 +222,12 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
                     groups: [],
                 }],
             },
-            settings: makeSettings({
-                connectedServicesProfileLabelByKey: {
-                    'openai-codex/work': 'Work Profile',
-                },
-            }),
+            labelsByKey: projectConnectedPresentationLabelsV1(ConnectedPresentationRecordV1Schema.parse({
+                v: 1,
+                entries: [{ v: 1, subject: { kind: 'account', account: {
+                    service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'work',
+                } }, label: 'Work Profile' }],
+            })),
         })).toEqual([
             {
                 key: 'codex:user',
@@ -781,7 +783,7 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
                         iconName: 'users',
                         tab: {
                             keyPrefix: 'claude-subagent-launcher',
-                            titleKey: 'session.subagents.panel.launchTeammateAction',
+                            titleKey: 'session.subagents.panel.claudeTeamTitle',
                             subtitleKey: 'session.subagents.panel.launchClaudeTeamsSubtitle',
                         },
                     },

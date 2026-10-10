@@ -5,6 +5,8 @@ import {
     getAgentCore as getSharedAgentCore,
     getAgentModelConfig,
     getProviderCliInstallGuideUrl,
+    getAgentLocalCliConfig,
+    type BundledAgentId,
 } from '@happier-dev/agents';
 
 import {
@@ -22,21 +24,36 @@ import {
     AGENT_IDS,
 } from './registryCore';
 import { buildAgentToolsUiConfig } from './buildAgentToolsUiConfig';
+import { buildCatalogAgentCliUiConfig } from './buildCatalogAgentCliUiConfig';
+import { buildAgentCliInstallBanner } from './buildAgentCliInstallBanner';
+import { createCatalogAgentLocalAuthPlugin } from '@/agents/catalog/localAuth/createCatalogAgentLocalAuthPlugin';
+import { getAgentLocalAuthPlugin } from '@/agents/catalog/localAuth/agentLocalAuthCatalog';
 import { LEGACY_COMPAT_PRIMARY_AGENT_ID } from '@/agents/backendCatalog/legacyCompatAgents';
 
 describe('agents/registryCore', () => {
+    it('does not invent native CLI setup or login for a definition-qualified Agent', () => {
+        // @ts-expect-error The declared Custom ACP contribution is pending the bundled membership generator.
+        const agentId: BundledAgentId = 'custom-acp';
+        expect(buildCatalogAgentCliUiConfig(agentId)).toBeNull();
+        expect(buildAgentCliInstallBanner(agentId)).toBeNull();
+        expect(createCatalogAgentLocalAuthPlugin(agentId)).toBeNull();
+        expect(getAgentLocalAuthPlugin(agentId)).toBeNull();
+    });
     it('exposes a stable list of agent ids', () => {
         expect(Array.isArray(AGENT_IDS)).toBe(true);
         expect(AGENT_IDS.length).toBeGreaterThan(0);
-        expect([...AGENT_IDS].sort()).toEqual([...SHARED_AGENT_IDS].sort());
-        expect([...CANONICAL_AGENT_IDS].sort()).toEqual([...SHARED_AGENT_IDS].sort());
+        expect([...CANONICAL_AGENT_IDS].sort()).toEqual(Object.keys(CANONICAL_AGENTS_CORE).sort());
+        expect(AGENT_IDS).toBe(CANONICAL_AGENT_IDS);
+        expect(SHARED_AGENT_IDS).toEqual(expect.arrayContaining(AGENT_IDS));
     });
 
     it('exports only agent ids that have a UI core config', () => {
         for (const agentId of AGENT_IDS) {
             const core = getUiAgentCore(agentId);
+            if (!core) throw new Error(`Missing admitted core: ${agentId}`);
             expect(core.id).toBe(agentId);
-            expect(typeof core.cli.detectKey).toBe('string');
+            expect(core.cli === null).toBe(getAgentLocalCliConfig(agentId) === null);
+            if (core.cli) expect(typeof core.cli.detectKey).toBe('string');
         }
     });
 
@@ -147,50 +164,65 @@ describe('agents/registryCore', () => {
 
     it('provides core config for known agents', () => {
         const claude = getUiAgentCore('claude');
+        if (!claude) throw new Error('Missing admitted Claude core');
         expect(claude.id).toBe('claude');
-        expect(claude.cli.detectKey).toBeTruthy();
+        expect(claude.cli?.detectKey).toBeTruthy();
+    });
+
+    it('publishes the bundled Antigravity core needed by session UI initialization', () => {
+        expect(getUiAgentCore('antigravity')).toMatchObject({
+            id: 'antigravity',
+            permissions: { promptProtocol: 'codexDecision' },
+            sessionStorage: { persisted: true },
+        });
+        expect(CANONICAL_AGENT_IDS).toContain('antigravity');
     });
 
     it('preserves Qwen quiet unknown-tool rendering from the generated projection', () => {
-        expect(getUiAgentCore('qwen').toolRendering.hideUnknownToolsByDefault).toBe(true);
+        expect(getUiAgentCore('qwen')?.toolRendering.hideUnknownToolsByDefault).toBe(true);
     });
 
     it('provides core config for kilo', () => {
         const kilo = getUiAgentCore('kilo');
+        if (!kilo) throw new Error('Missing admitted Kilo core');
         expect(kilo.id).toBe('kilo');
-        expect(kilo.cli.detectKey).toBeTruthy();
+        expect(kilo.cli?.detectKey).toBeTruthy();
     });
 
     it('provides core config for pi', () => {
         const pi = getUiAgentCore('pi');
+        if (!pi) throw new Error('Missing admitted Pi core');
         expect(pi.id).toBe('pi');
-        expect(pi.cli.detectKey).toBeTruthy();
+        expect(pi.cli?.detectKey).toBeTruthy();
         expect(pi.runtimeInput?.inFlightSteerSupported).toBe(true);
     });
 
     it('provides core config for ohMyPi', () => {
         const ohMyPi = getUiAgentCore('ohMyPi');
+        if (!ohMyPi) throw new Error('Missing admitted Oh My Pi core');
         expect(ohMyPi.id).toBe('ohMyPi');
-        expect(ohMyPi.cli.detectKey).toBe('omp');
+        expect(ohMyPi.cli?.detectKey).toBe('omp');
     });
 
     it('provides core config for kiro', () => {
         const kiro = getUiAgentCore('kiro');
+        if (!kiro) throw new Error('Missing admitted Kiro core');
         expect(kiro.id).toBe('kiro');
-        expect(kiro.cli.detectKey).toBe('kiro-cli');
+        expect(kiro.cli?.detectKey).toBe('kiro-cli');
     });
 
     it('uses generic installer guidance instead of hardcoded package-manager commands', () => {
         for (const agentId of ['codex', 'opencode', 'qwen', 'kilo', 'kiro', 'ohMyPi', 'pi', 'copilot'] as const) {
             const core = getUiAgentCore(agentId);
-            expect(core.cli.installBanner.installKind).toBe('ifAvailable');
-            expect(core.cli.installBanner.installCommand).toBeUndefined();
+            if (!core) throw new Error(`Missing admitted core: ${agentId}`);
+            expect(core.cli?.installBanner.installKind).toBe('ifAvailable');
+            expect(core.cli?.installBanner.installCommand).toBeUndefined();
         }
     });
 
     it('uses centralized setup guide URLs for provider install banners', () => {
         for (const agentId of ['claude', 'opencode', 'kimi', 'qwen', 'ohMyPi', 'pi'] as const) {
-            expect(getUiAgentCore(agentId).cli.installBanner.guideUrl).toBe(getProviderCliInstallGuideUrl(agentId));
+            expect(getUiAgentCore(agentId)?.cli?.installBanner.guideUrl).toBe(getProviderCliInstallGuideUrl(agentId));
         }
     });
 
@@ -205,17 +237,17 @@ describe('agents/registryCore', () => {
     it('surfaces shared flavor aliases from @happier-dev/agents', () => {
         for (const agentId of AGENT_IDS) {
             const sharedAliases = [...(getSharedAgentCore(agentId).flavorAliases ?? [])];
-            expect(getUiAgentCore(agentId).flavorAliases).toEqual(expect.arrayContaining(sharedAliases));
+            expect(getUiAgentCore(agentId)?.flavorAliases).toEqual(expect.arrayContaining(sharedAliases));
         }
     });
 
     it('exposes an explicit UI-only connected service surface separate from capability metadata', () => {
-        expect(getUiAgentCore('claude').uiConnectedService).toEqual({
+        expect(getUiAgentCore('claude')?.uiConnectedService).toEqual({
             serviceId: 'anthropic',
             labelKey: 'agentInput.connectedServiceLabel.claude',
             connectRoute: '/(app)/settings/connect/claude',
         });
-        expect(getUiAgentCore('opencode').uiConnectedService).toEqual({
+        expect(getUiAgentCore('opencode')?.uiConnectedService).toEqual({
             serviceId: null,
             labelKey: 'agentInput.agent.opencode',
             connectRoute: null,

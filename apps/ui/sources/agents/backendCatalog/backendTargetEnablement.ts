@@ -86,15 +86,6 @@ export function getAgentBackendCompatibilityTargets(params: Readonly<{
             compatibilityTargetsByKey.set(bareTargetKey, bareTarget);
         }
 
-        const configuredTarget: BackendTargetRefV2 = {
-            kind: 'backend',
-            backendId,
-            configuredBackendId: backendId,
-        };
-        const configuredTargetKey = resolveBackendTargetKeyV2(configuredTarget);
-        if (configuredTargetKey !== canonicalTargetKey) {
-            compatibilityTargetsByKey.set(configuredTargetKey, configuredTarget);
-        }
     }
 
     return [...compatibilityTargetsByKey.values()];

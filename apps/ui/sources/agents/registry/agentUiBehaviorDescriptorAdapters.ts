@@ -4,8 +4,11 @@ import type {
 } from '@happier-dev/protocol';
 import { mergeSpawnConfigOptionAliases } from '@happier-dev/protocol/actions/sessionSpawnConfigOptions';
 import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { resolveQualifiedConnectedAccountLabel } from '@happier-dev/protocol/connect/connectedServiceProfilePreferences';
 
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server/resolvePortableServerIdentityForRoutingId';
 import { parseConnectedServicesBindingsByServiceIdFromAgentOptionState } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
 import { t, tLoose } from '@/text';
 
@@ -19,6 +22,7 @@ import {
 } from './uiDescriptorDiagnostics';
 import type { Settings } from '@/sync/domains/settings/settings';
 import { readAgentUiSetting } from './agentUiSettingLookup';
+import { resolveQualifiedConnectedAccountServiceKey } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 
 type EnvironmentDescriptor = Readonly<{
     providerId: string;
@@ -52,7 +56,6 @@ type ConnectedServiceProfileSourceDescriptor = Readonly<{
     keyPrefix: string;
     labelKey: string;
     labelParams?: Readonly<Record<string, string>>;
-    detailSettingsKey?: AgentUiSettingReferenceV1;
     source: Readonly<Record<string, unknown>>;
     serviceIdField: string;
     profileIdField: string;
@@ -174,7 +177,13 @@ function readScopedServerBaseUrlFromSettings(opts: Readonly<{
 
     const byServerId = readSetting(opts.settings, opts.config.byServerIdSettingKey);
     if (!isRecord(byServerId)) return null;
-    return normalizeDescriptorUrl(byServerId[serverId], opts.config);
+    const serverIdentityId = resolvePortableServerIdentityForRoutingId(serverId);
+    // The predecessor wrote this Account carrier under device-local routing ids.
+    // A present portable entry owns the value even when blank or rejected.
+    const settingKey = serverIdentityId && Object.prototype.hasOwnProperty.call(byServerId, serverIdentityId)
+        ? serverIdentityId
+        : serverId;
+    return normalizeDescriptorUrl(byServerId[settingKey], opts.config);
 }
 
 function readRuntimeSettings(opts: Readonly<{
@@ -322,7 +331,6 @@ function readConnectedServiceProfileSourceDescriptors(value: unknown): readonly 
         const keyPrefix = readString(entry.keyPrefix);
         const labelKey = readString(entry.labelKey);
         const labelParams = readStringRecord(entry.labelParams);
-    const detailSettingsKey = readSettingReference(entry.detailSettingsKey);
         const serviceIdField = readString(entry.serviceIdField);
         const profileIdField = readString(entry.profileIdField);
         const sourceKind = readString(entry.source.kind);
@@ -332,7 +340,6 @@ function readConnectedServiceProfileSourceDescriptors(value: unknown): readonly 
             keyPrefix,
             labelKey,
             ...(labelParams ? { labelParams } : {}),
-            ...(detailSettingsKey ? { detailSettingsKey } : {}),
             source: entry.source,
             serviceIdField,
             profileIdField,
@@ -498,25 +505,15 @@ function resolveSourceFromCandidateDescriptor(opts: Readonly<{
     return sanitizeSourceFromDescriptor(candidateSource, opts.descriptor);
 }
 
-function readProfileLabelFromSettings(opts: Readonly<{
-    settings: unknown;
-    settingKey?: AgentUiSettingReferenceV1;
-    serviceId: string;
-    profileId: string;
-}>): string | null {
-    if (!opts.settingKey) return null;
-    const labels = readSetting(opts.settings, opts.settingKey);
-    if (!isRecord(labels)) return null;
-    return normalizeOptionalString(labels[`${opts.serviceId}/${opts.profileId}`]);
-}
-
 function buildConnectedServiceProfileSourceOptions(opts: Readonly<{
     profile: Readonly<{ connectedServicesV2?: readonly unknown[] }> | null | undefined;
-    settings: unknown;
+    labelsByKey: Readonly<Record<string, string | undefined>>;
     descriptors: readonly ConnectedServiceProfileSourceDescriptor[];
 }>): readonly SourceOptionDescriptor[] {
     const services = Array.isArray(opts.profile?.connectedServicesV2) ? opts.profile.connectedServicesV2 : [];
     return opts.descriptors.flatMap((descriptor) => {
+        const serviceKey = resolveQualifiedConnectedAccountServiceKey(descriptor.serviceId);
+        const serviceRef = serviceKey ? parseQualifiedPluginContributionKey(serviceKey) : null;
         const service = services.find((candidate) => isRecord(candidate) && candidate.serviceId === descriptor.serviceId);
         const profiles = isRecord(service) && Array.isArray(service.profiles) ? service.profiles : [];
         return profiles.flatMap((profile): SourceOptionDescriptor[] => {
@@ -527,12 +524,11 @@ function buildConnectedServiceProfileSourceOptions(opts: Readonly<{
                 key: `${descriptor.keyPrefix}:${descriptor.serviceId}:${profileId}`,
                 labelKey: descriptor.labelKey,
                 ...(descriptor.labelParams ? { labelParams: descriptor.labelParams } : {}),
-                detail: readProfileLabelFromSettings({
-                    settings: opts.settings,
-                    settingKey: descriptor.detailSettingsKey,
-                    serviceId: descriptor.serviceId,
-                    profileId,
-                }) ?? profileId,
+                detail: (serviceRef ? resolveQualifiedConnectedAccountLabel({
+                    labelsByKey: opts.labelsByKey,
+                    service: serviceRef,
+                    accountId: profileId,
+                }) : null) ?? profileId,
                 source: {
                     ...descriptor.source,
                     [descriptor.serviceIdField]: descriptor.serviceId,
@@ -578,11 +574,11 @@ function createExternalSessionsBehavior(
                     ...(typeof browse?.order === 'number' ? { order: browse.order } : {}),
                     ...(sourceOptions.length > 0 || connectedServiceProfileSources.length > 0
                         ? {
-                            getSourceOptions: ({ profile, settings }) => [
+                            getSourceOptions: ({ profile, labelsByKey }) => [
                                 ...sourceOptions,
                                 ...buildConnectedServiceProfileSourceOptions({
                                     profile,
-                                    settings,
+                                    labelsByKey,
                                     descriptors: connectedServiceProfileSources,
                                 }),
                             ].map((entry) => ({

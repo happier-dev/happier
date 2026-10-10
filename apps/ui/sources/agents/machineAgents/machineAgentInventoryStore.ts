@@ -1,4 +1,4 @@
-import type { MachineAgentInventoryDescriptor, MachineAgentInventoryItem } from '@happier-dev/protocol/capabilities';
+import type { MachineAgentInventoryDescriptor, MachineAgentInventoryItem, MachineAgentInventoryUnavailable } from '@happier-dev/protocol/capabilities';
 import type { MachineAgent, MachineAgentConnectedService } from './machineAgentTypes';
 import { projectMachineAgent, reconcileMachineAgents } from './machineAgentModel';
 
@@ -10,6 +10,7 @@ export type MachineAgentsSnapshot = Readonly<{
 export type MachineAgentInventoryObservation = Readonly<{
     status: MachineAgentsSnapshot['status'];
     items: readonly MachineAgentInventoryItem[];
+    unavailable?: readonly MachineAgentInventoryUnavailable[];
     lastCheckedAt: number | null;
     descriptors?: readonly MachineAgentInventoryDescriptor[];
     connectedServicesByAgentId?: Readonly<Record<string, readonly MachineAgentConnectedService[]>>;
@@ -46,11 +47,15 @@ export function createMachineAgentInventoryStore() {
             for (const item of observation.items) factsById.set(item.agentId, item);
             factsByScope.set(key, factsById);
             const descriptors = observation.descriptors ?? (observation.items.length > 0 ? observation.items : previous.agents);
+            const unavailableById = new Map(observation.unavailable?.map(({ agentId, ...reason }) => [agentId, reason]));
+            const refreshedIds = new Set(observation.items.map((item) => item.agentId));
             const agents = reconcileMachineAgents(previous.agents, descriptors.map((descriptor) => projectMachineAgent({
                 ...descriptor,
                 facts: factsById.get(descriptor.agentId) ?? null,
                 checking: observation.status === 'loading',
                 stale: observation.status === 'offline' || observation.status === 'error',
+                unavailableReason: unavailableById.get(descriptor.agentId)
+                    ?? (refreshedIds.has(descriptor.agentId) ? undefined : previous.agents.find((agent) => agent.agentId === descriptor.agentId)?.unavailableReason),
                 connectedServices: observation.connectedServicesByAgentId?.[descriptor.agentId] ?? previous.agents.find((agent) => agent.agentId === descriptor.agentId)?.signIn.connectedServices ?? [],
                 job: jobs ? jobs[descriptor.agentId] ?? null : previous.agents.find((agent) => agent.agentId === descriptor.agentId)?.job ?? null,
                 dependencyTitlesByKey: observation.dependencyTitlesByKey,

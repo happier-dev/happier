@@ -151,6 +151,11 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
         activeAccountRestored = false;
         projectionDescribeMock.mockReset();
         network = await installSessionOpsNetworkBoundary();
+        // The network fixture publishes plain Machines, so their Account must
+        // explicitly report plain mode rather than the old-server E2EE fallback.
+        network.setHttpResponder(async (input) => new URL(String(input)).pathname === '/v1/account/encryption'
+            ? Response.json({ mode: 'plain', updatedAt: 0 })
+            : null);
         const home = await network.addHome('https://server-1', 'account-a');
         expect(home.id).toBe('server-1');
         homeIds.clear();
@@ -338,11 +343,16 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
         }
     });
 
-    it('reuses a settled describe for another reader of the same Account until the projection changes', async () => {
+    it.each(['active', 'background'] as const)('reuses a settled describe for another reader of the same Account until the projection changes on an %s Home', async (placement) => {
         const { loadDaemonMergedProjectionCacheEntry } = await import('./loadDaemonMergedProjectionInputs');
         const { storage } = await import('@/sync/domains/state/storage');
+        if (placement === 'active') {
+            const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+            await upsertAndActivateServer({ serverUrl: 'https://server-1' });
+        }
         const previousMachines = storage.getState().machines;
-        storage.setState({ machines: { ...previousMachines, 'machine-1': createMachineFixture({ id: 'machine-1', daemonStateVersion: 1 }) } });
+        const daemonState = { status: 'running', pid: 17, contributionRegistryProjectionRevision: 0 };
+        storage.getState().applyMachines([createMachineFixture({ id: 'machine-1', daemonStateVersion: 1, daemonState })], false, { sourceServerId: 'server-1' });
         const firstAccount = createAccountLifetime('account-a');
         const sameAccount = createAccountLifetime('account-a');
         const nextAccount = createAccountLifetime('account-b');
@@ -366,7 +376,17 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
             });
             expect(projectionDescribeMock).toHaveBeenCalledTimes(2);
 
-            storage.setState({ machines: { ...storage.getState().machines, 'machine-1': createMachineFixture({ id: 'machine-1', daemonStateVersion: 2 }) } });
+            storage.getState().applyMachines([createMachineFixture({ id: 'machine-1', daemonStateVersion: 2, daemonState: {
+                ...daemonState, localServices: { v: 1, state: 'ready', runningCount: 1 },
+            } })], false, { sourceServerId: 'server-1' });
+            await expect(read(nextAccount.lifetime)).resolves.toMatchObject({
+                kind: 'ready', inputs: { pluginProjectionV2: { generation: 8 } },
+            });
+            expect(projectionDescribeMock).toHaveBeenCalledTimes(2);
+
+            storage.getState().applyMachines([createMachineFixture({ id: 'machine-1', daemonStateVersion: 3, daemonState: {
+                ...daemonState, contributionRegistryProjectionRevision: 1, localServices: { v: 1, state: 'ready', runningCount: 2 },
+            } })], false, { sourceServerId: 'server-1' });
             await expect(read(nextAccount.lifetime)).resolves.toMatchObject({
                 kind: 'ready', inputs: { pluginProjectionV2: { generation: 9 } },
             });
@@ -394,7 +414,7 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
         try {
             projectionDescribeMock.mockResolvedValue({ supported: true, projection: daemonProjection(7) });
             await expect(read()).resolves.toMatchObject({ kind: 'ready' });
-            storage.setState({ machines: { ...storage.getState().machines, 'machine-1': createMachineFixture({ id: 'machine-1', daemonStateVersion: 1 }) } });
+            storage.getState().applyMachines([createMachineFixture({ id: 'machine-1', daemonStateVersion: 1 })], false, { sourceServerId: 'server-1' });
             await expect(read()).resolves.toMatchObject({ kind: 'ready' });
             expect(projectionDescribeMock).toHaveBeenCalledTimes(2);
         } finally {

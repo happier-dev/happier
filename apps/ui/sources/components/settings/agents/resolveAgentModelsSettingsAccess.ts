@@ -1,4 +1,4 @@
-import { readProviderSettingsFromAccountSettingsV1 } from '@happier-dev/protocol/providers/settings/readFromAccountSettingsV1';
+import { composeProviderSettingsV1, DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, type ProviderConnectionsCatalogV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import type { ProviderSettingsV1 } from '@happier-dev/protocol/providers/settings/v1';
 
 export type AgentModelsSettingsAccess = Readonly<{
@@ -6,10 +6,9 @@ export type AgentModelsSettingsAccess = Readonly<{
     settings: ProviderSettingsV1;
 }>;
 
-export function resolveAgentModelsSettingsAccess(accountSettings: unknown): AgentModelsSettingsAccess {
-    const result = readProviderSettingsFromAccountSettingsV1(accountSettings);
+export function resolveAgentModelsSettingsAccess(snapshot: Readonly<{ status: 'loading' | 'ready' | 'partial' | 'unavailable'; data: ProviderConnectionsCatalogV1 | null; stale?: boolean }> | null): AgentModelsSettingsAccess {
     return {
-        writable: result.diagnostics.length === 0,
-        settings: result.settings,
+        writable: snapshot?.status === 'ready' && snapshot.data !== null && !snapshot.stale,
+        settings: composeProviderSettingsV1(snapshot?.data ?? DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, {}),
     };
 }

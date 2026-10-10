@@ -7,6 +7,7 @@ export type AgentCollectionRowStatus = MachineAgentState | 'disabled';
 export type AgentCollectionRow = Readonly<{
     entry: ResolvedAgentCatalogEntry;
     status: AgentCollectionRowStatus;
+    signIn: MachineAgent['signIn'] | null;
     /** Only a problem the user must fix (a signed-out installed agent) is flagged. */
     trouble: boolean;
 }>;
@@ -37,13 +38,13 @@ export function buildAgentCollection(params: Readonly<{
         if (query && !entry.title.toLocaleLowerCase().includes(query)) continue;
         const agent = agentsById.get(entry.agentId);
         if (agent?.state === 'notInstalled' || agent?.state === 'unsupported') {
-            available.push({ entry, status: agent.state, trouble: false });
+            available.push({ entry, status: agent.state, signIn: agent.signIn, trouble: false });
             continue;
         }
         const status: AgentCollectionRowStatus = entry.enabled === false
             ? 'disabled'
             : agent?.state ?? 'unknown';
-        onMachine.push({ entry, status, trouble: status === 'needsSignIn' && agent?.stale !== true });
+        onMachine.push({ entry, status, signIn: agent?.signIn ?? null, trouble: status === 'needsSignIn' && agent?.stale !== true });
     }
     return { onMachine, available, total: params.entries.length };
 }

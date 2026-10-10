@@ -3,11 +3,12 @@ import { View } from 'react-native';
 import { useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { applyAcpBackendDeleteV1, applyAcpBackendUpsertV1, normalizeAcpCatalogSettingsV1, suggestAcpBackendIdV1, type AcpBackendUpsertResultV1 } from '@happier-dev/protocol/acp/catalog/catalogMutationsV1';
+import { AgentsAcpBackendsDeleteOutputV1Schema, AgentsAcpBackendsUpsertOutputV1Schema, applyAcpBackendUpsertV1, suggestAcpBackendIdV1, type AcpBackendUpsertResultV1 } from '@happier-dev/protocol/acp/catalog/catalogMutationsV1';
+import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import type { AcpBackendDefinitionV1, AcpCatalogAuthSupportV1, AcpCatalogSupportHintV1 } from '@happier-dev/protocol/acp/catalog/settingsV1';
 
 import { createCustomAcpAgentSettingsRoute } from '@/agents/catalog/agentSettingsRoutes';
-import { useSavedSecretsMutable } from '@/components/secrets/useSavedSecretsMutable';
+import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalog';
 import { useAgentAuthoringEntry } from '@/components/settings/agents/authoring/useAgentAuthoringEntry';
 import { publishCustomAcpDraftTitle } from '@/components/settings/agents/collection/customAcpDraftTitle';
 import {
@@ -29,20 +30,33 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { Text } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
-import { useSettingMutable, useSettingsVersion } from '@/sync/domains/state/storage';
+import { useAcpCatalog } from '@/sync/store/useAcpCatalog';
+import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
+import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
+import { getStorage } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { useUnsavedDraftNavigationGuard } from '@/utils/navigation/useUnsavedDraftNavigationGuard';
 
 import { createDraftAcpBackend } from './createDraftAcpBackend';
+import { useAcpCatalogActionExecution } from './useAcpCatalogActionExecution';
 import { useHappierCollectionLayout } from '@happier-dev/plugin-ui/presentation';
 
 const TEST_ID = 'settings.acpCatalog.backendEditor';
 const AGENTS_ROUTE = '/(app)/settings/agents';
+const NO_PERSONAL_SECRETS = Object.freeze([]);
 
 type Draft = AcpBackendDefinitionV1;
 /** An authored field a refusal can point at. `other` collects fields without a row of their own. */
 type FieldKey = 'title' | 'id' | 'name' | 'command' | 'docsUrl' | 'env' | 'other';
 type FieldErrors = Partial<Record<FieldKey, string>>;
+type DraftAuthority = Readonly<{ expectedRevision: number }> | Readonly<{ expectedRevision: 'absent'; sourceSettingsVersion: number }>;
+
+function captureDraftAuthority(catalog: AcpCatalogSnapshotV1 | undefined): DraftAuthority | null {
+    if (catalog?.status !== 'ready') return null;
+    return catalog.revision === 'absent'
+        ? { expectedRevision: 'absent', sourceSettingsVersion: catalog.sourceSettingsVersion }
+        : { expectedRevision: catalog.revision };
+}
 
 type EditorState = Readonly<{
     /** What is stored (or the blank draft): the draft is dirty when it differs from this. */
@@ -51,15 +65,12 @@ type EditorState = Readonly<{
     /** A new agent's ID and short name follow its name until the author edits them. */
     identifiersEdited: boolean;
     errors: FieldErrors;
+    authority: DraftAuthority | null;
 }>;
 
 function comparable(draft: Draft): string {
     const { createdAt: _createdAt, updatedAt: _updatedAt, ...rest } = draft;
     return JSON.stringify(rest);
-}
-
-function trimList(values: readonly string[] | undefined): string[] {
-    return (values ?? []).map((value) => value.trim()).filter(Boolean);
 }
 
 /** The writer's typed refusal, placed beside the field it names. */
@@ -118,9 +129,9 @@ function withoutError(errors: FieldErrors, field: FieldKey): FieldErrors {
     return rest;
 }
 
-function createInitialState(existing: Draft | null): EditorState {
+function createInitialState(existing: Draft | null, authority: DraftAuthority | null): EditorState {
     const baseline = existing ?? createDraftAcpBackend();
-    return { baseline, draft: baseline, identifiersEdited: existing !== null, errors: {} };
+    return { baseline, draft: baseline, identifiersEdited: existing !== null, errors: {}, authority };
 }
 
 /**
@@ -136,27 +147,51 @@ export const AcpBackendEditorScreen = React.memo(function AcpBackendEditorScreen
     const router = useRouter();
     const navigation = useNavigation();
     const layoutMode = useHappierCollectionLayout()?.mode ?? null;
-    const [settingsRaw, setSettings] = useSettingMutable('acpCatalogSettingsV1');
-    // Null until the Account settings have loaded: until then a missing agent may still arrive.
-    const settingsLoaded = useSettingsVersion() !== null;
-    const [secrets, setSecrets] = useSavedSecretsMutable();
-    const settings = React.useMemo(() => normalizeAcpCatalogSettingsV1(settingsRaw), [settingsRaw]);
-    const isNew = props.backendId === null;
-    const existing = React.useMemo(
-        () => (props.backendId ? settings.backends.find((entry) => entry.id === props.backendId) ?? null : null),
-        [props.backendId, settings.backends],
-    );
-
-    const [state, setState] = React.useState<EditorState>(() => createInitialState(existing));
-    const { draft, baseline, identifiersEdited, errors } = state;
+    const activeScope = useAccountSettingsScope();
+    const [capturedScope, setCapturedScope] = React.useState(activeScope);
+    React.useEffect(() => { if (!capturedScope && activeScope) setCapturedScope(activeScope); }, [activeScope, capturedScope]);
+    const { snapshot } = useAcpCatalog(capturedScope);
+    const action = useAcpCatalogActionExecution(capturedScope);
+    const isEditorCurrent = React.useCallback(() => Boolean(capturedScope && action.isCurrent()
+        && areAccountSettingsScopesEqual(getStorage().getState().settingsScope, capturedScope)), [action.isCurrent, capturedScope]);
+    const settingsLoaded = areAccountSettingsScopesEqual(activeScope, capturedScope)
+        && snapshot?.catalog.status === 'ready' && !snapshot.stale && isEditorCurrent();
+    const currentAuthority = React.useMemo(() => snapshot && !snapshot.stale
+        ? captureDraftAuthority(snapshot.catalog) : null, [snapshot]);
+    const executeAction = action.execute;
+    const secretCatalog = useSavedSecretCatalog({ scope: capturedScope, personalSecrets: NO_PERSONAL_SECRETS });
+    const secrets = React.useMemo(() => [...secretCatalog.materializedSecrets], [secretCatalog.materializedSecrets]);
+    const settings = React.useMemo(() => ({ v: 2 as const, backends: snapshot?.data?.definitions ?? [] }), [snapshot?.data]);
+    const [state, setState] = React.useState<EditorState>(() => createInitialState(
+        props.backendId ? settings.backends.find((entry) => entry.id === props.backendId) ?? null : null,
+        currentAuthority,
+    ));
+    // A create's acknowledged baseline supplies identity while newer unsaved edits stay mounted.
+    const backendId = props.backendId ?? (state.baseline.id || null);
+    const isNew = backendId === null;
+    const { draft, baseline, identifiersEdited, errors, authority } = state;
+    const existing = React.useMemo(() => {
+        const stored = backendId ? settings.backends.find((entry) => entry.id === backendId) ?? null : null;
+        if (stored || props.backendId !== null || baseline.id !== backendId || typeof authority?.expectedRevision !== 'number') return stored;
+        // Refresh can fail after the durable create ACK. Keep its editor visible until the
+        // catalog observes that revision; readiness still comes solely from the catalog.
+        const catalog = snapshot?.catalog;
+        return catalog?.status !== 'ready' || catalog.revision === 'absent' || catalog.revision < authority.expectedRevision
+            ? baseline : null;
+    }, [authority, backendId, baseline, props.backendId, settings.backends, snapshot?.catalog]);
     const dirty = comparable(draft) !== comparable(baseline);
     // A synced change to the stored agent replaces an untouched editor; it never overwrites edits.
     React.useEffect(() => {
-        if (!existing) return;
-        setState((current) => (comparable(current.draft) === comparable(current.baseline)
-            ? { ...current, baseline: existing, draft: existing }
-            : current));
-    }, [existing]);
+        if (!currentAuthority) return;
+        setState((current) => {
+            if (comparable(current.draft) !== comparable(current.baseline)) {
+                return current.authority ? current : { ...current, authority: currentAuthority };
+            }
+            const baseline = existing ?? current.baseline;
+            return baseline === current.baseline && JSON.stringify(current.authority) === JSON.stringify(currentAuthority)
+                ? current : { ...current, baseline, draft: baseline, authority: currentAuthority };
+        });
+    }, [currentAuthority, dirty, existing]);
 
     const identifiersFollowName = isNew && !identifiersEdited;
     const derivedId = React.useMemo(
@@ -189,24 +224,20 @@ export const AcpBackendEditorScreen = React.memo(function AcpBackendEditorScreen
     const [pendingHref, setPendingHref] = React.useState<string | null>(null);
     React.useEffect(() => {
         if (pendingHref === null) return;
+        // The saved route remounts this editor: wait until newer edits are saved or discarded.
+        if (pendingHref !== AGENTS_ROUTE && dirty) return;
         setPendingHref(null);
         if (pendingHref === AGENTS_ROUTE && layoutMode === 'stacked' && router.canGoBack?.()) {
             router.back();
             return;
         }
         router.replace(pendingHref as never);
-    }, [layoutMode, pendingHref, router]);
+    }, [dirty, layoutMode, pendingHref, router]);
 
-    const save = React.useCallback((): boolean => {
+    const save = React.useCallback(async (): Promise<boolean> => {
+        if (!settingsLoaded || !authority || !capturedScope || !isEditorCurrent()) return false;
         const candidate: Draft = {
             ...effectiveDraft,
-            args: trimList(effectiveDraft.args),
-            auth: effectiveDraft.auth?.loginCommand
-                ? {
-                    ...effectiveDraft.auth,
-                    loginCommand: { ...effectiveDraft.auth.loginCommand, args: trimList(effectiveDraft.auth.loginCommand.args) },
-                }
-                : effectiveDraft.auth,
             updatedAt: Date.now(),
         };
         const result = applyAcpBackendUpsertV1({
@@ -228,11 +259,28 @@ export const AcpBackendEditorScreen = React.memo(function AcpBackendEditorScreen
             }));
             return false;
         }
-        setSettings(result.settings);
-        setState({ baseline: result.backend, draft: result.backend, identifiersEdited: true, errors: {} });
-        if (isNew) setPendingHref(createCustomAcpAgentSettingsRoute(result.backend.id));
+        let saved: Draft;
+        let acknowledgedAuthority: DraftAuthority;
+        try {
+            const execution = await executeAction('agents.acp.backends.upsert', { backend: candidate, ...authority });
+            if (!execution.ok) throw new Error(execution.errorCode);
+            const receipt = AgentsAcpBackendsUpsertOutputV1Schema.parse(execution.result);
+            saved = receipt.backend;
+            acknowledgedAuthority = { expectedRevision: receipt.revision };
+        }
+        catch {
+            if (isEditorCurrent()) setState((current) => ({ ...current, errors: { ...current.errors, other: t('common.unavailable') } }));
+            return false;
+        }
+        if (!isEditorCurrent()) return false;
+        setState((current) => ({ ...current, baseline: saved,
+            draft: comparable(current.draft) !== comparable(draft)
+                ? { ...current.draft, id: saved.id, ...(!current.identifiersEdited ? { name: saved.name } : {}) }
+                : saved,
+            identifiersEdited: true, errors: {}, authority: acknowledgedAuthority }));
+        if (isNew) setPendingHref(createCustomAcpAgentSettingsRoute(saved.id));
         return true;
-    }, [effectiveDraft, identifiersFollowName, isNew, setSettings, settings]);
+    }, [authority, capturedScope, draft, effectiveDraft, executeAction, identifiersFollowName, isEditorCurrent, isNew, settings, settingsLoaded]);
 
     const leave = React.useCallback(() => setPendingHref(AGENTS_ROUTE), []);
     // Set by delete: the page is leaving, so its agent disappearing is not "not found".
@@ -250,19 +298,24 @@ export const AcpBackendEditorScreen = React.memo(function AcpBackendEditorScreen
     });
 
     const remove = React.useCallback(async () => {
-        if (!existing) return;
+        if (!existing || !authority || !capturedScope || !settingsLoaded || !isEditorCurrent()) return;
         const confirmed = await Modal.confirm(
             t('settingsAgents.customAcp.deleteTitle'),
             t('settingsAgents.customAcp.deleteConfirm', { name: existing.title || existing.name }),
             { destructive: true, cancelText: t('common.cancel'), confirmText: t('common.delete') },
         );
-        if (!confirmed) return;
-        const result = applyAcpBackendDeleteV1({ settings, backendId: existing.id });
+        if (!confirmed || !isEditorCurrent()) return;
+        try {
+            const execution = await executeAction('agents.acp.backends.delete', { backendId: existing.id, ...authority });
+            if (!execution.ok) throw new Error(execution.errorCode);
+            AgentsAcpBackendsDeleteOutputV1Schema.parse(execution.result);
+        }
+        catch { if (isEditorCurrent()) Modal.alert(t('common.error'), t('common.unavailable')); return; }
+        if (!isEditorCurrent()) return;
         deletedRef.current = true;
-        if (result.ok) setSettings(result.settings);
         setState((current) => ({ ...current, draft: current.baseline, errors: {} }));
         leave();
-    }, [existing, leave, setSettings, settings]);
+    }, [authority, capturedScope, executeAction, existing, isEditorCurrent, leave, settingsLoaded]);
     const discardDraft = React.useCallback(() => {
         discard();
         leave();
@@ -314,15 +367,14 @@ export const AcpBackendEditorScreen = React.memo(function AcpBackendEditorScreen
                         <CustomAcpMarkIcon />
                     </PageHeaderMarkSlot>
                 )}
+                primaryAction={{
+                    testID: `${TEST_ID}.save`,
+                    title: t('common.save'),
+                    disabled: !settingsLoaded || (!dirty && !isNew),
+                    onPress: save,
+                }}
                 actions={(
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                        <RoundButton
-                            testID={`${TEST_ID}.save`}
-                            size="small"
-                            title={t('common.save')}
-                            disabled={!dirty && !isNew}
-                            onPress={() => { save(); }}
-                        />
                         <PageHeaderMenu testID={`${TEST_ID}.menu`} actions={menuActions} />
                     </View>
                 )}
@@ -479,12 +531,12 @@ export const AcpBackendEditorScreen = React.memo(function AcpBackendEditorScreen
 
             <McpValueRefMapEditor
                 kind="env"
+                scope={capturedScope}
                 title={t('settingsAgents.customAcp.environmentSection')}
                 description={t('settingsAgents.customAcp.environmentSectionDescription')}
                 iconName="flask"
                 entries={draft.env}
-                secrets={Array.isArray(secrets) ? secrets : []}
-                onChangeSecrets={setSecrets as (next: any[]) => void}
+                secrets={secrets}
                 onChangeEntries={(next) => update('env', (current) => ({ ...current, env: next }))}
                 addRowTitle={t('settingsAgents.customAcp.addVariable')}
                 emptyTitle={t('settingsAgents.customAcp.noVariablesTitle')}

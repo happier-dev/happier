@@ -10,6 +10,7 @@ import {
     getAgentVendorResumeId,
 } from './resumeCapabilities';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
+import { AcpCatalogRecordV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 
 const projectedExternalLifecycleCapabilities = {
     agentId: 'acme-lifecycle',
@@ -333,9 +334,10 @@ describe('configured ACP resume capability', () => {
     ): Parameters<typeof canResumeSessionWithOptions>[1] {
         return {
             accountSettings: {
-                acpCatalogSettingsV1: { v: 2, backends: [...backends] },
                 ...extraAccountSettings,
             },
+            acpCatalogSnapshot: { status: 'ready', revision: 1,
+                record: AcpCatalogRecordV1Schema.parse({ v: 1, definitions: [...backends] }) },
         };
     }
 
@@ -352,6 +354,40 @@ describe('configured ACP resume capability', () => {
             title: 'Custom Kiro',
         },
     } as const;
+
+    test('uses ready destination row facts for configured resume without a Settings catalog', () => {
+        const options = {
+            accountSettings: {},
+            acpCatalogSnapshot: { status: 'ready' as const, revision: 3,
+                record: AcpCatalogRecordV1Schema.parse({ v: 1, definitions: [
+                    configuredBackendDeclaration({ id: 'custom-backend', capabilities: { supportsLoadSession: true } }),
+                ] }) },
+        };
+        expect(canAgentResume('acp:custom-backend', options)).toBe(true);
+        expect(canResumeSessionWithOptions(configuredAcpMetadata, options)).toBe(true);
+    });
+
+    test('does not authorize configured resume from raw Settings when destination facts are unavailable', () => {
+        const options = { ...loadCapableCatalog, accountSettings: {
+                acpCatalogSettingsV1: { v: 2, backends: [configuredBackendDeclaration({ id: 'custom-backend', capabilities: { supportsLoadSession: true } })] },
+            },
+            acpCatalogSnapshot: { status: 'unavailable' as const, reason: 'unreachable' } };
+        expect(canAgentResume('acp:custom-backend', options)).toBe(false);
+        expect(canResumeSessionWithOptions(configuredAcpMetadata, options)).toBe(false);
+    });
+
+    test('uses the exact configured target for resume even when its display id names a bundled Agent', () => {
+        const backendTarget = { kind: 'backend' as const, backendId: 'claude', configuredBackendId: 'claude' };
+        const record = AcpCatalogRecordV1Schema.parse({ v: 1, definitions: [
+            configuredBackendDeclaration({ id: 'claude', capabilities: { supportsLoadSession: false } }),
+        ] });
+        const options = { backendTarget, acpCatalogSnapshot: { status: 'ready' as const, revision: 2, record } };
+        expect(canAgentResume('claude', options)).toBe(false);
+        const supported = { ...record, definitions: record.definitions.map(definition => ({ ...definition,
+            capabilities: { ...definition.capabilities, supportsLoadSession: true } })) };
+        expect(canAgentResume('claude', { ...options, acpCatalogSnapshot: { ...options.acpCatalogSnapshot, record: supported } })).toBe(true);
+        expect(canAgentResume('claude', { ...options, acpCatalogSnapshot: { status: 'loading' as const } })).toBe(false);
+    });
 
     test('fails closed when the Account declaration does not support session load', () => {
         // No Account catalog reached this reader at all.
@@ -525,6 +561,7 @@ describe('configured ACP resume capability', () => {
 
         expect(canResumeSession(metadata)).toBe(false);
         expect(canResumeSessionWithOptions(metadata, {
+            ...loadCapableCatalog,
             accountSettings: {
                 ...(loadCapableCatalog?.accountSettings ?? {}),
                 codexBackendMode: 'mcp',

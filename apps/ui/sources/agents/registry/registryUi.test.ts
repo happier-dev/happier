@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { AGENT_IDS as SHARED_AGENT_IDS } from '@happier-dev/agents';
+import { CANONICAL_AGENT_IDS } from './registryCore';
 import { createThemeFixture } from '@/dev/testkit/fixtures/themeFixtures';
 
 import { AGENTS_UI, CANONICAL_AGENTS_UI } from './registryUi';
@@ -11,8 +12,8 @@ function sortedKeys(value: Record<string, unknown>): string[] {
 }
 
 describe('agents/registryUi', () => {
-    it('covers the full canonical provider universe (no UI-only drift)', () => {
-        expect(sortedKeys(CANONICAL_AGENTS_UI)).toEqual([...SHARED_AGENT_IDS].sort());
+    it('covers exactly the generated UI core membership', () => {
+        expect(sortedKeys(CANONICAL_AGENTS_UI)).toEqual([...CANONICAL_AGENT_IDS].sort());
         expect(CANONICAL_AGENTS_UI).not.toHaveProperty('customAcp');
         expect(AGENTS_UI).not.toHaveProperty('customAcp');
     });

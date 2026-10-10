@@ -12,6 +12,8 @@ import {
     type ActiveServerAccountScopeLifetime,
 } from '@/sync/domains/scope/activeServerAccountScope';
 import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 
 import {
     loadDaemonMergedProjectionCacheEntry,
@@ -148,8 +150,19 @@ export function useDaemonMergedProjectionInputs(params: Readonly<{
             return;
         }
         if (!accountLifetime) {
+            const previousStateServerId = stateAccountLifetimeRef.current?.scope.serverId;
+            const retainRouteMetadata = params.retainInputsAcrossScopeChange === true
+                && Boolean(serverId && (
+                    (previousServerId && !areServerProfileIdentifiersEquivalent(previousServerId, serverId))
+                    || (previousStateServerId && !areServerProfileIdentifiersEquivalent(previousStateServerId, serverId))
+                ));
+            // A route replacement may keep inert catalog labels while its Home
+            // binds. A missing binding on the same Home withdraws Account data.
             stateAccountLifetimeRef.current = accountLifetime;
-            setState({ phase: 'loading', inputs: null });
+            setState((previous) => ({
+                phase: 'loading',
+                inputs: retainRouteMetadata ? previous.inputs : null,
+            }));
             return;
         }
 
@@ -169,6 +182,12 @@ export function useDaemonMergedProjectionInputs(params: Readonly<{
                 ? { phase: 'ready', inputs: reusable.inputs }
                 : reusable?.kind === 'unsupported'
                     ? { phase: 'unsupported', inputs: null }
+                    : cached?.kind === 'error'
+                        && cached.projectionRevision === projectionRevision
+                        && accountLifetime?.isCurrent()
+                        && areServerAccountScopesEqual(cached.accountScope, accountLifetime.scope)
+                        && cached.accountCurrentness?.isCurrent() !== false
+                        ? { phase: 'error', inputs: cached.inputs ?? null, failureReason: cached.reason }
                     : { phase: 'idle', inputs: cached?.kind === 'ready' || cached?.kind === 'error' ? cached.inputs ?? null : null });
             return;
         }

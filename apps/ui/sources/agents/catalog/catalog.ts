@@ -1,6 +1,7 @@
 import type { AgentCoreConfig, MachineLoginKey } from '@/agents/registry/registryCore';
 import {
     AGENT_IDS,
+    AGENT_CORE_CONFIGS,
     DEFAULT_AGENT_ID,
     getAllAgentProviderOwnedEnvironmentKeys,
     getAgentCore as getExpoAgentCore,
@@ -18,6 +19,8 @@ export { resolveBundledAgentIdFromContributionIdentity } from './resolveBundledA
 type RegistryUiModule = typeof import('@/agents/registry/registryUi');
 type AgentIconTintTheme = Parameters<RegistryUiModule['getAgentIconTintColor']>[1];
 import * as RegistryUi from '@/agents/registry/registryUi';
+import { AgentUiIdentityColorV1Schema } from '@happier-dev/protocol/plugins/contributions/agentUiGrammar';
+import { resolveProjectedAgentUiBehaviorEntry } from '@/agents/registry/agentUiBehaviorProjection';
 
 import type { AgentUiBehavior } from '@/agents/registry/registryUiBehavior';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -36,7 +39,7 @@ import {
     resolveAgentUiBehavior,
 } from '@/agents/registry/registryUiBehavior';
 
-export { AGENT_IDS, DEFAULT_AGENT_ID };
+export { AGENT_IDS, AGENT_CORE_CONFIGS, DEFAULT_AGENT_ID };
 export { getAllAgentProviderOwnedEnvironmentKeys };
 export type { AgentId, BundledAgentId, MachineLoginKey };
 
@@ -51,14 +54,28 @@ function registryUi(): typeof RegistryUi {
     return RegistryUi;
 }
 
-export function getAgentCore(id: BundledAgentId): AgentCoreConfig;
-export function getAgentCore(id: AgentId): AgentCoreConfig | null;
 export function getAgentCore(id: AgentId): AgentCoreConfig | null {
     return getExpoAgentCore(id);
 }
 
 export function getAgentUi(id: AgentId): AgentUiConfig {
     return registryUi().getAgentUiConfig(id);
+}
+
+/** Shared neutral for an Agent without an admitted identity hue, or a folded Other series. */
+export function getNeutralAgentIdentityColor(theme: Readonly<{ dark: boolean }>): string {
+    return theme.dark ? '#6C625D' : '#A3A3A8';
+}
+
+export function getAgentIdentityColor(
+    theme: Readonly<{ dark: boolean }>,
+    agentId: string,
+    scope?: Readonly<{ machineId?: string | null; accountScope?: ServerAccountScope | null }>,
+): string {
+    const projected = resolveProjectedAgentUiBehaviorEntry(agentId, scope?.machineId, scope?.accountScope);
+    const declaration = projected?.descriptor.identityColor ?? getAgentUi(agentId).identityColor;
+    const color = AgentUiIdentityColorV1Schema.safeParse(declaration);
+    return color.success ? color.data[theme.dark ? 'dark' : 'light'] : getNeutralAgentIdentityColor(theme);
 }
 
 export function getAgentIconSource(agentId: string): ReturnType<RegistryUiModule['getAgentIconSource']> {
@@ -106,10 +123,12 @@ export function getAgentBehavior(id: AgentId, machineId?: string | null, account
     return resolveAgentUiBehavior(id, machineId, accountScope);
 }
 
-export function getAgent(id: BundledAgentId): AgentCatalogEntry {
+export function getAgent(id: BundledAgentId): AgentCatalogEntry | null {
+    const core = getAgentCore(id);
+    if (!core) return null;
     return {
         id,
-        core: getAgentCore(id),
+        core,
         ui: getAgentUi(id),
         behavior: getAgentBehavior(id),
     };

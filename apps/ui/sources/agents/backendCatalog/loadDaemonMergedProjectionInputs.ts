@@ -10,6 +10,8 @@ import {
 import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { readRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
+import { resolveServerScopedMachine } from '@/sync/store/domains/machines/resolveServerScopedMachine';
+import { machineContributionRegistryProjectionScopeKey } from '@/sync/ops/machineContributionRegistryProjectionRevision';
 import {
     forgetPluginUiProjectionAdmissionSnapshot,
     pluginUiProjectionAdmissionTargetKey,
@@ -65,7 +67,7 @@ type ProjectionCacheResult = (
 type ProjectionCacheEntry = Readonly<{
     projectionRevision: number;
     accountScope?: ServerAccountScope | null;
-    daemonStateVersion: number | null;
+    hasObservedMachine: boolean;
     /** The locale whose narrowed translation bundles this answer carries. */
     locale: string;
     /** The exact routed Home credential that authorized this projection. */
@@ -83,7 +85,7 @@ const PROJECTION_CACHE = new Map<string, ProjectionCacheEntry>();
 const DEFAULT_PROJECTION_STALE_MS = 60_000;
 type ProjectionRequest = Readonly<{
     revision: number;
-    daemonStateVersion: number | null;
+    hasObservedMachine: boolean;
     locale: string;
     /** The Account it reads for; a successor Account never joins it. */
     accountScope: ServerAccountScope | null;
@@ -111,10 +113,10 @@ function buildCacheKey(
     machineId: string,
     serverId: string | null | undefined,
 ): string {
-    return JSON.stringify([
-        normalizeKeyPart(serverId),
-        normalizeKeyPart(machineId),
-    ]);
+    return machineContributionRegistryProjectionScopeKey({
+        serverId: normalizeKeyPart(serverId) || null,
+        machineId: normalizeKeyPart(machineId),
+    });
 }
 
 export function entryIsFresh(entry: Readonly<{ fetchedAtMs: number }>, staleMs: number): boolean {
@@ -142,9 +144,9 @@ export function readCachedDaemonMergedProjectionCacheEntry(params: Readonly<{
     return currentProjectionCacheEntry(buildCacheKey(machineId, normalizeKeyPart(params.serverId) || null));
 }
 
-function readDaemonStateVersion(machineId: string): number | null {
-    const version = readRegisteredStorageState()?.machines[machineId]?.daemonStateVersion;
-    return typeof version === 'number' ? version : null;
+function hasObservedMachine(machineId: string, serverId: string | null): boolean {
+    const state = readRegisteredStorageState();
+    return state !== null && resolveServerScopedMachine(state, serverId, machineId) !== null;
 }
 
 /** The single authoritative reuse decision for every projection reader. */
@@ -165,7 +167,7 @@ export function readReusableDaemonMergedProjectionCacheEntry(params: Readonly<{
         !cached || cached.kind === 'error'
         || !entryIsFresh(cached, staleMs)
         || cached.projectionRevision !== getMachineContributionRegistryProjectionRevision({ machineId, serverId })
-        || cached.daemonStateVersion !== readDaemonStateVersion(machineId)
+        || cached.hasObservedMachine !== hasObservedMachine(machineId, serverId)
         || cached.locale !== getPreferredLanguage()
         || (cached.accountScope !== accountLifetime.scope
             && !areServerAccountScopesEqual(cached.accountScope ?? null, accountLifetime.scope))
@@ -211,19 +213,20 @@ export async function loadDaemonMergedProjectionCacheEntry(params: Readonly<{
     const cacheKey = buildCacheKey(params.machineId, params.serverId);
     // The canonical per-machine projection scope. Its revision advances on
     // socket reconnect, on an explicit invalidation, and on a known daemon
-    // replacement. The first machine observation does not bump that revision;
-    // the store-owned daemon state version qualifies reuse separately.
+    // replacement. Only the first exact-Home inventory observation qualifies
+    // bootstrap reuse separately; subsequent state decisions belong to this
+    // revision, never to the generic daemon-state version.
     const projectionScope = {
         machineId: normalizeKeyPart(params.machineId),
         serverId: normalizeKeyPart(params.serverId) || null,
     };
     const requestRevision = getMachineContributionRegistryProjectionRevision(projectionScope);
-    const requestDaemonStateVersion = readDaemonStateVersion(projectionScope.machineId);
+    const requestHasObservedMachine = hasObservedMachine(projectionScope.machineId, projectionScope.serverId);
     const accountScope = accountLifetime?.scope ?? null;
     const incumbentRequest = LATEST_PROJECTION_REQUEST.get(cacheKey);
     if (
         incumbentRequest?.revision === requestRevision
-        && incumbentRequest.daemonStateVersion === requestDaemonStateVersion
+        && incumbentRequest.hasObservedMachine === requestHasObservedMachine
         && incumbentRequest.locale === locale
         && (incumbentRequest.accountScope === accountScope
             || areServerAccountScopesEqual(incumbentRequest.accountScope, accountScope))
@@ -261,7 +264,7 @@ export async function loadDaemonMergedProjectionCacheEntry(params: Readonly<{
         const published = Object.freeze({
             ...entry,
             accountScope,
-            daemonStateVersion: requestDaemonStateVersion,
+            hasObservedMachine: requestHasObservedMachine,
             locale,
             ...(routedAccount ? { accountCurrentness: routedAccount.currentness } : {}),
         });
@@ -342,7 +345,7 @@ export async function loadDaemonMergedProjectionCacheEntry(params: Readonly<{
     })();
     const requestOwner: ProjectionRequest = Object.freeze({
         revision: requestRevision,
-        daemonStateVersion: requestDaemonStateVersion,
+        hasObservedMachine: requestHasObservedMachine,
         locale,
         accountScope,
         readers,

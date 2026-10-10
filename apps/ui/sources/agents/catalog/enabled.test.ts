@@ -2,15 +2,17 @@ import { describe, it, expect } from 'vitest';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 
 import { getEnabledAgentIds, isAgentEnabled } from './enabled';
+import { CANONICAL_AGENT_IDS } from '@/agents/registry/registryCore';
 
 /** Canonical catalog order, minus Agents the catalog marks unselectable. */
 const SELECTABLE_AGENT_IDS_IN_DISPLAY_ORDER = [
     'claude', 'codex', 'opencode', 'antigravity', 'gemini', 'grok', 'auggie', 'qwen', 'kimi',
     'kilo', 'kiro', 'devin', 'fx', 'droid', 'cursor', 'ohMyPi', 'pi', 'copilot',
 ] as const;
+const AVAILABLE_SELECTABLE_AGENT_IDS = SELECTABLE_AGENT_IDS_IN_DISPLAY_ORDER.filter((id) => CANONICAL_AGENT_IDS.includes(id));
 
 describe('agents/enabled', () => {
-    it('keeps a live-negotiated agent enabled without static model facts', () => {
+    it.runIf(CANONICAL_AGENT_IDS.includes('antigravity'))('keeps a live-negotiated agent enabled without static model facts', () => {
         expect(getEnabledAgentIds({ backendEnabledByTargetKey: {} })).toContain('antigravity');
     });
 
@@ -98,19 +100,19 @@ describe('agents/enabled', () => {
     });
 
     it('returns enabled agent ids in display order', () => {
-        expect(getEnabledAgentIds({ backendEnabledByTargetKey: {} })).toEqual(SELECTABLE_AGENT_IDS_IN_DISPLAY_ORDER);
+        expect(getEnabledAgentIds({ backendEnabledByTargetKey: {} })).toEqual(AVAILABLE_SELECTABLE_AGENT_IDS);
         expect(getEnabledAgentIds({
             backendEnabledByTargetKey: {
                 [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'gemini' })]: false,
                 [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'auggie' })]: false,
                 [resolveBackendTargetKeyV2({ kind: 'backend', backendId: 'antigravity-localharness' })]: false,
             },
-        })).toEqual(SELECTABLE_AGENT_IDS_IN_DISPLAY_ORDER.filter(
+        })).toEqual(AVAILABLE_SELECTABLE_AGENT_IDS.filter(
             (agentId) => agentId !== 'gemini' && agentId !== 'auggie' && agentId !== 'antigravity',
         ));
     });
 
     it('ignores unknown backend ids in the toggle map', () => {
-        expect(getEnabledAgentIds({ backendEnabledByTargetKey: { unknownAgent: false } })).toEqual(SELECTABLE_AGENT_IDS_IN_DISPLAY_ORDER);
+        expect(getEnabledAgentIds({ backendEnabledByTargetKey: { unknownAgent: false } })).toEqual(AVAILABLE_SELECTABLE_AGENT_IDS);
     });
 });

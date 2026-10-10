@@ -9,6 +9,7 @@
  */
 
 import type { AgentId } from '@happier-dev/agents';
+import type { MachineAgentInventoryItem, MachineAgentInventoryUnavailable } from '@happier-dev/protocol/capabilities';
 
 /** The one state a surface shows for an agent on a machine (first match wins, see the resolver). */
 export type MachineAgentState =
@@ -41,9 +42,13 @@ export type MachineAgentConnectedService = Readonly<{
     healthy: boolean;
     /** The connected account's label ("Work · Max"), when connected. */
     profileLabel: string | null;
+    /** Exact account health; absent while descriptor/transport facts cannot evaluate profiles. */
+    profiles?: readonly Readonly<{ profileId: string; healthy: boolean; profileLabel: string | null }>[];
 }>;
 
 export type MachineAgentSignIn = Readonly<{
+    /** Retained probe facts; aggregate connected availability does not replace native authentication. */
+    native?: MachineAgentInventoryItem['signIn'];
     status: MachineAgentSignInStatus;
     /** How it is signed in, when it is. */
     via:
@@ -129,6 +134,8 @@ export type MachineAgent = Readonly<{
     job: MachineAgentJob | null;
     /** Last-known facts of a machine that is not answering right now. */
     stale: boolean;
+    /** The latest probe failed; retained facts cannot admit a Session. */
+    unavailableReason?: Omit<MachineAgentInventoryUnavailable, 'agentId'>;
 }>;
 
 /** The native sign-in running in a machine terminal (T1), shared by the bottom pane, the form and the phone sheet. */

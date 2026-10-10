@@ -5,6 +5,8 @@ import type {
 
 import type { PluginProjectionEntry } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import type { ExternalSessionsQualifiedAgent } from '@/components/settings/externalSessions/externalSessionsIntegrationModel';
+import { BUNDLED_CANONICAL_AGENT_DECLARATIONS } from '@/agents/registry/generatedBundledPluginEntries';
+import { projectAccountDeclaredPluginSettingsGroups } from '@/sync/domains/plugins/settings/accountDeclaredPluginSettings';
 
 /**
  * The one exact Agent identity the Agent-detail screen addresses.
@@ -44,8 +46,34 @@ export function resolveAgentDetailPluginSettingsProjection(input: Readonly<{
                 editableSettingsGroups: matchingGroups,
             };
         }
+        // A present daemon row is authoritative even if it removed all groups.
+        return null;
     }
-    return null;
+    const declaration = Object.values(BUNDLED_CANONICAL_AGENT_DECLARATIONS).find((entry) => (
+        entry?.identity.pluginId === identity.pluginId && entry.identity.localId === identity.localId
+    ));
+    if (!declaration) return null;
+    const editableSettingsGroups = projectAccountDeclaredPluginSettingsGroups({
+        pluginId: identity.pluginId,
+        targetAgent: identity,
+        declaration: { id: identity.pluginId, contributes: { settings: [...declaration.accountSettings] } },
+    });
+    if (editableSettingsGroups.length === 0) return null;
+    return {
+        pluginId: identity.pluginId,
+        title: identity.pluginId,
+        description: null,
+        version: null,
+        enabled: null,
+        generation: null,
+        generationLabel: null,
+        status: null,
+        provenance: null,
+        diagnostics: [],
+        actions: [],
+        resources: [],
+        editableSettingsGroups,
+    };
 }
 
 /**

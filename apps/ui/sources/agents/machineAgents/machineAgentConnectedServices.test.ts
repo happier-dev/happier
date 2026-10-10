@@ -8,7 +8,8 @@ import type { ConnectedServiceRegistryEntry } from '@/sync/domains/connectedServ
 import type { Profile } from '@/sync/domains/profiles/profile';
 
 import { projectMachineAgentConnectedServices } from './machineAgentConnectedServices';
-import { resolveMachineAgentSignIn } from './machineAgentModel';
+import { projectMachineAgent, projectMachineAgentForCredential, resolveMachineAgentSignIn } from './machineAgentModel';
+import { isMachineAgentReady } from './resolveMachineAgentState';
 
 const service = { pluginId: 'acme.agent', localId: 'account' };
 const profileDefaults = {
@@ -53,6 +54,7 @@ describe('projectMachineAgentConnectedServices', () => {
         expect(projected.acme).toEqual([{
             serviceId: 'acme.agent/account', title: 'Acme account', connected: true, healthy: true,
             profileLabel: 'Work account',
+            profiles: [{ profileId: 'work', healthy: true, profileLabel: 'Work account' }],
         }]);
         expect(resolveMachineAgentSignIn({
             native: { status: 'signedOut', loginSupport: 'login_terminal' }, connectedServices: projected.acme,
@@ -123,6 +125,34 @@ describe('projectMachineAgentConnectedServices', () => {
         }
         expect(projectMachineAgentConnectedServices({ ...defaults, accountTransport: 'indeterminate' }).acme)
             .toEqual([expect.objectContaining({ connected: false, healthy: false, profileLabel: null })]);
+    });
+
+    it('keeps selected authentication unknown until the descriptor and transport can evaluate profiles', () => {
+        const credentialBindings = { v: 2 as const, bindingsByServiceId: {
+            'acme.agent/account': { source: 'connected' as const, selection: 'profile' as const, profileId: 'work' },
+        } };
+        for (const projection of [
+            { ...defaults, entries: [] },
+            { ...defaults, entries: [{ ...entry, projectedDescriptor: undefined }] },
+            { ...defaults, entries: [{ ...entry, projectedDescriptorCandidates: [entry.projectedDescriptor!, entry.projectedDescriptor!] }] },
+            { ...defaults, accountTransport: 'indeterminate' as const },
+        ]) {
+            const connectedServices = projectMachineAgentConnectedServices(projection).acme;
+            const inventory = projectMachineAgent({ agentId: 'acme', title: 'Acme', facts: null,
+                checking: false, stale: false, connectedServices, job: null });
+            const installed = { ...inventory, installed: true, state: 'ready' as const };
+            const selected = projectMachineAgentForCredential(installed, { credentialBindings });
+            expect(selected).toMatchObject({ state: 'unknown', signIn: { status: 'unknown', via: null } });
+            expect(isMachineAgentReady(selected)).toBe(false);
+        }
+        const evaluated = projectMachineAgentConnectedServices(defaults).acme;
+        expect(resolveMachineAgentSignIn({ native: { status: 'unknown', loginSupport: 'status_only' },
+            connectedServices: evaluated, credentialBindings }).status).toBe('signedIn');
+        const rejected = projectMachineAgentConnectedServices({ ...defaults,
+            profile: { ...profileDefaults, connectedAccountsV4: [account({ status: 'needs_reauth' })] },
+        }).acme;
+        expect(resolveMachineAgentSignIn({ native: { status: 'signedIn', loginSupport: 'status_only' },
+            connectedServices: rejected, credentialBindings }).status).toBe('signedOut');
     });
 
     it('does not offer undeclared services and allows caller-localized descriptor titles', () => {

@@ -24,11 +24,14 @@ import {
     supportsCurrentProjectedAgentSessionOpen,
     type CurrentProjectedAgentCapabilities,
 } from '@/agents/backendCatalog/currentAgentCapabilities';
-import { normalizeAcpCatalogSettingsV1 } from '@happier-dev/protocol/acp/catalog/catalogMutationsV1';
+import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import type { PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 
 export type ResumeCapabilityOptions = {
     accountSettings?: Record<string, unknown> | null;
+    acpCatalogSnapshot?: AcpCatalogSnapshotV1;
+    backendTarget?: PersistedBackendTargetRefV2 | null;
     linkedSessionCurrentAgent?: Readonly<{
         identity: PluginContributionIdentityV1;
         sourceKinds: readonly string[];
@@ -85,8 +88,9 @@ export function resolveConfiguredAcpBackendId(params: Readonly<{
  * fails closed: presentation must never offer a resume the runtime will reject.
  */
 function canConfiguredAcpBackendResume(backendId: string, options?: ResumeCapabilityOptions): boolean {
-    const catalog = normalizeAcpCatalogSettingsV1(options?.accountSettings?.acpCatalogSettingsV1);
-    const backend = catalog.backends.find((candidate) => candidate.id === backendId) ?? null;
+    const catalog = options?.acpCatalogSnapshot;
+    if (catalog?.status !== 'ready') return false;
+    const backend = catalog.record.definitions.find((candidate) => candidate.id === backendId) ?? null;
     if (backend?.capabilities.supportsLoadSession !== true) return false;
 
     return isConfiguredAcpBackendEnabled(backendId, options);
@@ -95,7 +99,9 @@ function canConfiguredAcpBackendResume(backendId: string, options?: ResumeCapabi
 export function canAgentResume(agent: string | null | undefined, options?: ResumeCapabilityOptions): boolean {
     if (typeof agent !== 'string') return false;
 
-    const configuredAcpBackendId = resolveConfiguredAcpBackendId({ agent });
+    const target = options?.backendTarget;
+    const configuredAcpBackendId = target?.kind === 'backend' && target.configuredBackendId
+        ? target.configuredBackendId : resolveConfiguredAcpBackendId({ agent });
     if (configuredAcpBackendId !== null) {
         return canConfiguredAcpBackendResume(configuredAcpBackendId, options);
     }

@@ -6,17 +6,22 @@ import { buildResumeCapabilityOptionsFromUiState } from '@/agents/registry/regis
 import type { AgentPluginSettingsSnapshot } from '@/agents/registry/registryUiBehavior';
 import type { ResumeCapabilityOptions } from '@/agents/runtime/resumeCapabilities';
 import type { Settings } from '@/sync/domains/settings/settings';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { useAcpCatalogForServer } from '@/sync/store/useAcpCatalog';
 
 export function useResumeCapabilityOptions(opts: {
     agentId?: string | null;
     machineId: string | null | undefined;
     serverId?: string | null;
+    accountScope?: ServerAccountScope | null;
     settings: Settings;
     pluginSettings?: AgentPluginSettingsSnapshot | null;
     enabled?: boolean;
 }): {
     resumeCapabilityOptions: ResumeCapabilityOptions;
 } {
+    const { snapshot: acpCatalog } = useAcpCatalogForServer(opts.serverId, opts.accountScope);
+    const acpCatalogSnapshot = acpCatalog && !acpCatalog.stale ? acpCatalog.catalog : undefined;
     const projection = useDaemonMergedProjectionInputs({
         machineId: opts.machineId,
         serverId: opts.serverId,
@@ -50,10 +55,11 @@ export function useResumeCapabilityOptions(opts: {
         });
         return {
             ...base,
+            acpCatalogSnapshot,
             linkedSessionCurrentAgent,
             currentAgentCapabilities,
         };
-    }, [currentAgentCapabilities, linkedSessionCurrentAgent, opts.pluginSettings, opts.settings]);
+    }, [acpCatalogSnapshot, currentAgentCapabilities, linkedSessionCurrentAgent, opts.pluginSettings, opts.settings]);
 
     return { resumeCapabilityOptions };
 }

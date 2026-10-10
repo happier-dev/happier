@@ -1,6 +1,7 @@
 import {
     PersistedBackendTargetRefV2Schema,
     readBackendTargetRefV2,
+    writePersistedBackendTargetRefV2,
     type BackendTargetRefV2Input,
     type PersistedBackendTargetRefV2,
 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
@@ -48,6 +49,13 @@ function resolveParseableBackendTarget(
     if (parsed.kind === 'backend' && isLegacyCompatAgentType(parsed.backendId)) {
         return null;
     }
+    // An explicit configured selection is authored intent, not a default. A
+    // missing/unavailable row must leave the choice available for repair, not
+    // silently replace it with a bundled Agent. Availability gates launch.
+    if (parsed.kind === 'backend' && parsed.configuredBackendId) {
+        return writePersistedBackendTargetRefV2(parsed);
+    }
+    if (parsed.kind === 'agent' && parsed.definitionId !== undefined) return parsed;
     return isAvailableBackendTarget(parsed, availableTargets) ? parsed : null;
 }
 
@@ -70,7 +78,7 @@ export function resolvePreferredBackendTarget(params: BackendTargetPreferenceInp
     const hasStoredBackendTargetPreference = params.lastUsedBackendTarget !== undefined && params.lastUsedBackendTarget !== null;
     if (!hasStoredBackendTargetPreference) {
         const preferredConfiguredBackendTarget = params.availableBackendTargets?.find(
-            (target) => target.kind === 'backend' && !!target.configuredBackendId,
+            (target) => target.kind === 'agent' ? target.definitionId !== undefined : !!target.configuredBackendId,
         ) ?? null;
         if (preferredConfiguredBackendTarget) {
             return preferredConfiguredBackendTarget;
@@ -91,6 +99,10 @@ export function resolvePreferredBackendTarget(params: BackendTargetPreferenceInp
     }
 
     const defaultBuiltInAgentId = isBundledAgentId(params.defaultBuiltInAgentId)
+        && resolveParseableBackendTarget({
+            kind: 'agent',
+            identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES[params.defaultBuiltInAgentId],
+        }, undefined)
         ? params.defaultBuiltInAgentId
         : DEFAULT_AGENT_ID;
     if (!preferredBuiltInAgentIds.includes(defaultBuiltInAgentId)) {
@@ -98,11 +110,11 @@ export function resolvePreferredBackendTarget(params: BackendTargetPreferenceInp
     }
 
     for (const preferredBuiltInAgentId of preferredBuiltInAgentIds) {
-        const builtInTarget: PersistedBackendTargetRefV2 = {
+        const builtInTarget = resolveParseableBackendTarget({
             kind: 'agent',
             identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES[preferredBuiltInAgentId],
-        };
-        if (isAvailableBackendTarget(builtInTarget, params.availableBackendTargets)) {
+        }, params.availableBackendTargets);
+        if (builtInTarget) {
             return builtInTarget;
         }
     }

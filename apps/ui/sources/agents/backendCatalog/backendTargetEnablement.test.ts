@@ -39,9 +39,7 @@ describe('backendTargetEnablement', () => {
             },
         })).toEqual([
             'backend:example-settings-backend',
-            'backend:example-settings-backend:configured:example-settings-backend',
             'backend:example-terminal-backend',
-            'backend:example-terminal-backend:configured:example-terminal-backend',
         ]);
     });
 });

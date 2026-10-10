@@ -35,12 +35,17 @@ describe('buildBackendTargetRouteParams', () => {
             },
         })).toEqual({
             backendTarget: JSON.stringify({
-                kind: 'backend',
-                backendId: 'review-bot',
-                configuredBackendId: 'review-bot',
+                kind: 'agent',
+                identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' },
+                definitionId: 'review-bot',
             }),
-            backendTargetKey: 'backend:review-bot:configured:review-bot',
+            backendTargetKey: 'agent:happier.agent.custom-acp/custom-acp:definition:review-bot',
         });
+    });
+
+    it('refuses a bare Custom ACP container in Agent-default route compatibility', () => {
+        expect(resolveBackendTargetFromRouteParams({ agentType: 'custom-acp' })).toBeNull();
+        expect(buildBackendTargetRouteParams({ agentType: 'custom-acp', fallbackTarget: null })).toEqual({});
     });
 
     it('accepts canonical V2 route params', () => {

@@ -1,13 +1,14 @@
 import * as React from 'react';
-import type { AcpCatalogSettingsV1 } from '@happier-dev/protocol';
 
 import { getResolvedAgentCatalogEntries } from '@/agents/backendCatalog/agentCatalogProjection';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { useSetting } from '@/sync/domains/state/storage';
+import { useAcpCatalogForServer } from '@/sync/store/useAcpCatalog';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
 import {
     isMachineAdministrationCandidateExplicitlySelectable,
     machineAdministrationTargetsEqual,
+    resolveMachineAdministrationTargetState,
     type MachineAdministrationCandidateV1,
 } from '@/sync/domains/machines/administration/targetSelection';
 import {
@@ -15,7 +16,8 @@ import {
     type MachineAdministrationTargetSelectionV1,
 } from '@/sync/domains/machines/administration/useTargetSelection';
 import { t } from '@/text';
-import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
+import { describeMachineLockedReason, getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
+import { presentMachineAdministrationTargetState } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 
 /**
  * The machine the Agents pages manage. Agents show a machine's last known state while it is away,
@@ -39,7 +41,10 @@ export function resolveAgentsMachineCandidateAvailability(candidate: MachineAdmi
     if (candidate.availability === 'online' || candidate.availability === 'offline') {
         return { detail: t('settingsAgents.offline.pickerDetail'), selectable };
     }
-    return { detail: t('settingsPlugins.targetSelection.locked'), selectable };
+    const presentation = presentMachineAdministrationTargetState(resolveMachineAdministrationTargetState({
+        storedTarget: candidate.target, candidates: [candidate],
+    }));
+    return { detail: presentation.detail ?? presentation.title, selectable };
 }
 
 /**
@@ -67,10 +72,11 @@ export function useAgentsMachineScope(targetSelection: MachineAdministrationTarg
     const machine = executionTarget?.machine ?? selectedRow?.machine ?? null;
     return {
         executionTarget,
-        /** A machine is selected but cannot run operations now (offline or stale). */
-        offline: executionTarget === null && selectedRow !== null,
+        /** Presence comes from the canonical target state, not execution admission. */
+        offline: targetSelection.state.kind === 'offline',
         projectionScope: machineId && serverId ? { machineId, serverId } : null,
         machineLabel: getMachineDisplayName(machine),
+        machineLockedReason: describeMachineLockedReason(machine),
     } as const;
 }
 
@@ -87,9 +93,9 @@ export function useAgentAdministrationCatalog(options?: Readonly<{
     loadProjection?: boolean;
 }>) {
     const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
-    const acpCatalogSettingsV1 = useSetting('acpCatalogSettingsV1') as AcpCatalogSettingsV1 | undefined;
     const targetSelection = useAgentsAdministrationTargetSelection();
     const scope = useAgentsMachineScope(targetSelection);
+    const { snapshot: acpCatalog } = useAcpCatalogForServer(scope.projectionScope?.serverId);
     const daemonMergedProjection = useDaemonMergedProjectionInputs({
         machineId: scope.projectionScope?.machineId ?? null,
         serverId: scope.projectionScope?.serverId ?? null,
@@ -102,10 +108,10 @@ export function useAgentAdministrationCatalog(options?: Readonly<{
     const agentEntries = React.useMemo(() => getResolvedAgentCatalogEntries({
         enabledAgentIds: [],
         backendEnabledByTargetKey,
-        acpCatalogSettingsV1,
+        acpCatalogSnapshot: !acpCatalog?.stale ? acpCatalog?.catalog : undefined,
         mergedProviderProjectionById: daemonMergedProjectionInputs?.mergedProviderProjectionById ?? null,
         mergedBackendProjectionById: daemonMergedProjectionInputs?.mergedBackendProjectionById ?? null,
-    }), [acpCatalogSettingsV1, backendEnabledByTargetKey, daemonMergedProjectionInputs]);
+    }), [acpCatalog, backendEnabledByTargetKey, daemonMergedProjectionInputs]);
 
     return {
         targetSelection,

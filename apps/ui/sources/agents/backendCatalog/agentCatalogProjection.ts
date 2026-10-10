@@ -1,16 +1,20 @@
 import type {
-    AcpCatalogSettingsV1,
+    AcpBackendDefinitionV1,
     PluginAgentCliMetadata,
     PluginContributionIdentityV1,
     PluginProjectedAgentConnectedAccountPurposeV2,
     PluginProjectionInstalledPackageV2,
 } from '@happier-dev/protocol';
+import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import { AgentExecutionTargetV1Schema, CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol/agents/executionTargetV1';
 
 import { AGENT_IDS, getAgentCore, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
 import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 import { getAgentLocalAuthPlugin } from '@/agents/catalog/localAuth/agentLocalAuthCatalog';
 import { createProjectedAgentLocalAuthPlugin } from '@/agents/catalog/localAuth/createProjectedAgentLocalAuthPlugin';
 import type { BundledAgentUiBehaviorDescriptor } from '@/agents/registry/generatedBundledPluginEntries.uiBehaviorOverrides';
+import { BUNDLED_CANONICAL_AGENT_DECLARATIONS } from '@/agents/registry/generatedBundledPluginEntries';
+import { qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import {
     resolveBundledAgentUiBehaviorProjection,
     type AgentUiBehavior,
@@ -32,7 +36,7 @@ import { resolveAgentMarkAgentId } from './resolveAgentMarkAgentId';
 
 export type ResolvedAgentCatalogEntry = Readonly<{
     agentId: string;
-    /** Exact daemon V2 registry key; never reconstructed from local identity. */
+    /** Exact qualified identity from a daemon row or admitted bundled declaration. */
     qualifiedId: string;
     /**
      * Exact daemon-projected identity for an external Agent. Consumers that
@@ -57,10 +61,10 @@ export type ResolvedAgentCatalogEntry = Readonly<{
     descriptor: BundledAgentUiBehaviorDescriptor | null;
     behavior: AgentUiBehavior | null;
     authPlugin: AgentLocalAuthPlugin | null;
-    /** Exact public CLI declaration from the same daemon projection. */
+    /** Exact public CLI declaration; bundled facts do not grant execution. */
     cli?: PluginAgentCliMetadata | null;
     cliAuthBackgroundCheckSafe: boolean;
-    /** Exact Agent-owned account purposes from the same daemon generation. */
+    /** Exact Agent-owned Account purposes, available from bundled declarations when cold. */
     connectedAccounts: readonly PluginProjectedAgentConnectedAccountPurposeV2[];
 }>;
 
@@ -133,7 +137,13 @@ function resolveProviderTargetKey(agentId: string, isBuiltIn: boolean): string |
     const normalizedProviderId = normalizeAgentId(agentId);
     if (!normalizedProviderId) return null;
     if (isBuiltIn && isBundledAgentId(normalizedProviderId)) {
-        return resolveBackendTargetKeyV2({ kind: 'backend', backendId: normalizedProviderId });
+        // A declared contribution may require instance authoring before it is
+        // an executable selection. Its container has no target binding key.
+        try {
+            return resolveBackendTargetKeyV2({ kind: 'backend', backendId: normalizedProviderId });
+        } catch {
+            return null;
+        }
     }
     return null;
 }
@@ -156,9 +166,17 @@ function resolveProviderTargetKeyFromSettingsBackend(
     // `null` here left the same Agent with no reachable enable state, default
     // permission mode, or Models entry on its own detail screen.
     if (identity) {
-        return resolveBackendTargetKeyV2({ kind: 'agent', identity });
+        const target = AgentExecutionTargetV1Schema.safeParse({ kind: 'agent', identity });
+        return target.success ? resolveBackendTargetKeyV2(target.data) : null;
     }
     return resolveProviderTargetKey(agentId, isBuiltIn);
+}
+
+export function resolveAgentCatalogBackingId(agentId: string, declaredCatalogAgentId: string | null): AgentId | null {
+    if (declaredCatalogAgentId && isBundledAgentId(declaredCatalogAgentId) && getAgentCore(declaredCatalogAgentId)) {
+        return declaredCatalogAgentId;
+    }
+    return isBundledAgentId(agentId) && getAgentCore(agentId) ? agentId : null;
 }
 
 function resolveBehaviorProviderId(
@@ -167,20 +185,15 @@ function resolveBehaviorProviderId(
     primaryMergedBackendProjection: MergedBackendProjectionEntry | null,
 ): AgentId | null {
     const projectedCatalogAgentId = mergedProviderProjection?.catalogAgentId ?? primaryMergedBackendProjection?.catalogAgentId ?? null;
-    if (projectedCatalogAgentId && isBundledAgentId(projectedCatalogAgentId)) {
-        return projectedCatalogAgentId;
-    }
-    if (isBundledAgentId(agentId)) {
-        return agentId;
-    }
-    return null;
+    return resolveAgentCatalogBackingId(agentId, projectedCatalogAgentId);
 }
 
-function resolveProviderTitle(
+export function resolveAgentCatalogTitle(
     agentId: string,
-    mergedProviderProjection: MergedProviderProjectionEntry | null,
-    primaryMergedBackendProjection: MergedBackendProjectionEntry | null,
+    mergedProviderProjection: MergedProviderProjectionEntry | null = null,
+    primaryMergedBackendProjection: MergedBackendProjectionEntry | null = null,
 ): string {
+    agentId = normalizeAgentId(agentId);
     if (mergedProviderProjection?.title) {
         return mergedProviderProjection.title;
     }
@@ -189,9 +202,8 @@ function resolveProviderTitle(
         return primaryMergedBackendProjection.title;
     }
 
-    if (isBundledAgentId(agentId)) {
-        return t(getAgentCore(agentId).displayNameKey);
-    }
+    const core = getAgentCore(agentId);
+    if (core) return t(core.displayNameKey);
 
     return formatAgentLikeIdForDisplay(agentId);
 }
@@ -260,7 +272,9 @@ function resolveProviderChannel(
         return 'plugin';
     }
 
-    return getAgentCore(agentId).availability.experimental ? 'experimental' : 'stable';
+    const core = getAgentCore(agentId);
+    if (!core) return null;
+    return core.availability.experimental ? 'experimental' : 'stable';
 }
 
 function resolveProviderEnabled(
@@ -272,10 +286,8 @@ function resolveProviderEnabled(
         mergedProviderProjectionById?: Readonly<Record<string, MergedProviderProjectionEntry>> | null;
     }>,
 ): boolean | null {
-    if (!backendTargetKey && !isBundledAgentId(agentId)) {
-        return null;
-    }
-    const targetKey = backendTargetKey ?? resolveBackendTargetKeyV2({ kind: 'backend', backendId: agentId });
+    if (!backendTargetKey) return null;
+    const targetKey = backendTargetKey;
     return readBackendTargetEnabled({
         backendEnabledByTargetKey: params.backendEnabledByTargetKey,
         canonicalTargetKey: targetKey,
@@ -344,75 +356,52 @@ function resolveAgentLocalAuthPlugin(
 export function getResolvedAgentCatalogEntries(params: Readonly<{
     enabledAgentIds: readonly string[];
     backendEnabledByTargetKey?: Readonly<Record<string, boolean>> | null;
-    acpCatalogSettingsV1?: AcpCatalogSettingsV1;
+    acpCatalogSnapshot?: AcpCatalogSnapshotV1;
     mergedBackendProjectionById?: Readonly<Record<string, MergedBackendProjectionEntry>> | null;
     mergedProviderProjectionById?: Readonly<Record<string, MergedProviderProjectionEntry>> | null;
 }>): ResolvedAgentCatalogEntry[] {
-    void params.acpCatalogSettingsV1;
-    return uniqueProviderIds({
+    const entries = uniqueProviderIds({
         enabledAgentIds: params.enabledAgentIds,
         mergedBackendProjectionById: params.mergedBackendProjectionById,
         mergedProviderProjectionById: params.mergedProviderProjectionById,
-    }).map((agentId) => {
-        const mergedProviderProjection = readMergedProviderProjection(agentId, params.mergedProviderProjectionById);
-        const settingsBackendProjection = readSettingsBackendProjectionForAgent(
-            agentId,
-            mergedProviderProjection,
-            params.mergedBackendProjectionById,
-        );
-        const isBuiltIn = isBuiltInProvider(agentId, mergedProviderProjection);
-        const behaviorProviderId = resolveBehaviorProviderId(agentId, mergedProviderProjection, settingsBackendProjection);
-        const behaviorProjection = resolveBundledAgentUiBehaviorProjection(behaviorProviderId);
-        const iconAgentId = resolveProviderIconAgentId(agentId, mergedProviderProjection, settingsBackendProjection);
-        const identity = mergedProviderProjection?.identity ?? null;
-        const backendTargetKey = resolveProviderTargetKeyFromSettingsBackend(
-            agentId,
-            isBuiltIn,
-            settingsBackendProjection,
-            identity,
-        );
-        return {
-            agentId,
-            qualifiedId: mergedProviderProjection?.qualifiedId ?? agentId,
-            identity,
-            installedPackage: mergedProviderProjection?.installedPackage ?? null,
-            projectionGeneration: mergedProviderProjection?.projectionGeneration ?? null,
-            catalogAgentId: behaviorProviderId,
-            iconAgentId,
-            backendTargetKey,
-            title: resolveProviderTitle(agentId, mergedProviderProjection, settingsBackendProjection),
-            subtitle: resolveProviderSubtitle(agentId, mergedProviderProjection, settingsBackendProjection),
-            iconName: resolveProviderDisplayIconName(iconAgentId, agentId),
-            channel: resolveProviderChannel(agentId, mergedProviderProjection),
-            enabled: resolveProviderEnabled(backendTargetKey, agentId, {
-                backendEnabledByTargetKey: params.backendEnabledByTargetKey ?? null,
-                mergedBackendProjectionById: params.mergedBackendProjectionById,
-                mergedProviderProjectionById: params.mergedProviderProjectionById,
-            }),
-            isBuiltIn,
-            descriptor: behaviorProjection?.descriptor ?? null,
-            behavior: behaviorProjection?.behavior ?? null,
-            authPlugin: resolveAgentLocalAuthPlugin(agentId, behaviorProviderId, mergedProviderProjection, isBuiltIn),
-            cli: mergedProviderProjection?.cli ?? null,
-            cliAuthBackgroundCheckSafe: resolveCliAuthBackgroundCheckSafe(agentId, mergedProviderProjection),
-            connectedAccounts: mergedProviderProjection?.connectedAccounts ?? [],
-        };
-    });
+    }).map((agentId) => resolveAgentCatalogProjection(agentId, params));
+    if (params.acpCatalogSnapshot?.status === 'ready') {
+        entries.push(...params.acpCatalogSnapshot.record.definitions.map(definition =>
+            resolveConfiguredAcpAgentCatalogProjection(definition, params)));
+    }
+    return entries;
+}
+
+/** Configured targets stay distinct from a bundled Agent with the same display id. */
+export function resolveConfiguredAcpAgentCatalogProjection(definition: AcpBackendDefinitionV1,
+    params: Parameters<typeof resolveAgentCatalogProjection>[1]): ResolvedAgentCatalogEntry {
+    const identity = CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1;
+    const projectedAgent = Object.values(params.mergedProviderProjectionById ?? {}).find((entry) => (
+        entry.identity?.pluginId === identity.pluginId && entry.identity.localId === identity.localId
+    ));
+    const presentation = resolveAgentCatalogProjection(projectedAgent?.agentId ?? identity.localId, params);
+    const backendTargetKey = resolveBackendTargetKeyV2({ kind: 'backend', backendId: definition.id, configuredBackendId: definition.id });
+    return {
+        ...presentation,
+        backendTargetKey,
+        qualifiedId: `${identity.pluginId}/${identity.localId}`,
+        title: definition.title ?? definition.name,
+        subtitle: null,
+        enabled: readBackendTargetEnabled({ backendEnabledByTargetKey: params.backendEnabledByTargetKey,
+            canonicalTargetKey: backendTargetKey }),
+        isBuiltIn: false,
+        identity,
+    };
 }
 
 export function resolveAgentCatalogProjection(agentId: string, params: Readonly<{
     enabledAgentIds: readonly string[];
     backendEnabledByTargetKey?: Readonly<Record<string, boolean>> | null;
-    acpCatalogSettingsV1?: AcpCatalogSettingsV1;
+    acpCatalogSnapshot?: AcpCatalogSnapshotV1;
     mergedBackendProjectionById?: Readonly<Record<string, MergedBackendProjectionEntry>> | null;
     mergedProviderProjectionById?: Readonly<Record<string, MergedProviderProjectionEntry>> | null;
 }>): ResolvedAgentCatalogEntry {
     const normalizedProviderId = normalizeAgentId(agentId);
-    const projections = getResolvedAgentCatalogEntries(params);
-    if (projections.find((entry) => entry.agentId === normalizedProviderId)) {
-        return projections.find((entry) => entry.agentId === normalizedProviderId)!;
-    }
-
     const mergedProviderProjection = readMergedProviderProjection(normalizedProviderId, params.mergedProviderProjectionById);
     const settingsBackendProjection = readSettingsBackendProjectionForAgent(
         normalizedProviderId,
@@ -423,7 +412,11 @@ export function resolveAgentCatalogProjection(agentId: string, params: Readonly<
     const behaviorProviderId = resolveBehaviorProviderId(normalizedProviderId, mergedProviderProjection, settingsBackendProjection);
     const behaviorProjection = resolveBundledAgentUiBehaviorProjection(behaviorProviderId);
     const iconAgentId = resolveProviderIconAgentId(normalizedProviderId, mergedProviderProjection, settingsBackendProjection);
-    const identity = mergedProviderProjection?.identity ?? null;
+    // A current daemon declaration wins, including explicit removals. Only a
+    // canonical bundled Agent without a daemon row uses admitted static facts.
+    const declaration = !mergedProviderProjection && isBuiltIn && isBundledAgentId(normalizedProviderId)
+        ? BUNDLED_CANONICAL_AGENT_DECLARATIONS[normalizedProviderId] : null;
+    const identity = mergedProviderProjection?.identity ?? declaration?.identity ?? null;
     const backendTargetKey = resolveProviderTargetKeyFromSettingsBackend(
         normalizedProviderId,
         isBuiltIn,
@@ -439,7 +432,8 @@ export function resolveAgentCatalogProjection(agentId: string, params: Readonly<
         catalogAgentId: behaviorProviderId,
         iconAgentId,
         backendTargetKey,
-        title: resolveProviderTitle(normalizedProviderId, mergedProviderProjection, settingsBackendProjection),
+        title: mergedProviderProjection?.title ?? settingsBackendProjection?.title
+            ?? resolveAgentCatalogTitle(normalizedProviderId, mergedProviderProjection, settingsBackendProjection),
         subtitle: resolveProviderSubtitle(normalizedProviderId, mergedProviderProjection, settingsBackendProjection),
         iconName: resolveProviderDisplayIconName(iconAgentId, normalizedProviderId),
         channel: resolveProviderChannel(normalizedProviderId, mergedProviderProjection),
@@ -452,8 +446,11 @@ export function resolveAgentCatalogProjection(agentId: string, params: Readonly<
         descriptor: behaviorProjection?.descriptor ?? null,
         behavior: behaviorProjection?.behavior ?? null,
         authPlugin: resolveAgentLocalAuthPlugin(normalizedProviderId, behaviorProviderId, mergedProviderProjection, isBuiltIn),
-        cli: mergedProviderProjection?.cli ?? null,
+        cli: mergedProviderProjection?.cli ?? declaration?.cli ?? null,
         cliAuthBackgroundCheckSafe: resolveCliAuthBackgroundCheckSafe(normalizedProviderId, mergedProviderProjection),
-        connectedAccounts: mergedProviderProjection?.connectedAccounts ?? [],
+        connectedAccounts: mergedProviderProjection?.connectedAccounts ?? declaration?.connectedAccounts.map((purpose) => ({
+            ...purpose,
+            service: qualifyPluginContributionReferenceV1(purpose.service, declaration.identity.pluginId),
+        })) ?? [],
     };
 }

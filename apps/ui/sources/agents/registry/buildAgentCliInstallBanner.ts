@@ -12,6 +12,7 @@ export function buildAgentCliInstallBanner(
     options: Readonly<{ guideUrl?: string | null }> = {},
 ) {
     const runtimeSpec = getAgentCliRuntimeSpec(providerId);
+    if (!runtimeSpec) return null;
     return {
         installKind: 'ifAvailable' as const,
         guideUrl: options.guideUrl ?? getProviderCliInstallGuideUrl(providerId) ?? runtimeSpec.docsUrl ?? undefined,

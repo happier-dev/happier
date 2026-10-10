@@ -60,6 +60,28 @@ describe('resolveAgentDetailQualifiedIdentity', () => {
 });
 
 describe('resolveAgentDetailPluginSettingsProjection', () => {
+    it('renders bundled Agent Account preferences from admitted declarations without a machine', () => {
+        const projection = resolveAgentDetailPluginSettingsProjection({
+            pluginProjectionById: null,
+            identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+        });
+
+        expect(projection?.editableSettingsGroups.length).toBeGreaterThan(0);
+        expect(projection?.editableSettingsGroups.every((group) => (
+            group.target.kind === 'agent'
+            && group.target.agent.pluginId === 'happier.agent.claude'
+            && group.target.agent.localId === 'claude'
+            && group.scope.kind === 'account'
+            && group.fields.every((field) => field.secretCustody !== 'daemon')
+        ))).toBe(true);
+        expect(projection?.generation).toBeNull();
+        expect(projection?.version).toBeNull();
+        expect(resolveAgentDetailPluginSettingsProjection({
+            pluginProjectionById: null,
+            identity: { pluginId: 'acme.agent', localId: 'claude' },
+        })).toBeNull();
+    });
+
     it('never resolves a same-localId Agent group from another plugin', () => {
         // Both installed plugins declare an Agent with localId `helper`. The
         // exact identity names acme.two, so the localId-only match the screen
@@ -75,6 +97,15 @@ describe('resolveAgentDetailPluginSettingsProjection', () => {
         expect(projection?.pluginId).toBe('acme.two');
         expect(projection?.editableSettingsGroups).toHaveLength(1);
         expect(projection?.editableSettingsGroups[0]).toMatchObject({ label: 'two settings' });
+    });
+
+    it('keeps a current daemon declaration authoritative when it removes bundled preferences', () => {
+        expect(resolveAgentDetailPluginSettingsProjection({
+            pluginProjectionById: {
+                'happier.agent.claude': pluginEntry('happier.agent.claude', []),
+            },
+            identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+        })).toBeNull();
     });
 
     it('resolves nothing without an exact identity', () => {

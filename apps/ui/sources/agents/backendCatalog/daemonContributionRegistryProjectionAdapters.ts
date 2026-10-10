@@ -7,6 +7,7 @@ import type {
     PluginProjectedSettingsFieldV2,
     PluginProjectedSettingsV2,
     PluginProjectionV2,
+    PluginProjectionInstalledPackageV2,
     PluginContributionIdentityV1,
     PluginDiagnosticDataV1,
 } from '@happier-dev/protocol';
@@ -174,6 +175,8 @@ export type PluginProjectionResource = Readonly<{
 
 export type PluginProjectionEntry = Readonly<{
     pluginId: string;
+    /** The canonical installed-package Resource identity, also used by host brand chrome. */
+    installedPackage?: PluginProjectionInstalledPackageV2;
     /** Process-local physical lifetime of this admitted installed package. */
     occurrenceId?: string | null;
     /**
@@ -453,6 +456,7 @@ function buildV2PluginProjectionById(
     for (const [pluginId, installedPackage] of Object.entries(projection.installedPackagesById)) {
         entries[pluginId] = {
             pluginId,
+            installedPackage,
             occurrenceId: installedPackage.occurrenceId ?? null,
             immutableGenerationId: installedPackage.immutableGenerationId ?? null,
             title: installedPackage.displayName,
@@ -492,13 +496,14 @@ export function readProjectedAgentUiBehaviorDescriptors(
     for (const [agentId, entry] of Object.entries(mergedProviderProjectionById)) {
         const ui = entry.ui;
         if (!ui) continue;
-        if (!ui.behavior && !ui.session && !ui.message && !ui.components) continue;
+        if (!ui.identityColor && !ui.behavior && !ui.session && !ui.message && !ui.components) continue;
         if (!entry.identity) continue;
         descriptorsByAgentId[agentId] = {
             kind: 'plugin.ui.v1',
             pluginId: entry.identity.pluginId,
             agentId,
             version: 1,
+            ...(ui.identityColor ? { identityColor: ui.identityColor } : {}),
             ...(ui.behavior ? { behavior: ui.behavior } : {}),
             ...(ui.session ? { session: ui.session } : {}),
             ...(ui.message ? { message: ui.message } : {}),

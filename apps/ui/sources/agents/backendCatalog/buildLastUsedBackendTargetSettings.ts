@@ -25,6 +25,11 @@ export function buildLastUsedBackendTargetSettings(params: Readonly<{
     const lastUsedBackendTarget = params.backendTarget.kind === 'agent'
         ? params.backendTarget
         : writePersistedBackendTargetRefV2(params.backendTarget);
+    // A configured definition is not a bundled Agent default. Retain the
+    // latter independently for the user's next ordinary Session.
+    if (lastUsedBackendTarget.kind === 'agent' && lastUsedBackendTarget.definitionId !== undefined) {
+        return { lastUsedBackendTarget };
+    }
     if (lastUsedBackendTarget.kind === 'agent') {
         const bundledAgentId = resolveBundledAgentIdFromContributionIdentity(lastUsedBackendTarget.identity);
         return {

@@ -3,6 +3,7 @@ import {
     PersistedBackendTargetRefV2Schema,
     parseBackendTargetKeyV2,
     readBackendTargetRefV2,
+    writePersistedBackendTargetRefV2,
     type BackendTargetRefV2,
     type BackendTargetRefV2Input,
     type PersistedBackendTargetRefV2,
@@ -98,10 +99,10 @@ function resolveBackendTargetV2FromRouteParams(params: Readonly<{
             return null;
         }
 
-        return {
+        return parsePersistedTarget({
             kind: 'agent',
             identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES[normalizedAgentType],
-        };
+        });
     }
 
     return null;
@@ -139,12 +140,13 @@ export function buildBackendTargetRouteParams(params: Readonly<{
         backendTargetKey: string;
     }> = {};
 
-    const sanitizedTarget = resolvedTargetV2 ? stripBackendTargetSourceKind(resolvedTargetV2) : null;
+    const routeTarget = resolvedTargetV2 ? stripBackendTargetSourceKind(resolvedTargetV2) : null;
+    const sanitizedTarget = routeTarget?.kind === 'backend' && routeTarget.configuredBackendId
+        ? writePersistedBackendTargetRefV2(routeTarget)
+        : routeTarget;
 
     if (sanitizedTarget?.kind === 'backend' && isBundledAgentId(sanitizedTarget.backendId) && !isLegacyCompatAgentType(sanitizedTarget.backendId)) {
         routeParams.agentType = sanitizedTarget.backendId;
-    } else if (!resolvedTargetV2 && isBundledAgentId(params.agentType) && !isLegacyCompatAgentType(params.agentType)) {
-        routeParams.agentType = params.agentType;
     }
 
     if (sanitizedTarget) {

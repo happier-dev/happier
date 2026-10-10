@@ -1,4 +1,4 @@
-import { AgentExecutionTargetV1Schema, type AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import { AgentExecutionTargetV1Schema, AgentExecutionTargetV1StoredSchema, CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1, type AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { PluginContributionIdentityV1Schema, readPersistedAgentContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readBackendTargetRefV2, type BackendTargetRefV2, type BackendTargetRefV2Input } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
@@ -10,9 +10,9 @@ import type { DaemonMergedProjectionInputs } from './loadDaemonMergedProjectionI
 
 /**
  * Converts the UI's backend-selection vocabulary into the strict Action
- * target vocabulary. The daemon projection is authoritative for plugin Agents,
- * including the qualified Agent contribution behind a configured selection.
- * Bundled Agent identities are the only local fallback.
+ * target vocabulary. Configured selections are instances of the declared
+ * Custom ACP Agent; daemon projections resolve other installed plugin Agents.
+ * Bundled Agent identities are the only local fallback when no target is stored.
  */
 export function resolveAgentExecutionTargetForBackendTarget(params: Readonly<{
     backendTarget: BackendTargetRefV2Input;
@@ -33,6 +33,11 @@ export function resolveAgentExecutionTargetForBackendTarget(params: Readonly<{
         return null;
     }
 
+    if (backendTarget.configuredBackendId) {
+        return AgentExecutionTargetV1Schema.parse({ kind: 'agent',
+            identity: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1, definitionId: backendTarget.configuredBackendId });
+    }
+
     const projectedAgentId = params.daemonMergedProjectionInputs
         ?.mergedBackendProjectionById?.[backendTarget.backendId]?.agentId;
     const agentId = typeof projectedAgentId === 'string' && projectedAgentId.trim()
@@ -42,27 +47,22 @@ export function resolveAgentExecutionTargetForBackendTarget(params: Readonly<{
         ?.mergedProviderProjectionById?.[agentId]?.identity;
     const parsedProjectedIdentity = PluginContributionIdentityV1Schema.safeParse(projectedIdentity);
     if (parsedProjectedIdentity.success) {
-        return {
+        const target = AgentExecutionTargetV1Schema.safeParse({
             kind: 'agent',
             identity: parsedProjectedIdentity.data,
-        };
-    }
-
-    // A configured backend has no local qualified-identity fallback. Only its
-    // machine projection can prove which executable Agent contribution owns it;
-    // never reinterpret the configured id itself as an Agent identity.
-    if (backendTarget.configuredBackendId) {
-        return null;
+        });
+        return target.success ? target.data : null;
     }
 
     if (!isBundledAgentId(agentId)) {
         return null;
     }
 
-    return {
+    const bundledTarget = AgentExecutionTargetV1Schema.safeParse({
         kind: 'agent',
         identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES[agentId],
-    };
+    });
+    return bundledTarget.success ? bundledTarget.data : null;
 }
 
 /**
@@ -76,10 +76,11 @@ export function resolveAgentExecutionTargetForPersistedSelection(params: Readonl
     fallbackAgentId?: unknown;
 }>): AgentExecutionTargetV1 | null {
     if (params.backendTarget) {
-        const resolved = resolveAgentExecutionTargetForBackendTarget({
+        const stored = AgentExecutionTargetV1StoredSchema.safeParse(params.backendTarget);
+        if (stored.success) return stored.data;
+        return resolveAgentExecutionTargetForBackendTarget({
             backendTarget: stripBackendTargetSourceKind(params.backendTarget),
         });
-        if (resolved) return resolved;
     }
     if (typeof params.fallbackAgentId === 'string' && isBundledAgentId(params.fallbackAgentId)) {
         return resolveAgentExecutionTargetForBackendTarget({
@@ -87,5 +88,6 @@ export function resolveAgentExecutionTargetForPersistedSelection(params: Readonl
         });
     }
     const identity = readPersistedAgentContributionIdentityV1(params.fallbackAgentId);
-    return identity ? AgentExecutionTargetV1Schema.parse({ kind: 'agent', identity }) : null;
+    const target = AgentExecutionTargetV1Schema.safeParse({ kind: 'agent', identity });
+    return target.success ? target.data : null;
 }

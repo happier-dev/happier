@@ -1,8 +1,7 @@
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import type { AgentId } from '@/agents/registry/registryCore';
 import {
-    AGENT_IDS,
-    getAgentCore,
+    AGENT_CORE_CONFIGS,
     resolveAgentIdFromFlavor,
 } from '@/agents/registry/registryCore';
 
@@ -44,10 +43,10 @@ export function resolveAgentIdForPermissionUi(params: {
     const byTool = typeof params.toolName === 'string' ? params.toolName.trim() : '';
     if (byTool.length > 0) {
         const normalizedTool = byTool.toLowerCase();
-        for (const agentId of AGENT_IDS) {
-            const detectKey = getAgentCore(agentId).cli.detectKey.trim().toLowerCase();
+        for (const core of AGENT_CORE_CONFIGS) {
+            const detectKey = core.cli?.detectKey.trim().toLowerCase() ?? '';
             if (detectKey.length > 0 && normalizedTool.startsWith(detectKey)) {
-                return agentId;
+                return core.id;
             }
         }
     }

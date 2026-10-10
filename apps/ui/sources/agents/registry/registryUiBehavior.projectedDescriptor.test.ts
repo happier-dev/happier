@@ -8,6 +8,7 @@ vi.mock('@/text', async () => {
 
 import {
     canSelectAgentWithoutDetectedCli,
+    buildSpawnSessionExtrasFromUiState,
     getAgentResumeExperimentsFromSettings,
     resolveAgentUiBehavior,
     resolveAgentUiBehaviorFromSessionMetadata,
@@ -18,6 +19,7 @@ import {
     readProjectedAgentUiBehaviorDiagnostics,
 } from './agentUiBehaviorProjection';
 import { makeSettings } from './registryUiBehavior.testHelpers';
+import { attachAgentPluginSettings } from './agentUiSettingLookup';
 import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
 import { createSessionFixture } from '@/dev/testkit';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -38,11 +40,20 @@ function supportsStorageMode(agentId: string, storageMode: 'persisted' | 'direct
  * (Account restore through the disconnected transport boundary) rather than
  * mocking it: the Account fence under test IS that owner's answer.
  */
-async function activateServerAccount(serverUrl: string, accountId: string): Promise<void> {
+async function activateServerAccount(serverUrl: string, accountId: string, serverIdentityId?: string) {
     await loadSyncSingletonForTests();
-    accountConnections.push(await restoreServerAccountForTest({ serverUrl, accountId }));
+    // The harness uses the app's cold restore. A second cold restore on an
+    // initialized Sync is intentionally ignored; retire its real connection
+    // before restoring the next Account instead of faking active scope state.
+    if (accountConnections.length > 0) {
+        const { disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
+        await disconnectActiveServerConnection();
+    }
+    const connection = await restoreServerAccountForTest({ serverUrl, accountId, serverIdentityId });
+    accountConnections.push(connection);
     const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
     expect(getActiveServerAccountScope()?.accountId).toBe(accountId);
+    return connection.home;
 }
 
 function footerDescriptor(usePermissionUpdates: boolean): Readonly<Record<string, unknown>> {
@@ -72,6 +83,68 @@ describe('daemon-projected agent UI behavior descriptors', () => {
     afterEach(async () => {
         clearProjectedAgentUiBehaviorDescriptors();
         for (const connection of accountConnections.splice(0).reverse()) await connection.dispose();
+    });
+
+    it('launches with the selected portable Home override instead of its legacy routing key or active Home', async () => {
+        const active = await activateServerAccount('https://opencode-active.example.test', 'account-a', 'srv_opencode_active');
+        const { upsertServerProfileOnly } = await import('@/sync/domains/server/serverRuntime');
+        const { setServerProfileIdentityForUrl } = await import('@/sync/domains/server/serverProfiles');
+        const selectedProfile = await upsertServerProfileOnly({ serverUrl: 'https://opencode-selected.example.test', name: 'Selected Home' });
+        const selected = await setServerProfileIdentityForUrl(selectedProfile.serverUrl, 'srv_opencode_selected');
+        if (!selected) throw new Error('Selected test Home identity could not be established');
+        expect(selected.id).not.toBe(selected.serverIdentityId);
+        expect(active.id).not.toBe(active.serverIdentityId);
+        const settings = attachAgentPluginSettings(makeSettings(), { account: {
+            opencodeBackendMode: 'server',
+            opencodeServerBaseUrlByServerIdV1: {
+                'srv_opencode_selected': 'https://selected-opencode.example.test/path',
+                [selected.id]: 'https://legacy-opencode.example.test/',
+                'srv_opencode_active': 'https://active-opencode.example.test/',
+            },
+        } });
+        expect(buildSpawnSessionExtrasFromUiState({
+            agentId: 'opencode', settings, resumeSessionId: '', updatedAt: 123,
+            newSessionOptions: { targetServerId: selected.id },
+        }).sessionConfigOptionOverrides?.overrides.opencodeServerBaseUrl)
+            .toEqual({ value: 'https://selected-opencode.example.test/', updatedAt: 123 });
+        expect(buildSpawnSessionExtrasFromUiState({
+            agentId: 'opencode', settings, resumeSessionId: '', updatedAt: 123,
+        }).sessionConfigOptionOverrides?.overrides.opencodeServerBaseUrl)
+            .toEqual({ value: 'https://active-opencode.example.test/', updatedAt: 123 });
+        expect(buildSpawnSessionExtrasFromUiState({
+            agentId: 'opencode', settings, resumeSessionId: '', updatedAt: 123,
+            newSessionOptions: { targetServerId: 'missing-routing-profile' },
+        }).sessionConfigOptionOverrides?.overrides).not.toHaveProperty('opencodeServerBaseUrl');
+    });
+
+    it('retains the actual predecessor routing-key Account carrier when no portable override exists', async () => {
+        const home = await activateServerAccount('https://opencode-predecessor.example.test', 'account-a', 'srv_opencode_predecessor');
+        // ../0.2 at f2dd8f01185784676b639cec5cf8a5ed79973301 writes this flat
+        // Account map through providerSettingsFieldBinding using snapshot.serverId.
+        const settings = makeSettings({
+            opencodeBackendMode: 'server',
+            opencodeServerBaseUrlByServerIdV1: { [home.id]: 'https://predecessor-opencode.example.test/path' },
+        });
+        expect(buildSpawnSessionExtrasFromUiState({
+            agentId: 'opencode', settings, resumeSessionId: '', updatedAt: 123,
+            newSessionOptions: { targetServerId: home.id },
+        }).sessionConfigOptionOverrides?.overrides.opencodeServerBaseUrl)
+            .toEqual({ value: 'https://predecessor-opencode.example.test/', updatedAt: 123 });
+    });
+
+    it.each(['', 'https://user:password@remote-opencode.example.test/'])('does not revive a legacy routing URL behind a present rejected portable override (%s)', async (portableValue) => {
+        const home = await activateServerAccount('https://opencode-rejected.example.test', 'account-a', 'srv_opencode_rejected');
+        const settings = attachAgentPluginSettings(makeSettings(), { account: {
+            opencodeBackendMode: 'server',
+            opencodeServerBaseUrlByServerIdV1: {
+                'srv_opencode_rejected': portableValue,
+                [home.id]: 'https://legacy-opencode.example.test/',
+            },
+        } });
+        expect(buildSpawnSessionExtrasFromUiState({
+            agentId: 'opencode', settings, resumeSessionId: '', updatedAt: 123,
+            newSessionOptions: { targetServerId: home.id },
+        }).sessionConfigOptionOverrides?.overrides).not.toHaveProperty('opencodeServerBaseUrl');
     });
 
     it('exposes the parsed Agent-owned portable runtime choice without inventing presentation', () => {

@@ -9,23 +9,10 @@ import { isBundledAgentId, type AgentId, type BundledAgentId } from '@/agents/ca
 import { getEnabledAgentIds } from '@/agents/catalog/enabled';
 
 import { getResolvedBackendCatalogEntries, type ResolvedBackendCatalogEntry } from './getResolvedBackendCatalogEntries';
-import { isLegacyCompatAgentType } from './legacyCompatAgents';
 import type { DaemonMergedProjectionInputs } from './loadDaemonMergedProjectionInputs';
 import { resolveBackendTargetKeyV2 } from './backendTargetKeyV2';
 import { resolvePreferredBackendTarget } from './resolvePreferredBackendTarget';
-import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
-
-function hasNonEmptyRecord(value: Readonly<Record<string, boolean>> | null | undefined): boolean {
-    return !!(value && Object.keys(value).length > 0);
-}
-
-function hasNonEmptyAcpCatalogBackends(value: unknown): boolean {
-    if (!value || typeof value !== 'object') {
-        return false;
-    }
-    const backends = (value as { backends?: unknown }).backends;
-    return Array.isArray(backends) && backends.length > 0;
-}
+import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 
 function buildEnabledBuiltInAgentIds(params: Readonly<{
     enabledAgentIds?: ReadonlyArray<unknown>;
@@ -78,7 +65,7 @@ function entryIsCanonicalProjectionEntry(
     entry: ResolvedBackendCatalogEntry,
     canonicalBackendIds: ReadonlySet<string>,
 ): boolean {
-    if (entry.kind === 'builtInAgent') {
+    if (entry.kind === 'builtInAgent' || entry.kind === 'configuredBackend') {
         return true;
     }
     return canonicalBackendIds.has(entry.backendId);
@@ -104,52 +91,6 @@ function buildCanonicalAvailableTargetsFromResolvedEntries(
     }
 
     return targets;
-}
-
-function resolveAvailableBackendTargets(params: Readonly<{
-    enabledAgentIds?: ReadonlyArray<unknown>;
-    enabledBuiltInAgentIds: ReadonlyArray<BundledAgentId>;
-    acpCatalogSettingsV1?: unknown;
-    backendEnabledByTargetKey?: Readonly<Record<string, boolean>> | null;
-    daemonMergedProjectionInputs?: DaemonMergedProjectionInputs | null;
-}>): ReadonlyArray<PersistedBackendTargetRefV2> | undefined {
-    const hasMergedProjectionInputs = Boolean(params.daemonMergedProjectionInputs);
-    const hasCatalogBackends = hasNonEmptyAcpCatalogBackends(params.acpCatalogSettingsV1);
-    const hasAvailabilityInputs =
-        params.enabledAgentIds !== undefined
-        || hasNonEmptyRecord(params.backendEnabledByTargetKey ?? undefined)
-        || hasCatalogBackends
-        || hasMergedProjectionInputs;
-
-    if (!hasAvailabilityInputs) {
-        return undefined;
-    }
-
-    if (!hasMergedProjectionInputs && !hasCatalogBackends) {
-        return params.enabledBuiltInAgentIds.map((agentId) => ({
-            kind: 'agent',
-            identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES[agentId],
-        } satisfies PersistedBackendTargetRefV2));
-    }
-
-    const entries = getResolvedBackendCatalogEntries({
-        enabledAgentIds: params.enabledBuiltInAgentIds,
-        acpCatalogSettingsV1: params.acpCatalogSettingsV1 as any,
-        backendEnabledByTargetKey: params.backendEnabledByTargetKey ?? undefined,
-        collapseConfiguredBackendProviderSentinels: hasMergedProjectionInputs,
-        discoveredBackendIds: params.daemonMergedProjectionInputs?.discoveredBackendIds,
-        mergedProviderProjectionById: params.daemonMergedProjectionInputs?.mergedProviderProjectionById,
-        mergedBackendProjectionById: params.daemonMergedProjectionInputs?.mergedBackendProjectionById,
-    });
-
-    const filteredEntries = params.daemonMergedProjectionInputs
-        ? (() => {
-            const canonicalBackendIds = buildCanonicalProjectionBackendIdSet(params.daemonMergedProjectionInputs);
-            return entries.filter((entry) => entryIsCanonicalProjectionEntry(entry, canonicalBackendIds));
-        })()
-        : entries;
-
-    return buildCanonicalAvailableTargetsFromResolvedEntries(filteredEntries);
 }
 
 function resolveProjectedBuiltInBackendTarget(
@@ -215,7 +156,7 @@ export function resolvePreferredBackendTargetFromProjection(params: Readonly<{
     defaultBuiltInAgentId?: AgentId;
     enabledAgentIds?: ReadonlyArray<unknown>;
     backendEnabledByTargetKey?: Readonly<Record<string, boolean>> | null;
-    acpCatalogSettingsV1?: unknown;
+    acpCatalogSnapshot?: AcpCatalogSnapshotV1;
     daemonMergedProjectionInputs?: DaemonMergedProjectionInputs | null;
 }>): PersistedBackendTargetRefV2 {
     const enabledBuiltInAgentIds = buildEnabledBuiltInAgentIds({
@@ -224,7 +165,7 @@ export function resolvePreferredBackendTargetFromProjection(params: Readonly<{
     });
     const entries = getResolvedBackendCatalogEntries({
         enabledAgentIds: enabledBuiltInAgentIds,
-        acpCatalogSettingsV1: params.acpCatalogSettingsV1 as any,
+        acpCatalogSnapshot: params.acpCatalogSnapshot,
         backendEnabledByTargetKey: params.backendEnabledByTargetKey ?? undefined,
         collapseConfiguredBackendProviderSentinels: Boolean(params.daemonMergedProjectionInputs),
         discoveredBackendIds: params.daemonMergedProjectionInputs?.discoveredBackendIds,
@@ -237,13 +178,7 @@ export function resolvePreferredBackendTargetFromProjection(params: Readonly<{
             return entries.filter((entry) => entryIsCanonicalProjectionEntry(entry, canonicalBackendIds));
         })()
         : entries;
-    const availableBackendTargets = resolveAvailableBackendTargets({
-        enabledAgentIds: params.enabledAgentIds,
-        enabledBuiltInAgentIds,
-        acpCatalogSettingsV1: params.acpCatalogSettingsV1,
-        backendEnabledByTargetKey: params.backendEnabledByTargetKey ?? undefined,
-        daemonMergedProjectionInputs: params.daemonMergedProjectionInputs ?? null,
-    });
+    const availableBackendTargets = buildCanonicalAvailableTargetsFromResolvedEntries(filteredEntries);
 
     const resolved = resolvePreferredBackendTarget({
         lastUsedAgent: params.lastUsedAgent,
@@ -252,7 +187,7 @@ export function resolvePreferredBackendTargetFromProjection(params: Readonly<{
             filteredEntries,
         ),
         defaultBuiltInAgentId: params.defaultBuiltInAgentId,
-        ...(availableBackendTargets ? { availableBackendTargets } : {}),
+        availableBackendTargets,
     });
 
     // Treat `sourceKind` as a compat-only hint, not a canonical UI identity carrier.

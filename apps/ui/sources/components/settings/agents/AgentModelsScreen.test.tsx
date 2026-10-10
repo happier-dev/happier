@@ -1,20 +1,31 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_PROVIDER_SETTINGS_V1, createProviderErrorV1 } from '@happier-dev/protocol';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createProviderErrorV1 } from '@happier-dev/protocol';
 import { RPC_METHODS, type DaemonProviderModelProjectionResponseV1 } from '@happier-dev/protocol/rpc';
+import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, PROVIDER_CONNECTIONS_ROWS_ROUTE_V1,
+    ProviderConnectionsCatalogV1Schema, ProviderConnectionsRowMutationV1Schema,
+    sealProviderConnectionsContentV1, openProviderConnectionsContentV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+import { PROVIDER_MODEL_SETTINGS_ACTION_ID_BY_OPERATION_V1 } from '@happier-dev/protocol/providers/providerActionsV1';
+import { AccountSettingsV2UpdateRequestSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 
 import {
     createProviderModelProjectionFixture,
     createProviderModelProjectionGroupFixture,
     createProviderSettingsHarness,
+    createProviderSettingsAccountHarness,
     installProviderSettingsRpcBoundary,
-    installProviderSettingsStorageBoundary,
-    renderScreen,
-} from '@/dev/testkit';
+} from '@/dev/testkit/harness/providerSettingsHarness';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { buildCustomProviderTemplate, createCustomProviderDraft } from '@/providers/authoring/state';
+import { PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE } from '@/dev/testkit/fixtures/pluginProviderDaemonProjection';
+import { clearDaemonMergedProjectionCacheForTests, loadDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 
 const mocks = vi.hoisted(() => ({
-    settings: { schemaVersion: 7, providerSettingsV1: { v: 99, connections: [] } } as unknown,
     mutate: vi.fn(),
     refresh: vi.fn(async () => {}),
     projectionRequestCount: 0,
@@ -24,50 +35,15 @@ const mocks = vi.hoisted(() => ({
         error: null as null | ReturnType<typeof createProviderErrorV1>,
     },
 }));
-const administrationTargetState = vi.hoisted(() => ({
-    selectedTarget: {
-        serverIdentityId: 'server-a',
-        machineId: 'machine-a',
-    } as { serverIdentityId: string; machineId: string } | null,
-    executionTarget: {
-        target: {
-            serverIdentityId: 'server-a',
-            machineId: 'machine-a',
-        },
-        serverId: 'server-a',
-        machine: {
-            id: 'machine-a',
-            metadata: null,
-            daemonStateVersion: 0,
-        },
-    } as {
-        target: { serverIdentityId: string; machineId: string };
-        serverId: string;
-        machine: { id: string; metadata: null; daemonStateVersion: number };
-    } | null,
-}));
 const providerHarness = createProviderSettingsHarness();
 installProviderSettingsRpcBoundary(providerHarness);
-installProviderSettingsStorageBoundary(providerHarness);
+const account = createProviderSettingsAccountHarness();
+let serverId = '';
 
 const routerPush = vi.hoisted(() => vi.fn());
-vi.mock('expo-router', () => ({
-    useRouter: () => ({ back: vi.fn(), push: routerPush }),
-    usePathname: () => '/settings/agents/codex/models',
-}));
-vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({ useActiveServerSnapshot: () => ({ serverId: 'server-a' }) }));
-vi.mock('@/hooks/server/useFeatureEnabled', () => ({ useFeatureEnabled: () => true }));
-vi.mock('@/sync/domains/machines/administration/useTargetSelection', () => ({
-    useMachineAdministrationTargetSelection: () => ({
-        selectedTarget: administrationTargetState.selectedTarget,
-        resolveExecutionTarget: () => administrationTargetState.executionTarget,
-    }),
-}));
-vi.mock('@/components/settings/machines/MachineAdministrationTargetSelector', () => ({
-    MachineAdministrationTargetSelector: (props: Record<string, unknown>) => (
-        React.createElement('MachineAdministrationTargetSelector', props)
-    ),
-}));
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
+    pathname: '/settings/agents/codex/models', router: { push: routerPush },
+}).module);
 
 // The models are one section of the page's virtualized list; the recycler renders every row here.
 vi.mock('@legendapp/list/react-native', async (importOriginal) => {
@@ -75,31 +51,23 @@ vi.mock('@legendapp/list/react-native', async (importOriginal) => {
     return createCapturingLegendListMock({ original: await importOriginal<Record<string, unknown>>() }).module;
 });
 
+// Warm the real Sync module after the transport leaves are installed, not inside a test hook's budget.
+await loadSyncSingletonForTests();
+
 describe('AgentModelsScreen provider settings safety', () => {
-    beforeEach(() => {
+    afterEach(async () => { standardCleanup(); await account.reset(); });
+    beforeEach(async () => {
         providerHarness.reset();
-        mocks.settings = { schemaVersion: 7, providerSettingsV1: { v: 99, connections: [] } };
+        clearDaemonMergedProjectionCacheForTests();
         mocks.projection = { data: null, loading: false, error: null };
         mocks.projectionRequestCount = 0;
         mocks.mutate.mockReset();
         routerPush.mockReset();
-        administrationTargetState.selectedTarget = {
-            serverIdentityId: 'server-a',
-            machineId: 'machine-a',
-        };
-        administrationTargetState.executionTarget = {
-            target: {
-                serverIdentityId: 'server-a',
-                machineId: 'machine-a',
-            },
-            serverId: 'server-a',
-            machine: {
-                id: 'machine-a',
-                metadata: null,
-                daemonStateVersion: 0,
-            },
-        };
-        providerHarness.state.settings = mocks.settings;
+        serverId = (await account.restore({ serverIdentityId: 'srv_agent_models', machines: providerHarness.state.machines,
+            waivedActions: [...Object.values(PROVIDER_MODEL_SETTINGS_ACTION_ID_BY_OPERATION_V1), 'providers.models.load', 'providers.models.refresh'],
+        })).serverId;
+        await account.selectMachine(serverId, 'machine-a', 'agents');
+        await account.home.selectHomes([serverId]);
         providerHarness.intercept(RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION, async () => {
             mocks.projectionRequestCount += 1;
             if (mocks.projection.loading && !mocks.projection.data) return await new Promise<never>(() => undefined);
@@ -107,47 +75,36 @@ describe('AgentModelsScreen provider settings safety', () => {
             return mocks.projection.data ?? createProviderModelProjectionFixture({ agentTargetKey: 'agent:happier.agent.codex/codex' });
         });
         providerHarness.intercept(RPC_METHODS.DAEMON_PROVIDERS_MODEL_SETTINGS_MUTATE, async (request, next) => (
-            await mocks.mutate({ serverId: 'server-a', request: request.payload }) ?? await next()
+            await mocks.mutate({ serverId: request.serverId, request: request.payload }) ?? await next()
         ));
     });
 
     it('uses the canonical Administration exact target instead of the active-server fallback', async () => {
-        administrationTargetState.selectedTarget = {
-            serverIdentityId: 'server-selected',
-            machineId: 'machine-selected',
-        };
-        administrationTargetState.executionTarget = {
-            target: {
-                serverIdentityId: 'server-selected',
-                machineId: 'machine-selected',
-            },
-            serverId: 'server-selected',
-            machine: {
-                id: 'machine-selected',
-                metadata: null,
-                daemonStateVersion: 0,
-            },
-        };
-        mocks.settings = { schemaVersion: 7, providerSettingsV1: DEFAULT_PROVIDER_SETTINGS_V1 };
-        providerHarness.state.settings = mocks.settings;
+        const selectedServerId = await account.addHome({ name: 'Selected Agent Home', serverUrl: 'https://agent-models-selected.test',
+            accountId: 'account-a', serverIdentityId: 'srv_agent_models_selected', active: false });
+        await account.publishMachines(selectedServerId, [{ ...providerHarness.state.machines[0]!, id: 'machine-selected' }]);
+        await account.selectMachine(selectedServerId, 'machine-selected', 'agents');
 
         const { AgentModelsScreen } = await import('./AgentModelsScreen');
         const screen = await renderScreen(<AgentModelsScreen agentTargetKey="agent:happier.agent.codex/codex" runtimeAgentId={null} />);
 
-        expect(screen.findByType('MachineAdministrationTargetSelector' as any)).toBeTruthy();
-        expect(providerHarness.state.requests.find(
+        const { MachineAdministrationTargetSelector } = await import('@/components/settings/machines/MachineAdministrationTargetSelector');
+        expect(screen.findByType(MachineAdministrationTargetSelector)).toBeTruthy();
+        await waitForHomeGovernance(() => expect(providerHarness.state.requests.find(
             (request) => request.method === RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION,
-        )).toMatchObject({
-            machineId: 'machine-selected',
-            serverId: 'server-selected',
-        });
+        )).toBeDefined());
+        const projectionRequest = providerHarness.state.requests.find(
+            (request) => request.method === RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION,
+        );
+        expect(projectionRequest?.machineId).toBe('machine-selected');
+        const { areServerProfileIdentifiersEquivalent } = await import('@/sync/domains/server/serverProfiles');
+        expect(areServerProfileIdentifiersEquivalent(projectionRequest!.serverId, selectedServerId)).toBe(true);
+        expect(areServerProfileIdentifiersEquivalent(projectionRequest!.serverId, serverId)).toBe(false);
     });
 
     it('renders projected rows supplied through the shared Provider RPC boundary and real manager', async () => {
         const { AgentModelsScreen } = await import('./AgentModelsScreen');
         const { ProviderModelManager } = await import('@/providers/models/ProviderModelManager');
-        mocks.settings = { schemaVersion: 7, providerSettingsV1: DEFAULT_PROVIDER_SETTINGS_V1 };
-        providerHarness.state.settings = mocks.settings;
         mocks.projection.data = createProviderModelProjectionFixture({
                 groups: [createProviderModelProjectionGroupFixture({
                     rows: [{
@@ -172,27 +129,248 @@ describe('AgentModelsScreen provider settings safety', () => {
         expect(screen.findByType(ProviderModelManager).props.groups[0].rows[0].descriptor.name)
             .toBe('Boundary agent model');
     });
+    it('names a plugin Agent from its exact admitted catalog entry without another daemon read', async () => {
+        providerHarness.intercept(RPC_METHODS.DAEMON_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE, async () => ({
+            supported: true,
+            projection: PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE,
+        }));
+        const loaded = await loadDaemonMergedProjectionCacheEntry({ machineId: 'machine-a', serverId });
+        expect(loaded?.kind).toBe('ready');
+        const readsBefore = providerHarness.state.requests.filter(request => (
+            request.method === RPC_METHODS.DAEMON_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
+        )).length;
+        const { AgentModelsScreen } = await import('./AgentModelsScreen');
+        const screen = await renderScreen(<AgentModelsScreen
+            agentTargetKey="agent:acme.review/provider"
+            runtimeAgentId="provider"
+        />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('agent-models')).not.toBeNull());
+        expect(screen.getTextContent()).toContain('Acme Review Provider');
+        expect(providerHarness.state.requests.filter(request => (
+            request.method === RPC_METHODS.DAEMON_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
+        ))).toHaveLength(readsBefore);
+    });
+    it('keeps Account models, source visibility and exact favorite/default markers available without a machine', async () => {
+        const agentTargetKey = 'agent:happier.agent.codex/codex';
+        const selection = { v: 1, ref: { agentTargetKey, providerConnectionId: 'pc_a', modelId: 'model-a' }, updatedAt: 1 };
+        const catalog = ProviderConnectionsCatalogV1Schema.parse({
+            ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
+            connections: [{ v: 1, id: 'pc_a', source: { kind: 'custom', template: buildCustomProviderTemplate({
+                ...createCustomProviderDraft('openai-responses'), name: 'Account source', baseUrl: 'https://custom.example/v1',
+                requiresApiKey: false, catalog: 'manual',
+            }) }, role: 'named', displayName: 'My source', displayNameMode: 'custom', revision: 1, createdAt: 1, updatedAt: 1 }],
+            manualModelsByConnectionId: { pc_a: [
+                { id: 'model-a', name: 'Account model', addedAt: 1 },
+                { id: 'model-b', name: 'Account model B', addedAt: 1 },
+            ] },
+        });
+        serverId = (await account.restore({ catalog, machines: [], settings: {
+            providerDefaultModelSelectionsByAgentTargetKeyV1: { [agentTargetKey]: selection },
+            favoriteModelSelectionsV1: [{ selection }],
+        }, waivedActions: ['providers.defaults.set'] })).serverId;
+        await account.home.selectHomes([serverId]);
+        await account.selectMachine(serverId, null, 'agents');
+        let settingsVersion = 1;
+        account.home.answer(serverId, 'POST /v2/account/settings', { select: input => {
+            const mutation = AccountSettingsV2UpdateRequestSchema.parse(input);
+            expect(mutation.expectedVersion).toBe(settingsVersion);
+            expect(mutation.content?.t).toBe('plain');
+            settingsVersion += 1;
+            account.home.answer(serverId, 'GET /v2/account/settings', { body: {
+                version: settingsVersion, content: mutation.content,
+            } });
+            return { body: { success: true, version: settingsVersion } };
+        } });
+        const { AgentModelsScreen } = await import('./AgentModelsScreen');
+        const screen = await renderScreen(<AgentModelsScreen agentTargetKey={agentTargetKey} runtimeAgentId="codex" />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('agent-models')).not.toBeNull());
+        expect(screen.getTextContent()).toContain('Account model');
+        expect(screen.getTextContent()).toContain('★');
+        expect(screen.findByTestId('provider-model-manager.default')).not.toBeNull();
+        expect(screen.findByTestId('agent-models-source-visibility:pc_a')).not.toBeNull();
+        expect(providerHarness.state.requests).toEqual([]);
+        const defaultControl = screen.findAllByTestId('provider-model-manager.set-default')
+            .find(node => typeof node.props.onPress === 'function'
+                && node.props.accessibilityLabel?.includes('Account model B'));
+        expect(defaultControl).toBeDefined();
+        await act(async () => { await defaultControl?.props.onPress(); });
+        const { storage } = await import('@/sync/domains/state/storage');
+        await waitForHomeGovernance(() => expect(storage.getState().settings
+            .providerDefaultModelSelectionsByAgentTargetKeyV1[agentTargetKey]?.ref).toEqual({
+                agentTargetKey, providerConnectionId: 'pc_a', modelId: 'model-b',
+            }));
+        expect(providerHarness.state.requests).toEqual([]);
+    });
+    it.each(['plain', 'e2ee'] as const)('persists the %s custom source widget through admitted Account CAS', async mode => {
+        const secret = new Uint8Array(32).fill(31);
+        const material = mode === 'e2ee' ? { type: 'legacy' as const, secret } : null;
+        let catalog = ProviderConnectionsCatalogV1Schema.parse({
+            ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
+            connections: ['pc_a', 'pc_b'].map(id => ({
+                v: 1, id, source: id === 'pc_a' ? { kind: 'custom', template: buildCustomProviderTemplate({
+                    ...createCustomProviderDraft('openai-chat'), name: 'Custom source', baseUrl: 'https://custom.example/v1',
+                    requiresApiKey: false, catalog: 'manual',
+                }) } : { kind: 'contribution', contributionKey: 'acme.plugin/acme' },
+                role: 'named', displayName: id, displayNameMode: 'custom', revision: 1, createdAt: 1, updatedAt: 1,
+            })),
+        });
+        serverId = (await account.restore({ catalog, machines: providerHarness.state.machines,
+            features: createRootLayoutFeaturesResponse({ features: { providers: { enabled: true } } }),
+            ...(mode === 'e2ee' ? { e2eeSecret: secret } : {}),
+        })).serverId;
+        await account.home.selectHomes([serverId]);
+        await account.selectMachine(serverId, 'machine-a', 'agents');
+        let revision = 1;
+        account.home.answer(serverId, `GET ${PROVIDER_CONNECTIONS_ROWS_ROUTE_V1}`, {
+            select: () => ({ body: { status: 'present', revision, content: sealProviderConnectionsContentV1({ mode, material, catalog }) } }),
+        });
+        account.home.answer(serverId, `POST ${PROVIDER_CONNECTIONS_ROWS_ROUTE_V1}`, {
+            select: input => {
+                const mutation = ProviderConnectionsRowMutationV1Schema.parse(input);
+                expect(mutation.expectedRevision).toBe(revision);
+                const opened = openProviderConnectionsContentV1({ mode, material, content: mutation.content });
+                if (opened.status !== 'opened') throw new Error('Expected an admitted Account catalog');
+                catalog = opened.catalog;
+                revision += 1;
+                return { body: { status: 'updated', revision, cursor: revision } };
+            },
+        });
+        mocks.projection.data = createProviderModelProjectionFixture({ groups: ['pc_a', 'pc_b'].map(connectionId => (
+            createProviderModelProjectionGroupFixture({ connectionId, rows: [{
+                ref: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: connectionId, modelId: 'model-a' },
+                descriptor: { id: 'model-a', name: 'Model A' }, sources: { manual: true, static: false, probe: false },
+                confidence: 'manual', compatibility: { result: { status: 'verified', selectedProtocol: 'openai-chat',
+                    evidence: { sourceUrls: ['https://example.com'], verifiedAt: '2026-07-14' } },
+                    compatibilityFingerprint: 'compatibility:v1:source-visibility', confirmed: true },
+                endpointHealth: 'available', catalog: { stale: false }, loadState: 'loaded', visibility: 'visible',
+            }] })
+        )) });
+        const { AgentModelsScreen } = await import('./AgentModelsScreen');
+        const screen = await renderScreen(<AgentModelsScreen agentTargetKey="agent:happier.agent.codex/codex" runtimeAgentId={null} />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('agent-models')).not.toBeNull());
+        const control = () => screen.findAllByTestId('agent-models-source-visibility:pc_a')
+            .find(node => typeof node.props.onValueChange === 'function');
+        expect(control()?.props.value).toBe(true);
+        expect(screen.findByTestId('agent-models-source-visibility:pc_b')).toBeNull();
+        await act(async () => { control()?.props.onValueChange(false); });
+        await waitForHomeGovernance(() => expect(control()?.props.value).toBe(false));
+        expect(catalog.modelPickerVisibilityByConnectionId).toEqual({ pc_a: false });
+        expect(mocks.mutate).not.toHaveBeenCalled();
+        if (mode === 'e2ee') {
+            const withdrawnChoice = control()?.props.onValueChange;
+            expect(typeof withdrawnChoice).toBe('function');
+            const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+            const { getServerProfileById } = await import('@/sync/domains/server/serverProfiles');
+            const home = getServerProfileById(serverId)!;
+            const credentials = await TokenStorage.getCredentialsForServerUrl(home.serverUrl, { serverId });
+            if (!credentials) throw new Error('Expected the encrypted fixture credential');
+            const rowWrites = () => account.home.requestsFor(PROVIDER_CONNECTIONS_ROWS_ROUTE_V1)
+                .filter(request => ProviderConnectionsRowMutationV1Schema.safeParse(request.input).success);
+            const writes = rowWrites().length;
+            expect(writes).toBe(1);
+            // Secure-store reads and its genuine mutation event both now report keyless
+            // credentials; catalog admission and the mounted widget remain real.
+            vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: credentials.token });
+            await act(async () => {
+                await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId }, { token: credentials.token });
+            });
+            expect(control()).toBeUndefined();
+            expect(screen.findByTestId('agent-models')).toBeNull();
+            expect(screen.getTextContent()).not.toContain('Model A');
+            await act(async () => { withdrawnChoice?.(true); });
+            expect(rowWrites()).toHaveLength(writes);
+        }
+    });
+    it('retires the source error when Account B has no custom source leaf', async () => {
+        const catalog = ProviderConnectionsCatalogV1Schema.parse({
+            ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
+            connections: [{
+                v: 1, id: 'pc_a', source: { kind: 'custom', template: buildCustomProviderTemplate({
+                    ...createCustomProviderDraft('openai-chat'), name: 'Custom source', baseUrl: 'https://custom.example/v1',
+                    requiresApiKey: false, catalog: 'manual',
+                }) },
+                role: 'named', displayName: 'Custom source', displayNameMode: 'custom', revision: 1, createdAt: 1, updatedAt: 1,
+            }],
+        });
+        account.home.answer(serverId, PROVIDER_CONNECTIONS_ROWS_ROUTE_V1, { body: {
+            status: 'present', revision: 1, content: { t: 'plain', v: catalog },
+        } });
+        const { refreshProviderCatalog } = await import('@/sync/engine/settings/providerCatalogEngine');
+        await refreshProviderCatalog({ serverId, accountId: 'account-a' });
+        let writes = 0;
+        account.home.answer(serverId, `POST ${PROVIDER_CONNECTIONS_ROWS_ROUTE_V1}`, {
+            select: input => {
+                const mutation = ProviderConnectionsRowMutationV1Schema.parse(input);
+                expect(mutation.expectedRevision).toBe(1);
+                expect(mutation.content).toMatchObject({ t: 'plain', v: { modelPickerVisibilityByConnectionId: { pc_a: false } } });
+                writes += 1;
+                return { dispatchThenFail: true };
+            },
+        });
+        mocks.projection.data = createProviderModelProjectionFixture({
+            groups: [createProviderModelProjectionGroupFixture({ rows: [{
+                ref: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: 'pc_a', modelId: 'model-a' },
+                descriptor: { id: 'model-a', name: 'Model A' }, sources: { manual: true, static: false, probe: false },
+                confidence: 'manual', compatibility: { result: { status: 'verified', selectedProtocol: 'openai-chat',
+                    evidence: { sourceUrls: ['https://example.com'], verifiedAt: '2026-07-14' } },
+                    compatibilityFingerprint: 'compatibility:v1:source-retirement', confirmed: true },
+                endpointHealth: 'available', catalog: { stale: false }, loadState: 'loaded', visibility: 'visible',
+            }] })],
+        });
+        const { AgentModelsScreen } = await import('./AgentModelsScreen');
+        const screen = await renderScreen(<AgentModelsScreen agentTargetKey="agent:happier.agent.codex/codex" runtimeAgentId={null} />);
+        const control = () => screen.findAllByTestId('agent-models-source-visibility:pc_a')
+            .find(node => typeof node.props.onValueChange === 'function');
+        await waitForHomeGovernance(() => expect(control()?.props.value).toBe(true));
+        await act(async () => { control()!.props.onValueChange(false); });
+        await waitForHomeGovernance(() => expect(screen.findByTestId('provider-error:provider_rpc_mutation_outcome_unknown')).not.toBeNull());
+        expect(writes).toBe(1);
+
+        await act(async () => {
+            await account.restore({ accountId: 'account-b', catalog: DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
+                machines: providerHarness.state.machines,
+                waivedActions: [...Object.values(PROVIDER_MODEL_SETTINGS_ACTION_ID_BY_OPERATION_V1), 'providers.models.load', 'providers.models.refresh'],
+            });
+            // Publish the fixture Home's enabled Provider features after restoring B.
+            await account.publishFeatures(serverId, createRootLayoutFeaturesResponse({ features: { providers: { enabled: true } } }));
+            // Cold restoration also exposes the default saved Home. This page's feature
+            // decision must use the test Home rather than a group containing that unserved Home.
+            await account.home.selectHomes([serverId]);
+            await account.selectMachine(serverId, 'machine-a', 'agents');
+        });
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        expect(captureActiveServerAccountScopeLifetime()?.scope.accountId).toBe('account-b');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('agent-models')).not.toBeNull());
+        expect(control()).toBeUndefined();
+        expect(screen.findByTestId('provider-error:provider_rpc_mutation_outcome_unknown')).toBeNull();
+        expect(writes).toBe(1);
+    });
     it('renders the page anatomy: a page header with the machine chip, never the full-width machine group', async () => {
         const { AgentModelsScreen } = await import('./AgentModelsScreen');
-        mocks.settings = { schemaVersion: 7, providerSettingsV1: DEFAULT_PROVIDER_SETTINGS_V1 };
-        providerHarness.state.settings = mocks.settings;
         const { ProviderModelManager } = await import('@/providers/models/ProviderModelManager');
         const listed = await renderScreen(<AgentModelsScreen agentTargetKey="agent:happier.agent.codex/codex" runtimeAgentId={null} />);
         // The model list hosts the page: its header (rendered by the list) carries the machine chip.
         const host = listed.findByType(ProviderModelManager).props.page;
         expect(host?.header.props.actions.props.presentation).toBe('chip');
-        expect(listed.findAllByType('MachineAdministrationTargetSelector' as never)
+        const { MachineAdministrationTargetSelector } = await import('@/components/settings/machines/MachineAdministrationTargetSelector');
+        expect(listed.findAllByType(MachineAdministrationTargetSelector)
             .filter((node) => node.props.presentation !== 'chip')).toHaveLength(0);
 
-        administrationTargetState.selectedTarget = null;
-        administrationTargetState.executionTarget = null;
+        await listed.unmount();
+        await account.publishMachines(serverId, []);
+        await account.selectMachine(serverId, null, 'agents');
         const noMachine = await renderScreen(<AgentModelsScreen agentTargetKey="agent:happier.agent.codex/codex" runtimeAgentId={null} />);
         expect(noMachine.findByTestId('settings.agents.models.header')).not.toBeNull();
-        expect(noMachine.findAllByType('MachineAdministrationTargetSelector' as never).map((node) => node.props.presentation))
+        expect(noMachine.findAllByType(MachineAdministrationTargetSelector).map((node) => node.props.presentation))
             .toEqual(['chip']);
     });
 
-    it('renders a read-only diagnostic for future provider settings instead of a mutable default manager', async () => {
+    it('renders a read-only diagnostic for invalid Provider catalog content instead of a mutable default manager', async () => {
+        account.home.answer(serverId, PROVIDER_CONNECTIONS_ROWS_ROUTE_V1, { body: {
+            status: 'present', revision: 1, content: { t: 'plain', v: { v: 99, connections: [] } },
+        } });
+        const { refreshProviderCatalog } = await import('@/sync/engine/settings/providerCatalogEngine');
+        await refreshProviderCatalog({ serverId, accountId: 'account-a' });
         const { AgentModelsScreen } = await import('./AgentModelsScreen');
         const screen = await renderScreen(
             <AgentModelsScreen agentTargetKey="agent:happier.agent.codex/codex" runtimeAgentId={null} />,
@@ -204,12 +382,11 @@ describe('AgentModelsScreen provider settings safety', () => {
 
     it('shows explicit first-load and structured failure states instead of an empty manager', async () => {
         const { AgentModelsScreen } = await import('./AgentModelsScreen');
-        mocks.settings = { schemaVersion: 7 };
-        providerHarness.state.settings = mocks.settings;
         mocks.projection = { data: null, loading: true, error: null };
         const loading = await renderScreen(<AgentModelsScreen agentTargetKey="agent:happier.agent.codex/codex" runtimeAgentId={null} />);
         expect(loading.findByTestId('agent-models')).toBeNull();
         expect(loading.getTextContent()).toContain('Loading');
+        await loading.unmount();
 
         mocks.projection = {
             data: null,
@@ -226,8 +403,6 @@ describe('AgentModelsScreen provider settings safety', () => {
         async (operation) => {
             const { AgentModelsScreen } = await import('./AgentModelsScreen');
             const { ProviderModelManager } = await import('@/providers/models/ProviderModelManager');
-            mocks.settings = { schemaVersion: 7, providerSettingsV1: DEFAULT_PROVIDER_SETTINGS_V1 };
-            providerHarness.state.settings = mocks.settings;
             mocks.projection.data = createProviderModelProjectionFixture({
                 groups: [createProviderModelProjectionGroupFixture({
                     rows: [{
@@ -299,8 +474,6 @@ describe('AgentModelsScreen provider settings safety', () => {
     it('reviews an ambiguous model load on Agent Models without retaining load replay', async () => {
         const { AgentModelsScreen } = await import('./AgentModelsScreen');
         const { ProviderModelManager } = await import('@/providers/models/ProviderModelManager');
-        mocks.settings = { schemaVersion: 7, providerSettingsV1: DEFAULT_PROVIDER_SETTINGS_V1 };
-        providerHarness.state.settings = mocks.settings;
         mocks.projection.data = createProviderModelProjectionFixture({
             groups: [createProviderModelProjectionGroupFixture({
                 modelLoadAction: 'available',
@@ -361,8 +534,6 @@ describe('AgentModelsScreen provider settings safety', () => {
     it('retries only projection refresh after an acknowledged settings mutation', async () => {
         const { AgentModelsScreen } = await import('./AgentModelsScreen');
         const { ProviderModelManager } = await import('@/providers/models/ProviderModelManager');
-        mocks.settings = { schemaVersion: 7, providerSettingsV1: DEFAULT_PROVIDER_SETTINGS_V1 };
-        providerHarness.state.settings = mocks.settings;
         mocks.projection.data = createProviderModelProjectionFixture({ agentTargetKey: 'agent:happier.agent.codex/codex' });
         const screen = await renderScreen(
             <AgentModelsScreen agentTargetKey="agent:happier.agent.codex/codex" runtimeAgentId={null} />,

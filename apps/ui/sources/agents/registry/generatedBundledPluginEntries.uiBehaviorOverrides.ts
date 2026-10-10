@@ -172,7 +172,7 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
         "surfaceId": "subagent-launch"
       },
       {
-        "iconName": "people",
+        "iconName": "users",
         "id": "claude.teammateDetailsTab",
         "resourceKind": "claudeSubagentLauncher",
         "slot": "sessionSubagents.teammateDetailsTab",
@@ -180,7 +180,7 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
         "tab": {
           "keyPrefix": "claude-subagent-launcher",
           "subtitleKey": "session.subagents.panel.launchClaudeTeamsSubtitle",
-          "titleKey": "session.subagents.panel.launchTeammateAction"
+          "titleKey": "session.subagents.panel.claudeTeamTitle"
         }
       }
     ]
@@ -344,10 +344,6 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
       },
       "connectedServiceProfileSources": [
         {
-          "detailSettingsKey": {
-            "localId": "connectedServicesProfileLabelByKey",
-            "scope": "host"
-          },
           "keyPrefix": "codex:connected-service",
           "labelKey": "externalSessions.browseSourceCodexConnectedServices",
           "labelParams": {

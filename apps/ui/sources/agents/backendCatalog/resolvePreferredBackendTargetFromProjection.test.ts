@@ -1,12 +1,61 @@
 import { describe, expect, it } from 'vitest';
 
 import { resolvePreferredBackendTargetFromProjection } from './resolvePreferredBackendTargetFromProjection';
+import { resolvePreferredBackendTarget } from './resolvePreferredBackendTarget';
+import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
+import { AcpBackendDefinitionV1Schema } from '@happier-dev/protocol/acp/catalog/settingsV1';
 
 const CLAUDE_TARGET = { kind: 'agent' as const, identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES.claude };
 const ANTIGRAVITY_TARGET = { kind: 'agent' as const, identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES.antigravity };
+const configuredTarget = (definitionId: string) => ({ kind: 'agent' as const,
+    identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' }, definitionId });
 
 describe('resolvePreferredBackendTargetFromProjection', () => {
+    it('does not choose a bare Custom ACP container from a legacy Agent default', () => {
+        expect(resolvePreferredBackendTargetFromProjection({ lastUsedAgent: 'custom-acp',
+            enabledAgentIds: ['custom-acp', 'codex'],
+            acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [] } },
+        })).toEqual({ kind: 'agent', identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES.codex });
+        expect(resolvePreferredBackendTarget({ lastUsedAgent: 'custom-acp', defaultBuiltInAgentId: 'custom-acp' }))
+            .toEqual({ kind: 'agent', identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES[DEFAULT_AGENT_ID] });
+    });
+    it('retains definition-qualified intent without a parallel daemon backend registry', () => {
+        const target = { kind: 'agent' as const,
+            identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' }, definitionId: 'review-a' };
+        const definition = AcpBackendDefinitionV1Schema.parse({ id: 'review-a', name: 'review-a', title: 'Review', command: 'review',
+            createdAt: 1, updatedAt: 1 });
+        const inputs = { lastUsedAgent: 'codex', lastUsedBackendTarget: target,
+            enabledAgentIds: ['codex'],
+            daemonMergedProjectionInputs: { discoveredBackendIds: [], mergedBackendProjectionById: {},
+                mergedProviderProjectionById: {}, pluginProjectionById: {}, pluginProjectionV2: null, registryDiagnostics: [] },
+        };
+        expect(resolvePreferredBackendTargetFromProjection({ ...inputs,
+            acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [definition] } },
+        })).toEqual(target);
+        expect(resolvePreferredBackendTargetFromProjection({ ...inputs, lastUsedBackendTarget: null,
+            acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [definition] } },
+        })).toEqual(target);
+        expect(resolvePreferredBackendTargetFromProjection({ ...inputs,
+            acpCatalogSnapshot: { status: 'ready', revision: 4, record: { v: 1, definitions: [] } },
+        })).toEqual(target);
+    });
+    it('keeps a configured preference from ready destination row facts without a Settings catalog', () => {
+        const definition = AcpBackendDefinitionV1Schema.parse({ id: 'row-review', name: 'row-review', title: 'Row review',
+            command: 'review', createdAt: 1, updatedAt: 1 });
+        expect(resolvePreferredBackendTargetFromProjection({
+            lastUsedAgent: 'codex',
+            lastUsedBackendTarget: { kind: 'backend', backendId: 'row-review', configuredBackendId: 'row-review' },
+            acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [definition] } },
+        })).toEqual(configuredTarget('row-review'));
+    });
+
+    it('keeps ordinary bundled selection available when the configured destination catalog is unavailable', () => {
+        expect(resolvePreferredBackendTargetFromProjection({ lastUsedAgent: 'codex',
+            acpCatalogSnapshot: { status: 'unavailable', reason: 'account-mode-mismatch' },
+        })).toEqual({ kind: 'agent', identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES.codex });
+    });
+
     it('routes an Antigravity provider default selection to the canonical provider backend', () => {
         expect(resolvePreferredBackendTargetFromProjection({
             lastUsedAgent: 'antigravity',
@@ -14,7 +63,7 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
             defaultBuiltInAgentId: 'claude',
             enabledAgentIds: ['antigravity', 'claude'],
             backendEnabledByTargetKey: {},
-            acpCatalogSettingsV1: { v: 2, backends: [] },
+            acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [] } },
             daemonMergedProjectionInputs: {
                 discoveredBackendIds: ['antigravity-localharness', 'antigravity-terminal'],
                 mergedProviderProjectionById: {
@@ -62,7 +111,7 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
             defaultBuiltInAgentId: 'claude',
             enabledAgentIds: ['antigravity', 'claude'],
             backendEnabledByTargetKey: {},
-            acpCatalogSettingsV1: { v: 2, backends: [] },
+            acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [] } },
             daemonMergedProjectionInputs: {
                 discoveredBackendIds: ['antigravity-localharness', 'antigravity-terminal'],
                 mergedProviderProjectionById: {
@@ -103,7 +152,7 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
         })).toEqual(ANTIGRAVITY_TARGET);
     });
 
-    it('normalizes an old persisted configured Antigravity target to the canonical provider backend', () => {
+    it('keeps a private configured definition separate from an Antigravity runtime alias', () => {
         expect(resolvePreferredBackendTargetFromProjection({
             lastUsedAgent: 'claude',
             lastUsedBackendTarget: {
@@ -114,9 +163,7 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
             defaultBuiltInAgentId: 'claude',
             enabledAgentIds: ['antigravity', 'claude'],
             backendEnabledByTargetKey: {},
-            acpCatalogSettingsV1: {
-                v: 2,
-                backends: [
+            acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [
                     {
                         id: 'antigravity-localharness',
                         name: 'antigravity-localharness',
@@ -125,7 +172,6 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
                         command: 'agy-localharness',
                         args: [],
                         env: {},
-                        transportProfile: 'generic',
                         defaultMode: 'plan',
                         defaultModel: 'default',
                         capabilities: {
@@ -138,8 +184,7 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
                         createdAt: 1,
                         updatedAt: 1,
                     },
-                ],
-            },
+                ] } },
             daemonMergedProjectionInputs: {
                 discoveredBackendIds: ['antigravity-localharness', 'antigravity-terminal'],
                 mergedProviderProjectionById: {
@@ -177,7 +222,7 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
                 pluginProjectionV2: null,
                 registryDiagnostics: [],
             },
-        })).toEqual(ANTIGRAVITY_TARGET);
+        })).toEqual(configuredTarget('antigravity-localharness'));
     });
 
     it('keeps a daemon-projected plugin backend as the preferred target when it has no built-in runtime carrier', () => {
@@ -187,7 +232,7 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
             defaultBuiltInAgentId: 'claude',
             enabledAgentIds: ['claude'],
             backendEnabledByTargetKey: {},
-            acpCatalogSettingsV1: { v: 2, backends: [] },
+            acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [] } },
             daemonMergedProjectionInputs: {
                 discoveredBackendIds: ['acme.review.backend'],
                 mergedProviderProjectionById: {
@@ -225,7 +270,7 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
             defaultBuiltInAgentId: 'claude',
             enabledAgentIds: ['claude'],
             backendEnabledByTargetKey: {},
-            acpCatalogSettingsV1: { v: 2, backends: [] },
+            acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [] } },
             daemonMergedProjectionInputs: {
                 discoveredBackendIds: [],
                 mergedProviderProjectionById: {
@@ -245,17 +290,17 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
         })).toEqual({ kind: 'agent', identity: { pluginId: 'acme.review', localId: 'review' } });
     });
 
-    it('still refuses a settings-only configured backend the machine projection does not name', () => {
+    it('preserves a configured definition without an obsolete daemon backend registry entry', () => {
         expect(resolvePreferredBackendTargetFromProjection({
             lastUsedAgent: 'claude',
             lastUsedBackendTarget: { kind: 'backend', backendId: 'ghost-bot', configuredBackendId: 'ghost-bot' },
             defaultBuiltInAgentId: 'claude',
             enabledAgentIds: ['claude'],
             backendEnabledByTargetKey: {},
-            acpCatalogSettingsV1: {
-                v: 2,
-                backends: [{ id: 'ghost-bot', name: 'ghost-bot', title: 'Ghost Bot' }],
-            },
+            acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [
+                AcpBackendDefinitionV1Schema.parse({ id: 'ghost-bot', name: 'ghost-bot', title: 'Ghost Bot',
+                    command: 'ghost', createdAt: 1, updatedAt: 1 }),
+            ] } },
             daemonMergedProjectionInputs: {
                 discoveredBackendIds: [],
                 mergedProviderProjectionById: {
@@ -270,7 +315,7 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
                 pluginProjectionV2: null,
                 registryDiagnostics: [],
             },
-        } as never)).toEqual(CLAUDE_TARGET);
+        })).toEqual(configuredTarget('ghost-bot'));
     });
 
     it('does not let a projected plugin settings backend hijack the built-in fallback for legacy customAcp', () => {
@@ -278,7 +323,7 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
             lastUsedAgent: 'customAcp',
             lastUsedBackendTarget: null,
             defaultBuiltInAgentId: 'claude',
-            acpCatalogSettingsV1: { v: 2, backends: [] },
+            acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [] } },
             daemonMergedProjectionInputs: {
                 discoveredBackendIds: ['acme.review.backend'],
                 mergedProviderProjectionById: {
@@ -307,7 +352,7 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
         })).toEqual(CLAUDE_TARGET);
     });
 
-    it('normalizes an old configured plugin provider-owned target to the collapsed provider settings backend', () => {
+    it('keeps a private definition separate from an unrelated plugin Agent runtime alias', () => {
         expect(resolvePreferredBackendTargetFromProjection({
             lastUsedAgent: 'claude',
             lastUsedBackendTarget: {
@@ -318,9 +363,7 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
             defaultBuiltInAgentId: 'claude',
             enabledAgentIds: ['plugin-provider', 'claude'],
             backendEnabledByTargetKey: {},
-            acpCatalogSettingsV1: {
-                v: 2,
-                backends: [
+            acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [
                     {
                         id: 'plugin-runtime',
                         name: 'plugin-runtime',
@@ -329,7 +372,6 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
                         command: 'plugin-runtime',
                         args: [],
                         env: {},
-                        transportProfile: 'generic',
                         defaultMode: 'plan',
                         defaultModel: 'default',
                         capabilities: {
@@ -342,8 +384,7 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
                         createdAt: 1,
                         updatedAt: 1,
                     },
-                ],
-            },
+                ] } },
             daemonMergedProjectionInputs: {
                 discoveredBackendIds: ['plugin-runtime'],
                 mergedProviderProjectionById: {
@@ -369,7 +410,7 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
                 pluginProjectionV2: null,
                 registryDiagnostics: [],
             },
-        })).toEqual({ kind: 'agent', identity: { pluginId: 'acme.runtime', localId: 'provider' } });
+        })).toEqual(configuredTarget('plugin-runtime'));
     });
 
     it('preserves a configured custom backend target when daemon projection inputs are absent', () => {
@@ -383,9 +424,7 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
             defaultBuiltInAgentId: 'claude',
             enabledAgentIds: ['claude'],
             backendEnabledByTargetKey: {},
-            acpCatalogSettingsV1: {
-                v: 2,
-                backends: [
+            acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [
                     {
                         id: 'review-bot',
                         name: 'review-bot',
@@ -394,7 +433,6 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
                         command: 'review-bot',
                         args: [],
                         env: {},
-                        transportProfile: 'generic',
                         defaultMode: 'plan',
                         defaultModel: 'default',
                         capabilities: {
@@ -407,13 +445,8 @@ describe('resolvePreferredBackendTargetFromProjection', () => {
                         createdAt: 1,
                         updatedAt: 1,
                     },
-                ],
-            },
+                ] } },
             daemonMergedProjectionInputs: null,
-        })).toEqual({
-            kind: 'backend',
-            backendId: 'review-bot',
-            configuredBackendId: 'review-bot',
-        });
+        })).toEqual(configuredTarget('review-bot'));
     });
 });

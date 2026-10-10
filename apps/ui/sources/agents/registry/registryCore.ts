@@ -116,7 +116,7 @@ export type AgentCoreConfig = Readonly<{
          * Keep this stable; do not use aliases here.
          */
         spawnAgent: AgentId;
-    }>;
+    }> | null;
     permissions: Readonly<{
         modeGroup: PermissionModeGroupId;
         promptProtocol: PermissionPromptProtocol;
@@ -222,18 +222,30 @@ export type AgentCoreConfig = Readonly<{
     }>;
 }>;
 
-export const CANONICAL_AGENTS_CORE = BUNDLED_CANONICAL_AGENTS_CORE;
+export const CANONICAL_AGENTS_CORE: Readonly<Partial<Record<CanonicalAgentId, AgentCoreConfig>>> = BUNDLED_CANONICAL_AGENTS_CORE;
 
 export const AGENTS_CORE = Object.freeze({
     ...CANONICAL_AGENTS_CORE,
-}) satisfies Readonly<Record<CanonicalAgentId, AgentCoreConfig>>;
+}) satisfies Readonly<Partial<Record<CanonicalAgentId, AgentCoreConfig>>>;
 
 export const CANONICAL_AGENT_IDS: readonly CanonicalAgentId[] = Object.freeze(
-    [...SHARED_AGENT_IDS],
+    // Presentation membership belongs to the same generated map as its cores.
+    // Shared Agent ids retain identity/facts for optional plugins whose runtime
+    // or UI publication failed, so they are not a UI entry inventory.
+    (Object.keys(CANONICAL_AGENTS_CORE) as CanonicalAgentId[])
+        .sort((left, right) => SHARED_AGENT_IDS.indexOf(left) - SHARED_AGENT_IDS.indexOf(right)),
 );
 
 /** Same list as {@link CANONICAL_AGENT_IDS}; retained for existing UI importers. */
 export const AGENT_IDS: readonly CanonicalAgentId[] = CANONICAL_AGENT_IDS;
+
+/** Admitted presentation cores, in the same order as the UI Agent inventory. */
+export const AGENT_CORE_CONFIGS: readonly AgentCoreConfig[] = Object.freeze(
+    CANONICAL_AGENT_IDS.flatMap((id) => {
+        const core = CANONICAL_AGENTS_CORE[id];
+        return core ? [core] : [];
+    }),
+);
 
 export {
     DEFAULT_AGENT_ID,
@@ -248,13 +260,11 @@ export {
 /**
  * UI presentation core for a bundled Agent.
  *
- * An externally installed Agent ships no bundled core, so an open `AgentId`
+ * An externally installed or excluded optional Agent has no bundled UI core, so an open `AgentId`
  * resolves to `null` and the caller falls back to its plugin contribution.
  * This must never throw: a crash here takes down every session surface that
  * merely wanted a display name for an external Agent.
  */
-export function getAgentCore(id: BundledAgentId): AgentCoreConfig;
-export function getAgentCore(id: AgentId): AgentCoreConfig | null;
 export function getAgentCore(id: AgentId): AgentCoreConfig | null {
     return (CANONICAL_AGENTS_CORE as Partial<Record<AgentId, AgentCoreConfig>>)[id] ?? null;
 }
@@ -265,8 +275,7 @@ export function getAllAgentProviderOwnedEnvironmentKeys(
         providerOwnedEnvironmentKeys?: readonly string[];
     }>>> | null,
 ): ReadonlySet<string> {
-    const keys = new Set(CANONICAL_AGENT_IDS.flatMap((id) =>
-        CANONICAL_AGENTS_CORE[id].providerOwnedEnvironmentKeys ?? []));
+    const keys = new Set(AGENT_CORE_CONFIGS.flatMap((core) => core.providerOwnedEnvironmentKeys ?? []));
     for (const agent of Object.values(projectedAgentsById ?? {})) {
         for (const key of agent.providerOwnedEnvironmentKeys ?? []) {
             keys.add(key);
@@ -279,8 +288,8 @@ export function resolveAgentIdFromCliDetectKey(detectKey: string | null | undefi
     if (typeof detectKey !== 'string') return null;
     const normalized = detectKey.trim().toLowerCase();
     if (!normalized) return null;
-    for (const id of CANONICAL_AGENT_IDS) {
-        if (CANONICAL_AGENTS_CORE[id].cli.detectKey === normalized) return id;
+    for (const core of AGENT_CORE_CONFIGS) {
+        if (core.cli?.detectKey === normalized) return core.id;
     }
     return null;
 }
@@ -289,18 +298,18 @@ export function resolveAgentIdFromConnectedServiceId(serviceId: string | null | 
     if (typeof serviceId !== 'string') return null;
     const normalized = serviceId.trim().toLowerCase();
     if (!normalized) return null;
-    const supportsConnectedService = (id: CanonicalAgentId): boolean => {
-        const supportedServiceIds = CANONICAL_AGENTS_CORE[id].connectedServices?.supportedServiceIds ?? [];
+    const supportsConnectedService = (core: AgentCoreConfig): boolean => {
+        const supportedServiceIds = core.connectedServices?.supportedServiceIds ?? [];
         return supportedServiceIds.some((svc) => typeof svc === 'string' && svc.toLowerCase() === normalized);
     };
 
-    const exactProviderId = CANONICAL_AGENT_IDS.find((id) => id.toLowerCase() === normalized);
-    if (exactProviderId != null && supportsConnectedService(exactProviderId)) {
-        return exactProviderId;
+    const exactCore = AGENT_CORE_CONFIGS.find((core) => core.id.toLowerCase() === normalized);
+    if (exactCore && supportsConnectedService(exactCore)) {
+        return exactCore.id;
     }
 
-    for (const id of CANONICAL_AGENT_IDS) {
-        if (supportsConnectedService(id)) return id;
+    for (const core of AGENT_CORE_CONFIGS) {
+        if (supportsConnectedService(core)) return core.id;
     }
     return null;
 }

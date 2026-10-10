@@ -10,11 +10,14 @@ import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { AgentDetailHeader, AgentMachineContextBar } from '@/components/settings/agents/detail/AgentDetailHeader';
-import { AgentAttentionBanner, AgentMachineOfflineBanner } from '@/components/settings/agents/detail/AgentAttentionBanner';
+import { AgentAttentionBanner } from '@/components/settings/agents/detail/AgentAttentionBanner';
 import {
+    resolveAgentsMachineCandidateAvailability,
     useAgentsAdministrationTargetSelection,
     useAgentsMachineScope,
 } from '@/components/settings/agents/collection/useAgentAdministrationCatalog';
+import { MachineScopedSection } from '@/components/settings/machines/MachineScopedSection';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -24,6 +27,8 @@ import { useApplySettings } from '@/sync/store/settingsWriters';
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useHomeTeamCredentialModelCatalog } from '@/hooks/teams/useHomeTeamCredentialModelCatalog';
+import { useConnectedAccountPurposeDefaults } from '@/hooks/server/connectedServices/useConnectedAccountPurposeDefaults';
+import { Modal } from '@/modal';
 import {
     resolveBundledAgentIdFromContributionIdentity,
 } from '@/agents/catalog/catalog';
@@ -46,11 +51,9 @@ import {
 } from '@/agents/backendCatalog/currentAgentCapabilities';
 import { MachineAgentReadiness } from '@/components/machines/agents/MachineAgentReadiness';
 import { AgentSignInPaneHost } from '@/components/machines/agents/AgentSignInPaneHost';
-import { useMachineAgent } from '@/agents/machineAgents/useMachineAgents';
 import { resolveAgentChannelLabelKey } from '@/components/settings/agents/agentChannelLabel';
 import { getPermissionModeOptionsForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 import { isPermissionMode, type PermissionMode } from '@/sync/domains/permissions/permissionTypes';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { openExternalUrl } from '@/utils/url/openExternalUrl';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
@@ -59,7 +62,7 @@ import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugin
 import { PluginAgentCliSourcePreferenceSchema } from '@happier-dev/protocol/plugins/contributions/agentCliMetadata';
 import { readAccountSettingValueForBackendTarget } from '@happier-dev/protocol/account/settings/accountSettings';
 import { qualifiedPurposeKey, type QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
-import { resolveAgentConnectedAccountPurposeDefaults, writeAgentConnectedAccountPurposeDefault, type AgentConnectedAccountPurposeTeamResourceDefault } from '@happier-dev/protocol/account/settings/connected-services';
+import { resolveAgentConnectedAccountPurposeDefaults, type AgentConnectedAccountPurposeTeamResourceDefault } from '@happier-dev/protocol/account/settings/connected-services';
 import type { PluginProjectedAgentConnectedAccountPurposeV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { BackendTargetRefV2Input } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { ConnectedAccountPurposeTargetChooser } from '@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser';
@@ -86,6 +89,9 @@ import {
     type MachineAdministrationTargetSelectionV1,
 } from '@/sync/domains/machines/administration/useTargetSelection';
 import { isAdministrationScopedPluginSettingsTargetCurrent } from '@/sync/domains/machines/administration/scopedPluginSettingsTarget';
+import { AgentContributedSettingsSection, areAgentAccountSettingsAvailable } from './AgentContributedSettingsSection';
+
+export { AgentContributedSettingsSection } from './AgentContributedSettingsSection';
 import { publishMachineContributionRegistryProjectionInvalidation } from '@/sync/ops/machineContributionRegistryProjection';
 
 function resolveQualifiedAgentProjectionId(params: Readonly<{
@@ -142,81 +148,76 @@ function resolveLegacyCompatAgentRouteRedirect(params: Readonly<{
 
 
 /**
- * The one line under an agent's name: what it is when that adds anything, its CLI and version,
- * a non-stable release channel, and the machine this page manages.
+ * The one line under an agent's name, all Account facts: what it is, whether new sessions use it,
+ * and a non-stable release channel. Its CLI and version belong to the computer it runs on, so they
+ * live in "Setup and status".
  */
 function describeAgentDetail(params: Readonly<{
-    agentId: string;
-    subtitle: string | null;
-    binaryName: string | null;
-    version: string | null;
-    cliAvailable: boolean | null;
+    enabled: boolean | null;
     channelLabel: string | null;
-    machineLabel: string | null;
 }>): string {
-    const subtitle = params.subtitle && params.subtitle !== params.agentId && params.subtitle !== params.binaryName
-        ? params.subtitle
-        : null;
-    const cli = params.binaryName && params.cliAvailable !== false
-        ? params.version
-            ? t('settingsAgents.detailPage.cliVersion', { cli: params.binaryName, version: params.version })
-            : t('settingsAgents.detailPage.cliName', { cli: params.binaryName })
-        : null;
-    const machine = params.machineLabel
-        ? params.cliAvailable === false
-            ? t('settingsAgents.detailPage.notInstalledOnMachine', { machine: params.machineLabel })
-            : t('settingsAgents.detailPage.onMachine', { machine: params.machineLabel })
-        : null;
-    return [subtitle, cli, params.channelLabel, machine].filter(Boolean).join(' · ');
+    return [
+        t('settingsAgents.detailPage.kindCodingAgent'),
+        params.enabled ? t('settingsAgents.detailPage.usedByNewSessions') : null,
+        params.channelLabel,
+    ].filter(Boolean).join(' · ');
 }
 
 /**
  * Where the managed machine stands for this page. Only readiness, CLI, install and sign-in depend
  * on it; the agent's settings are Account settings and never wait for it.
  */
-type AgentMachineState = 'none' | 'offline' | 'checking' | 'error' | 'ready';
+type AgentMachineState = 'none' | 'offline' | 'unavailable' | 'checking' | 'error' | 'ready';
 
-function AgentMachineReadinessStateRow(props: Readonly<{
-    state: Exclude<AgentMachineState, 'offline' | 'ready'>;
-    agentTitle: string;
-    machineLabel: string | null;
-    onRetry: () => void;
-}>) {
-    if (props.state === 'none') {
-        return (
-            <Item
-                testID="settings.agents.detail.noMachine"
-                title={t('settingsAgents.detailPage.noMachineTitle')}
-                subtitle={t('settingsAgents.detailPage.noMachineDescription', { agent: props.agentTitle })}
-                subtitleLines={0}
-                mode="info"
-            />
-        );
-    }
-    if (props.state === 'checking') {
-        return (
-            <Item
-                testID="settings.agents.detail.machineChecking"
-                title={props.machineLabel
-                    ? t('settingsAgents.detailPage.checkingMachine', { machine: props.machineLabel })
-                    : t('common.loading')}
-                loading
-                mode="info"
-            />
-        );
-    }
+/** The chosen machine is still answering what the agent has there. */
+function AgentMachineCheckingRow(props: Readonly<{ machineLabel: string | null }>) {
     return (
         <Item
-            testID="settings.agents.detail.machineError"
-            title={t('common.unavailable')}
-            subtitle={t('settingsAgents.detailPage.machineUnavailableDescription')}
-            subtitleLines={0}
+            testID="settings.agents.detail.machineChecking"
+            title={props.machineLabel
+                ? t('settingsAgents.detailPage.checkingMachine', { machine: props.machineLabel })
+                : t('common.loading')}
+            loading
             mode="info"
-            showChevron={false}
-            rightElement={(
-                <RoundButton size="small" display="secondary" title={t('common.retry')} onPress={props.onRetry} />
-            )}
         />
+    );
+}
+
+/**
+ * "Setup and status": what the agent needs on one computer (CLI, sign-in), with that computer's chip
+ * in the section header. Shared by both Agent detail presentations; the page around it is Account
+ * settings and never waits for a machine. Offline, locked and missing computers are said once, here.
+ */
+function AgentSetupAndStatusSection(props: Readonly<{
+    state: AgentMachineState;
+    targetSelection: MachineAdministrationTargetSelectionV1;
+    machineLockedReason: string | null;
+    machineLabel: string | null;
+    onRetry: () => void;
+    /** The computer's rows once it has answered. */
+    children: React.ReactNode;
+}>) {
+    return (
+        <MachineScopedSection
+            title={t('settingsAgents.detailPage.setupTitle')}
+            selection={props.targetSelection}
+            resolveCandidateAvailability={resolveAgentsMachineCandidateAvailability}
+            unselectedInvitation={t('settingsAgents.detailPage.setupNoComputer')}
+            lockedReason={props.machineLockedReason}
+            testIDPrefix="settings.agents.administration.target"
+        >
+            {props.state === 'checking' ? (
+                <AgentMachineCheckingRow machineLabel={props.machineLabel} />
+            ) : props.state === 'error' ? (
+                <SurfaceStateCard
+                    testID="settings.agents.detail.machineError"
+                    size="line"
+                    kind="error"
+                    title={t('settingsAgents.detailPage.machineUnavailableDescription')}
+                    action={{ label: t('common.retry'), onPress: props.onRetry }}
+                />
+            ) : props.children}
+        </MachineScopedSection>
     );
 }
 
@@ -277,63 +278,15 @@ const AgentSettingsProjectionStatus = React.memo(function AgentSettingsProjectio
     );
 });
 
-/**
- * The Agent-targeted settings an installed plugin contributes, rendered through
- * the one canonical plugin settings section.
- *
- * Both Agent presentations reach it: the full Agent screen and the reduced
- * screen an Agent with no bundled runtime carrier and no CLI auth resolves to.
- * Without a single owner the reduced screen silently dropped the projection it
- * had already resolved, so an Agent that ships settings but no CLI had no way
- * to expose them.
- */
-export const AgentContributedSettingsSection = React.memo(function AgentContributedSettingsSection(props: Readonly<{
-    pluginSettingsProjection: PluginProjectionEntry | null;
-    targetSelection: MachineAdministrationTargetSelectionV1;
-    executionTarget: FreshMachineAdministrationExecutionTargetV1 | null;
-    daemonOperationsAvailable: boolean;
-}>) {
-    const { pluginSettingsProjection, targetSelection, executionTarget, daemonOperationsAvailable } = props;
-    const activeServer = useActiveServerSnapshot();
-    const accountServerIdentityId = React.useMemo(
-        () => resolveScopedPluginSettingsServerIdentity(activeServer.serverId),
-        [activeServer.serverId],
-    );
-    const isDaemonSettingsTargetCurrent = React.useCallback((target: Extract<ScopedPluginSettingsTarget, { kind: 'daemon' }>) => {
-        return isAdministrationScopedPluginSettingsTargetCurrent({
-            target,
-            expectedExecutionTarget: executionTarget,
-            resolveCurrentExecutionTarget: targetSelection.resolveExecutionTarget,
-        });
-    }, [executionTarget, targetSelection.resolveExecutionTarget]);
-    if (!pluginSettingsProjection) return null;
-    return (
-        <PluginDetailGenericSettingsSection
-            pluginId={pluginSettingsProjection.pluginId}
-            projection={pluginSettingsProjection}
-            machineId={executionTarget?.machine.id ?? null}
-            serverId={executionTarget?.serverId ?? null}
-            accountServerIdentityId={accountServerIdentityId}
-            daemonServerIdentityId={executionTarget?.target.serverIdentityId ?? null}
-            perActiveServerIdentityId={targetSelection.selectedTarget?.serverIdentityId ?? null}
-            accountOperationsAvailable={targetSelection.selectedTargetServerMatchesActiveAccount}
-            daemonOperationsAvailable={daemonOperationsAvailable}
-            isDaemonTargetCurrent={isDaemonSettingsTargetCurrent}
-        />
-    );
-});
-
-const AgentConnectedAccountPurposeSettingsSection = React.memo(function AgentConnectedAccountPurposeSettingsSection(
+/** The agent's default account per purpose, as rows of its Session defaults (Account settings). */
+const AgentConnectedAccountPurposeRows = React.memo(function AgentConnectedAccountPurposeRows(
     props: Readonly<{
         projection: ResolvedAgentCatalogEntry;
         accountSettingsAvailable: boolean;
+        machineId?: string;
     }>,
 ) {
-    const settings = useSettingsSelector((settings) => ({
-        connectedAccountPurposeBindingsV1: settings.connectedAccountPurposeBindingsV1,
-        connectedServicesDefaultAuthByAgentIdV1: settings.connectedServicesDefaultAuthByAgentIdV1,
-    }));
-    const applySettings = useApplySettings();
+    const { catalog: purposeCatalog, legacySettings, mutateDefaults } = useConnectedAccountPurposeDefaults();
     const identity = props.projection.identity;
     const declarations = React.useMemo(
         () => props.projection.connectedAccounts ?? [],
@@ -353,20 +306,17 @@ const AgentConnectedAccountPurposeSettingsSection = React.memo(function AgentCon
     // The one Agent default-authentication owner reads and writes these
     // purpose defaults; a released service-keyed default is shown until the
     // first write folds it into the purpose-binding store.
-    const defaultAuthSettings = React.useMemo(() => ({
-        connectedAccountPurposeBindingsV1: settings.connectedAccountPurposeBindingsV1,
-        connectedServicesDefaultAuthByAgentIdV1: settings.connectedServicesDefaultAuthByAgentIdV1,
-    }), [settings.connectedAccountPurposeBindingsV1, settings.connectedServicesDefaultAuthByAgentIdV1]);
     const defaultsByPurposeKey = React.useMemo(() => new Map(
-        identity
+        identity && purposeCatalog.value
             ? resolveAgentConnectedAccountPurposeDefaults({
-                settings: defaultAuthSettings,
+                settings: legacySettings,
+                purposeBindings: purposeCatalog.value,
                 agentId: props.projection.agentId,
                 consumer: identity,
                 declarations,
             }).map((entry) => [qualifiedPurposeKey(entry.purpose), entry] as const)
             : [],
-    ), [declarations, defaultAuthSettings, identity, props.projection.agentId]);
+    ), [declarations, legacySettings, purposeCatalog.value, identity, props.projection.agentId]);
     // A Team resource choice is written as the canonical Team selection of its
     // Team (lane 10 child 02 :271, child 06 :506), never as a purpose target.
     const setTarget = React.useCallback((
@@ -374,24 +324,24 @@ const AgentConnectedAccountPurposeSettingsSection = React.memo(function AgentCon
         target: QualifiedConnectedAccountPurposeBindingTargetV1 | null,
         teamResource: AgentConnectedAccountPurposeTeamResourceDefault | null,
     ) => {
-        if (!identity || !props.accountSettingsAvailable) return;
-        applySettings(writeAgentConnectedAccountPurposeDefault({
-            settings: defaultAuthSettings,
+        if (!identity || !props.accountSettingsAvailable || purposeCatalog.status !== 'ready' || purposeCatalog.stale) return;
+        void mutateDefaults({ kind: 'service', input: {
             agentId: props.projection.agentId,
-            consumer: identity,
-            declarations,
+            service: declaration.service,
             purpose: declaration.purpose,
-            target,
-            teamResource,
-        }));
-    }, [applySettings, declarations, defaultAuthSettings, identity, props.accountSettingsAvailable, props.projection.agentId]);
+            selection: teamResource?.selection ?? (target?.kind === 'account'
+                ? { source: 'connected', profileId: target.account.accountId }
+                : target?.kind === 'group'
+                    ? { source: 'connected', selection: 'group', groupId: target.groupId }
+                    : { source: 'native' }),
+            ...(teamResource ? { teamId: teamResource.teamId } : {}),
+            ...(props.machineId ? { machineId: props.machineId } : {}),
+        } }).catch(() => Modal.alert(t('common.error'), t('widgetAdd.inputsUnavailable')));
+    }, [mutateDefaults, purposeCatalog.status, purposeCatalog.stale, identity, props.accountSettingsAvailable, props.projection.agentId, props.machineId]);
 
     if (!identity || declarations.length === 0) return null;
     return (
-        <ItemGroup
-            title={t('connectedServices.defaultAuth.agentDetailTitle')}
-            description={t('connectedServices.defaultAuth.agentDetailFooter')}
-        >
+        <>
             {declarations.map((declaration) => {
                 const purpose = { consumer: identity, purpose: declaration.purpose };
                 const purposeKey = qualifiedPurposeKey(purpose);
@@ -405,26 +355,30 @@ const AgentConnectedAccountPurposeSettingsSection = React.memo(function AgentCon
                         teamResourceValue={defaultsByPurposeKey.get(purposeKey)?.teamResource ?? null}
                         teamCredentialCatalog={teamCredentialCatalog}
                         onReload={teamCredentialCatalog.reload}
-                        disabled={!props.accountSettingsAvailable}
+                        disabled={!props.accountSettingsAvailable || purposeCatalog.status !== 'ready' || purposeCatalog.stale}
                         disabledReason={!props.accountSettingsAvailable
                             ? t('connectedServices.accountScopeMismatchDescription')
-                            : undefined}
+                            : purposeCatalog.status !== 'ready' || purposeCatalog.stale
+                                ? t(purposeCatalog.status === 'loading' ? 'common.loading' : 'common.unavailable')
+                                : undefined}
                         onChange={(target, teamResource) => setTarget(declaration, target, teamResource)}
                     />
                 );
             })}
-        </ItemGroup>
+        </>
     );
 });
 
 /**
  * Session defaults are Account settings keyed by the agent's backend target: they load and save
- * with no machine, and apply on every machine a new session starts on.
+ * with no machine, and apply on every machine a new session starts on. The default account for
+ * each of the agent's purposes and the way to its Models page sit here too, for the same reason.
  */
 const AgentSessionDefaultsSection = React.memo(function AgentSessionDefaultsSection(props: Readonly<{
     projection: ResolvedAgentCatalogEntry;
     compatibilityTargetKeys: readonly string[];
     accountSettingsAvailable: boolean;
+    machineId?: string;
     /** The popover boundary the dropdown form of the permission choice measures against. */
     popoverBoundaryRef?: React.ComponentProps<typeof DropdownMenu>['popoverBoundaryRef'];
     onOpenModels: (() => void) | null;
@@ -437,7 +391,7 @@ const AgentSessionDefaultsSection = React.memo(function AgentSessionDefaultsSect
     const { projection, compatibilityTargetKeys, accountSettingsAvailable } = props;
     const providerTargetKey = projection.backendTargetKey;
     const defaultPermissionByTargetKey = settings.sessionDefaultPermissionModeByTargetKey;
-    const permissionModeOptions = getPermissionModeOptionsForAgentType(projection.agentId);
+    const permissionModeOptions = getPermissionModeOptionsForAgentType(projection.agentId, 'settings');
     const permissionPreference = providerTargetKey
         ? [providerTargetKey, ...compatibilityTargetKeys]
             .map((targetKey) => readAccountSettingValueForBackendTarget(
@@ -458,11 +412,12 @@ const AgentSessionDefaultsSection = React.memo(function AgentSessionDefaultsSect
         });
     };
     const showPermissionMode = Boolean(providerTargetKey) && permissionModeOptions.length > 0;
-    if (!showPermissionMode && !props.onOpenModels) return null;
+    const hasAccountRows = Boolean(projection.identity) && (projection.connectedAccounts?.length ?? 0) > 0;
+    if (!showPermissionMode && !props.onOpenModels && !hasAccountRows) return null;
     return (
         <ItemGroup
             title={t('settingsAgents.detailPage.sessionDefaultsTitle')}
-            description={t('settingsAgents.detailPage.sessionDefaultsAccountDescription', { agent: projection.title })}
+            description={t('settingsAgents.detailPage.sessionDefaultsSavedDescription', { agent: projection.title })}
         >
             {showPermissionMode ? (
                 permissionModeOptions.length <= 4 ? (
@@ -507,11 +462,16 @@ const AgentSessionDefaultsSection = React.memo(function AgentSessionDefaultsSect
                     />
                 )
             ) : null}
+            <AgentConnectedAccountPurposeRows
+                projection={projection}
+                accountSettingsAvailable={accountSettingsAvailable}
+                machineId={props.machineId}
+            />
             {props.onOpenModels ? (
                 <Item
                     testID="settings.agents.detail.models"
                     icon={<Icon name="stack-simple" />}
-                    title={t('settingsProviders.models.manage')}
+                    title={t('settingsProviders.detail.modelsTitle')}
                     onPress={props.onOpenModels}
                 />
             ) : null}
@@ -533,7 +493,7 @@ const AgentSettingsFallbackScreenInner = React.memo(function AgentSettingsFallba
     machineState: AgentMachineState;
     compatibilityTargetKeys: readonly string[];
     machineLabel: string | null;
-    machineOffline: boolean;
+    machineLockedReason: string | null;
     onRetryMachine: () => void;
 }>) {
     const settings = useSettingsSelector((settings) => ({
@@ -553,23 +513,16 @@ const AgentSettingsFallbackScreenInner = React.memo(function AgentSettingsFallba
         });
     }, [applySettings, backendEnabledByTargetKey, props.accountSettingsAvailable, providerTargetKey]);
     const machine = props.executionTarget?.machine ?? null;
-    const machineLabel = props.machineLabel;
 
     return (
         <ItemList>
-            <AgentMachineContextBar targetSelection={props.targetSelection} />
             <AgentDetailHeader
                 projection={props.projection}
                 description={describeAgentDetail({
-                    agentId: props.projection.agentId,
-                    subtitle: props.projection.subtitle,
-                    binaryName: null,
-                    version: null,
-                    cliAvailable: null,
+                    enabled: backendEnabled,
                     channelLabel: props.projection.channel === 'stable'
                         ? null
                         : t(resolveAgentChannelLabelKey(props.projection.channel)),
-                    machineLabel,
                 })}
                 machineId={machine?.id ?? null}
                 serverId={props.executionTarget?.serverId ?? null}
@@ -580,7 +533,6 @@ const AgentSettingsFallbackScreenInner = React.memo(function AgentSettingsFallba
                     onChange: setBackendEnabled,
                 } : null}
             />
-            {props.machineOffline ? <AgentMachineOfflineBanner onRetry={props.onRetryMachine} /> : null}
             {!props.accountSettingsAvailable && props.targetSelection.selectedTarget !== null ? (
                 <AgentAttentionBanner
                     testID="settings.agents.detail.accountScope"
@@ -588,40 +540,29 @@ const AgentSettingsFallbackScreenInner = React.memo(function AgentSettingsFallba
                     description={t('connectedServices.accountScopeMismatchDescription')}
                 />
             ) : null}
-            {props.machineState === 'offline' ? null : (
-                <ItemGroup
-                    title={t('settingsAgents.detailPage.readinessTitle')}
-                    description={t('settingsAgents.detailPage.readinessDescription')}
-                >
-                    {props.machineState === 'ready' ? (
-                        // The machine answered and the agent has no CLI or sign-in to manage there.
-                        <Item
-                            testID="settings.agents.detail.nothingToSetUp"
-                            title={t('settingsAgents.detailPage.nothingToSetUpTitle')}
-                            subtitle={t('settingsAgents.detailPage.nothingToSetUpDescription', { agent: props.projection.title })}
-                            subtitleLines={0}
-                            mode="info"
-                        />
-                    ) : (
-                        <AgentMachineReadinessStateRow
-                            state={props.machineState}
-                            agentTitle={props.projection.title}
-                            machineLabel={props.machineLabel}
-                            onRetry={props.onRetryMachine}
-                        />
-                    )}
-                </ItemGroup>
-            )}
             <AgentSessionDefaultsSection
                 projection={props.projection}
                 compatibilityTargetKeys={props.compatibilityTargetKeys}
                 accountSettingsAvailable={props.accountSettingsAvailable}
+                machineId={props.executionTarget?.machine.id}
                 onOpenModels={null}
             />
-            <AgentConnectedAccountPurposeSettingsSection
-                projection={props.projection}
-                accountSettingsAvailable={props.accountSettingsAvailable}
-            />
+            <AgentSetupAndStatusSection
+                state={props.machineState}
+                targetSelection={props.targetSelection}
+                machineLockedReason={props.machineLockedReason}
+                machineLabel={props.machineLabel}
+                onRetry={props.onRetryMachine}
+            >
+                {/* The machine answered and the agent has no CLI or sign-in to manage there. */}
+                <Item
+                    testID="settings.agents.detail.nothingToSetUp"
+                    title={t('settingsAgents.detailPage.nothingToSetUpTitle')}
+                    subtitle={t('settingsAgents.detailPage.nothingToSetUpDescription', { agent: props.projection.title })}
+                    subtitleLines={0}
+                    mode="info"
+                />
+            </AgentSetupAndStatusSection>
             {/*
               * External Sessions reachability belongs to the Agent, not to
               * whether it also carries a bundled runtime or a login screen:
@@ -671,7 +612,7 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
     installIntent?: 'install' | 'update';
     machineState: AgentMachineState;
     machineLabel: string | null;
-    machineOffline: boolean;
+    machineLockedReason: string | null;
     onRetryMachine: () => void;
 }>) {
     const { theme } = useUnistyles();
@@ -695,7 +636,6 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
         externalSessionsRefreshKey,
         installIntent,
         machineState,
-        machineOffline,
         onRetryMachine,
     } = props;
     const settings = useSettingsSelector((settings) => ({
@@ -754,23 +694,9 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
 
     const primaryMachine = executionTarget?.machine ?? null;
     const capabilityServerId = executionTarget?.serverId ?? null;
-    // The one per-machine inventory owner (lab agent-setup): installed, version, sign-in, update.
-    const machineAgent = useMachineAgent({
-        serverId: capabilityServerId,
-        machineId: primaryMachine?.id ?? null,
-        agentId: cliAgentId ?? '',
-        enabled: Boolean(cliAgentId),
-    });
-    const providerCliAvailable = machineAgent ? machineAgent.installed : null;
-    const primaryMachineLabel = props.machineLabel;
     const headerDescription = describeAgentDetail({
-        agentId: projection.agentId,
-        subtitle: projection.subtitle,
-        binaryName: agentCli?.executable.binaryName ?? null,
-        version: machineAgent?.version ?? null,
-        cliAvailable: agentCli ? providerCliAvailable : null,
+        enabled: backendEnabled,
         channelLabel: projection.channel === 'stable' ? null : t(resolveAgentChannelLabelKey(projection.channel)),
-        machineLabel: primaryMachineLabel,
     });
 
     const capabilityBadges: BadgeGridItem[] = [
@@ -811,7 +737,6 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
 
     const main = (
         <ItemList>
-            <AgentMachineContextBar targetSelection={targetSelection} />
             <AgentDetailHeader
                 projection={projection}
                 description={headerDescription}
@@ -827,9 +752,6 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
                 } : null}
                 menuActions={menuActions}
             />
-            {machineOffline ? (
-                <AgentMachineOfflineBanner onRetry={onRetryMachine} />
-            ) : null}
             {!accountSettingsAvailable && targetSelection.selectedTarget !== null ? (
                 <AgentAttentionBanner
                     testID="settings.agents.detail.accountScope"
@@ -837,40 +759,12 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
                     description={t('connectedServices.accountScopeMismatchDescription')}
                 />
             ) : null}
-            {machineState === 'none' || machineState === 'checking' || machineState === 'error' ? (
-                <ItemGroup
-                    title={t('settingsAgents.detailPage.readinessTitle')}
-                    description={t('settingsAgents.detailPage.readinessDescription')}
-                >
-                    <AgentMachineReadinessStateRow
-                        state={machineState}
-                        agentTitle={projection.title}
-                        machineLabel={props.machineLabel}
-                        onRetry={onRetryMachine}
-                    />
-                </ItemGroup>
-            ) : primaryMachine && capabilityServerId && cliAgentId ? (
-                // The same model and form as the machine's Agents section (lab agent-setup): install,
-                // sign in (connected service first, else the agent's own login in the terminal), ready.
-                <ItemGroup
-                    title={t('settingsAgents.detailPage.readinessTitle')}
-                    description={t('settingsAgents.detailPage.readinessDescription')}
-                >
-                    <MachineAgentReadiness
-                        testID="settings.agents.detail.readiness"
-                        serverId={capabilityServerId}
-                        machineId={primaryMachine.id}
-                        machineName={props.machineLabel ?? primaryMachine.id}
-                        agentId={cliAgentId}
-                        openForm={installIntent !== undefined}
-                    />
-                </ItemGroup>
-            ) : null}
 
             <AgentSessionDefaultsSection
                 projection={projection}
                 compatibilityTargetKeys={compatibilityTargetKeys}
                 accountSettingsAvailable={accountSettingsAvailable}
+                machineId={primaryMachine?.id}
                 popoverBoundaryRef={popoverBoundaryRef}
                 onOpenModels={currentAgentCapabilities && providerTargetKey ? () => router.push({
                     pathname: '/(app)/settings/agents/[agentId]/models',
@@ -883,10 +777,26 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
                 } as never) : null}
             />
 
-            <AgentConnectedAccountPurposeSettingsSection
-                projection={projection}
-                accountSettingsAvailable={accountSettingsAvailable}
-            />
+            <AgentSetupAndStatusSection
+                state={machineState}
+                targetSelection={targetSelection}
+                machineLockedReason={props.machineLockedReason}
+                machineLabel={props.machineLabel}
+                onRetry={onRetryMachine}
+            >
+                {primaryMachine && capabilityServerId && cliAgentId ? (
+                    // The same model and form as the machine's Agents section (lab agent-setup): install,
+                    // sign in (connected service first, else the agent's own login in the terminal), ready.
+                    <MachineAgentReadiness
+                        testID="settings.agents.detail.readiness"
+                        serverId={capabilityServerId}
+                        machineId={primaryMachine.id}
+                        machineName={props.machineLabel ?? primaryMachine.id}
+                        agentId={cliAgentId}
+                        openForm={installIntent !== undefined}
+                    />
+                ) : null}
+            </AgentSetupAndStatusSection>
 
             <AgentDetailExternalSessionsSection
                 agentId={agentId}
@@ -972,7 +882,6 @@ export const AgentSettingsScreen = React.memo(function AgentSettingsScreen() {
     const params = useLocalSearchParams();
     const settings = useSettingsSelector((settings) => ({
         backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
-        acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
     }));
     const administrationTargetSelection = useAgentsAdministrationTargetSelection();
     const rawAgentId = params.agentId;
@@ -1063,13 +972,11 @@ export const AgentSettingsScreen = React.memo(function AgentSettingsScreen() {
     const agentProjectionParams = React.useMemo(() => ({
         enabledAgentIds: [],
         backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
-        acpCatalogSettingsV1: settings.acpCatalogSettingsV1,
         mergedProviderProjectionById: daemonMergedProjectionInputs?.mergedProviderProjectionById ?? null,
         mergedBackendProjectionById: daemonMergedProjectionInputs?.mergedBackendProjectionById ?? null,
     }), [
         daemonMergedProjectionInputs?.mergedBackendProjectionById,
         daemonMergedProjectionInputs?.mergedProviderProjectionById,
-        settings.acpCatalogSettingsV1,
         settings.backendEnabledByTargetKey,
     ]);
     const knownProviderIds = React.useMemo(() => {
@@ -1169,12 +1076,17 @@ export const AgentSettingsScreen = React.memo(function AgentSettingsScreen() {
         : null;
     // Agent settings are Account settings: with no machine chosen they belong to the active Account;
     // a machine from another server's Account makes them read-only here.
-    const accountSettingsAvailable = administrationTargetSelection.selectedTarget === null
-        || administrationTargetSelection.selectedTargetServerMatchesActiveAccount;
+    const accountSettingsAvailable = areAgentAccountSettingsAvailable(administrationTargetSelection);
     const machineState: AgentMachineState = administrationTargetSelection.selectedTarget === null
         ? 'none'
         : machineScope.offline
             ? 'offline'
+            : administrationTargetSelection.state.kind === 'missing'
+                && administrationTargetSelection.state.inventoryKnown === false
+                && (administrationTargetSelection.state.inventoryStatus ?? 'loading') === 'loading'
+                ? 'checking'
+            : administrationTargetSelection.state.kind !== 'online'
+                ? 'unavailable'
             : daemonMergedProjection.phase === 'ready' || daemonMergedProjection.phase === 'unsupported'
                 ? 'ready'
                 : daemonMergedProjection.phase === 'error'
@@ -1237,7 +1149,7 @@ export const AgentSettingsScreen = React.memo(function AgentSettingsScreen() {
                 externalSessionsBrowseAvailable={externalSessionsBinding?.browseAvailable === true}
                 externalSessionsRefreshKey={externalSessionsRefreshKey}
                 machineLabel={machineScope.machineLabel}
-                machineOffline={machineScope.offline}
+                machineLockedReason={machineScope.machineLockedReason}
                 onRetryMachine={retryDaemonProjection}
             />
         );
@@ -1263,7 +1175,7 @@ export const AgentSettingsScreen = React.memo(function AgentSettingsScreen() {
             installIntent={installIntent}
             machineState={machineState}
             machineLabel={machineScope.machineLabel}
-            machineOffline={machineScope.offline}
+            machineLockedReason={machineScope.machineLockedReason}
             onRetryMachine={retryDaemonProjection}
         />
     );

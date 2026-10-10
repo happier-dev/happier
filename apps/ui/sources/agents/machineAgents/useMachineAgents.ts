@@ -4,8 +4,9 @@ import { buildMachineAgentsDetectRequest } from '@happier-dev/protocol/capabilit
 
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { getMachineCapabilitiesCacheState, prefetchMachineCapabilities, prefetchMachineCapabilitiesIfStale, subscribeMachineCapabilitiesCacheState } from '@/hooks/server/useMachineCapabilitiesCache';
-import { loadDaemonMergedProjectionInputs, readCachedDaemonMergedProjectionCacheEntry, type DaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
-import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { loadDaemonMergedProjectionCacheEntry, readCachedDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { getMachineContributionRegistryProjectionRevision, subscribeMachineContributionRegistryProjectionInvalidation } from '@/sync/ops/machineContributionRegistryProjectionRevision';
+import { useDaemonMergedProjectionInputs, type DaemonMergedProjectionInputsState } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { getStorage } from '@/sync/domains/state/storage';
 import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
 import { loadAccountProfile } from '@/sync/domains/state/accountProfilePersistence';
@@ -29,12 +30,21 @@ import type { MachineAgent, MachineAgentConnectedService } from './machineAgentT
 import { ensureMachineAgentInstallJobs } from './installJobs/installJobStore';
 
 export type { MachineAgentsSnapshot } from './machineAgentInventoryStore';
-export type MachineAgentsTarget = Readonly<{ serverId?: string | null; machineId: string | null | undefined; enabled?: boolean; load?: boolean }>;
+export type MachineAgentsTarget = Readonly<{ serverId?: string | null; machineId: string | null | undefined; agentId?: string; enabled?: boolean; load?: boolean }>;
 
 // Retain the previous CLI-detection owner's five-minute auth-probe freshness budget.
 const AUTH_PROBE_STALE_MS = 5 * 60_000;
 const scopeKey = (lifetime: ServerAccountScopeLifetime, machineId: string) => serverAccountScopedResourceKey(lifetime.scope, 'machine-agents', machineId);
-const capabilitySalt = (lifetime: ServerAccountScopeLifetime, version: number) => serverAccountScopedResourceKey(lifetime.scope, 'machine-agents-capabilities', String(version));
+const capabilitySalt = (lifetime: ServerAccountScopeLifetime, revision: number) => serverAccountScopedResourceKey(lifetime.scope, 'machine-agents-capabilities', String(revision));
+
+function useInventoryProjectionRevisions(serverId: string, machineIds: readonly string[]): string {
+    const subscribe = React.useCallback((listener: () => void) => {
+        const disposers = machineIds.map((machineId) => subscribeMachineContributionRegistryProjectionInvalidation({ serverId, machineId }, listener));
+        return () => { for (const dispose of disposers) dispose(); };
+    }, [machineIds, serverId]);
+    const read = React.useCallback(() => JSON.stringify(machineIds.map((machineId) => getMachineContributionRegistryProjectionRevision({ serverId, machineId }))), [machineIds, serverId]);
+    return React.useSyncExternalStore(subscribe, read, read);
+}
 
 function hydrate(lifetime: ServerAccountScopeLifetime, machineId: string): void {
     if (!lifetime.isCurrent()) return;
@@ -44,53 +54,62 @@ function hydrate(lifetime: ServerAccountScopeLifetime, machineId: string): void 
     if (saved) machineAgentInventoryStore.publish(key, { ...saved, status: 'offline' });
 }
 
-function observe(input: Readonly<{ lifetime: ServerAccountScopeLifetime; machineId: string; version: number; inputs: DaemonMergedProjectionInputs | null; online: boolean; connectedServices?: Readonly<Record<string, readonly MachineAgentConnectedService[]>> }>): void {
+function observe(input: Readonly<{ lifetime: ServerAccountScopeLifetime; machineId: string; revision: number; projection: DaemonMergedProjectionInputsState; online: boolean; connectedServices?: Readonly<Record<string, readonly MachineAgentConnectedService[]>> }>): void {
     if (!input.lifetime.isCurrent()) return;
     const key = scopeKey(input.lifetime, input.machineId);
-    const descriptors = input.inputs ? buildMachineAgentInventoryDescriptors(input.inputs) : undefined;
-    const observation = input.online && descriptors
-        ? projectMachineAgentCapabilityObservation(descriptors, getMachineCapabilitiesCacheState(input.machineId, input.lifetime.scope.serverId, capabilitySalt(input.lifetime, input.version), input.lifetime.scope.accountId))
-        : { status: input.online ? 'loading' as const : 'offline' as const, items: [], lastCheckedAt: null, ...(descriptors ? { descriptors } : {}) };
-    const dependencyTitlesByKey = Object.fromEntries(getInstallablesRegistryEntries({ pluginProjection: input.inputs?.pluginProjectionV2 ?? undefined }).map((entry) => [entry.key, entry.title]));
+    const descriptors = input.projection.inputs ? buildMachineAgentInventoryDescriptors(input.projection.inputs) : undefined;
+    const failed = input.projection.phase === 'error' || input.projection.phase === 'unsupported';
+    const observation = input.online && descriptors && !failed
+        ? projectMachineAgentCapabilityObservation(descriptors, getMachineCapabilitiesCacheState(input.machineId, input.lifetime.scope.serverId, capabilitySalt(input.lifetime, input.revision), input.lifetime.scope.accountId))
+        : { status: !input.online ? 'offline' as const : failed ? 'error' as const : 'loading' as const, items: [], lastCheckedAt: null, ...(descriptors ? { descriptors } : {}) };
+    const dependencyTitlesByKey = Object.fromEntries(getInstallablesRegistryEntries({ pluginProjection: input.projection.inputs?.pluginProjectionV2 ?? undefined }).map((entry) => [entry.key, entry.title]));
     machineAgentInventoryStore.publish(key, { ...observation, dependencyTitlesByKey, ...(input.connectedServices ? { connectedServicesByAgentId: input.connectedServices } : {}) });
     if (observation.status === 'ready' && observation.lastCheckedAt !== null) {
         createMachineAgentInventoryPersistence(getPersistenceStorage()).write(input.lifetime.scope, input.machineId, { items: [...observation.items], lastCheckedAt: observation.lastCheckedAt });
     }
 }
 
-/** Shared refresh for open inventories; the credential lifetime, never focused Home, owns transport. */
-export async function refreshMachineAgents(input: Readonly<{ serverId: string; machineId: string; accountLifetime: ServerAccountScopeLifetime; force?: boolean }>): Promise<void> {
+/** Shared inventory/selected-Agent refresh; the credential lifetime, never focused Home, owns transport. */
+export async function refreshMachineAgents(input: Readonly<{ serverId: string; machineId: string; accountLifetime: ServerAccountScopeLifetime; agentId?: string; force?: boolean }>): Promise<void> {
     const lifetime = input.accountLifetime;
     if (!lifetime.isCurrent() || lifetime.scope.serverId !== input.serverId) return;
     hydrate(lifetime, input.machineId);
     const machine = resolveServerScopedMachine(getStorage().getState(), input.serverId, input.machineId);
     const online = Boolean(machine && isMachineOnline(machine));
-    const version = machine?.daemonStateVersion ?? 0;
-    if (!online) { observe({ lifetime, machineId: input.machineId, version, inputs: null, online: false }); return; }
-    const inputs = await loadDaemonMergedProjectionInputs({ machineId: input.machineId, serverId: input.serverId, accountLifetime: lifetime });
+    const scope = { machineId: input.machineId, serverId: input.serverId };
+    const revision = getMachineContributionRegistryProjectionRevision(scope);
+    if (!online) { observe({ lifetime, machineId: input.machineId, revision, projection: { phase: 'idle', inputs: null }, online: false }); return; }
+    const entry = await loadDaemonMergedProjectionCacheEntry({ ...scope, accountLifetime: lifetime });
     if (!lifetime.isCurrent()) return;
+    if (getMachineContributionRegistryProjectionRevision(scope) !== revision) return;
+    const inputs = entry?.kind === 'ready' || entry?.kind === 'error' ? entry.inputs ?? null : null;
     const agents = buildMachineAgentInventoryDescriptors(inputs);
-    if (!inputs) {
-        machineAgentInventoryStore.publish(scopeKey(lifetime, input.machineId), { status: 'error', items: [], lastCheckedAt: null, ...(inputs ? { descriptors: agents } : {}) });
+    if (entry?.kind !== 'ready' || !inputs) {
+        observe({ lifetime, machineId: input.machineId, revision, projection: { phase: entry?.kind === 'unsupported' ? 'unsupported' : 'error', inputs }, online });
         return;
     }
     if (agents.length === 0) {
         machineAgentInventoryStore.publish(scopeKey(lifetime, input.machineId), { status: 'ready', items: [], descriptors: [], lastCheckedAt: Date.now() });
         return;
     }
-    const args = { machineId: input.machineId, serverId: input.serverId, accountLifetime: lifetime, cacheKeySalt: capabilitySalt(lifetime, version), request: buildMachineAgentsDetectRequest({ agents, refresh: input.force }) };
+    const requestedAgents = input.agentId ? agents.filter((agent) => agent.agentId === input.agentId) : agents;
+    if (requestedAgents.length === 0) return;
+    const args = { machineId: input.machineId, serverId: input.serverId, accountLifetime: lifetime, cacheKeySalt: capabilitySalt(lifetime, revision), request: buildMachineAgentsDetectRequest({ agents: requestedAgents, refresh: input.force }) };
     await Promise.all([
         // Older daemons can still report inventory facts when install jobs are unavailable.
         ensureMachineAgentInstallJobs({ ...lifetime.scope, machineId: input.machineId }).catch(() => {}),
         input.force ? prefetchMachineCapabilities(args) : prefetchMachineCapabilitiesIfStale({ ...args, staleMs: AUTH_PROBE_STALE_MS }),
     ]);
-    observe({ lifetime, machineId: input.machineId, version, inputs, online });
+    if (getMachineContributionRegistryProjectionRevision(scope) !== revision) return;
+    const currentMachine = resolveServerScopedMachine(getStorage().getState(), input.serverId, input.machineId);
+    observe({ lifetime, machineId: input.machineId, revision, projection: { phase: 'ready', inputs }, online: Boolean(currentMachine && isMachineOnline(currentMachine)) });
 }
 
 function useInventoryDriver(target: MachineAgentsTarget) {
     const activeServer = useActiveServerSnapshot(!target.serverId);
     const requestedServerId = target.serverId?.trim() || activeServer.serverId;
     const machineId = target.machineId?.trim() || '';
+    const agentId = target.agentId?.trim() || undefined;
     const enabled = target.enabled !== false && Boolean(machineId && requestedServerId);
     const { binding } = useServerCredentialAccountScopeBinding(requestedServerId);
     const lifetime = binding?.isCurrent() ? binding : null;
@@ -98,15 +117,19 @@ function useInventoryDriver(target: MachineAgentsTarget) {
     const key = enabled && lifetime ? scopeKey(lifetime, machineId) : null;
     const machine = getStorage()(useShallow((state) => {
         const row = enabled ? resolveServerScopedMachine(state, serverId, machineId) : null;
-        return { online: Boolean(row && isMachineOnline(row)), version: row?.daemonStateVersion ?? 0 };
+        return { online: Boolean(row && isMachineOnline(row)) };
     }));
+    const machineIds = React.useMemo(() => enabled ? [machineId] : [], [enabled, machineId]);
+    const projectionRevisions = useInventoryProjectionRevisions(serverId, machineIds);
+    const revision = enabled ? getMachineContributionRegistryProjectionRevision({ serverId, machineId }) : 0;
     const projection = useDaemonMergedProjectionInputs({ machineId, serverId, enabled, load: enabled && machine.online && target.load !== false });
     const profileSlice = getStorage()(useShallow((state) => ({ scope: state.profileScope, connectedServicesV2: state.profile.connectedServicesV2, connectedAccountsV4: state.profile.connectedAccountsV4 })));
     const savedProfile = React.useMemo(() => lifetime ? loadAccountProfile(lifetime.scope) : profileDefaults, [lifetime]);
     const profile = lifetime && areServerAccountScopesEqual(profileSlice.scope, lifetime.scope) ? profileSlice : savedProfile;
     const registry = useProjectedConnectedServicesRegistry();
     const localize = useProjectedPluginLocalizedTextResolver();
-    const features = useServerFeaturesSnapshotForServerId(serverId, { enabled: enabled && target.load !== false });
+    // Account authentication still needs Home negotiation when machine probes are passive.
+    const features = useServerFeaturesSnapshotForServerId(serverId, { enabled });
     const connectedServices = React.useMemo(() => projectMachineAgentConnectedServices({
         agents: Object.entries(projection.inputs?.pluginProjectionV2?.agentsById ?? {}).map(([agentId, agent]) => ({ agentId, connectedAccounts: agent.connectedAccounts })),
         profile,
@@ -118,18 +141,18 @@ function useInventoryDriver(target: MachineAgentsTarget) {
     React.useEffect(() => {
         if (!lifetime || !key) return;
         hydrate(lifetime, machineId);
-        const publish = () => observe({ lifetime, machineId, version: machine.version, inputs: projection.inputs, online: machine.online, connectedServices });
+        const publish = () => observe({ lifetime, machineId, revision, projection, online: machine.online, connectedServices });
         publish();
-        const unsubscribe = subscribeMachineCapabilitiesCacheState(machineId, serverId, capabilitySalt(lifetime, machine.version), publish, lifetime.scope.accountId);
+        const unsubscribe = subscribeMachineCapabilitiesCacheState(machineId, serverId, capabilitySalt(lifetime, revision), publish, lifetime.scope.accountId);
         return unsubscribe;
-    }, [connectedServices, key, lifetime, machine.online, machine.version, machineId, projection.inputs, serverId]);
+    }, [connectedServices, key, lifetime, machine.online, revision, machineId, projection.inputs, projection.phase, serverId]);
     React.useEffect(() => {
         if (!lifetime || !enabled || !machine.online || target.load === false) return;
-        void refreshMachineAgents({ serverId, machineId, accountLifetime: lifetime });
-    }, [enabled, lifetime, machine.online, machine.version, machineId, projection.inputs, serverId, target.load]);
+        void refreshMachineAgents({ serverId, machineId, accountLifetime: lifetime, agentId });
+    }, [agentId, enabled, lifetime, machine.online, projectionRevisions, machineId, projection.inputs, serverId, target.load]);
     const refresh = React.useCallback(async () => {
-        if (enabled && lifetime) await refreshMachineAgents({ serverId, machineId, accountLifetime: lifetime, force: true });
-    }, [enabled, lifetime, machineId, serverId]);
+        if (enabled && lifetime) await refreshMachineAgents({ serverId, machineId, accountLifetime: lifetime, agentId, force: true });
+    }, [agentId, enabled, lifetime, machineId, serverId]);
     return { key, lifetime, refresh };
 }
 
@@ -156,8 +179,9 @@ export function useMachineAgentsByMachine(target: Readonly<{ serverId: string; m
     const machineIds = React.useMemo(() => JSON.parse(idsKey) as string[], [idsKey]);
     const machineFacts = getStorage()(useShallow((state) => machineIds.flatMap((machineId) => {
         const machine = resolveServerScopedMachine(state, target.serverId, machineId);
-        return [Boolean(machine && isMachineOnline(machine)), machine?.daemonStateVersion ?? 0];
+        return [Boolean(machine && isMachineOnline(machine))];
     })));
+    const projectionRevisions = useInventoryProjectionRevisions(target.serverId, machineIds);
     const cacheRef = React.useRef<ReadonlyMap<string, MachineAgentsSnapshot>>(new Map());
     const read = React.useCallback(() => {
         const previous = cacheRef.current;
@@ -177,9 +201,9 @@ export function useMachineAgentsByMachine(target: Readonly<{ serverId: string; m
             if (target.load === true) void refreshMachineAgents({ serverId: lifetime.scope.serverId, machineId, accountLifetime: lifetime });
             else {
                 const inputs = readCachedDaemonMergedProjectionCacheEntry({ machineId, serverId: target.serverId });
-                if (machineFacts[index * 2] !== true) observe({ lifetime, machineId, version: Number(machineFacts[index * 2 + 1]), inputs: inputs?.kind === 'ready' ? inputs.inputs : null, online: false });
+                if (machineFacts[index] !== true) observe({ lifetime, machineId, revision: getMachineContributionRegistryProjectionRevision({ serverId: target.serverId, machineId }), projection: { phase: 'idle', inputs: inputs?.kind === 'ready' ? inputs.inputs : null }, online: false });
             }
         }
-    }, [lifetime, machineFacts, machineIds, target.load, target.serverId]);
+    }, [lifetime, machineFacts, machineIds, projectionRevisions, target.load, target.serverId]);
     return React.useSyncExternalStore(subscribe, read, read);
 }

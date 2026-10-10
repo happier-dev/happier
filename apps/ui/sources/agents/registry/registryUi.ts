@@ -12,6 +12,7 @@ export type AgentIconSvgXmlResolver = (
 
 export type AgentUiConfig = Readonly<{
     id: string;
+    identityColor?: Readonly<{ light: string; dark: string }>;
     icon: ImageSourcePropType | null;
     svgIconXml: AgentIconSvgXmlResolver | null;
     /**

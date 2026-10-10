@@ -19,6 +19,7 @@ describe('machine agent readiness', () => {
     it('distinguishes signed-out and missing facts without treating unknown native auth as signed out', () => {
         expect(resolveMachineAgentState({ ...facts, signIn: { ...facts.signIn, status: 'signedOut', via: null } })).toBe('needsSignIn');
         expect(resolveMachineAgentState({ ...facts, signIn: { ...facts.signIn, status: 'unknown', via: null } })).toBe('ready');
+        expect(resolveMachineAgentState({ ...facts, signIn: { ...facts.signIn, status: 'unknown', via: null }, requireSignedIn: true })).toBe('unknown');
         expect(resolveMachineAgentState({ ...facts, latestVersion: '1.1.0' })).toBe('updateAvailable');
         expect(resolveMachineAgentState({ ...facts, known: false, checking: true })).toBe('checking');
         expect(resolveMachineAgentState({ ...facts, known: false })).toBe('unknown');

@@ -256,7 +256,7 @@ describe('agentCatalogProjection', () => {
             isBuiltIn: false,
             catalogAgentId: 'claude',
             iconAgentId: 'codex',
-            iconName: getAgentCore('codex').ui.agentPickerIconName,
+            iconName: getAgentCore('codex')?.ui.agentPickerIconName,
             backendTargetKey: 'backend:acme.agent.backend',
             descriptor: expect.objectContaining({ agentId: 'claude' }),
             behavior: expect.objectContaining({ agentId: 'claude' }),

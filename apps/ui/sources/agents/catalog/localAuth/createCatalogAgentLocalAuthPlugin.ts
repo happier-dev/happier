@@ -4,8 +4,9 @@ import { getAgentLocalCliConfig, getProviderCliInstallGuideUrl } from '@happier-
 import { createAgentLocalAuthPluginFromLaunches } from './createAgentLocalAuthPluginFromLaunches';
 import type { AgentLocalAuthPlugin } from './agentLocalAuthPlugin';
 
-export function createCatalogAgentLocalAuthPlugin(agentId: BundledAgentId): AgentLocalAuthPlugin {
+export function createCatalogAgentLocalAuthPlugin(agentId: BundledAgentId): AgentLocalAuthPlugin | null {
     const config = getAgentLocalCliConfig(agentId);
+    if (!config) return null;
     const loginLaunches = (config.authLaunches
         ?? (config.loginLaunch ? [{ ...config.loginLaunch, kind: 'primary' as const }] : []));
     return createAgentLocalAuthPluginFromLaunches({

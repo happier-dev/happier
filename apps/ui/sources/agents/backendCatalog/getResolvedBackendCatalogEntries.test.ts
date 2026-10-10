@@ -32,7 +32,43 @@ function bundledAgentTargetKey(agentId: BundledAgentId): string {
     return `agent:${identity.pluginId}/${identity.localId}`;
 }
 
+function configuredAgentTarget(definitionId: string) {
+    return { kind: 'agent' as const,
+        identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' }, definitionId };
+}
+
+function configuredAgentTargetKey(definitionId: string) {
+    return `agent:happier.agent.custom-acp/custom-acp:definition:${definitionId}`;
+}
+
 describe('getResolvedBackendCatalogEntries', () => {
+    it('projects a declared Custom ACP container only as definition-qualified selectable instances', () => {
+        const definition = AcpBackendDefinitionV1Schema.parse({ id: 'review-a', name: 'review-a', title: 'Review', command: 'review',
+            args: [], env: {}, capabilities: { supportsLoadSession: false, supportsModes: 'unknown', supportsModels: 'unknown',
+                supportsConfigOptions: 'unknown', promptImageSupport: 'unknown' }, createdAt: 1, updatedAt: 1 });
+        const entries = getResolvedBackendCatalogEntries({ enabledAgentIds: ['custom-acp'],
+            mergedProviderProjectionById: { 'custom-acp': { agentId: 'custom-acp',
+                identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' }, isBuiltIn: true } },
+            acpCatalogSnapshot: { status: 'ready', revision: 4, record: { v: 1, definitions: [definition] } },
+        });
+        expect(entries.map((entry) => entry.backendTarget)).toEqual([configuredAgentTarget('review-a')]);
+    });
+    it('projects two configured definitions as distinct selections of one declared Custom ACP Agent', () => {
+        const definitions = ['review-a', 'review-b'].map((id) => AcpBackendDefinitionV1Schema.parse({
+            id, name: id, title: id, command: id, args: [], env: {},
+            capabilities: { supportsLoadSession: false, supportsModes: 'unknown', supportsModels: 'unknown',
+                supportsConfigOptions: 'unknown', promptImageSupport: 'unknown' }, createdAt: 1, updatedAt: 1,
+        }));
+        const entries = getResolvedBackendCatalogEntries({ enabledAgentIds: [],
+            acpCatalogSnapshot: { status: 'ready', revision: 4, record: { v: 1, definitions } } });
+        expect(entries.map((entry) => entry.backendTarget)).toEqual(definitions.map(({ id }) => ({
+            kind: 'agent', identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' }, definitionId: id,
+        })));
+        expect(new Set(entries.map((entry) => entry.backendTargetKey)).size).toBe(2);
+        expect(entries.map((entry) => entry.agentCatalogEntry.identity)).toEqual(definitions.map(() => ({
+            pluginId: 'happier.agent.custom-acp', localId: 'custom-acp',
+        })));
+    });
     it('keeps bundled Agents available while ACP rows load or are unavailable, and adds configured rows only when ready', () => {
         const definition = AcpBackendDefinitionV1Schema.parse({ id: 'row-review', name: 'row-review', title: 'Row review', command: 'review',
             args: [], env: {}, capabilities: { supportsLoadSession: false, supportsModes: 'unknown', supportsModels: 'unknown',
@@ -52,6 +88,25 @@ describe('getResolvedBackendCatalogEntries', () => {
                 expect.objectContaining({ kind: 'builtInAgent', builtInAgentId: 'claude' }),
             ]);
         }
+    });
+    it('keeps missing Agent subtitles absent instead of displaying routing ids', () => {
+        const entries = getResolvedBackendCatalogEntries({
+            enabledAgentIds: ['claude'],
+            acpCatalogSettingsV1: { v: 2, backends: [] },
+            mergedProviderProjectionById: {
+                'acme.review': {
+                    agentId: 'acme.review',
+                    identity: { pluginId: 'acme.review', localId: 'review' },
+                    title: 'Acme Review',
+                    channel: 'plugin',
+                    isBuiltIn: false,
+                },
+            },
+        });
+        expect(entries).toEqual(expect.arrayContaining([
+            expect.objectContaining({ agentId: 'claude', subtitle: null }),
+            expect.objectContaining({ agentId: 'acme.review', subtitle: null }),
+        ]));
     });
     it('does not fabricate a customAcp provider id for non-built-in backend targets', () => {
         expect(resolveCatalogAgentIdForBackendTarget({ kind: 'backend', backendId: 'claude' })).toBe('claude');
@@ -98,14 +153,12 @@ describe('getResolvedBackendCatalogEntries', () => {
                 title: 't:agentInput.agent.claude',
             }),
             expect.objectContaining({
-                backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
-                backendTargetKey: 'backend:review-bot:configured:review-bot',
+                backendTarget: configuredAgentTarget('review-bot'),
+                backendTargetKey: configuredAgentTargetKey('review-bot'),
                 kind: 'configuredBackend',
-                agentId: 'review-bot',
-                catalogAgentId: null,
-                iconAgentId: null,
+                agentId: 'custom-acp',
                 title: 'Review Bot',
-                subtitle: 'review-bot',
+                subtitle: null,
             }),
         ]);
     });
@@ -202,14 +255,14 @@ describe('getResolvedBackendCatalogEntries', () => {
             },
         });
 
-        expect(entries.map((entry) => entry.backendTargetKey)).toEqual([bundledAgentTargetKey('claude'), 'backend:review-bot:configured:review-bot']);
+        expect(entries.map((entry) => entry.backendTargetKey)).toEqual([bundledAgentTargetKey('claude'), configuredAgentTargetKey('review-bot')]);
         expect(entries[1]).toEqual(expect.objectContaining({
             kind: 'configuredBackend',
-            catalogAgentId: null,
+            agentId: 'custom-acp',
         }));
     });
 
-    it('uses merged configured-backend projection truth instead of leaving configured ACP entries on the customAcp carrier', () => {
+    it('keeps configured ACP definitions on their declared contribution despite stale unrelated backend projections', () => {
         const entries = getResolvedBackendCatalogEntries({
             enabledAgentIds: ['claude', 'customAcp'],
             acpCatalogSettingsV1: {
@@ -261,14 +314,12 @@ describe('getResolvedBackendCatalogEntries', () => {
 
         expect(entries).toEqual(expect.arrayContaining([
             expect.objectContaining({
-                backendTarget: { kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
-                backendTargetKey: 'backend:review-bot:configured:review-bot',
+                backendTarget: configuredAgentTarget('review-bot'),
+                backendTargetKey: configuredAgentTargetKey('review-bot'),
                 kind: 'configuredBackend',
-                agentId: 'kiro',
-                catalogAgentId: 'kiro',
-                iconAgentId: 'kiro',
+                agentId: 'custom-acp',
                 title: 'Review Bot',
-                subtitle: 'Configured Kiro backend',
+                subtitle: null,
             }),
         ]));
     });
@@ -371,66 +422,66 @@ describe('getResolvedBackendCatalogEntries', () => {
 
     it('collapses discovered provider-owned concrete backends behind the canonical provider row', () => {
         const entries = getResolvedBackendCatalogEntries({
-            enabledAgentIds: ['antigravity'],
+            enabledAgentIds: ['codex'],
             acpCatalogSettingsV1: { v: 2, backends: [] },
-            discoveredBackendIds: ['antigravity-localharness', 'antigravity-terminal'],
+            discoveredBackendIds: ['codex-localharness', 'codex-terminal'],
             mergedProviderProjectionById: {
-                antigravity: {
-                    agentId: 'antigravity',
-                    title: 'Antigravity',
-                    subtitle: 'Antigravity CLI',
+                codex: {
+                    agentId: 'codex',
+                    title: 'Codex',
+                    subtitle: 'Codex CLI',
                     isBuiltIn: true,
-                    settingsBackendId: 'antigravity-localharness',
-                    catalogAgentId: 'antigravity',
-                    iconAgentId: 'antigravity',
+                    settingsBackendId: 'codex-localharness',
+                    catalogAgentId: 'codex',
+                    iconAgentId: 'codex',
                 },
             },
             mergedBackendProjectionById: {
-                'antigravity-localharness': {
-                    backendId: 'antigravity-localharness',
-                    agentId: 'antigravity',
-                    title: 'Antigravity Localharness',
+                'codex-localharness': {
+                    backendId: 'codex-localharness',
+                    agentId: 'codex',
+                    title: 'Codex Localharness',
                     subtitle: 'Structured local runtime',
-                    catalogAgentId: 'antigravity',
-                    iconAgentId: 'antigravity',
+                    catalogAgentId: 'codex',
+                    iconAgentId: 'codex',
                 },
-                'antigravity-terminal': {
-                    backendId: 'antigravity-terminal',
-                    agentId: 'antigravity',
-                    title: 'Antigravity Terminal',
+                'codex-terminal': {
+                    backendId: 'codex-terminal',
+                    agentId: 'codex',
+                    title: 'Codex Terminal',
                     subtitle: 'Terminal runtime',
-                    catalogAgentId: 'antigravity',
-                    iconAgentId: 'antigravity',
+                    catalogAgentId: 'codex',
+                    iconAgentId: 'codex',
                 },
             },
         });
 
         expect(entries).toEqual([
             expect.objectContaining({
-                backendTarget: bundledAgentTarget('antigravity'),
-                backendTargetKey: bundledAgentTargetKey('antigravity'),
+                backendTarget: bundledAgentTarget('codex'),
+                backendTargetKey: bundledAgentTargetKey('codex'),
                 kind: 'builtInAgent',
-                backendId: 'antigravity',
-                agentId: 'antigravity',
-                catalogAgentId: 'antigravity',
-                builtInAgentId: 'antigravity',
-                iconAgentId: 'antigravity',
-                title: 't:agentInput.agent.antigravity',
+                backendId: 'codex',
+                agentId: 'codex',
+                catalogAgentId: 'codex',
+                builtInAgentId: 'codex',
+                iconAgentId: 'codex',
+                title: 't:agentInput.agent.codex',
             }),
         ]);
     });
 
-    it('collapses configured provider-owned concrete backends behind the canonical provider row', () => {
+    it('retains private definitions independently of bundled Agent settings backend aliases', () => {
         const entries = getResolvedBackendCatalogEntries({
-            enabledAgentIds: ['antigravity'],
+            enabledAgentIds: ['codex'],
             collapseConfiguredBackendProviderSentinels: true,
             acpCatalogSettingsV1: {
                 v: 2,
                 backends: [
                     {
-                        id: 'antigravity-localharness',
-                        name: 'antigravity-localharness',
-                        title: 'Antigravity Localharness',
+                        id: 'codex-localharness',
+                        name: 'codex-localharness',
+                        title: 'Codex Localharness',
                         description: 'Structured local runtime',
                         command: 'agy-localharness',
                         args: [],
@@ -448,11 +499,11 @@ describe('getResolvedBackendCatalogEntries', () => {
                         updatedAt: 1,
                     },
                     {
-                        id: 'antigravity-terminal',
-                        name: 'antigravity-terminal',
-                        title: 'Antigravity Terminal',
+                        id: 'codex-terminal',
+                        name: 'codex-terminal',
+                        title: 'Codex Terminal',
                         description: 'Terminal runtime',
-                        command: 'antigravity',
+                        command: 'codex',
                         args: [],
                         env: {},
                         defaultMode: 'plan',
@@ -470,70 +521,71 @@ describe('getResolvedBackendCatalogEntries', () => {
                 ],
             },
             mergedProviderProjectionById: {
-                antigravity: {
-                    agentId: 'antigravity',
-                    title: 'Antigravity',
-                    subtitle: 'Antigravity CLI',
+                codex: {
+                    agentId: 'codex',
+                    title: 'Codex',
+                    subtitle: 'Codex CLI',
                     isBuiltIn: true,
-                    settingsBackendId: 'antigravity-localharness',
-                    catalogAgentId: 'antigravity',
-                    iconAgentId: 'antigravity',
+                    settingsBackendId: 'codex-localharness',
+                    catalogAgentId: 'codex',
+                    iconAgentId: 'codex',
                 },
             },
             mergedBackendProjectionById: {
-                'antigravity-localharness': {
-                    backendId: 'antigravity-localharness',
-                    agentId: 'antigravity',
-                    title: 'Antigravity Localharness',
+                'codex-localharness': {
+                    backendId: 'codex-localharness',
+                    agentId: 'codex',
+                    title: 'Codex Localharness',
                     subtitle: 'Structured local runtime',
-                    catalogAgentId: 'antigravity',
-                    iconAgentId: 'antigravity',
+                    catalogAgentId: 'codex',
+                    iconAgentId: 'codex',
                     capabilities: { session: { supported: true } },
                 },
-                'antigravity-terminal': {
-                    backendId: 'antigravity-terminal',
-                    agentId: 'antigravity',
-                    title: 'Antigravity Terminal',
+                'codex-terminal': {
+                    backendId: 'codex-terminal',
+                    agentId: 'codex',
+                    title: 'Codex Terminal',
                     subtitle: 'Terminal runtime',
-                    catalogAgentId: 'antigravity',
-                    iconAgentId: 'antigravity',
+                    catalogAgentId: 'codex',
+                    iconAgentId: 'codex',
                     capabilities: { session: { supported: true } },
                 },
             },
         });
 
-        expect(entries.map((entry) => entry.backendTargetKey)).toEqual([bundledAgentTargetKey('antigravity')]);
+        expect(entries.map((entry) => entry.backendTargetKey)).toEqual([bundledAgentTargetKey('codex'),
+            configuredAgentTargetKey('codex-localharness'), configuredAgentTargetKey('codex-terminal')]);
         expect(entries[0]).toEqual(expect.objectContaining({
             kind: 'builtInAgent',
-            backendTarget: bundledAgentTarget('antigravity'),
-            builtInAgentId: 'antigravity',
-            title: 't:agentInput.agent.antigravity',
+            backendTarget: bundledAgentTarget('codex'),
+            builtInAgentId: 'codex',
+            title: 't:agentInput.agent.codex',
         }));
     });
 
     it('uses provider-level enablement for collapsed provider-owned settings backend rows', () => {
         const baseParams = {
-            enabledAgentIds: ['antigravity'],
+            enabledAgentIds: ['codex'],
             acpCatalogSettingsV1: { v: 2 as const, backends: [] },
             mergedProviderProjectionById: {
-                antigravity: {
-                    agentId: 'antigravity',
-                    title: 'Antigravity',
-                    subtitle: 'Antigravity CLI',
+                codex: {
+                    agentId: 'codex',
+                    title: 'Codex',
+                    subtitle: 'Codex CLI',
                     isBuiltIn: true,
-                    settingsBackendId: 'antigravity-localharness',
-                    catalogAgentId: 'antigravity',
-                    iconAgentId: 'antigravity',
+                    settingsBackendId: 'codex-localharness',
+                    catalogAgentId: 'codex',
+                    iconAgentId: 'codex',
                 },
             },
             mergedBackendProjectionById: {
-                'antigravity-localharness': {
-                    backendId: 'antigravity-localharness',
-                    agentId: 'antigravity',
-                    title: 'Antigravity Localharness',
+                'codex-localharness': {
+                    backendId: 'codex-localharness',
+                    agentId: 'codex',
+                    title: 'Codex Localharness',
                     subtitle: 'Structured local runtime',
-                    catalogAgentId: 'antigravity',
-                    iconAgentId: 'antigravity',
+                    catalogAgentId: 'codex',
+                    iconAgentId: 'codex',
                 },
             },
         } satisfies Omit<BackendCatalogParams, 'backendEnabledByTargetKey'>;
@@ -541,27 +593,27 @@ describe('getResolvedBackendCatalogEntries', () => {
         expect(getResolvedBackendCatalogEntries({
             ...baseParams,
             backendEnabledByTargetKey: {
-                [bundledAgentTargetKey('antigravity')]: true,
+                [bundledAgentTargetKey('codex')]: true,
             },
         })).toEqual([
             expect.objectContaining({
-                backendTargetKey: bundledAgentTargetKey('antigravity'),
-                backendTarget: bundledAgentTarget('antigravity'),
-                title: 't:agentInput.agent.antigravity',
+                backendTargetKey: bundledAgentTargetKey('codex'),
+                backendTarget: bundledAgentTarget('codex'),
+                title: 't:agentInput.agent.codex',
             }),
         ]);
 
         expect(getResolvedBackendCatalogEntries({
             ...baseParams,
             backendEnabledByTargetKey: {
-                [bundledAgentTargetKey('antigravity')]: false,
+                [bundledAgentTargetKey('codex')]: false,
             },
         })).toEqual([]);
 
         expect(getResolvedBackendCatalogEntries({
             ...baseParams,
             backendEnabledByTargetKey: {
-                'backend:antigravity-localharness': false,
+                'backend:codex-localharness': false,
             },
         })).toEqual([]);
 
@@ -569,20 +621,20 @@ describe('getResolvedBackendCatalogEntries', () => {
             ...baseParams,
             enabledAgentIds: [],
             backendEnabledByTargetKey: {
-                [bundledAgentTargetKey('antigravity')]: false,
-                'backend:antigravity-localharness': true,
+                [bundledAgentTargetKey('codex')]: false,
+                'backend:codex-localharness': true,
             },
         })).toEqual([]);
 
         expect(getResolvedBackendCatalogEntries({
             ...baseParams,
             backendEnabledByTargetKey: {
-                'backend:antigravity-localharness:configured:antigravity-localharness': false,
+                'backend:codex-localharness:configured:codex-localharness': false,
             },
-        })).toEqual([]);
+        })).toEqual([expect.objectContaining({ backendTarget: bundledAgentTarget('codex') })]);
     });
 
-    it('collapses configured plugin provider-owned concrete backends behind the provider settings backend row', () => {
+    it('retains a private definition independently of an installed Agent settings backend alias', () => {
         const entries = getResolvedBackendCatalogEntries({
             enabledAgentIds: [],
             collapseConfiguredBackendProviderSentinels: true,
@@ -640,10 +692,13 @@ describe('getResolvedBackendCatalogEntries', () => {
                 builtInAgentId: null,
                 title: 'Plugin Provider',
             }),
+            expect.objectContaining({ backendTarget: configuredAgentTarget('plugin-runtime'),
+                backendTargetKey: configuredAgentTargetKey('plugin-runtime'), kind: 'configuredBackend',
+                agentId: 'custom-acp', title: 'Plugin Runtime' }),
         ]);
     });
 
-    it('honors legacy configured-target enablement for collapsed plugin provider-owned settings backend rows', () => {
+    it('keeps private configured-definition enablement independent of an unrelated Agent settings backend alias', () => {
         const entries = getResolvedBackendCatalogEntries({
             enabledAgentIds: [],
             collapseConfiguredBackendProviderSentinels: true,
@@ -694,7 +749,9 @@ describe('getResolvedBackendCatalogEntries', () => {
             },
         });
 
-        expect(entries).toEqual([]);
+        expect(entries.map((entry) => entry.backendTarget)).toEqual([
+            { kind: 'agent', identity: { pluginId: 'acme.runtime', localId: 'provider' } },
+        ]);
     });
     it('makes a standalone installed Session Agent selectable from the current agents projection', () => {
         // The daemon's V2 projection carries no parallel backend registry, so an

@@ -1,34 +1,41 @@
 import * as React from 'react';
-import { Platform, View } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { createProviderErrorV1, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { serializeModelVisibilityRefV1, type ModelVisibilityRefV1 } from '@happier-dev/protocol/providers/model-selection';
 import { getAgentStaticModels } from '@happier-dev/agents';
+import { areProviderContributionKeysEqualV1 } from '@happier-dev/protocol/providers/contribution-identity';
+import type { ProviderModelPickerSourceKind } from '@happier-dev/protocol/providers/catalog/modelPickerVisibility';
 
-import { isBundledAgentId } from '@/agents/catalog/catalog';
-import { IconButton } from '@/components/ui/buttons/IconButton';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
+import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
 import { ProviderErrorItems } from '@/components/settings/providers/ProviderErrorItems';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { Switch } from '@/components/ui/forms/Switch';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { Modal } from '@/modal';
 import { useProviderModelProjection } from '@/providers/hooks/useProviderModelProjection';
 import { useProviderModelLoadAction } from '@/providers/hooks/useProviderModelLoadAction';
+import { useProviderModelPickerVisibility } from '@/providers/hooks/useProviderModelPickerVisibility';
+import { useRetireProviderStateOnAccountChange } from '@/providers/hooks/accountLifetimeRetirement';
 import {
     ProviderModelManager,
     buildProviderModelVisibilityChanges,
+    type ProviderModelManagerSourceGrouping,
 } from '@/providers/models/ProviderModelManager';
+import { useProviderSettingsForServer } from '@/providers/hooks/useProviderSettings';
 import { applyProviderModelBulkAction } from '@/providers/models/applyProviderModelBulkAction';
-import { mutateProviderModelSettings, providerErrorFromRpcFailure } from '@/providers/rpc/client';
+import { providerErrorFromRpcFailure } from '@/providers/actions/client';
+import { useProviderActionClient } from '@/providers/actions/useProviderActionClient';
+import { readAccountProviderDeclarations } from '@/providers/catalog/accountProviderDeclarations';
 import {
     providerModelLoadRecoveryForError,
     providerRetryRecoveryForError,
 } from '@/providers/connection/recovery';
-import { useSettingsSelector } from '@/sync/domains/state/storage';
+import { useProviderCatalogForServer } from '@/sync/store/useProviderCatalog';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
 import { machineAdministrationTargetsEqual } from '@/sync/domains/machines/administration/targetSelection';
 import { useMachineAdministrationTargetSelection } from '@/sync/domains/machines/administration/useTargetSelection';
@@ -37,15 +44,36 @@ import { t } from '@/text';
 import { resolveAgentModelsSettingsAccess } from './resolveAgentModelsSettingsAccess';
 import { providerConnectionModelsRoute } from '@/components/settings/providers/collection/providerCollectionModel';
 
+function AgentSourceVisibility(props: Readonly<{
+    connectionId: string;
+    kind: ProviderModelPickerSourceKind;
+    serverId: string | null;
+    onStateChange: (connectionId: string, error: unknown, reviewCurrentState: () => Promise<void>) => void;
+}>) {
+    const visibility = useProviderModelPickerVisibility(props.connectionId, { kind: props.kind, serverId: props.serverId });
+    const error = visibility?.error ?? null;
+    const reviewCurrentState = visibility?.reviewCurrentState;
+    React.useEffect(() => {
+        if (reviewCurrentState) props.onStateChange(props.connectionId, error, reviewCurrentState);
+    }, [error, props.connectionId, props.onStateChange, reviewCurrentState]);
+    if (!visibility) return null;
+    return visibility.busy ? <ActivitySpinner size="small" /> : (
+        <Switch
+            testID={`agent-models-source-visibility:${props.connectionId}`}
+            compact
+            accessibilityLabel={t('settingsProvidersCollection.showInPickerTitle')}
+            value={visibility.shown}
+            onValueChange={visibility.setShown}
+        />
+    );
+}
+
 export const AgentModelsScreen = React.memo(function AgentModelsScreen(props: Readonly<{
     agentTargetKey: string;
     runtimeAgentId: string | null;
 }>) {
     const router = useRouter();
     const enabled = useFeatureEnabled('providers');
-    const settings = useSettingsSelector((settings) => ({
-        providerSettingsV1: settings.providerSettingsV1,
-    }));
     const administrationTargetSelection = useMachineAdministrationTargetSelection(
         MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.agents,
     );
@@ -60,6 +88,8 @@ export const AgentModelsScreen = React.memo(function AgentModelsScreen(props: Re
     }, [administrationTargetSelection]);
     const machineId = executionTarget?.machine.id ?? null;
     const serverId = executionTarget?.serverId ?? null;
+    const { mutateProviderModelSettings } = useProviderActionClient(serverId);
+    const providerCatalog = useProviderCatalogForServer(serverId);
     const resolveCurrentExecutionTarget = React.useCallback(() => {
         if (!executionTarget) return null;
         const resolvedTarget = administrationTargetSelection.resolveExecutionTarget();
@@ -76,17 +106,22 @@ export const AgentModelsScreen = React.memo(function AgentModelsScreen(props: Re
         enabled, machineId, serverId, agentTargetKey: props.agentTargetKey, mode: 'management',
     });
     const settingsAccess = React.useMemo(
-        () => resolveAgentModelsSettingsAccess(settings),
-        [settings],
+        () => resolveAgentModelsSettingsAccess(providerCatalog),
+        [providerCatalog],
     );
     const providerSettings = settingsAccess.settings;
-    const [showHidden, setShowHidden] = React.useState(false);
+    const defaultSelection = useProviderSettingsForServer(serverId).defaultsByAgentTargetKey[props.agentTargetKey] ?? null;
+    const agentCore = props.runtimeAgentId && isBundledAgentId(props.runtimeAgentId) ? getAgentCore(props.runtimeAgentId) : null;
+    const agentTitle = agentCore ? t(agentCore.displayNameKey) : null;
     const [operationError, setOperationError] = React.useState<Readonly<{
         error: ProviderErrorV1;
         retry?: () => Promise<void>;
         loadModel?: () => Promise<void>;
         reviewCurrentState?: () => Promise<void>;
+        sourceVisibilityConnectionId?: string;
     }> | null>(null);
+    const retireOperationError = React.useCallback(() => setOperationError(null), []);
+    const accountLifetime = useRetireProviderStateOnAccountChange(retireOperationError);
     const nativeModels = React.useMemo(() => {
         if (!props.runtimeAgentId || !isBundledAgentId(props.runtimeAgentId)) return [];
         return getAgentStaticModels(props.runtimeAgentId).map((model) => {
@@ -111,6 +146,37 @@ export const AgentModelsScreen = React.memo(function AgentModelsScreen(props: Re
             reviewCurrentState?: () => Promise<void>;
         }> = {},
     ) => setOperationError({ error, ...recovery }), []);
+    const handleSourceVisibilityState = React.useCallback((connectionId: string, error: unknown, reviewCurrentState: () => Promise<void>) => {
+        if (!accountLifetime?.isCurrent()) return;
+        setOperationError(current => error
+            ? { error: providerErrorFromRpcFailure(error, { connectionId }), reviewCurrentState, sourceVisibilityConnectionId: connectionId }
+            : current?.sourceVisibilityConnectionId === connectionId ? null : current);
+    }, [accountLifetime]);
+    const renderSourceAccessory = React.useCallback((connectionId: string) => {
+        const connection = providerSettings.connections.find(item => item.id === connectionId);
+        const source = connection?.source;
+        const kind = source?.kind === 'custom' ? 'custom' : source?.kind === 'contribution'
+            ? readAccountProviderDeclarations().find(declaration =>
+                areProviderContributionKeysEqualV1(declaration.contributionKey, source.contributionKey))?.definition.kind
+            : undefined;
+        // Without an admitted declaration, do not infer a kind default from the
+        // Provider's name, id or number of models.
+        return kind
+            ? <AgentSourceVisibility connectionId={connectionId} kind={kind} serverId={serverId} onStateChange={handleSourceVisibilityState} />
+            : null;
+    }, [handleSourceVisibilityState, providerSettings.connections, serverId]);
+    // One sheet per source, in picker order; hidden models stay in their source, switched off.
+    const grouping = React.useMemo((): ProviderModelManagerSourceGrouping => ({
+        nativeTitle: agentTitle ?? t('settingsAgents.detailPage.modelsNativeFallbackTitle'),
+        nativeDescription: agentTitle
+            ? t('settingsAgents.detailPage.modelsNativeDescription', { agent: agentTitle })
+            : t('settingsAgents.detailPage.modelsNativeFallbackDescription'),
+        connectionDescription: t('settingsAgents.detailPage.modelsSourceShownDescription'),
+        defaultRef: defaultSelection
+            ? { providerConnectionId: defaultSelection.ref.providerConnectionId, modelId: defaultSelection.ref.modelId }
+            : null,
+        renderSourceAccessory,
+    }), [agentTitle, defaultSelection, renderSourceAccessory]);
     const reviewCurrentState = React.useCallback(async (): Promise<void> => {
         await projection.refresh();
     }, [projection.refresh]);
@@ -144,8 +210,7 @@ export const AgentModelsScreen = React.memo(function AgentModelsScreen(props: Re
     const mutate = React.useCallback(async (
         request: Parameters<typeof mutateProviderModelSettings>[0]['request'],
     ): Promise<void> => {
-        const currentExecutionTarget = resolveCurrentExecutionTarget();
-        if (!currentExecutionTarget) return;
+        if (!accountLifetime?.isCurrent()) return;
         const handleFailure = async (error: ProviderErrorV1): Promise<void> => {
             if (error.code === 'provider_rpc_mutation_outcome_unknown') {
                 try {
@@ -154,6 +219,7 @@ export const AgentModelsScreen = React.memo(function AgentModelsScreen(props: Re
                     // Preserve the unknown mutation outcome. A failed reconciliation
                     // must not turn an unsafe write replay into the recovery action.
                 }
+                if (!accountLifetime?.isCurrent()) return;
                 showError(error, { reviewCurrentState });
                 return;
             }
@@ -162,30 +228,30 @@ export const AgentModelsScreen = React.memo(function AgentModelsScreen(props: Re
         let result: Awaited<ReturnType<typeof mutateProviderModelSettings>>;
         try {
             result = await mutateProviderModelSettings({
-                serverId: currentExecutionTarget.serverId,
+                serverId,
                 request,
             });
         } catch (caught) {
+            if (!accountLifetime?.isCurrent()) return;
             await handleFailure(providerErrorFromRpcFailure(caught, {
-                machineId: currentExecutionTarget.machineId,
+                ...(machineId ? { machineId } : {}),
             }));
             return;
         }
+        if (!accountLifetime?.isCurrent()) return;
         if (result.status === 'error') {
             await handleFailure(result.error);
             return;
         }
         await projection.refresh();
-        setOperationError(null);
-    }, [projection.refresh, resolveCurrentExecutionTarget, reviewCurrentState, showError]);
+        if (accountLifetime?.isCurrent()) setOperationError(null);
+    }, [accountLifetime, machineId, mutateProviderModelSettings, projection.refresh, reviewCurrentState, serverId, showError]);
     const setVisibility = React.useCallback((ref: ModelVisibilityRefV1, hidden: boolean) => {
-        if (!machineId) return;
-        void mutate({ action: 'setVisibility', machineId, ref, hidden });
+        void mutate({ action: 'setVisibility', ...(machineId ? { machineId } : {}), ref, hidden });
     }, [machineId, mutate]);
     const reset = React.useCallback(() => {
-        if (!machineId) return;
         void mutate({
-            action: 'resetVisibility', machineId,
+            action: 'resetVisibility', ...(machineId ? { machineId } : {}),
             scope: { kind: 'agent', agentTargetKey: props.agentTargetKey },
         });
     }, [machineId, mutate, props.agentTargetKey]);
@@ -203,11 +269,11 @@ export const AgentModelsScreen = React.memo(function AgentModelsScreen(props: Re
         action: 'showAll' | 'hideAll' | 'showOnly',
         selected?: ModelVisibilityRefV1,
     ) => {
-        if (!machineId) return;
+        if (!accountLifetime?.isCurrent()) return;
         await applyProviderModelBulkAction({
             action,
             changes: bulkChanges(action, selected),
-            confirm: async () => await Modal.confirm(
+            confirm: async () => accountLifetime.isCurrent() && await Modal.confirm(
                 action === 'hideAll'
                     ? t('settingsProviders.models.hideAll')
                     : t('settingsProviders.models.showOnly'),
@@ -215,31 +281,19 @@ export const AgentModelsScreen = React.memo(function AgentModelsScreen(props: Re
                     ? t('settingsProviders.models.hideAllConfirmation')
                     : t('settingsProviders.models.showOnlyConfirmation'),
                 { confirmText: t('common.continue'), ...(action === 'hideAll' ? { destructive: true } : {}) },
-            ),
+            ) && accountLifetime.isCurrent(),
             apply: async (changes) => {
-                await mutate({ action: 'bulkVisibility', machineId, changes: [...changes] });
+                await mutate({ action: 'bulkVisibility', ...(machineId ? { machineId } : {}), changes: [...changes] });
             },
         });
-    }, [bulkChanges, machineId, mutate]);
-
-    const headerActions = (
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-            <IconButton
-                iconName={showHidden ? 'eye-slash' : 'eye'}
-                accessibilityLabel={showHidden ? t('settingsProviders.models.hideHidden') : t('settingsProviders.models.showHidden')}
-                tooltip={showHidden ? t('settingsProviders.models.hideHidden') : t('settingsProviders.models.showHidden')}
-                minimumInteractiveTargetSize={resolveMinimumInteractiveTargetSize(Platform.OS)}
-                interactiveTargetGapPx={4}
-                variant="plain"
-                onPress={() => setShowHidden((current) => !current)}
-            />
-        </View>
-    );
+    }, [accountLifetime, bulkChanges, machineId, mutate]);
 
     const header = (
         <SettingsPageHeader
             testID="settings.agents.models.header"
-            description={t('settingsProvidersCollection.modelsDescription')}
+            description={agentTitle
+                ? t('settingsAgents.detailPage.modelsDescription', { agent: agentTitle })
+                : t('settingsProvidersCollection.modelsDescription')}
             actions={(
                 <MachineAdministrationTargetSelector
                     selection={administrationTargetSelection}
@@ -272,10 +326,6 @@ export const AgentModelsScreen = React.memo(function AgentModelsScreen(props: Re
     if (!enabled) {
         return statePage(<Item mode="info" title={t('settingsProviders.unavailable')} subtitle={t('settingsProviders.unavailableDescription')} subtitleLines={0} />);
     }
-    if (!machineId) {
-        return statePage(<Item mode="info" title={t('settingsProviders.noMachine')} subtitle={t('settingsProviders.noMachineDescription')} subtitleLines={0} />);
-    }
-
     if (projection.loading && !projection.data) {
         return statePage(<Item mode="info" loading title={t('common.loading')} />);
     }
@@ -305,7 +355,8 @@ export const AgentModelsScreen = React.memo(function AgentModelsScreen(props: Re
             scope={{ kind: 'agent', agentTargetKey: props.agentTargetKey }}
             nativeModels={nativeModels}
             groups={projection.data?.groups ?? []}
-            showHidden={showHidden}
+            showHidden
+            grouping={grouping}
             onSetVisibility={setVisibility}
             onShowAll={() => { void runBulk('showAll'); }}
             onHideAll={() => { void runBulk('hideAll'); }}
@@ -316,11 +367,11 @@ export const AgentModelsScreen = React.memo(function AgentModelsScreen(props: Re
             onOpenConnection={(connectionId) => router.push(providerConnectionModelsRoute(connectionId) as never)}
             loadingModelKey={modelLoad.loadingModelKey}
             onRequestClose={() => router.back()}
-            headerActions={headerActions}
             testID="agent-models"
             page={{
                 header,
-                title: t('settingsProviders.detail.modelsTitle'),
+                // The page is "Models"; its filter sheet needs no second title.
+                title: '',
                 leadingRows,
                 testID: 'agent-models',
             }}

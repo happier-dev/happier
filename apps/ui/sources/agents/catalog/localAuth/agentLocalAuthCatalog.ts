@@ -3,7 +3,10 @@ import { createCatalogAgentLocalAuthPlugin } from '@/agents/catalog/localAuth/cr
 import { CANONICAL_AGENT_IDS } from '@/agents/registry/registryCore';
 
 export const AGENT_LOCAL_AUTH_PLUGINS: readonly AgentLocalAuthPlugin[] = CANONICAL_AGENT_IDS
-    .map((agentId) => createCatalogAgentLocalAuthPlugin(agentId));
+    .flatMap((agentId) => {
+        const plugin = createCatalogAgentLocalAuthPlugin(agentId);
+        return plugin ? [plugin] : [];
+    });
 
 export function getAgentLocalAuthPlugin(agentId: string | null | undefined): AgentLocalAuthPlugin | null {
     const normalized = String(agentId ?? '').trim().toLowerCase();

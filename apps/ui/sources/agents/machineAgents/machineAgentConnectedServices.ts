@@ -59,20 +59,22 @@ export function projectMachineAgentConnectedServices(params: Readonly<{
             const restricted = applyProjectedCredentialKindRestrictions({
                 optionsByServiceId: { [serviceId]: options }, connectedAccounts: [declaration],
             })[serviceId] ?? [];
-            const usable = restricted.find((option) => {
-                if (!isConnectedServiceProfileStatusSelectable(option.status)) return false;
+            const profiles = restricted.map((option) => {
                 const profile = params.profile.connectedAccountsV4.find((candidate) => (
                     candidate.ref.service.pluginId === declaration.service.pluginId
                     && candidate.ref.service.localId === declaration.service.localId
                     && candidate.ref.accountId === option.profileId
                 ));
-                return profile && isQualifiedConnectedAccountProfileUsableV4({ profile, authentication, now: params.now })
-                    && deriveAccountHealth({ status: profile.status, capacityPct: null }) === 'healthy';
+                return { profileId: option.profileId, profileLabel: option.label ?? option.providerEmail ?? null,
+                    healthy: Boolean(isConnectedServiceProfileStatusSelectable(option.status) && profile
+                        && isQualifiedConnectedAccountProfileUsableV4({ profile, authentication, now: params.now })
+                        && deriveAccountHealth({ status: profile.status, capacityPct: null }) === 'healthy') };
             });
-            const selected = usable ?? options[0];
+            const usable = profiles.find((profile) => profile.healthy);
+            const selected = usable ?? profiles[0];
             return {
                 serviceId, title, connected: options.length > 0, healthy: Boolean(usable),
-                profileLabel: selected?.label ?? selected?.providerEmail ?? null,
+                profileLabel: selected?.profileLabel ?? null, profiles,
             };
         }
 
@@ -86,13 +88,14 @@ export function projectMachineAgentConnectedServices(params: Readonly<{
         const restricted = applyProjectedCredentialKindRestrictions({
             optionsByServiceId: { [serviceId]: options }, connectedAccounts: [declaration],
         })[serviceId] ?? [];
-        const usable = restricted.find((option) => option.status !== 'unsupported_kind'
-            && isConnectedServiceProfileStatusSelectable(option.status)
-            && deriveAccountHealth({ status: option.status, capacityPct: null }) === 'healthy');
-        const selected = usable ?? options[0];
+        const profiles = restricted.map((option) => ({ profileId: option.profileId, profileLabel: option.label ?? option.providerEmail ?? null,
+            healthy: option.status !== 'unsupported_kind' && isConnectedServiceProfileStatusSelectable(option.status)
+                && deriveAccountHealth({ status: option.status, capacityPct: null }) === 'healthy' }));
+        const usable = profiles.find((profile) => profile.healthy);
+        const selected = usable ?? profiles[0];
         return {
             serviceId, title, connected: options.length > 0, healthy: Boolean(usable),
-            profileLabel: selected?.label ?? selected?.providerEmail ?? null,
+            profileLabel: selected?.profileLabel ?? null, profiles,
         };
     })]));
 }

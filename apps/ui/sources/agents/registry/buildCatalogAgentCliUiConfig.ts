@@ -8,11 +8,14 @@ export function buildCatalogAgentCliUiConfig(
   agentId: BundledAgentId,
 ): AgentCoreConfig['cli'] {
   const localCliConfig = getAgentLocalCliConfig(agentId);
+  if (!localCliConfig) return null;
+  const installBanner = buildAgentCliInstallBanner(agentId);
+  if (!installBanner) return null;
 
   return {
     detectKey: localCliConfig.detectKey,
     machineLoginKey: localCliConfig.machineLoginKey,
-    installBanner: buildAgentCliInstallBanner(agentId),
+    installBanner,
     spawnAgent: agentId,
   };
 }

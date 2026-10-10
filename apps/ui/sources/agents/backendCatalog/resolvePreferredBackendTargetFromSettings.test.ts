@@ -52,6 +52,7 @@ function configuredAcpBackend(id: string) {
 describe('resolvePreferredBackendTargetFromSettings', () => {
     it('prefers a parseable lastUsedBackendTarget from settings', () => {
         expect(resolvePreferredBackendTargetFromSettings({
+            acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [REVIEW_BOT_ACP_BACKEND] } },
             lastUsedAgent: 'codex',
             lastUsedBackendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
         })).toEqual({ kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' });
@@ -59,6 +60,7 @@ describe('resolvePreferredBackendTargetFromSettings', () => {
 
     it('does not revive a stored built-in customAcp target as a canonical backend target', () => {
         expect(resolvePreferredBackendTargetFromSettings({
+            acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [] } },
             lastUsedAgent: 'customAcp',
             lastUsedBackendTarget: { kind: 'builtInAgent', agentId: 'customAcp' },
         })).toEqual(CLAUDE_TARGET);
@@ -66,18 +68,21 @@ describe('resolvePreferredBackendTargetFromSettings', () => {
 
     it('falls back to a built-in target from lastUsedAgent when no backend target is stored', () => {
         expect(resolvePreferredBackendTargetFromSettings({
+            acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [] } },
             lastUsedAgent: 'claude',
         })).toEqual(CLAUDE_TARGET);
     });
 
     it('does not treat legacy customAcp as a selectable built-in target when no backend target is stored', () => {
         expect(resolvePreferredBackendTargetFromSettings({
+            acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [] } },
             lastUsedAgent: 'customAcp',
         })).toEqual(CLAUDE_TARGET);
     });
 
     it('falls back to the default built-in agent when settings contain no valid preference', () => {
         expect(resolvePreferredBackendTargetFromSettings({
+            acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [] } },
             lastUsedAgent: 'not-a-real-agent',
             lastUsedBackendTarget: { kind: 'bad-target' },
         })).toEqual(CLAUDE_TARGET);
@@ -88,10 +93,7 @@ describe('resolvePreferredBackendTargetFromSettings', () => {
             lastUsedAgent: 'codex',
             lastUsedBackendTarget: { kind: 'configuredAcpBackend', backendId: 'stale-review-bot' },
             backendEnabledByTargetKey: {},
-            acpCatalogSettingsV1: {
-                v: 2,
-                backends: [REVIEW_BOT_ACP_BACKEND],
-            },
+            acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [REVIEW_BOT_ACP_BACKEND] } },
         })).toEqual(CODEX_TARGET);
     });
 
@@ -100,20 +102,17 @@ describe('resolvePreferredBackendTargetFromSettings', () => {
             lastUsedAgent: 'codex',
             lastUsedBackendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
             backendEnabledByTargetKey: {},
-            acpCatalogSettingsV1: {
-                v: 2,
-                backends: [REVIEW_BOT_ACP_BACKEND],
-            },
+            acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [REVIEW_BOT_ACP_BACKEND] } },
         })).toEqual({ kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' });
     });
 
-    it('does not treat empty availability inputs as a stale-backend signal', () => {
+    it('does not revive a configured preference absent from the authoritative empty catalog', () => {
         expect(resolvePreferredBackendTargetFromSettings({
             lastUsedAgent: 'customAcp',
             lastUsedBackendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
             backendEnabledByTargetKey: {},
-            acpCatalogSettingsV1: { v: 2, backends: [] },
-        })).toEqual({ kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' });
+            acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [] } },
+        })).toEqual(CLAUDE_TARGET);
     });
 
     it('does not treat an externally qualified Agent id as a settings-only built-in default', () => {
@@ -122,17 +121,14 @@ describe('resolvePreferredBackendTargetFromSettings', () => {
             defaultBuiltInAgentId: 'codex',
             enabledAgentIds: ['acme.review.agent', 'codex'],
             backendEnabledByTargetKey: { 'backend:acme.review.backend': true },
-            acpCatalogSettingsV1: { v: 2, backends: [] },
+            acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [] } },
         })).toEqual(CODEX_TARGET);
     });
 
     it('still prefers a merged-projection configured backend target when the legacy customAcp carrier has no stored concrete backend target', () => {
         expect(resolvePreferredBackendTargetFromSettings({
             lastUsedAgent: 'customAcp',
-            acpCatalogSettingsV1: {
-                v: 2,
-                backends: [REVIEW_BOT_ACP_BACKEND],
-            },
+            acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [REVIEW_BOT_ACP_BACKEND] } },
             daemonMergedProjectionInputs: {
                 discoveredBackendIds: ['review-bot'],
                 mergedProviderProjectionById: {},
@@ -153,10 +149,7 @@ describe('resolvePreferredBackendTargetFromSettings', () => {
             lastUsedAgent: 'codex',
             lastUsedBackendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
             backendEnabledByTargetKey: {},
-            acpCatalogSettingsV1: {
-                v: 2,
-                backends: [REVIEW_BOT_ACP_BACKEND],
-            },
+            acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [REVIEW_BOT_ACP_BACKEND] } },
             daemonMergedProjectionInputs: {
                 discoveredBackendIds: [],
                 mergedProviderProjectionById: {},
@@ -167,6 +160,7 @@ describe('resolvePreferredBackendTargetFromSettings', () => {
 
     it('does not use the legacy customAcp carrier as permission to select a discovered plugin backend from merged projection truth by default', () => {
         expect(resolvePreferredBackendTargetFromSettings({
+            acpCatalogSnapshot: { status: 'ready', revision: 3, record: { v: 1, definitions: [] } },
             lastUsedAgent: 'customAcp',
             enabledAgentIds: ['claude', 'acme.review.backend'],
             daemonMergedProjectionInputs: {
