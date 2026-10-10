@@ -330,6 +330,7 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
         server: params.previewServer,
         registry: previewRegistry,
         inventoryRegistry,
+        projectManagedServices: params.projectManagedServices,
         ...(endpointEnricher ? { endpointEnricher } : {}),
         signal: endpointCancellation.signal,
         now,

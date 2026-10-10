@@ -296,6 +296,28 @@ describe('accepted Project Service declaration starter', () => {
         expect(h.owner.listProjectServices()).toEqual([]);
     });
 
+    it('publishes a portless declaration HTTP endpoint only after owned-tree observation', async () => {
+        const h = await fixture();
+        // The real listener and OS census prove ancestry; no PID, port or lineage is invented.
+        const portPath = join(h.root, 'observed-port');
+        const serverPath = join(h.root, 'server.cjs');
+        await writeFile(serverPath, `const http = require('node:http'); const fs = require('node:fs');
+const server = http.createServer((request, response) => response.end('observed'));
+server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}, String(server.address().port)));`);
+        await writeFile(join(h.root, '.happier/project.json'), JSON.stringify({ ...h.manifest,
+            services: { worker: { source: { kind: 'command', command: `${JSON.stringify(process.execPath)} ${JSON.stringify(serverPath)}` } } } }));
+        const review = await h.routes.startTarget!(h.request, h.ingress, h.context);
+        const started = await h.routes.startTarget!({ ...h.request, expectedEffectDigest: review.reviewedEffectDigest }, h.ingress, h.context);
+        expect(started.status).toBe('succeeded');
+        await expect.poll(() => readFile(portPath, 'utf8').then(Number).catch(() => null), { timeout: 10_000 }).toEqual(expect.any(Number));
+        const port = Number(await readFile(portPath, 'utf8'));
+        await expect.poll(async () => (await h.routes.getSnapshot()).targets.find(target => target.source === 'managed_service')?.endpointUrl,
+            { timeout: 10_000 }).toBe(`http://127.0.0.1:${port}`);
+        const target = (await h.routes.getSnapshot()).targets.find(target => target.source === 'managed_service');
+        expect(target).toMatchObject({ serviceState: 'running', endpointKind: 'http', startedByAccountId: 'owner' });
+        await h.owner.listProjectServices()[0]?.stop();
+    });
+
     it('reads complete current managed bindings independently of launcher Hide and distinguishes owned empty', async () => {
         const h = await fixture();
         const read = { workspaceRoot: h.root, projection: 'managed_bindings' as const };

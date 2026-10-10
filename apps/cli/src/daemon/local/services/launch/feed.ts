@@ -82,6 +82,10 @@ function managedTarget(handle: ProjectManagedServiceHandle): LocalServiceLaunchT
     const snapshot = handle.snapshot();
     const servingCurrent = handle.isCurrent();
     const selection = handle.declaration.selection;
+    const unavailableReason = snapshot.state !== 'stopped' && snapshot.nativePhase === 'unknown'
+        ? 'managed_service_native_state_unknown'
+        : snapshot.state !== 'stopped' && snapshot.nativePhase === 'stopped'
+            ? 'managed_service_native_cleanup_unconfirmed' : undefined;
     return {
         id: handle.serviceId, source: 'managed_service',
         sourceClass: { kind: 'managed_service', managedServiceId: handle.instanceId },
@@ -93,11 +97,12 @@ function managedTarget(handle: ProjectManagedServiceHandle): LocalServiceLaunchT
         subtitle: handle.cwd, confidence: 'high',
         state: snapshot.state === 'starting' ? 'starting' : 'available',
         serviceState: snapshot.state,
+        ...(unavailableReason ? { unavailableReason } : {}),
         ...(snapshot.startedAtMs !== null ? { startedAtMs: snapshot.startedAtMs } : {}),
         startedByAccountId: handle.requester.accountId,
-        endpointKind: handle.endpointKind,
+        endpointKind: handle.endpointKind === 'none' && snapshot.baseUrl ? 'http' : handle.endpointKind,
         ...(snapshot.readiness ? { readiness: snapshot.readiness } : {}),
-        ...(servingCurrent && snapshot.baseUrl ? { endpointUrl: snapshot.baseUrl } : {}),
+        ...(servingCurrent && !unavailableReason && snapshot.baseUrl ? { endpointUrl: snapshot.baseUrl } : {}),
         // Serving retirement does not settle native custody. The authenticated
         // Machine control path still owns Stop/retry for that exact occurrence.
         actions: snapshot.state !== 'stopped' ? ['manage'] : [],

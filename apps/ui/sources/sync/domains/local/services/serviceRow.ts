@@ -69,6 +69,13 @@ const SOURCE_LABEL_KEYS: Readonly<Record<LocalServiceLaunchTarget['source'], Tra
     recent: 'localServices.source.recent',
 };
 
+function hasUncertainNativeCustody(target: LocalServiceLaunchTarget): boolean {
+    return target.source === 'managed_service' && (
+        target.unavailableReason === 'managed_service_native_state_unknown'
+        || target.unavailableReason === 'managed_service_native_cleanup_unconfirmed'
+    );
+}
+
 function resolveStatus(target: LocalServiceLaunchTarget): ServiceRowStatus {
     if (target.unavailableReason === 'project_service_binding_unavailable') return 'unavailable';
     // Available means the script can be launched, never that a listener is running. Older
@@ -77,6 +84,7 @@ function resolveStatus(target: LocalServiceLaunchTarget): ServiceRowStatus {
     // Launcher availability does not revive a settled managed lifetime. Keep
     // stale/offline presentation, but consume the supervisor's actual outcome.
     if (target.source === 'managed_service' && target.state !== 'stale') {
+        if (hasUncertainNativeCustody(target)) return 'unavailable';
         if (target.serviceState === 'stopped') return 'stopped';
         if (target.serviceState === 'failed') return 'failed';
         if (target.serviceState === 'stopping') return 'stopping';
@@ -99,6 +107,7 @@ function resolveStatus(target: LocalServiceLaunchTarget): ServiceRowStatus {
 
 function resolvePrimaryAction(target: LocalServiceLaunchTarget): ServiceRow['primaryAction'] {
     if (target.unavailableReason === 'project_service_binding_unavailable') return null;
+    if (hasUncertainNativeCustody(target)) return null;
     // An unaccepted package is presentation only, not a Session terminal command.
     if (target.source === 'package_script' && !(target.workspace && target.declaration)) return null;
     // A target with private-preview registration is an Open intent. The shared action
@@ -133,6 +142,7 @@ const LIVE_MANAGED_STATES: ReadonlySet<NonNullable<LocalServiceLaunchTarget['ser
 ]);
 
 function resolveAddressNote(target: LocalServiceLaunchTarget, hasAddress: boolean): ServiceRow['addressNote'] {
+    if (hasUncertainNativeCustody(target)) return null;
     if (target.source !== 'managed_service' || target.state === 'stale' || hasAddress || target.endpointUrl) return null;
     if (!target.serviceState || !LIVE_MANAGED_STATES.has(target.serviceState)) return null;
     return target.serviceState === 'detecting' ? 'waiting' : 'none';

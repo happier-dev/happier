@@ -62,6 +62,18 @@ function packageTarget(overrides: Partial<LocalServiceLaunchTarget> = {}): Local
 }
 
 describe('buildLocalServiceRows', () => {
+    it.each(['managed_service_native_state_unknown', 'managed_service_native_cleanup_unconfirmed'] as const)(
+        'keeps %s distinct from running-unhealthy and preserves the exact manage target', reason => {
+            const uncertain = openableTarget({ source: 'managed_service', serviceState: 'unhealthy', unavailableReason: reason,
+                sourceClass: { kind: 'managed_service', managedServiceId: 'native-instance' }, actions: ['manage'] });
+            const [row] = buildLocalServiceRows({ inventoryRows: [], launchTargets: [uncertain], sessionId: null, scope: 'workspace' });
+            expect(row).toMatchObject({ status: 'unavailable', reasonCode: reason, primaryAction: null,
+                target: { actions: ['manage'], sourceClass: { managedServiceId: 'native-instance' } } });
+            expect(selectLocalServiceRunningCount([row!])).toBe(0);
+            const [running] = buildLocalServiceRows({ inventoryRows: [], launchTargets: [{ ...uncertain, unavailableReason: undefined }], sessionId: null, scope: 'workspace' });
+            expect(running?.status).toBe('running');
+        },
+    );
     it('keeps unavailable native custody distinct from a stopped declaration and offers no Start', () => {
         const target = packageTarget({ source: 'managed_service', workspace: { serverId: 'home', machineId: 'machine-a', workspaceId: 'checkout', rootPath: '/repo' },
             declaration: { workspaceRefId: 'checkout', selection: { kind: 'manifest', name: 'web' } },
