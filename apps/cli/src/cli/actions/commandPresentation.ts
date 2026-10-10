@@ -75,6 +75,12 @@ export type ActionCliPresentation = Readonly<{
  * output module into a cold CLI start.
  */
 const PRESENTATION_LOADERS: Partial<Record<ActionId, () => Promise<ActionCliPresentation>>> = {
+  'projects.execution.output.read': async () => (
+    await import('./outputPresentation')
+  ).PROJECT_EXECUTION_OUTPUT_READ_PRESENTATION,
+  'projects.execution.output.copy': async () => (
+    await import('./outputPresentation')
+  ).PROJECT_EXECUTION_OUTPUT_COPY_PRESENTATION,
   'session.list': async () => (
     await import('@/cli/commands/session/sessionListPresentation')
   ).SESSION_LIST_PRESENTATION,

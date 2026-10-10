@@ -18,12 +18,12 @@ import { createNonRepositoryScmSnapshotResponse, runScmRoute } from '@/scm/rpc/d
 import { preserveUnconfirmedNativeProcess, type ProjectNativeAdapterLeaseV1, type ProjectNativeAdapterProductionV1 } from '@/plugins/runtime/lifecycle/contributions/targetProjectNativeAdapters';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { validatePath } from '@/rpc/handlers/pathSecurity';
-import { resolveProjectEnvironmentSelection, resolveProjectNativeCommand, type ProjectNativeCommandIo, type ProjectNativeCommandResult, type ProjectNativeFileFact } from './projectNativeResolution';
+import { resolveProjectEnvironmentSelection, inspectProjectNativeCommand, type ProjectNativeCommandIo, type ProjectNativeCommandResult, type ProjectNativeFileFact } from './projectNativeResolution';
 import { readProjectManifest } from './projectManifestFile';
 import { readWorkspaceSyncChildMachineFacts } from '@/workspaces/sync/workspaceSyncTargetAuthority';
 import { isManagedDevcontainerChildProjectionCurrentV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
-import { readProjectDefinitionFileBytes } from './nativeDefinitionFiles';
+import { readProjectDefinitionFile, readProjectDefinitionFileBytes } from './nativeDefinitionFiles';
 import { createProjectSetupTrustClient, type ProjectSetupTrustClientInput } from './projectSetupTrust';
 import { createProjectSetupSuccessStore } from './projectSetupSuccess';
 
@@ -31,6 +31,7 @@ export type PreparedProjectSetupCommand = Readonly<
     { kind: 'literal'; source: Extract<ProjectCommandSourceV1, { kind: 'command' }>; cwd: string }
     | { kind: 'native'; source: Extract<ProjectCommandSourceV1, { kind: 'native' }>; resolution: Extract<ProjectNativeCommandResult, { kind: 'resolved' }> }
     | { kind: 'pluginNative'; source: Extract<ProjectCommandSourceV1, { kind: 'pluginNative' }>; resolution: Extract<ProjectNativeCommandResult, { kind: 'pluginResolved' }>['command']; lease: ProjectNativeAdapterProductionV1 }
+    | { kind: 'pluginNativeReference'; source: Extract<ProjectCommandSourceV1, { kind: 'pluginNative' }>; reviewInputs: readonly ProjectNativeFileFact[]; lease: ProjectNativeAdapterLeaseV1 }
 >;
 
 export type ProjectSetupPreparationInput = Readonly<{
@@ -285,29 +286,31 @@ export async function reviewProjectSetupEffect(input: ProjectSetupPreparationInp
                 reviewedCommands.push({ kind: 'command', command: source.command, cwd: reviewPath(root, cwd.resolvedPath), os: input.platform.os });
                 continue;
             }
-            let lease: ProjectNativeAdapterProductionV1 | undefined;
+            const provenance = { ...source, file: relative(root, resolve(root, source.file.replaceAll('\\', '/'))).replaceAll('\\', '/') };
             if (source.kind === 'pluginNative') {
                 if (!input.plugins) return refuse('native_adapter_unavailable');
                 const selected = await input.plugins.resolveProjectNativeAdapter(source.adapter, 'resolveCommand');
                 if (selected.kind === 'refused') return refuse(selected.code);
-                if (!input.retainNativeInvocation) return refuse('native_adapter_invocation_unavailable');
-                const acquired = selected.lease.acquireProduction({ root, environment: input.configEnvironment, signal: input.signal });
-                if (acquired.kind !== 'ready') return refuse(acquired.code);
-                lease = acquired.production;
-                input.retainNativeInvocation(lease);
+                const read = await readProjectDefinitionFile(root, provenance.file);
+                if (read.kind === 'absent') return refuse('native_configuration_missing');
+                if (read.kind === 'refused') return refuse(read.code);
+                const fact = { file: provenance.file, content: read.content };
+                const result = await addFile(fact.file, fact.content);
+                if (result) return result;
+                commands.push({ kind: 'pluginNativeReference', source, reviewInputs: [fact], lease: selected.lease });
+                reviewedCommands.push({ source: provenance, adapterVersion: selected.lease.pluginVersion });
+                continue;
             }
-            const resolved = await resolveProjectNativeCommand({ root, source, usage: 'setup', io: input.nativeIo,
-                ...(input.signal ? { signal: input.signal } : {}), ...(lease ? { plugin: { lease } } : {}) });
+            const resolved = await inspectProjectNativeCommand({ root, source, usage: 'setup', io: input.nativeIo,
+                ...(input.signal ? { signal: input.signal } : {}) });
             if (resolved.kind === 'refused') return refuse(resolved.code);
-            if (lease && !lease.isCurrent()) return refuse('native_adapter_retired');
-            const native = resolved.kind === 'resolved' ? resolved : resolved.command;
+            const native = resolved;
             const cwd = validatePath(native.cwd, root);
             if (!cwd.valid) return refuse('outside_root');
             for (const fact of native.reviewInputs) {
                 const result = await addFile(fact.file, fact.content);
                 if (result) return result;
             }
-            const provenance = { ...source, file: relative(root, resolve(root, source.file.replaceAll('\\', '/'))).replaceAll('\\', '/') };
             if (source.kind === 'native' && resolved.kind === 'resolved') {
                 const projectExecutable = reviewPath(root, resolved.command);
                 if (projectExecutable !== resolved.command) {
@@ -321,11 +324,6 @@ export async function reviewProjectSetupEffect(input: ProjectSetupPreparationInp
                     ...(resolved.nativeCommandEnvironment ? { nativeCommandEnvironment: resolved.nativeCommandEnvironment } : {}),
                     ...(resolved.reviewInvocation.environmentOverlay ? { environmentOverlay: Object.fromEntries(Object.entries(resolved.reviewInvocation.environmentOverlay).map(([key, value]) => [key, reviewPath(root, value)])) } : {}),
                 });
-            } else if (source.kind === 'pluginNative' && resolved.kind === 'pluginResolved' && lease) {
-                commands.push({ kind: 'pluginNative', source, resolution: resolved.command, lease });
-                reviewedCommands.push({ source: provenance, adapterVersion: lease.pluginVersion,
-                    executable: resolved.command.executable, args: resolved.command.args.map(arg => reviewPath(root, arg)), cwd: reviewPath(root, resolved.command.cwd),
-                    ...(resolved.command.environmentApplied ? { nativeCommandEnvironment: resolved.command.environmentApplied } : {}) });
             } else return refuse('native_adapter_result_invalid');
         }
         const setupInputs: Array<Readonly<{ file: string; digest: string }>> = [];
@@ -342,7 +340,7 @@ export async function reviewProjectSetupEffect(input: ProjectSetupPreparationInp
         const provenance = await readReviewProvenance(input, root, manifest !== null);
         if (input.signal?.aborted) return refuse('project_setup_cancelled');
         if (environmentAdapterLease && !environmentAdapterLease.isCurrent()
-            || commands.some(command => command.kind === 'pluginNative' && !command.lease.isCurrent())) return refuse('native_adapter_retired');
+            || commands.some(command => (command.kind === 'pluginNative' || command.kind === 'pluginNativeReference') && !command.lease.isCurrent())) return refuse('native_adapter_retired');
         const reviewedEffect: ProjectSetupReviewedEffect = { ...semanticEffect, presentation: { bindings: displayBindings, provenance } };
         const setupInputsDigest = digest(setupInputs);
         const successBasis = { cwd: root, platform: input.platform, reviewedEffectDigest, setupInputsDigest,
@@ -364,6 +362,9 @@ export async function inspectProjectSetupReadiness(input: ProjectSetupPreparatio
     const reviewed = await reviewProjectSetupEffect(input);
     if (reviewed.kind === 'refused') return { kind: 'needsReview', code: reviewed.code };
     const plan = reviewed.plan;
+    if (plan.commands.some(command => command.kind === 'pluginNativeReference')) {
+        return { kind: 'unknown', code: 'native_setup_readiness_unresolved' };
+    }
     if (plan.commands.length === 0 && plan.environment.kind === 'host') {
         return { kind: 'notRequired', reviewedEffectDigest: plan.reviewedEffectDigest };
     }
@@ -374,7 +375,7 @@ export async function inspectProjectSetupReadiness(input: ProjectSetupPreparatio
         }, plan.successBasis);
         if (input.signal?.aborted) return { kind: 'unknown', code: 'project_setup_cancelled' };
         if (plan.environmentAdapterLease && !plan.environmentAdapterLease.isCurrent()
-            || plan.commands.some(command => command.kind === 'pluginNative' && !command.lease.isCurrent())) {
+            || plan.commands.some(command => (command.kind === 'pluginNative' || command.kind === 'pluginNativeReference') && !command.lease.isCurrent())) {
             return { kind: 'needsReview', code: 'native_adapter_retired' };
         }
         return success ? { kind: 'current', reviewedEffectDigest: plan.reviewedEffectDigest, completedAtMs: success.completedAtMs }
@@ -414,7 +415,7 @@ export async function prepareProjectSetup(input: ProjectSetupPreparationInput & 
             }, plan.successBasis) : false;
         if (input.signal?.aborted) return refuse('project_setup_cancelled');
         if (plan.environmentAdapterLease && !plan.environmentAdapterLease.isCurrent()
-            || plan.commands.some(command => command.kind === 'pluginNative' && !command.lease.isCurrent())) return refuse('native_adapter_retired');
+            || plan.commands.some(command => (command.kind === 'pluginNative' || command.kind === 'pluginNativeReference') && !command.lease.isCurrent())) return refuse('native_adapter_retired');
         return { kind: 'prepared', plan, consent, previousSuccess };
     } catch (error) {
         preserveUnconfirmedNativeProcess(error);

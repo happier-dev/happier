@@ -161,7 +161,7 @@ async function selectNativeCommand(input: Readonly<{
         ...(nativeCommandEnvironment ? { nativeCommandEnvironment } : {}), ...(environmentOverlay ? { environmentOverlay } : {}) };
 }
 
-async function resolveSelectedNativeCommand(intent: NativeCommandIntent, io: ProjectNativeCommandIo, signal?: AbortSignal): Promise<ProjectNativeCommandResult> {
+async function resolveSelectedNativeCommand(intent: NativeCommandIntent, io: ProjectNativeCommandIo, signal?: AbortSignal): Promise<ProjectNativeRefusal | Extract<ProjectNativeCommandResult, { kind: 'resolved' }>> {
     const { tool, cwd, packageManager, reviewInputs, nativeCommandEnvironment } = intent;
     let { args, environmentOverlay } = intent;
     const cancelled = () => refuse('cancelled', 'native_resolution_cancelled');
@@ -181,7 +181,16 @@ async function resolveSelectedNativeCommand(intent: NativeCommandIntent, io: Pro
     } catch { return signal?.aborted ? cancelled() : refuse('unavailable', 'native_tool_unavailable'); }
 }
 
-/** Resolution does not admit an effect, spawn, or produce its environment. */
+/** Passive built-in intent and installed-tool facts; no plugin production callback. */
+export async function inspectProjectNativeCommand(input: Readonly<{
+    root: string; source: Extract<ProjectNativeRefV1, { kind: 'native' }>; usage: 'script' | 'service' | 'setup'; io: ProjectNativeCommandIo; signal?: AbortSignal;
+}>): Promise<ProjectNativeRefusal | Extract<ProjectNativeCommandResult, { kind: 'resolved' }>> {
+    if (input.signal?.aborted) return refuse('cancelled', 'native_resolution_cancelled');
+    const intent = await selectNativeCommand(input);
+    return intent.kind === 'refused' ? intent : resolveSelectedNativeCommand(intent, input.io, input.signal);
+}
+
+/** Plugin resolution may execute native effects and belongs to admitted execution. */
 export async function resolveProjectNativeCommand(input: Readonly<{
     root: string; source: ProjectNativeRefV1; usage: 'script' | 'service' | 'setup'; io: ProjectNativeCommandIo; signal?: AbortSignal;
     plugin?: Readonly<{ lease: Pick<ProjectNativeAdapterProductionV1, 'resolveCommand' | 'isCurrent'> }>;
@@ -190,8 +199,7 @@ export async function resolveProjectNativeCommand(input: Readonly<{
     if (input.signal?.aborted) return cancelled();
     const source = input.source;
     if (source.kind !== 'pluginNative') {
-        const intent = await selectNativeCommand({ ...input, source });
-        return intent.kind === 'refused' ? intent : resolveSelectedNativeCommand(intent, input.io, input.signal);
+        return inspectProjectNativeCommand({ ...input, source });
     }
     const fact = await selectedFile(input.root, source.file);
     if ('kind' in fact) return fact;

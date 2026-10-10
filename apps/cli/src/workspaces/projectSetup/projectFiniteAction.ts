@@ -33,7 +33,7 @@ import { resolveProjectSetupAcceptedWorkspace } from './projectSetupAcceptedWork
 import { RequesterWorkAttributionV1Schema } from '@/daemon/lifecycle/requesterWorkAttribution';
 import { readRequesterAccountActionContext, resolveAdmittedRequesterAccountReadRuntime } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { resolveProjectRequesterSecretEnvironment } from './projectSetupRequesterInputs';
-import { resolveProjectEnvironmentSelection, resolveProjectNativeCommand, readProjectExecutionInputs } from './projectNativeResolution';
+import { resolveProjectEnvironmentSelection, inspectProjectNativeCommand, resolveProjectNativeCommand, readProjectExecutionInputs } from './projectNativeResolution';
 import { inspectProjectDefinitionExecutionFacts } from './projectDefinitionInspection';
 import { readProjectDefinitionFileBytes } from './nativeDefinitionFiles';
 import { readProjectManifest } from './projectManifestFile';
@@ -403,7 +403,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
                     if (selected.kind === 'refused') throw coded(selected.code);
                     return { source, adapterVersion: selected.lease.pluginVersion };
                 }
-                const resolved = await resolveProjectNativeCommand({ root: association.workspace.rootPath, source, usage: 'script',
+                const resolved = await inspectProjectNativeCommand({ root: association.workspace.rootPath, source, usage: 'script',
                     io: runtime.nativeIo, signal });
                 await assertCurrent();
                 if (resolved.kind !== 'resolved') throw coded(resolved.kind === 'refused' ? resolved.code : 'native_adapter_result_invalid');

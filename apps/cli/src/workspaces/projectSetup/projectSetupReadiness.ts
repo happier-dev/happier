@@ -3,7 +3,6 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/execut
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { projectRuntimeAccountRowsInput } from '@/workspaces/projectAccountRows';
-import type { ProjectNativeEffectCaptureForHost } from '@/plugins/runtime/invocation/services/exec';
 import { readProjectRuntimeRequesterRefusal, type ProjectFiniteActionRuntime } from './projectFiniteAction';
 import { resolveProjectSetupAcceptedWorkspace } from './projectSetupAcceptedWorkspace';
 import { inspectProjectSetupReadiness } from './projectSetupPreparation';
@@ -15,7 +14,6 @@ export async function inspectProjectSetupReadinessFromRuntime(input: Readonly<{
 }>): Promise<ProjectSetupReadinessV1> {
     const { runtime, ingress } = input;
     const signal = input.context.signal ? AbortSignal.any([ingress.signal, input.context.signal]) : ingress.signal;
-    const captures = new Set<ProjectNativeEffectCaptureForHost>();
     let releaseRequester: (() => Promise<void>) | undefined;
     const unknown = (code: string): ProjectSetupReadinessV1 => ({ kind: 'unknown', code });
     const current = async () => !signal.aborted && (!runtime.isCurrent || await runtime.isCurrent())
@@ -37,13 +35,11 @@ export async function inspectProjectSetupReadinessFromRuntime(input: Readonly<{
             purpose: 'setup', platform: { os: (runtime.platform ?? process.platform) === 'win32' ? 'windows' : runtime.platform ?? process.platform,
                 arch: runtime.arch ?? process.arch }, nativeIo: runtime.nativeIo, signal,
             ...(secretEnvironment ? { secretEnvironment } : {}), ...(runtime.configEnvironment ? { configEnvironment: runtime.configEnvironment } : {}),
-            ...(runtime.plugins ? { plugins: runtime.plugins } : {}), ...(runtime.successHomeDir ? { successHomeDir: runtime.successHomeDir } : {}),
-            retainNativeInvocation: capture => captures.add(capture) });
+            ...(runtime.plugins ? { plugins: runtime.plugins } : {}), ...(runtime.successHomeDir ? { successHomeDir: runtime.successHomeDir } : {}) });
         return await current() ? readiness : unknown('project_requester_credentials_unavailable');
     } catch (error) {
         return unknown(error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'project_setup_requester_review_unavailable');
     } finally {
-        try { await Promise.all([...captures].map(capture => capture.release())); }
-        finally { await releaseRequester?.(); }
+        await releaseRequester?.();
     }
 }

@@ -1,7 +1,8 @@
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ProjectCommandAttachmentV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import { relative } from 'node:path';
+import { createHash } from 'node:crypto';
+import { relative, resolve } from 'node:path';
 import type { HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import type { TerminalPtySessionManager, TerminalPtyCustody } from '@/terminal/pty/sessions';
 import { ProjectNativeEnvironmentUncertainError, type ProjectNativeEnvironmentIo } from '@/workspaces/environment/produceProjectNativeEnvironment';
@@ -20,6 +21,9 @@ import {
 import { prepareProjectSetup, type PreparedProjectSetupPlan, type PreparedProjectSetupCommand } from './projectSetupPreparation';
 import { createProjectSetupSuccessStore } from './projectSetupSuccess';
 import { isProjectNativeProcessUncertain, type ProjectNativeAdapterProductionV1 } from '@/plugins/runtime/lifecycle/contributions/targetProjectNativeAdapters';
+import { validatePath } from '@/rpc/handlers/pathSecurity';
+import { readProjectDefinitionFileBytes } from './nativeDefinitionFiles';
+import { resolveProjectNativeCommand } from './projectNativeResolution';
 
 export type ProjectSetupOperationContext = Parameters<Parameters<HostActionOperationRuntime['observeExecution']>[0]['execute']>[0];
 export type ProjectSetupExecutionInput = Readonly<{
@@ -200,12 +204,43 @@ export async function authorizePreparedProjectCommand(input: ProjectSetupExecuti
     const assertCurrent = () => {
         if (signal.aborted) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
         if (plan.environmentAdapterLease && !plan.environmentAdapterLease.isCurrent()
-            || command.kind === 'pluginNative' && !command.lease.isCurrent()) {
+            || (command.kind === 'pluginNative' || command.kind === 'pluginNativeReference') && !command.lease.isCurrent()) {
             throw Object.assign(new Error('native_adapter_retired'), { code: 'native_adapter_retired' });
         }
     };
     assertCurrent();
     const env = projectBaseEnvironment(input, plan);
+    if (command.kind === 'pluginNativeReference') {
+        if (!input.preparation.retainNativeInvocation) throw Object.assign(new Error('native_adapter_invocation_unavailable'), { code: 'native_adapter_invocation_unavailable' });
+        const acquired = command.lease.acquireProduction({ root: plan.workspace.rootPath,
+            environment: plan.configEnvironment, signal });
+        if (acquired.kind !== 'ready') throw Object.assign(new Error(acquired.code), { code: acquired.code });
+        const lease = acquired.production;
+        input.preparation.retainNativeInvocation(lease);
+        const resolved = await resolveProjectNativeCommand({ root: plan.workspace.rootPath, source: command.source,
+            usage: 'setup', io: input.preparation.nativeIo, signal, plugin: { lease } });
+        assertCurrent();
+        if (!lease.isCurrent()) throw Object.assign(new Error('native_adapter_retired'), { code: 'native_adapter_retired' });
+        if (resolved.kind !== 'pluginResolved') {
+            const code = resolved.kind === 'refused' ? resolved.code : 'native_adapter_result_invalid';
+            throw Object.assign(new Error(code), { code });
+        }
+        const cwd = validatePath(resolved.command.cwd, plan.workspace.rootPath);
+        if (!cwd.valid) throw Object.assign(new Error('outside_root'), { code: 'outside_root' });
+        // A contributed resolver may discover extra dependencies only when they
+        // were already included in the reviewed explicit setupInputs basis.
+        for (const fact of [...command.reviewInputs, ...resolved.command.reviewInputs]) {
+            const file = relative(plan.workspace.rootPath, resolve(plan.workspace.rootPath, fact.file.replaceAll('\\', '/'))).replaceAll('\\', '/');
+            const reviewed = plan.reviewedEffect.files.find(input => input.file === file);
+            const read = await readProjectDefinitionFileBytes(plan.workspace.rootPath, fact.file);
+            if (!reviewed || read.kind !== 'read' || read.bytes.toString('utf8') !== fact.content
+                || createHash('sha256').update(read.bytes).digest('hex') !== reviewed.digest) {
+                throw Object.assign(new Error('project_setup_effect_changed'), { code: 'project_setup_effect_changed' });
+            }
+        }
+        assertCurrent();
+        command = { kind: 'pluginNative', source: command.source, resolution: resolved.command, lease };
+    }
     Object.assign(env, command.kind === 'native' ? command.resolution.environmentOverlay : {});
     const projectLaunch = createProjectNativeLaunchAdmission(input, plan, command, signal);
     if (command.kind === 'pluginNative') {
@@ -323,7 +358,7 @@ async function executePreparedProjectSetup(input: ProjectSetupExecutionInput): P
             if (current.kind !== 'prepared') return current.kind === 'refused' ? failure(current.code)
                 : failure(current.kind === 'pendingApproval' ? current.code : 'project_setup_effect_changed');
             if (fresh.plan.environmentAdapterLease && !fresh.plan.environmentAdapterLease.isCurrent()
-                || command.kind === 'pluginNative' && !command.lease.isCurrent()) return failure('native_adapter_retired');
+                || (command.kind === 'pluginNative' || command.kind === 'pluginNativeReference') && !command.lease.isCurrent()) return failure('native_adapter_retired');
             const executed = await executeProjectFiniteProcess({ ...admitted, terminalSessions: input.terminalSessions,
                 launch, signal, step, totalSteps: plan.commands.length });
             if (executed.kind !== 'no_launch') kind = executed.kind;
