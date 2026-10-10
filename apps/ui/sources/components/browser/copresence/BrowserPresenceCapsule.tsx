@@ -62,6 +62,11 @@ export type BrowserPresenceCapsuleProps = Readonly<{
     placement?: HappierPresenceCapsulePlacement;
     /** The agent's line when no activity is known ("on MacBook Pro"). */
     agentDetail?: string;
+    /**
+     * A standing fact about this surface that the person must read instead of the narration
+     * ("Mouse and keyboard control aren't allowed"): it takes the agent's line while it holds.
+     */
+    agentNote?: string;
     /** This surface's words for the person's control ("Claude is paused · You have control of Safari"). */
     humanTitle?: string;
     humanDetail?: string;
@@ -95,7 +100,9 @@ export function BrowserPresenceCapsule(props: BrowserPresenceCapsuleProps): Reac
     const agentName = props.agent.name;
     const copy: HappierPresenceCapsuleCopy = {
         agentTitle: props.agentTitle ?? t('browserPresence.agentBrowsing', { agent: agentName }),
-        agentDetail: resolveAgentDetail(props.presence, props.agentDetail),
+        agentDetail: props.presence.kind === 'agent' && props.agentNote
+            ? props.agentNote
+            : resolveAgentDetail(props.presence, props.agentDetail),
         stopping: t('browserPresence.stopping', { agent: agentName }),
         stoppingDetail: t('browserPresence.stoppingDetail'),
         humanTitle: props.humanTitle ?? t('browserPresence.youHaveControl'),
