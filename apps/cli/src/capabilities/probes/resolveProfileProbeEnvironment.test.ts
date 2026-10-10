@@ -1,17 +1,30 @@
 import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  accountSettingsParse,
   deriveAccountMachineKeyFromRecoverySecret,
   deriveSettingsSecretsKeyV1,
   encryptSecretStringV1,
 } from '@happier-dev/protocol';
 
 import { resolveProfileProbeEnvironment } from './resolveProfileProbeEnvironment';
+import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { deriveSettingsSecretsReadKeysForCredentials } from '@/settings/secrets/settingsSecretsKey';
+
+function publishAccountSnapshot(request: Pick<Parameters<typeof resolveProfileProbeEnvironment>[0], 'accountSettings' | 'credentials' | 'profileCatalog'>) {
+  if (!request.accountSettings || !request.credentials) throw new Error('Expected a credentialed Account fixture');
+  setActiveAccountSettingsSnapshot({
+    source: 'network', settings: accountSettingsParse(request.accountSettings), rawSettings: request.accountSettings,
+    settingsVersion: 1, loadedAtMs: 1, scopeKey: resolveAccountSettingsScopeKey(request.credentials),
+    settingsSecretsReadKeys: deriveSettingsSecretsReadKeysForCredentials(request.credentials), profileCatalog: request.profileCatalog,
+  });
+}
 const predecessorCatalog = { status: 'ready' as const, source: 'legacy' as const, authority: 'inactive' as const, control: null,
   controlRevision: 'absent' as const, referenceGuardRevision: 'absent' as const, diagnostics: [], records: [] };
 
 describe('resolveProfileProbeEnvironment', () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => { resetActiveAccountSettingsSnapshotForTests(); vi.restoreAllMocks(); });
   it('probes the destination Profile row rather than a retained Settings definition', async () => {
     vi.spyOn(axios, 'get').mockImplementation(async (url) => {
       const path = new URL(String(url)).pathname;
@@ -34,6 +47,7 @@ describe('resolveProfileProbeEnvironment', () => {
             defaultPermissionModeByTargetKey: {}, defaultPersistenceModeByTargetKey: {}, compatibilityByTargetKey: {},
             createdAt: 1, updatedAt: 1 } } } }] },
     };
+    publishAccountSnapshot(request);
     await expect(resolveProfileProbeEnvironment(request)).resolves.toEqual({ cacheKey: 'work',
       env: { TEAM_FLAG: 'destination', HAPPIER_SESSION_PROFILE_ID: 'work' } });
     await expect(resolveProfileProbeEnvironment({ ...request,
@@ -51,6 +65,7 @@ describe('resolveProfileProbeEnvironment', () => {
       if (path === '/v2/account/settings') return { status: 200, data: { content: null, version: 1 } };
       if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'e2ee', updatedAt: 1 } };
       if (path === '/v1/account/authoring-memory/lastUsedProfile') return { status: 200, data: { status: 'absent' } };
+      if (path === '/v1/artifacts') return { status: 200, data: [] };
       throw new Error(`Unexpected account request: ${path}`);
     });
     const recoverySecret = new Uint8Array(32).fill(7);
@@ -69,6 +84,7 @@ describe('resolveProfileProbeEnvironment', () => {
       processEnv: { HOME: '/home/alice' },
       secretReferenceOverlay: { v: 1 as const, bindings: { PROFILE_KEY: { ref: 'selected-key' } } },
     };
+    publishAccountSnapshot(request);
     await expect(resolveProfileProbeEnvironment(request)).resolves.toEqual({ cacheKey: 'work', env: {
       HAPPIER_SESSION_PROFILE_ID: 'work', OPENAI_API_KEY: 'selected-secret', PROFILE_KEY: 'selected-secret',
     } });
@@ -84,6 +100,7 @@ describe('resolveProfileProbeEnvironment', () => {
       if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'e2ee', updatedAt: 1 } };
       if (path === '/v1/account/authoring-memory/lastUsedProfile') return { status: 200, data: { status: 'absent' } };
       if (path === '/v2/account/settings') return { status: 200, data: { content: null, version: 1 } };
+      if (path === '/v1/artifacts') return { status: 200, data: [] };
       throw new Error(`Unexpected profile probe HTTP path: ${path}`);
     });
     const post = vi.spyOn(axios, 'post').mockImplementation(async () => {
@@ -136,6 +153,7 @@ describe('resolveProfileProbeEnvironment', () => {
       },
     };
 
+    publishAccountSnapshot({ accountSettings, credentials, profileCatalog: predecessorCatalog });
     for (const agentId of ['codex', 'acme.review/reviewer']) {
       await expect(resolveProfileProbeEnvironment({
         agentId,

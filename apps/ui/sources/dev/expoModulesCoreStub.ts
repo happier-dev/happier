@@ -26,9 +26,22 @@ export class NativeModule<TEvents = unknown> {
     removeListeners(_count: number): void {}
 }
 
-// Expo modules use this to access native modules (which don't exist in Vitest/node).
-export function requireOptionalNativeModule(_moduleName?: string) {
-    return null;
+const optionalNativeModules = new Map<string, object>();
+
+/** Replace one genuinely native SDK module, including Metro call-time lookup. */
+export function installOptionalNativeModuleForTests(moduleName: string, module: object): () => void {
+    const previous = optionalNativeModules.get(moduleName);
+    optionalNativeModules.set(moduleName, module);
+    return () => {
+        if (optionalNativeModules.get(moduleName) !== module) return;
+        if (previous) optionalNativeModules.set(moduleName, previous);
+        else optionalNativeModules.delete(moduleName);
+    };
+}
+
+// Native SDK lookup is opaque; the importing SDK supplies its external module type.
+export function requireOptionalNativeModule<T extends object = Record<string, unknown>>(moduleName?: string): T | null {
+    return (moduleName ? optionalNativeModules.get(moduleName) as T | undefined : undefined) ?? null;
 }
 
 export function requireNativeModule(moduleName: string): never {

@@ -962,7 +962,9 @@ export async function executeScmActionOperation(
         ? result : spec.outputSchema.parse(result);
     if (settled && typeof settled === 'object' && !Array.isArray(settled)) {
         const response = settled as Record<string, unknown>;
-        if (!params.actionId.startsWith('scm.diffSummary.') && spec.sideEffectClass !== 'read' && typeof response.success === 'boolean') {
+        // Prepared workspaces publish their closed currentness/verification result, not a Git operation outcome.
+        if (!params.actionId.startsWith('scm.diffSummary.') && params.actionId !== 'scm.reviewWorkspace.materializePrepared'
+            && spec.sideEffectClass !== 'read' && typeof response.success === 'boolean') {
             const code = ScmOperationErrorCodeSchema.safeParse(response.errorCode);
             settled = { ...response, outcome: normalizeScmOperationOutcome({
                 success: response.success,

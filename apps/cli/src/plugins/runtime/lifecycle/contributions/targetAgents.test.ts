@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import type { PluginInvocationContext, PluginServices } from '@happier-dev/plugin-sdk';
 import type {
@@ -24,6 +27,9 @@ import type {
     AgentExternalSessionTakeoverContribution,
 } from '@happier-dev/plugin-sdk/sessions/external';
 import { PluginContributesV2Schema } from '@happier-dev/protocol';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { ingestCanonicalPluginManifest } from '@/plugins/manifest/ingest';
+import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 
 import type { ActivationTarget } from '../activation/targets';
 import type { ContributionRuntimeRegistration } from '../../api/registrationRightsHost';
@@ -35,6 +41,13 @@ import {
     createDeclarativeAcpAgentRuntimeRegistry,
     createTargetAgentRuntimeRegistry,
 } from './targetAgents.testkit';
+import { createTargetAgentRuntimeRegistry as createTargetAgentRuntimeRegistryProduction } from './targetAgents';
+import { activateContributionModule } from '../activation/activateContributionModule';
+import {
+    createBundledActivationSourceResolver,
+    resolvePackagedBundledActivationPaths,
+} from '../../bundledActivationSource';
+import { resolvePluginSourceCustody } from '../../sourceAuthority';
 import {
     createExternalSessionObservationReconciler,
 } from '../../../../api/session/external/leases/createExternalSessionObservationReconciler';
@@ -49,6 +62,17 @@ const providerBinding: AgentProviderBindingAdapter = {
     materialize: async () => ({ v: 1, kind: 'spawnEnv', env: [] }),
 };
 const TEST_RETIREMENT_SIGNAL = new AbortController().signal;
+
+function readAdmittedAgentRegistration(
+    registry: Awaited<ReturnType<typeof createTargetAgentRuntimeRegistry>>,
+    pluginId: string,
+    localId = 'assistant',
+) {
+    const admitted = registry.sdkRegistrations.find((entry) => entry.pluginId === pluginId
+        && entry.registration.family === 'agents' && entry.registration.localId === localId);
+    if (admitted?.registration.family !== 'agents') throw new Error('Expected actual admitted Agent registration');
+    return admitted.registration.value;
+}
 
 const externalSessionsContribution: AgentExternalSessionsContribution = Object.freeze({
     resolveSource: vi.fn(async (request) => ({ ok: true as const, value: { source: request.source } })),
@@ -182,7 +206,7 @@ async function readPromiseStateAfterMicrotasks(
     return state;
 }
 
-function target(pluginId = 'happier.agent.fixture'): ActivationTarget {
+function target(pluginId = 'acme.agent.fixture'): ActivationTarget {
     // Boundary fixture: targetAgents only consumes manifest.version from an admitted target.
     return {
         provenance: 'external',
@@ -207,18 +231,24 @@ function registration(params: Readonly<{
     occurrenceId?: string;
     factory: AgentRuntimeFactory;
     providerBinding?: AgentProviderBindingAdapter;
+    terminalPromptSubmitVerification?: AgentTerminalPromptSubmitVerificationPolicyV1;
 }>): Readonly<{
     pluginId: string;
     occurrenceId: string;
     registration: ContributionRuntimeRegistration;
 }> {
     return {
-        pluginId: params.pluginId ?? 'happier.agent.fixture',
+        pluginId: params.pluginId ?? 'acme.agent.fixture',
         occurrenceId: params.occurrenceId ?? 'generation-7',
         registration: {
             family: 'agents',
             localId: params.localId ?? 'assistant',
-            value: { factory: params.factory, providerBinding: params.providerBinding ?? providerBinding },
+            value: {
+                factory: params.factory,
+                providerBinding: params.providerBinding ?? providerBinding,
+                ...(params.terminalPromptSubmitVerification
+                    ? { terminalPromptSubmitVerification: params.terminalPromptSubmitVerification } : {}),
+            },
         },
     };
 }
@@ -233,7 +263,7 @@ function externalSessionsRegistration(params?: Readonly<{
     registration: ContributionRuntimeRegistration;
 }> {
     return {
-        pluginId: params?.pluginId ?? 'happier.agent.fixture',
+        pluginId: params?.pluginId ?? 'acme.agent.fixture',
         occurrenceId: params?.occurrenceId ?? 'generation-7',
         registration: {
             family: 'agents',
@@ -254,7 +284,7 @@ function terminalRegistration(params?: Readonly<{
     registration: ContributionRuntimeRegistration;
 }> {
     return {
-        pluginId: params?.pluginId ?? 'happier.agent.fixture',
+        pluginId: params?.pluginId ?? 'acme.agent.fixture',
         occurrenceId: params?.occurrenceId ?? 'generation-7',
         registration: {
             family: 'agents',
@@ -283,7 +313,7 @@ function observationRegistration(params?: Readonly<{
     registration: ContributionRuntimeRegistration;
 }> {
     return {
-        pluginId: params?.pluginId ?? 'happier.agent.fixture',
+        pluginId: params?.pluginId ?? 'acme.agent.fixture',
         occurrenceId: params?.occurrenceId ?? 'generation-7',
         registration: {
             family: 'agents',
@@ -317,7 +347,7 @@ function externalSessionHooksRegistration(params?: Readonly<{
     registration: ContributionRuntimeRegistration;
 }> {
     return {
-        pluginId: 'happier.agent.fixture',
+        pluginId: 'acme.agent.fixture',
         occurrenceId: 'generation-7',
         registration: {
             family: 'agents',
@@ -439,7 +469,7 @@ function declaringExternalSessionsRegistration(
     registration: ContributionRuntimeRegistration;
 }> {
     return {
-        pluginId: 'happier.agent.fixture',
+        pluginId: 'acme.agent.fixture',
         occurrenceId: 'generation-7',
         registration: {
             family: 'agents',
@@ -484,10 +514,10 @@ describe('contribution-owned External Sessions managed endpoint', () => {
             };
         });
         const registry = await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
             activationTargets: [target()],
             targetRegistrations: [{
-                pluginId: 'happier.agent.fixture',
+                pluginId: 'acme.agent.fixture',
                 occurrenceId: 'generation-7',
                 registration: {
                     family: 'agents',
@@ -572,10 +602,10 @@ describe('contribution-owned External Sessions managed endpoint', () => {
             };
         });
         const registry = await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
             activationTargets: [target()],
             targetRegistrations: [{
-                pluginId: 'happier.agent.fixture',
+                pluginId: 'acme.agent.fixture',
                 occurrenceId: 'generation-7',
                 registration: {
                     family: 'agents',
@@ -629,7 +659,7 @@ describe('contribution-owned External Sessions managed endpoint', () => {
             },
         });
         const registry = await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
             activationTargets: [target()],
             targetRegistrations: [{
                 ...observationRegistration({ observation }),
@@ -722,7 +752,7 @@ describe('contribution-owned External Sessions managed endpoint', () => {
             },
         });
         const registry = await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
             activationTargets: [target()],
             targetRegistrations: [{
                 ...observationRegistration({ observation }),
@@ -767,7 +797,7 @@ describe('contribution-owned External Sessions managed endpoint', () => {
         const managed = createManagedServicesDouble();
         const resolveManagedEndpointService = vi.fn(() => null);
         const registry = await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
             activationTargets: [target()],
             targetRegistrations: [
                 declaringExternalSessionsRegistration(resolveManagedEndpointService),
@@ -853,7 +883,7 @@ describe('target Agent runtime registry', () => {
             },
         });
         const registry = await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
             activationTargets: [target()],
             targetRegistrations: [observationRegistration({ observation })],
             isOccurrenceCurrent: () => true,
@@ -908,16 +938,18 @@ describe('target Agent runtime registry', () => {
         expect(reconcileRead).toHaveBeenCalledWith(expect.objectContaining({
             status: 201,
         }));
+        const admittedCustody = registry.readPluginSourceCustody('acme.agent.fixture');
+        if (admittedCustody?.kind !== 'managed') throw new Error('Expected admitted managed fixture custody');
         expect(managedEndpointRead).toHaveBeenNthCalledWith(1, expect.objectContaining({
             identity: {
-                pluginId: 'happier.agent.fixture',
+                pluginId: 'acme.agent.fixture',
                 agentId: 'assistant',
-                occurrenceId: 'generation-7',
+                occurrenceId: registry.readPluginOccurrenceId('acme.agent.fixture'),
                 contributionQualifiedId:
-                    'happier.agent.fixture/agents/assistant',
+                    'acme.agent.fixture/agents/assistant',
                 sourceCustody: {
                     kind: 'managed',
-                    immutableGenerationId: 'generation-7',
+                    immutableGenerationId: admittedCustody.immutableGenerationId,
                     installSource: 'localPath',
                 },
             },
@@ -992,7 +1024,7 @@ describe('target Agent runtime registry', () => {
             };
         });
         const lease = (await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
             activationTargets: [target()],
             targetRegistrations: [observationRegistration({
                 observation: createObservationContribution({ reconcile }),
@@ -1042,7 +1074,7 @@ describe('target Agent runtime registry', () => {
             }),
         }));
         const lease = (await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
             activationTargets: [target()],
             targetRegistrations: [observationRegistration({
                 observation: createObservationContribution({
@@ -1114,7 +1146,7 @@ describe('target Agent runtime registry', () => {
             }),
         }));
         const lease = (await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
             activationTargets: [target()],
             targetRegistrations: [observationRegistration({
                 observation: createObservationContribution({
@@ -1170,7 +1202,7 @@ describe('target Agent runtime registry', () => {
                 });
             });
             const lease = (await createTargetAgentRuntimeRegistry({
-                agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+                agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
                 activationTargets: [target()],
                 targetRegistrations: [observationRegistration({
                     observation: createObservationContribution({ acquire }),
@@ -1182,6 +1214,8 @@ describe('target Agent runtime registry', () => {
             })).get('assistant')?.externalSessionObservation;
             if (!lease) throw new Error('Expected observation lease');
 
+            logger.flushSync();
+            expect(vi.getTimerCount()).toBe(0);
             const acquisition = Promise.resolve(lease.observeResource({
                 resourceKey: 'resource-1',
                 managedEndpointSource: { kind: 'fixture' },
@@ -1228,7 +1262,7 @@ describe('target Agent runtime registry', () => {
                 });
             });
             const lease = (await createTargetAgentRuntimeRegistry({
-                agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+                agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
                 activationTargets: [target()],
                 targetRegistrations: [observationRegistration({
                     observation: createObservationContribution({ reconcile }),
@@ -1279,7 +1313,7 @@ describe('target Agent runtime registry', () => {
 
     it('fails closed when no retirement signal owns a generated runtime lease', async () => {
         await expect(createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
             activationTargets: [target()],
             targetRegistrations: [registration({
                 factory: async () => ({
@@ -1346,7 +1380,7 @@ describe('target Agent runtime registry', () => {
             pluginId: 'acme.declarative',
             pluginVersion: '2.3.4',
             agentId: 'declarative-agent',
-            occurrenceId: 'generation-9',
+            occurrenceId: registry.readPluginOccurrenceId('acme.declarative'),
             hasPrimaryRuntime: true,
         });
         if (!lease?.hasPrimaryRuntime) throw new Error('Expected a primary Agent runtime lease');
@@ -1442,6 +1476,7 @@ describe('target Agent runtime registry', () => {
         const pluginId = 'acme.declarative';
         const agentId = 'declarative-agent';
         const registry = await createDeclarativeAcpAgentRuntimeRegistry({
+            invalidOwnerInput: true,
             agents: [{
                 id: agentId,
                 identity: { pluginId, localId: agentId },
@@ -1540,6 +1575,13 @@ describe('target Agent runtime registry', () => {
     });
 
     it('leases one manifest-joined factory with provider binding and canonical identity', async () => {
+        const terminalPromptSubmitVerification = Object.freeze({
+            shouldVerifyAfterSubmit: (promptText: string) => promptText.trim().length > 0,
+            verifyAfterSubmit: ({ promptText, screenText }: Readonly<{
+                promptText: string;
+                screenText: string;
+            }>) => screenText.includes(promptText),
+        });
         const factory = vi.fn<AgentRuntimeFactory>(async () => ({
             sessions: {
                 open: async () => ({
@@ -1550,30 +1592,39 @@ describe('target Agent runtime registry', () => {
             },
         }));
         const registry = await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
             activationTargets: [target()],
-            targetRegistrations: [registration({ factory })],
-            immutableGenerationIdsByPluginId: new Map([['happier.agent.fixture', 'immutable-generation-content-digest']]),
+            targetRegistrations: [registration({ factory, terminalPromptSubmitVerification })],
+            immutableGenerationIdsByPluginId: new Map([['acme.agent.fixture', 'immutable-generation-content-digest']]),
             isOccurrenceCurrent: () => true,
             retirementSignal: TEST_RETIREMENT_SIGNAL,
             onDuplicate: vi.fn(),
         });
 
         const lease = registry.get('assistant');
+        const admittedCustody = registry.readPluginSourceCustody('acme.agent.fixture');
+        if (admittedCustody?.kind !== 'managed') throw new Error('Expected admitted managed fixture custody');
         expect(lease).toMatchObject({
-            pluginId: 'happier.agent.fixture',
+            pluginId: 'acme.agent.fixture',
             pluginVersion: '0.0.0',
             agentId: 'assistant',
-            occurrenceId: 'generation-7',
-            immutableGenerationId: 'immutable-generation-content-digest',
-            providerBinding,
+            occurrenceId: registry.readPluginOccurrenceId('acme.agent.fixture'),
+            immutableGenerationId: admittedCustody.immutableGenerationId,
+            providerBinding: readAdmittedAgentRegistration(registry, 'acme.agent.fixture').providerBinding,
             hasPrimaryRuntime: true,
         });
         if (!lease?.hasPrimaryRuntime) throw new Error('Expected a primary Agent runtime lease');
+        const verification = lease.terminalPromptSubmitVerification;
+        if (!verification) throw new Error('Expected the admitted custom Agent prompt-verification option');
+        expect(verification).toBe(readAdmittedAgentRegistration(registry, 'acme.agent.fixture').terminalPromptSubmitVerification);
+        expect(verification.shouldVerifyAfterSubmit('hello')).toBe(true);
+        expect(verification.shouldVerifyAfterSubmit('  ')).toBe(false);
+        expect(verification.verifyAfterSubmit({ promptText: 'hello', screenText: 'hello' })).toBe(true);
+        expect(verification.verifyAfterSubmit({ promptText: 'hello', screenText: 'not submitted' })).toBe(false);
         const signal = new AbortController().signal;
         const runtime = await lease.createRuntime({ signal });
         expect(factory).toHaveBeenCalledWith({
-            plugin: { id: 'happier.agent.fixture', version: '0.0.0' },
+            plugin: { id: 'acme.agent.fixture', version: '0.0.0' },
             agent: { id: 'assistant' },
             signal: TEST_RETIREMENT_SIGNAL,
         });
@@ -1602,7 +1653,7 @@ describe('target Agent runtime registry', () => {
         });
         const retirement = new AbortController();
         const registry = await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
             activationTargets: [target()],
             targetRegistrations: [registration({ factory })],
             isOccurrenceCurrent: () => !retirement.signal.aborted,
@@ -1634,7 +1685,7 @@ describe('target Agent runtime registry', () => {
 
     it('retains a direct runner factory binding without host-only lease fields', async () => {
         const host = createContributionRegistrationHost({
-            pluginId: 'happier.agent.fixture',
+            pluginId: 'acme.agent.fixture',
             occurrenceId: 'generation-7',
             rights: [{
                 family: 'agents',
@@ -1674,34 +1725,37 @@ describe('target Agent runtime registry', () => {
             loadMode: 'immutable-js',
         });
 
-        const lease = (await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+        const registry = await createTargetAgentRuntimeRegistry({
+            agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
             activationTargets: [target()],
             targetRegistrations: [{
-                pluginId: 'happier.agent.fixture',
+                pluginId: 'acme.agent.fixture',
                 occurrenceId: 'generation-7',
                 registration: committed,
             }],
             immutableGenerationIdsByPluginId: new Map([
-                ['happier.agent.fixture', 'immutable-generation-7'],
+                ['acme.agent.fixture', 'immutable-generation-7'],
             ]),
             isOccurrenceCurrent: () => true,
             retirementSignal: TEST_RETIREMENT_SIGNAL,
             onDuplicate: vi.fn(),
-        })).get('assistant');
+        });
+        const lease = registry.get('assistant');
+        const admittedCustody = registry.readPluginSourceCustody('acme.agent.fixture');
+        if (admittedCustody?.kind !== 'managed') throw new Error('Expected admitted managed fixture custody');
 
         if (!lease?.hasPrimaryRuntime) {
             throw new Error('Expected a primary Agent runtime lease');
         }
         expect(lease.sessionRunnerFactoryBinding).toEqual({
             v: 1,
-            pluginId: 'happier.agent.fixture',
+            pluginId: 'acme.agent.fixture',
             pluginVersion: '0.0.0',
             agentId: 'assistant',
             localAgentId: 'assistant',
             sourceCustody: {
                 kind: 'managed',
-                immutableGenerationId: 'immutable-generation-7',
+                immutableGenerationId: admittedCustody.immutableGenerationId,
                 installSource: 'localPath',
             },
             locator,
@@ -1714,83 +1768,125 @@ describe('target Agent runtime registry', () => {
     });
 
     it('takes a bundled factory binding from the published manifest when registration drifts', async () => {
-        const registeredLocator = {
-            module: './agent/b.mjs', export: 'createB', runtimeApiVersion: 1 as const,
-        };
-        const publishedLocator = {
-            module: './agent/a.mjs', export: 'createA', runtimeApiVersion: 1 as const,
-        };
-        const host = createContributionRegistrationHost({
-            pluginId: 'happier.agent.fixture',
-            occurrenceId: 'generation-7',
-            rights: [{
-                family: 'agents', localId: 'assistant', target: { realm: 'daemon' },
-                requiredFields: ['factory', 'sessionRunnerFactory'],
-            }],
-            isOccurrenceCurrent: () => true,
-        });
-        const factory: AgentRuntimeFactory = async () => ({
-            sessions: { open: async () => ({
-                send: async () => ({ status: 'admitted' }),
-                watch: () => ({ dispose() {} }), dispose() {},
-            }) },
-        });
-        host.api.agents.register('assistant', factory, { sessionRunnerFactory: registeredLocator });
-        const [committed] = host.commit();
-        if (committed?.family !== 'agents') throw new Error('Expected Agent registration');
-        const validatedLocator = committed.value.sessionRunnerFactory;
-        if (!validatedLocator) throw new Error('Expected validated factory locator');
-        recordValidatedAgentSessionRunnerFactory(committed.value, {
-            locator: validatedLocator, normalizedModulePath: 'agent/b.mjs', loadMode: 'immutable-js',
-        });
-        const publishedTarget = {
-            ...target(),
-            provenance: 'first_party',
-            manifest: {
-                ...target().manifest,
-                entrypoints: { daemon: './daemon.mjs' },
-                runtime: { apiVersion: 1, agentFactories: [{
-                    localAgentId: 'assistant', locator: publishedLocator,
-                    normalizedModulePath: 'agent/a.mjs', loadMode: 'immutable-js',
+        // Package-boundary input, not a release build or checkout-custody override.
+        const runtimeRoot = await mkdtemp(join(tmpdir(), 'happier-target-agent-bundled-'));
+        let activation: Awaited<ReturnType<typeof activateContributionModule>> | undefined;
+        try {
+            const pluginId = 'happier.agent.fixture';
+            const packageName = '@happier-dev/plugins-target-agent-fixture';
+            const packageRoot = join(runtimeRoot, 'node_modules', '@happier-dev', 'plugins-target-agent-fixture');
+            const publishedFactory = {
+                localAgentId: 'assistant',
+                locator: { module: './agent/a.mjs', export: 'createA', runtimeApiVersion: 1 as const },
+                normalizedModulePath: '.happier-plugin/agent/a.mjs',
+                loadMode: 'immutable-js' as const,
+            };
+            const registeredLocator = {
+                module: './agent/b.mjs', export: 'createB', runtimeApiVersion: 1 as const,
+            };
+            const rawManifest = createPluginManifestV2Fixture({
+                id: pluginId,
+                engines: { happier: '^0.3.0' },
+                runtime: { apiVersion: 1, agentFactories: [publishedFactory] },
+                entrypoints: { daemon: './.happier-plugin/daemon.mjs' },
+                contributes: { agents: [{
+                    id: 'assistant', title: 'Fixture Agent', runtime: { kind: 'custom' }, primary: 'sessions',
+                    capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
                 }] },
-                contributes: { agents: [{ id: 'assistant' }] },
-            },
-        } as ActivationTarget;
-        const lease = (await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
-            activationTargets: [publishedTarget],
-            targetRegistrations: [{
-                pluginId: 'happier.agent.fixture', occurrenceId: 'generation-7', registration: committed,
-            }],
-            isOccurrenceCurrent: () => true,
-            retirementSignal: TEST_RETIREMENT_SIGNAL,
-            onDuplicate: vi.fn(),
-        })).get('assistant');
-        if (!lease?.hasPrimaryRuntime) throw new Error('Expected primary Agent lease');
-        expect(lease.sessionRunnerFactoryBinding).toMatchObject({
-            locator: publishedLocator,
-            normalizedModulePath: 'agent/a.mjs',
-        });
+            });
+            const ingested = ingestCanonicalPluginManifest(rawManifest, {
+                manifestAuthority: 'bundled_first_party', sourceProvenance: 'registryCustodied',
+            });
+            if (!ingested.ok) throw new Error(ingested.diagnostics.map(({ message }) => message).join('\n'));
+            const publishedTarget: ActivationTarget = {
+                provenance: 'first_party', source: { kind: 'bundled' }, pluginId,
+                manifestPath: join(packageRoot, '.happier-plugin', 'plugin.json'),
+                daemonEntryPath: packageName, devDaemonEntryPath: null,
+                sourceSpec: { kind: 'bundled', locator: packageName, trustPolicy: 'local_trusted', installPolicy: 'link' },
+                manifest: ingested.manifest,
+            };
+            await mkdir(join(packageRoot, '.happier-plugin', 'agent'), { recursive: true });
+            await writeFile(join(packageRoot, 'package.json'), JSON.stringify({ name: packageName, version: '1.0.0', type: 'module' }));
+            await writeFile(publishedTarget.manifestPath, JSON.stringify(rawManifest));
+            const runtime = `({ sessions: { open: async () => ({
+                send: async () => ({ status: 'admitted' }), watch: () => ({ dispose() {} }), dispose() {},
+            }) } })`;
+            await writeFile(join(packageRoot, '.happier-plugin', 'agent', 'a.mjs'), `export const createA = async () => ${runtime};\n`);
+            await writeFile(join(packageRoot, '.happier-plugin', 'agent', 'b.mjs'), `export const createB = async () => ${runtime};\n`);
+            await writeFile(join(packageRoot, '.happier-plugin', 'daemon.mjs'), `
+                import { createB } from './agent/b.mjs';
+                export function activate(api) {
+                    api.agents.register('assistant', createB, { sessionRunnerFactory: ${JSON.stringify(registeredLocator)} });
+                }
+            `);
+            const packaged = resolvePackagedBundledActivationPaths({
+                runtimeRoot, activationTargets: [publishedTarget],
+                metadata: [{ pluginId, packageName }], locators: [{ pluginId, manifest: rawManifest }],
+            });
+            const source = createBundledActivationSourceResolver({
+                bundledPackageNames: [packageName], immutableArtifactPackageNames: [packageName],
+                immutableArtifactEntryPathsByPackageName: packaged.entryPathsByPackageName,
+                immutableArtifactRootPathsByPackageName: packaged.rootPathsByPackageName,
+                packagedRuntime: { kind: 'cli_version_root', versionRootId: 'fixture-cli-version' },
+                canImportFirstPartyPluginSource: () => false, repoRoot: join(runtimeRoot, 'no-source-checkout'),
+            })(publishedTarget);
+            if (!source?.sourceAuthority) throw new Error('Expected packaged activation source authority');
+            const custody = resolvePluginSourceCustody(source.sourceAuthority);
+            expect(custody.kind).toBe('bundled_first_party');
+            const occurrenceId = 'bundled-fixture-occurrence';
+            activation = await activateContributionModule({
+                pluginId, manifestAuthority: 'bundled_first_party', occurrenceId, manifest: ingested.manifest,
+                moduleNamespace: await source.load(), resolveRelativeModule: source.resolveRelativeModule,
+                isOccurrenceCurrent: () => true,
+            });
+            expect(activation.status).toBe('active');
+            expect(activation.validatedAgentSessionRunnerFactories).toEqual([{
+                localAgentId: 'assistant', locator: registeredLocator,
+                normalizedModulePath: '.happier-plugin/agent/b.mjs', loadMode: 'immutable-js',
+            }]);
+            const lease = createTargetAgentRuntimeRegistryProduction({
+                agents: [{ id: 'assistant', pluginId }],
+                activationTargets: [publishedTarget],
+                targetRegistrations: activation.registrations.map((registration) => ({ pluginId, occurrenceId, registration })),
+                readPluginOccurrenceId: (id) => id === pluginId ? occurrenceId : null,
+                readPluginSourceCustody: (id) => id === pluginId ? custody : null,
+                isOccurrenceCurrent: () => true,
+                retirementSignal: TEST_RETIREMENT_SIGNAL,
+                onDuplicate: vi.fn(),
+            }).get('assistant');
+            if (!lease?.hasPrimaryRuntime) throw new Error('Expected primary Agent lease');
+            expect(lease.sessionRunnerFactoryBinding).toMatchObject({
+                sourceCustody: custody,
+                locator: publishedFactory.locator,
+                normalizedModulePath: publishedFactory.normalizedModulePath,
+            });
+            expect(lease.sessionRunnerFactoryBinding?.locator).not.toEqual(registeredLocator);
+        } finally {
+            await activation?.dispose();
+            await rm(runtimeRoot, { recursive: true, force: true });
+        }
     });
 
     it('leases an auxiliary-only External Sessions contribution without claiming primary runtime ownership', async () => {
         const registry = await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
             activationTargets: [target()],
             targetRegistrations: [externalSessionsRegistration()],
             immutableGenerationIdsByPluginId: new Map([
-                ['happier.agent.fixture', 'immutable-generation-content-digest'],
+                ['acme.agent.fixture', 'immutable-generation-content-digest'],
             ]),
             isOccurrenceCurrent: () => true,
             retirementSignal: TEST_RETIREMENT_SIGNAL,
             onDuplicate: vi.fn(),
         });
 
+        const admittedCustody = registry.readPluginSourceCustody('acme.agent.fixture');
+        if (admittedCustody?.kind !== 'managed') throw new Error('Expected admitted managed fixture custody');
         expect(registry.get('assistant')).toMatchObject({
-            pluginId: 'happier.agent.fixture',
+            pluginId: 'acme.agent.fixture',
             agentId: 'assistant',
-            occurrenceId: 'generation-7',
-            immutableGenerationId: 'immutable-generation-content-digest',
+            occurrenceId: registry.readPluginOccurrenceId('acme.agent.fixture'),
+            immutableGenerationId: admittedCustody.immutableGenerationId,
             hasPrimaryRuntime: false,
         });
         expect(registry.get('assistant')?.externalSessions).toBeDefined();
@@ -1802,7 +1898,7 @@ describe('target Agent runtime registry', () => {
         let current = true;
         const resolveLaunch = vi.fn(async () => ({ argv: ['fixture-terminal'] }));
         const registry = await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
             activationTargets: [target()],
             targetRegistrations: [terminalRegistration({
                 terminal: Object.freeze({ resolveLaunch }),
@@ -1842,10 +1938,10 @@ describe('target Agent runtime registry', () => {
             },
         );
         const registry = await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
             activationTargets: [target()],
             targetRegistrations: [{
-                pluginId: 'happier.agent.fixture',
+                pluginId: 'acme.agent.fixture',
                 occurrenceId: 'generation-7',
                 registration: {
                     family: 'agents',
@@ -1890,7 +1986,7 @@ describe('target Agent runtime registry', () => {
     it('leases observation beside the same auxiliary-only External Sessions identity and generation', async () => {
         const observation = createObservationContribution();
         const registry = await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
             activationTargets: [target()],
             targetRegistrations: [observationRegistration({ observation })],
             isOccurrenceCurrent: () => true,
@@ -1900,9 +1996,9 @@ describe('target Agent runtime registry', () => {
 
         const lease = registry.get('assistant');
         expect(lease).toMatchObject({
-            pluginId: 'happier.agent.fixture',
+            pluginId: 'acme.agent.fixture',
             agentId: 'assistant',
-            occurrenceId: 'generation-7',
+            occurrenceId: registry.readPluginOccurrenceId('acme.agent.fixture'),
             hasPrimaryRuntime: false,
         });
         expect(lease?.externalSessions).toBeDefined();
@@ -1916,8 +2012,8 @@ describe('target Agent runtime registry', () => {
         const registry = await createTargetAgentRuntimeRegistry({
             agents: [{
                 id: 'assistant',
-                identity: { pluginId: 'happier.agent.fixture', localId: 'assistant' },
-                pluginId: 'happier.agent.fixture',
+                identity: { pluginId: 'acme.agent.fixture', localId: 'assistant' },
+                pluginId: 'acme.agent.fixture',
             }],
             activationTargets: [target()],
             targetRegistrations: [externalSessionHooksRegistration({ contribution })],
@@ -1931,7 +2027,7 @@ describe('target Agent runtime registry', () => {
         expect(lease?.externalSessionHooks).toBeDefined();
         expect(lease?.externalSessionHooks).not.toBe(contribution);
         expect(lease?.externalSessionHooks?.installationVariants)
-            .toBe(contribution.installationVariants);
+            .toBe(readAdmittedAgentRegistration(registry, 'acme.agent.fixture').externalSessionHooks?.installationVariants);
     });
 
     it('preserves a caller deadline beyond 15 seconds for hook installation', async () => {
@@ -1942,7 +2038,7 @@ describe('target Agent runtime registry', () => {
             return await contribution.resolveInstallation(request, context);
         };
         const registry = await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
             activationTargets: [target()],
             targetRegistrations: [externalSessionHooksRegistration({ contribution: createExternalSessionHooksContribution({ resolveInstallation }) })],
             isOccurrenceCurrent: () => true,
@@ -1993,8 +2089,8 @@ describe('target Agent runtime registry', () => {
         const registry = await createTargetAgentRuntimeRegistry({
             agents: [{
                 id: 'assistant',
-                identity: { pluginId: 'happier.agent.fixture', localId: 'assistant' },
-                pluginId: 'happier.agent.fixture',
+                identity: { pluginId: 'acme.agent.fixture', localId: 'assistant' },
+                pluginId: 'acme.agent.fixture',
             }],
             activationTargets: [target()],
             targetRegistrations: [externalSessionHooksRegistration({
@@ -2016,10 +2112,10 @@ describe('target Agent runtime registry', () => {
         );
 
         expect(receivedContext).toMatchObject({
-            plugin: { id: 'happier.agent.fixture', version: '0.0.0' },
+            plugin: { id: 'acme.agent.fixture', version: '0.0.0' },
             contribution: {
                 id: 'assistant',
-                qualifiedId: 'happier.agent.fixture/agents/assistant',
+                qualifiedId: 'acme.agent.fixture/agents/assistant',
             },
             surface: 'agent',
             invokedAtMs: expect.any(Number),
@@ -2028,10 +2124,10 @@ describe('target Agent runtime registry', () => {
         expect(receivedContext?.services).toBe(services);
         expect(createAgentInvocationServices).toHaveBeenCalledWith(
             expect.objectContaining({
-                pluginId: 'happier.agent.fixture',
+                pluginId: 'acme.agent.fixture',
                 pluginVersion: '0.0.0',
                 agentId: 'assistant',
-                occurrenceId: 'generation-7',
+                occurrenceId: registry.readPluginOccurrenceId('acme.agent.fixture'),
                 cwd: process.cwd(),
                 signal: receivedRequestSignal,
                 isOccurrenceCurrent: expect.any(Function),
@@ -2079,8 +2175,8 @@ describe('target Agent runtime registry', () => {
             const registry = await createTargetAgentRuntimeRegistry({
                 agents: [{
                     id: 'assistant',
-                    identity: { pluginId: 'happier.agent.fixture', localId: 'assistant' },
-                    pluginId: 'happier.agent.fixture',
+                    identity: { pluginId: 'acme.agent.fixture', localId: 'assistant' },
+                    pluginId: 'acme.agent.fixture',
                 }],
                 activationTargets: [target()],
                 targetRegistrations: [externalSessionHooksRegistration({
@@ -2129,7 +2225,7 @@ describe('target Agent runtime registry', () => {
             },
         }));
         const registry = await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
             activationTargets: [target()],
             targetRegistrations: [externalSessionHooksRegistration({
                 contribution: createExternalSessionHooksContribution({ resolveInstallation }),
@@ -2164,7 +2260,7 @@ describe('target Agent runtime registry', () => {
             },
         }));
         const registry = await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
             activationTargets: [target()],
             targetRegistrations: [externalSessionHooksRegistration({
                 contribution: createExternalSessionHooksContribution({ resolveInstallation }),
@@ -2196,10 +2292,10 @@ describe('target Agent runtime registry', () => {
             },
         });
         const registry = await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
             activationTargets: [target()],
             targetRegistrations: [{
-                pluginId: 'happier.agent.fixture',
+                pluginId: 'acme.agent.fixture',
                 occurrenceId: 'generation-7',
                 registration: {
                     family: 'agents',
@@ -2263,13 +2359,6 @@ describe('target Agent runtime registry', () => {
                     value: {},
                 }),
             });
-        const terminalPromptSubmitVerification = Object.freeze({
-            shouldVerifyAfterSubmit: (promptText: string) => promptText.trim().length > 0,
-            verifyAfterSubmit: ({ promptText, screenText }: Readonly<{
-                promptText: string;
-                screenText: string;
-            }>) => screenText.includes(promptText),
-        });
         const terminal: AgentTerminalSurface = Object.freeze({
             resolveLaunch: async () => ({ argv: ['declarative-terminal'] }),
         });
@@ -2286,7 +2375,6 @@ describe('target Agent runtime registry', () => {
                 externalSessionHooks,
                 externalSessionTakeover,
                 terminal,
-                terminalPromptSubmitVerification,
             })],
             isOccurrenceCurrent: () => activationCurrent,
             retirementSignal: auxiliaryRetirement.signal,
@@ -2297,6 +2385,7 @@ describe('target Agent runtime registry', () => {
         const registry = await createDeclarativeAcpAgentRuntimeRegistry({
             agents: [agent],
             registered,
+            admittedFixture: registered.fixture,
             occurrenceId: 'generation-9',
             isOccurrenceCurrent: () => registryCurrent,
             retirementSignal: TEST_RETIREMENT_SIGNAL,
@@ -2328,8 +2417,6 @@ describe('target Agent runtime registry', () => {
         })).resolves.toEqual({
             argv: ['declarative-terminal'],
         });
-        expect(lease?.terminalPromptSubmitVerification)
-            .toBe(registered.get(agentId)?.terminalPromptSubmitVerification);
         const invocationContext = await lease?.createAgentRuntimeSurfaceInvocationContext({
             cwd: '/tmp/declarative-agent',
             happierSessionId: 'happier-session-1',
@@ -2394,135 +2481,147 @@ describe('target Agent runtime registry', () => {
 
     it('settles retirement-bound observation before a non-cooperative late acquisition and disposes it once', async () => {
         vi.useFakeTimers();
-        let settle!: (disposable: Readonly<{ dispose(): void }>) => void;
-        let observedSignal: AbortSignal | undefined;
-        let emit: ((event: never) => void) | undefined;
-        let requestReconcile: (() => void) | undefined;
-        let requestTranscriptRefresh: ((linkKey: string) => void) | undefined;
-        let markEntered!: () => void;
-        const entered = new Promise<void>((resolve) => {
-            markEntered = resolve;
-        });
-        const dispose = vi.fn();
-        const observation = createObservationContribution({
-            acquire: ({
-                signal,
-                emit: emitValue,
-                requestReconcile: requestReconcileValue,
-                requestTranscriptRefresh: requestTranscriptRefreshValue,
-            }) => {
-                observedSignal = signal;
-                emit = emitValue;
-                requestReconcile = requestReconcileValue;
-                requestTranscriptRefresh = requestTranscriptRefreshValue;
-                markEntered();
-                return new Promise((resolve) => {
-                    settle = resolve;
-                });
-            },
-        });
-        const retirement = new AbortController();
-        let current = true;
-        const publish = vi.fn();
-        const reconcile = vi.fn();
-        const refresh = vi.fn();
-        const registry = await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
-            activationTargets: [target()],
-            targetRegistrations: [observationRegistration({ observation })],
-            isOccurrenceCurrent: () => current,
-            retirementSignal: retirement.signal,
-            onDuplicate: vi.fn(),
-        });
-        const lease = registry.get('assistant');
-        if (!lease?.externalSessionObservation) throw new Error('Expected observation lease');
+        try {
+            let settle!: (disposable: Readonly<{ dispose(): void }>) => void;
+            let observedSignal: AbortSignal | undefined;
+            let emit: ((event: never) => void) | undefined;
+            let requestReconcile: (() => void) | undefined;
+            let requestTranscriptRefresh: ((linkKey: string) => void) | undefined;
+            let markEntered!: () => void;
+            const entered = new Promise<void>((resolve) => {
+                markEntered = resolve;
+            });
+            const dispose = vi.fn();
+            const observation = createObservationContribution({
+                acquire: ({
+                    signal,
+                    emit: emitValue,
+                    requestReconcile: requestReconcileValue,
+                    requestTranscriptRefresh: requestTranscriptRefreshValue,
+                }) => {
+                    observedSignal = signal;
+                    emit = emitValue;
+                    requestReconcile = requestReconcileValue;
+                    requestTranscriptRefresh = requestTranscriptRefreshValue;
+                    markEntered();
+                    return new Promise((resolve) => {
+                        settle = resolve;
+                    });
+                },
+            });
+            const retirement = new AbortController();
+            let current = true;
+            const publish = vi.fn();
+            const reconcile = vi.fn();
+            const refresh = vi.fn();
+            const registry = await createTargetAgentRuntimeRegistry({
+                agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
+                activationTargets: [target()],
+                targetRegistrations: [observationRegistration({ observation })],
+                isOccurrenceCurrent: () => current,
+                retirementSignal: retirement.signal,
+                onDuplicate: vi.fn(),
+            });
+            const lease = registry.get('assistant');
+            if (!lease?.externalSessionObservation) throw new Error('Expected observation lease');
 
-        const acquisition = lease.externalSessionObservation.observeResource({
-            resourceKey: 'resource-1',
-            signal: new AbortController().signal,
-            emit: publish,
-            requestReconcile: reconcile,
-            requestTranscriptRefresh: refresh,
-        });
-        await entered;
-        requestReconcile?.();
-        requestTranscriptRefresh?.('link-1');
-        expect(reconcile).toHaveBeenCalledOnce();
-        expect(refresh).toHaveBeenCalledWith('link-1');
-        current = false;
-        retirement.abort();
-        expect(observedSignal?.aborted).toBe(true);
-        emit?.({} as never);
-        requestReconcile?.();
-        requestTranscriptRefresh?.('link-1');
-        expect(publish).not.toHaveBeenCalled();
-        expect(reconcile).toHaveBeenCalledOnce();
-        expect(refresh).toHaveBeenCalledOnce();
+            logger.flushSync();
+            expect(vi.getTimerCount()).toBe(0);
 
-        expect(await readPromiseStateAfterMicrotasks(acquisition)).toBe('rejected');
-        expect(vi.getTimerCount()).toBe(0);
-        settle({ dispose });
-        await expect(acquisition).rejects.toThrow(/retired generation/u);
-        await Promise.resolve();
-        expect(dispose).toHaveBeenCalledOnce();
-        retirement.abort();
-        expect(dispose).toHaveBeenCalledOnce();
-        vi.useRealTimers();
+            const acquisition = lease.externalSessionObservation.observeResource({
+                resourceKey: 'resource-1',
+                signal: new AbortController().signal,
+                emit: publish,
+                requestReconcile: reconcile,
+                requestTranscriptRefresh: refresh,
+            });
+            await entered;
+            requestReconcile?.();
+            requestTranscriptRefresh?.('link-1');
+            expect(reconcile).toHaveBeenCalledOnce();
+            expect(refresh).toHaveBeenCalledWith('link-1');
+            current = false;
+            retirement.abort();
+            expect(observedSignal?.aborted).toBe(true);
+            emit?.({} as never);
+            requestReconcile?.();
+            requestTranscriptRefresh?.('link-1');
+            expect(publish).not.toHaveBeenCalled();
+            expect(reconcile).toHaveBeenCalledOnce();
+            expect(refresh).toHaveBeenCalledOnce();
+
+            expect(await readPromiseStateAfterMicrotasks(acquisition)).toBe('rejected');
+            expect(vi.getTimerCount()).toBe(0);
+            settle({ dispose });
+            await expect(acquisition).rejects.toThrow(/retired generation/u);
+            await Promise.resolve();
+            expect(dispose).toHaveBeenCalledOnce();
+            retirement.abort();
+            expect(dispose).toHaveBeenCalledOnce();
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('settles caller-cancelled observation without waiting for the plugin and releases listeners and deadline', async () => {
         vi.useFakeTimers();
-        let settle!: (disposable: Readonly<{ dispose(): void }>) => void;
-        let observedSignal: AbortSignal | undefined;
-        let markEntered!: () => void;
-        const entered = new Promise<void>((resolve) => {
-            markEntered = resolve;
-        });
-        const dispose = vi.fn();
-        const caller = new AbortController();
-        const retirement = new AbortController();
-        const callerRemove = vi.spyOn(caller.signal, 'removeEventListener');
-        const retirementRemove = vi.spyOn(retirement.signal, 'removeEventListener');
-        const observation = createObservationContribution({
-            acquire: ({ signal }) => {
-                observedSignal = signal;
-                markEntered();
-                return new Promise((resolve) => {
-                    settle = resolve;
-                });
-            },
-        });
-        const lease = (await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
-            activationTargets: [target()],
-            targetRegistrations: [observationRegistration({ observation })],
-            isOccurrenceCurrent: () => true,
-            retirementSignal: retirement.signal,
-            onDuplicate: vi.fn(),
-        })).get('assistant')?.externalSessionObservation;
-        if (!lease) throw new Error('Expected observation lease');
+        try {
+            let settle!: (disposable: Readonly<{ dispose(): void }>) => void;
+            let observedSignal: AbortSignal | undefined;
+            let markEntered!: () => void;
+            const entered = new Promise<void>((resolve) => {
+                markEntered = resolve;
+            });
+            const dispose = vi.fn();
+            const caller = new AbortController();
+            const retirement = new AbortController();
+            const callerRemove = vi.spyOn(caller.signal, 'removeEventListener');
+            const retirementRemove = vi.spyOn(retirement.signal, 'removeEventListener');
+            const observation = createObservationContribution({
+                acquire: ({ signal }) => {
+                    observedSignal = signal;
+                    markEntered();
+                    return new Promise((resolve) => {
+                        settle = resolve;
+                    });
+                },
+            });
+            const lease = (await createTargetAgentRuntimeRegistry({
+                agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
+                activationTargets: [target()],
+                targetRegistrations: [observationRegistration({ observation })],
+                isOccurrenceCurrent: () => true,
+                retirementSignal: retirement.signal,
+                onDuplicate: vi.fn(),
+            })).get('assistant')?.externalSessionObservation;
+            if (!lease) throw new Error('Expected observation lease');
 
-        const acquisition = lease.observeResource({
-            resourceKey: 'resource-1',
-            signal: caller.signal,
-            emit() {},
-            requestReconcile() {},
-            requestTranscriptRefresh() {},
-        });
-        await entered;
-        caller.abort();
+            logger.flushSync();
+            expect(vi.getTimerCount()).toBe(0);
 
-        expect(observedSignal?.aborted).toBe(true);
-        expect(await readPromiseStateAfterMicrotasks(acquisition)).toBe('rejected');
-        expect(callerRemove).toHaveBeenCalled();
-        expect(retirementRemove).toHaveBeenCalled();
-        expect(vi.getTimerCount()).toBe(0);
+            const acquisition = lease.observeResource({
+                resourceKey: 'resource-1',
+                signal: caller.signal,
+                emit() {},
+                requestReconcile() {},
+                requestTranscriptRefresh() {},
+            });
+            await entered;
+            caller.abort();
 
-        settle({ dispose });
-        await expect(acquisition).rejects.toThrow(/cancelled/u);
-        await Promise.resolve();
-        expect(dispose).toHaveBeenCalledOnce();
-        vi.useRealTimers();
+            expect(observedSignal?.aborted).toBe(true);
+            expect(await readPromiseStateAfterMicrotasks(acquisition)).toBe('rejected');
+            expect(callerRemove).toHaveBeenCalled();
+            expect(retirementRemove).toHaveBeenCalled();
+            expect(vi.getTimerCount()).toBe(0);
+
+            settle({ dispose });
+            await expect(acquisition).rejects.toThrow(/cancelled/u);
+            await Promise.resolve();
+            expect(dispose).toHaveBeenCalledOnce();
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('preserves slow reconciliation until caller cancellation and ignores its late result', async () => {
@@ -2542,7 +2641,7 @@ describe('target Agent runtime registry', () => {
             }),
         });
         const lease = (await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
             activationTargets: [target()],
             targetRegistrations: [observationRegistration({ observation })],
             isOccurrenceCurrent: () => true,
@@ -2594,84 +2693,90 @@ describe('target Agent runtime registry', () => {
 
     it('lets reconciler teardown finish before a non-cooperative observation settles and disposes the late observer once', async () => {
         vi.useFakeTimers();
-        let settle!: (disposable: Readonly<{ dispose(): void }>) => void;
-        let markStarted!: () => void;
-        const started = new Promise<void>((resolve) => {
-            markStarted = resolve;
-        });
-        const dispose = vi.fn();
-        const observation = createObservationContribution({
-            acquire: () => {
-                markStarted();
-                return new Promise((resolve) => {
-                    settle = resolve;
-                });
-            },
-        });
-        const lease = (await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
-            activationTargets: [target()],
-            targetRegistrations: [observationRegistration({ observation })],
-            isOccurrenceCurrent: () => true,
-            retirementSignal: TEST_RETIREMENT_SIGNAL,
-            onDuplicate: vi.fn(),
-        })).get('assistant')?.externalSessionObservation;
-        if (!lease) throw new Error('Expected observation lease');
-        const reconciler = createExternalSessionObservationReconciler({
-            acquireObserver: async (input) => await lease.observeResource({
-                resourceKey: input.resource.resourceKey,
-                signal: input.signal,
-                emit: input.emit,
-                requestReconcile: input.requestReconcile,
-                requestTranscriptRefresh() {},
-            }),
-        });
-        const admission = reconciler.reconcileLink({
-            resource: {
-                pluginId: 'happier.agent.fixture',
-                agentLocalId: 'assistant',
-                occurrenceId: 'generation-7',
-                resourceKey: 'resource-1',
-            },
-            link: {
-                sessionId: 'session-1',
-                linkGeneration: 'link-generation-1',
-                linkKey: 'link-1',
-                linkedSource: {
-                    source: { kind: 'fixture' },
-                    remoteSessionId: 'native-session',
-                    linkData: {},
+        try {
+            let settle!: (disposable: Readonly<{ dispose(): void }>) => void;
+            let markStarted!: () => void;
+            const started = new Promise<void>((resolve) => {
+                markStarted = resolve;
+            });
+            const dispose = vi.fn();
+            const observation = createObservationContribution({
+                acquire: () => {
+                    markStarted();
+                    return new Promise((resolve) => {
+                        settle = resolve;
+                    });
                 },
-                changeObservation: 'observe_resource',
-            },
-            demand: {
-                passiveEvent: true,
-                persistedPolicy: false,
-                fallbackDemand: false,
-            },
-            onFacts() {},
-        });
-        const admissionOutcome = admission.then(
-            () => 'fulfilled' as const,
-            (error: unknown) => {
-                expect(error).toBeInstanceOf(Error);
-                expect((error as Error).message).toMatch(/cancelled/u);
-                return 'rejected' as const;
-            },
-        );
-        await started;
+            });
+            const lease = (await createTargetAgentRuntimeRegistry({
+                agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
+                activationTargets: [target()],
+                targetRegistrations: [observationRegistration({ observation })],
+                isOccurrenceCurrent: () => true,
+                retirementSignal: TEST_RETIREMENT_SIGNAL,
+                onDuplicate: vi.fn(),
+            })).get('assistant')?.externalSessionObservation;
+            if (!lease) throw new Error('Expected observation lease');
 
-        const teardown = reconciler.dispose();
-        expect(await readPromiseStateAfterMicrotasks(teardown)).toBe('fulfilled');
-        await expect(admissionOutcome).resolves.toBe('rejected');
-        expect(vi.getTimerCount()).toBe(0);
+            logger.flushSync();
+            expect(vi.getTimerCount()).toBe(0);
+            const reconciler = createExternalSessionObservationReconciler({
+                acquireObserver: async (input) => await lease.observeResource({
+                    resourceKey: input.resource.resourceKey,
+                    signal: input.signal,
+                    emit: input.emit,
+                    requestReconcile: input.requestReconcile,
+                    requestTranscriptRefresh() {},
+                }),
+            });
+            const admission = reconciler.reconcileLink({
+                resource: {
+                    pluginId: 'acme.agent.fixture',
+                    agentLocalId: 'assistant',
+                    occurrenceId: 'generation-7',
+                    resourceKey: 'resource-1',
+                },
+                link: {
+                    sessionId: 'session-1',
+                    linkGeneration: 'link-generation-1',
+                    linkKey: 'link-1',
+                    linkedSource: {
+                        source: { kind: 'fixture' },
+                        remoteSessionId: 'native-session',
+                        linkData: {},
+                    },
+                    changeObservation: 'observe_resource',
+                },
+                demand: {
+                    passiveEvent: true,
+                    persistedPolicy: false,
+                    fallbackDemand: false,
+                },
+                onFacts() {},
+            });
+            const admissionOutcome = admission.then(
+                () => 'fulfilled' as const,
+                (error: unknown) => {
+                    expect(error).toBeInstanceOf(Error);
+                    expect((error as Error).message).toMatch(/cancelled/u);
+                    return 'rejected' as const;
+                },
+            );
+            await started;
 
-        settle({ dispose });
-        await Promise.resolve();
-        expect(dispose).toHaveBeenCalledOnce();
-        await reconciler.dispose();
-        expect(dispose).toHaveBeenCalledOnce();
-        vi.useRealTimers();
+            const teardown = reconciler.dispose();
+            expect(await readPromiseStateAfterMicrotasks(teardown)).toBe('fulfilled');
+            await expect(admissionOutcome).resolves.toBe('rejected');
+            expect(vi.getTimerCount()).toBe(0);
+
+            settle({ dispose });
+            await Promise.resolve();
+            expect(dispose).toHaveBeenCalledOnce();
+            await reconciler.dispose();
+            expect(dispose).toHaveBeenCalledOnce();
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('retires an acquired observer exactly once without affecting a reloaded generation', async () => {
@@ -2686,7 +2791,7 @@ describe('target Agent runtime registry', () => {
             isOccurrenceCurrent: () => boolean,
             dispose: () => void,
         ) => await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
             activationTargets: [target()],
             targetRegistrations: [observationRegistration({
                 occurrenceId,
@@ -2742,7 +2847,7 @@ describe('target Agent runtime registry', () => {
             throw new Error('plugin-private-observer-disposal-failure');
         });
         const observation = (await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
             activationTargets: [target()],
             targetRegistrations: [observationRegistration({
                 observation: createObservationContribution({
@@ -2800,7 +2905,7 @@ describe('target Agent runtime registry', () => {
             .mockRejectedValueOnce(new Error('plugin-private-observer-disposal-failure'))
             .mockResolvedValue(undefined);
         const lease = (await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
             activationTargets: [target()],
             targetRegistrations: [observationRegistration({
                 observation: createObservationContribution({
@@ -2823,7 +2928,7 @@ describe('target Agent runtime registry', () => {
         });
         await reconciler.reconcileLink({
             resource: {
-                pluginId: 'happier.agent.fixture',
+                pluginId: 'acme.agent.fixture',
                 agentLocalId: 'assistant',
                 occurrenceId: 'generation-7',
                 resourceKey: 'resource-1',
@@ -2872,7 +2977,7 @@ describe('target Agent runtime registry', () => {
             let releaseDisposal!: () => void;
             const dispose = vi.fn(() => new Promise<void>((resolve) => { releaseDisposal = resolve; }));
             const observation = (await createTargetAgentRuntimeRegistry({
-                agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+                agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
                 activationTargets: [target()],
                 targetRegistrations: [observationRegistration({
                     observation: createObservationContribution({
@@ -2915,7 +3020,7 @@ describe('target Agent runtime registry', () => {
             const firstDispose = vi.fn(() => new Promise<void>((resolve) => { releaseFirstDisposal = resolve; }));
             const secondDispose = vi.fn(async () => undefined);
             const first = (await createTargetAgentRuntimeRegistry({
-                agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+                agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
                 activationTargets: [target()],
                 targetRegistrations: [observationRegistration({
                     occurrenceId: 'generation-7',
@@ -2928,7 +3033,7 @@ describe('target Agent runtime registry', () => {
                 onDuplicate: vi.fn(),
             })).get('assistant')?.externalSessionObservation;
             const second = (await createTargetAgentRuntimeRegistry({
-                agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+                agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
                 activationTargets: [target()],
                 targetRegistrations: [observationRegistration({
                     occurrenceId: 'generation-8',
@@ -2973,7 +3078,7 @@ describe('target Agent runtime registry', () => {
 
             await expect(reconciler.reconcileLink({
                 resource: {
-                    pluginId: 'happier.agent.fixture',
+                    pluginId: 'acme.agent.fixture',
                     agentLocalId: 'assistant',
                     occurrenceId: 'generation-7',
                     resourceKey: 'resource-1',
@@ -2990,7 +3095,7 @@ describe('target Agent runtime registry', () => {
 
             await expect(reconciler.reconcileLink({
                 resource: {
-                    pluginId: 'happier.agent.fixture',
+                    pluginId: 'acme.agent.fixture',
                     agentLocalId: 'assistant',
                     occurrenceId: 'generation-8',
                     resourceKey: 'resource-1',
@@ -3032,7 +3137,7 @@ describe('target Agent runtime registry', () => {
             reconcileResource,
         });
         const lease = (await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
             activationTargets: [target()],
             targetRegistrations: [observationRegistration({ observation })],
             isOccurrenceCurrent: () => true,
@@ -3093,7 +3198,7 @@ describe('target Agent runtime registry', () => {
             }),
         });
         const lease = (await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
             activationTargets: [target()],
             targetRegistrations: [observationRegistration({ observation: overBound })],
             isOccurrenceCurrent: () => true,
@@ -3135,7 +3240,7 @@ describe('target Agent runtime registry', () => {
             }),
         });
         const lease = (await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
             activationTargets: [target()],
             targetRegistrations: [observationRegistration({ observation })],
             isOccurrenceCurrent: () => true,
@@ -3217,7 +3322,7 @@ describe('target Agent runtime registry', () => {
         };
         const reconcile = vi.fn(async () => pluginResult);
         const lease = (await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
             activationTargets: [target()],
             targetRegistrations: [observationRegistration({
                 observation: createObservationContribution({ reconcile }),
@@ -3312,7 +3417,7 @@ describe('target Agent runtime registry', () => {
             }>,
         });
         const lease = (await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
             activationTargets: [target()],
             targetRegistrations: [observationRegistration({ observation: malformed })],
             isOccurrenceCurrent: () => true,
@@ -3332,38 +3437,43 @@ describe('target Agent runtime registry', () => {
 
     it('releases observation listeners and deadline after a synchronous plugin acquisition throw', async () => {
         vi.useFakeTimers();
-        const caller = new AbortController();
-        const retirement = new AbortController();
-        const callerRemove = vi.spyOn(caller.signal, 'removeEventListener');
-        const retirementRemove = vi.spyOn(retirement.signal, 'removeEventListener');
-        const failure = new Error('synchronous acquisition failure');
-        const throwing = createObservationContribution({
-            acquire: () => {
-                throw failure;
-            },
-        });
-        const lease = (await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
-            activationTargets: [target()],
-            targetRegistrations: [observationRegistration({ observation: throwing })],
-            isOccurrenceCurrent: () => true,
-            retirementSignal: retirement.signal,
-            onDuplicate: vi.fn(),
-        })).get('assistant')?.externalSessionObservation;
-        if (!lease) throw new Error('Expected observation lease');
+        try {
+            const caller = new AbortController();
+            const retirement = new AbortController();
+            const callerRemove = vi.spyOn(caller.signal, 'removeEventListener');
+            const retirementRemove = vi.spyOn(retirement.signal, 'removeEventListener');
+            const failure = new Error('synchronous acquisition failure');
+            const throwing = createObservationContribution({
+                acquire: () => {
+                    throw failure;
+                },
+            });
+            const lease = (await createTargetAgentRuntimeRegistry({
+                agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
+                activationTargets: [target()],
+                targetRegistrations: [observationRegistration({ observation: throwing })],
+                isOccurrenceCurrent: () => true,
+                retirementSignal: retirement.signal,
+                onDuplicate: vi.fn(),
+            })).get('assistant')?.externalSessionObservation;
+            if (!lease) throw new Error('Expected observation lease');
 
-        await expect(lease.observeResource({
-            resourceKey: 'resource-1',
-            signal: caller.signal,
-            emit() {},
-            requestReconcile() {},
-            requestTranscriptRefresh() {},
-        })).rejects.toBe(failure);
+            logger.flushSync();
+            expect(vi.getTimerCount()).toBe(0);
+            await expect(lease.observeResource({
+                resourceKey: 'resource-1',
+                signal: caller.signal,
+                emit() {},
+                requestReconcile() {},
+                requestTranscriptRefresh() {},
+            })).rejects.toBe(failure);
 
-        expect(callerRemove).toHaveBeenCalled();
-        expect(retirementRemove).toHaveBeenCalled();
-        expect(vi.getTimerCount()).toBe(0);
-        vi.useRealTimers();
+            expect(callerRemove).toHaveBeenCalled();
+            expect(retirementRemove).toHaveBeenCalled();
+            expect(vi.getTimerCount()).toBe(0);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('carries the immutable registration-ingress Provider binding snapshot into the generation lease', async () => {
@@ -3371,7 +3481,7 @@ describe('target Agent runtime registry', () => {
         const originalMaterialize = providerBinding.materialize;
         const mutableProviderBinding = { ...providerBinding };
         const host = createContributionRegistrationHost({
-            pluginId: 'happier.agent.fixture',
+            pluginId: 'acme.agent.fixture',
             occurrenceId: 'generation-7',
             rights: [{ family: 'agents', localId: 'assistant', target: { realm: 'daemon' } }],
             isOccurrenceCurrent: () => true,
@@ -3396,28 +3506,27 @@ describe('target Agent runtime registry', () => {
         ) {
             throw new Error('Expected committed Provider binding snapshot');
         }
-        const committedProviderBinding = committedRegistration.value.providerBinding;
-
         mutableProviderBinding.adapterVersion = 2;
         mutableProviderBinding.prepare = () => ({ v: 1, materialization: 'configFile' });
         mutableProviderBinding.materialize = async () => ({ v: 1, kind: 'configFile', env: [], files: [] });
 
-        const lease = (await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+        const registry = await createTargetAgentRuntimeRegistry({
+            agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
             activationTargets: [target()],
             targetRegistrations: committed.map((entry) => ({
-                pluginId: 'happier.agent.fixture',
+                pluginId: 'acme.agent.fixture',
                 occurrenceId: 'generation-7',
                 registration: entry,
             })),
             isOccurrenceCurrent: () => true,
             retirementSignal: TEST_RETIREMENT_SIGNAL,
             onDuplicate: vi.fn(),
-        })).get('assistant');
+        });
+        const lease = registry.get('assistant');
 
         const binding = lease?.providerBinding;
         if (!binding) throw new Error('Expected Provider binding lease');
-        expect(binding).toBe(committedProviderBinding);
+        expect(binding).toBe(readAdmittedAgentRegistration(registry, 'acme.agent.fixture').providerBinding);
         expect(binding).toMatchObject({
             v: 1,
             adapterVersion: 1,
@@ -3476,7 +3585,7 @@ describe('target Agent runtime registry', () => {
         const registry = await createTargetAgentRuntimeRegistry({
             agents: [{
                 id: 'assistant',
-                pluginId: 'happier.agent.fixture',
+                pluginId: 'acme.agent.fixture',
                 richDefinition: {
                     provenance: 'external',
                     definition,
@@ -3510,7 +3619,7 @@ describe('target Agent runtime registry', () => {
             resolveFactory = resolve;
         });
         const lease = (await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
             activationTargets: [target()],
             targetRegistrations: [registration({ factory })],
             isOccurrenceCurrent: () => active,
@@ -3541,18 +3650,18 @@ describe('target Agent runtime registry', () => {
         const invalidFactory: AgentRuntimeFactory = async () => Object.freeze({}) as never;
         const onDuplicate = vi.fn();
         const registry = await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.alpha', identity: { pluginId: 'happier.agent.alpha', localId: 'assistant' } }],
-            activationTargets: [target('happier.agent.zeta'), target('happier.agent.alpha')],
+            agents: [{ id: 'assistant', pluginId: 'acme.agent.alpha', identity: { pluginId: 'acme.agent.alpha', localId: 'assistant' } }],
+            activationTargets: [target('acme.agent.zeta'), target('acme.agent.alpha')],
             targetRegistrations: [
-                registration({ pluginId: 'happier.agent.zeta', factory: invalidFactory }),
-                registration({ pluginId: 'happier.agent.alpha', factory: invalidFactory }),
+                registration({ pluginId: 'acme.agent.zeta', factory: invalidFactory }),
+                registration({ pluginId: 'acme.agent.alpha', factory: invalidFactory }),
             ],
             isOccurrenceCurrent: () => true,
             retirementSignal: TEST_RETIREMENT_SIGNAL,
             onDuplicate,
         });
 
-        expect(registry.get('assistant')?.pluginId).toBe('happier.agent.alpha');
+        expect(registry.get('assistant')?.pluginId).toBe('acme.agent.alpha');
         expect(onDuplicate).not.toHaveBeenCalled();
         const lease = registry.get('assistant');
         if (!lease?.hasPrimaryRuntime) throw new Error('Expected a primary Agent runtime lease');
@@ -3580,7 +3689,7 @@ describe('target Agent runtime registry', () => {
             },
         })) as unknown as AgentRuntimeFactory;
         const registry = await createTargetAgentRuntimeRegistry({
-            agents: [{ id: 'assistant', pluginId: 'happier.agent.fixture' }],
+            agents: [{ id: 'assistant', pluginId: 'acme.agent.fixture' }],
             activationTargets: [target()],
             targetRegistrations: [registration({
                 factory: competingFactory,
@@ -3639,7 +3748,7 @@ describe('target Agent runtime registry', () => {
         ) => (await createTargetAgentRuntimeRegistry({
             agents: [{
                 id: 'assistant',
-                pluginId: 'happier.agent.fixture',
+                pluginId: 'acme.agent.fixture',
                 richDefinition: { provenance: 'external', definition: selectedDefinition },
             }],
             activationTargets: [target()],
@@ -3696,7 +3805,7 @@ describe('target Agent runtime registry', () => {
         const lease = (await createTargetAgentRuntimeRegistry({
             agents: [{
                 id: 'assistant',
-                pluginId: 'happier.agent.fixture',
+                pluginId: 'acme.agent.fixture',
                 richDefinition: {
                     provenance: 'external',
                     definition,
@@ -3722,47 +3831,32 @@ describe('target Agent runtime registry', () => {
 
     it('publishes a manifest-local registration under its canonical Agent id', async () => {
         const pluginId = 'happier.agent.ohmypi';
-        const factory = vi.fn<AgentRuntimeFactory>(async () => ({
-            sessions: {
-                open: async () => ({
-                    send: async () => ({ status: 'admitted' }),
-                    watch: () => ({ dispose() {} }),
-                    dispose() {},
-                }),
-            },
-        }));
-        const registry = await createTargetAgentRuntimeRegistry({
-            agents: [{
-                id: 'ohMyPi',
+        const fixture = await createAdmittedPluginRuntimeFixture({
+            runtimeOptions: { pluginIds: [pluginId] },
+        });
+        try {
+            const registry = fixture.registry.agentRuntimesByAgentId;
+            expect(registry.has('ohmypi')).toBe(false);
+            const lease = registry.get('ohMyPi');
+            expect(lease).toMatchObject({
+                agentId: 'ohMyPi',
                 pluginId,
-                identity: { pluginId, localId: 'ohmypi' },
-            }],
-            activationTargets: [target(pluginId)],
-            targetRegistrations: [registration({
+                localAgentId: 'ohmypi',
+                hasPrimaryRuntime: true,
+            });
+            if (!lease?.hasPrimaryRuntime) throw new Error('Expected the canonical OhMyPi runtime lease');
+            const signal = new AbortController().signal;
+            const runtime = await lease.createRuntime({ signal });
+            expect(runtime.sessions).toBeDefined();
+            expect(lease.sessionRunnerFactoryBinding).toMatchObject({
                 pluginId,
-                localId: 'ohmypi',
-                factory,
-            })],
-            isOccurrenceCurrent: () => true,
-            retirementSignal: TEST_RETIREMENT_SIGNAL,
-            onDuplicate: vi.fn(),
-        });
-
-        expect(registry.has('ohmypi')).toBe(false);
-        const lease = registry.get('ohMyPi');
-        expect(lease).toMatchObject({
-            agentId: 'ohMyPi',
-            pluginId,
-            hasPrimaryRuntime: true,
-        });
-        if (!lease?.hasPrimaryRuntime) throw new Error('Expected the canonical OhMyPi runtime lease');
-        const signal = new AbortController().signal;
-        await lease.createRuntime({ signal });
-        expect(factory).toHaveBeenCalledWith({
-            plugin: { id: pluginId, version: '0.0.0' },
-            agent: { id: 'ohmypi' },
-            signal: TEST_RETIREMENT_SIGNAL,
-        });
+                agentId: 'ohMyPi',
+                localAgentId: 'ohmypi',
+                sourceCustody: fixture.registry.readPluginSourceCustody?.(pluginId),
+            });
+        } finally {
+            await fixture.dispose();
+        }
     });
 
     it('keeps executable Agent ownership aligned with the selected static contribution owner', async () => {
@@ -3783,7 +3877,7 @@ describe('target Agent runtime registry', () => {
                 }),
             },
         });
-        const selectedPluginId = 'happier.agent.zeta';
+        const selectedPluginId = 'acme.agent.zeta';
         const collidingPluginId = 'acme.agent.alpha';
         const input = {
             agents: [{ id: 'assistant', pluginId: selectedPluginId, identity: { pluginId: selectedPluginId, localId: 'assistant' } }],
@@ -3805,11 +3899,12 @@ describe('target Agent runtime registry', () => {
             onDuplicate: vi.fn(),
         };
 
-        const lease = (await createTargetAgentRuntimeRegistry(input)).get('assistant');
+        const registry = await createTargetAgentRuntimeRegistry(input);
+        const lease = registry.get('assistant');
 
         expect(lease).toMatchObject({
             pluginId: selectedPluginId,
-            providerBinding: selectedProviderBinding,
+            providerBinding: readAdmittedAgentRegistration(registry, selectedPluginId).providerBinding,
         });
         expect(input.onDuplicate).not.toHaveBeenCalled();
 

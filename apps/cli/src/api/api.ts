@@ -71,7 +71,7 @@ import type { LocalServicesRuntimeActionRoutes } from '@/daemon/local/services/a
 import type { DaemonPeerMediationObservabilityRuntimeActionContext } from '@/daemon/peer/mediation/observability/runtimeActionExecutor';
 import type { SimulatorPreviewRoutes } from '@/daemon/devices/simulator/previewRoutes.types';
 import {
-  fetchServerFeaturesSnapshot,
+  refreshServerFeaturesSnapshot,
   type CliServerFeaturesSnapshot,
 } from '@/features/serverFeaturesClient';
 import { decodeBase64, encodeBase64, encrypt, decrypt, getRandomBytes } from './encryption';
@@ -444,7 +444,7 @@ export class ApiClient {
           );
         });
       }
-      return await fetchServerFeaturesSnapshot({
+      return await refreshServerFeaturesSnapshot({
         serverUrl: resolveServerHttpBaseUrl(),
         signal: options.signal,
       });

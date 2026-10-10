@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe } from 'vitest';
 
-import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 
 import { resolveDefaultScmBackendRegistry } from '../scmBackendCatalog';
 import type { ScmBackend } from '../types';
@@ -21,14 +21,12 @@ import { runScmBackendContractSuite } from './scmBackendContractHarness';
  */
 describe('sapling SCM backend contract', () => {
     let backend: ScmBackend | null = null;
-    let runtimeRegistry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+    let runtimeFixture: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | null = null;
 
     beforeAll(async () => {
-        runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({
-            pluginIds: ['happier.scm.backend.sapling'],
-        });
+        runtimeFixture = await createAdmittedPluginRuntimeFixture();
         backend = (await resolveDefaultScmBackendRegistry({
-            pluginRuntimeRegistry: runtimeRegistry,
+            pluginRuntimeRegistry: runtimeFixture.registry,
         }))
             .listBackends()
             .find((candidate) => candidate.id === 'happier.scm.backend.sapling/sapling')
@@ -37,7 +35,7 @@ describe('sapling SCM backend contract', () => {
     });
 
     afterAll(async () => {
-        await runtimeRegistry?.dispose();
+        await runtimeFixture?.dispose();
     });
 
     runScmBackendContractSuite({

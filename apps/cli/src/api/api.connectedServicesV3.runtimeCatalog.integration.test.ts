@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import axios from 'axios';
 import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
@@ -8,12 +8,13 @@ import { logger } from '@/ui/logger';
 import { resetServerEndpointFailureLogSamplingForTests } from './client/serverEndpointFailureLog';
 import { readHttpStatus } from './client/httpStatusError';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
+import { fetchServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
+import { resolveServerHttpBaseUrl } from './client/serverHttpBaseUrl';
 
-const { mockPost, mockPatch, mockGet, mockFetchServerFeaturesSnapshot } = vi.hoisted(() => ({
+const { mockPost, mockPatch, mockGet } = vi.hoisted(() => ({
   mockPost: vi.fn(),
   mockPatch: vi.fn(),
   mockGet: vi.fn(),
-  mockFetchServerFeaturesSnapshot: vi.fn(),
 }));
 
 vi.mock('axios', () => ({
@@ -25,10 +26,6 @@ vi.mock('@/ui/logger', () => ({
   logger: {
     debug: vi.fn(),
   },
-}));
-
-vi.mock('@/features/serverFeaturesClient', () => ({
-  fetchServerFeaturesSnapshot: mockFetchServerFeaturesSnapshot,
 }));
 
 vi.mock('./configuration', () => ({
@@ -68,10 +65,11 @@ describe('ApiClient connected services v3 credentials', () => {
     mockPost.mockReset();
     mockPatch.mockReset();
     mockGet.mockReset();
-    mockFetchServerFeaturesSnapshot.mockReset();
+    resetServerFeaturesClientForTests();
     vi.clearAllMocks();
     resetServerEndpointFailureLogSamplingForTests();
   });
+  afterEach(() => { vi.unstubAllGlobals(); resetServerFeaturesClientForTests(); });
 
   it('force-refreshes server features instead of trusting a warm cached contract', async () => {
     const cached = { status: 'ready', features: { features: {}, capabilities: {} } } as const;
@@ -89,24 +87,30 @@ describe('ApiClient connected services v3 credentials', () => {
         capabilities: {},
       },
     } as const;
-    mockFetchServerFeaturesSnapshot.mockResolvedValue(authoritative);
+    // HTTP is the boundary. Seed the real public cache, then change the Home's
+    // response without changing URL so refresh must observe the newer contract.
+    let responseFeatures = cached.features;
+    vi.stubGlobal('fetch', async (input: string | URL | Request) => {
+      expect(String(input)).toBe(`${resolveServerHttpBaseUrl()}/v1/features`);
+      return new Response(JSON.stringify(responseFeatures), { status: 200 });
+    });
+    await expect(fetchServerFeaturesSnapshot({ serverUrl: resolveServerHttpBaseUrl() })).resolves.toMatchObject(cached);
+    responseFeatures = authoritative.features;
     const api = await ApiClient.create({
       token: 'happy-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32) },
     });
     api.setServerFeaturesSnapshotProvider(() => cached as unknown as CliServerFeaturesSnapshot);
 
-    await expect(api.getServerFeaturesSnapshot({ refresh: true })).resolves.toBe(authoritative);
+    await expect(api.getServerFeaturesSnapshot({ refresh: true })).resolves.toMatchObject(authoritative);
     await expect(api.getServerFeaturesSnapshot()).resolves.toBe(cached);
-    expect(mockFetchServerFeaturesSnapshot).toHaveBeenCalledWith({
-      serverUrl: expect.any(String),
-    });
   });
 
   it('refreshes through the installed daemon snapshot owner when available', async () => {
     const cached = { status: 'ready', features: { features: {}, capabilities: {} } } as const;
     const refreshed = { status: 'unsupported', reason: 'endpoint_missing' } as const;
     const refresh = vi.fn(async () => refreshed as CliServerFeaturesSnapshot);
+    vi.stubGlobal('fetch', async () => { throw new Error('The installed daemon owner must own refresh'); });
     const api = await ApiClient.create({
       token: 'happy-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32) },
@@ -118,7 +122,6 @@ describe('ApiClient connected services v3 credentials', () => {
 
     await expect(api.getServerFeaturesSnapshot({ refresh: true })).resolves.toBe(refreshed);
     expect(refresh).toHaveBeenCalledOnce();
-    expect(mockFetchServerFeaturesSnapshot).not.toHaveBeenCalled();
   });
 
   it('rejects a v3 credential whose embedded binding does not match the requested route', async () => {
