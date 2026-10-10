@@ -9,20 +9,44 @@ import { ProjectEnvironmentSelectionV1Schema, ProjectNativeFilePathV1Schema } fr
 export const PROJECT_NATIVE_ADAPTER_ROLES_V1 = ['detect', 'resolveCommand', 'produceEnvironment', 'nativeServiceLifecycle'] as const;
 export type ProjectNativeAdapterRoleV1 = typeof PROJECT_NATIVE_ADAPTER_ROLES_V1[number];
 
-export type BuiltinNativeEnvironmentAdapterV1 = Readonly<{
-    id: 'mise'; title: string;
+type NativeEnvironmentQualificationV1 = Readonly<{
+    id: 'mise' | 'devbox' | 'devenv' | 'flox' | 'nix_flake'; title: string;
     platform: 'linux'; nativeVersion: string;
+    executable: string;
+    versionArgs: readonly string[];
+    versionPattern: string;
+}>;
+/** Preserve the incumbent global-only descriptor contract for Machine callers. */
+export type BuiltinNativeEnvironmentAdapterV1 = NativeEnvironmentQualificationV1 & Readonly<{
+    id: 'mise';
     globalEnvironment: Readonly<{ configFile: 'config.toml'; installArgs: readonly string[] }>;
 }>;
+export type BuiltinProjectNativeEnvironmentAdapterV1 = BuiltinNativeEnvironmentAdapterV1 | (NativeEnvironmentQualificationV1 & Readonly<{
+    id: Exclude<NativeEnvironmentQualificationV1['id'], 'mise'>;
+    globalEnvironment?: never;
+}>);
 
 /** Builtin native qualification shares this descriptor owner with plugin
  * declarations. Plugin produceEnvironment alone does not promise global setup. */
-const builtinNativeEnvironmentAdapters: readonly BuiltinNativeEnvironmentAdapterV1[] = Object.freeze([
-    Object.freeze({ id: 'mise', title: 'Mise', platform: 'linux', nativeVersion: '2026.10.4',
+const builtinNativeEnvironmentAdapters: readonly BuiltinProjectNativeEnvironmentAdapterV1[] = Object.freeze([
+    Object.freeze({ id: 'mise', title: 'Mise', platform: 'linux', nativeVersion: '2026.10.4', executable: 'mise',
+        versionArgs: Object.freeze(['--version']), versionPattern: '^(\\d{4}\\.\\d+\\.\\d+) linux-x64 \\([^\\r\\n]*\\)\\s*$',
         globalEnvironment: Object.freeze({ configFile: 'config.toml', installArgs: Object.freeze(['install']) }) }),
+    Object.freeze({ id: 'devbox', title: 'Devbox', platform: 'linux', nativeVersion: '0.18.4', executable: 'devbox',
+        versionArgs: Object.freeze(['version']), versionPattern: '^([0-9]+\\.[0-9]+\\.[0-9]+)\\s*$' }),
+    Object.freeze({ id: 'devenv', title: 'devenv', platform: 'linux', nativeVersion: '2.4.0', executable: 'devenv',
+        versionArgs: Object.freeze(['--version']), versionPattern: '^devenv ([0-9]+\\.[0-9]+\\.[0-9]+) \\(x86_64-linux\\)\\s*$' }),
+    Object.freeze({ id: 'flox', title: 'Flox', platform: 'linux', nativeVersion: '1.18.1-gf264cf2', executable: 'flox',
+        versionArgs: Object.freeze(['--version']), versionPattern: '^([0-9]+\\.[0-9]+\\.[0-9]+(?:-g[0-9a-f]+)?)\\s*$' }),
+    Object.freeze({ id: 'nix_flake', title: 'Nix flake', platform: 'linux', nativeVersion: '2.35.2', executable: 'nix',
+        versionArgs: Object.freeze(['--version']), versionPattern: '^nix \\(Nix\\) ([0-9]+\\.[0-9]+\\.[0-9]+)\\s*$' }),
 ]);
+export function findBuiltinNativeEnvironmentAdapterV1(id: string, platform: string): BuiltinProjectNativeEnvironmentAdapterV1 | undefined {
+    return builtinNativeEnvironmentAdapters.find(adapter => adapter.id === id && adapter.platform === platform);
+}
 export function listMachineEnvironmentAdaptersV1(platform: string): readonly BuiltinNativeEnvironmentAdapterV1[] {
-    return builtinNativeEnvironmentAdapters.filter(adapter => adapter.platform === platform);
+    return builtinNativeEnvironmentAdapters.filter((adapter): adapter is BuiltinNativeEnvironmentAdapterV1 =>
+        adapter.platform === platform && adapter.globalEnvironment !== undefined);
 }
 
 /** File names are declarations, not permission to read outside the admitted root. */

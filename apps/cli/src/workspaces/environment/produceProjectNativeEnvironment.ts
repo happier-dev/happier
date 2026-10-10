@@ -1,6 +1,6 @@
 import type { ProjectEnvironmentSelectionV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
-import { resolve } from 'node:path';
-import { listMachineEnvironmentAdaptersV1 } from '@happier-dev/protocol/plugins/contributions/projectNativeAdapters';
+import { basename, dirname, resolve } from 'node:path';
+import { findBuiltinNativeEnvironmentAdapterV1 } from '@happier-dev/protocol/plugins/contributions/projectNativeAdapters';
 import type { ProjectNativeAdapterProductionV1 } from '@/plugins/runtime/lifecycle/contributions/targetProjectNativeAdapters';
 
 type PluginEnvironmentReady = Extract<Awaited<ReturnType<ProjectNativeAdapterProductionV1['produceEnvironment']>>, { kind: 'ready' }>;
@@ -14,7 +14,7 @@ export type ProjectNativeEnvironmentIo = Readonly<{
   /** Incumbent managedDependencies/systemTools resolution; never installs. */
   resolveTool: (tool: string, signal?: AbortSignal) => Promise<Readonly<{ executablePath: string; args?: readonly string[]; version: string }> | null>;
   /** Incumbent supervised process IO, including process-tree cancellation. Output is private. */
-  run: (request: Readonly<{ command: string; args: readonly string[]; cwd: string; env: Readonly<Record<string, string>>; signal?: AbortSignal }>) => Promise<Readonly<{ exitCode: number; stdout: string }>>;
+  run: (request: Readonly<{ command: string; args: readonly string[]; cwd: string; env: Readonly<Record<string, string>>; signal?: AbortSignal }>) => Promise<Readonly<{ exitCode: number; stdout: string; stderr?: string }>>;
 }>;
 
 export type ProjectNativeEnvironmentResult =
@@ -98,9 +98,9 @@ export async function produceProjectNativeEnvironment(input: ProjectNativeEnviro
   if (native?.kind === 'toolchain' && native.tool === selected.tool && native.configPath === selected.configPath) {
     return { status: 'ready', env: input.env };
   }
-  // Only this installed Linux contract has native argv/env/cancel/recovery
-  // evidence. Other tools/platforms retain their selection for repair.
-  const characterization = listMachineEnvironmentAdaptersV1(input.platform).find(adapter => adapter.id === selected.tool);
+  // Installed Linux x64 contracts only. Selection is retained for repair on
+  // unqualified targets; it never silently becomes the host environment.
+  const characterization = findBuiltinNativeEnvironmentAdapterV1(selected.tool, input.platform);
   if (!characterization) {
     return { status: 'refused', kind: 'unsupported', code: 'native_adapter_not_characterized' };
   }
@@ -110,7 +110,7 @@ export async function produceProjectNativeEnvironment(input: ProjectNativeEnviro
     if (!tool) return { status: 'refused', kind: 'unavailable', code: 'native_tool_unavailable' };
     if (tool.version !== characterization.nativeVersion) return { status: 'refused', kind: 'unsupported', code: 'native_version_not_characterized' };
     // Passive resolution selects the actual reviewed file; an unresolved or
-    // missing selection must not make Mise silently use the host environment.
+    // missing selection must not silently use the host environment.
     if (selected.configPath === undefined) return { status: 'refused', kind: 'unavailable', code: 'native_configuration_unavailable' };
     const { readProjectDefinitionFile } = await import('../projectSetup/nativeDefinitionFiles.ts');
     const root = input.root ?? input.cwd;
@@ -120,25 +120,63 @@ export async function produceProjectNativeEnvironment(input: ProjectNativeEnviro
       status: 'refused', kind: 'unavailable',
       code: config.kind === 'refused' ? config.code : 'native_configuration_unavailable',
     };
+    const configPath = resolve(root, selected.configPath.replaceAll('\\', '/'));
+    const envInput = { ...input.env };
+    // Native activation may move to its config root and print hook diagnostics.
+    // Restore the actual launch cwd with literal argv, then frame the complete
+    // export so diagnostics cannot become environment keys. This is a fixed
+    // probe, not the consumer's launch command or a second native producer.
+    const marker = '\0HAPPIER_NATIVE_ENV_V1\0';
+    const probe = ['/bin/sh', '-c', 'cd "$1" && printf "\\000HAPPIER_NATIVE_ENV_V1\\000" && exec /usr/bin/env -0', 'happier-native-environment', input.cwd];
+    const probeCommand = probe.map(arg => `'${arg.replaceAll("'", "'\\''")}'`).join(' ');
+    let args: readonly string[];
+    switch (selected.tool) {
+      case 'mise':
+        envInput.MISE_OVERRIDE_CONFIG_FILENAMES = configPath;
+        args = ['exec', '--', '/usr/bin/env', '-0'];
+        break;
+      case 'devbox':
+        if (basename(configPath) !== 'devbox.json') return { status: 'refused', kind: 'unsupported', code: 'native_configuration_not_characterized' };
+        // Devbox 0.18.4 RunScript evals its command and double-quotes each
+        // additional arg, expanding $/backticks inside them. Supply the fully
+        // shell-quoted fixed probe as the command itself, with no extra args.
+        args = ['run', '--config', dirname(configPath), '--', probeCommand];
+        break;
+      case 'devenv':
+        if (basename(configPath) !== 'devenv.nix') return { status: 'refused', kind: 'unsupported', code: 'native_configuration_not_characterized' };
+        args = ['--from', `path:${dirname(configPath)}`, 'shell', '--', ...probe];
+        break;
+      case 'flox':
+        if (!configPath.endsWith('/.flox/env/manifest.toml')) return { status: 'refused', kind: 'unsupported', code: 'native_configuration_not_characterized' };
+        // Direct exec skips Flox profiles. Shell-command activation includes
+        // common/bash profiles; select the installed, characterized Linux shell.
+        envInput.FLOX_SHELL = '/bin/bash';
+        args = ['activate', '--dir', dirname(dirname(dirname(configPath))), '--no-start-services', '-c', probeCommand];
+        break;
+      case 'nix_flake':
+        if (basename(configPath) !== 'flake.nix') return { status: 'refused', kind: 'unsupported', code: 'native_configuration_not_characterized' };
+        args = ['--extra-experimental-features', 'nix-command flakes', 'develop', `path:${dirname(configPath)}`, '--command', ...probe];
+        break;
+    }
     const output = await input.io.run({
       command: tool.executablePath,
-      args: [...(tool.args ?? []), 'exec', '--', '/usr/bin/env', '-0'],
+      args: [...(tool.args ?? []), ...args],
       cwd: input.cwd,
-      env: {
-        ...input.env,
-        MISE_OVERRIDE_CONFIG_FILENAMES: resolve(root, selected.configPath.replaceAll('\\', '/')),
-      },
+      env: envInput,
       ...(input.signal ? { signal: input.signal } : {}),
     });
     if (input.signal?.aborted) return cancelled();
     if (output.exitCode !== 0) return { status: 'refused', kind: 'native_failed', code: 'native_environment_failed' };
     // env -0 exports the full environment, including native unset semantics.
-    // env --json is only a patch and loses those removals (Mise 2026.10.4).
+    // Shell/JSON export plans alone omit hooks and/or native removals.
+    const markerOffset = output.stdout.indexOf(marker);
+    if (selected.tool !== 'mise' && markerOffset < 0) return { status: 'refused', kind: 'native_failed', code: 'native_environment_invalid' };
+    const stdout = selected.tool === 'mise' ? output.stdout : output.stdout.slice(markerOffset + marker.length);
     const env: Record<string, string> = Object.create(null);
-    if (output.stdout !== '' && !output.stdout.endsWith('\0')) {
+    if (stdout !== '' && !stdout.endsWith('\0')) {
       return { status: 'refused', kind: 'native_failed', code: 'native_environment_invalid' };
     }
-    for (const entry of output.stdout === '' ? [] : output.stdout.slice(0, -1).split('\0')) {
+    for (const entry of stdout === '' ? [] : stdout.slice(0, -1).split('\0')) {
       const separator = entry.indexOf('=');
       if (separator <= 0) return { status: 'refused', kind: 'native_failed', code: 'native_environment_invalid' };
       env[entry.slice(0, separator)] = entry.slice(separator + 1);

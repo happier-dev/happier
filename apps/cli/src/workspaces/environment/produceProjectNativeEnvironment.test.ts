@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { produceProjectNativeEnvironment, type ProjectNativeEnvironmentInput, type ProjectNativeEnvironmentIo } from './produceProjectNativeEnvironment';
@@ -32,10 +32,40 @@ describe('produceProjectNativeEnvironment', () => {
 
   it('refuses unavailable and uncharacterized tools/platforms instead of returning the host environment', async () => {
     expect(await produceProjectNativeEnvironment({ ...input, io: { ...io, resolveTool: async () => null } })).toEqual({ status: 'refused', kind: 'unavailable', code: 'native_tool_unavailable' });
-    for (const tool of ['devbox', 'devenv', 'flox', 'nix_flake'] as const) {
-      expect(await produceProjectNativeEnvironment({ ...input, selection: { kind: 'toolchain', tool } })).toMatchObject({ status: 'refused', kind: 'unsupported', code: 'native_adapter_not_characterized' });
-    }
     expect(await produceProjectNativeEnvironment({ ...input, platform: 'win32' })).toMatchObject({ status: 'refused', kind: 'unsupported' });
+    expect(await produceProjectNativeEnvironment({ ...input, platform: 'darwin' })).toMatchObject({ status: 'refused', kind: 'unsupported' });
+    expect(await produceProjectNativeEnvironment({ ...input, io: { ...io, resolveTool: async () => ({ executablePath: '/tools/mise', version: '2026.10.5' }) } }))
+      .toMatchObject({ status: 'refused', kind: 'unsupported', code: 'native_version_not_characterized' });
+  });
+
+  it.each([
+    ['devbox', 'devbox.json', '0.18.4'],
+    ['devenv', 'devenv.nix', '2.4.0'],
+    ['flox', '.flox/env/manifest.toml', '1.18.1-gf264cf2'],
+    ['nix_flake', 'flake.nix', '2.35.2'],
+  ] as const)('produces the complete %s environment through the same owner and retains cancellation custody', async (tool, configPath, version) => {
+    await mkdir(join(input.cwd, '.flox/env'), { recursive: true });
+    await writeFile(join(input.cwd, configPath), 'reviewed native configuration');
+    const nativeInput: ProjectNativeEnvironmentInput = { ...input, selection: { kind: 'toolchain', tool, configPath }, io: {
+      ...io, resolveTool: async () => ({ executablePath: '/tools/native', args: ['installed-prefix'], version }),
+      run: async () => ({ exitCode: 0, stdout: 'native hook diagnostic\n\0HAPPIER_NATIVE_ENV_V1\0PATH=/native/bin\0KEEP=inherited\0NATIVE=value=with\nnewline\0' }),
+    } };
+    expect(await produceProjectNativeEnvironment(nativeInput)).toEqual({ status: 'ready', env: { PATH: '/native/bin', KEEP: 'inherited', NATIVE: 'value=with\nnewline' } });
+    expect(await produceProjectNativeEnvironment({ ...nativeInput, io: { ...nativeInput.io,
+      resolveTool: async () => ({ executablePath: '/tools/native', version: `${version}.unqualified` }),
+    } })).toMatchObject({ status: 'refused', kind: 'unsupported', code: 'native_version_not_characterized' });
+    expect(await produceProjectNativeEnvironment({ ...nativeInput, io: { ...nativeInput.io, run: io.run } }))
+      .toMatchObject({ status: 'refused', kind: 'native_failed', code: 'native_environment_invalid' });
+    expect(await produceProjectNativeEnvironment({ ...nativeInput, nativeCommandEnvironment: nativeInput.selection, io: {
+      resolveTool: async () => { throw new Error('Already-native invocation must not probe'); },
+      run: async () => { throw new Error('Already-native invocation must not evaluate'); },
+    } })).toEqual({ status: 'ready', env: input.env });
+    expect(await produceProjectNativeEnvironment({ ...nativeInput, io: { ...nativeInput.io, run: async () => ({ exitCode: 1, stdout: '' }) } }))
+      .toMatchObject({ status: 'refused', kind: 'native_failed' });
+    const controller = new AbortController();
+    await expect(produceProjectNativeEnvironment({ ...nativeInput, signal: controller.signal, io: { ...nativeInput.io,
+      run: async () => { controller.abort(); throw Object.assign(new Error('private native output'), { code: 'plugin_exec_termination_incomplete' }); },
+    } })).rejects.toMatchObject({ kind: 'outcome_uncertain', code: 'native_environment_termination_incomplete' });
   });
 
   it('does not evaluate the repository for host selection or an already-native command', async () => {
