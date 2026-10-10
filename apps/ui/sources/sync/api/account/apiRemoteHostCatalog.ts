@@ -13,7 +13,7 @@ import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/a
 import type { ServerFetch } from '@/sync/http/client';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { withProfileAccount, type ProfileAccountContext } from './apiProfileCatalog';
-import { AccountStorageCurrentnessUnavailableError, resolveAccountStorageContext } from '@/sync/encryption/accountStorageContext';
+import { classifyAccountStorageReadFailure, resolveAccountStorageContext } from '@/sync/encryption/accountStorageContext';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { captureSavedSecretReferenceRevisionsInContext, readSavedSecretCatalogInContext, readSavedSecretReferenceInContext,
     type SavedSecretReferenceRevisionProof } from './apiSavedSecretCatalog';
@@ -23,7 +23,6 @@ import { decryptSecretValueWithKeys, deriveSettingsSecretsKeySet } from '@/sync/
 import { normalizeAccountSettingsHistoryAfterTransfer } from '@/sync/engine/settings/accountSettingsHistoryRestore';
 import { randomUUID } from '@/platform/randomUUID';
 import { SavedSecretCatalogReferenceCensusV1Schema, type SavedSecretCatalogReferenceCensusV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
-import { HappyError } from '@/utils/errors/errors';
 
 export type RemoteHostAccountContext = Pick<ProfileAccountContext,
     'request' | 'assertCurrent' | 'credentials' | 'resolveAccountMode' | 'resolveAccountEncryption' | 'serverId' | 'accountId' | 'accountLifetime' | 'mutateRawSettings'>;
@@ -67,39 +66,41 @@ async function admit<T>(context: RemoteHostAccountContext,
     return operation(storage.mode, storage.mode === 'plain' ? null : resolveAccountScopedCryptoMaterialFromCredentials(context.credentials));
 }
 function failure(error: unknown, signal?: AbortSignal): RemoteHostCatalogSnapshotV1 {
-    if (signal?.aborted) return { status: 'unavailable', reason: 'cancelled' };
-    if (error instanceof AccountStorageCurrentnessUnavailableError) return { status: 'unavailable', reason: error.reason };
-    if (error instanceof HappyError && (error.status === 401 || error.status === 403))
-        return { status: 'unavailable', reason: error.status === 401 ? 'unauthorized' : 'forbidden' };
-    const code = error instanceof Error ? 'code' in error ? error.code : error.message : undefined;
-    if (code === 'scope-retired' || code === 'action_account_scope_changed' || code === 'action_home_not_found')
-        return { status: 'unavailable', reason: 'scope-retired' };
-    if (code === 'unauthorized' || code === 'action_home_signed_out') return { status: 'unavailable', reason: 'unauthorized' };
-    if (code === 'forbidden' || code === 'unsupported') return { status: 'unavailable', reason: code };
-    if (code === 'account_encryption_currentness_unavailable')
-        return { status: 'unavailable', reason: 'encryption-material-unavailable' };
-    if (error instanceof Error && error.name === 'ZodError') return { status: 'unavailable', reason: 'invalid-stored-content' };
-    return { status: 'unavailable', reason: 'unreachable' };
+    return { status: 'unavailable', reason: classifyAccountStorageReadFailure(error, signal) };
 }
 
 /** Complete opened destination census; absence never consults retired Settings. */
+async function readAdmittedRemoteHostCatalog(context: RemoteHostAccountContext, mode: 'plain' | 'e2ee',
+    material: AccountScopedCryptoMaterial | null, signal?: AbortSignal): Promise<RemoteHostCatalogSnapshotV1> {
+    const catalog = await loadRemoteHostCatalogV1({ mode, material, signal,
+        readRow: () => readRemoteHostCatalogRow({ request: context.request, isCurrent: () => {
+            try { context.assertCurrent(); return true; } catch { return false; }
+        } }, signal) });
+    const { encryption } = await context.resolveAccountEncryption();
+    const current = await resolveAccountStorageContext(context.credentials, { encryption, request: context.request });
+    context.assertCurrent();
+    return current.mode === mode ? catalog : { status: 'unavailable', reason: 'account-mode-mismatch' };
+}
 export async function readRemoteHostCatalogInContext(context: RemoteHostAccountContext,
     signal?: AbortSignal): Promise<RemoteHostCatalogSnapshotV1> {
-    try {
-        return await admit(context, async (mode, material) => {
-            const catalog = await loadRemoteHostCatalogV1({ mode, material, signal,
-                readRow: () => readRemoteHostCatalogRow({ request: context.request, isCurrent: () => {
-                    try { context.assertCurrent(); return true; } catch { return false; }
-                } }, signal) });
-            const { encryption } = await context.resolveAccountEncryption();
-            const current = await resolveAccountStorageContext(context.credentials, { encryption, request: context.request });
-            context.assertCurrent();
-            return current.mode === mode ? catalog : { status: 'unavailable', reason: 'account-mode-mismatch' };
-        });
-    } catch (error) { return failure(error, signal); }
+    try { return await admit(context, (mode, material) => readAdmittedRemoteHostCatalog(context, mode, material, signal)); }
+    catch (error) { return failure(error, signal); }
 }
 export async function readRemoteHostCatalog(scope: ServerAccountScope, signal?: AbortSignal): Promise<RemoteHostCatalogSnapshotV1> {
     try { return await withProfileAccount(scope, signal, context => readRemoteHostCatalogInContext(context, signal)); }
+    catch (error) { return failure(error, signal); }
+}
+
+/** Current-row operations need cutover only when there is no destination yet. */
+async function readCapturedRemoteHostCatalogForOperation(context: RemoteHostAccountContext, mode: 'plain' | 'e2ee',
+    material: AccountScopedCryptoMaterial | null, signal?: AbortSignal): Promise<RemoteHostCatalogSnapshotV1> {
+    const destination = await readAdmittedRemoteHostCatalog(context, mode, material, signal);
+    return destination.status === 'ready' && destination.revision === 'absent'
+        ? readCapturedRemoteHostCatalogProjection(context, mode, material, signal) : destination;
+}
+export async function readRemoteHostCatalogForOperationInContext(context: RemoteHostAccountContext,
+    signal?: AbortSignal): Promise<RemoteHostCatalogSnapshotV1> {
+    try { return await admit(context, (mode, material) => readCapturedRemoteHostCatalogForOperation(context, mode, material, signal)); }
     catch (error) { return failure(error, signal); }
 }
 
@@ -340,8 +341,8 @@ export async function saveRemoteHostInContext(context: RemoteHostAccountContext,
     try {
         const prepared = RemoteHostSaveActionInputV1Schema.parse(input);
         return await admit(context, async (mode, material) => {
-            const catalog = await readCapturedRemoteHostCatalogProjection(context, mode, material, signal);
-            if (catalog.status !== 'ready' || catalog.cleanup === 'pending') return { ok: false, reason: 'unavailable' };
+            const catalog = await readCapturedRemoteHostCatalogForOperation(context, mode, material, signal);
+            if (catalog.status !== 'ready') return { ok: false, reason: 'unavailable' };
             if (catalog.revision !== prepared.expectedRevision) return { ok: false, reason: 'changed' };
             const referenceCensus = prepared.savedSecretResources?.length ? SavedSecretCatalogReferenceCensusV1Schema.parse({
                 scope: 'catalogs', accountMode: mode, catalogs: {}, remoteHosts: { revision: catalog.revision,
@@ -407,8 +408,8 @@ export async function removeRemoteHostInContext(context: RemoteHostAccountContex
     input: Readonly<{ hostId: string; expectedRevision: number | 'absent' }>, signal?: AbortSignal): Promise<RemoteHostMutationResult> {
     try {
         return await admit(context, async (mode, material) => {
-            const catalog = await readCapturedRemoteHostCatalogProjection(context, mode, material, signal);
-            if (catalog.status !== 'ready' || catalog.cleanup === 'pending') return { ok: false, reason: 'unavailable' };
+            const catalog = await readCapturedRemoteHostCatalogForOperation(context, mode, material, signal);
+            if (catalog.status !== 'ready') return { ok: false, reason: 'unavailable' };
             if (catalog.revision !== input.expectedRevision || !catalog.hosts.some(host => host.id === input.hostId))
                 return { ok: false, reason: 'changed' };
             const hosts = catalog.hosts.filter(host => host.id !== input.hostId);

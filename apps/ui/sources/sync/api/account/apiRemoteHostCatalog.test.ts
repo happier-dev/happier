@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import * as owner from './apiRemoteHostCatalog';
 import type { ServerFetch } from '@/sync/http/client';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
@@ -149,6 +150,7 @@ describe('Remote host captured catalog mutation', () => {
                 encryptionMode: 'plain', ownerAccountId: accountId, revision: 3, materialStatus: 'ready',
                 capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } } });
         const mutations: ReturnType<typeof AccountSettingsV2HistoryMutationRequestSchema.parse>[] = [];
+        const hostWrites: unknown[] = [];
         const context: owner.RemoteHostAccountContext = { serverId: 'home', accountId, credentials: { token: createAccountTokenForTests(accountId) },
             resolveAccountMode: async () => 'plain',
             resolveAccountEncryption: async () => ({ accountMode: 'plain', encryption: null }), assertCurrent: () => {},
@@ -161,8 +163,14 @@ describe('Remote host captured catalog mutation', () => {
                 if (path === '/v1/account/saved-secrets/resources/materials') return Response.json({ resources: [resource] });
                 if (path === '/v2/account/settings') return Response.json({ version: 7, content: { t: 'plain', v: {} } });
                 if (path === '/v1/account/entity-rows/profiles/transfer') return Response.json({ status: 'absent' });
-                if (path === '/v1/account/entity-rows/remote-hosts') return Response.json({ status: 'present', revision: 2,
-                    content: { t: 'plain', v: { v: 1, hosts: [host] } } });
+                if (path === '/v1/account/entity-rows/remote-hosts') {
+                    if (init?.method === 'POST') {
+                        hostWrites.push(JSON.parse(String(init.body)));
+                        return Response.json({ status: 'updated', revision: 3, cursor: 1 });
+                    }
+                    return Response.json({ status: 'present', revision: 2,
+                        content: { t: 'plain', v: { v: 1, hosts: [host] } } });
+                }
                 if (path === '/v2/account/settings/history') return Response.json({ snapshots: [{ version: 4,
                     createdAt: '2026-01-01T00:00:00.000Z', contentKind: 'plain', byteLength: JSON.stringify(recorded).length }] });
                 if (path === '/v2/account/settings/history/4') return Response.json({ version: 4, createdAt: '2026-01-01T00:00:00.000Z', content: recorded });
@@ -182,7 +190,23 @@ describe('Remote host captured catalog mutation', () => {
         if (state === 'matching') {
             expect(mutations[0]!.operation).toMatchObject({ savedSecretTransfers: [{ source, resourceId, expectedRevision: 3 }] });
             expect(recorded).toEqual({ t: 'plain', v: { preferredLanguage: 'de' } });
-        } else expect(recorded.t === 'plain' && recorded.v.remoteHostsV1).toBeTruthy();
+        } else {
+            expect(recorded.t === 'plain' && recorded.v.remoteHostsV1).toBeTruthy();
+            await expect(owner.saveRemoteHostInContext(context, { host: { ...host, name: 'Edited while history is pending' },
+                expectedRevision: 2 })).resolves.toEqual({ ok: true, revision: 3 });
+            expect(hostWrites[0]).toMatchObject({ mutation: { expectedRevision: 2,
+                referencedSavedSecretRevisions: [{ resourceId, revision: 3 }] } });
+            await expect(owner.saveRemoteHostInContext(context, { host, expectedRevision: 1 })).resolves.toEqual({ ok: false, reason: 'changed' });
+            await expect(owner.saveRemoteHostInContext(context, { host: { ...host, ssh: { ...host.ssh,
+                passwordSecretRef: ref + '-missing' } }, expectedRevision: 2 })).resolves.toEqual({ ok: false, reason: 'references-conflict' });
+            await expect(owner.removeRemoteHostInContext(context, { hostId: host.id, expectedRevision: 2 })).resolves.toEqual({ ok: true, revision: 3 });
+            expect(hostWrites).toHaveLength(2);
+            expect(hostWrites[1]).toMatchObject({ mutation: { expectedRevision: 2, referencedSavedSecretRevisions: [],
+                content: { t: 'plain', v: { v: 1, hosts: [] } } } });
+            expect(mutations).toEqual([]);
+            expect(recorded.t === 'plain' && recorded.v.remoteHostsV1).toBeTruthy();
+            await expect(owner.readRemoteHostCatalogProjectionInContext(context)).resolves.toMatchObject({ status: 'ready', cleanup: 'pending' });
+        }
     });
 
     it('saves only against the addressed complete catalog and preserves siblings without publishing before acknowledgement', async () => {
@@ -191,6 +215,7 @@ describe('Remote host captured catalog mutation', () => {
         const sibling = { ...host, id: 'sibling' };
         const writes: unknown[] = [];
         let revision = 4;
+        const historyReady = createDeferred<void>();
         const context = { serverId: 'home', accountId: 'account', credentials: { token: createAccountTokenForTests('account') },
             resolveAccountMode: async () => 'plain' as const,
             resolveAccountEncryption: async () => ({ accountMode: 'plain' as const, encryption: null }), assertCurrent: () => {},
@@ -200,7 +225,7 @@ describe('Remote host captured catalog mutation', () => {
                 if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture({ settingsVersion: 4 }));
                 if (path === '/v1/account/saved-secrets/resources/materials') return Response.json({ resources: [] });
                 if (path === '/v2/account/settings') return Response.json({ version: 4, content: { t: 'plain', v: {} } });
-                if (path.startsWith('/v2/account/settings/history')) return Response.json({ snapshots: [] });
+                if (path.startsWith('/v2/account/settings/history')) { await historyReady.promise; return Response.json({ snapshots: [] }); }
                 if (path === '/v1/account/entity-rows/profiles/transfer') return Response.json({ status: 'absent' });
                 if (path !== '/v1/account/entity-rows/remote-hosts') return Response.json({}, { status: 404 });
                 if (init?.method === 'POST') { writes.push(JSON.parse(String(init.body))); return Response.json({ status: 'updated', revision: 5, cursor: 1 }); }
@@ -210,7 +235,11 @@ describe('Remote host captured catalog mutation', () => {
         const save = 'saveRemoteHostInContext' in owner ? owner.saveRemoteHostInContext : undefined;
         expect(typeof save).toBe('function');
         if (typeof save !== 'function') throw new Error('missing_canonical_host_writer');
-        await expect(save(context, { host: { ...host, name: 'Edited' }, expectedRevision: 4 })).resolves.toEqual({ ok: true, revision: 5 });
+        const saving = save(context, { host: { ...host, name: 'Edited' }, expectedRevision: 4 });
+        try {
+            await vi.waitFor(() => { expect(writes).toHaveLength(1); });
+            await expect(saving).resolves.toEqual({ ok: true, revision: 5 });
+        } finally { historyReady.resolve(); await saving; }
         expect(writes).toEqual([{ mutation: { expectedRevision: 4, referencedSavedSecretRevisions: [],
             content: { t: 'plain', v: { v: 1, hosts: [{ ...host, name: 'Edited' }, sibling] } } } }]);
         revision = 6;

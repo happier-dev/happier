@@ -1,6 +1,4 @@
-import type { SecretString } from '@/sync/encryption/secretSettings';
-
-import type { RemoteHost, RemoteHostAuthMode, RemoteHostId } from './remoteHostModel';
+import type { RemoteHost, RemoteHostAuthMode } from './remoteHostModel';
 import type { RemoteHostLocalOverrides } from './remoteHostLocalOverrides';
 
 export type RemoteHostEffectiveSshConfig = Readonly<{
@@ -21,18 +19,26 @@ export type ResolveRemoteHostEffectiveSshConfigResult =
     | Readonly<{
         ok: false;
         error: Readonly<{
-            code: 'identity_file_required';
+            code: 'identity_file_required' | 'saved_secret_unavailable' | 'saved_secret_changed';
             message: string;
         }>;
     }>;
 
-type SecretDecryptor = (input: SecretString | null | undefined) => string | null;
+export type RemoteHostSavedSecretValueReader = (reference: string) => Promise<
+    | Readonly<{ ok: true; value: string }>
+    | Readonly<{ ok: false; reason: 'unavailable' | 'changed' }>
+>;
+
+function secretFailure(reason: 'unavailable' | 'changed'): ResolveRemoteHostEffectiveSshConfigResult {
+    return { ok: false, error: { code: reason === 'changed' ? 'saved_secret_changed' : 'saved_secret_unavailable',
+        message: reason === 'changed' ? 'The Account changed before the SSH credential could be used.' : 'The saved SSH credential is unavailable.' } };
+}
 
 export async function resolveRemoteHostEffectiveSshConfig(params: Readonly<{
     remoteHost: RemoteHost;
     localOverrides: RemoteHostLocalOverrides | null;
     secretMaterialAllowed: boolean;
-    decryptSecretValue: SecretDecryptor;
+    readSavedSecretValue: RemoteHostSavedSecretValueReader;
 }>): Promise<ResolveRemoteHostEffectiveSshConfigResult> {
     const ssh = params.remoteHost.ssh;
     const sshTarget = String(ssh.target ?? '').trim();
@@ -47,12 +53,11 @@ export async function resolveRemoteHostEffectiveSshConfig(params: Readonly<{
         const localIdentityFilePath = String(params.localOverrides?.identityFilePath ?? '').trim();
         if (localIdentityFilePath) {
             identityFilePath = localIdentityFilePath;
-        } else if (params.secretMaterialAllowed) {
-            const enc = ssh.identityPrivateKeyEnc;
-            const privateKey = params.decryptSecretValue(enc);
-            if (privateKey) {
-                identityPrivateKey = String(privateKey).trim();
-            }
+        } else if (ssh.identityPrivateKeySecretRef) {
+            if (!params.secretMaterialAllowed) return secretFailure('unavailable');
+            const material = await params.readSavedSecretValue(ssh.identityPrivateKeySecretRef);
+            if (!material.ok) return secretFailure(material.reason);
+            identityPrivateKey = material.value.trim();
         }
 
         if (!identityFilePath && !identityPrivateKey) {
@@ -67,10 +72,11 @@ export async function resolveRemoteHostEffectiveSshConfig(params: Readonly<{
     }
 
     let password = '';
-    if (sshAuth === 'password') {
-        if (params.secretMaterialAllowed) {
-            password = String(params.decryptSecretValue(ssh.passwordEnc) ?? '');
-        }
+    if (sshAuth === 'password' && ssh.passwordSecretRef) {
+        if (!params.secretMaterialAllowed) return secretFailure('unavailable');
+        const material = await params.readSavedSecretValue(ssh.passwordSecretRef);
+        if (!material.ok) return secretFailure(material.reason);
+        password = material.value;
     }
 
     return {

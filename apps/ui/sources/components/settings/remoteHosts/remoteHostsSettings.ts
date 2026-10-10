@@ -8,10 +8,7 @@ export const REMOTE_HOSTS_SETTINGS = defineSettingsPage({
         savedHosts: {
             titleKey: 'settingsRemoteHostsPage.savedHostsSection',
             settings: {
-                addHost: {
-                    titleKey: 'settings.remoteHostsAddHost',
-                    descriptionKey: 'settings.remoteHostsEmptySubtitle',
-                },
+                addHost: {},
             },
         },
     },
@@ -25,7 +22,7 @@ export const REMOTE_HOSTS_ACCESS_SETTINGS = defineSettingsPage({
         trustedHostKeys: {
             titleKey: 'settings.remoteHostsTrustedHostKeysTitle',
             settings: {
-                clearTrustedHostKeys: { titleKey: 'settings.remoteHostsTrustedHostKeysClearTitle' },
+                clearTrustedHostKeys: {},
             },
         },
     },

@@ -1,8 +1,4 @@
-import {
-    buildHomeConnectionDescriptorForProfile,
-    getServerProfileById,
-    type ActiveServerSnapshot,
-} from '@/sync/domains/server/serverProfiles';
+import type { ActiveServerSnapshot } from '@/sync/domains/server/serverProfiles';
 import type { RemoteHostEffectiveSshConfig } from '@/sync/domains/remoteHosts/resolveRemoteHostEffectiveSshConfig';
 import type { SshCredentialsDraft } from '@/components/ssh/SshCredentialsFields';
 import { buildRemoteSshBootstrapMachineSystemTaskSpec } from '@/components/systemTasks/remoteSshBootstrap/buildRemoteSshBootstrapMachineSystemTaskSpec';
@@ -10,7 +6,7 @@ import { resolvePreferredPublicReleaseRingLabelForCurrentApp } from '@/sync/runt
 import { parseSshTarget } from '@happier-dev/protocol/ssh/sshTarget';
 import type { SshTunnelEnsureRequest } from '@happier-dev/protocol/ssh/tunnels';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
-import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
+import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
 import type { NativeSshTunnelRequest } from '@/sync/runtime/nativeSshTunnels/types';
 import type { NativeSshTunnelCredentialResolution } from '@/sync/runtime/nativeSshTunnels/adapter';
 import {
@@ -66,31 +62,16 @@ export function resolveRemoteHostBootstrapRelayUrls(activeServerSnapshot: Active
 export function buildRemoteHostBootstrapSystemTaskSpec(params: Readonly<{
     remoteHostId: string;
     config: RemoteHostEffectiveSshConfig;
-    activeServerSnapshot: ActiveServerSnapshot;
+    homeTarget: ResolvedHomeTarget;
+    shareableServerUrl: string | null;
 }>) {
-    const relay = resolveRemoteHostBootstrapRelayUrls(params.activeServerSnapshot);
-    if (!relay) return null;
-    const activeProfile = getServerProfileById(params.activeServerSnapshot.serverId);
-    const descriptor = activeProfile ? buildHomeConnectionDescriptorForProfile(activeProfile) : null;
-    const homeTarget = activeProfile && descriptor
-        ? resolveHomeTargetFromDescriptor({
-            descriptor,
-            authority: activeProfile.descriptorProvenance === 'advisory-only'
-                ? 'account_directory'
-                : 'current_connection',
-            profile: {
-                id: activeProfile.id,
-                serverUrl: activeProfile.canonicalServerUrl ?? activeProfile.serverUrl,
-                webappUrl: activeProfile.serverUrl,
-            },
-        })
-        : undefined;
+    const shareableUrl = String(params.shareableServerUrl ?? '').trim();
 
     const spec = buildRemoteSshBootstrapMachineSystemTaskSpec({
-        relayUrl: relay.relayUrl,
-        webappUrl: relay.webappUrl,
-        publicRelayUrl: relay.publicRelayUrl ?? undefined,
-        homeTarget,
+        relayUrl: shareableUrl || params.homeTarget.canonicalAuthUrl,
+        webappUrl: params.homeTarget.webappUrl,
+        publicRelayUrl: shareableUrl || undefined,
+        homeTarget: params.homeTarget,
         channel: resolvePreferredPublicReleaseRingLabelForCurrentApp(),
         sshTarget: params.config.sshTarget,
         sshPort: params.config.sshPort ? String(params.config.sshPort) : '',

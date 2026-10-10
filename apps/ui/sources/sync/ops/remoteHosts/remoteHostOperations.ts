@@ -7,7 +7,7 @@ import { getDefaultSystemTaskRunner } from '@/components/systemTasks';
 import { REMOTE_HOSTS_NEW_ROUTE, remoteHostHref } from '@/components/settings/remoteHosts/collection/remoteHostsRoutes';
 import { startRemoteHostMaintenanceTask, startRemoteHostSetupTask, connectRemoteHostFromDevice,
     startAdmittedRemoteHostSystemTask, resolveRemoteHostRelayAccess, type RemoteHostMaintenanceTaskAction } from '@/components/settings/remoteHosts/remoteHostTaskOperations';
-import { buildRelayAccessDisableSystemTaskSpec, buildRelayAccessExecutionSystemTaskSpec } from '@/components/systemTasks/specs/relayAccess/buildRelayAccessSystemTaskSpec';
+import { buildRelayAccessStatusSystemTaskSpec, buildRelayAccessDisableSystemTaskSpec, buildRelayAccessExecutionSystemTaskSpec } from '@/components/systemTasks/specs/relayAccess/buildRelayAccessSystemTaskSpec';
 import { readRemoteHostCatalogForOperationInContext, saveRemoteHostInContext, removeRemoteHostInContext } from '@/sync/api/account/apiRemoteHostCatalog';
 import { readSavedSecretReferenceInContext } from '@/sync/api/account/apiSavedSecretCatalog';
 import { resolveRemoteHostEffectiveSshConfig } from '@/sync/domains/remoteHosts/resolveRemoteHostEffectiveSshConfig';
@@ -20,6 +20,9 @@ import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBu
 import { resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
 import { captureLazyActionAccountContext, type LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks';
+import { getRemoteHostTrustedHostKeyStore } from '@/sync/domains/remoteHosts/hostKeys/trustedHostKeyStore';
+import { getNativeSshTunnelRuntime } from '@/sync/runtime/nativeSshTunnels/runtime';
+import { buildSshTunnelStopSystemTaskSpec } from '@/components/systemTasks/specs/localControl/buildSshTunnelSystemTaskSpec';
 
 export const REMOTE_HOST_MAINTENANCE_ACTION_IDS = {
     testConnection: 'remote_hosts.relay.test',
@@ -116,6 +119,39 @@ export function createUiRemoteHostActionExecuteV1(account: LazyActionAccountCont
             : { status: 'unavailable' as const, reason: result.reason };
         try {
             assertCurrent();
+            if (request.actionId === 'remote_hosts.tunnel.stop') {
+                if (request.input.target.kind === 'native') {
+                    await getNativeSshTunnelRuntime().releaseTunnel(request.input.target.leaseId);
+                    return { ok: true, result: { status: 'released' } };
+                }
+                const runner = getDefaultSystemTaskRunner();
+                if (runner.mode !== 'tauri') throw new RemoteHostOperationError('desktop_host_required');
+                const taskId = await runner.start(buildSshTunnelStopSystemTaskSpec(request.input.target.tunnelKey));
+                return { ok: true, result: { status: 'task_started', taskId } };
+            }
+            if (request.actionId === 'remote_hosts.trusted_keys.list' || request.actionId === 'remote_hosts.trusted_keys.remove'
+                || request.actionId === 'remote_hosts.trusted_keys.clear') {
+                const store = getRemoteHostTrustedHostKeyStore();
+                if (request.actionId === 'remote_hosts.trusted_keys.list') return { ok: true, result: { status: 'listed',
+                    keys: store.readAll().map(key => ({ host: key.hostLower, port: key.port, algorithm: key.algorithm, fingerprintSha256: key.fingerprintSha256 })) } };
+                if (request.actionId === 'remote_hosts.trusted_keys.remove') {
+                    const key = store.get(request.input.key);
+                    if (!key || key.fingerprintSha256 !== request.input.key.fingerprintSha256) throw new RemoteHostOperationError('trusted_host_key_changed');
+                    assertCurrent();
+                    store.delete(request.input.key);
+                } else {
+                    const records = store.readAll();
+                    const reviewed = new Set(request.input.keys.map(key => {
+                        const current = store.get(key);
+                        if (!current || current.fingerprintSha256 !== key.fingerprintSha256) throw new RemoteHostOperationError('trusted_host_keys_changed');
+                        return JSON.stringify([current.hostLower, current.port, current.algorithm]);
+                    }));
+                    if (reviewed.size !== records.length) throw new RemoteHostOperationError('trusted_host_keys_changed');
+                    assertCurrent();
+                    store.clear();
+                }
+                return { ok: true, result: { status: 'removed' } };
+            }
             if (request.actionId === 'remote_hosts.save') {
                 return { ok: true, result: mutationResult(request.input.host.id, await saveRemoteHostInContext(account, request.input, context.signal)) };
             }
@@ -166,6 +202,11 @@ export function createUiRemoteHostActionExecuteV1(account: LazyActionAccountCont
             return { ok: true, result: await withRemoteHostSshConfig(account, request.input, async ({ config, host, assertCurrent }) => {
                 const runner = getDefaultSystemTaskRunner();
                 const admission = { runner, config: config.value, assertCurrent, signal: context.signal };
+                if (request.actionId === 'remote_hosts.relay.access.status') {
+                    const relay = resolveRemoteHostRelayAccess({ config: config.value, homeTarget: await account.resolveHomeTarget() });
+                    if (relay.status !== 'relay_ready') throw new RemoteHostOperationError(relay.reason);
+                    return startAdmittedRemoteHostSystemTask(admission, buildRelayAccessStatusSystemTaskSpec({ target: relay.target }));
+                }
                 if (request.actionId === 'remote_hosts.relay.configure') {
                     const relay = resolveRemoteHostRelayAccess({ config: config.value, homeTarget: await account.resolveHomeTarget() });
                     if (relay.status !== 'relay_ready') throw new RemoteHostOperationError(relay.reason);

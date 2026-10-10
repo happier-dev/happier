@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useLocalSearchParams, useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -14,7 +14,6 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { RelayAccessControlSection } from '@/components/settings/server/relayAccess/RelayAccessControlSection';
-import { Modal } from '@/modal';
 import { t } from '@/text';
 import { useUnsavedDraftNavigationGuard } from '@/utils/navigation/useUnsavedDraftNavigationGuard';
 import type { RemoteHost } from '@/sync/domains/remoteHosts/remoteHostModel';
@@ -38,6 +37,7 @@ const DESTRUCTIVE_ACTION_IDS = new Set(['personalHome.erase']);
 export const RemoteHostPage = React.memo(function RemoteHostPage(props: Readonly<{ hostId: string | null }>) {
     const collection = useRemoteHostsCollection();
     const host = props.hostId ? collection.hosts.find((entry) => entry.id === props.hostId) ?? null : null;
+    if (props.hostId && !host && !collection.catalogComplete) return null;
     if (props.hostId && !host) {
         return (
             <ItemList>
@@ -51,7 +51,7 @@ export const RemoteHostPage = React.memo(function RemoteHostPage(props: Readonly
         );
     }
     // One editor per host: a different host (or the draft) starts from its own saved values.
-    return <RemoteHostEditorPage key={host?.id ?? 'new'} host={host} />;
+    return <RemoteHostEditorPage key={JSON.stringify([collection.scope?.serverId, collection.scope?.accountId, host?.id ?? 'new'])} host={host} />;
 });
 
 const RemoteHostEditorPage = React.memo(function RemoteHostEditorPage(props: Readonly<{ host: RemoteHost | null }>) {
@@ -60,6 +60,7 @@ const RemoteHostEditorPage = React.memo(function RemoteHostEditorPage(props: Rea
     const navigation = useNavigation();
     const collection = useRemoteHostsCollection();
     const host = props.host;
+    const params = useLocalSearchParams<{ remoteHostIntent?: string; expectedRevision?: string }>();
     const isNew = host === null;
     const localOverrides = React.useMemo(() => (host ? getRemoteHostLocalOverrides(host.id) : null), [host]);
     const editor = useRemoteHostEditor({
@@ -82,14 +83,21 @@ const RemoteHostEditorPage = React.memo(function RemoteHostEditorPage(props: Rea
         router.replace(pendingHref as never);
     }, [pendingHref, router]);
 
-    const save = React.useCallback((): boolean => {
+    const [saving, setSaving] = React.useState(false);
+    const save = React.useCallback(async (): Promise<boolean> => {
+        if (saving) return false;
         const payload = editor.buildSavePayload();
         if (!payload) return false;
-        collection.saveHost(payload);
-        editor.markSaved();
-        if (isNew) setPendingHref(remoteHostHref(payload.remoteHost.id));
-        return true;
-    }, [collection, editor, isNew]);
+        setSaving(true);
+        try {
+            const receipt = await collection.saveHost({ ...payload, accountDirty: editor.accountDirty });
+            if (!receipt.ok || receipt.localOverrides === 'retired') return false;
+            const localOverridesSaved = receipt.localOverrides === 'saved';
+            editor.markSaved({ localOverridesSaved, remoteHost: receipt.host });
+            if (isNew && localOverridesSaved) setPendingHref(remoteHostHref(payload.remoteHost.id));
+            return localOverridesSaved;
+        } finally { setSaving(false); }
+    }, [collection, editor, isNew, saving]);
     const leave = React.useCallback(() => setPendingHref(REMOTE_HOSTS_ROOT), []);
     useUnsavedDraftNavigationGuard({
         navigation,
@@ -102,13 +110,7 @@ const RemoteHostEditorPage = React.memo(function RemoteHostEditorPage(props: Rea
 
     const remove = React.useCallback(async () => {
         if (!host) return;
-        const confirmed = await Modal.confirm(
-            t('common.remove'),
-            host.name,
-            { destructive: true, confirmText: t('common.remove'), cancelText: t('common.cancel') },
-        );
-        if (!confirmed) return;
-        collection.deleteHost(host.id);
+        if (!await collection.deleteHost(host.id)) return;
         editor.discard();
         leave();
     }, [collection, editor, host, leave]);
@@ -125,6 +127,12 @@ const RemoteHostEditorPage = React.memo(function RemoteHostEditorPage(props: Rea
     const maintenanceActions = actions.filter((action) => !USE_ACTION_IDS.has(action.id) && !DESTRUCTIVE_ACTION_IDS.has(action.id));
     const eraseAction = actions.find((action) => action.id === 'personalHome.erase');
     const relayAccessSelection = collection.remoteHostOutcomeActions.relayAccessSelection;
+    React.useEffect(() => {
+        if (host && params.remoteHostIntent === 'relay' && collection.catalogComplete
+            && String(collection.catalogRevision ?? '') === params.expectedRevision) {
+            collection.remoteHostOutcomeActions.selectRelayAccess(host);
+        }
+    }, [host, params.remoteHostIntent, params.expectedRevision, collection.catalogComplete, collection.catalogRevision, collection.remoteHostOutcomeActions.selectRelayAccess]);
     const hostTunnels = host ? collection.activeRemoteHostSshTunnels.filter((tunnel) => tunnel.remoteHostId === host.id) : [];
 
     return (
@@ -140,15 +148,14 @@ const RemoteHostEditorPage = React.memo(function RemoteHostEditorPage(props: Rea
                         <Icon name="desktop" size={22} color={theme.colors.text.secondary} />
                     </PageHeaderMarkSlot>
                 )}
+                primaryAction={{
+                    testID: 'settings.remoteHosts.host.save',
+                    title: t('common.save'),
+                    disabled: saving || !collection.canMutate || !editor.valid || (!editor.dirty && !isNew),
+                    onPress: () => { void save(); },
+                }}
                 actions={(
                     <View style={styles.headerActions}>
-                        <RoundButton
-                            testID="settings.remoteHosts.host.save"
-                            size="small"
-                            title={t('common.save')}
-                            disabled={!editor.valid || (!editor.dirty && !isNew)}
-                            onPress={() => { save(); }}
-                        />
                         <PageHeaderMenu testID="settings.remoteHosts.host.menu" actions={menuActions} />
                     </View>
                 )}
@@ -176,8 +183,11 @@ const RemoteHostEditorPage = React.memo(function RemoteHostEditorPage(props: Rea
                         />
                     </ItemGroup>
                     <RelayAccessControlSection
+                        remoteHost={{ scope: relayAccessSelection.scope, hostId: relayAccessSelection.host.id,
+                            expectedRevision: relayAccessSelection.revision }}
                         target={relayAccessSelection.target}
                         upstreamUrl={relayAccessSelection.upstreamUrl}
+                        runWithTarget={collection.remoteHostOutcomeActions.runRelayAccessTask}
                         runner={collection.runner}
                         accessChannels={collection.accessChannels}
                         accessEndpointRemediationActions={collection.accessEndpointProjection.remediationActions}

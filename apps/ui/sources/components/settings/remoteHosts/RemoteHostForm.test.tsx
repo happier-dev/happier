@@ -3,9 +3,10 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
-import { flushHookEffects, renderScreen } from '@/dev/testkit';
+import { flushHookEffects, renderScreen, renderHook } from '@/dev/testkit';
 import type { SystemTaskRunState, SystemTaskRunner } from '@/components/systemTasks/types';
 import type { SystemTaskEvent, SystemTaskResult, SystemTaskSpec } from '@happier-dev/protocol';
+import type { RemoteHost } from '@/sync/domains/remoteHosts/remoteHostModel';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -32,22 +33,6 @@ vi.mock('@/text', async () => {
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
-
-vi.mock('@happier-dev/protocol', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@happier-dev/protocol')>();
-    return {
-        ...actual,
-    buildSshTarget: ({ username, host }: { username: string; host: string }) =>
-        (username ? `${username}@${host}` : host),
-    parseSshTarget: (value: string) => {
-        const text = String(value ?? '').trim();
-        const atIndex = text.lastIndexOf('@');
-        return atIndex > 0
-            ? { username: text.slice(0, atIndex), host: text.slice(atIndex + 1) }
-            : { username: '', host: text };
-    },
-    };
-});
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
@@ -77,12 +62,6 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
 
 vi.mock('@/components/ui/lists/SelectableRow', () => ({
     SelectableRow: (props: Record<string, unknown>) => React.createElement('SelectableRow', props),
-}));
-
-vi.mock('@/sync/sync', () => ({
-    sync: {
-        encryptSecretValue: () => ({ _isSecretValue: true, value: 'enc' }),
-    },
 }));
 
 function createDiscoveryRunner(): SystemTaskRunner {
@@ -163,6 +142,51 @@ async function renderEditor(runner: SystemTaskRunner) {
 }
 
 describe('RemoteHostEditorSections', () => {
+    it('keeps the exact unsaved host identity across manual retry while a new editor owns a different identity', async () => {
+        const { useRemoteHostEditor } = await import('./RemoteHostForm');
+        const first = await renderHook(({ host }: { host: RemoteHost | null }) => useRemoteHostEditor({ remoteHost: host,
+            localOverrides: null, secretMaterialAllowed: false }), { initialProps: { host: null } });
+        await act(async () => first.getCurrent().setState(current => ({ ...current, name: 'Retry host',
+            sshDraft: { ...current.sshDraft, username: 'root', host: 'example.test' } })));
+        const firstSubmission = first.getCurrent().buildSavePayload();
+        expect(firstSubmission).not.toBeNull();
+        if (!firstSubmission) throw new Error('Expected a ready draft');
+        await act(async () => first.getCurrent().setState(current => ({ ...current, name: 'Edited before manual retry' })));
+        expect(first.getCurrent().buildSavePayload()?.remoteHost.id).toBe(firstSubmission?.remoteHost.id);
+        const second = await renderHook(() => useRemoteHostEditor({ remoteHost: null, localOverrides: null, secretMaterialAllowed: false }));
+        await act(async () => second.getCurrent().setState(current => ({ ...current, name: 'Different draft',
+            sshDraft: { ...current.sshDraft, username: 'root', host: 'example.test' } })));
+        expect(second.getCurrent().buildSavePayload()?.remoteHost.id).not.toBe(firstSubmission?.remoteHost.id);
+        await first.rerender({ host: { ...firstSubmission.remoteHost, id: 'persisted-host' } });
+        expect(first.getCurrent().buildSavePayload()?.remoteHost.id).toBe('persisted-host');
+        await first.rerender({ host: null });
+        expect(first.getCurrent().buildSavePayload()?.remoteHost.id).not.toBe(firstSubmission.remoteHost.id);
+    });
+
+    it('keeps newly typed credentials out of the durable host and passes them separately to the atomic save owner', async () => {
+        const { useRemoteHostEditor } = await import('./RemoteHostForm');
+        const hook = await renderHook(() => useRemoteHostEditor({ remoteHost: null, localOverrides: null, secretMaterialAllowed: true }));
+        await act(async () => hook.getCurrent().setState(current => ({ ...current, name: 'Saved host', savePassword: true,
+            sshDraft: { ...current.sshDraft, username: 'root', host: 'example.test', authMode: 'password', password: 'private-password' } })));
+        const payload = hook.getCurrent().buildSavePayload();
+        expect(payload).toMatchObject({ credentialChanges: { password: { kind: 'new', value: 'private-password' } } });
+        expect(payload?.remoteHost.ssh).not.toHaveProperty('passwordEnc');
+        expect(JSON.stringify(payload?.remoteHost)).not.toContain('private-password');
+    });
+
+    it('retains captured references while credentials are unavailable and emits clear only for an explicit credential edit', async () => {
+        const { useRemoteHostEditor } = await import('./RemoteHostForm');
+        const remoteHost = { id: 'host-a', name: 'Host', ssh: { target: 'root@example.test', authMode: 'password' as const,
+            passwordSecretRef: 'happier:shared-secret:v1:ssh-password' }, createdAt: 1, updatedAt: 1, lastUsedAt: null };
+        const hook = await renderHook(({ allowed }: { allowed: boolean }) => useRemoteHostEditor({ remoteHost, localOverrides: null,
+            secretMaterialAllowed: allowed }), { initialProps: { allowed: false } });
+        expect(hook.getCurrent().buildSavePayload()).toMatchObject({ remoteHost: { ssh: { passwordSecretRef: remoteHost.ssh.passwordSecretRef } } });
+        expect(hook.getCurrent().buildSavePayload()).not.toHaveProperty('credentialChanges');
+        await hook.rerender({ allowed: true });
+        await act(async () => hook.getCurrent().setState(current => ({ ...current, savePassword: false })));
+        expect(hook.getCurrent().buildSavePayload()).toMatchObject({ credentialChanges: { password: { kind: 'clear' } } });
+    });
+
     it('prefills SSH credential fields from a configured-host suggestion as an unsaved change', async () => {
         const { screen, editorSpy } = await renderEditor(createDiscoveryRunner());
 

@@ -4,22 +4,26 @@ import { Platform } from 'react-native';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { t, tLoose } from '@/text';
 import { Modal } from '@/modal';
-import { useSettingMutable } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
-import { sync } from '@/sync/sync';
-import {
-    readRemoteHosts,
-    removeRemoteHost,
-    upsertRemoteHost,
-    type RemoteHost,
-} from '@/sync/domains/remoteHosts/remoteHostModel';
+import type { RemoteHost } from '@/sync/domains/remoteHosts/remoteHostModel';
+import type { RemoteHostActionIdV1 } from '@happier-dev/protocol/remoteHosts/remoteHostActionIdsV1';
+import type { RemoteHostActionInputByIdV1 } from '@happier-dev/protocol/remoteHosts/remoteHostActionsV1';
+import { useRemoteHostCatalogSnapshot } from '@/sync/store/settings/remoteHostCatalogSnapshot';
+import { invalidateRemoteHostCatalogProjection } from '@/sync/engine/settings/remoteHostCatalogEngine';
+import { withProfileAccount } from '@/sync/api/account/apiProfileCatalog';
+import { prepareRemoteHostSaveInContext, readRemoteHostCatalogInContext,
+    type RemoteHostCredentialChanges } from '@/sync/api/account/apiRemoteHostCatalog';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
+import { REMOTE_HOST_MAINTENANCE_ACTION_IDS } from '@/sync/ops/remoteHosts/remoteHostOperations';
+import type { createDefaultActionExecutor, UiActionExecutorContext } from '@/sync/ops/actions/defaultActionExecutor';
 import {
     deleteRemoteHostLocalOverrides,
     getRemoteHostLocalOverrides,
     upsertRemoteHostLocalOverrides,
     type RemoteHostLocalOverrides,
 } from '@/sync/domains/remoteHosts/remoteHostLocalOverrides';
-import { resolveRemoteHostEffectiveSshConfig } from '@/sync/domains/remoteHosts/resolveRemoteHostEffectiveSshConfig';
 import { getDefaultSystemTaskRunner } from '@/components/systemTasks';
 import { useSystemTaskSnapshot } from '@/components/systemTasks/useSystemTaskSnapshot';
 import { readLatestSystemTaskPrompt } from '@/components/systemTasks/prompts/readLatestSystemTaskPrompt';
@@ -31,12 +35,12 @@ import { createDefaultNativeSshBridgeInterruptionStore } from '@/components/syst
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import { resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
-import { buildRemoteSshManageHostSystemTaskSpec } from '@/components/systemTasks/specs/remoteSsh/buildRemoteSshManageHostSystemTaskSpec';
 import { buildAccessChannelProjection } from '@/sync/domains/accessEndpoints/channels/buildProjection';
 import { buildAccessEndpointProjection } from '@/sync/domains/accessEndpoints/buildProjection';
 import { getNativeSshTunnelRuntime } from '@/sync/runtime/nativeSshTunnels/runtime';
 import type { NativeSshTunnelSnapshot } from '@/sync/runtime/nativeSshTunnels/types';
-import { resolvePreferredPublicReleaseRingLabelForCurrentApp } from '@/sync/runtime/resolvePublicReleaseRing';
+import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { router } from 'expo-router';
 
 import { useRemoteHostOutcomeActions } from '../useRemoteHostOutcomeActions';
 import { useRemoteHostSshTunnelControl } from '../useRemoteHostSshTunnelControl';
@@ -60,10 +64,10 @@ function hasNativeUsableSshCredentialMaterial(
         return false;
     }
     if (host.ssh.authMode === 'password') {
-        return Boolean(host.ssh.passwordEnc);
+        return Boolean(host.ssh.passwordSecretRef);
     }
     if (host.ssh.authMode === 'keyfile') {
-        return Boolean(host.ssh.identityPrivateKeyEnc);
+        return Boolean(host.ssh.identityPrivateKeySecretRef);
     }
     return false;
 }
@@ -169,10 +173,37 @@ export function useRemoteHostsGates() {
  * task started from one host keeps reporting while another page is open.
  */
 export type RemoteHostsGates = ReturnType<typeof useRemoteHostsGates>;
+export type RemoteHostSaveReceipt = Readonly<{ ok: false }>
+    | Readonly<{ ok: true; revision: number; host: RemoteHost; localOverrides: 'saved' | 'pending' | 'retired' }>;
 
 export function useRemoteHostsCollectionController(gates: RemoteHostsGates) {
-    const [remoteHostsRaw, setRemoteHosts] = useSettingMutable('remoteHostsV1');
-    const remoteHosts = React.useMemo(() => readRemoteHosts(remoteHostsRaw), [remoteHostsRaw]);
+    const scope = useActiveServerAccountScope();
+    const tunnelExecution = useMountedActionExecution(scope, { onApprovalPending: registration => {
+        if (registration.scope) router.push(`/inbox/approvals/${encodeURIComponent(registration.artifactId)}?serverId=${encodeURIComponent(registration.scope.serverId)}`);
+    } });
+    const snapshot = useRemoteHostCatalogSnapshot(scope);
+    const remoteHosts = snapshot?.data ?? [];
+    const catalog = snapshot?.catalog;
+    const catalogRevision = catalog?.status === 'ready' || catalog?.status === 'partial' ? catalog.revision : null;
+    const catalogComplete = catalog?.status === 'ready' && snapshot?.stale === false;
+    const canMutate = Boolean(scope && catalogComplete);
+    const actionExecutor = React.useRef<Promise<ReturnType<typeof createDefaultActionExecutor>> | null>(null);
+    const executeAction = React.useCallback(async <T extends RemoteHostActionIdV1,>(actionId: T,
+        input: RemoteHostActionInputByIdV1[T], presentation?: Pick<UiActionExecutorContext, 'openRoute'>) => {
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!scope || !lifetime || !areServerAccountScopesEqual(scope, lifetime.scope)) return null;
+        actionExecutor.current ??= import('@/sync/ops/actions/defaultActionExecutor').then(owner => owner.createDefaultActionExecutor());
+        const executor = await actionExecutor.current;
+        if (!lifetime.isCurrent()) return null;
+        const result = await executor.execute(actionId, input, { surface: 'ui', authority: 'present_user',
+            serverId: scope.serverId, expectedAccountId: scope.accountId, ...presentation });
+        if (!result.ok) Modal.alert(t('common.error'), result.error);
+        else if (result.result && typeof result.result === 'object' && 'status' in result.result
+            && (result.result.status === 'unavailable' || result.result.status === 'conflict' || result.result.status === 'outcome_unknown')) {
+            Modal.alert(t('common.error'), t('errors.operationFailed'));
+        }
+        return result;
+    }, [scope]);
     const hosts = React.useMemo(() => sortByLastUsedDesc(remoteHosts), [remoteHosts]);
 
     const runner = gates.runner;
@@ -216,7 +247,8 @@ export function useRemoteHostsCollectionController(gates: RemoteHostsGates) {
     const remoteHostOutcomeActions = useRemoteHostOutcomeActions({
         runner,
         remoteHosts: remoteHosts,
-        remoteHostsRaw: remoteHostsRaw,
+        scope,
+        catalogRevision,
         secretMaterialAllowed: gates.secretMaterialAllowed,
         onSshTunnelEnsured: () => {
             void sshTunnelControl.refreshTunnels();
@@ -292,7 +324,11 @@ export function useRemoteHostsCollectionController(gates: RemoteHostsGates) {
         if (leaseId && runner.mode === 'native') {
             void (async () => {
                 try {
-                    await getNativeSshTunnelRuntime().releaseTunnel(leaseId);
+                    const result = await tunnelExecution.execute('remote_hosts.tunnel.stop', { target: { kind: 'native', leaseId } });
+                    if (!result.ok) throw new Error(result.errorCode);
+                    if (result.result && typeof result.result === 'object' && 'status' in result.result && result.result.status !== 'released') {
+                        throw new Error('reason' in result.result ? String(result.result.reason) : String(result.result.status));
+                    }
                 } catch (error) {
                     const message = error instanceof Error ? error.message : String(error ?? '');
                     Modal.alert(t('common.error'), message || t('settings.remoteHostsConnectFromThisDeviceFailed'));
@@ -304,66 +340,111 @@ export function useRemoteHostsCollectionController(gates: RemoteHostsGates) {
         if (tunnelKey) {
             void sshTunnelControl.stopTunnel(tunnelKey);
         }
-    }, [runner.mode, sshTunnelControl]);
+    }, [runner.mode, sshTunnelControl, tunnelExecution.execute]);
 
     const startManageHostAction = React.useCallback(async (
         remoteHost: RemoteHost,
-        action: Parameters<typeof buildRemoteSshManageHostSystemTaskSpec>[0]['action'],
+        action: keyof typeof REMOTE_HOST_MAINTENANCE_ACTION_IDS,
         title: string,
     ) => {
         try {
-            const localOverrides = getRemoteHostLocalOverrides(remoteHost.id);
-            const resolved = await resolveRemoteHostEffectiveSshConfig({
-                remoteHost,
-                localOverrides,
-                secretMaterialAllowed: gates.secretMaterialAllowed,
-                decryptSecretValue: (input) => sync.decryptSecretValue(input),
-            });
-            if (!resolved.ok) {
-                Modal.alert(t('common.error'), resolved.error.message);
-                return;
+            if (!canMutate || catalogRevision === null) return;
+            const result = await executeAction(REMOTE_HOST_MAINTENANCE_ACTION_IDS[action],
+                { hostId: remoteHost.id, expectedRevision: catalogRevision });
+            if (result?.ok && result.result && typeof result.result === 'object'
+                && 'status' in result.result && result.result.status === 'task_started'
+                && 'taskId' in result.result && typeof result.result.taskId === 'string') {
+                setActiveTaskId(result.result.taskId);
+                setActiveTaskTitle(title);
+                setActiveTaskAction(action);
             }
-
-            const spec = buildRemoteSshManageHostSystemTaskSpec({
-                action,
-                channel: resolvePreferredPublicReleaseRingLabelForCurrentApp(),
-                sshTarget: resolved.value.sshTarget,
-                sshPort: resolved.value.sshPort ? String(resolved.value.sshPort) : '',
-                sshAuth: resolved.value.sshAuth,
-                identityFilePath: resolved.value.identityFilePath,
-                identityPrivateKey: resolved.value.identityPrivateKey,
-                sshConfigFilePath: resolved.value.sshConfigFilePath,
-                sshPassword: resolved.value.password,
-                knownHostsMode: 'app',
-                serviceMode: 'user',
-                relayRuntime: {
-                    channel: resolvePreferredPublicReleaseRingLabelForCurrentApp(),
-                    mode: 'user',
-                },
-            });
-            const taskId = await runner.start(spec);
-            setActiveTaskId(taskId);
-            setActiveTaskTitle(title);
-            setActiveTaskAction(action);
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error ?? '');
             Modal.alert(t('common.error'), message || t('settings.remoteHostsConnectionFailed'));
         }
-    }, [gates.secretMaterialAllowed, runner]);
+    }, [canMutate, catalogRevision, executeAction]);
 
 
-    const saveHost = React.useCallback((input: Readonly<{ remoteHost: RemoteHost; localOverrides: RemoteHostLocalOverrides | null }>) => {
-        setRemoteHosts(upsertRemoteHost(remoteHostsRaw, input.remoteHost));
-        upsertRemoteHostLocalOverrides(input.remoteHost.id, input.localOverrides);
-    }, [remoteHostsRaw, setRemoteHosts]);
+    const saveHost = React.useCallback(async (input: Readonly<{ remoteHost: RemoteHost;
+        localOverrides: RemoteHostLocalOverrides | null; credentialChanges?: RemoteHostCredentialChanges;
+        accountDirty?: boolean }>): Promise<RemoteHostSaveReceipt> => {
+        if (!scope || !canMutate || catalogRevision === null) return { ok: false };
+        try {
+            return await withProfileAccount<RemoteHostSaveReceipt>(scope, undefined, async account => {
+                if (input.accountDirty === false) {
+                    // Only an acknowledged existing row can continue a device-local
+                    // save. A new draft or withdrawn catalog still needs Account admission.
+                    const current = await readRemoteHostCatalogInContext(account);
+                    account.assertCurrent();
+                    const host = current.status === 'ready' ? current.hosts.find(host => host.id === input.remoteHost.id) : undefined;
+                    if (current.status !== 'ready'
+                        || current.revision !== catalogRevision || typeof current.revision !== 'number'
+                        || !host
+                        || input.credentialChanges && Object.keys(input.credentialChanges).length > 0) return { ok: false };
+                    try {
+                        upsertRemoteHostLocalOverrides(input.remoteHost.id, input.localOverrides);
+                        return { ok: true, revision: current.revision, host, localOverrides: 'saved' };
+                    } catch (error) {
+                        if (!account.accountLifetime.isCurrent()) return { ok: true, revision: current.revision, host, localOverrides: 'retired' };
+                        Modal.alert(t('common.error'), error instanceof Error ? error.message : t('errors.operationFailed'));
+                        return { ok: true, revision: current.revision, host, localOverrides: 'pending' };
+                    }
+                }
+                const prepared = await prepareRemoteHostSaveInContext(account, { host: input.remoteHost,
+                    expectedRevision: catalogRevision, credentialChanges: input.credentialChanges });
+                try {
+                    account.assertCurrent();
+                    const result = await executeAction('remote_hosts.save', prepared.input);
+                    if (!result?.ok || !result.result || typeof result.result !== 'object'
+                        || !('status' in result.result) || result.result.status !== 'updated'
+                        || !('revision' in result.result) || typeof result.result.revision !== 'number') return { ok: false };
+                    // A durable acknowledgement belongs to the original Account; local
+                    // overrides and editor projection must not follow a retired Account.
+                    const revision = result.result.revision;
+                    const host = prepared.input.host;
+                    try {
+                        account.assertCurrent();
+                        await invalidateRemoteHostCatalogProjection(scope);
+                        account.assertCurrent();
+                        upsertRemoteHostLocalOverrides(input.remoteHost.id, input.localOverrides);
+                        return { ok: true, revision, host, localOverrides: 'saved' };
+                    } catch (error) {
+                        if (!account.accountLifetime.isCurrent()) return { ok: true, revision, host, localOverrides: 'retired' };
+                        Modal.alert(t('common.error'), error instanceof Error ? error.message : t('errors.operationFailed'));
+                        return { ok: true, revision, host, localOverrides: 'pending' };
+                    }
+                } finally { prepared.dispose(); }
+            });
+        } catch (error) {
+            Modal.alert(t('common.error'), error instanceof Error ? error.message : t('errors.operationFailed'));
+            return { ok: false };
+        }
+    }, [scope, canMutate, catalogRevision, executeAction]);
 
-    const deleteHost = React.useCallback((remoteHostId: string) => {
-        setRemoteHosts(removeRemoteHost(remoteHostsRaw, remoteHostId));
-        deleteRemoteHostLocalOverrides(remoteHostId);
-    }, [remoteHostsRaw, setRemoteHosts]);
+    const deleteHost = React.useCallback(async (remoteHostId: string): Promise<boolean> => {
+        if (!scope || !canMutate || catalogRevision === null) return false;
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime || !areServerAccountScopesEqual(scope, lifetime.scope)) return false;
+        const result = await executeAction('remote_hosts.delete', { hostId: remoteHostId, expectedRevision: catalogRevision });
+        if (!result?.ok || !result.result || typeof result.result !== 'object'
+            || !('status' in result.result) || result.result.status !== 'updated' || !lifetime.isCurrent()) return false;
+        await invalidateRemoteHostCatalogProjection(scope);
+        if (!lifetime.isCurrent()) return false;
+        try { deleteRemoteHostLocalOverrides(remoteHostId); }
+        catch (error) { Modal.alert(t('common.error'), error instanceof Error ? error.message : t('errors.operationFailed')); }
+        return true;
+    }, [scope, canMutate, catalogRevision, executeAction]);
+
+    const openHost = React.useCallback(async (hostId: string | null, openRoute: NonNullable<UiActionExecutorContext['openRoute']>) => {
+        if (!canMutate) return null;
+        if (hostId === null) return executeAction('remote_hosts.add', {}, { openRoute });
+        if (!canMutate || catalogRevision === null) return null;
+        return executeAction('remote_hosts.edit', { hostId, expectedRevision: catalogRevision }, { openRoute });
+    }, [canMutate, catalogRevision, executeAction]);
 
     /** Every operation this device can run on a saved host, in the order the host's page offers them. */
     const buildHostActions = React.useCallback((host: RemoteHost): ItemAction[] => {
+        if (!canMutate) return [];
         const canConnectFromThisDevice = connectableRemoteHostIds.has(host.id);
         const canSetupAsMachine = canRunRemoteHostBootstrapTasks
             && (canRunRemoteHostMaintenanceTasks || nativeBootstrapCapableRemoteHostIds.has(host.id));
@@ -400,7 +481,7 @@ export function useRemoteHostsCollectionController(gates: RemoteHostsGates) {
                 subtitle: t('settings.remoteHostsConfigureAccessSubtitle'),
                 icon: 'graph',
                 onPress: () => {
-                    void remoteHostOutcomeActions.openRelayAccess(host);
+                    void remoteHostOutcomeActions.configureRelayAccess(host);
                 },
             },
             ...(canRunRemoteHostMaintenanceTasks ? [{
@@ -483,6 +564,7 @@ export function useRemoteHostsCollectionController(gates: RemoteHostsGates) {
             }] satisfies ItemAction[] : []),
         ];
     }, [
+        canMutate,
         canRunRemoteHostBootstrapTasks,
         canRunRemoteHostMaintenanceTasks,
         connectableRemoteHostIds,
@@ -509,6 +591,12 @@ export function useRemoteHostsCollectionController(gates: RemoteHostsGates) {
         ...gates,
         hosts,
         remoteHosts,
+        scope,
+        catalogRevision,
+        catalogStatus: catalog?.status ?? 'loading',
+        catalogComplete,
+        canMutate,
+        openHost,
         hostNameById,
         buildHostActions,
         saveHost,

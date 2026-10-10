@@ -6,7 +6,6 @@ import { Item } from '@/components/ui/lists/Item';
 import { Switch } from '@/components/ui/forms/Switch';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { t } from '@/text';
-import { sync } from '@/sync/sync';
 import { randomUUID } from '@/platform/randomUUID';
 import { parseSshTarget, buildSshTarget } from '@happier-dev/protocol/ssh/sshTarget';
 
@@ -55,60 +54,74 @@ function initialDraftState(remoteHost: RemoteHost | null, overrides: RemoteHostL
         name: remoteHost?.name ?? '',
         sshDraft: toSshDraft(remoteHost, overrides),
         sshConfigFilePath: overrides?.sshConfigFilePath ?? '',
-        savePassword: Boolean(remoteHost?.ssh.passwordEnc),
-        savePrivateKeyMaterial: Boolean(remoteHost?.ssh.identityPrivateKeyEnc),
+        savePassword: Boolean(remoteHost?.ssh.passwordSecretRef),
+        savePrivateKeyMaterial: Boolean(remoteHost?.ssh.identityPrivateKeySecretRef),
         privateKeyMaterialDraft: '',
     };
 }
 
-export type RemoteHostSavePayload = Readonly<{ remoteHost: RemoteHost; localOverrides: RemoteHostLocalOverrides | null }>;
+export type RemoteHostCredentialChange = Readonly<{ kind: 'new'; value: string }> | Readonly<{ kind: 'clear' }>;
+export type RemoteHostCredentialChanges = Readonly<{
+    password?: RemoteHostCredentialChange;
+    identityPrivateKey?: RemoteHostCredentialChange;
+}>;
+export type RemoteHostSavePayload = Readonly<{ remoteHost: RemoteHost; localOverrides: RemoteHostLocalOverrides | null;
+    credentialChanges?: RemoteHostCredentialChanges }>;
 
 /**
  * The one editor of a remote host, for a new host (draft) and a saved one: its name, how to reach it
  * over SSH, and which secrets this Account stores for it. The host's page renders its sections and
- * owns Save; secrets typed here are encrypted only when saved.
+ * owns Save; secrets typed here reach only the atomic credential/reference save.
  */
 export function useRemoteHostEditor(props: Readonly<{
     remoteHost: RemoteHost | null;
     localOverrides: RemoteHostLocalOverrides | null;
     secretMaterialAllowed: boolean;
 }>) {
-    const existing = props.remoteHost;
-    const [state, setState] = React.useState<RemoteHostDraftState>(() => initialDraftState(existing, props.localOverrides));
-    const [baseline, setBaseline] = React.useState<RemoteHostDraftState>(() => initialDraftState(existing, props.localOverrides));
-    const dirty = JSON.stringify(state) !== JSON.stringify(baseline);
+    const [state, setState] = React.useState<RemoteHostDraftState>(() => initialDraftState(props.remoteHost, props.localOverrides));
+    const [baseline, setBaseline] = React.useState(() => ({ draft: state, remoteHost: props.remoteHost }));
+    const existing = props.remoteHost ?? baseline.remoteHost;
+    const draftIdentityRef = React.useRef<{ existingId: string | null; id: string | null }>({ existingId: existing?.id ?? null, id: null });
+    if (draftIdentityRef.current.existingId !== (existing?.id ?? null)) {
+        draftIdentityRef.current = { existingId: existing?.id ?? null, id: null };
+    }
+    const draftIdentity = draftIdentityRef.current;
+    const accountDraft = (draft: RemoteHostDraftState) => ({ ...draft, sshConfigFilePath: '',
+        sshDraft: { ...draft.sshDraft, identityFilePath: '' } });
+    const accountDirty = JSON.stringify(accountDraft(state)) !== JSON.stringify(accountDraft(baseline.draft));
+    const localDirty = state.sshConfigFilePath !== baseline.draft.sshConfigFilePath
+        || state.sshDraft.identityFilePath !== baseline.draft.sshDraft.identityFilePath;
+    const dirty = accountDirty || localDirty;
     const valid = state.name.trim().length > 0 && isSshCredentialsDraftReady(state.sshDraft);
 
     const buildSavePayload = React.useCallback((): RemoteHostSavePayload | null => {
         const trimmedName = state.name.trim();
         if (!trimmedName || !valid) return null;
         const effectiveSecretMaterialAllowed = props.secretMaterialAllowed === true;
-        const existingPasswordEnc = existing?.ssh.passwordEnc ?? null;
-        const existingIdentityPrivateKeyEnc = existing?.ssh.identityPrivateKeyEnc ?? null;
+        const existingPasswordRef = existing?.ssh.passwordSecretRef ?? null;
+        const existingIdentityPrivateKeyRef = existing?.ssh.identityPrivateKeySecretRef ?? null;
         const sshAuthMode = normalizeRemoteHostAuthMode(state.sshDraft.authMode);
         const target = buildSshTarget({ username: state.sshDraft.username.trim(), host: state.sshDraft.host.trim() });
         const passwordRaw = String(state.sshDraft.password ?? '').trim();
         const privateKeyRaw = String(state.privateKeyMaterialDraft ?? '').trim();
-        const passwordEnc = effectiveSecretMaterialAllowed && state.savePassword
-            ? (passwordRaw ? sync.encryptSecretValue(passwordRaw) : existingPasswordEnc)
-            : null;
-        const identityPrivateKeyEnc = effectiveSecretMaterialAllowed && state.savePrivateKeyMaterial && sshAuthMode === 'keyfile'
-            ? (privateKeyRaw ? sync.encryptSecretValue(privateKeyRaw) : existingIdentityPrivateKeyEnc)
-            : null;
+        const credentialChanges: RemoteHostCredentialChanges = effectiveSecretMaterialAllowed ? {
+            ...(state.savePassword
+                ? (passwordRaw ? { password: { kind: 'new', value: passwordRaw } as const } : {})
+                : (existingPasswordRef ? { password: { kind: 'clear' } as const } : {})),
+            ...(state.savePrivateKeyMaterial && sshAuthMode === 'keyfile'
+                ? (privateKeyRaw ? { identityPrivateKey: { kind: 'new', value: privateKeyRaw } as const } : {})
+                : (existingIdentityPrivateKeyRef ? { identityPrivateKey: { kind: 'clear' } as const } : {})),
+        } : {};
         const now = Date.now();
         const remoteHost: RemoteHost = {
-            id: existing?.id ?? randomUUID(),
+            id: existing?.id ?? (draftIdentity.id ??= randomUUID()),
             name: trimmedName,
             ssh: {
                 target,
                 port: parseSshPortNumber(state.sshDraft.port),
                 authMode: sshAuthMode,
-                ...(effectiveSecretMaterialAllowed
-                    ? {
-                        ...(passwordEnc ? { passwordEnc } : {}),
-                        ...(identityPrivateKeyEnc ? { identityPrivateKeyEnc } : {}),
-                    }
-                    : {}),
+                passwordSecretRef: existingPasswordRef,
+                identityPrivateKeySecretRef: existingIdentityPrivateKeyRef,
             },
             createdAt: existing?.createdAt ?? now,
             updatedAt: now,
@@ -124,18 +137,35 @@ export function useRemoteHostEditor(props: Readonly<{
                 ...(identityFilePath ? { identityFilePath } : {}),
             }
             : null;
-        return { remoteHost, localOverrides };
-    }, [existing, props.secretMaterialAllowed, state, valid]);
+        return { remoteHost, localOverrides, ...(Object.keys(credentialChanges).length ? { credentialChanges } : {}) };
+    }, [draftIdentity, existing, props.secretMaterialAllowed, state, valid]);
 
-    /** Marks the current draft saved: typed secrets leave state once they are encrypted. */
-    const markSaved = React.useCallback(() => {
-        const next = { ...state, privateKeyMaterialDraft: '', sshDraft: { ...state.sshDraft, password: '' } };
-        setState(next);
-        setBaseline(next);
-    }, [state]);
-    const discard = React.useCallback(() => setState(baseline), [baseline]);
+    /** Marks the acknowledged draft saved and removes transient credential material. */
+    const markSaved = React.useCallback((options: Readonly<{ localOverridesSaved?: boolean; remoteHost?: RemoteHost }> = {}) => {
+        const acknowledged = {
+            ...state,
+            privateKeyMaterialDraft: '',
+            sshConfigFilePath: options.localOverridesSaved === false ? baseline.draft.sshConfigFilePath : state.sshConfigFilePath,
+            sshDraft: {
+                ...state.sshDraft,
+                password: '',
+                identityFilePath: options.localOverridesSaved === false ? baseline.draft.sshDraft.identityFilePath : state.sshDraft.identityFilePath,
+            },
+        };
+        // This callback belongs to the submitted draft. Acknowledging it must
+        // not replace edits made while its HTTP save was pending.
+        setState(current => ({
+            ...current,
+            privateKeyMaterialDraft: current.privateKeyMaterialDraft === state.privateKeyMaterialDraft ? '' : current.privateKeyMaterialDraft,
+            sshDraft: { ...current.sshDraft, password: current.sshDraft.password === state.sshDraft.password ? '' : current.sshDraft.password },
+        }));
+        // The committed host, including its actual SavedSecret references,
+        // belongs to this submitted baseline even while a new page stays open.
+        setBaseline({ draft: acknowledged, remoteHost: options.remoteHost ?? existing });
+    }, [baseline, existing, state]);
+    const discard = React.useCallback(() => setState(baseline.draft), [baseline]);
 
-    return { state, setState, dirty, valid, buildSavePayload, markSaved, discard } as const;
+    return { state, setState, dirty, accountDirty, localDirty, valid, buildSavePayload, markSaved, discard } as const;
 }
 
 export type RemoteHostEditorState = ReturnType<typeof useRemoteHostEditor>;
@@ -166,8 +196,8 @@ export const RemoteHostEditorSections = React.memo(function RemoteHostEditorSect
     }, [setState]);
 
     const showSecretControls = props.secretMaterialAllowed === true;
-    const showStoredPasswordHint = showSecretControls && state.savePassword && existing?.ssh.passwordEnc != null;
-    const showStoredKeyHint = showSecretControls && state.savePrivateKeyMaterial && existing?.ssh.identityPrivateKeyEnc != null;
+    const showStoredPasswordHint = showSecretControls && state.savePassword && existing?.ssh.passwordSecretRef != null;
+    const showStoredKeyHint = showSecretControls && state.savePrivateKeyMaterial && existing?.ssh.identityPrivateKeySecretRef != null;
     const secretMaterialDisabledRow = (
         <Item
             title={t('settings.remoteHostsSecretMaterialDisabledTitle')}

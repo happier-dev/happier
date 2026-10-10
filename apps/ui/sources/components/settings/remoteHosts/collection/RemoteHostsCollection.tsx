@@ -30,9 +30,7 @@ import {
 import { remoteHostDraftTitle } from './remoteHostDraftTitle';
 import {
     REMOTE_HOSTS_ACCESS_ROUTE,
-    REMOTE_HOSTS_NEW_ROUTE,
     readLastVisitedRemoteHostId,
-    remoteHostHref,
     resolveRemoteHostsLandingHref,
     resolveSelectedRemoteHostsEntry,
 } from './remoteHostsRoutes';
@@ -109,6 +107,7 @@ export const RemoteHostsActiveTask = React.memo(function RemoteHostsActiveTask()
  */
 export const AddRemoteHostButton = React.memo(function AddRemoteHostButton(props: Readonly<{ replace: boolean }>) {
     const router = useRouter();
+    const collection = useRemoteHostsCollection();
     return (
         <IconButton
             testID="settings.remoteHosts.add"
@@ -116,7 +115,7 @@ export const AddRemoteHostButton = React.memo(function AddRemoteHostButton(props
             accessibilityLabel={t('settings.remoteHostsAddHost')}
             tooltip={t('settings.remoteHostsAddHost')}
             variant="plain"
-            onPress={() => openHref(router, REMOTE_HOSTS_NEW_ROUTE, props.replace, 'AddRemoteHostButton')}
+            onPress={() => { void collection.openHost(null, href => props.replace ? router.replace(href as never) : router.push(href as never)); }}
         />
     );
 });
@@ -130,7 +129,7 @@ export const RemoteHostsCollectionList = React.memo(function RemoteHostsCollecti
     const { theme } = useUnistyles();
     const router = useRouter();
     const pathname = usePathname();
-    const { hosts } = useRemoteHostsCollection();
+    const { hosts, openHost, catalogComplete } = useRemoteHostsCollection();
     const rail = props.variant === 'rail';
     const selected = rail ? resolveSelectedRemoteHostsEntry(pathname) : null;
     const onDetailRoute = resolveSelectedRemoteHostsEntry(pathname) !== null;
@@ -150,7 +149,7 @@ export const RemoteHostsCollectionList = React.memo(function RemoteHostsCollecti
             density={rail ? 'compact' : undefined}
             showChevron={!rail}
             pressableStyle={rail ? collectionListStyles.row : undefined}
-            onPress={() => openHref(router, remoteHostHref(host.id), rail && onDetailRoute, 'RemoteHostsCollectionList.openHost')}
+            onPress={() => { void openHost(host.id, href => rail && onDetailRoute ? router.replace(href as never) : router.push(href as never)); }}
         />
     ));
     const accessRow = (
@@ -182,7 +181,7 @@ export const RemoteHostsCollectionList = React.memo(function RemoteHostsCollecti
                     <SettingRow
                         testID="settings.remoteHosts.addHost"
                         setting={REMOTE_HOSTS_SETTINGS.settings.addHost}
-                        onPress={() => openHref(router, REMOTE_HOSTS_NEW_ROUTE, false, 'RemoteHostsCollectionList.addHost')}
+                        onPress={() => { void openHost(null, href => router.push(href as never)); }}
                     />
                 </ItemGroup>
                 <ItemGroup>{accessRow}</ItemGroup>
@@ -194,7 +193,7 @@ export const RemoteHostsCollectionList = React.memo(function RemoteHostsCollecti
         <CollectionList
             testID="settings.remoteHosts.rail"
             title={t('settings.remoteHostsTitle')}
-            count={hosts.length}
+            count={catalogComplete ? hosts.length : undefined}
             headerAction={<AddRemoteHostButton replace={onDetailRoute} />}
         >
             {selected?.kind === 'new' ? <RemoteHostDraftRow /> : null}
@@ -248,8 +247,9 @@ export const RemoteHostsSettingsIndex = React.memo(function RemoteHostsSettingsI
 const ADD_HOST_SETTINGS = [REMOTE_HOSTS_SETTINGS.settings.addHost];
 
 const RemoteHostsLanding = React.memo(function RemoteHostsLanding() {
-    const { hosts } = useRemoteHostsCollection();
+    const { hosts, catalogComplete } = useRemoteHostsCollection();
     const addHostRequested = useSettingRevealRequested(ADD_HOST_SETTINGS);
+    if (!catalogComplete) return null;
     const href = resolveRemoteHostsLandingHref(hosts.map((host) => host.id), readLastVisitedRemoteHostId(), { addHostRequested });
     return <Redirect href={href as never} />;
 });

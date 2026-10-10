@@ -2,9 +2,14 @@ import * as React from 'react';
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { act } from 'react-test-renderer';
 
-import type { AccountSettingsDefaults } from '@happier-dev/protocol';
-import { renderScreen, flushHookEffects, standardCleanup } from '@/dev/testkit';
+import { RemoteHostCatalogRowMutationV1Schema, type RemoteHostRecordV1 } from '@happier-dev/protocol/remoteHosts/remoteHostRecordV1';
+import { SavedSecretResourceMaterialV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { renderScreen, flushHookEffects, standardCleanup, createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
+import type { RemoteHostsCollectionController } from './collection/remoteHostsCollectionController';
+import type { ItemAction } from '@/components/ui/lists/itemActions';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -13,19 +18,14 @@ const routerSpies = vi.hoisted(() => ({
     replace: vi.fn(),
     back: vi.fn(),
 }));
+const routerState = vi.hoisted(() => ({ params: {} as Record<string, string> }));
 const featureGateState = vi.hoisted(() => ({
     managementEnabled: true,
     secretMaterialEnabled: false,
 }));
 
-vi.mock('@/sync/domains/features/featureBuildPolicy', () => ({
-    getFeatureBuildPolicyDecision: () => 'allow',
-}));
-type RemoteHostsRaw = AccountSettingsDefaults['remoteHostsV1'];
-
 const remoteHostsState = vi.hoisted(() => ({
-    value: [] as RemoteHostsRaw,
-    setValue: vi.fn(),
+    value: [] as RemoteHostRecordV1[],
 }));
 const systemTaskState = vi.hoisted(() => ({
     mode: 'tauri' as 'tauri' | 'native' | 'dev' | 'unavailable',
@@ -135,17 +135,15 @@ const startMock = vi.hoisted(() => vi.fn(async (spec: { kind?: string }) => {
     }
     return taskId;
 }));
+const defaultStartImplementation = startMock.getMockImplementation()!;
 /** The host's operations as the collection owner builds them for its page (see `loadRemoteHostsScreen`). */
-const itemRowActionsSpy = vi.hoisted(() => ({ props: null as any }));
-const collectionSpy = vi.hoisted(() => ({ value: null as any }));
+const itemRowActionsSpy = vi.hoisted(() => ({ props: null as { actions: readonly ItemAction[] } | null }));
+const collectionSpy = vi.hoisted(() => ({ value: null as RemoteHostsCollectionController | null }));
 const modalSpies = vi.hoisted(() => ({
     show: vi.fn(),
     alert: vi.fn(async () => undefined),
     confirm: vi.fn(async () => true),
     prompt: vi.fn(async () => null as string | null),
-}));
-const secretState = vi.hoisted(() => ({
-    decryptedSecretValue: null as string | null,
 }));
 const nativeTunnelState = vi.hoisted(() => ({
     credentialsByRemoteHostId: new Map<string, unknown>(),
@@ -220,15 +218,6 @@ const nativeBootstrapInterruptionState = vi.hoisted(() => ({
         startedAtMs: number;
     }>(),
 }));
-const activeServerState = vi.hoisted(() => ({
-    snapshot: {
-        serverId: 'server-1',
-        serverUrl: 'https://server.example.test',
-        activeShareableServerUrl: 'https://share.example.test',
-        activeShareableServerUrlValidatedAgainstServerUrl: 'https://server.example.test',
-        generation: 1,
-    },
-}));
 
 function setTauriDesktop(enabled: boolean) {
     if (enabled) {
@@ -241,7 +230,7 @@ function setTauriDesktop(enabled: boolean) {
 installSettingsViewCommonModuleMocks({
     router: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-        return createExpoRouterMock({ router: routerSpies }).module;
+        return createExpoRouterMock({ router: routerSpies, params: () => routerState.params }).module;
     },
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -283,59 +272,11 @@ installSettingsViewCommonModuleMocks({
             },
         });
     },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            useSettings: () => ({} as any),
-            useSettingMutable: (key: any) => {
-                if (key === 'remoteHostsV1') {
-                    return [remoteHostsState.value, remoteHostsState.setValue] as any;
-                }
-                return [undefined, vi.fn()] as any;
-            },
-        });
-    },
+    storage: 'real',
 });
 
-vi.mock('@/hooks/server/useEffectiveServerSelection', () => ({
-    useEffectiveServerSelection: () => ({
-        enabled: false,
-        serverIds: [],
-        presentation: 'grouped',
-    }),
-}));
-
-vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({
-    useActiveServerSnapshot: () => activeServerState.snapshot,
-}));
-
-vi.mock('@/sync/domains/features/featureDecisionRuntime', async () => {
-    const actual = await vi.importActual<typeof import('@/sync/domains/features/featureDecisionRuntime')>('@/sync/domains/features/featureDecisionRuntime');
-    const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
-    const features = () => createRootLayoutFeaturesResponse({
-        features: {
-            remoteHosts: {
-                management: { enabled: featureGateState.managementEnabled },
-                secretMaterial: { enabled: featureGateState.secretMaterialEnabled },
-            },
-        },
-    });
-    return {
-        ...actual,
-        useServerFeaturesRuntimeSnapshot: () => ({
-            status: 'ready',
-            features: features(),
-        }),
-        useServerFeaturesMainSelectionSnapshot: () => ({
-            status: 'ready',
-            features: features(),
-        }),
-        useServerFeaturesSnapshotForServerId: () => ({
-            status: 'ready',
-            features: features(),
-        }),
-    };
-});
+const home = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(home);
 
 vi.mock('@/components/systemTasks', () => ({
     getDefaultSystemTaskRunner: () => ({
@@ -352,6 +293,7 @@ vi.mock('@/components/systemTasks', () => ({
         cancel: vi.fn(async () => {}),
         respond: vi.fn(async () => {}),
         subscribe: vi.fn(() => () => {}),
+        getSnapshot: (taskId: string) => systemTaskState.snapshots.get(taskId) ?? null,
     }),
     useSystemTaskSnapshot: (_runner: unknown, taskId: string | null) =>
         (taskId ? systemTaskState.snapshots.get(taskId) ?? { taskId, status: 'running', currentStepId: null, latestMessage: null, awaitingInput: false, cancelRequested: false, events: [], result: null } : null),
@@ -365,13 +307,6 @@ vi.mock('@/components/systemTasks/useSystemTaskSnapshot', () => ({
 
 vi.mock('@/components/systemTasks/SystemTaskProgressCard', () => ({
     SystemTaskProgressCard: (props: Record<string, unknown>) => React.createElement('SystemTaskProgressCard', props),
-}));
-
-vi.mock('@/sync/sync', () => ({
-    sync: {
-        decryptSecretValue: () => secretState.decryptedSecretValue,
-        encryptSecretValue: () => ({ _isSecretValue: true, value: 'enc' }),
-    },
 }));
 
 vi.mock('@/sync/runtime/nativeSshTunnels/runtime', () => ({
@@ -434,19 +369,23 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => ({
     ItemRowActions: (props: any) => React.createElement('ItemRowActions', props),
 }));
 
-	    afterEach(() => {
+	    afterEach(async () => {
+	        await standardCleanup();
+            const { resetRemoteHostCatalogSnapshotsForTests } = await import('@/sync/store/settings/remoteHostCatalogSnapshot');
+            resetRemoteHostCatalogSnapshotsForTests();
+            const { publishAppliedActiveServerRuntimeAvailability } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+            publishAppliedActiveServerRuntimeAvailability(false);
+            await home.reset();
 	    setTauriDesktop(false);
 	    featureGateState.managementEnabled = true;
 	    featureGateState.secretMaterialEnabled = false;
             remoteHostsState.value = [];
-            remoteHostsState.setValue.mockReset();
             systemTaskState.nextTaskNumber = 1;
             systemTaskState.mode = 'tauri';
             systemTaskState.nativeSshAvailable = false;
             systemTaskState.nativeSshSupportsLoopbackTunnel = true;
             systemTaskState.snapshots.clear();
             systemTaskState.sshTunnelSnapshots = [];
-            secretState.decryptedSecretValue = null;
             nativeTunnelState.credentialsByRemoteHostId.clear();
             nativeTunnelState.leases = [];
             nativeTunnelState.listener = null;
@@ -458,17 +397,13 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => ({
             nativeTunnelState.authPromptResolver = null;
             nativeTunnelState.setAuthPromptResolver.mockClear();
             nativeBootstrapInterruptionState.markers.clear();
-            activeServerState.snapshot = {
-                serverId: 'server-1',
-                serverUrl: 'https://server.example.test',
-                activeShareableServerUrl: 'https://share.example.test',
-                activeShareableServerUrlValidatedAgainstServerUrl: 'https://server.example.test',
-                generation: 1,
-            };
 	        startMock.mockReset();
+            startMock.mockImplementation(defaultStartImplementation);
             routerSpies.push.mockReset();
             routerSpies.replace.mockReset();
             routerSpies.back.mockReset();
+            routerState.params = {};
+            collectionSpy.value = null;
 	        itemRowActionsSpy.props = null;
             modalSpies.show.mockReset();
             modalSpies.alert.mockReset();
@@ -476,8 +411,63 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => ({
             modalSpies.confirm.mockResolvedValue(true);
             modalSpies.prompt.mockReset();
             modalSpies.prompt.mockResolvedValue(null);
-	        standardCleanup();
 	    });
+
+async function seedRemoteHostCatalog() {
+    // Match the row-catalog suite's evaluation order; storage hooks and their
+    // owning store must settle before importing the collection's real owners.
+    await import('@/sync/domains/state/storageStore');
+    await import('@/sync/store/hooks');
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { settingsParse } = await import('@/sync/domains/settings/settings');
+    const { applyRemoteHostCatalogSnapshot } = await import('@/sync/store/settings/remoteHostCatalogSnapshot');
+    const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+    const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+    const serverId = await home.addHome({ name: 'Remote hosts Home', serverUrl: 'https://server.example.test',
+        publicServerUrl: 'https://share.example.test', accountId: 'account' });
+    const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
+    const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+    const features = createRootLayoutFeaturesResponse({ features: { remoteHosts: {
+        management: { enabled: featureGateState.managementEnabled }, secretMaterial: { enabled: featureGateState.secretMaterialEnabled },
+    } } });
+    primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
+    home.answer(serverId, '/v1/features', { body: features });
+    home.answer(serverId, '/v1/features/authenticated', { body: features });
+    const catalogScope = { serverId, accountId: 'account' };
+    // These cases exercise execution after the Account's user-configured
+    // approval policy admits it; policy/approval routing has its own owner suite.
+    const settings = { actionsSettingsV1: { v: 1, approvalWaivedSurfaces: {
+        'remote_hosts.save': ['ui'], 'remote_hosts.delete': ['ui'], 'remote_hosts.connect': ['ui'],
+        'remote_hosts.setup_as_machine': ['ui'], 'remote_hosts.relay.use': ['ui'],
+        'remote_hosts.relay.configure': ['ui'], 'remote_hosts.relay.test': ['ui'],
+    } } };
+    storage.setState({ profileScope: catalogScope, settingsScope: catalogScope, settings: settingsParse(settings) });
+    publishAppliedActiveServerSnapshot(getActiveServerSnapshot(), true);
+    applyRemoteHostCatalogSnapshot(catalogScope, { status: 'ready', revision: 4, hosts: remoteHostsState.value, diagnostics: [] }, true);
+    home.answer(serverId, '/v2/account/settings', { body: { version: 4, content: { t: 'plain', v: settings } } });
+    home.answer(serverId, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture({ settingsVersion: 4 }) });
+    home.answer(serverId, '/v2/account/settings/history', { body: { snapshots: [] } });
+    home.answer(serverId, '/v1/account/entity-rows/profiles/transfer', { body: { status: 'absent' } });
+    let revision = 4;
+    home.answer(serverId, '/v1/account/entity-rows/remote-hosts', { select: () => ({ body: {
+        status: 'present', revision, content: { t: 'plain', v: { v: 1, hosts: remoteHostsState.value } },
+    } }) });
+    home.answer(serverId, 'POST /v1/account/entity-rows/remote-hosts', { select: input => {
+        if (!input || typeof input !== 'object' || !('mutation' in input)) throw new Error('invalid_host_mutation');
+        const mutation = RemoteHostCatalogRowMutationV1Schema.parse(input.mutation);
+        if (mutation.content.t !== 'plain') throw new Error('unexpected_encrypted_host_fixture');
+        remoteHostsState.value = mutation.content.v.hosts;
+        revision += 1;
+        return { body: { status: 'updated', revision, cursor: revision } };
+    } });
+    const passwordRef = formatSharedSavedSecretRefV1('ssh-password');
+    const password = SavedSecretResourceMaterialV1Schema.parse({ resourceId: 'ssh-password', encryptionMode: 'plain', recipientEnvelope: null,
+        storedContent: { t: 'plain', v: { v: 1, name: 'SSH password', kind: 'password', value: 'secret' } },
+        entry: { ref: passwordRef, source: 'shared_resource', relationship: 'owner', name: 'SSH password', kind: 'password',
+            encryptionMode: 'plain', ownerAccountId: 'account', revision: 1, materialStatus: 'ready',
+            capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } } });
+    home.answer(serverId, '/v1/account/saved-secrets/resources/materials', { body: { resources: [password] } });
+}
 
 
 /**
@@ -486,6 +476,7 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => ({
  * for that host (what the host page offers).
  */
 async function loadRemoteHostsScreen() {
+    await seedRemoteHostCatalog();
     const collection = await import('./collection/RemoteHostsCollection');
     const { RemoteHostPage } = await import('./collection/RemoteHostPage');
     const { useRemoteHostsCollection } = await import('./collection/remoteHostsCollectionController');
@@ -569,6 +560,7 @@ async function loadRemoteHostsScreen() {
 
         testConnection!.onPress();
         await flushHookEffects({ cycles: 1, turns: 6 });
+        await vi.waitFor(() => { expect(startMock.mock.calls.some(([spec]) => spec.kind === 'remote.ssh.manageHost.v1')).toBe(true); });
 
         expect(startMock).toHaveBeenCalledWith(expect.objectContaining({
             kind: 'remote.ssh.manageHost.v1',
@@ -584,7 +576,7 @@ async function loadRemoteHostsScreen() {
         }));
     });
 
-    it('does not include a plaintext password in the SystemTask spec when secret material is disabled (password auth prompts instead)', async () => {
+    it('starts password auth without plaintext when secret material is disabled and no credential is saved', async () => {
         setTauriDesktop(true);
         featureGateState.managementEnabled = true;
         featureGateState.secretMaterialEnabled = false;
@@ -618,6 +610,7 @@ async function loadRemoteHostsScreen() {
 
         testConnection!.onPress();
         await flushHookEffects({ cycles: 1, turns: 6 });
+        await vi.waitFor(() => { expect(startMock.mock.calls.some(([spec]) => spec.kind === 'remote.ssh.manageHost.v1')).toBe(true); });
 
         expect(startMock).toHaveBeenCalledWith(expect.objectContaining({
             kind: 'remote.ssh.manageHost.v1',
@@ -667,6 +660,7 @@ async function loadRemoteHostsScreen() {
         expect(screen.findByTestId('settings.remoteHosts.hostRow.host-a')).toBeTruthy();
 
         addHost!.props.onPress();
+        await vi.waitFor(() => { expect(routerSpies.push).toHaveBeenCalled(); });
 
         // Adding happens in the collection: a draft host with its editor, never a modal form.
         expect(modalSpies.show).not.toHaveBeenCalled();
@@ -677,6 +671,7 @@ async function loadRemoteHostsScreen() {
         setTauriDesktop(true);
         featureGateState.managementEnabled = true;
         remoteHostsState.value = [];
+        await seedRemoteHostCatalog();
         const collection = await import('./collection/RemoteHostsCollection');
         const { RemoteHostPage } = await import('./collection/RemoteHostPage');
         const screen = await renderScreen(React.createElement(
@@ -697,14 +692,15 @@ async function loadRemoteHostsScreen() {
         });
         await flushHookEffects({ cycles: 2, turns: 4 });
 
-        const saved = remoteHostsState.setValue.mock.calls.at(-1)?.[0] as Array<{ id: string; name: string; ssh: { target: string } }>;
+        await vi.waitFor(() => { expect(routerSpies.replace).toHaveBeenCalled(); });
+        const saved = remoteHostsState.value;
         expect(saved).toHaveLength(1);
         expect(saved[0]).toEqual(expect.objectContaining({ name: 'Build box', ssh: expect.objectContaining({ target: 'ci@build.local' }) }));
         expect(routerSpies.replace).toHaveBeenCalledWith(`/settings/remote-hosts/${saved[0].id}`);
         expect(modalSpies.show).not.toHaveBeenCalled();
     });
 
-    it('preserves opaque legacy rows when the collection saves or removes a current host', async () => {
+    it('preserves other Account catalog hosts when the collection saves or removes a current host', async () => {
         setTauriDesktop(true);
         featureGateState.managementEnabled = true;
         const currentHost = {
@@ -721,38 +717,32 @@ async function loadRemoteHostsScreen() {
             updatedAt: 1,
             lastUsedAt: null,
         };
-        const opaqueFutureHost = {
-            v: 2,
-            id: 'future-host',
-            transport: 'future-transport',
-            futureData: { retained: true },
-        };
-        remoteHostsState.value = [currentHost, opaqueFutureHost];
+        const retainedHost = { ...currentHost, id: 'retained-host', name: 'Retained host' };
+        remoteHostsState.value = [currentHost, retainedHost];
 
         const { RemoteHostsScreen } = await loadRemoteHostsScreen();
         const screen = await renderScreen(React.createElement(RemoteHostsScreen));
         expect(screen.findByTestId('settings.remoteHosts.hostRow.host-a')).toBeTruthy();
-        const formProps = {
-            onSave: (payload: any) => collectionSpy.value.saveHost(payload),
-            onDelete: (id: string) => collectionSpy.value.deleteHost(id),
-        };
+        const controller = collectionSpy.value!;
         const addedHost = {
             ...currentHost,
             id: 'host-b',
             name: 'Build box',
         };
-        formProps.onSave({ remoteHost: addedHost, localOverrides: null });
+        await act(async () => { await controller.saveHost({ remoteHost: addedHost, localOverrides: null }); });
 
-        const afterUpsert = remoteHostsState.setValue.mock.calls.at(-1)?.[0];
+        const afterUpsert = remoteHostsState.value;
         expect(afterUpsert).toHaveLength(3);
-        expect(afterUpsert[1]).toBe(opaqueFutureHost);
+        expect(afterUpsert).toContainEqual(retainedHost);
         expect(afterUpsert).toContainEqual(addedHost);
 
-        formProps.onDelete(currentHost.id);
+        await act(async () => { await collectionSpy.value!.deleteHost(currentHost.id); });
 
-        const afterRemove = remoteHostsState.setValue.mock.calls.at(-1)?.[0];
-        expect(afterRemove).toHaveLength(1);
-        expect(afterRemove[0]).toBe(opaqueFutureHost);
+        const afterRemove = remoteHostsState.value;
+        expect(afterRemove).toHaveLength(2);
+        expect(afterRemove).toContainEqual(retainedHost);
+        expect(afterRemove).toContainEqual(addedHost);
+        expect(afterRemove.map(host => host.id)).not.toContain(currentHost.id);
     });
 
     it('leads a host page with what this device can do with it, then keeping Happier there up to date', async () => {
@@ -821,6 +811,7 @@ async function loadRemoteHostsScreen() {
 
         setupAsMachine!.onPress();
         await flushHookEffects({ cycles: 1, turns: 6 });
+        await vi.waitFor(() => { expect(startMock.mock.calls.some(([spec]) => spec.kind === 'remote.ssh.bootstrapMachine.v1')).toBe(true); });
 
         expect(startMock).toHaveBeenCalledWith(expect.objectContaining({
             kind: 'remote.ssh.bootstrapMachine.v1',
@@ -831,10 +822,10 @@ async function loadRemoteHostsScreen() {
                     auth: 'agent',
                 }),
                 relay: expect.objectContaining({
-                    relayUrl: 'https://share.example.test',
+                    relayUrl: 'https://server.example.test',
                     webappUrl: 'https://server.example.test',
-                    publicRelayUrl: 'https://share.example.test',
                 }),
+                homeTarget: expect.objectContaining({ applicationUrl: 'https://server.example.test', canonicalAuthUrl: 'https://server.example.test' }),
             }),
         }));
     });
@@ -845,7 +836,6 @@ async function loadRemoteHostsScreen() {
         systemTaskState.nativeSshAvailable = true;
         featureGateState.managementEnabled = true;
         featureGateState.secretMaterialEnabled = true;
-        secretState.decryptedSecretValue = 'secret';
         remoteHostsState.value = [
             {
                 id: 'host-a',
@@ -854,7 +844,7 @@ async function loadRemoteHostsScreen() {
                     target: 'dev@10.0.0.1',
                     port: 2222,
                     authMode: 'password',
-                    passwordEnc: { _isSecretValue: true, value: 'enc' },
+                    passwordSecretRef: formatSharedSavedSecretRefV1('ssh-password'),
                 },
                 linkedMachineId: null,
                 linkedRelayProfileId: null,
@@ -873,6 +863,7 @@ async function loadRemoteHostsScreen() {
 
         connectFromThisDevice!.onPress();
         await flushHookEffects({ cycles: 2, turns: 6 });
+        await vi.waitFor(() => { expect(nativeTunnelState.ensureTunnel).toHaveBeenCalled(); });
 
         expect(nativeTunnelState.startLifecycle).toHaveBeenCalledTimes(1);
         expect(nativeTunnelState.ensureTunnel).toHaveBeenCalledWith({
@@ -953,7 +944,6 @@ async function loadRemoteHostsScreen() {
         systemTaskState.nativeSshAvailable = true;
         featureGateState.managementEnabled = true;
         featureGateState.secretMaterialEnabled = true;
-        secretState.decryptedSecretValue = 'secret';
         remoteHostsState.value = [
             {
                 id: 'host-a',
@@ -962,7 +952,7 @@ async function loadRemoteHostsScreen() {
                     target: 'dev@10.0.0.1',
                     port: 2222,
                     authMode: 'password',
-                    passwordEnc: { _isSecretValue: true, value: 'enc' },
+                    passwordSecretRef: formatSharedSavedSecretRefV1('ssh-password'),
                 },
                 linkedMachineId: null,
                 linkedRelayProfileId: null,
@@ -981,6 +971,7 @@ async function loadRemoteHostsScreen() {
 
         connectFromThisDevice!.onPress();
         await flushHookEffects({ cycles: 2, turns: 6 });
+        await vi.waitFor(() => { expect(nativeTunnelState.ensureTunnel).toHaveBeenCalled(); });
         await screen.update(React.createElement(RemoteHostsScreen));
 
         expect(screen.findByTestId('settings.server.accessEndpoints.channel:access-channel:ssh-tunnel-native:host-a:native-key-a')).toBeTruthy();
@@ -1036,7 +1027,7 @@ async function loadRemoteHostsScreen() {
                     target: 'dev@10.0.0.1',
                     port: 2222,
                     authMode: 'password',
-                    passwordEnc: { _isSecretValue: true, value: 'enc' },
+                    passwordSecretRef: formatSharedSavedSecretRefV1('ssh-password'),
                 },
                 linkedMachineId: null,
                 linkedRelayProfileId: null,
@@ -1086,7 +1077,7 @@ async function loadRemoteHostsScreen() {
                     target: 'dev@10.0.0.1',
                     port: 2222,
                     authMode: 'password',
-                    passwordEnc: { _isSecretValue: true, value: 'enc' },
+                    passwordSecretRef: formatSharedSavedSecretRefV1('ssh-password'),
                 },
                 linkedMachineId: null,
                 linkedRelayProfileId: null,
@@ -1128,7 +1119,7 @@ async function loadRemoteHostsScreen() {
 
         setupAsMachine!.onPress();
         await flushHookEffects({ cycles: 2, turns: 6 });
-        remoteHostsState.value = [...remoteHostsState.value];
+        await vi.waitFor(() => { expect(nativeBootstrapInterruptionState.markers.has(markerKey)).toBe(true); });
         await screen.update(React.createElement(RemoteHostsScreen));
 
         expect(screen.findByTestId('settings.remoteHosts.interruptedBootstrap.host-a')).toBeNull();
@@ -1150,7 +1141,7 @@ async function loadRemoteHostsScreen() {
                     target: 'dev@10.0.0.1',
                     port: 2222,
                     authMode: 'password',
-                    passwordEnc: { _isSecretValue: true, value: 'enc' },
+                    passwordSecretRef: formatSharedSavedSecretRefV1('ssh-password'),
                 },
                 linkedMachineId: null,
                 linkedRelayProfileId: null,
@@ -1228,6 +1219,10 @@ async function loadRemoteHostsScreen() {
 
         useAsRelayHost!.onPress();
         await flushHookEffects({ cycles: 2, turns: 6 });
+        await vi.waitFor(() => { expect(routerSpies.push).toHaveBeenCalledWith('/settings/remote-hosts/host-a?remoteHostIntent=relay&expectedRevision=4'); });
+        routerState.params = { remoteHostIntent: 'relay', expectedRevision: '4' };
+        await screen.update(React.createElement(RemoteHostsScreen));
+        await vi.waitFor(() => { expect(screen.findByTestId('settings.remoteHosts.relayAccess.host-a')).toBeTruthy(); });
 
         expect(screen.findByTestId('settings.remoteHosts.relayAccess.host-a')).toBeTruthy();
         expect(startMock).toHaveBeenCalledWith(expect.objectContaining({
@@ -1287,6 +1282,10 @@ async function loadRemoteHostsScreen() {
 
         configureAccess!.onPress();
         await flushHookEffects({ cycles: 2, turns: 6 });
+        await vi.waitFor(() => { expect(routerSpies.push).toHaveBeenCalledWith('/settings/remote-hosts/host-a?remoteHostIntent=relay&expectedRevision=4'); });
+        routerState.params = { remoteHostIntent: 'relay', expectedRevision: '4' };
+        await screen.update(React.createElement(RemoteHostsScreen));
+        await vi.waitFor(() => { expect(screen.findByTestId('settings.remoteHosts.relayAccess.host-a')).toBeTruthy(); });
 
         expect(screen.findByTestId('settings.remoteHosts.relayAccess.host-a')).toBeTruthy();
         expect(startMock).toHaveBeenCalledWith(expect.objectContaining({
