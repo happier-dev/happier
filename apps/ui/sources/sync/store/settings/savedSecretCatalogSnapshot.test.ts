@@ -8,6 +8,7 @@ import {
     beginSavedSecretCatalogLoad,
     getSavedSecretCatalogSnapshot,
     invalidateSavedSecretCatalog,
+    removeDeletedSavedSecretCatalogResource,
     resolveSavedSecretReference,
     resetSavedSecretCatalogSnapshotsForTests,
 } from './savedSecretCatalogSnapshot';
@@ -76,6 +77,32 @@ describe('savedSecretCatalogSnapshot', () => {
             data: [expect.objectContaining({ ref: 'happier:shared-secret:v1:resource-a' })],
             corruptEntries,
         });
+        applySavedSecretCatalogPage({ scope, entries: [sharedEntry()],
+            corruptEntries: [corruptEntries[1]!], observedAt: 11 });
+        expect(getSavedSecretCatalogSnapshot(scope)?.corruptEntries).toEqual([corruptEntries[1]]);
+    });
+
+    it('keeps legacy cleanup diagnostics independent of usable resource material and retains them through a failed refresh', () => {
+        const ref = 'happier:shared-secret:v1:resource-a';
+        const page = {
+            scope,
+            entries: [sharedEntry()],
+            materializedSecrets: [{ id: ref, name: 'Shared key', kind: 'apiKey' as const,
+                encryptedValue: { _isSecretValue: true as const, value: 'opened-value' }, createdAt: 1, updatedAt: 1 }],
+            legacyImport: { status: 'pending' as const, reason: 'source-uncharacterized' as const },
+            observedAt: 10,
+        };
+        applySavedSecretCatalogPage(page);
+        expect(getSavedSecretCatalogSnapshot(scope)).toMatchObject({ status: 'ready', legacyImport: page.legacyImport });
+        expect(resolveSavedSecretReference(scope, [], ref)).toMatchObject({ status: 'ready', secret: { id: ref } });
+
+        beginSavedSecretCatalogLoad(scope);
+        applySavedSecretCatalogFailure({ scope, error: { kind: 'unreachable', retryable: true } });
+        expect(getSavedSecretCatalogSnapshot(scope)).toMatchObject({ legacyImport: page.legacyImport, materializedSecrets: [] });
+
+        applySavedSecretCatalogPage({ ...page, legacyImport: { status: 'complete' as const }, observedAt: 11 });
+        expect(getSavedSecretCatalogSnapshot(scope)).toMatchObject({ status: 'ready', legacyImport: { status: 'complete' } });
+        expect(resolveSavedSecretReference(scope, [], ref)).toMatchObject({ status: 'ready', secret: { id: ref } });
     });
 
     it('preserves last-known rows while refreshing and after a retryable failure', () => {
@@ -99,6 +126,23 @@ describe('savedSecretCatalogSnapshot', () => {
             stale: true,
             data: [first],
         });
+    });
+
+    it('removes only the deleted resource from its exact Account/Home catalog', () => {
+        const otherAccount = { ...scope, accountId: 'account-b' };
+        const otherHome = { ...scope, serverId: 'home-b' };
+        const page = { entries: [sharedEntry(), sharedEntry({ ref: 'happier:shared-secret:v1:retained' })], observedAt: 10 };
+        for (const target of [scope, otherAccount, otherHome]) applySavedSecretCatalogPage({ ...page, scope: target });
+        const accountBSnapshot = getSavedSecretCatalogSnapshot(otherAccount);
+        const homeBSnapshot = getSavedSecretCatalogSnapshot(otherHome);
+
+        removeDeletedSavedSecretCatalogResource(scope, 'resource-a');
+        expect(getSavedSecretCatalogSnapshot(scope)?.data?.map(entry => entry.ref)).toEqual(['happier:shared-secret:v1:retained']);
+        expect(getSavedSecretCatalogSnapshot(otherAccount)).toBe(accountBSnapshot);
+        expect(getSavedSecretCatalogSnapshot(otherHome)).toBe(homeBSnapshot);
+        const afterDelete = getSavedSecretCatalogSnapshot(scope);
+        removeDeletedSavedSecretCatalogResource(scope, 'resource-a');
+        expect(getSavedSecretCatalogSnapshot(scope)).toBe(afterDelete);
     });
 
     it('drops opened material immediately on invalidation while retaining repairable metadata', () => {

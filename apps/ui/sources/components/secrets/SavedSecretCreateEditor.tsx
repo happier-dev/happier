@@ -4,7 +4,9 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { SavedSecret } from '@happier-dev/protocol';
 
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
+import type { SavedSecretPrivateCreationApprovalOptions } from './useSavedSecretCatalog';
+import { RoundButton, RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
 import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
@@ -28,16 +30,15 @@ type SecretStorage = 'personal' | 'shared';
 /**
  * The one editor that adds a Saved Secret, shown in the draft row of the Secrets collection.
  *
- * A secret is kept either in the Account's own settings (personal, through the catalog's personal
- * writer) or as a resource on this Home that can be shared (through the shared-resource writer).
- * The choice is offered only where both writers are available; each choice calls its own writer, so
- * nothing about either write changes. A value is entered once and never shown again.
+ * Both choices use the SavedSecret resource owner. The catalog's private-create port gives the
+ * resource no recipients; the shared-create port also accepts the chosen grants. A value is entered
+ * once and never shown again.
  */
 export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEditor(props: Readonly<{
-    /** The Home and Account a shared secret is created on; without it only a personal secret can be added. */
+    /** The admitted Home and Account for resource creation. */
     scope: ServerAccountScope | null;
-    /** The catalog's personal writer; absent where only shared secrets can be created. */
-    onCreatePersonal?: (input: Readonly<{ name: string; value: string }>) => Promise<string | null>;
+    /** The catalog's private-create port; absent where only the grant-aware choice is offered. */
+    onCreatePersonal?: (input: Readonly<{ name: string; value: string }>, approval?: SavedSecretPrivateCreationApprovalOptions) => Promise<string | null>;
     /** Whether this Home allows shared secrets. Defaults to available when a scope is given. */
     sharedAvailable?: boolean;
     approvalPending: boolean;
@@ -46,7 +47,7 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
     requestApproval: (registration: ActionApprovalRegistration) => void;
     onCancel: () => void;
     onDirtyChange?: (dirty: boolean) => void;
-    /** The new secret's reference: a personal id or a shared resource ref. */
+    /** The newly created resource's canonical reference. */
     onCreated: (ref: string, storage: SecretStorage) => void | Promise<void>;
 }>) {
     const { theme } = useUnistyles();
@@ -102,16 +103,22 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
         operationInFlight.current = true;
         setSubmitting(true);
         setFailure(null);
-        // The personal writer reports its own failure; a null id leaves the draft for another try.
-        const createdId = await create({ name: trimmedName, value });
-        if (currentScopeKey.current !== scopeKey) return;
-        if (createdId) {
-            await finishCreated(createdId, scopeKey, 'personal');
-            return;
+        try {
+            // The original promise is settled by the shared Artifact continuation,
+            // not by replaying creation after approval.
+            const createdId = await create({ name: trimmedName, value }, { onApprovalPending: props.requestApproval });
+            if (currentScopeKey.current !== scopeKey) return;
+            if (createdId) {
+                await finishCreated(createdId, scopeKey, 'personal');
+                return;
+            }
+        } catch {
+            if (currentScopeKey.current !== scopeKey) return;
+            setFailure(t('secrets.catalog.operationFailed'));
         }
         operationInFlight.current = false;
         setSubmitting(false);
-    }, [finishCreated, props.onCreatePersonal, scopeKey, value]);
+    }, [finishCreated, props.onCreatePersonal, props.requestApproval, scopeKey, value]);
 
     const submitShared = React.useCallback(async (trimmedName: string) => {
         const scope = props.scope;
@@ -220,6 +227,7 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
                             : t('secretsSettings.keepSharedDescription')}
                     >
                         <SegmentedTabBar
+                            labelSize="field"
                             tabs={storageTabs}
                             activeTabId={storage}
                             onSelectTab={setChosenStorage}
@@ -232,6 +240,7 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
                     <FieldItem label={t('secrets.catalog.kindTitle')}>
                         <SegmentedTabBar
                             role="radiogroup"
+                            labelSize="field"
                             tabs={kindTabs}
                             activeTabId={kind}
                             onSelectTab={setKind}
@@ -257,17 +266,12 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
                 </Text>
             ) : null}
             {props.approvalId && props.onOpenApproval ? (
-                <View style={styles.approval} testID="saved-secret-create-approval">
-                    <Text accessibilityLiveRegion="polite" style={[styles.notice, styles.approvalText, { color: theme.colors.text.secondary }]}>
-                        {t('secrets.catalog.approvalPending')}
-                    </Text>
-                    <RoundButton size="small" display="secondary" title={t('approvals.title')} onPress={props.onOpenApproval} />
-                </View>
+                <ActionApprovalPendingNotice testID="saved-secret-create-approval"
+                    message={t('secrets.catalog.approvalPending')} onOpenApproval={props.onOpenApproval} />
             ) : null}
-            <View style={styles.actions}>
+            <RoundButtonSizeScope size="normal" presentation="uniform"><View style={styles.actions}>
                 <RoundButton
                     testID="saved-secret-create-submit"
-                    size="small"
                     title={t('secretsSettings.save')}
                     loading={busy}
                     disabled={busy || !name.trim() || value.length === 0}
@@ -275,23 +279,19 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
                 />
                 <RoundButton
                     testID="saved-secret-create-cancel"
-                    size="small"
                     display="secondary"
                     title={t('common.cancel')}
                     disabled={busy}
                     onPress={props.onCancel}
                 />
-            </View>
+            </View></RoundButtonSizeScope>
         </View>
     );
 });
 
 const styles = StyleSheet.create(() => ({
     body: { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 16, gap: 14 },
-    // Text fields stay a readable width on wide pages instead of spanning the sheet.
-    fields: { gap: 12, maxWidth: 480, width: '100%' },
+    fields: { gap: 12, width: '100%' },
     actions: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
-    approval: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
-    approvalText: { flexShrink: 1 },
     notice: { fontSize: 13, lineHeight: 18 },
 }));

@@ -1,6 +1,7 @@
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import type { SavedSecretCatalogCorruptEntryV1, SavedSecretCatalogEntryV1, SavedSecretCatalogMaterialStatusV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
-import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
+import { formatSavedSecretCatalogFingerprintV1, formatSavedSecretCatalogReferenceV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import type { SavedSecret, SavedSecretLegacyImportResult } from '@/sync/domains/settings/savedSecretTypes';
 
 import { serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import {
@@ -17,6 +18,7 @@ export type SavedSecretCatalogSnapshot = Readonly<{
     data: readonly SavedSecretCatalogEntryV1[] | null;
     corruptEntries: readonly SavedSecretCatalogCorruptEntryV1[];
     materializedSecrets: readonly SavedSecret[];
+    legacyImport: SavedSecretLegacyImportResult | null;
     lastObservedAt: number | null;
     stale: boolean;
     reachability: ScopedSnapshotReachability;
@@ -57,6 +59,7 @@ export function beginSavedSecretCatalogLoad(scope: ServerAccountScope): void {
         data: current?.data ?? null,
         corruptEntries: current?.corruptEntries ?? EMPTY_CORRUPT_ENTRIES,
         materializedSecrets: EMPTY_MATERIALIZED_SECRETS,
+        legacyImport: current?.legacyImport ?? null,
         lastObservedAt: current?.lastObservedAt ?? null,
         stale: current?.stale ?? false,
         reachability: current?.reachability ?? 'unknown',
@@ -65,7 +68,7 @@ export function beginSavedSecretCatalogLoad(scope: ServerAccountScope): void {
     notify();
 }
 
-export function applySavedSecretCatalogPage(params: Readonly<{ scope: ServerAccountScope; entries: readonly SavedSecretCatalogEntryV1[]; corruptEntries?: readonly SavedSecretCatalogCorruptEntryV1[]; materializedSecrets?: readonly SavedSecret[]; observedAt: number; current?: boolean }>): void {
+export function applySavedSecretCatalogPage(params: Readonly<{ scope: ServerAccountScope; entries: readonly SavedSecretCatalogEntryV1[]; corruptEntries?: readonly SavedSecretCatalogCorruptEntryV1[]; materializedSecrets?: readonly SavedSecret[]; legacyImport?: SavedSecretLegacyImportResult; observedAt: number; current?: boolean }>): void {
     const previous = getSavedSecretCatalogSnapshot(params.scope);
     snapshots.set(key(params.scope), Object.freeze({
         scope: params.scope,
@@ -73,6 +76,7 @@ export function applySavedSecretCatalogPage(params: Readonly<{ scope: ServerAcco
         data: preserveRows(previous?.data ?? null, params.entries),
         corruptEntries: Object.freeze([...(params.corruptEntries ?? [])]),
         materializedSecrets: Object.freeze([...(params.materializedSecrets ?? [])]),
+        legacyImport: params.legacyImport ?? null,
         lastObservedAt: params.observedAt,
         stale: params.current === false,
         reachability: 'reachable',
@@ -93,6 +97,7 @@ export function applySavedSecretCatalogFailure(params: Readonly<{ scope: ServerA
             ? EMPTY_CORRUPT_ENTRIES
             : (current?.corruptEntries ?? EMPTY_CORRUPT_ENTRIES),
         materializedSecrets: EMPTY_MATERIALIZED_SECRETS,
+        legacyImport: authoritativeRefusal ? null : current?.legacyImport ?? null,
         lastObservedAt: current?.lastObservedAt ?? null,
         stale: true,
         reachability: reachabilityForScopedSnapshotError(params.error),
@@ -108,6 +113,25 @@ export function invalidateSavedSecretCatalog(scope: ServerAccountScope): void {
         ...current,
         stale: true,
         materializedSecrets: EMPTY_MATERIALIZED_SECRETS,
+    }));
+    notify();
+}
+
+/** An acknowledged delete is authoritative even when the next catalog read fails. */
+export function removeDeletedSavedSecretCatalogResource(scope: ServerAccountScope, resourceId: string): void {
+    const current = getSavedSecretCatalogSnapshot(scope);
+    if (!current) return;
+    const ref = formatSavedSecretCatalogReferenceV1({ kind: 'shared_resource', id: resourceId });
+    const data = current.data?.filter(entry => entry.ref !== ref) ?? null;
+    const corruptEntries = current.corruptEntries.filter(entry => entry.repair?.resourceId !== resourceId);
+    const materializedSecrets = current.materializedSecrets.filter(secret => secret.id !== ref);
+    if (data?.length === current.data?.length && corruptEntries.length === current.corruptEntries.length
+        && materializedSecrets.length === current.materializedSecrets.length) return;
+    snapshots.set(key(scope), Object.freeze({
+        ...current,
+        data: data?.length === current.data?.length ? current.data : data ? Object.freeze(data) : null,
+        corruptEntries: corruptEntries.length === current.corruptEntries.length ? current.corruptEntries : Object.freeze(corruptEntries),
+        materializedSecrets: materializedSecrets.length === current.materializedSecrets.length ? current.materializedSecrets : Object.freeze(materializedSecrets),
     }));
     notify();
 }
@@ -168,7 +192,7 @@ export function resolveSavedSecretReference(
             entry: null,
             secret: personalSecret,
             revision: personalSecret.updatedAt,
-            fingerprint: `personal:${ref}:${personalSecret.updatedAt}`,
+            fingerprint: formatSavedSecretCatalogFingerprintV1({ ref, source: 'personal', revision: personalSecret.updatedAt }),
         });
     }
     let parsed: ReturnType<typeof parseSavedSecretRefV1>;
@@ -194,14 +218,14 @@ export function resolveSavedSecretReference(
             entry: null,
             secret,
             revision: secret?.updatedAt ?? null,
-            fingerprint: secret ? `personal:${ref}:${secret.updatedAt}` : null,
+            fingerprint: formatSavedSecretCatalogFingerprintV1({ ref, source: 'personal', revision: secret?.updatedAt ?? null }),
         });
     }
 
     const snapshot = getSavedSecretCatalogSnapshot(scope);
     const entry = snapshot?.data?.find((candidate) => candidate.ref === ref) ?? null;
     const revision = entry?.revision ?? null;
-    const fingerprint = revision === null ? null : `shared:${ref}:${revision}`;
+    const fingerprint = formatSavedSecretCatalogFingerprintV1({ ref, source: 'shared_resource', revision });
     if (!snapshot || snapshot.stale || snapshot.status !== 'ready') {
         return Object.freeze({
             ref,

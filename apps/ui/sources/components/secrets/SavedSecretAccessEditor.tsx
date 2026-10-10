@@ -5,7 +5,7 @@ import type { SavedSecret } from '@happier-dev/protocol/profiles/backendProfileS
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { RoundButton, RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
 import { Item } from '@/components/ui/lists/Item';
 import { Text } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
@@ -201,7 +201,7 @@ export const SavedSecretAccessEditor = React.memo(function SavedSecretAccessEdit
         // The revision fence is a correctness rule: a press from
         // a stale render must not replace an audience somebody
         // else already changed.
-        if (movedUnderEditor) return;
+        if (!dirty || saving || props.approvalPending || movedUnderEditor) return;
         const requestedTargetKey = targetKey;
         const currentGrantCount = (entry?.audience?.accounts.length ?? 0)
             + (entry?.audience?.teams.length ?? 0)
@@ -422,19 +422,17 @@ export const SavedSecretAccessEditor = React.memo(function SavedSecretAccessEdit
                     {failureText}
                 </Text>
             ) : null}
-            <View style={styles.actions}>
+            <RoundButtonSizeScope size="normal" presentation="uniform"><View style={styles.actions}>
                 <RoundButton
                     testID="saved-secret-access-save"
-                    size="small"
                     title={target.kind === 'personal' ? t('secretsSettings.share') : t('common.save')}
                     loading={saving || props.approvalPending}
-                    disabled={saving || props.approvalPending || movedUnderEditor}
+                    disabled={!dirty || saving || props.approvalPending || movedUnderEditor}
                     onPress={() => { void save(); }}
                 />
                 {movedUnderEditor && entry !== null ? (
                     <RoundButton
                         testID="saved-secret-access-reload"
-                        size="small"
                         display="secondary"
                         title={t('common.retry')}
                         disabled={saving || props.approvalPending}
@@ -451,13 +449,12 @@ export const SavedSecretAccessEditor = React.memo(function SavedSecretAccessEdit
                 ) : null}
                 <RoundButton
                     testID="saved-secret-access-cancel"
-                    size="small"
                     display="secondary"
                     title={t('common.cancel')}
                     disabled={saving || props.approvalPending}
                     onPress={props.onClose}
                 />
-            </View>
+            </View></RoundButtonSizeScope>
         </View>
     );
 });

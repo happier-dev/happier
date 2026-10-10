@@ -23,6 +23,8 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import type { SavedSecretReferenceResolution } from '@/sync/store/settings/savedSecretCatalogSnapshot';
+import type { ScopedSnapshotStatus } from '@/sync/domains/scope/scopedSnapshotFacts';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { t } from '@/text';
 import { collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
@@ -41,6 +43,7 @@ export type SecretsSettingsPageProps = Readonly<{
     resolveSharedReference: (ref: string) => SavedSecretReferenceResolution;
     /** The shared catalog is showing last-known rows because a refresh failed. */
     sharedCatalogStale: boolean;
+    sharedCatalogStatus: ScopedSnapshotStatus;
     onRetrySharedCatalog?: () => void;
 
     onRenamePersonal: (secret: SavedSecret, name: string) => Promise<boolean>;
@@ -132,6 +135,7 @@ function SecretStorageRow(props: Readonly<{
             ? t('secretsSettings.storageE2eeDescription')
             : t('secretsSettings.storagePlainDescription')}`}
         subtitleLines={0}
+        accessoryLayout="adaptive"
         showChevron={false}
         showDivider={false}
         rightElement={props.action}
@@ -202,6 +206,7 @@ export const SecretsSettingsPage = React.memo(function SecretsSettingsPage(props
             <ItemGroup
                 title={t('secretsSettings.yoursTitle')}
                 description={t('secretsSettings.yoursDescription')}
+                actionLayout="adaptive"
                 action={<AddSecretAction disabled={adding} onPress={props.onAdd} />}
             >
                 {adding ? (
@@ -216,7 +221,23 @@ export const SecretsSettingsPage = React.memo(function SecretsSettingsPage(props
                         {props.createEditor}
                     </ExpandableItem>
                 ) : null}
-                {yoursEmpty && !adding ? (
+                {props.sharedCatalogStatus === 'loading' ? (
+                    <SectionContentRow>
+                        <SurfaceStateCard
+                            testID="saved-secret-catalog-loading"
+                            kind="loading"
+                            size="line"
+                            title={t('common.loading')}
+                            accessibilitySemantics="status"
+                            action={props.onRetrySharedCatalog ? {
+                                label: t('common.retry'),
+                                testID: 'saved-secret-catalog-retry-button',
+                                onPress: props.onRetrySharedCatalog,
+                            } : undefined}
+                        />
+                    </SectionContentRow>
+                ) : null}
+                {yoursEmpty && !adding && props.sharedCatalogStatus === 'ready' ? (
                     <Item
                         testID="saved-secret:empty"
                         title={t('secretsSettings.emptyTitle')}

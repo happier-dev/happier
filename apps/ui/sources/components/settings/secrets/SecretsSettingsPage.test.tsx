@@ -60,6 +60,7 @@ async function renderPage(overrides: Partial<SecretsSettingsPageProps> = {}, acc
         // The page reads only the resolved status; the rest of a resolution is irrelevant here.
         resolveSharedReference: (ref: string) => ({ ref, kind: 'shared_resource', status: 'ready' }) as unknown as ReturnType<SecretsSettingsPageProps['resolveSharedReference']>,
         sharedCatalogStale: false,
+        sharedCatalogStatus: 'ready',
         onRenamePersonal: vi.fn(async () => true),
         onRotatePersonal: vi.fn(async () => true),
         onDeletePersonal: vi.fn(async () => true),

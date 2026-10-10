@@ -243,10 +243,9 @@ export const SecretsSettingsScreen = React.memo(function SecretsSettingsScreen()
             const operation = {
                 scope, resourceId, expectedRevision,
                 expectedSettingsVersion: settingsVersion, confirmedByPresentUser: true,
-                onApprovalSucceeded: async () => {
+                onApprovalSucceeded: () => {
                     if (!isCurrent()) return;
                     setSharedMutationPending(false);
-                    await catalog.reload();
                 },
                 onApprovalFailed: (_code: string, result: Exclude<SavedSecretResourceDeleteResult, Readonly<{ ok: true }>>) => {
                     void settleResult(result);
@@ -272,7 +271,7 @@ export const SecretsSettingsScreen = React.memo(function SecretsSettingsScreen()
                     if (!result.ok) {
                         if (result.reason === 'outcome_unknown') await catalog.reload().catch(() => {});
                         alertDeleteRefusal(result);
-                    } else await catalog.reload();
+                    }
                 } catch (cause) {
                     handleFailure(cause);
                 }
@@ -376,6 +375,7 @@ export const SecretsSettingsScreen = React.memo(function SecretsSettingsScreen()
             sharedEntries={catalog.sharedEntries}
             corruptEntries={catalog.corruptEntries}
             resolveSharedReference={catalog.resolveReference}
+            sharedCatalogStatus={catalog.status}
             sharedCatalogStale={catalog.status === 'error' || (catalog.status === 'ready' && catalog.stale)}
             onRetrySharedCatalog={catalog.sharedEnabled || catalog.collisionMigrationStatus === 'failed'
                 ? () => { void catalog.reload().catch(() => {}); }

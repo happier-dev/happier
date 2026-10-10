@@ -110,10 +110,11 @@ describe('SavedSecretAccessEditor recipient readiness', () => {
         expect(subtitle('account-setup')).toBe('secrets.catalog.recipientEncryptionSetupRequired');
         // The owner is not listed as their own recipient.
         expect(screen.findByTestId('saved-secret-recipient:account-owner')).toBeFalsy();
-        expect(requestHomeDomain).toHaveBeenCalledWith(expect.objectContaining({
-            path: '/v1/account/saved-secrets/resources/envelope-census',
-            input: expect.objectContaining({ resourceId: 'resource-1' }),
-        }));
+        const request = requestHomeDomain.mock.calls[0]?.[0];
+        expect(request).toMatchObject({ method: 'GET', effect: 'read', scope });
+        const requestedUrl = new URL(request.path, 'https://home.test');
+        expect(requestedUrl.pathname).toBe('/v1/account/saved-secrets/resources/envelope-census');
+        expect(requestedUrl.searchParams.get('resourceId')).toBe('resource-1');
 
         // Selecting a Plain recipient never converts: conversion is the
         // owner's explicit, separately confirmed choice.

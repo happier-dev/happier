@@ -11,6 +11,7 @@ import {
     computeContentPublicKeyFingerprint,
     sealAccountScopedBlobCiphertext,
     sealSavedSecretResourceStoredContentV1,
+    openSavedSecretResourceStoredContentV1,
     tryWriteServerEnabledBitInPlace,
     type SavedSecretResourceEnvelopeCensusRecipientV1,
     type SavedSecretResourceMaterialV1,
@@ -26,6 +27,13 @@ import { settingsParse, type Settings } from '@/sync/domains/settings/settings';
 import { normalizeAccountSettingsForServerStorage, openAccountSettingsStoredContent } from '@/sync/domains/settings/accountSettingsNormalization';
 import { normalizeVoiceSettingsServerDelta } from '@/sync/domains/settings/voiceSettingsPersistence';
 import { encryptDataKeyForRecipientV0 } from '@/sync/encryption/directShareEncryption';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { SharedSavedSecretPromoteInputV1Schema, SHARED_SAVED_SECRET_ACTION_PATHS_V1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+import { PROFILE_ROWS_ROUTE_V1, PROFILE_REFERENCE_GUARD_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileRecordV1';
+import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileTransferV1';
+import { REMOTE_HOST_ROWS_ROUTE_V1 } from '@happier-dev/protocol/remoteHosts/remoteHostRecordV1';
+import { NOTIFICATION_CHANNELS_ROUTE_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
+import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 
 /** Real Home/Account/catalog/Action/crypto owners, with only HTTP and credential storage synthetic. */
 export async function createSecretSettingsTestHarness(options: Readonly<{
@@ -34,6 +42,7 @@ export async function createSecretSettingsTestHarness(options: Readonly<{
     plaintextStorageEnabled?: boolean;
     settings?: Settings;
     rejectSettingsWrites?: boolean;
+    approvalRequired?: boolean;
 }> = {}) {
     await loadSyncSingletonForTests();
     const mode = options.mode ?? 'plain';
@@ -47,7 +56,10 @@ export async function createSecretSettingsTestHarness(options: Readonly<{
         || !tryWriteServerEnabledBitInPlace(features, 'encryption.plaintextStorage', options.plaintextStorageEnabled ?? true)) {
         throw new Error('Saved Secrets feature fixture is not writable');
     }
-    const settings = options.settings ?? settingsParse({ secrets: mode === 'plain' ? [{
+    const settings = options.settings ?? settingsParse({ actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
+        ...(options.approvalRequired ? { actions: { 'secrets.shared.promote': { approvalRequiredSurfaces: ['ui'] } } }
+            : { approvalWaivedSurfaces: { 'secrets.shared.promote': ['ui'], 'secrets.shared.create': ['ui'] } }),
+    }), secrets: mode === 'plain' ? [{
         id: 'personal-a', name: 'Personal', kind: 'token',
         encryptedValue: { _isSecretValue: true, value: 'value' }, createdAt: 1, updatedAt: 1,
     }] : [] });
@@ -59,6 +71,8 @@ export async function createSecretSettingsTestHarness(options: Readonly<{
             payload: raw, randomBytes: getRandomBytes }),
     } : { t: 'plain', v: raw });
     let settingsVersion = 1;
+    let referenceGuardRevision = 3;
+    let losePromotionResponse = false;
     let rejectSettingsWrites = options.rejectSettingsWrites ?? false;
     const resources: SavedSecretResourceMaterialV1[] = [];
     const recipients: SavedSecretResourceEnvelopeCensusRecipientV1[] = [];
@@ -66,12 +80,18 @@ export async function createSecretSettingsTestHarness(options: Readonly<{
     const deletes: Array<ReturnType<typeof SharedSavedSecretDeleteInputV1Schema.parse>> = [];
     const repairs: Array<ReturnType<typeof SavedSecretResourceEnvelopeRepairInputV1Schema.parse>> = [];
     const settingsWrites: unknown[] = [];
+    const promotions: Array<ReturnType<typeof SharedSavedSecretPromoteInputV1Schema.parse>> = [];
+    const catalogRows = new Map<string, unknown>();
+    const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: mode });
     const request = vi.fn(async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
         const url = new URL(String(input));
         const path = url.pathname;
+        const artifactResponse = artifacts.handle(`${path}${url.search}`, init);
+        if (artifactResponse) return await artifactResponse;
         if (path === '/v1/features') return Response.json(features);
         if (path === '/v1/account/encryption') return Response.json({ mode, updatedAt: 1 });
         if (path === '/v1/account/encryption/currentness') return Response.json({ mode, version: 1, updatedAt: 1,
+            settingsVersion,
             signingKeyFingerprint: encryption ? 'signing' : null,
             contentKeyFingerprint: encryption ? computeAccountEncryptionMigrateKeyFingerprintV1(encryption.contentDataKey) : null,
             recipientEnvelopeReadiness: encryption ? { status: 'available' } : { status: 'unavailable', reason: 'plain_account' },
@@ -98,6 +118,40 @@ export async function createSecretSettingsTestHarness(options: Readonly<{
             return Response.json({ success: true, version: settingsVersion });
         }
         if (path === '/v1/account/saved-secrets/resources/materials') return Response.json({ resources });
+        if (path === PROFILE_ROWS_ROUTE_V1) return Response.json({ status: 'listed', rows: [], nextCursor: null,
+            complete: true, referenceGuardRevision, transferControl: { status: 'absent' }, diagnostics: [] });
+        if (path === PROFILE_REFERENCE_GUARD_ROUTE_V1) return Response.json({ status: 'ready', revision: referenceGuardRevision });
+        if (path === PROFILE_TRANSFER_ROUTE_V1 || path === REMOTE_HOST_ROWS_ROUTE_V1 || path === NOTIFICATION_CHANNELS_ROUTE_V1) return Response.json({ status: 'absent' });
+        if (['/v1/account/entity-rows/mcp', '/v1/account/entity-rows/acp', '/v1/account/entity-rows/provider-connections',
+            '/v1/account/entity-rows/connected-accounts/configurations', '/v1/account/entity-rows/connected-accounts/purposes'].includes(path)) {
+            return Response.json(catalogRows.get(path) ?? { status: 'absent' });
+        }
+        if (path === SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.promote']) {
+            const input = SharedSavedSecretPromoteInputV1Schema.parse(JSON.parse(String(init?.body)));
+            if (mode !== 'plain' || input.nextSettings?.t !== 'plain') throw new Error('Full-save fixture requires Plain Settings');
+            if (rejectSettingsWrites || input.expectedSettingsVersion !== settingsVersion) {
+                return Response.json({ error: 'settings_conflict' }, { status: 409 });
+            }
+            for (const resource of [input, ...(input.additionalSavedSecretResources ?? [])]) {
+                const content = openSavedSecretResourceStoredContentV1({ resourceId: resource.resourceId,
+                    mode: 'plain', storedContent: resource.storedContent });
+                if (!content) throw new Error('Expected canonical resource content');
+                resources.push(SavedSecretResourceMaterialV1Schema.parse({ resourceId: resource.resourceId,
+                    encryptionMode: 'plain', storedContent: resource.storedContent, recipientEnvelope: null,
+                    entry: { ref: `happier:shared-secret:v1:${resource.resourceId}`, source: 'shared_resource',
+                        relationship: 'owner', ownerAccountId: 'account-a', name: content.name, kind: content.kind,
+                        encryptionMode: 'plain', revision: 1, materialStatus: 'ready',
+                        audience: { accounts: [], teams: [], groups: [] },
+                        capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
+                }));
+            }
+            promotions.push(input);
+            settingsContent = AccountSettingsStoredContentEnvelopeSchema.parse(input.nextSettings);
+            settingsVersion += 1;
+            referenceGuardRevision += 1;
+            if (losePromotionResponse) throw new TypeError('Response lost after accepting the full transaction');
+            return Response.json({ resourceId: input.resourceId, settingsVersion });
+        }
         if (path === '/v1/account/saved-secrets/resources/envelope-census') {
             const resource = resources.find((row) => 'resourceId' in row && row.resourceId === url.searchParams.get('resourceId'));
             if (!resource || !('resourceId' in resource)) return Response.json({ error: 'resource_not_found' }, { status: 404 });
@@ -156,8 +210,9 @@ export async function createSecretSettingsTestHarness(options: Readonly<{
     const scope = { serverId: connection.home.id, accountId: 'account-a' };
     storage.setState({ settings, settingsScope: scope, settingsVersion });
     return {
-        credentials, encryption, scope, request, resources, recipients, updates, deletes, repairs, settingsWrites,
+        credentials, encryption, scope, request, resources, recipients, updates, deletes, repairs, settingsWrites, promotions, catalogRows, artifacts,
         setRejectSettingsWrites(next: boolean) { rejectSettingsWrites = next; },
+        setLosePromotionResponse(next: boolean) { losePromotionResponse = next; },
         get persistedSettings() {
             return settingsParse(openAccountSettingsStoredContent({ content: settingsContent, encryption, expectedMode: mode }).raw);
         },

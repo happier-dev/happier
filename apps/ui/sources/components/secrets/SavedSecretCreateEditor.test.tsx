@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createDeferred, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installSettingsViewCommonModuleMocks } from '@/components/settings/settingsViewTestHelpers';
@@ -10,6 +10,7 @@ const confirmDisclosure = vi.hoisted(() => vi.fn(async () => true));
 const createResource = vi.hoisted(() => vi.fn());
 
 installSettingsViewCommonModuleMocks({
+    storage: importOriginal => importOriginal(),
     modal: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
         return createModalModuleMock({ spies: { confirm: confirmDisclosure } }).module;
@@ -19,28 +20,38 @@ installSettingsViewCommonModuleMocks({
 vi.mock('@/sync/ops/settings/savedSecretResourceOperations', () => ({
     createSavedSecretResource: createResource,
 }));
-vi.mock('@/sync/ops/teams/teamActionClient', () => ({
-    isTeamActionApprovalPendingError: (value: unknown) => (
-        typeof value === 'object' && value !== null && 'registration' in value
-    ),
-}));
-vi.mock('@/components/sessions/access/useSessionAccessDirectory', () => ({
-    useSessionAccessDirectory: () => ({
-        sections: [
-            { kind: 'account', title: 'People', candidates: [], status: 'idle', cursor: null, hasMore: false, loadingMore: false,
-                resolveCandidates: async () => [{ principal: { ref: { kind: 'account', accountId: 'account-b' }, key: 'account:account-b', displayName: 'B', accessibilityLabel: 'B' }, addition: { kind: 'allowed' }, operation: { kind: 'idle' } }] },
-            { kind: 'team', title: 'Teams', candidates: [], status: 'idle', cursor: null, hasMore: false, loadingMore: false,
-                resolveCandidates: async () => [{ principal: { ref: { kind: 'team', teamId: 'team-a' }, key: 'team:team-a', displayName: 'Team A', accessibilityLabel: 'Team A' }, addition: { kind: 'allowed' }, operation: { kind: 'idle' } }] },
-            { kind: 'group', title: 'Groups', candidates: [], status: 'idle', cursor: null, hasMore: false, loadingMore: false,
-                resolveCandidates: async () => [{ principal: { ref: { kind: 'group', teamId: 'team-a', groupId: 'group-a' }, key: 'group:team-a:group-a', displayName: 'Group A', secondaryLabel: 'Team A', accessibilityLabel: 'Group A, Team A' }, addition: { kind: 'allowed' }, operation: { kind: 'idle' } }] },
+const { serveActionHomes } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
+const { teamSummaryFixture, teamGroupFixture } = await import('@/dev/testkit/fixtures/teamFixtures');
+let home: Awaited<ReturnType<typeof serveActionHomes>> | null = null;
+let scopeA = { serverId: '', accountId: 'owner-a' };
+let scopeB = { serverId: '', accountId: 'owner-b' };
+beforeEach(async () => {
+    home = await serveActionHomes({
+        homes: [
+            { key: 'home-b', serverUrl: 'https://saved-secret-create-b.test', accountId: 'owner-b' },
+            { key: 'home-a', serverUrl: 'https://saved-secret-create-a.test', accountId: 'owner-a' },
         ],
-        teamContexts: [], activeTeamContexts: [], teamDirectoryStatus: 'ready', teamDirectoryComplete: true,
-        loadMore: vi.fn(), retry: vi.fn(),
-    }),
-}));
+        route: request => {
+            if (request.path === '/v1/user/search') return Response.json({ users: request.home === 'home-a' ? [
+                { id: 'account-b', firstName: 'B', lastName: null, username: 'b', avatar: null, bio: null, status: 'none', publicKey: null },
+            ] : [], nextCursor: null });
+            if (request.path === '/v1/teams/list') return Response.json({
+                items: request.home === 'home-a' ? [teamSummaryFixture({ id: 'team-a', name: 'Team A' })] : [], nextCursor: null,
+            });
+            if (request.path === '/v1/teams/groups/list') return Response.json({
+                items: request.home === 'home-a' ? [teamGroupFixture({ id: 'group-a', teamId: 'team-a', name: 'Group A' })] : [], nextCursor: null,
+            });
+            return undefined;
+        },
+    });
+    scopeA = { serverId: home.homes['home-a']!.id, accountId: 'owner-a' };
+    scopeB = { serverId: home.homes['home-b']!.id, accountId: 'owner-b' };
+});
 
 afterEach(() => {
     standardCleanup();
+    home?.dispose();
+    home = null;
     confirmDisclosure.mockReset();
     confirmDisclosure.mockResolvedValue(true);
     createResource.mockReset();
@@ -55,7 +66,7 @@ describe('SavedSecretCreateEditor', () => {
         const { SavedSecretCreateEditor } = await import('./SavedSecretCreateEditor');
         const screen = await renderScreen(
             <SavedSecretCreateEditor
-                scope={{ serverId: 'home-a', accountId: 'owner-a' }}
+                scope={scopeA}
                 approvalPending={false}
                 requestApproval={vi.fn()}
                 onCancel={vi.fn()}
@@ -70,7 +81,7 @@ describe('SavedSecretCreateEditor', () => {
 
         expect(confirmDisclosure).not.toHaveBeenCalled();
         expect(createResource).toHaveBeenCalledWith(expect.objectContaining({
-            scope: { serverId: 'home-a', accountId: 'owner-a' },
+            scope: scopeA,
             name: 'Deploy token', kind: 'token', value: '  token-value\n',
             accountGrants: [], teamGrants: [], groupGrants: [],
         }));
@@ -84,7 +95,7 @@ describe('SavedSecretCreateEditor', () => {
         const { SavedSecretCreateEditor } = await import('./SavedSecretCreateEditor');
         const screen = await renderScreen(
             <SavedSecretCreateEditor
-                scope={{ serverId: 'home-a', accountId: 'owner-a' }}
+                scope={scopeA}
                 approvalPending={false}
                 requestApproval={vi.fn()}
                 onCancel={vi.fn()}
@@ -100,6 +111,8 @@ describe('SavedSecretCreateEditor', () => {
         await screen.pressByTestIdAsync('saved-secret-access-candidate-team:team-a');
         await vi.waitFor(() => expect(screen.findByTestId('saved-secret-access-candidate-group:team-a:group-a')).toBeTruthy());
         await screen.pressByTestIdAsync('saved-secret-access-candidate-group:team-a:group-a');
+        expect(home?.requests.some(request => request.path === '/v1/teams/list')).toBe(true);
+        expect(home?.requests.some(request => request.path === '/v1/teams/groups/list')).toBe(true);
         await screen.pressByTestIdAsync('saved-secret-create-submit');
 
         expect(confirmDisclosure).toHaveBeenCalledOnce();
@@ -110,11 +123,12 @@ describe('SavedSecretCreateEditor', () => {
 
     it('keeps the draft mounted while approval is pending and presents the exact artifact', async () => {
         const requestApproval = vi.fn();
-        createResource.mockRejectedValueOnce({ registration: { artifactId: 'approval-a' } });
+        const { TeamActionApprovalPendingError } = await import('@/sync/ops/teams/teamActionClient');
+        createResource.mockRejectedValueOnce(new TeamActionApprovalPendingError('approval-a'));
         const { SavedSecretCreateEditor } = await import('./SavedSecretCreateEditor');
         const screen = await renderScreen(
             <SavedSecretCreateEditor
-                scope={{ serverId: 'home-a', accountId: 'owner-a' }}
+                scope={scopeA}
                 approvalPending={false}
                 requestApproval={requestApproval}
                 onCancel={vi.fn()}
@@ -127,11 +141,11 @@ describe('SavedSecretCreateEditor', () => {
         // handler is the one the last commit produced.
         await flushHookEffects();
         await screen.pressByTestIdAsync('saved-secret-create-submit');
-        expect(requestApproval).toHaveBeenCalledWith({ artifactId: 'approval-a' });
+        expect(requestApproval).toHaveBeenCalledWith('approval-a');
 
         await screen.update(
             <SavedSecretCreateEditor
-                scope={{ serverId: 'home-a', accountId: 'owner-a' }}
+                scope={scopeA}
                 approvalPending
                 approvalId="approval-a"
                 requestApproval={requestApproval}
@@ -159,7 +173,7 @@ describe('SavedSecretCreateEditor', () => {
             onCreated,
         };
         const screen = await renderScreen(
-            <SavedSecretCreateEditor scope={{ serverId: 'home-a', accountId: 'owner-a' }} {...common} />,
+            <SavedSecretCreateEditor scope={scopeA} {...common} />,
         );
         screen.changeTextByTestId('saved-secret-create-name', 'Home A secret');
         screen.changeTextByTestId('saved-secret-create-value', 'home-a-value');
@@ -168,7 +182,7 @@ describe('SavedSecretCreateEditor', () => {
         screen.pressByTestId('saved-secret-create-submit');
 
         await screen.update(
-            <SavedSecretCreateEditor scope={{ serverId: 'home-b', accountId: 'owner-b' }} {...common} />,
+            <SavedSecretCreateEditor scope={scopeB} {...common} />,
         );
         // A different Home is a different draft: the value typed for Home A is
         // gone, so nothing typed there can be submitted here.
@@ -194,7 +208,7 @@ describe('SavedSecretCreateEditor', () => {
             onCreated: vi.fn(async () => {}),
         };
         const screen = await renderScreen(
-            <SavedSecretCreateEditor scope={{ serverId: 'home-a', accountId: 'owner-a' }} {...common} />,
+            <SavedSecretCreateEditor scope={scopeA} {...common} />,
         );
         screen.changeTextByTestId('saved-secret-create-name', 'Cross-Home secret');
         screen.changeTextByTestId('saved-secret-create-value', 'cross-home-value');
@@ -204,7 +218,7 @@ describe('SavedSecretCreateEditor', () => {
         await screen.pressByTestIdAsync('saved-secret-access-candidate-team:team-a');
 
         await screen.update(
-            <SavedSecretCreateEditor scope={{ serverId: 'home-b', accountId: 'owner-b' }} {...common} />,
+            <SavedSecretCreateEditor scope={scopeB} {...common} />,
         );
         screen.changeTextByTestId('saved-secret-create-name', 'Home B secret');
         screen.changeTextByTestId('saved-secret-create-value', 'home-b-value');
@@ -214,7 +228,7 @@ describe('SavedSecretCreateEditor', () => {
         // `account-b`, `team-a` and `group-a` are Home A identities; submitting
         // them to Home B would ask it to share with principals it never named.
         expect(createResource).toHaveBeenCalledWith(expect.objectContaining({
-            scope: { serverId: 'home-b', accountId: 'owner-b' },
+            scope: scopeB,
             name: 'Home B secret',
             value: 'home-b-value',
             accountGrants: [], teamGrants: [], groupGrants: [],
@@ -230,7 +244,7 @@ describe('SavedSecretCreateEditor', () => {
         const { SavedSecretCreateEditor } = await import('./SavedSecretCreateEditor');
         const screen = await renderScreen(
             <SavedSecretCreateEditor
-                scope={{ serverId: 'home-a', accountId: 'owner-a' }}
+                scope={scopeA}
                 onCreatePersonal={onCreatePersonal}
                 approvalPending={false}
                 requestApproval={vi.fn()}
@@ -258,7 +272,7 @@ describe('SavedSecretCreateEditor', () => {
         const { SavedSecretCreateEditor } = await import('./SavedSecretCreateEditor');
         const screen = await renderScreen(
             <SavedSecretCreateEditor
-                scope={{ serverId: 'home-a', accountId: 'owner-a' }}
+                scope={scopeA}
                 onCreatePersonal={onCreatePersonal}
                 approvalPending={false}
                 requestApproval={vi.fn()}
@@ -282,7 +296,7 @@ describe('SavedSecretCreateEditor', () => {
         const { SavedSecretCreateEditor } = await import('./SavedSecretCreateEditor');
         const screen = await renderScreen(
             <SavedSecretCreateEditor
-                scope={{ serverId: 'home-a', accountId: 'owner-a' }}
+                scope={scopeA}
                 onCreatePersonal={vi.fn(async () => 'personal-new')}
                 sharedAvailable={false}
                 approvalPending={false}
@@ -301,7 +315,7 @@ describe('SavedSecretCreateEditor', () => {
         const { SavedSecretCreateEditor } = await import('./SavedSecretCreateEditor');
         const screen = await renderScreen(
             <SavedSecretCreateEditor
-                scope={{ serverId: 'home-a', accountId: 'owner-a' }}
+                scope={scopeA}
                 approvalPending={false}
                 requestApproval={vi.fn()}
                 onCancel={vi.fn()}

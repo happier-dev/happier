@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { SavedSecretCatalogEntryV1 } from '@happier-dev/protocol';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SavedSecretResourceOperationResult } from '@/sync/ops/settings/savedSecretResourceOperations';
 
 import { createDeferred, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
@@ -11,6 +11,7 @@ import { installSettingsViewCommonModuleMocks } from '@/components/settings/sett
 const confirmDisclosure = vi.hoisted(() => vi.fn(async () => true));
 
 installSettingsViewCommonModuleMocks({
+    storage: importOriginal => importOriginal(),
     modal: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
         return createModalModuleMock({ spies: { confirm: confirmDisclosure } }).module;
@@ -27,23 +28,30 @@ vi.mock('@/sync/ops/settings/savedSecretResourceOperations', () => ({
     promotePersonalSavedSecretResource: promotePersonal,
 }));
 vi.mock('@/sync/runtime/getSyncSingleton', () => ({ getSyncSingleton: () => ({ encryption: null }) }));
-vi.mock('@/components/sessions/access/useSessionAccessDirectory', () => ({
-    useSessionAccessDirectory: () => ({
-        sections: [
-            { kind: 'account', title: 'People', candidates: [], status: 'idle', cursor: null, hasMore: false, loadingMore: false,
-                resolveCandidates: async () => [
-                    { principal: { ref: { kind: 'account', accountId: 'account-new' }, key: 'account:account-new', displayName: 'New Person', accessibilityLabel: 'New Person' }, addition: { kind: 'allowed' }, operation: { kind: 'idle' } },
-                    { principal: { ref: { kind: 'account', accountId: 'account-old' }, key: 'account:account-old', displayName: 'Old Person', accessibilityLabel: 'Old Person' }, addition: { kind: 'allowed' }, operation: { kind: 'idle' } },
-                ] },
-            { kind: 'team', title: 'Teams', candidates: [], status: 'idle', cursor: null, hasMore: false, loadingMore: false,
-                resolveCandidates: async () => [{ principal: { ref: { kind: 'team', teamId: 'team-new' }, key: 'team:team-new', displayName: 'New Team', accessibilityLabel: 'New Team' }, addition: { kind: 'allowed' }, operation: { kind: 'idle' } }] },
-            { kind: 'group', title: 'Groups', candidates: [], status: 'idle', cursor: null, hasMore: false, loadingMore: false,
-                resolveCandidates: async () => [{ principal: { ref: { kind: 'group', teamId: 'team-new', groupId: 'group-new' }, key: 'group:team-new:group-new', displayName: 'New Group', secondaryLabel: 'New Team', accessibilityLabel: 'New Group, New Team' }, addition: { kind: 'allowed' }, operation: { kind: 'idle' } }] },
-        ],
-        teamContexts: [], activeTeamContexts: [], teamDirectoryStatus: 'ready', teamDirectoryComplete: true,
-        loadMore: vi.fn(), retry: vi.fn(),
-    }),
-}));
+// The host Action boundary answers Team directories; their clients, schemas,
+// pagers, and shared access-directory projection remain real.
+vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async () => {
+    const { teamSummaryFixture, teamGroupFixture } = await import('@/dev/testkit/fixtures/teamFixtures');
+    return { createFrontDoorActionExecute: () => async (actionId: string) => ({ ok: true,
+        result: { items: actionId === 'teams.list'
+            ? [teamSummaryFixture({ id: 'team-new', name: 'New Team' })]
+            : actionId === 'teams.groups.list'
+                ? [teamGroupFixture({ id: 'group-new', teamId: 'team-new', name: 'New Group' })] : [], nextCursor: null } }) };
+});
+
+const { serveAccountHomes } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
+let home: Awaited<ReturnType<typeof serveAccountHomes>> | null = null;
+let testScope = { serverId: '', accountId: 'account-owner' };
+beforeEach(async () => {
+    home = await serveAccountHomes({
+        homes: [{ key: 'home-a', serverUrl: 'https://saved-secret-access.test', accountId: 'account-owner' }],
+        route: request => request.path === '/v1/user/search' ? Response.json({ users: [
+            { id: 'account-new', firstName: 'New', lastName: 'Person', username: 'new-person', avatar: null, bio: null, status: 'none', publicKey: null },
+            { id: 'account-old', firstName: 'Old', lastName: 'Person', username: 'old-person', avatar: null, bio: null, status: 'none', publicKey: null },
+        ], nextCursor: null }) : undefined,
+    });
+    testScope = { serverId: home.homes['home-a']!.id, accountId: 'account-owner' };
+});
 
 const entry = {
     ref: 'happier:shared-secret:v1:resource-1',
@@ -63,6 +71,8 @@ const entry = {
 
 afterEach(() => {
     standardCleanup();
+    home?.dispose();
+    home = null;
     setGrants.mockReset();
     setGrants.mockResolvedValue({ ok: true });
     promotePersonal.mockReset();
@@ -81,6 +91,25 @@ const personalSecret = {
 } as const;
 
 describe('SavedSecretAccessEditor', () => {
+    it('requires a changed audience and disables Save again when the selection is reverted', async () => {
+        const { SavedSecretAccessEditor } = await import('./SavedSecretAccessEditor');
+        const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
+        const screen = await renderScreen(<SavedSecretAccessEditor
+            target={{ kind: 'shared', entry }} scope={testScope}
+            onClose={() => {}} onSaved={async () => {}} />);
+        const save = () => screen.findAllByType(RoundButton).find((button) => button.props.testID === 'saved-secret-access-save')!;
+        expect(save().props.disabled).toBe(true);
+        await vi.waitFor(() => expect(screen.findByTestId('saved-secret-access-candidate-account:account-new')).toBeTruthy());
+        expect(home?.requests.some((request) => request.path === '/v1/user/search'
+            && request.url.searchParams.get('purpose') === 'collaboration')).toBe(true);
+        await screen.pressByTestIdAsync('saved-secret-access-candidate-account:account-new');
+        expect(save().props.disabled).toBe(false);
+        await screen.pressByTestIdAsync('saved-secret-access-grant-account:account-new');
+        await screen.pressByTestIdAsync('saved-secret-access-remove:account:account-new');
+        expect(save().props.disabled).toBe(true);
+        expect(setGrants).not.toHaveBeenCalled();
+    });
+
     it('promotes a personal secret once, with the chosen grants, only when the person saves', async () => {
         const { SavedSecretAccessEditor } = await import('./SavedSecretAccessEditor');
         const onClose = vi.fn();
@@ -88,7 +117,7 @@ describe('SavedSecretAccessEditor', () => {
         const screen = await renderScreen(
             <SavedSecretAccessEditor
                 target={{ kind: 'personal', secret: personalSecret, expectedSettingsVersion: 9 }}
-                scope={{ serverId: 'home-a', accountId: 'account-owner' }}
+                scope={testScope}
                 onClose={onClose}
                 onSaved={onSaved}
             />,
@@ -109,7 +138,7 @@ describe('SavedSecretAccessEditor', () => {
         expect(confirmDisclosure).toHaveBeenCalledOnce();
         expect(promotePersonal).toHaveBeenCalledOnce();
         expect(promotePersonal).toHaveBeenCalledWith(expect.objectContaining({
-            scope: { serverId: 'home-a', accountId: 'account-owner' },
+            scope: testScope,
             expectedSettingsVersion: 9,
             secret: personalSecret,
             accountGrants: ['account-new'],
@@ -127,7 +156,7 @@ describe('SavedSecretAccessEditor', () => {
         const screen = await renderScreen(
             <SavedSecretAccessEditor
                 target={{ kind: 'personal', secret: personalSecret, expectedSettingsVersion: 9 }}
-                scope={{ serverId: 'home-a', accountId: 'account-owner' }}
+                scope={testScope}
                 onClose={vi.fn()}
                 onSaved={vi.fn(async () => {})}
             />,
@@ -148,7 +177,7 @@ describe('SavedSecretAccessEditor', () => {
         const screen = await renderScreen(
             <SavedSecretAccessEditor
                 target={{ kind: 'shared', entry }}
-                scope={{ serverId: 'home-a', accountId: 'account-owner' }}
+                scope={testScope}
                 onClose={onClose}
                 onSaved={onSaved}
             />,
@@ -163,7 +192,7 @@ describe('SavedSecretAccessEditor', () => {
         await screen.pressByTestIdAsync('saved-secret-access-save');
 
         expect(setGrants).toHaveBeenCalledWith(expect.objectContaining({
-            scope: { serverId: 'home-a', accountId: 'account-owner' },
+            scope: testScope,
             resourceId: 'resource-1',
             expectedRevision: 3,
             encryptionMode: 'plain',
@@ -181,7 +210,7 @@ describe('SavedSecretAccessEditor', () => {
         setGrants.mockImplementationOnce(() => request.promise);
         const onClose = vi.fn();
         const onSaved = vi.fn(async () => {});
-        const scope = { serverId: 'home-a', accountId: 'account-owner' } as const;
+        const scope = testScope;
         const screen = await renderScreen(
             <SavedSecretAccessEditor target={{ kind: 'shared', entry }} scope={scope} onClose={onClose} onSaved={onSaved} />,
         );
@@ -207,7 +236,7 @@ describe('SavedSecretAccessEditor', () => {
         const { SavedSecretAccessEditor } = await import('./SavedSecretAccessEditor');
         const onClose = vi.fn();
         const onSaved = vi.fn(async () => {});
-        const scope = { serverId: 'home-a', accountId: 'account-owner' } as const;
+        const scope = testScope;
         const screen = await renderScreen(
             <SavedSecretAccessEditor target={{ kind: 'shared', entry }} scope={scope} onClose={onClose} onSaved={onSaved} />,
         );
@@ -236,11 +265,13 @@ describe('SavedSecretAccessEditor', () => {
         expect(setGrants).not.toHaveBeenCalled();
 
         await screen.pressByTestIdAsync('saved-secret-access-reload');
-        expect(screen.findByTestId('saved-secret-access-save')?.props.disabled).not.toBe(true);
+        expect(screen.findByTestId('saved-secret-access-save')?.props.disabled).toBe(true);
+        await vi.waitFor(() => expect(screen.findByTestId('saved-secret-access-candidate-account:account-new')).toBeTruthy());
+        await screen.pressByTestIdAsync('saved-secret-access-candidate-account:account-new');
         await screen.pressByTestIdAsync('saved-secret-access-save');
         expect(setGrants).toHaveBeenCalledWith(expect.objectContaining({
             expectedRevision: 4,
-            accountGrants: [],
+            accountGrants: ['account-new'],
         }));
     });
 
@@ -250,7 +281,7 @@ describe('SavedSecretAccessEditor', () => {
         const screen = await renderScreen(
             <SavedSecretAccessEditor
                 target={{ kind: 'shared', entry }}
-                scope={{ serverId: 'home-a', accountId: 'account-owner' }}
+                scope={testScope}
                 onClose={vi.fn()}
                 onSaved={vi.fn(async () => {})}
             />,
@@ -275,7 +306,7 @@ describe('SavedSecretAccessEditor', () => {
         const screen = await renderScreen(
             <SavedSecretAccessEditor
                 target={{ kind: 'shared', entry: shared }}
-                scope={{ serverId: 'home-a', accountId: 'account-owner' }}
+                scope={testScope}
                 onClose={vi.fn()}
                 onSaved={vi.fn(async () => {})}
             />,
@@ -318,7 +349,7 @@ describe('SavedSecretAccessEditor', () => {
         const screen = await renderScreen(
             <SavedSecretAccessEditor
                 target={{ kind: 'shared', entry }}
-                scope={{ serverId: 'home-a', accountId: 'account-owner' }}
+                scope={testScope}
                 onClose={onClose}
                 onSaved={onSaved}
             />,
