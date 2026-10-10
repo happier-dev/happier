@@ -190,6 +190,27 @@ test('combined release resume reuses only exact-source, channel-scoped successfu
   assert.deepEqual(resolveReleaseResume({ ...input, originRun: originRun({ path: workflowPath, head_sha: 'c'.repeat(40) }),
     artifacts: [statusArtifact({ workflow_run: { id: RUN_ID, head_sha: 'c'.repeat(40) } })] }).uiCompleted, incomplete,
   'control head alone cannot prove a different candidate checkout');
+  for (const workflowPath of ['.github/workflows/release-preview-and-production.yml', '.github/workflows/release.yml']) {
+    const workflowSha = 'c'.repeat(40);
+    const prefix = workflowPath.endsWith('release-preview-and-production.yml') ? 'Publish preview channel / deploy_ui / ' : 'deploy_ui / ';
+    const pinnedInput = {
+      ...input,
+      originRun: originRun({ path: workflowPath, head_sha: workflowSha }),
+      artifacts: [statusArtifact({ workflow_run: { id: RUN_ID, head_sha: workflowSha } })],
+      expected: { ...input.expected, workflowPath },
+      jobs: jobs.map((job, index) => ({ ...job, head_sha: workflowSha, name: `${prefix}${flows[index][0]}` })),
+    };
+    assert.deepEqual(resolveReleaseResume(pinnedInput).uiCompleted, complete,
+      'candidate-bound status and successful origin steps retain native completion under a different control SHA');
+    assert.throws(() => resolveReleaseResume({ ...pinnedInput, expected: { ...pinnedInput.expected, sourceSha: workflowSha } }), /authorized source SHA/);
+    for (const patch of [
+      { run_id: RUN_ID + 1 }, { head_sha: SOURCE_SHA },
+      { steps: [{ name: 'EAS build (pipeline)', status: 'completed', conclusion: 'skipped' }] },
+    ]) {
+      assert.deepEqual(resolveReleaseResume({ ...pinnedInput, jobs: pinnedInput.jobs.map((job, index) => index === 1 ? { ...job, ...patch } : job) }).uiCompleted,
+        { ...complete, nativeIos: false }, 'different control must still require exact-origin successful native steps');
+    }
+  }
 });
 
 test('resume artifact download preserves binary bytes and fails on digest mismatch or failed GitHub download', (t) => {

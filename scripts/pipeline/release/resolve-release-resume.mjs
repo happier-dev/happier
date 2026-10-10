@@ -92,15 +92,15 @@ function flattenArtifacts(value) {
 }
 
 /**
- * GitHub job metadata proves these current-origin flows only when control and candidate
- * source are the same. It does not prove store public availability or a chained origin.
+ * Candidate-bound status and exact-origin successful job steps prove these flows
+ * independently of the control SHA. They do not prove store public availability or a chained origin.
  * @param {unknown} value
  * @param {{ runId: number; workflowSha: string; sourceSha: string; expectedSourceSha?: string; operationId?: string; workflowPath: string; channel: string; requested: boolean; expoAction: string }} identity
  */
 function resolveUiFlowCompletion(value, identity) {
   const completed = { ota: false, nativeIos: false, nativeAndroid: false, apk: false };
   if (!value || !identity.requested || !identity.operationId || identity.sourceSha !== identity.expectedSourceSha
-    || identity.sourceSha !== identity.workflowSha || !['preview', 'production'].includes(identity.channel)
+    || !['preview', 'production'].includes(identity.channel)
     || !['.github/workflows/release.yml', '.github/workflows/release-preview-and-production.yml'].includes(identity.workflowPath)) return completed;
   const pages = Array.isArray(value) ? value : [value];
   const jobs = pages.flatMap((page) => {

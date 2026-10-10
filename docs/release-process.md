@@ -289,6 +289,12 @@ changes, resume the combined operation from its prior run; each channel reads
 its own terminal status artifact and reuses only the verified work for that
 channel.
 
+Successful native flows remain reusable when the candidate source differs from
+the origin run's workflow-control SHA. Candidate-bound status must match the
+authorized source and operation, and the exact origin run's channel-specific
+native jobs and required build steps must have succeeded. A control correction
+alone does not invalidate that evidence or require rebuilding and resubmitting.
+
 Desktop recovery prefers that channel's unexpired finalized updater artifacts,
 bound to the exact origin run and SHA-256 archive digest. Restoring them does not
 rebuild, re-sign, or re-notarize their payloads. Missing finalized platforms use
