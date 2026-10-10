@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { EventEmitter } from 'node:events';
+import { EventEmitter, once } from 'node:events';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -1356,6 +1356,7 @@ describe('startTestDaemon', () => {
   it('returns daemon state even if the daemon exits after persisting daemon.state.json', async () => {
     const testDir = await mkdtemp(join(tmpdir(), 'happier-daemon-exit-after-state-'));
     const homeDir = resolve(testDir, 'home');
+    let daemon: Awaited<ReturnType<typeof startTestDaemon>> | null = null;
 
     try {
       const fakeScriptDir = resolve(testDir, 'fake-daemon', 'dist');
@@ -1382,19 +1383,23 @@ describe('startTestDaemon', () => {
         env: {},
       });
 
-      const daemon = await startTestDaemon({
+      daemon = await startTestDaemon({
         testDir,
         happyHomeDir: homeDir,
         env: {},
         startupTimeoutMs: 15_000,
       });
 
+      // State can become readable before Node observes the fake daemon's exit.
+      if (daemon.proc.child.exitCode === null && daemon.proc.child.signalCode === null) {
+        await once(daemon.proc.child, 'exit');
+      }
+
       expect(daemon.state.httpPort).toBe(32_225);
       expect(daemon.state.pid).toBe(daemon.proc.child.pid);
       expect(daemon.proc.child.exitCode).toBe(1);
-
-      await daemon.stop();
     } finally {
+      if (daemon) await daemon.stop();
       await rm(testDir, { recursive: true, force: true });
     }
   });
