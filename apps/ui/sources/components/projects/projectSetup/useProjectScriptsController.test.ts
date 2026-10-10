@@ -238,8 +238,9 @@ describe('Project Scripts Setup controls', () => {
                 expect(admissions).toEqual([]);
                 expect(hook.getCurrent().managedCreations.test?.progress.kind).toBe(mode === 'enrollment-pending' ? 'enrollment_pending' : 'acquiring');
                 machine = { ...machine, enrolledMachineId: 'actual-guest' };
-                act(() => publishHomeAccountChange(serverId));
-                await waitForHomeGovernance(() => expect(admissions).toHaveLength(1));
+                await act(async () => { publishHomeAccountChange(serverId); });
+                await flushHookEffects();
+                expect(admissions).toHaveLength(1);
             }
             expect(acquisitions).toHaveLength(1);
             expect(acquisitions[0]).not.toHaveProperty('agentStart');
