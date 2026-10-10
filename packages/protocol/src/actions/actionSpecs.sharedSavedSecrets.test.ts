@@ -46,6 +46,9 @@ describe('Shared Saved Secret Action contracts', () => {
       expect(spec.executionPlacement).toBe('account');
       expect(spec.serverTransport?.path).toBe(SHARED_SAVED_SECRET_ACTION_PATHS_V1[id]);
       expect(spec.surfaces).toMatchObject({ ui: true, cli: true, agent: true, api: true, plugin: true });
+      const exposedOnMcp = id === 'secrets.shared.promote' || id === 'secrets.shared.grants.set';
+      expect(spec.surfaces.mcp).toBe(exposedOnMcp);
+      expect(spec.bindings?.mcpToolName).toBe(exposedOnMcp ? id.replaceAll('.', '_') : undefined);
       expect(spec.approval).toEqual(id === 'secrets.shared.list'
         ? { result: 'required' }
         : { result: 'required', flow: 'deferred' });
@@ -127,6 +130,8 @@ describe('Shared Saved Secret Action contracts', () => {
       ...common,
       expectedSettingsVersion: 7,
       nextSettings: { t: 'encrypted', c: 'sealed-settings-envelope' },
+      referenceCensus: { accountMode: 'e2ee', profiles: { referenceGuardRevision: 0, rows: [] } },
+      profileMutations: [],
     })).toEqual({
       resourceId: 'secret-1',
       displayName: 'CI token',

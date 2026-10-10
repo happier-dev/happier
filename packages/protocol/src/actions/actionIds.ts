@@ -51,6 +51,7 @@ import { REMOTE_HOST_ACTION_IDS_V1 } from '../remoteHosts/remoteHostActionIdsV1.
 import { HOME_RUNTIME_ACTION_IDS_V1 } from '../home/runtime/actionIdsV1.js';
 import { ARTIFACT_FOLDER_ACTION_IDS_V1 } from '../prompts/library/artifactFolderActionIdsV1.js';
 import { USAGE_SOURCE_ACTION_IDS } from '../usage/usageSources.js';
+import { WORKFLOW_AUTHORING_ACTION_IDS } from './workflowAuthoringAction.js';
 
 export const WORKFLOW_ACTION_IDS_V1 = [
   'workflow.validate', 'workflow.run.start', 'workflow.run.list', 'workflow.run.summaries', 'workflow.run.get', 'workflow.run.wait',
@@ -134,7 +135,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   ],
   workflows: WORKFLOW_ACTION_IDS_V1,
   workflow_effects: WORKFLOW_EFFECT_ACTION_IDS_V1,
-  workflow_authoring: ['workflow.authoring.conversation.bind'],
+  workflow_authoring: WORKFLOW_AUTHORING_ACTION_IDS,
   workflow_diagnostics: ['workflow.trigger.test', 'workflow.starters.list', 'workflow.starters.resolve'],
   session_authoring: ['session.authoring.open'],
   artifact_access: ARTIFACT_ACCESS_ACTION_IDS_V1,
@@ -393,6 +394,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'ui.current_context.read',
     'ui.current_context.command.invoke',
   ],
+  account_home_continuation: ['account.home_continuation.invoke'],
   command_palette: ['ui.command_palette.list', 'ui.command_palette.invoke'],
   find: ['ui.find'],
   prompt_picker: ['ui.prompts.picker.open'],

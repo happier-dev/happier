@@ -8,6 +8,7 @@ import { writeSessionContextIntentV1ToMetadata } from '../sessions/context/sessi
 import type { StoredContentPublicShareV1 } from '../sharing/storedContentPublicShareV1.js';
 import type { PromptLibraryRecordV1 } from '../prompts/library/promptLibraryRowsV1.js';
 import { MemoryMutationResultV1Schema } from '../prompts/library/memoryActionsV1.js';
+import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
 
 function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
   return createActionExecutor({
@@ -49,6 +50,41 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
 }
 
 describe('createActionExecutor (prompt library actions)', () => {
+  it('keeps an agent memory proposal unchanged until the existing approval owner approves it', async () => {
+    let request: ApprovalRequest | null = null;
+    let stored: PromptLibraryStoredArtifact = { id: 'memory', revision: { headerVersion: 1, bodyVersion: 1 },
+      header: { v: 1, kind: 'memory_doc.v1', title: 'Memory' }, body: JSON.stringify({ v: 1, index: [], topics: [] }) };
+    // Artifact and approval persistence are external boundaries; admission,
+    // reviewed-target binding, approval replay and memory mutation remain real.
+    const executor = createExecutor({ isActionApprovalRequired: undefined,
+      isApprovalExecutionOriginCurrent: async () => true,
+      approvalsCreate: async ({ request: value }) => { request = value; return { artifactId: 'proposal' }; },
+      approvalsGet: async () => request,
+      approvalsUpdate: async ({ request: value }) => { request = value; return { ok: true }; },
+      memoryLibrary: { serverId: 'home', nowMs: () => 10, randomId: () => 'approved-fact',
+        store: { read: async () => stored, update: async input => {
+          stored = { ...stored, body: input.body, revision: { headerVersion: 2, bodyVersion: 2 } };
+        } },
+        readExposure: async () => ({ grants: { artifactId: 'memory', ownerAccountId: 'owner', access: 'owner', grants: [] },
+          publicShares: { publicShares: [] } }),
+      },
+    });
+    const original = stored;
+    expect(await executor.execute('approval.request.create', { actionId: 'memory.remember',
+      actionArgs: { ref: { kind: 'doc', artifactId: 'memory', serverId: 'home' }, expectedRevision: stored.revision,
+        text: 'Use the canonical Context owner.' }, summary: 'Remember', createdBy: { surface: 'agent' } },
+      { surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' },
+        serverId: 'home', defaultSessionId: 'lead', actionRequestId: 'memory-proposal' }))
+      .toMatchObject({ ok: true });
+    expect(stored).toBe(original);
+    expect(request).toMatchObject({ status: 'open', actionId: 'memory.remember' });
+    expect(await executor.execute('approval.request.decide', { artifactId: 'proposal', decision: 'approve' },
+      { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home',
+        defaultSessionId: 'lead' })).toMatchObject({ ok: true });
+    expect(JSON.parse(stored.body!).index).toEqual([expect.objectContaining({ id: 'approved-fact',
+      text: 'Use the canonical Context owner.', sourceSessionRef: { serverId: 'home', sessionId: 'lead' } })]);
+    expect(request).toMatchObject({ status: 'executed' });
+  });
   it('F8 edits the captured Account stack through semantic Actions without replacing neighboring entries', async () => {
     const neighbor = { id: 'neighbor', ref: { kind: 'bundle' as const, artifactId: 'skill' }, enabled: true,
       placement: 'skill_instructions' as const };

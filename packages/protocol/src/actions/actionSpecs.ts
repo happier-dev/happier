@@ -1,4 +1,5 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { AccountHomeContinuationInputV1Schema, AccountHomeContinuationResultV1Schema } from './accountHomeContinuationV1.js';
 import { SessionForkRpcParamsSchema } from '../sessions/fork.js';
 import { USAGE_ACTION_IDS, USAGE_COACH_ACTION_IDS } from '../usage/usageActionIdsV1.js';
 import { PromptDocRevisionV1Schema, PromptDocCreateActionInputV1Schema } from '../prompts/library/promptDocV2.js';
@@ -3140,6 +3141,7 @@ const RESULT_REQUIRED_APPROVAL_ACTION_IDS = [
   'action.invoke',
   'ui.current_context.read',
   'ui.current_context.command.invoke',
+  'account.home_continuation.invoke',
   'ui.command_palette.list',
   'ui.command_palette.invoke',
   'ui.find',
@@ -8116,7 +8118,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX = Object.freeze(defineActionSpecs([
     safety: 'safe',
     placements: [],
     bindings: { mcpToolName: 'machines_agents_list' },
-    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: false, rpc: false },
     inputHints: {
       title: 'List agents on a machine',
       fields: [
@@ -10874,6 +10876,21 @@ const ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX = Object.freeze(defineActionSpecs([
     inputSchema: EmptyObjectSchema,
   },
   {
+    id: 'account.home_continuation.invoke',
+    title: 'Continue Home connection',
+    description: 'Request an exact mounted authenticated Account continuation: choose a Home, retry, refresh, stop waiting, relink or open the enrolled Home. A human in that Account decides; key, credential and QR acquisition remain human-only.',
+    requiredAuthority: 'present_user', safety: 'safe', sideEffectClass: 'write', placements: [],
+    bindings: { mcpToolName: 'account_home_continuation_invoke' },
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
+    inputHints: { title: 'Continue Home connection', fields: [
+      { path: 'operation', title: 'Continuation step', widget: 'text', required: true },
+      { path: 'commandId', title: 'Current mounted command', widget: 'text', required: true },
+      { path: 'homeServerIdentityId', title: 'Chosen Home identity (choose only)', widget: 'text' },
+    ] },
+    inputSchema: AccountHomeContinuationInputV1Schema,
+    outputSchema: AccountHomeContinuationResultV1Schema,
+  },
+  {
     id: 'ui.current_context.command.invoke',
     title: 'Invoke current UI command',
     description: 'Invoke one currently available opaque command from the local current UI context. If the result is `denied`, the person declined the confirmation: report that and do not invoke it again unless they ask.',
@@ -12474,6 +12491,7 @@ export type PluginProvenanceOnlyActionId = keyof typeof PLUGIN_PROVENANCE_ONLY_A
  * are intentionally absent from the generic API and trusted-plugin catalogs.
  */
 const CLIENT_EXECUTION_PLACEMENT_ACTION_IDS = [
+  ...ACTION_ID_FAMILIES_V1.account_home_continuation,
   ...ACTION_ID_FAMILIES_V1.session_authoring,
   ...ACTION_ID_FAMILIES_V1.composer_ingress,
   ...ACTION_ID_FAMILIES_V1.workflow_authoring,

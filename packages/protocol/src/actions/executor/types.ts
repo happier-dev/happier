@@ -19,6 +19,7 @@ import type { FilesystemActionId } from '../filesystemActionFamily.js';
 import type { SessionStateFieldActionWrite } from '../sessionStateFieldActions.js';
 import type { ProjectContextUpdateInputV1, ProjectContextUpdateOutputV1 } from '../../projects/projectContextV1.js';
 import type { SessionWorkerPublishInputV1 } from '../../sessions/relations/workerUpdateV1.js';
+import type { WorkflowAuthoringActionId } from '../workflowAuthoringAction.js';
 import type { ManagedMachineActionIdV1, ManagedMachineActionInputV1 } from '../../machines/managed/actionsV1.js';
 import type { MachineReferenceCensusV1 } from '../../machines/machineReferenceCensusV1.js';
 import type { MachinePresetActionIdV1, MachinePresetActionInputV1 } from '../../machines/managed/machinePresetActionsV1.js';
@@ -31,6 +32,7 @@ import type { WidgetDefinitionActionDepsV1 } from '../../widgets/definitionActio
 import type { WidgetLayoutFragmentActionDepsV1 } from '../../widgets/fragmentActionsV1.js';
 import type { MachinesAgentsSignInStartInput, MachinesAgentsSignInStatusInput, MachinesAgentsSignInStartOutput, AgentSignInStatusResponse, MachinesAgentsSignInCancelInput, MachinesAgentsSignInCancelOutput } from '../../daemon/agentSignIn.js';
 import type { z } from 'zod';
+import type { AccountHomeContinuationInputV1 } from '../accountHomeContinuationV1.js';
 import type {
   ProjectSourcesListInputV1, ProjectSourcesReadInputV1, ProjectSourcesCreateInputV1,
   ProjectSourcesUpdateInputV1, ProjectSourcesDeleteInputV1,
@@ -865,6 +867,8 @@ export type ApprovalQueueListResultV1 = Readonly<{
 
 type ExecutionRunActionOptions = Readonly<{
   serverId?: string | null;
+  /** Host-only issuance witness; never serialized into the Run request. */
+  onTransportIssued?: () => void;
   /** Immutable caller facts already admitted by the outer Action executor. */
   authority?: ActionRequiredAuthority;
   actionCaller?: ActionCaller;
@@ -1171,6 +1175,12 @@ export type ActionExecutorDeps = Readonly<{
     input: unknown;
     context: ActionExecutorContext;
   }>) => Promise<ActionExecuteResult>;
+  /** Borrows the answering Account's exact mounted continuation; no enrollment state is copied. */
+  accountHomeContinuationAction?: (args: Readonly<{
+    actionId: 'account.home_continuation.invoke';
+    input: AccountHomeContinuationInputV1;
+    context: ActionExecutorContext;
+  }>) => Promise<ActionExecuteResult>;
   uiFindAction?: (args: Readonly<{
     actionId: 'ui.find';
     input: unknown;
@@ -1217,7 +1227,7 @@ export type ActionExecutorDeps = Readonly<{
   /** Authenticated Machine materialization; result publication belongs to the Project row owner. */
   projectsOpen?: (input: OpenProjectInputV1, context: ActionExecutorContext) => Promise<OpenProjectResultV1 | ActionApprovalRequestCreatedResult | ActionExecuteFailure>;
   sessionCanvasAction?: (args: Readonly<{ actionId: SessionCanvasActionId; input: unknown; signal?: AbortSignal }>) => Promise<unknown>;
-  workflowConversationBind?: (args: Readonly<{ input: unknown; context: ActionExecutorContext; signal?: AbortSignal }>) => Promise<unknown>;
+  workflowAuthoringAction?: (args: Readonly<{ actionId: WorkflowAuthoringActionId; input: unknown; context: ActionExecutorContext; signal?: AbortSignal }>) => Promise<unknown>;
   sessionOrganizationMove?: (args: Readonly<{ input: unknown; signal?: AbortSignal }>) => Promise<unknown>;
   /** Authenticated Account HTTP mutation; rail admission uses current Session metadata in the host. */
   sessionOrganizationPinSet?: (args: Readonly<{

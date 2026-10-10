@@ -4,6 +4,8 @@ import { getActionSpec } from './actionSpecs.js';
 import { resolveEffectiveActionInputFields } from './actionInputHintsRuntime.js';
 import { actionInputFieldAcceptsNull } from './actionInputSchemaPath.js';
 import type { ActionId } from './actionIds.js';
+import { VoiceConversationTargetSchema } from './voiceConversationActionFamily.js';
+import type { ActionInputFieldHint } from './actionInputHintsRuntime.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -25,9 +27,41 @@ export type ApprovalStructuredAnswersProjection =
   | Readonly<{ kind: 'unrepresentable'; reason: ApprovalUnrepresentableReason }>;
 
 export type ApprovalActionFieldRow =
-  | Readonly<{ kind: 'value'; path: string; title: string; value: string }>
+  | Readonly<{ kind: 'value'; path: string; title: string; value: string; reference?: ApprovalActionReference }>
   | Readonly<{ kind: 'structuredAnswers'; path: string; title: string; answers: readonly ApprovalStructuredAnswer[] }>
   | Readonly<{ kind: 'unrepresentable'; path: string; title: string; reason: ApprovalUnrepresentableReason }>;
+
+export type ApprovalActionReference =
+  | Readonly<{ kind: 'session'; id: string; serverId?: string }>
+  | Readonly<{ kind: 'home'; id: string }>;
+
+// These are declared Action field keys, not a guess from an opaque value or suffix.
+const SESSION_REFERENCE_KEYS = new Set([
+  'sessionId', 'leadSessionId', 'expectedLeadSessionId', 'sourceSessionId', 'targetSessionId',
+  'underSessionId', 'parentSessionId', 'originSessionId',
+]);
+
+function describeApprovalReference(actionId: string, field: ActionInputFieldHint, values: readonly unknown[]): ApprovalActionReference | undefined {
+  if (values.length !== 1) return undefined;
+  const value = values[0];
+  if (field.path === 'target' && (actionId === 'ui.voice_global.start' || actionId === 'ui.voice_global.get')) {
+    // Only this declared typed union owns this discriminator. Arbitrary JSON that happens
+    // to contain kind/sessionId keys remains data, including access principals/configuration.
+    const target = VoiceConversationTargetSchema.safeParse(value);
+    if (target.success && target.data.kind === 'session' && target.data.sessionAddress) {
+      return { kind: 'session', id: target.data.sessionAddress.sessionId, serverId: target.data.sessionAddress.serverId };
+    }
+    return undefined;
+  }
+  if (typeof value !== 'string' || !value.trim()) return undefined;
+  const key = field.path.split('.').at(-1);
+  if ((field.inputType && 'hostType' in field.inputType && field.inputType.hostType === 'session')
+    || (key !== undefined && SESSION_REFERENCE_KEYS.has(key))) {
+    return { kind: 'session', id: value.trim() };
+  }
+  if (key === 'serverId') return { kind: 'home', id: value.trim() };
+  return undefined;
+}
 
 export type ApprovalActionFieldsPresentation = Readonly<{
   rows: readonly ApprovalActionFieldRow[];
@@ -218,7 +252,8 @@ export function describeApprovalActionFields(input: Readonly<{
       }
       continue;
     }
-    rows.push({ kind: 'value', path: field.path, title: field.title, value });
+    const reference = describeApprovalReference(input.actionId, field, values);
+    rows.push({ kind: 'value', path: field.path, title: field.title, value, ...(reference ? { reference } : {}) });
   }
   return { rows, unrepresentable };
 }

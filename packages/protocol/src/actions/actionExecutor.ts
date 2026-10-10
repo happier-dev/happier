@@ -4,6 +4,7 @@ import { getWorkflowStarterExamplesV1, materializeWorkflowStarterExample } from 
 import { WorkflowStartersResolveInputV1Schema } from '../workflows/builtins/starterActionsV1.js';
 import { resolveReviewEngineInventoryTarget } from './executor/reviewEngineInventoryTarget.js';
 import { MemoryWindowRequestV1Schema } from '../memory/memoryWindow.js';
+import { isWorkflowAuthoringActionId } from './workflowAuthoringAction.js';
 import { BackendTargetKeyV2InputSchema } from '../backends/targets/backendTargetRefV2.js';
 import { PromptDocRevisionV1Schema, PromptDocCreateActionInputV1Schema } from '../prompts/library/promptDocV2.js';
 import { updatePromptLibraryStackV1 } from '../prompts/library/promptLibraryCatalogV1.js';
@@ -29,6 +30,7 @@ import {
 import { isSessionStateFieldActionId, resolveSessionStateFieldActionWrite } from './sessionStateFieldActions.js';
 import { isProjectDefinitionActionId } from './projectDefinitionActionFamily.js';
 import { isAccountSettingActionSurfaceAllowedV1 } from './accountSettingDeclarations.js';
+import { AccountHomeContinuationInputV1Schema } from './accountHomeContinuationV1.js';
 import { bytesToHex, randomBytes } from '@noble/hashes/utils';
 import type { PublicActionInputById } from './actionSpecs.js';
 import { WaitActionInputV1Schema } from './specs/wait.js';
@@ -1606,7 +1608,7 @@ function buildExecutionRunCallOptions(
   targetMachineId?: string | null,
   permissionRequestStore?: unknown,
   workflowObservationSink?: unknown,
-  actionContext?: Pick<ActionExecutorContext, 'actionCaller' | 'actionRequestId' | 'requesterWorkAttributionV1'>,
+  actionContext?: Pick<ActionExecutorContext, 'actionCaller' | 'actionRequestId' | 'requesterWorkAttributionV1' | 'onTransportIssued'>,
 ): ExecutionRunCallOptions | undefined {
   const origin = normalizeId(originSessionId);
   const target = normalizeId(targetMachineId);
@@ -1615,12 +1617,13 @@ function buildExecutionRunCallOptions(
   const requesterWorkAttributionV1 = actionContext?.requesterWorkAttributionV1;
   if (!serverId && !signal && !origin && !target
     && permissionRequestStore === undefined && workflowObservationSink === undefined
-    && !actionRequestId && !actionCaller && !authority && !requesterWorkAttributionV1) return undefined;
+    && !actionRequestId && !actionCaller && !authority && !requesterWorkAttributionV1 && !actionContext?.onTransportIssued) return undefined;
   return {
     ...(serverId ? { serverId } : {}),
     ...(origin ? { originSessionId: origin } : {}),
     ...(target ? { targetMachineId: target } : {}),
     ...(signal ? { signal } : {}),
+    ...(actionContext?.onTransportIssued ? { onTransportIssued: actionContext.onTransportIssued } : {}),
     ...(permissionRequestStore === undefined ? {} : { permissionRequestStore }),
     ...(workflowObservationSink === undefined ? {} : { workflowObservationSink }),
     ...(actionRequestId ? { actionRequestId } : {}),
@@ -4615,6 +4618,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
         return await deps.uiCommandPaletteAction({ actionId, input: parsed.data, context: ctx });
       }
+      if (actionId === 'account.home_continuation.invoke') {
+        return deps.accountHomeContinuationAction
+          ? await deps.accountHomeContinuationAction({ actionId, input: AccountHomeContinuationInputV1Schema.parse(parsed.data), context: ctx })
+          : { ok: false, errorCode: 'unsupported_action', error: 'current_account_continuation_not_mounted' };
+      }
       if (actionId === 'ui.current_context.read' || actionId === 'ui.current_context.command.invoke') {
         return deps.uiCurrentContextAction
           ? await deps.uiCurrentContextAction({ actionId, input: parsed.data, context: ctx })
@@ -6763,9 +6771,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           }, ctx));
         }
 
-        if (actionId === 'workflow.authoring.conversation.bind') {
-          if (!deps.workflowConversationBind) return { ok: true, result: { status: 'unavailable' } };
-          return completeActionResult(await deps.workflowConversationBind({ input: parsed.data, context: ctx,
+        if (isWorkflowAuthoringActionId(actionId)) {
+          if (!deps.workflowAuthoringAction) return { ok: true, result: { status: 'unavailable' } };
+          return completeActionResult(await deps.workflowAuthoringAction({ actionId, input: parsed.data, context: ctx,
             ...(ctx.signal ? { signal: ctx.signal } : {}) }));
         }
 
