@@ -156,6 +156,39 @@ export type ProjectWorkersActionInputById = {
             };
         } | undefined;
     };
+    readonly "projects.worker.copy.inspect": {
+        kind: 'preview';
+        workspace: {
+            serverId: string;
+            refId: string;
+        };
+        machineId: string;
+        expectedRelationship: {
+            v: 1;
+            relationshipId: string;
+            controllerMachineId: string;
+            alphaWorkspaceRefId: string;
+            betaWorkspaceRefId: string;
+            mode: 'keep_synced' | 'mirror_exactly' | 'keep_both_in_sync';
+            contentPolicy: {
+                v: 1;
+                selection: 'git_worktree' | 'all_files';
+                extraIgnorePatterns: readonly string[];
+                extraIncludePatterns: readonly string[];
+                policyDigest: string;
+            };
+            enabled: boolean;
+            createdAtMs: number;
+            updatedAtMs: number;
+            provenance?: {
+                kind: 'worker_clean_copy';
+                sourceWorkspaceRefId: string;
+                targetWorkspaceRefId: string;
+            } | undefined;
+        };
+        targetMachineId: string;
+        targetWorkspaceRefId: string;
+    };
     readonly "projects.worker.copy.retire": {
         workspace: {
             serverId: string;
@@ -179,6 +212,11 @@ export type ProjectWorkersActionInputById = {
             enabled: boolean;
             createdAtMs: number;
             updatedAtMs: number;
+            provenance?: {
+                kind: 'worker_clean_copy';
+                sourceWorkspaceRefId: string;
+                targetWorkspaceRefId: string;
+            } | undefined;
         };
         removeTargetCopy?: {
             workspaceRefId: string;
@@ -363,6 +401,30 @@ export type ProjectWorkersActionResultById = {
         status: 'unavailable' | 'locked' | 'invalid' | 'outcomeUnknown' | 'cancelled';
     };
     readonly "projects.worker.status": {
+        eligible: false;
+        load: {
+            accepting: boolean;
+            runAtMost: number | null;
+            kind: 'known';
+            running: number;
+            queued: number;
+        } | {
+            kind: 'unknown';
+        };
+        candidate: null;
+        explanation: 'unavailable' | 'not_accepting' | 'draining' | 'policy_unavailable' | 'unsupported' | 'forbidden' | 'workspace_unavailable' | 'worker_copy_missing' | 'capability_unknown' | 'memory_insufficient' | 'memory_unavailable';
+        observedMemory?: {
+            totalBytes: number;
+            availableBytes: number;
+        } | undefined;
+        lastCleanSyncAtMs?: number | null | undefined;
+        workerCopy?: {
+            serverId: string;
+            sourceWorkspaceRefId: string;
+            sourceMachineId: string;
+            targetMachineId: string;
+        } | undefined;
+    } | {
         eligible: true;
         load: {
             accepting: boolean;
@@ -378,19 +440,23 @@ export type ProjectWorkersActionResultById = {
             machineId: string;
         };
         explanation: 'eligible' | 'load_unknown';
-    } | {
-        eligible: false;
-        load: {
-            accepting: boolean;
-            runAtMost: number | null;
-            kind: 'known';
-            running: number;
-            queued: number;
-        } | {
-            kind: 'unknown';
+        observedMemory?: {
+            totalBytes: number;
+            availableBytes: number;
+        } | undefined;
+        lastCleanSyncAtMs?: number | null | undefined;
+    };
+    readonly "projects.worker.copy.inspect": {
+        ok: true;
+        preview: {
+            targetMachineId: string;
+            workspaceRefId: string;
+            rootFingerprint: string;
+            sizeBytes?: number | undefined;
         };
-        candidate: null;
-        explanation: 'unavailable' | 'not_accepting' | 'draining' | 'policy_unavailable' | 'unsupported' | 'forbidden' | 'workspace_unavailable' | 'capability_unknown' | 'memory_insufficient' | 'memory_unavailable';
+    } | {
+        ok: false;
+        errorCode: 'workspace_copy_not_owned';
     };
     readonly "projects.worker.copy.retire": {
         status: 'retired';
@@ -488,7 +554,7 @@ export type ProjectWorkersActionResultById = {
                         };
                     };
                 } | undefined;
-                serviceState?: 'running' | 'starting' | 'detecting' | 'healthy' | 'unhealthy' | 'stopping' | 'stopped' | 'failed' | undefined;
+                serviceState?: 'running' | 'starting' | 'stopped' | 'detecting' | 'healthy' | 'unhealthy' | 'stopping' | 'failed' | undefined;
                 readiness?: 'ready' | 'not_ready' | 'not_reported' | undefined;
                 endpointUrl?: string | undefined;
                 startedAtMs?: number | undefined;
@@ -631,7 +697,7 @@ export type ProjectWorkersActionResultById = {
                         };
                     };
                 } | undefined;
-                serviceState?: 'running' | 'starting' | 'detecting' | 'healthy' | 'unhealthy' | 'stopping' | 'stopped' | 'failed' | undefined;
+                serviceState?: 'running' | 'starting' | 'stopped' | 'detecting' | 'healthy' | 'unhealthy' | 'stopping' | 'failed' | undefined;
                 readiness?: 'ready' | 'not_ready' | 'not_reported' | undefined;
                 endpointUrl?: string | undefined;
                 startedAtMs?: number | undefined;

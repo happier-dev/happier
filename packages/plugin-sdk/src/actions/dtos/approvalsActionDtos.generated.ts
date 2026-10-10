@@ -40,7 +40,7 @@ export type ApprovalsActionInputById = {
     };
     readonly "approval.request.decide": {
         artifactId: string;
-        decision: 'approve' | 'reject' | 'cancel';
+        decision: 'cancel' | 'approve' | 'reject';
         computerTarget?: {
             kind: 'window';
             displayId: string;

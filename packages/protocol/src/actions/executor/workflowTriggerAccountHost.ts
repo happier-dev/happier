@@ -213,6 +213,7 @@ export function createAccountWorkflowTriggerActions(params: WorkflowTriggerAccou
         return params.automations.reconcile(automationId, { ...input, triggers }, row);
       },
       delete: (automationId) => params.automations.delete(automationId),
+      ...(params.automations.runNow ? { runNow: params.automations.runNow } : {}),
     },
     newId: () => params.newId(),
     ...(params.sessionList ? { sessionList: params.sessionList } : {}),

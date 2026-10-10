@@ -38,6 +38,12 @@ import {
 } from './actionToolExposure.js';
 
 describe('actionToolExposure', () => {
+  it('exposes the backed sandbox installer to agent discovery without changing its danger classification', () => {
+    const spec = getActionSpec('browser.sandbox.install');
+    expect(isActionDiscoverableOnToolSurface(spec, 'agent')).toBe(true);
+    expect(resolveActionSurfaceAvailability({ actionId: spec.id, surface: 'ui' }).available).toBe(true);
+    expect(spec).toMatchObject({ safety: 'danger', requiredAuthority: 'account_automation' });
+  });
   it('uses the same Session memory availability for direct and discoverable writes without changing Account surfaces', () => {
     const settings = ActionsSettingsV1Schema.parse({ v: 1, actions: {
       'memory.remember': { toolExposureModes: { agent: 'direct' } },
@@ -283,7 +289,7 @@ describe('actionToolExposure', () => {
 
   it('keeps direct tool binding checks separate from discoverable availability', () => {
     expect(resolveActionSurfaceAvailability({
-      actionId: 'execution.run.ensure',
+      actionId: 'execution.run.ensure_or_start',
       surface: 'agent',
       requireToolBinding: true,
     })).toEqual(expect.objectContaining({

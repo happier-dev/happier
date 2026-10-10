@@ -97,7 +97,7 @@ describe('createActionExecutor (plugin Settings administration)', () => {
     });
   });
 
-  it('requires a present user before secret custody mutations reach the administration owner', async () => {
+  it('requests human approval for plugin secret custody mutations and refuses external automation', async () => {
     const pluginSettingsAdministrationAction = vi.fn(async () => ({
       ok: true,
       kind: 'plugins.settings.secret.bind' as const,
@@ -111,6 +111,7 @@ describe('createActionExecutor (plugin Settings administration)', () => {
     }));
     const executor = createActionExecutor({
       pluginSettingsAdministrationAction,
+      approvalsCreate: async () => ({ artifactId: 'secret-approval' }),
       isActionApprovalRequired: () => false,
     } as ActionExecutorDeps);
     const inputs = {
@@ -143,12 +144,16 @@ describe('createActionExecutor (plugin Settings administration)', () => {
 
       await expect(executor.execute(actionId, inputs[actionId], {
         surface: 'plugin',
+        serverId: 'server-1',
+        actionRequestId: `settings-${actionId}`,
         authority: 'account_automation',
-        actionCaller: { kind: 'plugin', pluginId: 'acme.settings' },
+        actionCaller: {
+          kind: 'plugin', pluginId: 'acme.settings', contributionLocalId: 'settings',
+          sourceCustody: { kind: 'development', registeredRootId: 'settings-root-1' },
+        },
       })).resolves.toEqual({
-        ok: false,
-        errorCode: 'present_user_required',
-        error: 'present_user_required',
+        ok: true,
+        result: { kind: 'approval_request_created', artifactId: 'secret-approval', actionId },
       });
     }
 

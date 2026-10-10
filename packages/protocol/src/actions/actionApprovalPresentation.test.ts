@@ -4,7 +4,7 @@ import { describeApprovalActionFields } from './actionApprovalPresentation.js';
 
 describe('approval field presentation', () => {
   it.each(['account', 'team', 'group'])('keeps %s access principals as data, not Session references', (kind) => {
-    const principal = { kind, [`${kind}Id`]: 'session-shaped-id' };
+    const principal = { kind, ...(kind === 'group' ? { teamId: 'team-1' } : {}), [`${kind}Id`]: 'session-shaped-id' };
     const rows = describeApprovalActionFields({ actionId: 'machines.access.grant.set',
       actionArgs: { serverId: 'home', machineId: 'machine', principal, level: 'view' } }).rows;
     expect(rows.find(row => row.path === 'principal')).toMatchObject({ kind: 'value', path: 'principal', value: JSON.stringify(principal) });

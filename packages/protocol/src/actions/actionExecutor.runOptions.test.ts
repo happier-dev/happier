@@ -2,10 +2,13 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { buildAcpConfigOptionOverridesV1 } from '../sessions/metadata/metadataOverridesV1.js';
-import { buildBackendTargetKeyV2 } from '../backends/targets/backendTargetRefV2.js';
+import { buildBackendTargetKeyV2, parseBackendTargetKeyV2 } from '../backends/targets/backendTargetRefV2.js';
+import { ExecutionRunStartRequestSchema } from '../execution/runs/startRequest.js';
+import { projectActionWorkflowSelectionInputV1 } from './executor/agentStartAdmission.js';
 
 function createDeps(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutorDeps {
   return {
+    executionRunCheckProtocolV2: async () => ({ ok: true, exactMachineId: 'm1' }),
     executionRunStart: vi.fn(async () => ({ runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' })),
     executionRunList: vi.fn(async () => ({})),
     executionRunGet: vi.fn(async () => ({})),
@@ -81,6 +84,119 @@ const START_CONTEXT = {
   callerPermissionCeiling: 'read-only',
 } as const;
 const START_TARGET_KEY = buildBackendTargetKeyV2({ kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } });
+
+it('admits a scalar review engine and qualified Team selection through canonical target identity', async () => {
+  const deps = createDeps({ reviewEnginesList: async () => ({ items: [{ value: 'claude', label: 'Claude' }] }),
+    executionRunCheckProtocolV2: async () => ({ ok: true, exactMachineId: 'm1' }) });
+  const selection = { kind: 'team_credential_provider_model', teamId: 'team-1', resourceId: 'resource-1',
+    expectedResourceRevision: 3, deliveryMode: 'brokered',
+    agentTargetKey: buildBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' }), modelId: 'team-model' } as const;
+  const result = await createActionExecutor(deps).execute('review.start', {
+    sessionId: 's1', engineIds: ['claude'], instructions: 'Review', modelId: 'team-model', teamCredentialModel: selection,
+  }, UI_CALLER);
+  expect(result).toMatchObject({ ok: true, result: { results: [{ ok: true }] } });
+  expect(vi.mocked(deps.executionRunStart).mock.calls[0]?.[1]).toMatchObject({ teamCredentialModel: selection });
+});
+
+it.each([{}, { modelId: 'custom-native' }, { modelSelection: null },
+  { modelSelection: { agentTargetKey: START_TARGET_KEY, providerConnectionId: 'connection-1', modelId: 'model-1' } }])(
+  'admits attached child choices without a separate inheritance capability: %j', async (selection) => {
+    const deps = createDeps({ executionRunCheckProtocolV2: undefined });
+    expect(await createActionExecutor(deps).execute('execution.run.start', {
+      ...RUN_START_BASE, ...selection,
+    }, UI_CALLER)).toMatchObject({ ok: true });
+    expect(deps.executionRunStart).toHaveBeenCalledWith('s1', expect.objectContaining(selection), undefined);
+  },
+);
+
+it('admits fully explicit native selections without an inheritance capability', async () => {
+  const deps = createDeps({ executionRunCheckProtocolV2: undefined });
+  expect(await createActionExecutor(deps).execute('execution.run.start', {
+    ...RUN_START_BASE, modelId: 'custom-native', connectedServices: null,
+  }, UI_CALLER)).toMatchObject({ ok: true });
+  expect(deps.executionRunStart).toHaveBeenCalledOnce();
+});
+
+it.each(['review.start', 'subagents.plan.start', 'subagents.delegate.start', 'voice_agent.start'] as const)(
+  'refuses a credential-bearing model tuple at %s ingress before any host effect', async (actionId) => {
+    const deps = createDeps();
+    const result = await createActionExecutor(deps).execute(actionId, {
+      sessionId: 's1', instructions: 'Use this model',
+      [actionId === 'review.start' ? 'engineIds' : 'backendTargetKeys']: [actionId === 'review.start' ? 'codex' : START_TARGET_KEY],
+      modelSelection: { agentTargetKey: START_TARGET_KEY, providerConnectionId: null, modelId: 'native-model', accessToken: 'must-not-cross' },
+    }, UI_CALLER);
+    expect(result).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    expect(deps.executionRunStart).not.toHaveBeenCalled();
+  },
+);
+
+it.each(['execution.run.start', 'review.start', 'subagents.plan.start', 'subagents.delegate.start', 'voice_agent.start'] as const)(
+  'preserves a Workflow native reset through %s to the receiving host instead of inheriting', async (actionId) => {
+    const received: unknown[] = [];
+    const deps = createDeps({ reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex' }] }),
+      executionRunStart: async (_sessionId, input) => {
+      received.push(ExecutionRunStartRequestSchema.parse(input));
+      return { runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' };
+    } });
+    const input = projectActionWorkflowSelectionInputV1(actionId, actionId === 'execution.run.start'
+      ? RUN_START_BASE
+      : { sessionId: 's1', instructions: 'Use native settings',
+          [actionId === 'review.start' ? 'engineIds' : 'backendTargetKeys']: [actionId === 'review.start' ? 'codex' : START_TARGET_KEY] },
+      { modelSelection: null });
+    expect(await createActionExecutor(deps).execute(actionId, input, UI_CALLER)).toMatchObject(
+      actionId === 'execution.run.start' ? { ok: true } : { ok: true, result: { results: [{ ok: true }] } },
+    );
+    expect(received).toMatchObject([{ modelSelection: null }]);
+  },
+);
+
+it.each(['subagents.plan.start', 'subagents.delegate.start', 'voice_agent.start', 'review.start'] as const)(
+  'round-trips a contributed Agent option through %s admission and dispatch', async (actionId) => {
+    const agentTarget = { kind: 'agent', identity: { pluginId: 'acme.review', localId: 'reviewer' } } as const;
+    const key = buildBackendTargetKeyV2(agentTarget);
+    const deps = createDeps({
+      reviewEnginesList: async () => ({ items: [{ targetKey: key, label: 'Plugin reviewer' }] }),
+      agentsBackendsList: async () => ({ items: [{ targetKey: key, label: 'Plugin reviewer', enabled: true,
+        agentId: 'acme.review/reviewer', identity: agentTarget.identity }] }),
+    });
+    const executor = createActionExecutor(deps);
+    const fieldPath = actionId === 'review.start' ? 'engineIds' : 'backendTargetKeys';
+    const options = await executor.execute('action.options.resolve', { actionId, fieldPath, sessionId: 's1' }, UI_CALLER);
+    expect(options).toMatchObject({ ok: true, result: { options: [{ value: key }] } });
+    const result = await executor.execute(actionId, { sessionId: 's1', instructions: 'Review the plan',
+      [fieldPath]: [key] }, { ...UI_CALLER, agentStartContext: START_CONTEXT });
+    expect(result).toMatchObject({ ok: true, result: { results: [{ ok: true }] } });
+    expect(vi.mocked(deps.executionRunStart).mock.calls[0]?.[1]).toMatchObject({ backendTarget: agentTarget });
+  },
+);
+
+it('round-trips the contributed Agent option into session creation and a direct execution run', async () => {
+  const identity = { pluginId: 'acme.review', localId: 'reviewer' };
+  const key = buildBackendTargetKeyV2({ kind: 'agent', identity });
+  const deps = createDeps({
+    agentsBackendsList: async () => ({ items: [{ targetKey: key, label: 'Plugin reviewer', enabled: true }] }),
+    sessionSpawnNew: vi.fn(async () => ({ type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' })),
+  });
+  const executor = createActionExecutor(deps);
+  expect(await executor.execute('action.options.resolve', {
+    actionId: 'session.spawn_new', fieldPath: 'agentTarget',
+  }, UI_CALLER)).toMatchObject({ ok: true, result: { options: [{ value: key }] } });
+  const target = parseBackendTargetKeyV2(key);
+  expect(target).toEqual({ kind: 'agent', identity });
+  const spawnResult = await executor.execute('session.spawn_new', {
+    creationKey: 'contributed-option-roundtrip',
+    executionTarget: { serverId: 'server-1', machineId: 'm1' },
+    directory: { kind: 'path', path: '/workspace' },
+    organizationPlacement: { folderId: null, tagIds: [] },
+    agentTarget: target,
+  }, { ...UI_CALLER, authority: 'present_user' });
+  expect(spawnResult.ok, JSON.stringify(spawnResult)).toBe(true);
+  expect(vi.mocked(deps.sessionSpawnNew).mock.calls[0]?.[0]).toMatchObject({ agentTarget: target });
+  expect(await executor.execute('execution.run.start', {
+    ...RUN_START_BASE, backendTarget: target,
+  }, UI_CALLER)).toMatchObject({ ok: true });
+  expect(vi.mocked(deps.executionRunStart).mock.calls[0]?.[1]).toMatchObject({ backendTarget: target });
+});
 
 it.each(['subagents.plan.start', 'subagents.delegate.start'] as const)(
   'preserves both report chip values through %s fan-out', async (actionId) => {
@@ -334,6 +450,39 @@ const EXECUTION_RUN_WAIT_SUCCEEDED = {
 } as const;
 
 describe('createActionExecutor run options parity (model + effort)', () => {
+  it('retains the transport issuance witness on an admitted Stop without putting it in RPC input', async () => {
+    let issued = false;
+    let receivedInput: unknown;
+    // ExecutionRunStop is the host transport boundary; Action admission remains real.
+    const executor = createActionExecutor(createDeps({ executionRunStop: async (_sessionId, input, opts) => {
+      receivedInput = input;
+      opts?.onTransportIssued?.();
+      return { ok: false, error: 'Connection lost', errorCode: 'transport_failed' };
+    } }));
+    const result = await executor.execute('execution.run.stop', { sessionId: 's1', runId: 'run-1' }, {
+      surface: 'ui', authority: 'present_user', serverId: 'home-1',
+      onTransportIssued: () => { issued = true; },
+    });
+    expect(result).toMatchObject({ ok: false, errorCode: 'transport_failed' });
+    expect(issued).toBe(true);
+    expect(receivedInput).toEqual({ runId: 'run-1' });
+  });
+
+  it('preserves the mounted host Session correlation and exact Machine on an immediate start', async () => {
+    const executionRunStart = vi.fn(async () => ({ runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' }));
+    const executor = createActionExecutor(createDeps({ executionRunStart }));
+    const launchOrigin = { kind: 'session', sessionId: 's1', draftCorrelationId: 'draft_1' } as const;
+    const context = { ...UI_CALLER, defaultSessionId: 's1', executionRunTargetMachineId: 'mounted_machine', executionRunLaunchOrigin: launchOrigin };
+
+    await expect(executor.execute('execution.run.start', {
+      ...RUN_START_BASE,
+      launchOrigin: { kind: 'session', sessionId: 'forged', draftCorrelationId: 'forged' },
+    }, context)).resolves.toMatchObject({ ok: true });
+
+    expect(executionRunStart).toHaveBeenCalledWith('s1', expect.objectContaining({ launchOrigin }),
+      expect.objectContaining({ targetMachineId: 'mounted_machine' }));
+  });
+
   it('threads modelId + sessionConfigOptionOverrides on execution.run.start', async () => {
     const executionRunStart = vi.fn(async () => ({ runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' }));
     const executor = createActionExecutor(createDeps({ executionRunStart }));
@@ -408,7 +557,8 @@ describe('createActionExecutor run options parity (model + effort)', () => {
       null,
     ]);
     expect(executionRunStart.mock.calls.every(([, request]) => !Object.hasOwn(request, 'sessionId'))).toBe(true);
-    expect(executionRunCheckProtocolV2).toHaveBeenCalledTimes(2);
+    expect(executionRunCheckProtocolV2.mock.calls.map(([scope]) => scope)).toEqual([null, null]);
+    expect(executionRunCheckProtocolV2).toHaveBeenCalledWith(null, expect.objectContaining({ detachedScope: true }), undefined);
   });
 
   it('defaults an unexpected start-path exception to outcomeUnknown at the canonical Action boundary', async () => {
@@ -1046,7 +1196,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
 
   it('fails closed before a V2 start when capability negotiation is unavailable', async () => {
     const executionRunStart = vi.fn(async () => ({ runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' }));
-    const executor = createActionExecutor(createDeps({ executionRunStart }));
+    const executor = createActionExecutor(createDeps({ executionRunStart, executionRunCheckProtocolV2: undefined }));
 
     for (const input of [
       { ...RUN_START_BASE, sessionId: null },
@@ -1060,7 +1210,9 @@ describe('createActionExecutor run options parity (model + effort)', () => {
         ok: false,
         errorCode: 'execution_run_protocol_unsupported',
         error: 'execution_run_protocol_unsupported',
-        details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } },
+        details: {
+          executionRunStart: { v: 1, runCreation: 'noRunCreated' },
+        },
       });
     }
     expect(executionRunStart).not.toHaveBeenCalled();

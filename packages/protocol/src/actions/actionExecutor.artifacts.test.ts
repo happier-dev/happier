@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { ActionIdSchema, type ActionId } from './actionIds.js';
 import { getActionSpec } from './actionSpecs.js';
-import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
+import { createActionExecutor, type ActionExecutorDeps, type ActionExecutorContext } from './actionExecutor.js';
 import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 import { prepareArtifactHeaderForRevisionV1 } from '../artifacts/artifactHeaderRestorationV1.js';
 import { buildWorkBoardArtifactHeaderV1, readWorkBoardArtifactSummaryV1 } from '../boards/workBoardArtifactV1.js';
@@ -10,6 +10,19 @@ import { createWorkBoardV1 } from '../boards/workBoardV1.js';
 import { ArtifactActionInputSchemasV1, type ArtifactDocumentV1Schema } from '../artifacts/artifactActionsV1.js';
 import { z } from 'zod';
 import { buildWidgetSurfaceArtifactIdV1, buildWidgetSurfaceArtifactHeaderV1 } from '../widgets/widgetSurfaceArtifactV1.js';
+import { buildProviderAccountUsageRecordId } from '../connect/providerAccountUsagePrimitives.js';
+
+function usageNoticeArtifact() {
+  const notice = { topic: 'connected_service_usage', kind: 'credit_expiry', serviceId: 'cloud', profileId: 'account',
+    issueFingerprint: 'observed-credit-expiry', evidence: {
+      recordId: buildProviderAccountUsageRecordId({ providerId: 'cloud', accountSubjectId: 'account', subjectKind: 'account', quotaScope: 'account' }),
+      creditId: 'credit', expiresAtMs: 1000, observedAtMs: 600, previousObservedAtMs: 500,
+    } } as const;
+  return { artifactId: '11111111-1111-4111-8111-111111111111',
+    header: { v: 1, kind: 'usage_notice.v1', title: 'Credit expiry', status: 'open', notice } as const,
+    body: JSON.stringify({ v: 1, notice }), revision: { headerVersion: 1, bodyVersion: 1 },
+    ownerAccountId: 'owner', access: 'owner' as const, publicAudience: 'none' as const, seq: 1, createdAt: 1, updatedAt: 1 };
+}
 
 function openedArtifactBoundary(initial: z.infer<typeof ArtifactDocumentV1Schema>) {
   const artifacts = new Map([[initial.artifactId, initial]]);
@@ -54,6 +67,80 @@ const ids = ['artifact.create', 'artifact.get', 'artifact.list', 'artifact.updat
   'artifact.publish_from_file', 'artifact.revisions.list', 'artifact.revisions.restore', 'artifact.storage.usage'] as const;
 
 describe('ordinary Artifact Actions', () => {
+  it('admits binary export as an approved machine write and refuses internal document egress', async () => {
+    expect(ActionIdSchema.safeParse('artifact.export').success).toBe(true);
+    const spec = getActionSpec('artifact.export');
+    expect(spec).toMatchObject({ safety: 'danger', sideEffectClass: 'write', executionPlacement: 'machine',
+      surfaces: { agent: true, mcp: true, cli: true } });
+    expect(resolveActionApprovalRouting({ actionId: 'artifact.export', spec,
+      context: { surface: 'agent', authority: 'account_automation' } }).required).toBe(true);
+    const artifact = usageNoticeArtifact();
+    const executor = createActionExecutor({ artifactAction: openedArtifactBoundary(artifact).action });
+    expect(await executor.execute('artifact.export', { artifactId: artifact.artifactId, path: 'private.bin' },
+      { surface: 'agent', authority: 'account_automation', bypassApprovals: true }))
+      .toMatchObject({ ok: false, errorCode: 'artifact_kind_internal' });
+  });
+  it('admits only the captured present-user Account usage notice read and dismiss through the existing Artifact revision writer', async () => {
+    const initial = usageNoticeArtifact();
+    const boundary = openedArtifactBoundary(initial);
+    const executor = createActionExecutor({ artifactAction: boundary.action });
+    const context = { surface: 'ui', authority: 'present_user', expectedAccountId: 'owner', actionCaller: { kind: 'host' } } as const;
+    expect(await executor.execute('artifact.get', { artifactId: initial.artifactId }, context))
+      .toMatchObject({ ok: true, result: { artifact: initial } });
+    const dismiss = { artifactId: initial.artifactId, expectedRevision: initial.revision,
+      header: { ...initial.header, status: 'dismissed' }, body: initial.body };
+    expect(await executor.execute('artifact.update', { ...dismiss, expectedRevision: { headerVersion: 2, bodyVersion: 2 } }, context))
+      .toMatchObject({ ok: false, errorCode: 'version_mismatch' });
+    expect(boundary.read()).toEqual(initial);
+    expect(await executor.execute('artifact.update', dismiss, context)).toMatchObject({ ok: true,
+      result: { artifactId: initial.artifactId, revision: { headerVersion: 2, bodyVersion: 2 } } });
+    expect(boundary.read()).toMatchObject({ header: { ...initial.header, status: 'dismissed' }, body: initial.body });
+    expect(await executor.execute('artifact.update', { ...dismiss, expectedRevision: { headerVersion: 2, bodyVersion: 2 },
+      header: initial.header }, context)).toMatchObject({ ok: false, errorCode: 'artifact_kind_internal' });
+    expect(boundary.read()?.header.status).toBe('dismissed');
+  });
+  it('refuses usage notice Account, audience, authority and content bypasses without admitting generic internal mutations', async () => {
+    const initial = usageNoticeArtifact();
+    const context = { surface: 'ui', authority: 'present_user', expectedAccountId: 'owner', actionCaller: { kind: 'host' } } as const;
+    const invalidCases: ReadonlyArray<Readonly<{ artifact: z.infer<typeof ArtifactDocumentV1Schema>; context: ActionExecutorContext }>> = [
+      { artifact: initial, context: { ...context, expectedAccountId: 'foreign' } },
+      { artifact: initial, context: { ...context, expectedAccountId: undefined } },
+      { artifact: { ...initial, access: 'view' }, context },
+      { artifact: { ...initial, publicAudience: 'retained' }, context },
+      { artifact: { ...initial, publicAudience: 'unknown' }, context },
+      { artifact: { ...initial, body: '{}' }, context },
+      { artifact: initial, context: { ...context, authority: 'account_automation', bypassApprovals: true } },
+      { artifact: initial, context: { ...context, surface: 'agent', bypassApprovals: true } },
+    ];
+    for (const sample of invalidCases) {
+      const boundary = openedArtifactBoundary(sample.artifact);
+      const executor = createActionExecutor({ artifactAction: boundary.action });
+      expect(await executor.execute('artifact.get', { artifactId: initial.artifactId }, sample.context)).toMatchObject({ ok: false });
+      expect(await executor.execute('artifact.update', { artifactId: initial.artifactId, expectedRevision: initial.revision,
+        header: { ...initial.header, status: 'dismissed' }, body: initial.body }, sample.context)).toMatchObject({ ok: false });
+      expect(boundary.read()).toEqual(sample.artifact);
+    }
+    const boundary = openedArtifactBoundary(initial);
+    const executor = createActionExecutor({ artifactAction: boundary.action });
+    for (const header of [{ ...initial.header, title: 'Altered', status: 'dismissed' }, { title: 'Retagged' }]) {
+      expect(await executor.execute('artifact.update', { artifactId: initial.artifactId, expectedRevision: initial.revision,
+        header, body: initial.body }, context)).toMatchObject({ ok: false, errorCode: 'artifact_kind_internal' });
+    }
+    expect(await executor.execute('artifact.update', { artifactId: initial.artifactId, expectedRevision: initial.revision,
+      header: { ...initial.header, status: 'dismissed' }, body: '{}' }, context)).toMatchObject({ ok: false, errorCode: 'artifact_kind_internal' });
+    expect(await executor.execute('artifact.delete', { artifactId: initial.artifactId, expectedRevision: initial.revision }, context))
+      .toMatchObject({ ok: false, errorCode: 'artifact_kind_internal' });
+    expect(await executor.execute('artifact.create', { artifactId: '22222222-2222-4222-8222-222222222222',
+      header: initial.header, body: initial.body }, context)).toMatchObject({ ok: false, errorCode: 'artifact_kind_internal' });
+    expect(boundary.read()).toEqual(initial);
+    const ordinary = { ...initial, header: { title: 'Ordinary' }, body: 'before' };
+    const ordinaryBoundary = openedArtifactBoundary(ordinary);
+    const ordinaryExecutor = createActionExecutor({ artifactAction: ordinaryBoundary.action });
+    expect(await ordinaryExecutor.execute('artifact.update', { artifactId: ordinary.artifactId,
+      expectedRevision: ordinary.revision, header: { ...initial.header, status: 'dismissed' }, body: initial.body }, context))
+      .toMatchObject({ ok: false, errorCode: 'artifact_kind_internal' });
+    expect(ordinaryBoundary.read()).toEqual(ordinary);
+  });
   it('retains the admitted WorkBoard sharing projection on ordinary reads', async () => {
     const board = createWorkBoardV1({ id: 'board', name: 'Shared board' });
     const artifact = { artifactId: board.id, header: buildWorkBoardArtifactHeaderV1(board), body: JSON.stringify(board),
@@ -66,7 +153,7 @@ describe('ordinary Artifact Actions', () => {
   it('refuses default dashboard deletion and shared-dashboard raw edits through ordinary Artifact admission', async () => {
     const base = { serverId: 'home', accountId: 'owner', owner: { kind: 'project', projectId: 'project' } } as const;
     for (const actionId of ['artifact.delete', 'artifact.update'] as const) {
-      const surface = actionId === 'artifact.delete' ? base : { ...base, owner: { ...base.owner, dashboardId: 'shared' } };
+      const surface = actionId === 'artifact.delete' ? base : { ...base, owner: { ...base.owner, layoutId: 'shared' } };
       const layout = { v: 1 as const, surface, name: 'Dashboard', instances: [] };
       const artifactId = buildWidgetSurfaceArtifactIdV1(surface);
       const initial = { artifactId, header: buildWidgetSurfaceArtifactHeaderV1(layout), body: JSON.stringify(layout),

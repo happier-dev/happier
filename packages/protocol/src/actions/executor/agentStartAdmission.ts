@@ -51,7 +51,7 @@ export function isAgentStartActionInvocationV1(actionId: string, input: Readonly
 }
 /** Action policies that may admit new Agent work, unlike observation and own-Session controls. */
 export function requiresActionAgentStartDepthV1(actionId: string): boolean {
-    return isAgentStartActionV1(actionId) || actionId === 'workflow.run.start'
+    return isAgentStartActionV1(actionId) || actionId === 'workflow.run.start' || actionId === 'workflow.trigger.run_now'
         || actionId === 'workflow.definition.create' || actionId === 'workflow.definition.update'
         || actionId === 'workflow.definition.edit'
         || actionId === 'workflow.trigger.add' || actionId === 'workflow.trigger.update'

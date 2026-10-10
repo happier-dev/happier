@@ -40,12 +40,18 @@ export type DiscoveryActionInputById = {
                 } | {
                     kind: 'project';
                     projectId: string;
-                    dashboardId?: string | undefined;
+                    layoutId?: string | undefined;
                 } | {
                     kind: 'pluginArea';
                     pluginId: string;
                     pageId: string;
                     area: string;
+                    layoutId?: string | undefined;
+                } | {
+                    kind: 'corePage';
+                    pageId: string;
+                    area: string;
+                    layoutId?: string | undefined;
                 };
                 artifactId?: string | undefined;
             };
@@ -105,7 +111,13 @@ export type DiscoveryActionInputById = {
                             inputType?: {
                                 pluginId: string;
                                 localId: string;
+                            } | {
+                                hostType: 'usageQuery';
+                                field?: 'period' | 'session' | undefined;
+                            } | {
+                                hostType: 'session' | 'workspace';
                             } | undefined;
+                            contextMode?: 'follow' | 'own' | undefined;
                             required?: boolean | undefined;
                             requireExplicitSelection?: boolean | undefined;
                             listSeparator?: 'comma' | 'newline' | undefined;
@@ -189,7 +201,13 @@ export type DiscoveryActionResultById = {
                     inputType?: {
                         pluginId: string;
                         localId: string;
+                    } | {
+                        hostType: 'usageQuery';
+                        field?: 'period' | 'session' | undefined;
+                    } | {
+                        hostType: 'session' | 'workspace';
                     } | undefined;
+                    contextMode?: 'follow' | 'own' | undefined;
                     required?: boolean | undefined;
                     requireExplicitSelection?: boolean | undefined;
                     listSeparator?: 'comma' | 'newline' | undefined;
@@ -297,7 +315,13 @@ export type DiscoveryActionResultById = {
                     inputType?: {
                         pluginId: string;
                         localId: string;
+                    } | {
+                        hostType: 'usageQuery';
+                        field?: 'period' | 'session' | undefined;
+                    } | {
+                        hostType: 'session' | 'workspace';
                     } | undefined;
+                    contextMode?: 'follow' | 'own' | undefined;
                     required?: boolean | undefined;
                     requireExplicitSelection?: boolean | undefined;
                     listSeparator?: 'comma' | 'newline' | undefined;
@@ -409,14 +433,14 @@ export type DiscoveryActionResultById = {
                     connectionRole: 'default' | 'named';
                     connectionDisplayNameMode: 'custom' | 'automatic';
                     connectionRevision: number;
-                    modelLoadAction: 'available' | 'descriptor_absent' | 'feature_disabled';
+                    modelLoadAction: 'available' | 'descriptor_absent' | 'feature_disabled' | 'machine_required';
                     authorization: {
                         authorized: true;
                     } | {
                         authorized: false;
                         error: {
                             v: 1;
-                            code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
+                            code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
                             retryable: boolean;
                             action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
                             connectionId?: (string) | undefined;
@@ -618,6 +642,14 @@ export type DiscoveryActionResultById = {
                     sourceRevision?: string | undefined;
                     modelLoadPreflightPolicy?: 'required' | 'advisory' | null | undefined;
                 }[];
+                hiddenSources?: {
+                    connectionId: string;
+                    providerName: string;
+                    connectionName: string;
+                    connectionRole: 'default' | 'named';
+                    connectionDisplayNameMode: 'custom' | 'automatic';
+                    modelCount: number;
+                }[] | undefined;
                 currentSelectionRecovery?: {
                     kind: 'contribution_unavailable' | 'connection_deleted' | 'connection_missing' | 'model_not_found';
                     ref: {
@@ -631,7 +663,7 @@ export type DiscoveryActionResultById = {
                     };
                     error: {
                         v: 1;
-                        code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
+                        code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
                         retryable: boolean;
                         action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
                         connectionId?: (string) | undefined;
@@ -649,7 +681,7 @@ export type DiscoveryActionResultById = {
                     connectionId: string;
                     error: {
                         v: 1;
-                        code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
+                        code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
                         retryable: boolean;
                         action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
                         connectionId?: (string) | undefined;

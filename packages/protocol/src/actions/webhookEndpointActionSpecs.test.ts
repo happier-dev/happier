@@ -37,6 +37,18 @@ const PRESENT_USER_ACTION_IDS = [
 ] as const;
 
 describe('webhook endpoint ActionSpecs', () => {
+  it('offers endpoint setup and refresh to Agent/MCP without widening plugin-provenance operations', () => {
+    for (const actionId of ['plugin.webhook.endpoint.ensure', 'plugin.webhook.endpoint.read'] as const) {
+      const spec = getActionSpec(actionId);
+      expect(spec.surfaces, actionId).toMatchObject({ agent: true, mcp: true });
+      expect(spec.requiredAuthority).toBe('present_user');
+    }
+    expect(getActionSpec('plugin.webhook.endpoint.ensure').approvalResultCustody).toBe('live_only');
+    for (const actionId of PLUGIN_WEBHOOK_PLUGIN_SURFACE_ACTION_IDS_V1) {
+      expect(getActionSpec(actionId).surfaces).toMatchObject({ agent: false, mcp: false });
+    }
+  });
+
   it('declares domain HTTP transport without publishing it as an Action wire contract', () => {
     const spec = getActionSpec('plugin.webhook.endpoint.read');
     expect(spec.serverTransport).toEqual({

@@ -61,8 +61,16 @@ const titles: Record<ActionOperationActionIdV1, string> = {
   'action.operations.cancel': 'Stop operation', 'projects.execution.output.read': 'Read command output',
   'projects.execution.output.open': 'Open command output', 'projects.execution.output.copy': 'Copy command output',
 };
+const summaries: Record<ActionOperationActionIdV1, string> = {
+  'action.operations.list': 'See what is running or recently finished on a machine, such as project scripts and commands.',
+  'action.operations.get': 'See how one running or finished operation is going.',
+  'action.operations.cancel': 'Stop an operation that is still running.',
+  'projects.execution.output.read': 'Read what a project script or command has printed so far.',
+  'projects.execution.output.open': 'Show a command\'s output on this device.',
+  'projects.execution.output.copy': 'Copy a command\'s output, so you can paste it elsewhere.',
+};
 export const ACTION_OPERATION_ACTION_SPECS = ACTION_OPERATION_ACTION_IDS_V1.map((id): PreNormalizedActionSpec => ({
-  id, title: titles[id], description: titles[id],
+  id, title: titles[id], description: summaries[id],
   safety: id === 'action.operations.cancel' ? 'danger' : 'safe',
   sideEffectClass: id === 'action.operations.cancel' ? 'write' : 'read',
   executionPlacement: id === 'projects.execution.output.open' ? 'client' : 'machine', placements: [],

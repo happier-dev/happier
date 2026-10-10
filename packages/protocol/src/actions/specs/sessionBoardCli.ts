@@ -2,7 +2,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod';
 
 import { SessionSurfaceItemIdSchema } from '../../sessions/board/ids.js';
-import { SessionSurfaceItemV1Schema } from '../../sessions/board/item.js';
+import { SessionSurfaceItemV1Schema, SessionSurfaceItemDestinationV1Schema } from '../../sessions/board/item.js';
 import {
   SessionBoardItemPlacementV1Schema,
   SessionBoardLayoutOperationV1Schema,
@@ -36,6 +36,7 @@ export const SessionBoardItemUpsertCliInputSchema = lazyZodSchema(() => z.object
   sessionId: SessionSelectorSchema,
   itemId: SessionSurfaceItemIdSchema,
   expectedItemRevision: SessionSystemRecordRevisionSchema.optional(),
+  destination: SessionSurfaceItemDestinationV1Schema.optional(),
   item: z.lazy(() => SessionSurfaceItemV1Schema),
   placement: SessionBoardItemPlacementV1Schema.optional(),
 }).strict());
@@ -45,7 +46,7 @@ export const SessionBoardItemRemoveCliInputSchema = lazyZodSchema(() => z.object
   sessionId: SessionSelectorSchema,
   itemId: SessionSurfaceItemIdSchema,
   expectedItemRevision: SessionSystemRecordRevisionSchema,
-  expectedLayoutRevision: SessionSystemRecordRevisionSchema,
+  expectedLayoutRevision: SessionSystemRecordRevisionSchema.optional(),
 }).strict());
 export type SessionBoardItemRemoveCliInput = z.infer<typeof SessionBoardItemRemoveCliInputSchema>;
 
@@ -65,6 +66,7 @@ export function bindSessionBoardItemUpsertCliInput(
     itemId: value.itemId,
     expectedItemRevision: value.expectedItemRevision ?? actionCliDerivedDefault(null),
     item: value.item,
+    ...(value.destination ? { destination: value.destination } : {}),
     ...(value.placement ? { placement: value.placement } : {}),
   };
 }
@@ -108,6 +110,7 @@ export const SESSION_BOARD_ITEM_UPSERT_CLI_PROJECTION: ActionCliProjection = {
       { path: 'sessionId', title: 'Session id or prefix', widget: 'text', required: true },
       { path: 'itemId', title: 'Item id', widget: 'text', required: true },
       { path: 'expectedItemRevision', title: 'Expected item revision (omit to create)', widget: 'text' },
+      { path: 'destination', title: 'Destination (transcript, board, both)', widget: 'text' },
       { path: 'item', title: 'Item', widget: 'json', required: true },
       { path: 'placement', title: 'Placement', widget: 'json' },
     ],
@@ -129,7 +132,7 @@ export const SESSION_BOARD_ITEM_REMOVE_CLI_PROJECTION: ActionCliProjection = {
       { path: 'sessionId', title: 'Session id or prefix', widget: 'text', required: true },
       { path: 'itemId', title: 'Item id', widget: 'text', required: true },
       { path: 'expectedItemRevision', title: 'Expected item revision', widget: 'text', required: true },
-      { path: 'expectedLayoutRevision', title: 'Expected layout revision', widget: 'text', required: true },
+      { path: 'expectedLayoutRevision', title: 'Expected layout revision', widget: 'text' },
     ],
   },
 };

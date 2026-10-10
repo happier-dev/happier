@@ -8,6 +8,85 @@ import { deriveActionDtoSchemas } from './deriveActionDtos.mjs';
 import { prepareActionTypeMap } from './generateActionTypeMap.mjs';
 import { resolveTypeScriptCliInvocation } from '../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs';
 
+test('Account operand mapped keys stay lexical in public support projections', t => {
+  const cache = resolve('packages/plugin-sdk/node_modules/.cache');
+  mkdirSync(cache, { recursive: true });
+  const root = mkdtempSync(resolve(cache, 'schema-account-operand-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const request = resolve(root, 'request.json'), resultPath = resolve(root, 'result.json');
+  writeFileSync(request, JSON.stringify({ repoRoot: process.cwd(), bindings: [
+    ['providers/providerActionsV1.ts', 'AccountOperand'],
+    ['providers/providerActionsV1.ts', 'AccountCreationOperand'],
+  ] }));
+  const generated = spawnSync(process.execPath, [resolve('packages/plugin-sdk/scripts/deriveActionDtos.mjs'), request, resultPath], { encoding: 'utf8' });
+  assert.equal(generated.status, 0, generated.stdout + generated.stderr);
+  const result = JSON.parse(readFileSync(resultPath, 'utf8'));
+  writeFileSync(resolve(root, 'dto.ts'), result.declarations.map(([, text]) => text).join('\n'));
+  writeFileSync(resolve(root, 'consumer.ts'), `
+    import type { AccountOperand, AccountCreationOperand } from './dto.js';
+    const read: AccountOperand<{ machineId: string; connectionId: string }> = { connectionId: 'pc_a' };
+    const create: AccountCreationOperand<{ machineId: string; connectionId: string; authoringReview: { revision: number } }>
+      = { connectionId: 'pc_a' };
+    // @ts-expect-error widening machine and review must not widen the required identity
+    const missing: typeof create = {};
+    // @ts-expect-error optional machine remains a string, not an arbitrary value
+    const invalid: typeof read = { connectionId: 'pc_a', machineId: 42 };
+  `);
+  const invocation = resolveTypeScriptCliInvocation({ repoRoot: process.cwd(), workspaceDir: process.cwd() });
+  const compile = spawnSync(invocation.command, [...invocation.argsPrefix, '--ignoreConfig', '--strict', '--skipLibCheck',
+    '--target', 'ES2022', '--module', 'ESNext', '--moduleResolution', 'Bundler', '--noEmit', resolve(root, 'consumer.ts')],
+  { encoding: 'utf8' });
+  assert.equal(compile.status, 0, compile.stdout + compile.stderr);
+});
+
+test('family workers derive one input snapshot despite a mid-run schema edit', async t => {
+  const cache = resolve('packages/plugin-sdk/node_modules/.cache');
+  mkdirSync(cache, { recursive: true });
+  const root = mkdtempSync(resolve(cache, 'schema-action-overlays-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const actions = resolve(root, 'packages/protocol/src/actions');
+  mkdirSync(actions, { recursive: true });
+  writeFileSync(resolve(actions, 'actionIds.ts'), "export const ACTION_ID_FAMILIES_V1 = { first: ['first.read'], second: ['second.read'] } as const;");
+  writeFileSync(resolve(actions, 'pluginActionSurface.ts'), 'export const PLUGIN_SURFACE_EXCLUSION_REASONS = {} as const;');
+  const shared = resolve(actions, 'native.ts');
+  const original = `import { z } from 'zod';
+    export const NativeName = z.string();
+    export const SecondInput = z.object({ second: z.number() }).strict();
+    export const SecondOutput = z.object({ secondResult: z.literal('second') }).strict();`;
+  writeFileSync(shared, original);
+  writeFileSync(resolve(actions, 'first.ts'), `import { z } from 'zod';
+    import { NativeName } from './native.js';
+    export const FirstInput = z.object({ first: NativeName }).strict();
+    export const FirstOutput = z.object({ firstResult: z.literal('first') }).strict();`);
+  writeFileSync(resolve(actions, 'actionSpecs.ts'), `
+    import { z } from 'zod';
+    import { FirstInput, FirstOutput } from './first.js';
+    import { SecondInput, SecondOutput } from './native.js';
+    const INPUTS = { 'first.read': FirstInput, 'second.read': SecondInput } as const;
+    const OUTPUTS = { 'first.read': FirstOutput, 'second.read': SecondOutput } as const;
+    type CanonicalActionSchemaDefinition<Id, Input, Output> = { id: Id; inputSchema: Input; outputSchema: Output };
+    type Definition = { [Id in 'first.read' | 'second.read']: CanonicalActionSchemaDefinition<Id, (typeof INPUTS)[Id], (typeof OUTPUTS)[Id]> };`);
+  const pending = deriveActionDtoSchemas({ repoRoot: root, onlyFamilies: ['first', 'second'] });
+  const edited = original.replace('z.string()', 'z.boolean()').replace('second: z.number()', 'second: z.string()');
+  writeFileSync(shared, edited);
+  const derived = await pending;
+  assert.equal(readFileSync(shared, 'utf8'), edited, 'derivation must preserve the concurrent source edit');
+  const first = derived.outputs.get(resolve(actions, 'firstActionDtos.ts'));
+  const second = derived.outputs.get(resolve(actions, 'secondActionDtos.ts'));
+  const fieldType = (text, alias, action, field) => {
+    const source = ts.createSourceFile('dto.ts', text, ts.ScriptTarget.ES2022, true);
+    const declaration = source.statements.find(node => ts.isTypeAliasDeclaration(node) && node.name.text === alias);
+    const row = declaration.type.members.find(member => member.name.text === action).type;
+    return row.members.find(member => member.name.text === field)?.type;
+  };
+  assert.equal(fieldType(first, 'FirstActionInputById', 'first.read', 'first').kind, ts.SyntaxKind.StringKeyword);
+  assert.equal(fieldType(first, 'FirstActionResultById', 'first.read', 'firstResult').literal.text, 'first');
+  assert.equal(fieldType(first, 'FirstActionResultById', 'first.read', 'secondResult'), undefined);
+  assert.equal(fieldType(second, 'SecondActionInputById', 'second.read', 'second').kind, ts.SyntaxKind.NumberKeyword);
+  assert.equal(fieldType(second, 'SecondActionResultById', 'second.read', 'secondResult').literal.text, 'second');
+  assert.equal(fieldType(second, 'SecondActionResultById', 'second.read', 'firstResult'), undefined);
+});
+
 test('external authors can type inline Workflow and Session triggers and cannot author invalid blocks', () => {
   const invocation = resolveTypeScriptCliInvocation({ repoRoot: process.cwd(), workspaceDir: process.cwd() });
   const compiled = spawnSync(invocation.command, [...invocation.argsPrefix, '--noEmit', '-p',
@@ -259,6 +338,75 @@ test('versioned imported Action spec owners supply generated DTO schemas', async
   const mappedDto = [...mapped.outputs.values()].join('\n');
   assert.match(mappedDto, /query\?: string/u);
   assert.match(mappedDto, /count: number/u);
+  writeFileSync(resolve(actions, 'specs/widgets.ts'), `
+    import { z } from 'zod';
+    const INPUTS = { 'widgets.catalog.list': z.object({ query: z.string().optional() }).strict() } as const;
+    const OUTPUTS = { 'widgets.catalog.list': z.object({ count: z.number() }).strict() } as const;
+    function actionRow<Id extends keyof typeof INPUTS>(id: Id): {
+      id: Id; inputSchema: (typeof INPUTS)[Id]; outputSchema: (typeof OUTPUTS)[Id];
+    };
+    function actionRow(id: keyof typeof INPUTS) {
+      return { id, inputSchema: INPUTS[id], outputSchema: OUTPUTS[id] };
+    }
+    export const WIDGET_INSTANCE_ACTION_SPECS_V1 = Object.freeze([actionRow('widgets.catalog.list')]);
+  `);
+  const adapted = await deriveActionDtoSchemas({ repoRoot: root, onlyFamilies: ['widgets'] });
+  const adaptedDto = [...adapted.outputs.values()].join('\n');
+  assert.match(adaptedDto, /query\?: string/u);
+  assert.match(adaptedDto, /count: number/u);
+  writeFileSync(resolve(actions, 'specs/widgetIds.ts'), `
+    const IDS_BY_OPERATION = { list: 'widgets.catalog.list' } as const;
+    export const WIDGET_IDS = Object.freeze([...Object.values(IDS_BY_OPERATION)]);
+  `);
+  writeFileSync(resolve(actions, 'actionIds.ts'), `
+    import { WIDGET_IDS } from './specs/widgetIds.js';
+    export const ACTION_ID_FAMILIES_V1 = { widgets: WIDGET_IDS } as const;
+  `);
+  const catalogValues = await deriveActionDtoSchemas({ repoRoot: root, onlyFamilies: ['widgets'] });
+  const valuesDto = [...catalogValues.outputs.values()].join('\n');
+  assert.match(valuesDto, /query\?: string/u);
+  assert.match(valuesDto, /count: number/u);
+  writeFileSync(resolve(actions, 'widgetSchemas.ts'), `
+    import { z } from 'zod';
+    export const Input = z.object({ query: z.string().optional() }).strict();
+    export const Output = z.object({ count: z.number() }).strict();
+  `);
+  writeFileSync(resolve(actions, 'specs/widgets.ts'), `
+    import * as schemas from '../widgetSchemas.js';
+    export const WIDGET_INSTANCE_ACTION_SPECS_V1 = [{
+      id: 'widgets.catalog.list', inputSchema: schemas.Input, outputSchema: schemas.Output,
+    }] as const;
+  `);
+  const namespaced = await deriveActionDtoSchemas({ repoRoot: root, onlyFamilies: ['widgets'] });
+  const namespaceDto = [...namespaced.outputs.values()].join('\n');
+  assert.match(namespaceDto, /query\?: string/u);
+  assert.match(namespaceDto, /count: number/u);
+});
+
+test('deferred canonical Team credential maps supply concrete input and result DTOs', async () => {
+  const derived = await deriveActionDtoSchemas({ repoRoot: process.cwd(), onlyFamilies: ['teams'] });
+  const dto = derived.outputs.get(resolve('packages/protocol/src/teams/teamsActionDtos.ts'));
+  assert.equal(typeof dto, 'string');
+  const source = ts.createSourceFile('dto.ts', dto, ts.ScriptTarget.ES2022, true);
+  const actionRow = alias => {
+    const declaration = source.statements.find(node => ts.isTypeAliasDeclaration(node) && node.name.text === alias);
+    assert.ok(declaration && ts.isTypeLiteralNode(declaration.type));
+    const row = declaration.type.members.find(member => member.name.text === 'teams.credentials.list');
+    assert.ok(row && ts.isTypeLiteralNode(row.type));
+    return row.type;
+  };
+  const input = actionRow('TeamsActionInputById');
+  assert.equal(input.members.find(member => member.name.text === 'teamId').type.kind, ts.SyntaxKind.StringKeyword);
+  assert.ok(input.members.find(member => member.name.text === 'limit').questionToken);
+  const output = actionRow('TeamsActionResultById');
+  const resources = output.members.find(member => member.name.text === 'resources');
+  assert.ok(resources && ts.isArrayTypeNode(resources.type));
+  assert.notEqual(resources.type.elementType.kind, ts.SyntaxKind.UnknownKeyword);
+  assert.notEqual(output.members.find(member => member.name.text === 'viewer').type.kind, ts.SyntaxKind.UnknownKeyword);
+  const cursor = output.members.find(member => member.name.text === 'nextCursor');
+  assert.ok(ts.isUnionTypeNode(cursor.type));
+  assert.ok(cursor.type.types.some(type => type.kind === ts.SyntaxKind.StringKeyword));
+  assert.ok(cursor.type.types.some(type => ts.isLiteralTypeNode(type) && type.literal.kind === ts.SyntaxKind.NullKeyword));
 });
 
 test('public support roots preserve canonical mutable projections and recursive readonly interfaces', t => {

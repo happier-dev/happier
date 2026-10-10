@@ -7,6 +7,9 @@ import { encodeBase64 } from '../../crypto/base64.js';
 
 import { createWorkflowAccountRunActionOwner, type WorkflowAccountRunActionDeps } from './workflowRunActions.js';
 import { createWorkflowActionExecutor } from './workflowAccountActions.js';
+import { createActionExecutor } from '../actionExecutor.js';
+import { ApprovalRequestV2Schema, type ApprovalRequest } from '../../approvals/approvalRequestV1.js';
+import { decideApprovalRequestTransition } from '../../approvals/approvalRequestTransition.js';
 import type { WorkflowActionExecuteArgs } from './types.js';
 import {
   WorkflowDefinitionV1Schema, WorkflowProgressEnvelopeV1Schema, WorkflowRunInvocationIndexV1Schema,
@@ -40,6 +43,7 @@ function harness(options: Readonly<{
   loseResponse?: boolean;
   canContinue?: boolean;
   e2ee?: boolean;
+  unavailableKeyReason?: 'history_not_readable' | 'encryption_setup_required' | 'waiting_for_keys';
   materializedLeaves?: WorkflowMaterializedLeafV1[];
   access?: 'view' | 'edit';
   authorization?: WorkflowAcceptedAuthorizationV1;
@@ -87,7 +91,8 @@ function harness(options: Readonly<{
   storeRow(heldId, '0', heldProgress, options.lifecycle ?? 'waiting_for_review');
   const snapshot = { run, keyCensus: { runId, ownerAccountId: 'owner', encryptionMode: crypto.mode, access: options.access ?? 'edit',
     ownerAccountCurrentness: ownerWitness,
-    dataEncryptionKey: ownerKeyEnvelope, callerDataEncryptionKey: callerKeyEnvelope, visibleTeamId: null, recipients: [] },
+    dataEncryptionKey: options.unavailableKeyReason === 'history_not_readable' ? null : ownerKeyEnvelope,
+    callerDataEncryptionKey: options.unavailableKeyReason === 'waiting_for_keys' ? null : callerKeyEnvelope, visibleTeamId: null, recipients: [] },
     acceptedEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ ...crypto,
       binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'owner', runId }, acceptedSnapshot: {
         definition, authoredDefinition: definition, startedBy: 'user', workDepth: 0, metadata: null, frozenChildren: {},
@@ -102,7 +107,7 @@ function harness(options: Readonly<{
   let lost = false;
   const deps: WorkflowAccountRunActionDeps = {
     resolveAccountId: async () => options.callerAccountId ?? 'owner',
-    resolveEncryption: async () => callerMaterial ? { kind: 'available', material: callerMaterial,
+    resolveEncryption: async () => callerMaterial && options.unavailableKeyReason !== 'encryption_setup_required' ? { kind: 'available', material: callerMaterial,
       witness: { mode: 'e2ee', version: 3, contentKeyFingerprint: callerMaterial.contentPublicKeyFingerprint } }
       : { kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } },
     definitions: { get: async () => { throw new Error('frozen_review_must_not_read_live_definition'); } },
@@ -174,6 +179,78 @@ function harness(options: Readonly<{
 }
 
 describe('Account review Actions', () => {
+  it.each([false, true])('keeps agent-requested review custody until a present user decides (stale=%s)', async stale => {
+    const h = harness({ callerAccountId: 'account-1' });
+    let stored: ApprovalRequest | null = null;
+    // These unreachable ports represent other transport boundaries. Review uses
+    // the real Workflow owner above and only substitutes HTTP/Artifact storage.
+    const unreachable = async (): Promise<never> => { throw new Error('unexpected_transport'); };
+    const unavailable = async () => ({ ok: false as const, errorCode: 'source_unavailable' as const, error: 'unused' });
+    const executor = createActionExecutor({
+      executionRunStart: unreachable, executionRunList: unreachable, executionRunGet: unreachable,
+      detachedExecutionRunSend: unreachable, executionRunStop: unreachable, executionRunAction: unreachable,
+      executionRunWait: unreachable, sessionOpen: unreachable, sessionFork: unreachable, sessionRollback: unreachable,
+      sessionSpawnNew: unreachable, pathsListRecent: unreachable, machinesList: unreachable, serversList: unreachable,
+      reviewEnginesList: unreachable, agentsBackendsList: unreachable, agentsModelsList: unreachable,
+      sessionSendMessage: unreachable, sessionModeSet: unreachable, sessionModesList: unreachable,
+      sessionList: unreachable, sessionActivityGet: unreachable, sessionRecentMessagesGet: unreachable,
+      daemonMemorySearch: unreachable, daemonMemoryGetWindow: unreachable, daemonMemoryEnsureUpToDate: unreachable,
+      resetGlobalVoiceAgent: unreachable,
+      workflowAction: createWorkflowActionExecutor({ isWorkflowFeatureEnabled: () => true, runs: h.owner,
+        definitions: { list: unavailable, get: unavailable, create: unavailable, update: unavailable, edit: unavailable, delete: unavailable } }),
+      isActionApprovalRequired: () => false,
+      approvalsCreate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { artifactId: 'review-request' }; },
+      approvalsGet: async () => stored,
+      approvalsUpdate: async ({ request }) => {
+        if (!stored) return { ok: false, errorCode: 'not_found', error: 'not_found' };
+        const transition = decideApprovalRequestTransition(stored, request);
+        if (!transition.ok) return transition;
+        stored = ApprovalRequestV2Schema.parse(request);
+        return { ok: true };
+      },
+      isApprovalExecutionOriginCurrent: async () => true,
+    });
+    const input = { ...target, mode: 'use_result', value: 'stop' };
+    const context = { surface: 'agent', authority: 'account_automation', serverId: 'home',
+      runtimeAccountId: 'account-1', actionRequestId: 'review-attempt', actionCaller: { kind: 'host' },
+      callerPermissionMode: 'safe-yolo' } as const;
+    expect(await executor.execute('workflow.run.invocations.complete_review', input, { ...context, bypassApprovals: true }))
+      .toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    expect(await executor.execute('workflow.run.invocations.complete_review', input, context))
+      .toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'review-request' } });
+    expect(stored).toMatchObject({ status: 'open', actionArgs: input });
+    expect(h.operations.some(operation => operation.operation === 'invocations.complete_review')).toBe(false);
+    expect(await executor.execute('approval.request.decide', { artifactId: 'review-request', decision: 'approve' }, context))
+      .toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    if (stale) h.rows.get(heldId)!.index = { ...h.rows.get(heldId)!.index, contentRevision: '5' };
+    const decision = await executor.execute('approval.request.decide', { artifactId: 'review-request', decision: 'approve' },
+      { ...actor, serverId: 'home', runtimeAccountId: 'account-1', actionCaller: { kind: 'host' } });
+    expect(decision).toMatchObject({ ok: true, result: { status: stale ? 'failed' : 'executed' } });
+    if (stale) {
+      expect(ApprovalRequestV2Schema.parse(stored).execution).toMatchObject({ ok: false, errorCode: 'currentness_conflict' });
+      expect(h.operations.some(operation => operation.operation === 'invocations.complete_review')).toBe(false);
+      expect(h.progress().result).toBe('continue');
+    } else {
+      expect(h.progress()).toMatchObject({ result: 'stop', review: { resultSource: { kind: 'human', accountId: 'account-1' },
+        decision: { kind: 'use_result', requestedFromContentRevision: '4' } } });
+    }
+  });
+
+  it.each(['history_not_readable', 'encryption_setup_required', 'waiting_for_keys'] as const)(
+    'keeps %s visible at review ingress without mutating the held row', async unavailableKeyReason => {
+      const h = harness({ e2ee: true, unavailableKeyReason });
+      const unavailable = async () => ({ ok: false as const, errorCode: 'source_unavailable' as const, error: 'unused' });
+      const execute = createWorkflowActionExecutor({ isWorkflowFeatureEnabled: () => true, runs: h.owner,
+        definitions: { list: unavailable, get: unavailable, create: unavailable, update: unavailable, edit: unavailable, delete: unavailable } });
+      const before = h.rows.get(heldId)!.contentEnvelope;
+      await expect(execute({ actionId: 'workflow.run.invocations.complete_review',
+        input: { ...target, mode: 'use_result' }, context: actor }))
+        .resolves.toMatchObject({ ok: false, errorCode: unavailableKeyReason });
+      expect(h.rows.get(heldId)!.contentEnvelope).toBe(before);
+      expect(h.operations.some(operation => operation.operation === 'invocations.complete_review')).toBe(false);
+    },
+  );
+
   it.each([false, true])('refuses attaching an earlier Plan Run to a changed proposal (supplied=%s)', async supplied => {
     const proposalA = WorkflowDefinitionV1Schema.parse({ ...program, defaults: {
       agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } },

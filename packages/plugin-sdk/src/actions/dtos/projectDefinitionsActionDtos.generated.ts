@@ -271,6 +271,10 @@ export type ProjectDefinitionsActionResultById = {
                 cwd: string;
                 requestedVersion?: string | undefined;
             } | undefined;
+            executionInputs?: {
+                file: string;
+                hash: string;
+            }[] | undefined;
         }[];
         commands?: {
             name: string;
@@ -297,6 +301,14 @@ export type ProjectDefinitionsActionResultById = {
                 cwd: string;
                 requestedVersion?: string | undefined;
             } | undefined;
+            executionInputs?: {
+                file: string;
+                hash: string;
+            }[] | undefined;
+        }[] | undefined;
+        environmentExecutionInputs?: {
+            file: string;
+            hash: string;
         }[] | undefined;
         tools?: {
             tool: string;
@@ -305,6 +317,23 @@ export type ProjectDefinitionsActionResultById = {
             requestedVersion?: string | undefined;
             version?: string | undefined;
         }[] | undefined;
+        setupReadiness?: {
+            kind: 'current';
+            reviewedEffectDigest: string;
+            completedAtMs: number;
+        } | {
+            kind: 'unprepared';
+            reviewedEffectDigest: string;
+        } | {
+            kind: 'notRequired';
+            reviewedEffectDigest: string;
+        } | {
+            kind: 'needsReview';
+            code: string;
+        } | {
+            kind: 'unknown';
+            code: string;
+        } | undefined;
     };
     readonly "projects.manifest.update": {
         status: 'saved';

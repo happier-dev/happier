@@ -87,6 +87,7 @@ export type { ExecutionRunControlActionInputById } from './dtos/executionRunCont
 export type { ExecutionRunControlActionResultById } from './dtos/executionRunControlActionDtos.generated.js';
 export type { ExternalSessionsActionInputById } from './dtos/externalSessionsActionDtos.generated.js';
 export type { ExternalSessionsActionResultById } from './dtos/externalSessionsActionDtos.generated.js';
+export type { ExternalSessionsSource } from './dtos/pluginActionDtoSupport.generated.js';
 export type { FilesystemActionInputById } from './dtos/filesystemActionDtos.generated.js';
 export type { FilesystemActionResultById } from './dtos/filesystemActionDtos.generated.js';
 export type { FindActionInputById } from './dtos/findActionDtos.generated.js';
@@ -274,6 +275,12 @@ export type { TeamsActionResultById } from './dtos/teamsActionDtos.generated.js'
 export type { TodoSessionLinkActionInputById } from './dtos/todoSessionLinkActionDtos.generated.js';
 export type { TodoSessionLinkActionResultById } from './dtos/todoSessionLinkActionDtos.generated.js';
 export type { ToolContribution } from './service.js';
+export type { UsageActionInputById } from './dtos/usageActionDtos.generated.js';
+export type { UsageActionResultById } from './dtos/usageActionDtos.generated.js';
+export type { UsageCoachEvaluation } from './dtos/pluginActionDtoSupport.generated.js';
+export type { UsageCoachFinding } from './dtos/pluginActionDtoSupport.generated.js';
+export type { UsageSourcesActionInputById } from './dtos/usageSourcesActionDtos.generated.js';
+export type { UsageSourcesActionResultById } from './dtos/usageSourcesActionDtos.generated.js';
 export type { VoiceControlsActionInputById } from './dtos/voiceControlsActionDtos.generated.js';
 export type { VoiceControlsActionResultById } from './dtos/voiceControlsActionDtos.generated.js';
 export type { VoiceProviderSettingsJsonValueV1 } from './dtos/pluginActionDtoSupport.generated.js';

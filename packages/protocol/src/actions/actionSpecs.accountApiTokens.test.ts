@@ -30,8 +30,10 @@ describe('Account API-token Action admission', () => {
         expect(resolveActionSurfaceAvailability({ actionId: id, surface }).available).toBe(true);
       }
       for (const surface of ['agent', 'mcp', 'voice', 'rpc', 'api', 'plugin'] as const) {
-        expect(resolveActionSurfaceAvailability({ actionId: id, surface }).available)
-          .toBe(surface === 'agent' || (surface === 'mcp' && id !== 'account.apiTokens.list'));
+        // Tools and trusted plugins can request a human-decided mutation; API tokens cannot
+        // execute it directly, and the declared authority remains present_user.
+        expect(resolveActionSurfaceAvailability({ actionId: id, surface }).available, `${id} on ${surface}`)
+          .toBe(surface === 'agent' || surface === 'mcp' || surface === 'plugin');
       }
     }
   });

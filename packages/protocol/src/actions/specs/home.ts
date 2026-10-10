@@ -49,6 +49,8 @@ import {
   HomeReachabilityV1Schema,
 } from '../../home/governance/reachability.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
+import { z } from 'zod';
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { homeDomainActionRow, homeDomainApprovalField as approvalField } from './homeDomainRow.js';
 
 const ACCOUNT_ID_FIELD = approvalField('accountId', 'Account ID', { required: true });
@@ -65,6 +67,17 @@ const ACCOUNT_ID_FIELD = approvalField('accountId', 'Account ID', { required: tr
  * acknowledgement the caller would have to re-read to trust.
  */
 export const HOME_GOVERNANCE_ACTION_SPECS = Object.freeze([
+  {
+    ...homeDomainActionRow({
+      id: 'home.search.rebuild', title: 'Rebuild Home search index',
+      description: 'Rebuild this Personal Home’s derived search index from its canonical transcript rows.',
+      safety: 'danger', sideEffectClass: 'danger', cliPath: ['home', 'search', 'rebuild'],
+      path: '/v1/home/search/rebuild', inputSchema: HomeGovernanceGetInputV1Schema,
+      outputSchema: lazyZodSchema(() => z.object({ ok: z.literal(true) }).strict()),
+    }),
+    // The existing server search owner requires present-user admission.
+    requiredAuthority: 'present_user' as const,
+  },
   homeDomainActionRow({
     id: 'home.governance.get',
     title: 'Get Home administration',

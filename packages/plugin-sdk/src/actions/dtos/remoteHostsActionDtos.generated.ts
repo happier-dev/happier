@@ -61,6 +61,25 @@ export type RemoteHostsActionInputById = {
                 recipientContentPublicKeyFingerprint: string;
             }[] | undefined;
         }[] | undefined;
+        referenceCensus?: {
+            scope: 'catalogs';
+            accountMode: 'plain' | 'e2ee';
+            catalogs: {
+                mcp?: number | 'absent' | undefined;
+                acp?: number | 'absent' | undefined;
+                providerConnections?: number | 'absent' | undefined;
+                connectedConfigurations?: number | 'absent' | undefined;
+                connectedPurposes?: number | 'absent' | undefined;
+            };
+            remoteHosts?: {
+                revision: number | 'absent';
+                resourceRefs: string[];
+            } | undefined;
+            notificationChannels?: {
+                revision: number | 'absent';
+                resourceRefs: string[];
+            } | undefined;
+        } | undefined;
     };
     readonly "remote_hosts.duplicate": {
         hostId: string;
@@ -87,6 +106,25 @@ export type RemoteHostsActionInputById = {
     readonly "remote_hosts.relay.configure": {
         hostId: string;
         expectedRevision: number | 'absent';
+        operation: {
+            kind: 'configure';
+            config: {
+                providerId: 'localOnly';
+            } | {
+                providerId: 'lan';
+                url: string;
+            } | {
+                providerId: 'tailscaleServe';
+            } | {
+                providerId: 'tailscaleFunnel';
+            } | {
+                providerId: 'cloudflareNamed';
+                hostname: string;
+                token: string;
+            };
+        } | {
+            kind: 'disable';
+        };
     };
     readonly "remote_hosts.relay.test": {
         hostId: string;
@@ -113,6 +151,10 @@ export type RemoteHostsActionInputById = {
         expectedRevision: number | 'absent';
     };
     readonly "remote_hosts.relay.status": {
+        hostId: string;
+        expectedRevision: number | 'absent';
+    };
+    readonly "remote_hosts.relay.access.status": {
         hostId: string;
         expectedRevision: number | 'absent';
     };
@@ -152,6 +194,32 @@ export type RemoteHostsActionInputById = {
     readonly "remote_hosts.personal_home.erase": {
         hostId: string;
         expectedRevision: number | 'absent';
+    };
+    readonly "remote_hosts.trusted_keys.list": Record<string, never>;
+    readonly "remote_hosts.trusted_keys.remove": {
+        key: {
+            host: string;
+            port: number;
+            algorithm: string;
+            fingerprintSha256: string;
+        };
+    };
+    readonly "remote_hosts.trusted_keys.clear": {
+        keys: {
+            host: string;
+            port: number;
+            algorithm: string;
+            fingerprintSha256: string;
+        }[];
+    };
+    readonly "remote_hosts.tunnel.stop": {
+        target: {
+            kind: 'native';
+            leaseId: string;
+        } | {
+            kind: 'desktop';
+            tunnelKey: string;
+        };
     };
 };
 export type RemoteHostsActionResultById = {
@@ -327,9 +395,10 @@ export type RemoteHostsActionResultById = {
     } | {
         status: 'outcome_unknown';
     } | {
-        status: 'opened';
-        route: string;
-        hostId?: string | undefined;
+        status: 'task_started';
+        taskId: string;
+    } | {
+        status: 'connected';
     };
     readonly "remote_hosts.relay.test": {
         status: 'conflict';
@@ -429,6 +498,20 @@ export type RemoteHostsActionResultById = {
     } | {
         status: 'connected';
     };
+    readonly "remote_hosts.relay.access.status": {
+        status: 'conflict';
+        revision: number;
+    } | {
+        status: 'unavailable';
+        reason: string;
+    } | {
+        status: 'outcome_unknown';
+    } | {
+        status: 'task_started';
+        taskId: string;
+    } | {
+        status: 'connected';
+    };
     readonly "remote_hosts.relay.install_or_update": {
         status: 'conflict';
         revision: number;
@@ -511,5 +594,58 @@ export type RemoteHostsActionResultById = {
         taskId: string;
     } | {
         status: 'connected';
+    };
+    readonly "remote_hosts.trusted_keys.list": {
+        status: 'conflict';
+        revision: number;
+    } | {
+        status: 'unavailable';
+        reason: string;
+    } | {
+        status: 'outcome_unknown';
+    } | {
+        status: 'listed';
+        keys: {
+            host: string;
+            port: number;
+            algorithm: string;
+            fingerprintSha256: string;
+        }[];
+    };
+    readonly "remote_hosts.trusted_keys.remove": {
+        status: 'conflict';
+        revision: number;
+    } | {
+        status: 'unavailable';
+        reason: string;
+    } | {
+        status: 'outcome_unknown';
+    } | {
+        status: 'removed';
+    };
+    readonly "remote_hosts.trusted_keys.clear": {
+        status: 'conflict';
+        revision: number;
+    } | {
+        status: 'unavailable';
+        reason: string;
+    } | {
+        status: 'outcome_unknown';
+    } | {
+        status: 'removed';
+    };
+    readonly "remote_hosts.tunnel.stop": {
+        status: 'conflict';
+        revision: number;
+    } | {
+        status: 'unavailable';
+        reason: string;
+    } | {
+        status: 'outcome_unknown';
+    } | {
+        status: 'task_started';
+        taskId: string;
+    } | {
+        status: 'released';
     };
 };

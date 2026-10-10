@@ -61,7 +61,7 @@ export type LaunchProfilesActionInputById = {
     };
     readonly "launch_profiles.save": {
         id: string;
-        expectedRevision: number;
+        expectedRevision: number | 'absent';
         profile: {
             id: string;
             name: string;
@@ -97,6 +97,32 @@ export type LaunchProfilesActionInputById = {
                 sessionTitleUpdates?: 'agent' | 'disabled' | 'initial' | 'ongoing' | undefined;
                 responseOptions?: 'agent' | 'disabled' | undefined;
             } | undefined;
+            codingPromptBehaviorOverrides?: {
+                sessionTitleUpdates?: 'agent' | 'disabled' | 'initial' | 'ongoing' | undefined;
+                responseOptions?: 'agent' | 'disabled' | undefined;
+            } | undefined;
+            artifactId?: string | undefined;
+            secretBindings?: Readonly<Record<string, string>> | undefined;
+            shared?: boolean | undefined;
+            viewOnly?: boolean | undefined;
+            revision?: Readonly<{
+                headerVersion: number;
+                bodyVersion: number;
+            }> | undefined;
+            enabled?: boolean | undefined;
+            promptStack?: readonly {
+                id: string;
+                ref: {
+                    kind: 'doc' | 'bundle';
+                    artifactId: string;
+                    serverId?: string | undefined;
+                };
+                enabled?: boolean | undefined;
+                placement?: 'system_append' | 'composer_insert' | 'skill_instructions' | 'provider_asset' | undefined;
+                maxChars?: number | undefined;
+                required?: boolean | undefined;
+            }[] | undefined;
+            profileRecordRevision?: number | undefined;
         } | {
             v: 2;
             createdAt: number;
@@ -131,7 +157,39 @@ export type LaunchProfilesActionInputById = {
                 kind?: 'secret' | 'config' | undefined;
                 required?: boolean | undefined;
             }[] | undefined;
+            artifactId?: string | undefined;
+            secretBindings?: Readonly<Record<string, string>> | undefined;
+            shared?: boolean | undefined;
+            viewOnly?: boolean | undefined;
+            revision?: Readonly<{
+                headerVersion: number;
+                bodyVersion: number;
+            }> | undefined;
+            enabled?: boolean | undefined;
+            promptStack?: readonly {
+                id: string;
+                ref: {
+                    kind: 'doc' | 'bundle';
+                    artifactId: string;
+                    serverId?: string | undefined;
+                };
+                enabled?: boolean | undefined;
+                placement?: 'system_append' | 'composer_insert' | 'skill_instructions' | 'provider_asset' | undefined;
+                maxChars?: number | undefined;
+                required?: boolean | undefined;
+            }[] | undefined;
+            profileRecordRevision?: number | undefined;
         };
+        secretBindings?: Record<string, string | null> | undefined;
+        legacyCloneSource?: {
+            id: string;
+            revision: number;
+            artifactRevision?: {
+                headerVersion: number;
+                bodyVersion: number;
+                artifactId: string;
+            } | undefined;
+        } | undefined;
         expectedArtifactRevision?: {
             headerVersion: number;
             bodyVersion: number;
@@ -174,6 +232,54 @@ export type LaunchProfilesActionInputById = {
             kind: 'resource';
             resourceId: string;
             expectedResourceRevision: number;
+        };
+    } | {
+        id: string;
+        expectedRevision: number | 'absent';
+        selections: {
+            envName: string;
+            selection: {
+                kind: 'none';
+            } | {
+                kind: 'resource';
+                resourceId: string;
+                expectedResourceRevision: number;
+            };
+        }[];
+    };
+    readonly "launch_profiles.prompt_stack.update": {
+        id: string;
+        expectedRevision: number | 'absent';
+        intent: {
+            kind: 'attach';
+            entry: {
+                id: string;
+                ref: {
+                    kind: 'doc' | 'bundle';
+                    artifactId: string;
+                    serverId?: string | undefined;
+                };
+                enabled?: boolean | undefined;
+                placement?: 'system_append' | 'composer_insert' | 'skill_instructions' | 'provider_asset' | undefined;
+                maxChars?: number | undefined;
+                required?: boolean | undefined;
+            };
+        } | {
+            kind: 'detach';
+            entryId: string;
+        } | {
+            kind: 'reorder';
+            entryId: string;
+            siblingId: string;
+            position: 'before' | 'after';
+        } | {
+            kind: 'set_budget';
+            entryId: string;
+            maxChars: number | null;
+        } | {
+            kind: 'set_enabled';
+            entryId: string;
+            enabled: boolean;
         };
     };
     readonly "launch_profiles.legacy.preview": {
@@ -269,6 +375,21 @@ export type LaunchProfilesActionInputById = {
                         localId: string;
                     };
                     groupId: string;
+                }> | undefined;
+                gatewayPlacement?: {
+                    kind: 'sessionMachine';
+                } | {
+                    kind: 'machine';
+                    machineId: string;
+                } | undefined;
+                claudeHelperModels?: {
+                    fast?: string | undefined;
+                    default?: string | undefined;
+                    strongest?: string | undefined;
+                } | undefined;
+                modelSettings?: Record<string, {
+                    temperature?: number | null | undefined;
+                    maxTokens?: number | null | undefined;
                 }> | undefined;
             };
             credentialMoves: {
@@ -378,6 +499,21 @@ export type LaunchProfilesActionInputById = {
                     };
                     groupId: string;
                 }> | undefined;
+                gatewayPlacement?: {
+                    kind: 'sessionMachine';
+                } | {
+                    kind: 'machine';
+                    machineId: string;
+                } | undefined;
+                claudeHelperModels?: {
+                    fast?: string | undefined;
+                    default?: string | undefined;
+                    strongest?: string | undefined;
+                } | undefined;
+                modelSettings?: Record<string, {
+                    temperature?: number | null | undefined;
+                    maxTokens?: number | null | undefined;
+                }> | undefined;
             };
             credentialMoves: {
                 legacyEnvVarName: string;
@@ -427,7 +563,7 @@ export type LaunchProfilesActionResultById = {
         reason: string;
     } | {
         status: 'invalid';
-        reason: 'read-only' | 'duplicate-id' | 'duplicate-name' | 'profile-not-found' | 'legacy-creation-unsupported' | 'invalid-definition';
+        reason: 'read-only' | 'duplicate-id' | 'duplicate-name' | 'profile-not-found' | 'legacy-creation-unsupported' | 'invalid-definition' | 'entry_conflict' | 'entry_not_found' | 'invalid_parameters';
         id?: string | undefined;
     } | {
         status: 'present';
@@ -1208,7 +1344,7 @@ export type LaunchProfilesActionResultById = {
         reason: string;
     } | {
         status: 'invalid';
-        reason: 'read-only' | 'duplicate-id' | 'duplicate-name' | 'profile-not-found' | 'legacy-creation-unsupported' | 'invalid-definition';
+        reason: 'read-only' | 'duplicate-id' | 'duplicate-name' | 'profile-not-found' | 'legacy-creation-unsupported' | 'invalid-definition' | 'entry_conflict' | 'entry_not_found' | 'invalid_parameters';
         id?: string | undefined;
     } | {
         status: 'updated';
@@ -1373,7 +1509,7 @@ export type LaunchProfilesActionResultById = {
         reason: string;
     } | {
         status: 'invalid';
-        reason: 'read-only' | 'duplicate-id' | 'duplicate-name' | 'profile-not-found' | 'legacy-creation-unsupported' | 'invalid-definition';
+        reason: 'read-only' | 'duplicate-id' | 'duplicate-name' | 'profile-not-found' | 'legacy-creation-unsupported' | 'invalid-definition' | 'entry_conflict' | 'entry_not_found' | 'invalid_parameters';
         id?: string | undefined;
     } | {
         status: 'updated';
@@ -1392,7 +1528,7 @@ export type LaunchProfilesActionResultById = {
         reason: string;
     } | {
         status: 'invalid';
-        reason: 'read-only' | 'duplicate-id' | 'duplicate-name' | 'profile-not-found' | 'legacy-creation-unsupported' | 'invalid-definition';
+        reason: 'read-only' | 'duplicate-id' | 'duplicate-name' | 'profile-not-found' | 'legacy-creation-unsupported' | 'invalid-definition' | 'entry_conflict' | 'entry_not_found' | 'invalid_parameters';
         id?: string | undefined;
     } | {
         status: 'updated';
@@ -1408,7 +1544,7 @@ export type LaunchProfilesActionResultById = {
         reason: string;
     } | {
         status: 'invalid';
-        reason: 'read-only' | 'duplicate-id' | 'duplicate-name' | 'profile-not-found' | 'legacy-creation-unsupported' | 'invalid-definition';
+        reason: 'read-only' | 'duplicate-id' | 'duplicate-name' | 'profile-not-found' | 'legacy-creation-unsupported' | 'invalid-definition' | 'entry_conflict' | 'entry_not_found' | 'invalid_parameters';
         id?: string | undefined;
     } | {
         status: 'updated';
@@ -1428,7 +1564,7 @@ export type LaunchProfilesActionResultById = {
         reason: string;
     } | {
         status: 'invalid';
-        reason: 'read-only' | 'duplicate-id' | 'duplicate-name' | 'profile-not-found' | 'legacy-creation-unsupported' | 'invalid-definition';
+        reason: 'read-only' | 'duplicate-id' | 'duplicate-name' | 'profile-not-found' | 'legacy-creation-unsupported' | 'invalid-definition' | 'entry_conflict' | 'entry_not_found' | 'invalid_parameters';
         id?: string | undefined;
     } | {
         status: 'updated';
@@ -1444,7 +1580,7 @@ export type LaunchProfilesActionResultById = {
         reason: string;
     } | {
         status: 'invalid';
-        reason: 'read-only' | 'duplicate-id' | 'duplicate-name' | 'profile-not-found' | 'legacy-creation-unsupported' | 'invalid-definition';
+        reason: 'read-only' | 'duplicate-id' | 'duplicate-name' | 'profile-not-found' | 'legacy-creation-unsupported' | 'invalid-definition' | 'entry_conflict' | 'entry_not_found' | 'invalid_parameters';
         id?: string | undefined;
     } | {
         status: 'updated';
@@ -1460,7 +1596,7 @@ export type LaunchProfilesActionResultById = {
         reason: string;
     } | {
         status: 'invalid';
-        reason: 'read-only' | 'duplicate-id' | 'duplicate-name' | 'profile-not-found' | 'legacy-creation-unsupported' | 'invalid-definition';
+        reason: 'read-only' | 'duplicate-id' | 'duplicate-name' | 'profile-not-found' | 'legacy-creation-unsupported' | 'invalid-definition' | 'entry_conflict' | 'entry_not_found' | 'invalid_parameters';
         id?: string | undefined;
     } | {
         status: 'updated';
@@ -1481,7 +1617,7 @@ export type LaunchProfilesActionResultById = {
         reason: string;
     } | {
         status: 'invalid';
-        reason: 'read-only' | 'duplicate-id' | 'duplicate-name' | 'profile-not-found' | 'legacy-creation-unsupported' | 'invalid-definition';
+        reason: 'read-only' | 'duplicate-id' | 'duplicate-name' | 'profile-not-found' | 'legacy-creation-unsupported' | 'invalid-definition' | 'entry_conflict' | 'entry_not_found' | 'invalid_parameters';
         id?: string | undefined;
     } | {
         status: 'updated';
@@ -1501,7 +1637,7 @@ export type LaunchProfilesActionResultById = {
         reason: string;
     } | {
         status: 'invalid';
-        reason: 'read-only' | 'duplicate-id' | 'duplicate-name' | 'profile-not-found' | 'legacy-creation-unsupported' | 'invalid-definition';
+        reason: 'read-only' | 'duplicate-id' | 'duplicate-name' | 'profile-not-found' | 'legacy-creation-unsupported' | 'invalid-definition' | 'entry_conflict' | 'entry_not_found' | 'invalid_parameters';
         id?: string | undefined;
     } | {
         status: 'updated';
@@ -1521,7 +1657,23 @@ export type LaunchProfilesActionResultById = {
         reason: string;
     } | {
         status: 'invalid';
-        reason: 'read-only' | 'duplicate-id' | 'duplicate-name' | 'profile-not-found' | 'legacy-creation-unsupported' | 'invalid-definition';
+        reason: 'read-only' | 'duplicate-id' | 'duplicate-name' | 'profile-not-found' | 'legacy-creation-unsupported' | 'invalid-definition' | 'entry_conflict' | 'entry_not_found' | 'invalid_parameters';
+        id?: string | undefined;
+    } | {
+        status: 'updated';
+        id: string;
+        revision: number;
+    };
+    readonly "launch_profiles.prompt_stack.update": {
+        status: 'conflict';
+        id: string;
+        revision: number;
+    } | {
+        status: 'unavailable';
+        reason: string;
+    } | {
+        status: 'invalid';
+        reason: 'read-only' | 'duplicate-id' | 'duplicate-name' | 'profile-not-found' | 'legacy-creation-unsupported' | 'invalid-definition' | 'entry_conflict' | 'entry_not_found' | 'invalid_parameters';
         id?: string | undefined;
     } | {
         status: 'updated';
@@ -1536,7 +1688,7 @@ export type LaunchProfilesActionResultById = {
         status: 'error';
         error: {
             v: 1;
-            code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
+            code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
             retryable: boolean;
             action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
             connectionId?: (string) | undefined;
@@ -1554,7 +1706,7 @@ export type LaunchProfilesActionResultById = {
         status: 'error';
         error: {
             v: 1;
-            code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
+            code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
             retryable: boolean;
             action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
             connectionId?: (string) | undefined;
@@ -1572,7 +1724,7 @@ export type LaunchProfilesActionResultById = {
         status: 'error';
         error: {
             v: 1;
-            code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
+            code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
             retryable: boolean;
             action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
             connectionId?: (string) | undefined;
@@ -1590,7 +1742,7 @@ export type LaunchProfilesActionResultById = {
         reason: string;
     } | {
         status: 'invalid';
-        reason: 'read-only' | 'duplicate-id' | 'duplicate-name' | 'profile-not-found' | 'legacy-creation-unsupported' | 'invalid-definition';
+        reason: 'read-only' | 'duplicate-id' | 'duplicate-name' | 'profile-not-found' | 'legacy-creation-unsupported' | 'invalid-definition' | 'entry_conflict' | 'entry_not_found' | 'invalid_parameters';
         id?: string | undefined;
     } | {
         status: 'updated';

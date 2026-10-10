@@ -61,17 +61,26 @@ export type MachinePresetsActionInputById = {
                 };
             }[] | undefined;
         };
+        environment?: {
+            toolchain?: {
+                adapterId: string;
+                config: string;
+            } | undefined;
+            setupScript?: string | undefined;
+            secretRefs?: {
+                v: 1;
+                bindings: Record<string, {
+                    ref: string;
+                    revision?: number | undefined;
+                }>;
+            } | undefined;
+        } | undefined;
         retention?: {
             kind: 'until-delete';
         } | {
             kind: 'unused';
             afterMs: number;
             effect: 'stop' | 'delete';
-        } | {
-            kind: 'deadline';
-            at: number;
-            effect: 'stop' | 'delete';
-            interrupts: true;
         } | undefined;
         wakeOnAcceptedMessage?: boolean | undefined;
         simultaneousLimit?: {
@@ -113,17 +122,26 @@ export type MachinePresetsActionInputById = {
                 machineId: string;
                 installationId: string;
             } | undefined;
+            environment?: {
+                toolchain?: {
+                    adapterId: string;
+                    config: string;
+                } | undefined;
+                setupScript?: string | undefined;
+                secretRefs?: {
+                    v: 1;
+                    bindings: Record<string, {
+                        ref: string;
+                        revision?: number | undefined;
+                    }>;
+                } | undefined;
+            } | null | undefined;
             retention?: {
                 kind: 'until-delete';
             } | {
                 kind: 'unused';
                 afterMs: number;
                 effect: 'stop' | 'delete';
-            } | {
-                kind: 'deadline';
-                at: number;
-                effect: 'stop' | 'delete';
-                interrupts: true;
             } | null | undefined;
             wakeOnAcceptedMessage?: boolean | null | undefined;
             simultaneousLimit?: {
@@ -186,17 +204,26 @@ export type MachinePresetsActionResultById = {
                 machineId: string;
                 installationId: string;
             };
+            environment?: {
+                toolchain?: {
+                    adapterId: string;
+                    config: string;
+                } | undefined;
+                setupScript?: string | undefined;
+                secretRefs?: {
+                    v: 1;
+                    bindings: Record<string, {
+                        ref: string;
+                        revision?: number | undefined;
+                    }>;
+                } | undefined;
+            } | undefined;
             retention?: {
                 kind: 'until-delete';
             } | {
                 kind: 'unused';
                 afterMs: number;
                 effect: 'stop' | 'delete';
-            } | {
-                kind: 'deadline';
-                at: number;
-                effect: 'stop' | 'delete';
-                interrupts: true;
             } | undefined;
             wakeOnAcceptedMessage?: boolean | undefined;
             simultaneousLimit?: {
@@ -255,17 +282,26 @@ export type MachinePresetsActionResultById = {
                 machineId: string;
                 installationId: string;
             };
+            environment?: {
+                toolchain?: {
+                    adapterId: string;
+                    config: string;
+                } | undefined;
+                setupScript?: string | undefined;
+                secretRefs?: {
+                    v: 1;
+                    bindings: Record<string, {
+                        ref: string;
+                        revision?: number | undefined;
+                    }>;
+                } | undefined;
+            } | undefined;
             retention?: {
                 kind: 'until-delete';
             } | {
                 kind: 'unused';
                 afterMs: number;
                 effect: 'stop' | 'delete';
-            } | {
-                kind: 'deadline';
-                at: number;
-                effect: 'stop' | 'delete';
-                interrupts: true;
             } | undefined;
             wakeOnAcceptedMessage?: boolean | undefined;
             simultaneousLimit?: {
@@ -320,17 +356,26 @@ export type MachinePresetsActionResultById = {
                 machineId: string;
                 installationId: string;
             };
+            environment?: {
+                toolchain?: {
+                    adapterId: string;
+                    config: string;
+                } | undefined;
+                setupScript?: string | undefined;
+                secretRefs?: {
+                    v: 1;
+                    bindings: Record<string, {
+                        ref: string;
+                        revision?: number | undefined;
+                    }>;
+                } | undefined;
+            } | undefined;
             retention?: {
                 kind: 'until-delete';
             } | {
                 kind: 'unused';
                 afterMs: number;
                 effect: 'stop' | 'delete';
-            } | {
-                kind: 'deadline';
-                at: number;
-                effect: 'stop' | 'delete';
-                interrupts: true;
             } | undefined;
             wakeOnAcceptedMessage?: boolean | undefined;
             simultaneousLimit?: {
@@ -388,17 +433,26 @@ export type MachinePresetsActionResultById = {
                 machineId: string;
                 installationId: string;
             };
+            environment?: {
+                toolchain?: {
+                    adapterId: string;
+                    config: string;
+                } | undefined;
+                setupScript?: string | undefined;
+                secretRefs?: {
+                    v: 1;
+                    bindings: Record<string, {
+                        ref: string;
+                        revision?: number | undefined;
+                    }>;
+                } | undefined;
+            } | undefined;
             retention?: {
                 kind: 'until-delete';
             } | {
                 kind: 'unused';
                 afterMs: number;
                 effect: 'stop' | 'delete';
-            } | {
-                kind: 'deadline';
-                at: number;
-                effect: 'stop' | 'delete';
-                interrupts: true;
             } | undefined;
             wakeOnAcceptedMessage?: boolean | undefined;
             simultaneousLimit?: {
@@ -456,17 +510,26 @@ export type MachinePresetsActionResultById = {
                 machineId: string;
                 installationId: string;
             };
+            environment?: {
+                toolchain?: {
+                    adapterId: string;
+                    config: string;
+                } | undefined;
+                setupScript?: string | undefined;
+                secretRefs?: {
+                    v: 1;
+                    bindings: Record<string, {
+                        ref: string;
+                        revision?: number | undefined;
+                    }>;
+                } | undefined;
+            } | undefined;
             retention?: {
                 kind: 'until-delete';
             } | {
                 kind: 'unused';
                 afterMs: number;
                 effect: 'stop' | 'delete';
-            } | {
-                kind: 'deadline';
-                at: number;
-                effect: 'stop' | 'delete';
-                interrupts: true;
             } | undefined;
             wakeOnAcceptedMessage?: boolean | undefined;
             simultaneousLimit?: {
@@ -524,17 +587,26 @@ export type MachinePresetsActionResultById = {
                 machineId: string;
                 installationId: string;
             };
+            environment?: {
+                toolchain?: {
+                    adapterId: string;
+                    config: string;
+                } | undefined;
+                setupScript?: string | undefined;
+                secretRefs?: {
+                    v: 1;
+                    bindings: Record<string, {
+                        ref: string;
+                        revision?: number | undefined;
+                    }>;
+                } | undefined;
+            } | undefined;
             retention?: {
                 kind: 'until-delete';
             } | {
                 kind: 'unused';
                 afterMs: number;
                 effect: 'stop' | 'delete';
-            } | {
-                kind: 'deadline';
-                at: number;
-                effect: 'stop' | 'delete';
-                interrupts: true;
             } | undefined;
             wakeOnAcceptedMessage?: boolean | undefined;
             simultaneousLimit?: {

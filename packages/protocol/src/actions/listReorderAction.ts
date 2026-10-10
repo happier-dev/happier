@@ -27,7 +27,7 @@ export type ListReorderOutputV1 = z.infer<typeof ListReorderOutputV1Schema>;
 
 const shared = {
   safety: 'safe', sideEffectClass: 'write', requiredAuthority: 'account_automation', executionPlacement: 'client',
-  placements: [], surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: false, rpc: false },
+  placements: [], surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
   outputSchema: ListReorderOutputV1Schema,
   inputHints: { fields: [
     { path: 'scope', title: 'Home and Account', widget: 'json', required: true },
@@ -37,6 +37,7 @@ const shared = {
 } as const;
 export const LIST_REORDER_ACTION_SPECS = [
   { ...shared, id: 'session.pending.reorder', title: 'Reorder pending input',
+    cli: { commands: [{ path: ['session', 'pending', 'reorder'], visibility: 'canonical' }] },
     description: 'Move pending input relative to current membership of an exact Session and recipient queue. Does not transfer input custody or recipients.',
     inputHints: { fields: [
       ...shared.inputHints.fields,
@@ -45,6 +46,7 @@ export const LIST_REORDER_ACTION_SPECS = [
     ] },
     bindings: { mcpToolName: 'session_pending_reorder' }, inputSchema: PendingReorderInputV1Schema },
   { ...shared, id: 'todos.reorder', title: 'Reorder undone todo',
+    cli: { commands: [{ path: ['todos', 'reorder'], visibility: 'canonical' }] },
     description: 'Move an undone todo relative to current undone membership. Does not change completion status.',
     bindings: { mcpToolName: 'todos_reorder' }, inputSchema: TodoReorderInputV1Schema },
 ] as const satisfies readonly PreNormalizedActionSpec[];

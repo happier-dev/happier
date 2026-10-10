@@ -19,8 +19,26 @@ export type MachineWorkSummaryActionResultById = {
             accountId: string;
             displayName: string;
         }>[];
+        finiteLoad?: {
+            accepting: boolean;
+            runAtMost: number | null;
+            kind: 'known';
+            running: number;
+            queued: number;
+        } | {
+            kind: 'unknown';
+        } | undefined;
     }> | Readonly<{
         kind: 'unavailable';
+        finiteLoad?: {
+            accepting: boolean;
+            runAtMost: number | null;
+            kind: 'known';
+            running: number;
+            queued: number;
+        } | {
+            kind: 'unknown';
+        } | undefined;
     }> | {
         kind: 'refused';
         code: 'access_denied' | 'machine_unavailable' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'encryption_material_unavailable' | 'recipient_binding_changed' | 'machine_key_changed' | 'invalid_recipient_envelope' | 'principal_not_found' | 'principal_ineligible' | 'custodian_protected' | 'data_key_not_required' | 'unsupported_operation';

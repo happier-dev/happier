@@ -7,6 +7,8 @@ import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '../../automatio
 import { createAccountScopedCryptoMaterialSnapshotV1 } from '../../crypto/accountScopedCipher.js';
 import { WorkflowDefinitionV1Schema } from '../../workflows/workflowV1.js';
 import { createAccountWorkflowTriggerActions, type WorkflowTriggerAccountHostParams } from './workflowTriggerAccountHost.js';
+import { DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1 } from '../../account/settings/sessionAgentSpawnPolicyV1.js';
+import { markSessionListQueryResultV1 } from '../../sessions/awareness/action.js';
 
 const definition = WorkflowDefinitionV1Schema.parse({ version: 1, blocks: [{ kind: 'action', id: 'notice',
   actionId: 'notifications.notify_me', input: { message: { kind: 'literal', value: 'PR changed' } } }] });
@@ -71,6 +73,47 @@ function fixture(encryption: AvailableAutomationAccountEncryptionV1) {
 }
 
 describe('Account PR trigger private content', () => {
+  it.each(['create', 'update'] as const)('rechecks Session admission after private %s encryption before transport commit', async (operation) => {
+    const f = fixture(modes[1]!);
+    const guardedDefinition = WorkflowDefinitionV1Schema.parse({ version: 1,
+      defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'native.agent', localId: 'agent' } } },
+      blocks: [{ kind: 'step', id: 'review', document: { text: 'Review', references: [], attachments: [] },
+        input: [], result: { kind: 'text' } }],
+    });
+    const request = { sessionId: 'session-one', target: { kind: 'inline' as const, definition: guardedDefinition },
+      trigger: { kind: 'prComment' as const, enabled: true, pullRequest } };
+    const existing = operation === 'update' ? await createAccountWorkflowTriggerActions(f.params).sessionAdd(request) : null;
+    let accessible = true;
+    let encryptionReads = 0;
+    // The Account encryption/currentness service is a genuine boundary. In this
+    // request, context sealing precedes the private-trigger write's separate read;
+    // update also opens the context at both scoped and set ingress.
+    const privateWriteRead = operation === 'create' ? 2 : 4;
+    const host = createAccountWorkflowTriggerActions({ ...f.params,
+      resolveEncryption: async () => {
+        if (++encryptionReads === privateWriteRead) accessible = false;
+        return modes[1]!;
+      },
+      sessionList: async () => markSessionListQueryResultV1({
+        sessions: accessible ? [{ id: 'session-one', active: false, presence: 'offline', updatedAt: 10 }] : [],
+        nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
+      }),
+      resolveMaterializer: async () => ({ effects: { resolveTargetAvailability: async () => true } }),
+    });
+    const caller = { surface: 'agent' as const, sessionAgentSpawnPolicyV1: DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
+      agentStartContext: { caller: { kind: 'session' as const, sessionId: 'lead', starterDepth: 0, turnDepth: 0 },
+        baseline: { machineId: 'machine-one', directory: '/repo', configuration: { agentTarget: guardedDefinition.defaults!.agentTarget! } },
+        roles: {}, ledSubtreeSessionIds: ['session-one'],
+        workDepthLimit: 4, callerPermissionCeiling: 'default' as const } };
+    const write = existing
+      ? host.sessionUpdate({ sessionId: 'session-one', triggerId: existing.triggerId!, expectedRevision: existing.set.revision,
+        patch: { enabled: false } }, caller)
+      : host.sessionAdd(request, caller);
+    await expect(write).rejects.toMatchObject({ code: 'subtree_denied' });
+    if (existing) expect(f.row().triggers[0]?.enabled).toBe(true);
+    else expect(f.row()).toBeNull();
+  });
+
   it.each(['prComment', 'ciFailed'] as const)('opens %s selectors and reseals encrypted enablement revisions', async (kind) => {
     const f = fixture(modes[1]!);
     const host = createAccountWorkflowTriggerActions(f.params);

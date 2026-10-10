@@ -109,8 +109,30 @@ export const SIMULATOR_RUNTIME_ACTION_OUTPUT_SCHEMAS = Object.freeze({
   'devices.simulator.sideband.request': SimulatorPreviewActionResultV1Schema,
 } as const satisfies Readonly<Record<DevicesSimulatorRuntimeActionId, z.ZodTypeAny>>);
 
+export const SIMULATOR_RUNTIME_ACTION_DESCRIPTIONS: Readonly<Partial<Record<RuntimeActionIdV1, string>>> = Object.freeze({
+  'devices.simulator.list': 'See the phone and tablet simulators available on a machine.',
+  'devices.simulator.stream.keyframe': 'Ask the simulator preview for a fresh full picture when it looks broken.',
+  'devices.simulator.stream.snapshot': 'Take a still picture of what the simulator shows now.',
+  'devices.simulator.stream.quality.set': 'Choose how sharp the simulator preview is. Sharper uses more data.',
+  'devices.simulator.stream.fps.set': 'Choose how smooth the simulator preview is. Smoother uses more data.',
+  'devices.simulator.stream.scale.set': 'Choose how large the simulator preview is sent.',
+  'devices.simulator.lease.acquire': 'Take control of a simulator, so only one person or agent drives it at a time.',
+  'devices.simulator.lease.renew': 'Keep control of a simulator for longer.',
+  'devices.simulator.lease.release': 'Give up control of a simulator, so someone else can drive it.',
+  'devices.simulator.input.tap': 'Tap a point on the simulator screen.',
+  'devices.simulator.input.swipe': 'Swipe across the simulator screen.',
+  'devices.simulator.input.text': 'Type text into the simulator.',
+  'devices.simulator.input.key': 'Press a keyboard key in the simulator.',
+  'devices.simulator.input.button': 'Press a device button on the simulator, such as Home or volume.',
+  'devices.simulator.input.orientation': 'Turn the simulator to portrait or landscape.',
+  'devices.simulator.input.pinch': 'Pinch on the simulator screen to zoom.',
+  'devices.simulator.input.rotate': 'Rotate with two fingers on the simulator screen.',
+  'devices.simulator.sideband.request': 'Ask the simulator for information beside the picture, such as its logs or what is on screen.',
+});
+
 export const SIMULATOR_RUNTIME_ACTION_SPEC_FAMILY = Object.freeze({
   titles: SIMULATOR_RUNTIME_ACTION_TITLES,
+  descriptions: SIMULATOR_RUNTIME_ACTION_DESCRIPTIONS,
   inputSchemas: SIMULATOR_RUNTIME_ACTION_INPUT_SCHEMAS,
   outputSchemas: SIMULATOR_RUNTIME_ACTION_OUTPUT_SCHEMAS,
 } satisfies RuntimeActionSpecFamily);

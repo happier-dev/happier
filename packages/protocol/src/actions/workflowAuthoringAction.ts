@@ -19,9 +19,10 @@ export type WorkflowConversationBindInputV1 = z.infer<typeof WorkflowConversatio
 export type WorkflowConversationBindResultV1 = z.infer<typeof WorkflowConversationBindResultV1Schema>;
 export const WORKFLOW_AUTHORING_ACTION_SPECS = [{
   id: 'workflow.authoring.conversation.bind', title: 'Bind Workflow conversation',
+  cli: { commands: [{ path: ['workflow', 'authoring', 'conversation', 'bind'], visibility: 'canonical' }] },
   description: 'Bind a current existing Session to a step (or the default with stepId null) in the answering mounted Workflow draft. This authors one change; it does not save, start the Workflow or submit text.',
   safety: 'safe', sideEffectClass: 'external', executionPlacement: 'client', placements: [],
-  surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: false, rpc: false },
+  surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
   bindings: { mcpToolName: 'workflow_authoring_conversation_bind' },
   inputSchema: WorkflowConversationBindInputV1Schema, outputSchema: WorkflowConversationBindResultV1Schema,
   inputHints: { fields: [

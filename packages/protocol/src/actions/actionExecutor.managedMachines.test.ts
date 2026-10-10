@@ -5,6 +5,25 @@ import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 
 const agentTarget = { kind: 'agent', identity: { pluginId: 'native.agent', localId: 'agent' } } as const;
+
+describe('machine environment apply admission', () => {
+  it('runs only the reviewed preset revision after confirmation through the machine transport', async () => {
+    const applied: unknown[] = [];
+    const executor = createActionExecutor({ machineEnvironmentApply: async request => {
+      applied.push(request.input);
+      return { operationId: 'environment-operation', terminalId: 'environment-output' };
+    } } as ActionExecutorDeps);
+    const input = { homeId: 'home', machineId: 'guest', presetId: 'preset', presetRevision: 4 };
+    expect(await executor.execute('machines.environment.apply', input, { surface: 'cli', authority: 'present_user',
+      presentUserConfirmation: { actionId: 'machines.environment.apply' } }))
+      .toEqual({ ok: true, result: { operationId: 'environment-operation', terminalId: 'environment-output' } });
+    expect(applied).toEqual([input]);
+    expect(await executor.execute('machines.environment.apply', { ...input, environment: { setupScript: 'unreviewed' } },
+      { surface: 'cli', authority: 'present_user', presentUserConfirmation: { actionId: 'machines.environment.apply' } }))
+      .toMatchObject({ ok: false });
+    expect(applied).toEqual([input]);
+  });
+});
 const acquireInput = {
   selection: { kind: 'one-off', homeId: 'home', controller: { machineId: 'controller', installationId: 'installation' },
     launch: { provider: { pluginId: 'machine.example', localId: 'vm' }, schemaVersion: 1, name: 'Work VM', choices: {} },

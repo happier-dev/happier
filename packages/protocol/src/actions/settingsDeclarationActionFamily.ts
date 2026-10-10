@@ -2,7 +2,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 
-export const SETTINGS_DECLARATION_ACTION_IDS_V1 = ['settings.list', 'settings.get', 'settings.set', 'settings.invoke'] as const;
+export const SETTINGS_DECLARATION_ACTION_IDS_V1 = ['settings.list', 'settings.get', 'settings.set', 'settings.reset', 'settings.invoke'] as const;
 export type SettingsDeclarationActionIdV1 = typeof SETTINGS_DECLARATION_ACTION_IDS_V1[number];
 
 export function isSettingsDeclarationActionIdV1(value: string): value is SettingsDeclarationActionIdV1 {
@@ -14,6 +14,15 @@ export const SettingsDeclarationValueV1Schema = StrictJsonValueSchema;
 const SettingsDeclarationScalarChoiceV1Schema = lazyZodSchema(() => z.union([z.string(), z.number().finite(), z.boolean(), z.null()]));
 const AnchorSchema = lazyZodSchema(() => z.string().trim().min(1));
 const OperationIdSchema = lazyZodSchema(() => z.string().trim().min(1));
+export const SettingsDeclarationTargetKindV1Schema = lazyZodSchema(() => z.enum(['home', 'team', 'team_identity_connection']));
+/** Resource identity only; caller Account and authority come from Action admission. */
+export const SettingsDeclarationTargetV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('home'), serverId: OperationIdSchema }).strict(),
+  z.object({ kind: z.literal('team'), serverId: OperationIdSchema, teamId: OperationIdSchema }).strict(),
+  z.object({ kind: z.literal('team_identity_connection'), serverId: OperationIdSchema, teamId: OperationIdSchema, connectionId: OperationIdSchema }).strict(),
+]));
+export type SettingsDeclarationTargetV1 = z.infer<typeof SettingsDeclarationTargetV1Schema>;
+export type SettingsDeclarationTargetKindV1 = SettingsDeclarationTargetV1['kind'];
 /** Exact operation targets, never a settings path, credential value or caller confirmation. */
 export const SettingsDeclarationOperationInputV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('account_settings_history_purge'), versions: z.array(z.number().int().nonnegative().safe()).nonempty() }).strict(),
@@ -34,22 +43,53 @@ export const SettingsDeclarationDescriptorV1Schema = lazyZodSchema(() => z.objec
   writable: z.boolean(),
   sensitive: z.boolean(),
   storageScope: z.enum(['account', 'local']).optional(),
+  targetKinds: z.array(SettingsDeclarationTargetKindV1Schema).optional(),
+  targetRequired: z.boolean().optional(),
   allowedValues: z.array(SettingsDeclarationScalarChoiceV1Schema).optional(),
   operation: z.object({ actionId: z.literal('settings.invoke'), requiresHumanInteraction: z.boolean(), requiresApproval: z.boolean().optional() }).strict().optional(),
   unavailableReason: z.enum(['not_bound', 'sensitive', 'read_only', 'unsupported_host', 'feature_disabled']).optional(),
 }).strict());
 const ValueResultSchema = lazyZodSchema(() => z.object({ anchor: AnchorSchema, value: SettingsDeclarationValueV1Schema }).strict());
+const UnsetResultSchema = lazyZodSchema(() => z.object({ anchor: AnchorSchema, unset: z.literal(true) }).strict());
+const SettingsVersionSchema = lazyZodSchema(() => z.number().int().nonnegative().safe());
+const SettingRawScalarSchema = lazyZodSchema(() => z.union([
+  z.object({ unset: z.literal(true) }).strict(),
+  z.object({ value: SettingsDeclarationScalarChoiceV1Schema }).strict(),
+]));
+/** Exact captured Home/Account identity, raw presence and versions from the Account Settings CAS owner. */
+export const SettingsDeclarationMutationReversalV1Schema = lazyZodSchema(() => z.object({
+  scope: z.object({ serverId: OperationIdSchema, accountId: OperationIdSchema }).strict(),
+  beforeVersion: SettingsVersionSchema,
+  appliedVersion: SettingsVersionSchema,
+  before: SettingRawScalarSchema,
+  applied: SettingRawScalarSchema,
+}).strict().refine(value => value.appliedVersion === value.beforeVersion + 1));
+export type SettingsDeclarationMutationReversalV1 = z.infer<typeof SettingsDeclarationMutationReversalV1Schema>;
+const SettingReversalInputSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('capture') }).strict(),
+  SettingsDeclarationMutationReversalV1Schema.safeExtend({ kind: z.literal('restore') }),
+]));
 
 export const SettingsDeclarationActionInputSchemasV1 = {
   'settings.list': z.object({ pageId: z.string().trim().min(1).optional() }).strict(),
-  'settings.get': z.object({ anchor: AnchorSchema }).strict(),
-  'settings.set': z.object({ anchor: AnchorSchema, value: SettingsDeclarationValueV1Schema }).strict(),
+  'settings.get': z.object({ anchor: AnchorSchema, target: SettingsDeclarationTargetV1Schema.optional(), includeVersion: z.literal(true).optional() }).strict(),
+  'settings.set': z.object({ anchor: AnchorSchema, value: SettingsDeclarationValueV1Schema, target: SettingsDeclarationTargetV1Schema.optional(),
+    expectedSettingsVersion: SettingsVersionSchema.optional(), reversal: SettingReversalInputSchema.optional() }).strict()
+    .refine(value => value.reversal?.kind !== 'restore' || value.expectedSettingsVersion === undefined || value.expectedSettingsVersion === value.reversal.appliedVersion),
+  'settings.reset': z.object({ anchor: AnchorSchema, target: SettingsDeclarationTargetV1Schema.optional() }).strict(),
   'settings.invoke': z.object({ anchor: AnchorSchema, input: SettingsDeclarationOperationInputV1Schema.optional() }).strict(),
 } as const;
 export const SettingsDeclarationActionOutputSchemasV1 = {
   'settings.list': z.object({ items: z.array(SettingsDeclarationDescriptorV1Schema) }).strict(),
-  'settings.get': z.union([ValueResultSchema, z.object({ anchor: AnchorSchema, unset: z.literal(true) }).strict()]),
-  'settings.set': ValueResultSchema,
+  'settings.get': z.union([ValueResultSchema.extend({ settingsVersion: SettingsVersionSchema.optional() }),
+    UnsetResultSchema.extend({ settingsVersion: SettingsVersionSchema.optional() })]),
+  'settings.set': z.union([
+    ValueResultSchema.extend({ settingsVersion: SettingsVersionSchema.optional(),
+      reversal: SettingsDeclarationMutationReversalV1Schema.optional(), reversalUnavailableReason: z.literal('no_change').optional() }),
+    UnsetResultSchema.extend({ settingsVersion: SettingsVersionSchema.optional(),
+      reversal: SettingsDeclarationMutationReversalV1Schema.optional(), reversalUnavailableReason: z.literal('no_change').optional() }),
+  ]),
+  'settings.reset': z.union([ValueResultSchema, UnsetResultSchema]),
   'settings.invoke': z.object({
     anchor: AnchorSchema,
     status: z.enum(['completed', 'cancelled', 'unavailable', 'interaction_opened']),

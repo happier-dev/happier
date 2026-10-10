@@ -1,6 +1,7 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import { MACHINE_ADD_SSH_ACTION_IDS } from './specs/machineConnection.js';
+import { USAGE_ACTION_IDS, USAGE_COACH_ACTION_IDS } from '../usage/usageActionIdsV1.js';
 import { MACHINE_ACCESS_ACTION_IDS, MACHINE_WORK_SUMMARY_ACTION_IDS } from './specs/machineAccess.js';
 import { MACHINE_TERMINAL_ACTION_IDS } from './specs/machineTerminal.js';
 import { SCOPE_ACTION_IDS } from './scopeActionFamily.js';
@@ -10,6 +11,7 @@ import { VOICE_CONVERSATION_ACTION_IDS } from './voiceConversationActionFamily.j
 import { PROJECT_SOURCE_ACTION_IDS_V1 } from './specs/projectSources.js';
 
 import { HOME_GOVERNANCE_ACTION_IDS_V1 } from '../home/governance/actionsV1.js';
+import { HOME_IDENTITY_ACTION_IDS_V1 } from '../teams/identity/actionIds.js';
 import { PLUGIN_SETTINGS_ADMINISTRATION_ACTION_IDS_V1 } from '../plugins/settingsAdministration.js';
 import { SESSION_BOARD_ACTION_IDS_V1 } from '../sessions/board/actionIds.js';
 import { SESSION_DISCUSSION_ACTION_IDS_V1 } from '../sessions/discussions/actionIds.js';
@@ -24,9 +26,9 @@ import { TEAM_ACTION_IDS_V1 } from '../teams/actionsV1.js';
 import { MANAGED_GITHUB_APP_ACTION_IDS_V1 } from '../identity/githubApps.js';
 import { MANAGED_IDENTITY_PROVIDER_ACTION_IDS_V1 } from '../identity/providers.js';
 import { EPHEMERAL_RUNNER_ACTION_IDS_V1 } from '../ephemeralRunner/actionIdsV1.js';
-import { SHARED_SAVED_SECRET_ACTION_IDS_V1 } from '../account/settings/savedSecretResourceActionsV1.js';
+import { SHARED_SAVED_SECRET_ACTION_IDS_V1 } from '../account/settings/savedSecretResourceActionIdsV1.js';
 import { ARTIFACT_ACCESS_ACTION_IDS_V1 } from '../artifacts/artifactAccessV1.js';
-import { ARTIFACT_ACTION_IDS_V1 } from '../artifacts/artifactActionsV1.js';
+import { ARTIFACT_ACTION_IDS_V1 } from '../artifacts/artifactActionIdsV1.js';
 import { WORKSPACE_ACTION_IDS } from './workspaceActionFamily.js';
 import { PROJECT_ACTION_IDS_V1 } from './projectActionIdsV1.js';
 import { PROJECT_DEFINITION_ACTION_IDS } from './projectDefinitionActionFamily.js';
@@ -35,14 +37,20 @@ import { CONNECTED_SERVICE_CONFIGURATION_ACTION_IDS_V1 } from '../connect/config
 import { SETTINGS_DECLARATION_ACTION_IDS_V1 } from './settingsDeclarationActionFamily.js';
 import { APP_SHELL_ACTION_IDS } from './appShellActionFamily.js';
 import { SESSION_TERMINAL_ACTION_IDS } from './sessionTerminalActionFamily.js';
-import { NOTIFICATION_CONFIGURATION_ACTION_IDS } from './notificationConfigurationActionFamily.js';
+import { NOTIFICATION_CONFIGURATION_ACTION_IDS } from './notificationConfigurationActionIds.js';
 import { APP_UPDATE_ACTION_IDS } from './appUpdateActionFamily.js';
 import { WIDGET_INSTANCE_ACTION_IDS_V1 } from '../widgets/actionIdsV1.js';
 import { WIDGET_DEFINITION_ACTION_IDS_V1 } from '../widgets/definitionActionIdsV1.js';
+import { WIDGET_LAYOUT_FRAGMENT_ACTION_IDS_V1 } from '../widgets/fragmentActionIdsV1.js';
 import { WORKFLOW_EFFECT_ACTION_IDS_V1 } from '../workflows/stepActionsV1.js';
 import { FILESYSTEM_ACTION_IDS } from './filesystemActionFamily.js';
 import { PROFILE_ACTION_IDS_V1 } from '../profiles/profileActionIdsV1.js';
+import { MCP_SERVER_ACTION_IDS_V1 } from '../mcp/servers/serverActionIdsV1.js';
+import { PROVIDER_ACTION_IDS_V1 } from '../providers/providerActionIdsV1.js';
+import { REMOTE_HOST_ACTION_IDS_V1 } from '../remoteHosts/remoteHostActionIdsV1.js';
+import { HOME_RUNTIME_ACTION_IDS_V1 } from '../home/runtime/actionIdsV1.js';
 import { ARTIFACT_FOLDER_ACTION_IDS_V1 } from '../prompts/library/artifactFolderActionIdsV1.js';
+import { USAGE_SOURCE_ACTION_IDS } from '../usage/usageSources.js';
 
 export const WORKFLOW_ACTION_IDS_V1 = [
   'workflow.validate', 'workflow.run.start', 'workflow.run.list', 'workflow.run.summaries', 'workflow.run.get', 'workflow.run.wait',
@@ -51,7 +59,9 @@ export const WORKFLOW_ACTION_IDS_V1 = [
   'workflow.run.invocations.publish_draft', 'workflow.run.invocations.complete_review',
   'workflow.definition.list', 'workflow.definition.get', 'workflow.definition.create',
   'workflow.definition.update', 'workflow.definition.edit', 'workflow.definition.delete',
+  'workflow.definition.import', 'workflow.definition.export',
   'workflow.trigger.list', 'workflow.trigger.add', 'workflow.trigger.update', 'workflow.trigger.remove',
+  'workflow.trigger.run_now',
   'session.trigger.list', 'session.trigger.add', 'session.trigger.update', 'session.trigger.remove',
 ] as const;
 export type WorkflowActionIdV1 = typeof WORKFLOW_ACTION_IDS_V1[number];
@@ -87,6 +97,7 @@ export function isPluginDevLoopActionIdV1(value: string): value is PluginDevLoop
 // Action ids remain protocol-owned and closed in this wave.
 // Plugin/runtime unification must not imply plugin-defined action-id authoring parity yet.
 export const ACTION_ID_FAMILIES_V1 = Object.freeze({
+  usage: [...USAGE_ACTION_IDS, ...USAGE_COACH_ACTION_IDS],
   project_sources: PROJECT_SOURCE_ACTION_IDS_V1,
   project_execution: PROJECT_ACTION_IDS_V1,
   project_definitions: PROJECT_DEFINITION_ACTION_IDS,
@@ -101,13 +112,19 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   list_reorder: ['session.pending.reorder', 'todos.reorder'],
   todo_session_link: ['todos.session.link'],
   workspace_file_search: ['workspace.files.search'],
+  workflow_event_catalog: ['workflow.events.list'],
   filesystem: FILESYSTEM_ACTION_IDS,
   scope: SCOPE_ACTION_IDS,
   connected_services_configuration: CONNECTED_SERVICE_CONFIGURATION_ACTION_IDS_V1,
+  usage_sources: USAGE_SOURCE_ACTION_IDS,
   boards: WORK_BOARD_ACTION_IDS_V1,
-  widgets: [...WIDGET_INSTANCE_ACTION_IDS_V1, ...WIDGET_DEFINITION_ACTION_IDS_V1, 'widgets.snapshot.post'],
+  widgets: [...WIDGET_INSTANCE_ACTION_IDS_V1, ...WIDGET_DEFINITION_ACTION_IDS_V1, ...WIDGET_LAYOUT_FRAGMENT_ACTION_IDS_V1, 'widgets.snapshot.post'],
   roles: ROLE_ACTION_IDS_V1,
   launch_profiles: ['launch_profiles.publish', ...PROFILE_ACTION_IDS_V1],
+  mcp_servers: MCP_SERVER_ACTION_IDS_V1,
+  providers: PROVIDER_ACTION_IDS_V1,
+  remote_hosts: REMOTE_HOST_ACTION_IDS_V1,
+  home_runtime: HOME_RUNTIME_ACTION_IDS_V1,
   artifact_folders: ARTIFACT_FOLDER_ACTION_IDS_V1,
   discovery: [
     'action.spec.search',
@@ -118,6 +135,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   workflows: WORKFLOW_ACTION_IDS_V1,
   workflow_effects: WORKFLOW_EFFECT_ACTION_IDS_V1,
   workflow_authoring: ['workflow.authoring.conversation.bind'],
+  workflow_diagnostics: ['workflow.trigger.test', 'workflow.starters.list', 'workflow.starters.resolve'],
   session_authoring: ['session.authoring.open'],
   artifact_access: ARTIFACT_ACCESS_ACTION_IDS_V1,
   artifacts: ARTIFACT_ACTION_IDS_V1,
@@ -196,8 +214,11 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'session.worker.publish',
   ],
   session_control: [
+    'session.pending.resetStart.set',
+    'session.pending.resetStart.cancel',
     'session.pending.next',
     'session.pending.withdraw',
+    'session.turn.cancel',
     'session.stop',
     'session.delete',
     'session.folder.set',
@@ -381,14 +402,22 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   memory: [
     'memory.remember', 'memory.update', 'memory.forget', 'memory.read', 'memory.list',
     'memory.search',
+    'search.settings.get',
+    'search.settings.set',
+    'search.conversations',
+    'memory.status',
+    'memory.clear_index',
     'memory.get_window',
     'memory.ensure_up_to_date',
   ],
   agent_acp_catalog: [
+    'agents.acp.backends.get',
     'agents.acp.backends.upsert',
     'agents.acp.backends.delete',
   ],
   prompt_library: [
+    'prompts.invocation.create',
+    'prompts.stack.update',
     'prompt_doc.get',
     'prompt_doc.create',
     'prompt_doc.favorite.set',
@@ -719,28 +748,33 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
    * becomes the other's registry.
    */
   home_governance: HOME_GOVERNANCE_ACTION_IDS_V1,
+  home_identity: HOME_IDENTITY_ACTION_IDS_V1,
   teams: TEAM_ACTION_IDS_V1,
   saved_secret_sharing: SHARED_SAVED_SECRET_ACTION_IDS_V1,
 } as const);
 
 export const ACTION_IDS = [
+  ...ACTION_ID_FAMILIES_V1.usage,
   ...ACTION_ID_FAMILIES_V1.project_sources,
   ...ACTION_ID_FAMILIES_V1.project_execution,
   ...ACTION_ID_FAMILIES_V1.project_definitions,
   ...ACTION_ID_FAMILIES_V1.project_workers,
   ...ACTION_ID_FAMILIES_V1.operation_output,
   ...ACTION_ID_FAMILIES_V1.workflow_authoring,
+  ...ACTION_ID_FAMILIES_V1.workflow_diagnostics,
   ...ACTION_ID_FAMILIES_V1.session_authoring,
   ...ACTION_ID_FAMILIES_V1.observation,
   ...ACTION_ID_FAMILIES_V1.capture_viewing,
   ...ACTION_ID_FAMILIES_V1.session_terminals,
   ...ACTION_ID_FAMILIES_V1.connected_services_configuration,
+  ...ACTION_ID_FAMILIES_V1.usage_sources,
   ...ACTION_ID_FAMILIES_V1.workspace_layout,
   ...ACTION_ID_FAMILIES_V1.session_organization_move,
   ...ACTION_ID_FAMILIES_V1.composer_ingress,
   ...ACTION_ID_FAMILIES_V1.list_reorder,
   ...ACTION_ID_FAMILIES_V1.todo_session_link,
   ...ACTION_ID_FAMILIES_V1.workspace_file_search,
+  ...ACTION_ID_FAMILIES_V1.workflow_event_catalog,
   ...ACTION_ID_FAMILIES_V1.home_hub_layout,
   ...ACTION_ID_FAMILIES_V1.scope,
   ...ACTION_ID_FAMILIES_V1.boards,
@@ -753,6 +787,10 @@ export const ACTION_IDS = [
   ...ACTION_ID_FAMILIES_V1.machine_agent_sign_in,
   ...ACTION_ID_FAMILIES_V1.roles,
   ...ACTION_ID_FAMILIES_V1.launch_profiles,
+  ...ACTION_ID_FAMILIES_V1.mcp_servers,
+  ...ACTION_ID_FAMILIES_V1.providers,
+  ...ACTION_ID_FAMILIES_V1.remote_hosts,
+  ...ACTION_ID_FAMILIES_V1.home_runtime,
   ...ACTION_ID_FAMILIES_V1.artifact_folders,
   ...ACTION_ID_FAMILIES_V1.artifact_access,
   ...ACTION_ID_FAMILIES_V1.artifacts,
@@ -825,6 +863,7 @@ export const ACTION_IDS = [
   ...ACTION_ID_FAMILIES_V1.scm_repository,
   ...ACTION_ID_FAMILIES_V1.scm_diff_summary,
   ...ACTION_ID_FAMILIES_V1.home_governance,
+  ...ACTION_ID_FAMILIES_V1.home_identity,
   ...ACTION_ID_FAMILIES_V1.teams,
   ...ACTION_ID_FAMILIES_V1.saved_secret_sharing,
   ...ACTION_ID_FAMILIES_V1.workflows,

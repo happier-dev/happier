@@ -2,13 +2,14 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
 
-const FindOptionsSchema = lazyZodSchema(() => z.object({ matchCase: z.boolean(), regex: z.boolean() }).strict());
+export const FindOptionsSchema = lazyZodSchema(() => z.object({ matchCase: z.boolean(), regex: z.boolean() }).strict());
+const target = { target: z.string().min(1).optional() };
 export const UiFindInputSchema = lazyZodSchema(() => z.discriminatedUnion('op', [
-  z.object({ op: z.literal('read') }).strict(),
-  z.object({ op: z.literal('set'), query: z.string(), options: FindOptionsSchema.optional(), target: z.string().min(1).optional() }).strict(),
-  z.object({ op: z.literal('step'), direction: z.union([z.literal(1), z.literal(-1)]) }).strict(),
-  z.object({ op: z.literal('stop') }).strict(),
-  z.object({ op: z.literal('close') }).strict(),
+  z.object({ op: z.literal('read'), ...target }).strict(),
+  z.object({ op: z.literal('set'), query: z.string(), options: FindOptionsSchema.optional(), ...target }).strict(),
+  z.object({ op: z.literal('step'), direction: z.union([z.literal(1), z.literal(-1)]), ...target }).strict(),
+  z.object({ op: z.literal('stop'), ...target }).strict(),
+  z.object({ op: z.literal('close'), ...target }).strict(),
 ]));
 export const UiFindOutputSchema = lazyZodSchema(() => z.union([
   z.object({ status: z.literal('noMountedSurface') }).strict(),
@@ -27,7 +28,7 @@ export const UiFindOutputSchema = lazyZodSchema(() => z.union([
 /** Additive client Action: no persistence, remote corpus or second Find decision owner. */
 export const FIND_ACTION_SPECS = [{
   id: 'ui.find', title: 'Find in the current surface',
-  description: 'Read or control Find on a mounted client surface. Returns coverage/counts when available, or host-known query/options with typed engine-owned count status. Never returns corpus text. Set may address a mounted surface id.',
+  description: 'Read or control Find on a mounted client surface. Every operation may address a mounted surface id; omission uses the focused surface. Returns coverage/counts when available, or host-known query/options with typed engine-owned count status. Never returns corpus text.',
   safety: 'safe', sideEffectClass: 'external', executionPlacement: 'client', placements: [],
   surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: false, rpc: false },
   bindings: { voiceClientToolName: 'findInSurface', mcpToolName: 'ui_find' },

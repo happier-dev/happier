@@ -24,7 +24,7 @@ type ProfileActionSpec<TId extends ProfileActionIdV1> = PreNormalizedActionSpec 
   outputSchema: (typeof outputs)[TId];
 }>;
 
-function profileSpec<TId extends ProfileActionIdV1>(id: TId, title: string, options: Readonly<{
+function profileSpec<TId extends ProfileActionIdV1>(id: TId, title: string, summary: string, options: Readonly<{
   danger?: boolean; read?: boolean; placement?: 'account' | 'machine' | 'client';
 }>): ProfileActionSpec<TId> {
   const client = options.placement === 'client';
@@ -37,26 +37,42 @@ function profileSpec<TId extends ProfileActionIdV1>(id: TId, title: string, opti
     ...(!client ? { bindings: { rpcMethod: id, mcpToolName: id.replaceAll('.', '_') } } : {}),
     inputSchema: inputs[id], outputSchema: outputs[id],
     projectObservationInput: projectProfileObservation, projectObservationOutput: projectProfileObservation,
-    inputHints: { fields: [] },
+    inputHints: { description: summary, fields: [] },
     ...(!client ? { cli: { acceptsServerId: true, commands: [{ path: id.split('.'), visibility: 'canonical' as const }] } } : {}),
   } satisfies ProfileActionSpec<TId>;
 }
 
 export const PROFILE_ACTION_SPECS_V1 = [
-  profileSpec('launch_profiles.read', 'Read launch profile', { read: true }),
-  profileSpec('launch_profiles.search', 'Search launch profiles', { read: true }),
-  profileSpec('launch_profiles.select', 'Select launch profile', {}),
-  profileSpec('launch_profiles.create', 'Create launch profile', {}),
-  profileSpec('launch_profiles.edit', 'Open launch profile editor', { placement: 'client' }),
-  profileSpec('launch_profiles.save', 'Save launch profile', {}),
-  profileSpec('launch_profiles.duplicate', 'Duplicate launch profile', {}),
-  profileSpec('launch_profiles.enabled.set', 'Set launch profile enablement', {}),
-  profileSpec('launch_profiles.favorite.set', 'Set launch profile favorite', {}),
-  profileSpec('launch_profiles.delete', 'Delete launch profile', { danger: true }),
-  profileSpec('launch_profiles.prompt_stack.update', 'Update launch profile context', {}),
-  profileSpec('launch_profiles.secrets.select', 'Select launch profile secret', { danger: true }),
-  profileSpec('launch_profiles.legacy.preview', 'Preview legacy profile conversion', { read: true, placement: 'machine' }),
-  profileSpec('launch_profiles.legacy.convert', 'Convert legacy profile', { danger: true, placement: 'machine' }),
-  profileSpec('launch_profiles.legacy.resolve_conflict', 'Resolve legacy profile conversion conflict', { danger: true, placement: 'machine' }),
-  profileSpec('launch_profiles.draft.discard', 'Discard launch profile draft', { placement: 'client' }),
+  profileSpec('launch_profiles.read', 'Read launch profile',
+    'See one launch profile and what it sets for the sessions it starts.', { read: true }),
+  profileSpec('launch_profiles.search', 'Search launch profiles',
+    'Find launch profiles by name.', { read: true }),
+  profileSpec('launch_profiles.select', 'Select launch profile',
+    'Choose the launch profile new sessions start with.', {}),
+  profileSpec('launch_profiles.create', 'Create launch profile',
+    'Add a launch profile: a saved setup of agent, environment and permissions for starting sessions.', {}),
+  profileSpec('launch_profiles.edit', 'Open launch profile editor',
+    'Open a launch profile in its editor.', { placement: 'client' }),
+  profileSpec('launch_profiles.save', 'Save launch profile',
+    'Save changes to a launch profile.', {}),
+  profileSpec('launch_profiles.duplicate', 'Duplicate launch profile',
+    'Make a copy of a launch profile to adjust.', {}),
+  profileSpec('launch_profiles.enabled.set', 'Turn launch profile on or off',
+    'Show or hide a launch profile where sessions are started, without deleting it.', {}),
+  profileSpec('launch_profiles.favorite.set', 'Favorite launch profile',
+    'Keep a launch profile at the top of the list, or stop doing so.', {}),
+  profileSpec('launch_profiles.delete', 'Delete launch profile',
+    'Remove a launch profile. Sessions already started with it keep running.', { danger: true }),
+  profileSpec('launch_profiles.prompt_stack.update', 'Update launch profile context',
+    'Change the instructions and context a launch profile gives its sessions.', {}),
+  profileSpec('launch_profiles.secrets.select', 'Select launch profile secret',
+    'Choose which saved secret a launch profile uses for one of its values.', { danger: true }),
+  profileSpec('launch_profiles.legacy.preview', 'Preview profile from an earlier version',
+    'See what a profile from an earlier version of Happier would become as a launch profile, without changing anything.', { read: true, placement: 'machine' }),
+  profileSpec('launch_profiles.legacy.convert', 'Convert profile from an earlier version',
+    'Turn a profile from an earlier version of Happier into a launch profile.', { danger: true, placement: 'machine' }),
+  profileSpec('launch_profiles.legacy.resolve_conflict', 'Resolve profile conversion conflict',
+    'Choose what to keep when a converted profile clashes with a launch profile you already have.', { danger: true, placement: 'machine' }),
+  profileSpec('launch_profiles.draft.discard', 'Discard launch profile draft',
+    'Throw away unsaved changes to a launch profile.', { placement: 'client' }),
 ] as const satisfies readonly PreNormalizedActionSpec[];

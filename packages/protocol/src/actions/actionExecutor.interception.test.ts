@@ -53,7 +53,7 @@ describe('createActionExecutor execution interception', () => {
 
   it('revalidates transformed input and executes once before observational after', async () => {
     const sequence: string[] = [];
-    const sessionTitleSet = vi.fn(async (args: unknown) => {
+    const sessionStateFieldSet = vi.fn(async (args: unknown) => {
       sequence.push('execute');
       return { updated: args };
     });
@@ -69,7 +69,7 @@ describe('createActionExecutor execution interception', () => {
       throw new Error('observer failure must not replace the action result');
     });
     const executor = createExecutor({
-      sessionTitleSet,
+      sessionStateFieldSet,
       interceptActionExecution,
       observeActionExecution,
     });
@@ -85,10 +85,11 @@ describe('createActionExecutor execution interception', () => {
 
     expect(result.ok).toBe(true);
     expect(sequence).toEqual(['before', 'execute', 'after']);
-    expect(sessionTitleSet).toHaveBeenCalledOnce();
-    expect(sessionTitleSet).toHaveBeenCalledWith({
+    expect(sessionStateFieldSet).toHaveBeenCalledOnce();
+    expect(sessionStateFieldSet).toHaveBeenCalledWith({
       context: { surface: 'cli', actionCaller: { kind: 'plugin', pluginId: 'caller.plugin' } },
-      sessionId: 'session-1', title: 'transformed',
+      actionId: 'session.title.set', fieldId: 'display.title',
+      sessionId: 'session-1', value: 'transformed',
     });
     expect(interceptActionExecution).toHaveBeenCalledWith(expect.objectContaining({
       actionId: 'session.title.set',
@@ -104,10 +105,10 @@ describe('createActionExecutor execution interception', () => {
   });
 
   it('distinguishes explicit rejection from a hook failure and never executes', async () => {
-    const sessionTitleSet = vi.fn(async () => ({}));
+    const sessionStateFieldSet = vi.fn(async () => ({}));
     const observeActionExecution = vi.fn(async () => undefined);
     const executor = createExecutor({
-      sessionTitleSet,
+      sessionStateFieldSet,
       observeActionExecution,
       interceptActionExecution: async () => ({
         status: 'rejected',
@@ -127,15 +128,15 @@ describe('createActionExecutor execution interception', () => {
       errorCode: 'action_interception_rejected',
       details: { code: 'policy_denied' },
     });
-    expect(sessionTitleSet).not.toHaveBeenCalled();
+    expect(sessionStateFieldSet).not.toHaveBeenCalled();
     expect(observeActionExecution).not.toHaveBeenCalled();
   });
 
   it('rejects malformed transformed input before rights, approval, or action effects', async () => {
-    const sessionTitleSet = vi.fn(async () => ({}));
+    const sessionStateFieldSet = vi.fn(async () => ({}));
     const isActionApprovalRequired = vi.fn(() => true);
     const executor = createExecutor({
-      sessionTitleSet,
+      sessionStateFieldSet,
       isActionApprovalRequired,
       interceptActionExecution: async () => ({
         status: 'continue',
@@ -151,7 +152,7 @@ describe('createActionExecutor execution interception', () => {
 
     expect(result).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
     expect(isActionApprovalRequired).not.toHaveBeenCalled();
-    expect(sessionTitleSet).not.toHaveBeenCalled();
+    expect(sessionStateFieldSet).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -241,8 +242,8 @@ describe('createActionExecutor execution interception', () => {
   it('disables interception for one explicitly nested execution', async () => {
     const interceptActionExecution = vi.fn(async () => ({ status: 'rejected' as const }));
     const observeActionExecution = vi.fn(async () => undefined);
-    const sessionTitleSet = vi.fn(async () => ({ updated: true }));
-    const executor = createExecutor({ interceptActionExecution, observeActionExecution, sessionTitleSet });
+    const sessionStateFieldSet = vi.fn(async () => ({ updated: true }));
+    const executor = createExecutor({ interceptActionExecution, observeActionExecution, sessionStateFieldSet });
 
     const result = await executor.execute(
       'session.title.set',
@@ -255,21 +256,21 @@ describe('createActionExecutor execution interception', () => {
     );
 
     expect(result.ok).toBe(true);
-    expect(sessionTitleSet).toHaveBeenCalledOnce();
+    expect(sessionStateFieldSet).toHaveBeenCalledOnce();
     expect(interceptActionExecution).not.toHaveBeenCalled();
     expect(observeActionExecution).not.toHaveBeenCalled();
   });
 
   it('publishes the target after event only when a deferred approved action actually executes', async () => {
     let storedRequest: Parameters<NonNullable<ActionExecutorDeps['approvalsCreate']>>[0]['request'] | null = null;
-    const sessionTitleSet = vi.fn(async () => ({ updated: true }));
+    const sessionStateFieldSet = vi.fn(async () => ({ updated: true }));
     const interceptActionExecution = vi.fn(async (request: { input: unknown }) => ({
       status: 'continue' as const,
       input: request.input,
     }));
     const observeActionExecution = vi.fn(async () => undefined);
     const executor = createExecutor({
-      sessionTitleSet,
+      sessionStateFieldSet,
       interceptActionExecution,
       observeActionExecution,
       isActionApprovalRequired: (actionId) => actionId === 'session.title.set',
@@ -306,13 +307,14 @@ describe('createActionExecutor execution interception', () => {
     });
     expect(observeActionExecution.mock.calls.filter(([event]) => event.actionId === 'session.title.set')).toHaveLength(0);
 
-    await executor.execute(
+    const decision = await executor.execute(
       'approval.request.decide',
       { artifactId: 'approval-1', decision: 'approve' },
       { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' } },
     );
+    expect(decision).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
 
-    expect(sessionTitleSet).toHaveBeenCalledOnce();
+    expect(sessionStateFieldSet).toHaveBeenCalledOnce();
     expect(observeActionExecution.mock.calls.filter(([event]) => event.actionId === 'session.title.set'))
       .toEqual([[expect.objectContaining({
         input: { sessionId: 'session-1', title: 'deferred' },
@@ -321,6 +323,7 @@ describe('createActionExecutor execution interception', () => {
           pluginId: 'caller.plugin',
           contributionLocalId: 'title-hook',
           sourceCustody: { kind: 'development', registeredRootId: 'root-1' },
+          startedBy: 'trigger',
         },
         result: expect.objectContaining({ ok: true }),
       })]]);

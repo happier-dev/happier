@@ -21,6 +21,7 @@ import { HomeGovernanceErrorV1Schema } from '../home/governance/errors.js';
 import { HomeSettingsInvalidErrorV1Schema } from '../home/governance/settings.js';
 import { TeamErrorV1Schema } from '../teams/errors.js';
 import { TeamIdentityErrorV1Schema } from '../teams/identity/errors.js';
+import { HOME_IDENTITY_ACTION_IDS_V1, type HomeIdentityActionIdV1 } from '../teams/identity/actionIds.js';
 import { TeamDirectoryErrorV1Schema } from '../teams/directory/v1.js';
 import { TeamCredentialResourceErrorV1Schema } from '../teams/credentials/resourceV1.js';
 import { ManagedIdentityProviderErrorV1Schema } from '../identity/providers.js';
@@ -46,6 +47,7 @@ import {
  */
 export const HOME_DOMAIN_ACTION_IDS_V1 = [
   ...HOME_GOVERNANCE_ACTION_IDS_V1,
+  ...HOME_IDENTITY_ACTION_IDS_V1,
   ...TEAM_ACTION_IDS_V1,
   ...MANAGED_IDENTITY_PROVIDER_ACTION_IDS_V1,
   ...MANAGED_GITHUB_APP_ACTION_IDS_V1,
@@ -58,6 +60,7 @@ export const HOME_DOMAIN_ACTION_IDS_V1 = [
 
 export type HomeDomainActionIdV1 =
   | HomeGovernanceActionIdV1
+  | HomeIdentityActionIdV1
   | TeamActionIdV1
   | ManagedIdentityProviderActionIdV1
   | ManagedGitHubAppActionIdV1
@@ -93,7 +96,14 @@ type HomeDomainActionObjectErrorV1 = z.infer<
 /** Every code accepted by the canonical Home-domain error reader. */
 export type HomeDomainActionErrorCodeV1 =
   | HomeDomainActionObjectErrorV1['error']
-  | z.infer<typeof ProviderErrorV1Schema>['code'];
+  | z.infer<typeof ProviderErrorV1Schema>['code']
+  | 'session_absent' | 'session_delete_conflict';
+
+// The session DELETE route predates typed error codes. Keep its exact released
+// refusals at the same Home error boundary as the other domain envelopes.
+const SessionDeleteRefusalSchema = lazyZodSchema(() => z.object({
+  error: z.enum(['Session not found or not owned by user', 'Session delete condition was lost']),
+}).strict());
 
 /**
  * Reads the existing answering domain's typed refusal without creating a
@@ -108,6 +118,12 @@ export function readHomeDomainActionErrorV1(value: unknown): Readonly<{
     const parsed = schema.safeParse(value);
     if (parsed.success) return { code: parsed.data.error, details: parsed.data };
   }
+  const sessionDelete = SessionDeleteRefusalSchema.safeParse(value);
+  if (sessionDelete.success) return {
+    code: sessionDelete.data.error === 'Session not found or not owned by user'
+      ? 'session_absent' : 'session_delete_conflict',
+    details: sessionDelete.data,
+  };
   const provider = ProviderErrorV1Schema.safeParse(value);
   return provider.success
     ? { code: provider.data.code, details: provider.data }

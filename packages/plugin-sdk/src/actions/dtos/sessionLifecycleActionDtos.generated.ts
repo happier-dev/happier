@@ -11,6 +11,7 @@ export type SessionLifecycleActionInputById = {
         sessionTitle?: string | undefined;
         serverId?: string | undefined;
         approvedNewDirectoryCreation?: boolean | undefined;
+        intent?: 'resume' | undefined;
         destination?: {
             kind: 'scmReview';
             comparison: {
@@ -55,8 +56,30 @@ export type SessionLifecycleActionInputById = {
         } | undefined;
     };
     readonly "session.fork": {
-        [x: string]: unknown;
+        strategy?: 'auto' | 'native' | 'provider_native' | 'acp_fork_latest' | 'replay' | undefined;
+        replaySummaryRunner?: {
+            [x: string]: unknown;
+            v: 1;
+            backendTarget: {
+                kind: 'builtInAgent';
+                agentId: string;
+            } | {
+                kind: 'configuredAcpBackend';
+                backendId: string;
+            };
+            modelId?: string | undefined;
+            permissionMode?: 'no_tools' | 'read_only' | 'workspace_write' | 'full' | undefined;
+        } | undefined;
+        replayMaxSeedChars?: number | undefined;
+        requestId?: string | undefined;
         sessionId?: string | undefined;
+        serverId?: string | undefined;
+        forkPoint?: {
+            type: 'latest';
+        } | {
+            type: 'seq';
+            upToSeqInclusive: number;
+        } | undefined;
     };
     readonly "session.continue_with_replay": {
         [x: string]: unknown;
@@ -243,6 +266,7 @@ export type SessionLifecycleActionInputById = {
         targetMachineId?: string | undefined;
         targetPath?: string | undefined;
         targetSessionStorageMode?: 'direct' | 'persisted' | undefined;
+        stateTransfer?: 'transfer' | 'existing' | undefined;
         workspaceAction?: {
             kind: 'none';
         } | {
@@ -413,6 +437,7 @@ export type SessionLifecycleActionInputById = {
             policyDigest: string;
         };
         destinationIntent: 'use_existing' | 'materialize_from_source_workspace';
+        purpose?: 'worker_clean_copy' | undefined;
     };
     readonly "workspace.sync.relationships.list": {
         controllerMachineId?: string | undefined;
@@ -463,6 +488,7 @@ export type SessionLifecycleActionInputById = {
                 pluginId: string;
                 localId: string;
             };
+            definitionId?: string | undefined;
         };
         creationKey?: string | undefined;
         placementOrigin?: {
@@ -579,7 +605,7 @@ export type SessionLifecycleActionInputById = {
             kind: 'git_worktree';
             displayName: string;
             baseRef: string | null;
-            branchMode?: 'new' | 'existing' | undefined;
+            branchMode?: 'existing' | 'new' | undefined;
         } | null | undefined;
         title?: string | undefined;
         identity?: {
@@ -587,6 +613,14 @@ export type SessionLifecycleActionInputById = {
                 kind: 'bot';
             } | undefined;
             createdAsBot?: true | undefined;
+        } | undefined;
+        managedCreation?: {
+            homeId: string;
+            managedId: string;
+            controller: {
+                machineId: string;
+                installationId: string;
+            };
         } | undefined;
         memoryEnabled?: boolean | undefined;
         promptStack?: {
@@ -1250,6 +1284,11 @@ export type SessionLifecycleActionInputById = {
                         inputType?: {
                             pluginId: string;
                             localId: string;
+                        } | {
+                            hostType: 'usageQuery';
+                            field?: 'session' | 'period' | undefined;
+                        } | {
+                            hostType: 'session' | 'workspace';
                         } | undefined;
                     }[];
                     defaults: {
@@ -1259,6 +1298,7 @@ export type SessionLifecycleActionInputById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            definitionId?: string | undefined;
                         } | null | undefined;
                         modelSelection?: {
                             v: 1;
@@ -1439,6 +1479,7 @@ export type SessionLifecycleActionInputById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                definitionId?: string | undefined;
                             };
                             modelSelection?: {
                                 v: 1;
@@ -2181,7 +2222,7 @@ export type SessionLifecycleActionResultById = {
             } | undefined;
             transportStrategy?: 'direct_peer' | 'server_routed_stream' | null | undefined;
             failure?: {
-                code: 'target_identity_conflict' | 'agent_version_unsupported';
+                code: 'target_identity_conflict' | 'agent_version_unsupported' | 'existing_session_state_unavailable' | 'existing_session_state_unsupported';
                 message?: string | undefined;
             } | undefined;
         };
@@ -2213,6 +2254,7 @@ export type SessionLifecycleActionResultById = {
                 };
                 conflictCount: number;
                 lastCycleObservedAtMs: number | null;
+                lastCleanSyncAtMs?: number | null | undefined;
                 errorCode?: string | undefined;
             } | undefined;
             cleanupWarning?: {
@@ -2246,6 +2288,7 @@ export type SessionLifecycleActionResultById = {
                 };
                 conflictCount: number;
                 lastCycleObservedAtMs: number | null;
+                lastCleanSyncAtMs?: number | null | undefined;
                 errorCode?: string | undefined;
             } | undefined;
             cleanupWarning?: {
@@ -2280,6 +2323,7 @@ export type SessionLifecycleActionResultById = {
                     };
                     conflictCount: number;
                     lastCycleObservedAtMs: number | null;
+                    lastCleanSyncAtMs?: number | null | undefined;
                     errorCode?: string | undefined;
                 };
             }[];
@@ -2384,6 +2428,7 @@ export type SessionLifecycleActionResultById = {
             };
             conflictCount: number;
             lastCycleObservedAtMs: number | null;
+            lastCleanSyncAtMs?: number | null | undefined;
             errorCode?: string | undefined;
         };
     };
@@ -2403,7 +2448,7 @@ export type SessionLifecycleActionResultById = {
         agentId?: string | undefined;
         providerError?: {
             v: 1;
-            code: 'model_not_granted' | 'permission_mode_not_granted' | 'machine_offline' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
+            code: 'model_not_granted' | 'permission_mode_not_granted' | 'machine_offline' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
             retryable: boolean;
             action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
             connectionId?: (string) | undefined;

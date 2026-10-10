@@ -23,7 +23,13 @@ export * from './executor/actionOperationActions.js';
 export * from '../connect/configurationActionsV1.js';
 export * from '../connect/executeConfigurationActionV1.js';
 export * from './settingsDeclarationActionFamily.js';
+export * from './settings/settingsOwnerActions.js';
+export * from './settings/rawSettingScalar.js';
+export * from './settings/homeSettingsDeclarationAction.js';
+export * from './settings/teamSettingsDeclarationAction.js';
+export * from './settings/sessionAutoFollowSettingsAction.js';
 export * from './accountSettingDeclarations.js';
+export * from './settings/settingsDeclarations.js';
 export * from './voiceConversationActionFamily.js';
 export * from './appShellActionFamily.js';
 export * from './notificationConfigurationActionFamily.js';
@@ -586,6 +592,7 @@ export {
 } from './specs/executionRunCli.js';
 export { resolveRequestedSessionModeId } from './sessionModeIds.js';
 export { TEAM_IDENTITY_ACTION_PATHS_V1 } from './specs/teamsIdentity.js';
+export { HOME_IDENTITY_ACTION_PATHS_V1, HOME_IDENTITY_ACTION_INPUT_SCHEMAS_V1, HOME_IDENTITY_ACTION_OUTPUT_SCHEMAS_V1 } from './specs/homeIdentity.js';
 export { MANAGED_IDENTITY_PROVIDER_ACTION_PATHS_V1 } from '../identity/providers.js';
 export { TEAM_DIRECTORY_ACTION_PATHS_V1 } from '../teams/directory/v1.js';
 export { TEAM_EXTERNAL_GROUP_BINDING_ACTION_PATHS_V1 } from '../teams/externalGroupBindings/v1.js';
@@ -615,3 +622,4 @@ export { PendingReorderInputV1Schema, TodoReorderInputV1Schema, ListReorderOutpu
   type PendingReorderInputV1, type TodoReorderInputV1, type ListReorderOutputV1 } from './listReorderAction.js';
 export { MACHINE_TERMINAL_ACTION_IDS, MACHINE_TERMINAL_ACTION_INPUT_SCHEMAS, MACHINE_TERMINAL_ACTION_OUTPUT_SCHEMAS, isMachineTerminalActionId } from './specs/machineTerminal.js';
 export type { MachineTerminalActionId, MachineTerminalActionInput } from './specs/machineTerminal.js';
+export * from './settings/automationSettingsDeclarationAction.js';

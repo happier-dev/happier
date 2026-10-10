@@ -14,7 +14,7 @@ describe('session.spawn_new dev adaptation', () => {
       serverId: 'server-1',
       machineId: 'machine-1',
     },
-    directory: '/workspace/project',
+    directory: { kind: 'path', path: '/workspace/project' },
     organizationPlacement: {
       folderId: 'folder-1',
       tagIds: ['tag-1'],

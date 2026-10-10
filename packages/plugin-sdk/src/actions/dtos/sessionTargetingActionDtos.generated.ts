@@ -226,6 +226,8 @@ export type SessionTargetingActionResultById = {
             title?: string | undefined;
             path?: string | undefined;
             host?: string | undefined;
+            machineId?: string | undefined;
+            permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
             share?: {
                 accessLevel: string;
                 canApprovePermissions: boolean;

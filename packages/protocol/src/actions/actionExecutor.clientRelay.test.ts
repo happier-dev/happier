@@ -17,12 +17,15 @@ describe('client placement delivery after canonical admission', () => {
     expect(requests).toEqual([expect.objectContaining({ actionId, input, context: expect.objectContaining({ surface: 'mcp', authority: 'account_automation' }) })]);
   });
 
-  it('does not dispatch a danger Action without approval', async () => {
+  it.each([
+    { actionId: 'session.draft.delete' as const, input: { draftId: '11111111-1111-4111-8111-111111111111' } },
+    { actionId: 'prompts.invocation.create' as const, input: { token: '/new', title: 'New', target: { kind: 'doc', artifactId: 'doc' } } },
+  ])('does not dispatch $actionId without approval', async ({ actionId, input }) => {
     let issued = false;
     const executor = createActionExecutor({ clientActionExecute: async () => {
       issued = true; return { ok: true, result: {} };
     } } as unknown as ActionExecutorDeps);
-    const result = await executor.execute('session.draft.delete', { draftId: '11111111-1111-4111-8111-111111111111' }, { surface: 'agent', authority: 'account_automation' });
+    const result = await executor.execute(actionId, input, { surface: 'agent', authority: 'account_automation' });
     expect(result).toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
     expect(issued).toBe(false);
   });

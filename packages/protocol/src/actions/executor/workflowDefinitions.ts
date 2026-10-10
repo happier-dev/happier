@@ -11,6 +11,9 @@ import {
 import { WorkflowDefinitionCreateRequestV1Schema, WorkflowDefinitionUpdateRequestV1Schema,
   WORKFLOW_DEFINITION_PLUGIN_CURSOR_PREFIX_V1, workflowDefinitionListCursorPhaseV1,
   type WorkflowDefinitionListResultV1 } from '../../workflows/actionsV1.js';
+import { WorkflowDefinitionImportRequestV1Schema, WorkflowDefinitionImportResultV1Schema,
+  WorkflowDefinitionExportRequestV1Schema } from '../../workflows/actionsV1.js';
+import { parseWorkflowDocumentJsonIngressV1, serializeWorkflowDocumentJsonV1 } from '../../workflows/workflowDocumentV1.js';
 import { applyWorkflowDefinitionEditsV1, countWorkflowStepsV1, type WorkflowDefinitionEditRequestV1 } from '../../workflows/workflowDefinitionEditV1.js';
 import { workflowDefinitionPreviewStepsV1 } from '../../workflows/workflowStepLabel.js';
 import type { createWorkflowTriggerActions } from './workflowTriggerActions.js';
@@ -133,15 +136,16 @@ export function createWorkflowDefinitionActions(params: Readonly<{
     return { definitionId, revision: artifact.revision, definition, metadata: parsedHeader.data.metadata, access: artifact.access,
       ...(artifact.provenance ? { savedBy: artifact.provenance.savedBy } : {}) };
   };
-  const destinations = (definition: WorkflowDefinitionV1, signal?: AbortSignal) => resolveWorkflowDestinationsV1({ definition }, async ref => {
-    const source = await resolveWorkflowDefinitionRefV1(ref, { readPluginWorkflows,
+  const destinations = (definition: WorkflowDefinitionV1, options: Readonly<{ signal?: AbortSignal; includePlugins?: boolean }> = {}) => resolveWorkflowDestinationsV1({ definition }, async ref => {
+    const source = await resolveWorkflowDefinitionRefV1(ref, {
+      ...(options.includePlugins === false ? {} : { readPluginWorkflows }),
       readArtifact: (definitionId, readSignal) => read({ definitionId, ...(readSignal ? { signal: readSignal } : {}) }),
-      ...(signal ? { signal } : {}) });
+      ...(options.signal ? { signal: options.signal } : {}) });
     return source?.definition ?? null;
   });
   const get = async (input: Readonly<{ definitionId: string; signal?: AbortSignal }>) => {
     const value = await read(input);
-    return { ...value, destinations: await destinations(value.definition, input.signal) };
+    return { ...value, destinations: await destinations(value.definition, input.signal ? { signal: input.signal } : {}) };
   };
   const save = async (input: Pick<UpdateInput, 'definitionId' | 'expectedRevision' | 'metadata'>, definition: WorkflowDefinitionV1, access: ArtifactCallerAccessV1, caller?: DefinitionCaller) => {
     const nextRevision = { headerVersion: input.expectedRevision.headerVersion + 1, bodyVersion: input.expectedRevision.bodyVersion + 1 };
@@ -157,6 +161,19 @@ export function createWorkflowDefinitionActions(params: Readonly<{
   };
   return {
     readPluginWorkflows,
+    importDocument: async (raw: z.infer<typeof WorkflowDefinitionImportRequestV1Schema>, context?: WorkflowIngressContextV1) => {
+      const { json } = WorkflowDefinitionImportRequestV1Schema.parse(raw);
+      const parsed = parseWorkflowDocumentJsonIngressV1(json, context);
+      return WorkflowDefinitionImportResultV1Schema.parse(parsed.ok
+        ? { ...parsed, classification: 'unsaved_definition' } : parsed);
+    },
+    exportDocument: async (raw: z.infer<typeof WorkflowDefinitionExportRequestV1Schema>) => {
+      const input = WorkflowDefinitionExportRequestV1Schema.parse(raw);
+      const saved = await read(input);
+      const document = { kind: 'happier.workflow' as const, version: 1 as const, definition: saved.definition };
+      return { definitionId: saved.definitionId, revision: saved.revision, metadata: saved.metadata,
+        document, json: serializeWorkflowDocumentJsonV1(document) };
+    },
     list: async ({ limit, cursor: inputCursor }: Readonly<{ cursor?: string; limit?: number }>): Promise<WorkflowDefinitionListResultV1> => {
       const definitions: WorkflowDefinitionListResultV1['definitions'] = [];
       let triggerSummaries: Awaited<ReturnType<NonNullable<typeof params.readWorkflowTriggerSummaries>>> | undefined;
@@ -240,7 +257,9 @@ export function createWorkflowDefinitionActions(params: Readonly<{
           const displayMetadata = WorkflowDefinitionArtifactHeaderV1ReadSchema.shape.metadata.safeParse(artifact.header.metadata);
           const definition: WorkflowDefinitionListResultV1['definitions'][number] = opened && readableHeader
             ? { ...readableHeader, ...facts, contentStatus: 'available', stepCount: countWorkflowStepsV1(opened.blocks),
-              destinations: await destinations(opened) }
+              // Account pages resolve saved/builtin children; plugin facts remain
+              // explicit unresolved references until the discovery phase is read.
+              destinations: await destinations(opened, { includePlugins: false }) }
             : { kind: 'workflow-definition.v1', definitionId: identity.data,
               revision: readableHeader?.revision ?? (physicalRevision.success ? physicalRevision.data : null),
               metadata: displayMetadata.success ? displayMetadata.data : null, ...facts,

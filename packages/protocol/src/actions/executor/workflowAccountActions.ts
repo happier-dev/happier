@@ -12,14 +12,16 @@ export function normalizeWorkflowActionThrownError(error: unknown): WorkflowActi
   // The template codec's reasons also drive locked-row listing inside the
   // trigger owner. At the Action boundary they describe unreadable content,
   // not a failure to reach storage.
-  const code = rawCode === 'session_key_required' || rawCode === 'encryption_material_unavailable'
+  const code = rawCode === 'automation_disabled' ? 'ineligible_state'
+    : rawCode === 'automation_not_found' ? 'content_unavailable'
+    : rawCode === 'session_key_required' || rawCode === 'encryption_material_unavailable'
     || rawCode === 'encryption_mode_mismatch' || rawCode === 'invalid_template'
     ? 'content_unavailable' : rawCode;
   const failure = WorkflowActionFailureV1Schema.safeParse({
     ok: false,
     errorCode: code,
     error: error instanceof Error ? error.message : code,
-    ...(error !== null && typeof error === 'object' && 'details' in error ? { details: error.details } : {}),
+    ...(error !== null && typeof error === 'object' && 'details' in error && error.details !== undefined ? { details: error.details } : {}),
   });
   return failure.success ? failure.data : { ok: false, errorCode: 'storage_unavailable', error: 'storage_unavailable' };
 }
@@ -43,6 +45,8 @@ type DefinitionActions = Readonly<{
   edit: (input: ReturnType<typeof WorkflowActionInputSchemasV1['workflow.definition.edit']['parse']>, context?: WorkflowIngressContextV1,
     caller?: WorkflowActionExecuteArgs['context']) => Promise<WorkflowActionResult>;
   delete: (input: ReturnType<typeof WorkflowActionInputSchemasV1['workflow.definition.delete']['parse']>) => Promise<WorkflowActionResult>;
+  importDocument: (input: ReturnType<typeof WorkflowActionInputSchemasV1['workflow.definition.import']['parse']>, context?: WorkflowIngressContextV1) => Promise<WorkflowActionResult>;
+  exportDocument: (input: ReturnType<typeof WorkflowActionInputSchemasV1['workflow.definition.export']['parse']>) => Promise<WorkflowActionResult>;
 }>;
 
 type RunActionId = Extract<WorkflowActionIdV1, `workflow.run.${string}`>;
@@ -102,7 +106,8 @@ export function createWorkflowActionExecutor(deps: Readonly<{
       || actionId === 'workflow.run.invocations.complete_review'
       || actionId === 'workflow.definition.create'
       || actionId === 'workflow.definition.update'
-      || actionId === 'workflow.definition.edit';
+      || actionId === 'workflow.definition.edit'
+      || actionId === 'workflow.definition.import';
     const context = resolvesIngress
       ? await deps.resolveIngressContext?.(rawArgs)
       : undefined;
@@ -123,6 +128,12 @@ export function createWorkflowActionExecutor(deps: Readonly<{
     if (actionId === 'workflow.definition.get') {
       return await deps.definitions.get(parseWorkflowActionInput(WorkflowActionInputSchemasV1[actionId], rawArgs.input));
     }
+    if (actionId === 'workflow.definition.import') {
+      return await deps.definitions.importDocument(parseWorkflowActionInput(WorkflowActionInputSchemasV1[actionId], rawArgs.input), context);
+    }
+    if (actionId === 'workflow.definition.export') {
+      return await deps.definitions.exportDocument(parseWorkflowActionInput(WorkflowActionInputSchemasV1[actionId], rawArgs.input));
+    }
     if (actionId === 'workflow.definition.create') {
       return await deps.definitions.create(parseWorkflowActionInput(WorkflowActionInputSchemasV1[actionId], rawArgs.input), context, rawArgs.context);
     }
@@ -137,6 +148,10 @@ export function createWorkflowActionExecutor(deps: Readonly<{
     }
     if (actionId === 'workflow.trigger.list') {
       return deps.triggers ? deps.triggers.list(parseWorkflowActionInput(WorkflowActionInputSchemasV1[actionId], rawArgs.input), rawArgs.context)
+        : { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
+    }
+    if (actionId === 'workflow.trigger.run_now') {
+      return deps.triggers ? deps.triggers.runNow(parseWorkflowActionInput(WorkflowActionInputSchemasV1[actionId], rawArgs.input), rawArgs.context)
         : { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
     }
     if (actionId === 'workflow.trigger.add') {

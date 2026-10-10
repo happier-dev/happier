@@ -59,7 +59,7 @@ describe('verified invocation authority', () => {
         .toEqual({ ok: false, errorCode: 'present_user_required' });
     }
   });
-  it('abort requires conversational input capability and Action admission', () => {
-    expect(resolveSocketRpcSessionAuthorization('s1:abort')).toMatchObject({ authority: 'submitAgentInput', actionId: 'session.message.send' });
+  it('abort requires input capability and the current-turn Action admission', () => {
+    expect(resolveSocketRpcSessionAuthorization('s1:abort')).toMatchObject({ authority: 'submitAgentInput', actionId: 'session.turn.cancel' });
   });
 });

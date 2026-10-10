@@ -28,14 +28,14 @@ describe('Team directory Action contracts', () => {
       expect(spec.inputSchema).toBe(TEAM_DIRECTORY_ACTION_INPUT_SCHEMAS_V1[id]);
       expect(spec.outputSchema).toBe(TEAM_DIRECTORY_ACTION_OUTPUT_SCHEMAS_V1[id]);
       const isRead = spec.sideEffectClass === 'read';
-      const isPublicRemoval = id === 'teams.directory.sources.remove';
-      expect(spec.requiredAuthority).toBe(isRead || isPublicRemoval ? 'account_automation' : 'present_user');
+      const isRemoval = id === 'teams.directory.sources.remove' || id === 'teams.directory.sources.remove.preview';
+      expect(spec.requiredAuthority).toBe(isRead && !isRemoval ? 'account_automation' : 'present_user');
       expect(spec.surfaces).toMatchObject({
         ui: true,
         cli: true,
-        agent: isRead,
-        mcp: false,
-        api: isRead || isPublicRemoval,
+        agent: true,
+        mcp: !isRead || isRemoval,
+        api: isRead && !isRemoval,
       });
     }
   });
@@ -53,25 +53,25 @@ describe('Team directory Action contracts', () => {
     }
   });
 
-  it('publishes removal preview and mutation through the same public Action contract', () => {
-    expect(PUBLIC_ACTION_IDS).toContain('teams.directory.sources.remove');
-    expect(SIGNED_ROOT_ACTION_IDS).toContain('teams.directory.sources.remove');
-    expect(PUBLIC_ACTION_IDS).toContain('teams.directory.sources.remove.preview');
+  it('makes removal preview and mutation requestable under the same present-user Action contract', () => {
+    expect(PUBLIC_ACTION_IDS).not.toContain('teams.directory.sources.remove');
+    expect(SIGNED_ROOT_ACTION_IDS).not.toContain('teams.directory.sources.remove');
+    expect(PUBLIC_ACTION_IDS).not.toContain('teams.directory.sources.remove.preview');
     expect(getActionSpec('teams.directory.sources.remove.preview').surfaces)
-      .toMatchObject({ ui: true, cli: true, agent: true, api: true, plugin: true });
+      .toMatchObject({ ui: true, cli: true, agent: true, mcp: true, api: false, plugin: true });
     expect(getActionSpec('teams.directory.sources.remove').bindings?.sdkMethod)
       .toBe('teams.directory.sources.remove.execute');
     expect(getActionSpec('teams.directory.sources.remove')).toMatchObject({
-      requiredAuthority: 'account_automation',
+      requiredAuthority: 'present_user',
       safety: 'danger',
       sideEffectClass: 'danger',
       approval: { result: 'required', flow: 'deferred' },
       surfaces: {
         ui: true,
         cli: true,
-        agent: false,
-        mcp: false,
-        api: true,
+        agent: true,
+        mcp: true,
+        api: false,
         plugin: true,
       },
     });

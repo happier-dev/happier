@@ -6,7 +6,7 @@ import {
   formatQualifiedPluginActionId,
   parseQualifiedPluginActionId,
   type QualifiedPluginActionId,
-} from '../plugins/actions/invocation.js';
+} from '../plugins/actions/qualifiedActionId.js';
 import {
   ActionSurfaceSchema,
   ActionToolExposureModeSchema,
@@ -191,6 +191,9 @@ function isActionsSettingsV1Document(value: unknown): value is Readonly<{
 
 /** Returns null only when the root document cannot be interpreted as v1. */
 export function tryNormalizeActionsSettingsV1(value: unknown): ActionsSettingsV1 | null {
+  // Missing optional settings are the ordinary default-policy path. Avoid
+  // constructing a validation error on every catalog enablement check.
+  if (value === undefined || value === null) return null;
   const parsed = ActionsSettingsV1Schema.safeParse(value);
   if (parsed.success) return parsed.data;
   if (!isActionsSettingsV1Document(value)) return null;

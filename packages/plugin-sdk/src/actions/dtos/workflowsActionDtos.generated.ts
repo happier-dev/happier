@@ -47,6 +47,7 @@ export type WorkflowsActionInputById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            definitionId?: string | undefined;
                         };
                         modelSelection?: {
                             v: 1;
@@ -391,6 +392,12 @@ export type WorkflowsActionInputById = {
     readonly "workflow.definition.delete": {
         definitionId: string;
     };
+    readonly "workflow.definition.import": {
+        json: string;
+    };
+    readonly "workflow.definition.export": {
+        definitionId: string;
+    };
     readonly "workflow.trigger.list": {
         workflow: string;
     } | {
@@ -609,6 +616,11 @@ export type WorkflowsActionInputById = {
                     inputType?: {
                         pluginId: string;
                         localId: string;
+                    } | {
+                        hostType: 'usageQuery';
+                        field?: 'session' | 'period' | undefined;
+                    } | {
+                        hostType: 'session' | 'workspace';
                     } | undefined;
                 }[];
                 defaults: {
@@ -618,6 +630,7 @@ export type WorkflowsActionInputById = {
                             pluginId: string;
                             localId: string;
                         };
+                        definitionId?: string | undefined;
                     } | null | undefined;
                     modelSelection?: {
                         v: 1;
@@ -798,6 +811,7 @@ export type WorkflowsActionInputById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            definitionId?: string | undefined;
                         };
                         modelSelection?: {
                             v: 1;
@@ -900,6 +914,11 @@ export type WorkflowsActionInputById = {
                         inputType?: {
                             pluginId: string;
                             localId: string;
+                        } | {
+                            hostType: 'usageQuery';
+                            field?: 'session' | 'period' | undefined;
+                        } | {
+                            hostType: 'session' | 'workspace';
                         } | undefined;
                     }[];
                     defaults: {
@@ -909,6 +928,7 @@ export type WorkflowsActionInputById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            definitionId?: string | undefined;
                         } | null | undefined;
                         modelSelection?: {
                             v: 1;
@@ -1089,6 +1109,7 @@ export type WorkflowsActionInputById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                definitionId?: string | undefined;
                             };
                             modelSelection?: {
                                 v: 1;
@@ -1356,6 +1377,10 @@ export type WorkflowsActionInputById = {
         automationId: string;
         triggerId: string;
     };
+    readonly "workflow.trigger.run_now": {
+        automationId: string;
+        idempotencyKey?: string | undefined;
+    };
     readonly "session.trigger.list": {
         sessionId: string;
     };
@@ -1547,6 +1572,11 @@ export type WorkflowsActionInputById = {
                     inputType?: {
                         pluginId: string;
                         localId: string;
+                    } | {
+                        hostType: 'usageQuery';
+                        field?: 'session' | 'period' | undefined;
+                    } | {
+                        hostType: 'session' | 'workspace';
                     } | undefined;
                 }[];
                 defaults: {
@@ -1556,6 +1586,7 @@ export type WorkflowsActionInputById = {
                             pluginId: string;
                             localId: string;
                         };
+                        definitionId?: string | undefined;
                     } | null | undefined;
                     modelSelection?: {
                         v: 1;
@@ -1736,6 +1767,7 @@ export type WorkflowsActionInputById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            definitionId?: string | undefined;
                         };
                         modelSelection?: {
                             v: 1;
@@ -1871,6 +1903,11 @@ export type WorkflowsActionInputById = {
                         inputType?: {
                             pluginId: string;
                             localId: string;
+                        } | {
+                            hostType: 'usageQuery';
+                            field?: 'session' | 'period' | undefined;
+                        } | {
+                            hostType: 'session' | 'workspace';
                         } | undefined;
                     }[];
                     defaults: {
@@ -1880,6 +1917,7 @@ export type WorkflowsActionInputById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            definitionId?: string | undefined;
                         } | null | undefined;
                         modelSelection?: {
                             v: 1;
@@ -2060,6 +2098,7 @@ export type WorkflowsActionInputById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                definitionId?: string | undefined;
                             };
                             modelSelection?: {
                                 v: 1;
@@ -2361,6 +2400,11 @@ export type WorkflowsActionResultById = {
                 inputType?: {
                     pluginId: string;
                     localId: string;
+                } | {
+                    hostType: 'usageQuery';
+                    field?: 'session' | 'period' | undefined;
+                } | {
+                    hostType: 'session' | 'workspace';
                 } | undefined;
             }[];
             defaults: {
@@ -2370,6 +2414,7 @@ export type WorkflowsActionResultById = {
                         pluginId: string;
                         localId: string;
                     };
+                    definitionId?: string | undefined;
                 } | null | undefined;
                 modelSelection?: {
                     v: 1;
@@ -2550,6 +2595,7 @@ export type WorkflowsActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        definitionId?: string | undefined;
                     };
                     modelSelection?: {
                         v: 1;
@@ -2768,6 +2814,21 @@ export type WorkflowsActionResultById = {
             stepProgress?: {
                 completed: number;
                 total: number;
+                destinations?: {
+                    sourceKey: string;
+                    blockId: string;
+                    sessionIds: string[];
+                    ordinal?: number | undefined;
+                    name?: string | undefined;
+                    observation?: {
+                        recordId: string;
+                        sequence: string;
+                        attempt: string;
+                        contentRevision: string;
+                        lifecycle: 'running' | 'failed' | 'cancelled' | 'skipped' | 'outcome_uncertain' | 'waiting_for_review' | 'pending' | 'waiting_for_capacity' | 'admitting' | 'waiting_for_approval' | 'needs_attention' | 'completed' | 'cancel_requested' | 'superseded';
+                        blockKind?: 'workflow' | 'action' | 'root' | 'step' | 'wait' | 'parallel' | 'loop' | 'if' | undefined;
+                    } | undefined;
+                }[] | undefined;
                 currentLoop?: {
                     completed: number;
                     total: number;
@@ -2929,6 +2990,21 @@ export type WorkflowsActionResultById = {
             stepProgress?: {
                 completed: number;
                 total: number;
+                destinations?: {
+                    sourceKey: string;
+                    blockId: string;
+                    sessionIds: string[];
+                    ordinal?: number | undefined;
+                    name?: string | undefined;
+                    observation?: {
+                        recordId: string;
+                        sequence: string;
+                        attempt: string;
+                        contentRevision: string;
+                        lifecycle: 'running' | 'failed' | 'cancelled' | 'skipped' | 'outcome_uncertain' | 'waiting_for_review' | 'pending' | 'waiting_for_capacity' | 'admitting' | 'waiting_for_approval' | 'needs_attention' | 'completed' | 'cancel_requested' | 'superseded';
+                        blockKind?: 'workflow' | 'action' | 'root' | 'step' | 'wait' | 'parallel' | 'loop' | 'if' | undefined;
+                    } | undefined;
+                }[] | undefined;
                 currentLoop?: {
                     completed: number;
                     total: number;
@@ -2955,7 +3031,7 @@ export type WorkflowsActionResultById = {
             };
         } | {
             kind: 'unavailable';
-            reason: 'missing_reference' | 'invalid_reference_scope' | 'invalid_input' | 'target_unavailable' | 'run_not_found' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'currentness_conflict' | 'workflow_input_too_large' | 'workflow_outcome_unresolved' | 'workflow_interaction_capacity_exceeded' | 'workflow_conversation_unavailable' | 'continuation_unavailable' | 'workflow_workspace_restore_unavailable' | 'workflow_workspace_restore_failed' | 'workflow_wait_self_dependency' | 'ineligible_state' | 'custody_pending' | 'content_unavailable' | 'source_unavailable' | 'legacy_conversion_unsupported' | 'history_not_readable' | 'encryption_setup_required' | 'waiting_for_keys' | 'storage_unavailable' | 'native_goal_owner' | 'session_already_started';
+            reason: 'missing_reference' | 'invalid_reference_scope' | 'invalid_input' | 'target_unavailable' | 'run_not_found' | 'not_authenticated' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'currentness_conflict' | 'workflow_input_too_large' | 'workflow_outcome_unresolved' | 'workflow_interaction_capacity_exceeded' | 'workflow_conversation_unavailable' | 'continuation_unavailable' | 'workflow_workspace_restore_unavailable' | 'workflow_workspace_restore_failed' | 'workflow_wait_self_dependency' | 'ineligible_state' | 'custody_pending' | 'content_unavailable' | 'source_unavailable' | 'legacy_conversion_unsupported' | 'history_not_readable' | 'encryption_setup_required' | 'waiting_for_keys' | 'storage_unavailable' | 'native_goal_owner' | 'session_already_started';
         }>;
         invocationProvenance?: {
             index: {
@@ -3134,6 +3210,21 @@ export type WorkflowsActionResultById = {
             stepProgress?: {
                 completed: number;
                 total: number;
+                destinations?: {
+                    sourceKey: string;
+                    blockId: string;
+                    sessionIds: string[];
+                    ordinal?: number | undefined;
+                    name?: string | undefined;
+                    observation?: {
+                        recordId: string;
+                        sequence: string;
+                        attempt: string;
+                        contentRevision: string;
+                        lifecycle: 'running' | 'failed' | 'cancelled' | 'skipped' | 'outcome_uncertain' | 'waiting_for_review' | 'pending' | 'waiting_for_capacity' | 'admitting' | 'waiting_for_approval' | 'needs_attention' | 'completed' | 'cancel_requested' | 'superseded';
+                        blockKind?: 'workflow' | 'action' | 'root' | 'step' | 'wait' | 'parallel' | 'loop' | 'if' | undefined;
+                    } | undefined;
+                }[] | undefined;
                 currentLoop?: {
                     completed: number;
                     total: number;
@@ -3170,6 +3261,11 @@ export type WorkflowsActionResultById = {
                 inputType?: {
                     pluginId: string;
                     localId: string;
+                } | {
+                    hostType: 'usageQuery';
+                    field?: 'session' | 'period' | undefined;
+                } | {
+                    hostType: 'session' | 'workspace';
                 } | undefined;
             }[];
             defaults: {
@@ -3179,6 +3275,7 @@ export type WorkflowsActionResultById = {
                         pluginId: string;
                         localId: string;
                     };
+                    definitionId?: string | undefined;
                 } | null | undefined;
                 modelSelection?: {
                     v: 1;
@@ -3359,6 +3456,7 @@ export type WorkflowsActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        definitionId?: string | undefined;
                     };
                     modelSelection?: {
                         v: 1;
@@ -3474,6 +3572,7 @@ export type WorkflowsActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        definitionId?: string | undefined;
                     } | null | undefined;
                     modelSelection?: {
                         v: 1;
@@ -3747,6 +3846,11 @@ export type WorkflowsActionResultById = {
                     inputType?: {
                         pluginId: string;
                         localId: string;
+                    } | {
+                        hostType: 'usageQuery';
+                        field?: 'session' | 'period' | undefined;
+                    } | {
+                        hostType: 'session' | 'workspace';
                     } | undefined;
                 }[];
                 defaults: {
@@ -3756,6 +3860,7 @@ export type WorkflowsActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        definitionId?: string | undefined;
                     } | null | undefined;
                     modelSelection?: {
                         v: 1;
@@ -3936,6 +4041,7 @@ export type WorkflowsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            definitionId?: string | undefined;
                         };
                         modelSelection?: {
                             v: 1;
@@ -4122,6 +4228,7 @@ export type WorkflowsActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        definitionId?: string | undefined;
                     } | null | undefined;
                     modelSelection?: {
                         v: 1;
@@ -4395,6 +4502,11 @@ export type WorkflowsActionResultById = {
                     inputType?: {
                         pluginId: string;
                         localId: string;
+                    } | {
+                        hostType: 'usageQuery';
+                        field?: 'session' | 'period' | undefined;
+                    } | {
+                        hostType: 'session' | 'workspace';
                     } | undefined;
                 }[];
                 defaults: {
@@ -4404,6 +4516,7 @@ export type WorkflowsActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        definitionId?: string | undefined;
                     } | null | undefined;
                     modelSelection?: {
                         v: 1;
@@ -4584,6 +4697,7 @@ export type WorkflowsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            definitionId?: string | undefined;
                         };
                         modelSelection?: {
                             v: 1;
@@ -4729,6 +4843,11 @@ export type WorkflowsActionResultById = {
                 inputType?: {
                     pluginId: string;
                     localId: string;
+                } | {
+                    hostType: 'usageQuery';
+                    field?: 'session' | 'period' | undefined;
+                } | {
+                    hostType: 'session' | 'workspace';
                 } | undefined;
             }[];
             defaults: {
@@ -4738,6 +4857,7 @@ export type WorkflowsActionResultById = {
                         pluginId: string;
                         localId: string;
                     };
+                    definitionId?: string | undefined;
                 } | null | undefined;
                 modelSelection?: {
                     v: 1;
@@ -4918,6 +5038,7 @@ export type WorkflowsActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        definitionId?: string | undefined;
                     };
                     modelSelection?: {
                         v: 1;
@@ -5156,6 +5277,21 @@ export type WorkflowsActionResultById = {
             stepProgress?: {
                 completed: number;
                 total: number;
+                destinations?: {
+                    sourceKey: string;
+                    blockId: string;
+                    sessionIds: string[];
+                    ordinal?: number | undefined;
+                    name?: string | undefined;
+                    observation?: {
+                        recordId: string;
+                        sequence: string;
+                        attempt: string;
+                        contentRevision: string;
+                        lifecycle: 'running' | 'failed' | 'cancelled' | 'skipped' | 'outcome_uncertain' | 'waiting_for_review' | 'pending' | 'waiting_for_capacity' | 'admitting' | 'waiting_for_approval' | 'needs_attention' | 'completed' | 'cancel_requested' | 'superseded';
+                        blockKind?: 'workflow' | 'action' | 'root' | 'step' | 'wait' | 'parallel' | 'loop' | 'if' | undefined;
+                    } | undefined;
+                }[] | undefined;
                 currentLoop?: {
                     completed: number;
                     total: number;
@@ -5320,6 +5456,21 @@ export type WorkflowsActionResultById = {
             stepProgress?: {
                 completed: number;
                 total: number;
+                destinations?: {
+                    sourceKey: string;
+                    blockId: string;
+                    sessionIds: string[];
+                    ordinal?: number | undefined;
+                    name?: string | undefined;
+                    observation?: {
+                        recordId: string;
+                        sequence: string;
+                        attempt: string;
+                        contentRevision: string;
+                        lifecycle: 'running' | 'failed' | 'cancelled' | 'skipped' | 'outcome_uncertain' | 'waiting_for_review' | 'pending' | 'waiting_for_capacity' | 'admitting' | 'waiting_for_approval' | 'needs_attention' | 'completed' | 'cancel_requested' | 'superseded';
+                        blockKind?: 'workflow' | 'action' | 'root' | 'step' | 'wait' | 'parallel' | 'loop' | 'if' | undefined;
+                    } | undefined;
+                }[] | undefined;
                 currentLoop?: {
                     completed: number;
                     total: number;
@@ -5484,6 +5635,21 @@ export type WorkflowsActionResultById = {
             stepProgress?: {
                 completed: number;
                 total: number;
+                destinations?: {
+                    sourceKey: string;
+                    blockId: string;
+                    sessionIds: string[];
+                    ordinal?: number | undefined;
+                    name?: string | undefined;
+                    observation?: {
+                        recordId: string;
+                        sequence: string;
+                        attempt: string;
+                        contentRevision: string;
+                        lifecycle: 'running' | 'failed' | 'cancelled' | 'skipped' | 'outcome_uncertain' | 'waiting_for_review' | 'pending' | 'waiting_for_capacity' | 'admitting' | 'waiting_for_approval' | 'needs_attention' | 'completed' | 'cancel_requested' | 'superseded';
+                        blockKind?: 'workflow' | 'action' | 'root' | 'step' | 'wait' | 'parallel' | 'loop' | 'if' | undefined;
+                    } | undefined;
+                }[] | undefined;
                 currentLoop?: {
                     completed: number;
                     total: number;
@@ -5648,6 +5814,21 @@ export type WorkflowsActionResultById = {
             stepProgress?: {
                 completed: number;
                 total: number;
+                destinations?: {
+                    sourceKey: string;
+                    blockId: string;
+                    sessionIds: string[];
+                    ordinal?: number | undefined;
+                    name?: string | undefined;
+                    observation?: {
+                        recordId: string;
+                        sequence: string;
+                        attempt: string;
+                        contentRevision: string;
+                        lifecycle: 'running' | 'failed' | 'cancelled' | 'skipped' | 'outcome_uncertain' | 'waiting_for_review' | 'pending' | 'waiting_for_capacity' | 'admitting' | 'waiting_for_approval' | 'needs_attention' | 'completed' | 'cancel_requested' | 'superseded';
+                        blockKind?: 'workflow' | 'action' | 'root' | 'step' | 'wait' | 'parallel' | 'loop' | 'if' | undefined;
+                    } | undefined;
+                }[] | undefined;
                 currentLoop?: {
                     completed: number;
                     total: number;
@@ -5811,6 +5992,21 @@ export type WorkflowsActionResultById = {
             stepProgress?: {
                 completed: number;
                 total: number;
+                destinations?: {
+                    sourceKey: string;
+                    blockId: string;
+                    sessionIds: string[];
+                    ordinal?: number | undefined;
+                    name?: string | undefined;
+                    observation?: {
+                        recordId: string;
+                        sequence: string;
+                        attempt: string;
+                        contentRevision: string;
+                        lifecycle: 'running' | 'failed' | 'cancelled' | 'skipped' | 'outcome_uncertain' | 'waiting_for_review' | 'pending' | 'waiting_for_capacity' | 'admitting' | 'waiting_for_approval' | 'needs_attention' | 'completed' | 'cancel_requested' | 'superseded';
+                        blockKind?: 'workflow' | 'action' | 'root' | 'step' | 'wait' | 'parallel' | 'loop' | 'if' | undefined;
+                    } | undefined;
+                }[] | undefined;
                 currentLoop?: {
                     completed: number;
                     total: number;
@@ -5975,6 +6171,21 @@ export type WorkflowsActionResultById = {
             stepProgress?: {
                 completed: number;
                 total: number;
+                destinations?: {
+                    sourceKey: string;
+                    blockId: string;
+                    sessionIds: string[];
+                    ordinal?: number | undefined;
+                    name?: string | undefined;
+                    observation?: {
+                        recordId: string;
+                        sequence: string;
+                        attempt: string;
+                        contentRevision: string;
+                        lifecycle: 'running' | 'failed' | 'cancelled' | 'skipped' | 'outcome_uncertain' | 'waiting_for_review' | 'pending' | 'waiting_for_capacity' | 'admitting' | 'waiting_for_approval' | 'needs_attention' | 'completed' | 'cancel_requested' | 'superseded';
+                        blockKind?: 'workflow' | 'action' | 'root' | 'step' | 'wait' | 'parallel' | 'loop' | 'if' | undefined;
+                    } | undefined;
+                }[] | undefined;
                 currentLoop?: {
                     completed: number;
                     total: number;
@@ -6136,6 +6347,21 @@ export type WorkflowsActionResultById = {
             stepProgress?: {
                 completed: number;
                 total: number;
+                destinations?: {
+                    sourceKey: string;
+                    blockId: string;
+                    sessionIds: string[];
+                    ordinal?: number | undefined;
+                    name?: string | undefined;
+                    observation?: {
+                        recordId: string;
+                        sequence: string;
+                        attempt: string;
+                        contentRevision: string;
+                        lifecycle: 'running' | 'failed' | 'cancelled' | 'skipped' | 'outcome_uncertain' | 'waiting_for_review' | 'pending' | 'waiting_for_capacity' | 'admitting' | 'waiting_for_approval' | 'needs_attention' | 'completed' | 'cancel_requested' | 'superseded';
+                        blockKind?: 'workflow' | 'action' | 'root' | 'step' | 'wait' | 'parallel' | 'loop' | 'if' | undefined;
+                    } | undefined;
+                }[] | undefined;
                 currentLoop?: {
                     completed: number;
                     total: number;
@@ -6297,6 +6523,21 @@ export type WorkflowsActionResultById = {
             stepProgress?: {
                 completed: number;
                 total: number;
+                destinations?: {
+                    sourceKey: string;
+                    blockId: string;
+                    sessionIds: string[];
+                    ordinal?: number | undefined;
+                    name?: string | undefined;
+                    observation?: {
+                        recordId: string;
+                        sequence: string;
+                        attempt: string;
+                        contentRevision: string;
+                        lifecycle: 'running' | 'failed' | 'cancelled' | 'skipped' | 'outcome_uncertain' | 'waiting_for_review' | 'pending' | 'waiting_for_capacity' | 'admitting' | 'waiting_for_approval' | 'needs_attention' | 'completed' | 'cancel_requested' | 'superseded';
+                        blockKind?: 'workflow' | 'action' | 'root' | 'step' | 'wait' | 'parallel' | 'loop' | 'if' | undefined;
+                    } | undefined;
+                }[] | undefined;
                 currentLoop?: {
                     completed: number;
                     total: number;
@@ -6381,6 +6622,21 @@ export type WorkflowsActionResultById = {
                 stepProgress?: {
                     completed: number;
                     total: number;
+                    destinations?: {
+                        sourceKey: string;
+                        blockId: string;
+                        sessionIds: string[];
+                        ordinal?: number | undefined;
+                        name?: string | undefined;
+                        observation?: {
+                            recordId: string;
+                            sequence: string;
+                            attempt: string;
+                            contentRevision: string;
+                            lifecycle: 'running' | 'failed' | 'cancelled' | 'skipped' | 'outcome_uncertain' | 'waiting_for_review' | 'pending' | 'waiting_for_capacity' | 'admitting' | 'waiting_for_approval' | 'needs_attention' | 'completed' | 'cancel_requested' | 'superseded';
+                            blockKind?: 'workflow' | 'action' | 'root' | 'step' | 'wait' | 'parallel' | 'loop' | 'if' | undefined;
+                        } | undefined;
+                    }[] | undefined;
                     currentLoop?: {
                         completed: number;
                         total: number;
@@ -6705,6 +6961,7 @@ export type WorkflowsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            definitionId?: string | undefined;
                         } | null | undefined;
                         modelSelection?: {
                             v: 1;
@@ -6993,6 +7250,21 @@ export type WorkflowsActionResultById = {
                 stepProgress?: {
                     completed: number;
                     total: number;
+                    destinations?: {
+                        sourceKey: string;
+                        blockId: string;
+                        sessionIds: string[];
+                        ordinal?: number | undefined;
+                        name?: string | undefined;
+                        observation?: {
+                            recordId: string;
+                            sequence: string;
+                            attempt: string;
+                            contentRevision: string;
+                            lifecycle: 'running' | 'failed' | 'cancelled' | 'skipped' | 'outcome_uncertain' | 'waiting_for_review' | 'pending' | 'waiting_for_capacity' | 'admitting' | 'waiting_for_approval' | 'needs_attention' | 'completed' | 'cancel_requested' | 'superseded';
+                            blockKind?: 'workflow' | 'action' | 'root' | 'step' | 'wait' | 'parallel' | 'loop' | 'if' | undefined;
+                        } | undefined;
+                    }[] | undefined;
                     currentLoop?: {
                         completed: number;
                         total: number;
@@ -7317,6 +7589,7 @@ export type WorkflowsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            definitionId?: string | undefined;
                         } | null | undefined;
                         modelSelection?: {
                             v: 1;
@@ -7696,6 +7969,21 @@ export type WorkflowsActionResultById = {
             stepProgress?: {
                 completed: number;
                 total: number;
+                destinations?: {
+                    sourceKey: string;
+                    blockId: string;
+                    sessionIds: string[];
+                    ordinal?: number | undefined;
+                    name?: string | undefined;
+                    observation?: {
+                        recordId: string;
+                        sequence: string;
+                        attempt: string;
+                        contentRevision: string;
+                        lifecycle: 'running' | 'failed' | 'cancelled' | 'skipped' | 'outcome_uncertain' | 'waiting_for_review' | 'pending' | 'waiting_for_capacity' | 'admitting' | 'waiting_for_approval' | 'needs_attention' | 'completed' | 'cancel_requested' | 'superseded';
+                        blockKind?: 'workflow' | 'action' | 'root' | 'step' | 'wait' | 'parallel' | 'loop' | 'if' | undefined;
+                    } | undefined;
+                }[] | undefined;
                 currentLoop?: {
                     completed: number;
                     total: number;
@@ -7782,6 +8070,21 @@ export type WorkflowsActionResultById = {
                 stepProgress?: {
                     completed: number;
                     total: number;
+                    destinations?: {
+                        sourceKey: string;
+                        blockId: string;
+                        sessionIds: string[];
+                        ordinal?: number | undefined;
+                        name?: string | undefined;
+                        observation?: {
+                            recordId: string;
+                            sequence: string;
+                            attempt: string;
+                            contentRevision: string;
+                            lifecycle: 'running' | 'failed' | 'cancelled' | 'skipped' | 'outcome_uncertain' | 'waiting_for_review' | 'pending' | 'waiting_for_capacity' | 'admitting' | 'waiting_for_approval' | 'needs_attention' | 'completed' | 'cancel_requested' | 'superseded';
+                            blockKind?: 'workflow' | 'action' | 'root' | 'step' | 'wait' | 'parallel' | 'loop' | 'if' | undefined;
+                        } | undefined;
+                    }[] | undefined;
                     currentLoop?: {
                         completed: number;
                         total: number;
@@ -8106,6 +8409,7 @@ export type WorkflowsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            definitionId?: string | undefined;
                         } | null | undefined;
                         modelSelection?: {
                             v: 1;
@@ -8485,6 +8789,21 @@ export type WorkflowsActionResultById = {
             stepProgress?: {
                 completed: number;
                 total: number;
+                destinations?: {
+                    sourceKey: string;
+                    blockId: string;
+                    sessionIds: string[];
+                    ordinal?: number | undefined;
+                    name?: string | undefined;
+                    observation?: {
+                        recordId: string;
+                        sequence: string;
+                        attempt: string;
+                        contentRevision: string;
+                        lifecycle: 'running' | 'failed' | 'cancelled' | 'skipped' | 'outcome_uncertain' | 'waiting_for_review' | 'pending' | 'waiting_for_capacity' | 'admitting' | 'waiting_for_approval' | 'needs_attention' | 'completed' | 'cancel_requested' | 'superseded';
+                        blockKind?: 'workflow' | 'action' | 'root' | 'step' | 'wait' | 'parallel' | 'loop' | 'if' | undefined;
+                    } | undefined;
+                }[] | undefined;
                 currentLoop?: {
                     completed: number;
                     total: number;
@@ -8664,6 +8983,11 @@ export type WorkflowsActionResultById = {
                     inputType?: {
                         pluginId: string;
                         localId: string;
+                    } | {
+                        hostType: 'usageQuery';
+                        field?: 'session' | 'period' | undefined;
+                    } | {
+                        hostType: 'session' | 'workspace';
                     } | undefined;
                 }[];
                 defaults: {
@@ -8673,6 +8997,7 @@ export type WorkflowsActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        definitionId?: string | undefined;
                     } | null | undefined;
                     modelSelection?: {
                         v: 1;
@@ -8853,6 +9178,7 @@ export type WorkflowsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            definitionId?: string | undefined;
                         };
                         modelSelection?: {
                             v: 1;
@@ -8954,6 +9280,11 @@ export type WorkflowsActionResultById = {
                 inputType?: {
                     pluginId: string;
                     localId: string;
+                } | {
+                    hostType: 'usageQuery';
+                    field?: 'session' | 'period' | undefined;
+                } | {
+                    hostType: 'session' | 'workspace';
                 } | undefined;
             }[];
             defaults: {
@@ -8963,6 +9294,7 @@ export type WorkflowsActionResultById = {
                         pluginId: string;
                         localId: string;
                     };
+                    definitionId?: string | undefined;
                 } | null | undefined;
                 modelSelection?: {
                     v: 1;
@@ -9143,6 +9475,7 @@ export type WorkflowsActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        definitionId?: string | undefined;
                     };
                     modelSelection?: {
                         v: 1;
@@ -9266,6 +9599,11 @@ export type WorkflowsActionResultById = {
                 inputType?: {
                     pluginId: string;
                     localId: string;
+                } | {
+                    hostType: 'usageQuery';
+                    field?: 'session' | 'period' | undefined;
+                } | {
+                    hostType: 'session' | 'workspace';
                 } | undefined;
             }[];
             defaults: {
@@ -9275,6 +9613,7 @@ export type WorkflowsActionResultById = {
                         pluginId: string;
                         localId: string;
                     };
+                    definitionId?: string | undefined;
                 } | null | undefined;
                 modelSelection?: {
                     v: 1;
@@ -9455,6 +9794,7 @@ export type WorkflowsActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        definitionId?: string | undefined;
                     };
                     modelSelection?: {
                         v: 1;
@@ -9578,6 +9918,11 @@ export type WorkflowsActionResultById = {
                 inputType?: {
                     pluginId: string;
                     localId: string;
+                } | {
+                    hostType: 'usageQuery';
+                    field?: 'session' | 'period' | undefined;
+                } | {
+                    hostType: 'session' | 'workspace';
                 } | undefined;
             }[];
             defaults: {
@@ -9587,6 +9932,7 @@ export type WorkflowsActionResultById = {
                         pluginId: string;
                         localId: string;
                     };
+                    definitionId?: string | undefined;
                 } | null | undefined;
                 modelSelection?: {
                     v: 1;
@@ -9767,6 +10113,7 @@ export type WorkflowsActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        definitionId?: string | undefined;
                     };
                     modelSelection?: {
                         v: 1;
@@ -9885,6 +10232,11 @@ export type WorkflowsActionResultById = {
                 inputType?: {
                     pluginId: string;
                     localId: string;
+                } | {
+                    hostType: 'usageQuery';
+                    field?: 'session' | 'period' | undefined;
+                } | {
+                    hostType: 'session' | 'workspace';
                 } | undefined;
             }[];
             defaults: {
@@ -9894,6 +10246,7 @@ export type WorkflowsActionResultById = {
                         pluginId: string;
                         localId: string;
                     };
+                    definitionId?: string | undefined;
                 } | null | undefined;
                 modelSelection?: {
                     v: 1;
@@ -10074,6 +10427,7 @@ export type WorkflowsActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
+                        definitionId?: string | undefined;
                     };
                     modelSelection?: {
                         v: 1;
@@ -10163,6 +10517,902 @@ export type WorkflowsActionResultById = {
     readonly "workflow.definition.delete": {
         deleted: true;
         definitionId: string;
+    };
+    readonly "workflow.definition.import": {
+        ok: true;
+        classification: 'unsaved_definition';
+        document: {
+            kind: 'happier.workflow';
+            version: 1;
+            definition: Readonly<{
+                version: 1;
+                inputs: readonly {
+                    name: string;
+                    valueType: 'string' | 'number' | 'boolean' | 'json';
+                    required: boolean;
+                    enum?: string[] | undefined;
+                    default?: string | number | boolean | readonly JsonValue[] | {
+                        readonly [key: string]: JsonValue;
+                    } | null | undefined;
+                    description?: string | undefined;
+                    optionsSourceId?: string | undefined;
+                    inputType?: {
+                        pluginId: string;
+                        localId: string;
+                    } | {
+                        hostType: 'usageQuery';
+                        field?: 'session' | 'period' | undefined;
+                    } | {
+                        hostType: 'session' | 'workspace';
+                    } | undefined;
+                }[];
+                defaults: {
+                    agentTarget?: {
+                        kind: 'agent';
+                        identity: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        definitionId?: string | undefined;
+                    } | null | undefined;
+                    modelSelection?: {
+                        v: 1;
+                        ref: {
+                            agentTargetKey: string;
+                            providerConnectionId: null;
+                            modelId: string;
+                        } | {
+                            agentTargetKey: string;
+                            providerConnectionId: string;
+                            modelId: string;
+                        };
+                        updatedAt: number;
+                    } | null | undefined;
+                    profileId?: string | null | undefined;
+                    permissionMode?: string | null | undefined;
+                    acpSessionModeId?: string | null | undefined;
+                    sessionConfigOptionOverrides?: {
+                        [x: string]: unknown;
+                        v: 1;
+                        updatedAt: number;
+                        overrides: Record<string, {
+                            [x: string]: unknown;
+                            updatedAt: number;
+                            value: string | number | boolean | null;
+                        }>;
+                    } | null | undefined;
+                    mcpSelection?: {
+                        forceIncludeServerIds: string[];
+                        forceExcludeServerIds: string[];
+                        v: 1;
+                        managedServersEnabled: boolean;
+                    } | null | undefined;
+                    connectedServices?: {
+                        v: 2;
+                        bindingsByServiceId: Record<string, {
+                            source: 'native';
+                        } | {
+                            source: 'connected';
+                            selection: 'group';
+                            groupId: string;
+                            profileId?: string | undefined;
+                        } | {
+                            source: 'connected';
+                            selection: 'profile';
+                            profileId: string;
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'direct';
+                            disclosedMember: {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'brokered';
+                            disclosedMember?: undefined;
+                        }>;
+                    } | null | undefined;
+                    transcriptStorage?: 'direct' | 'persisted' | null | undefined;
+                    terminal?: {
+                        mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                        tmux?: {
+                            sessionName?: string | undefined;
+                            isolated?: boolean | undefined;
+                            tmpDir?: string | null | undefined;
+                        } | undefined;
+                        herdr?: {
+                            sessionName?: string | undefined;
+                        } | undefined;
+                        windows?: {
+                            launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
+                            console?: 'hidden' | 'visible' | undefined;
+                            windowName?: string | undefined;
+                        } | undefined;
+                    } | null | undefined;
+                    windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
+                    windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
+                    windowsTerminalWindowName?: string | null | undefined;
+                    runtimeDescriptorV1?: {
+                        v: 1;
+                        agentId: string;
+                        agent: {
+                            backendMode: string;
+                            home?: 'user' | 'connectedService' | undefined;
+                            connectedServiceId?: string | undefined;
+                            connectedServiceProfileId?: string | undefined;
+                            connectedServiceGroupId?: string | undefined;
+                        };
+                    } | null | undefined;
+                    permissionModeUpdatedAt?: number | undefined;
+                    launchEnvironment?: {
+                        values: Record<string, string>;
+                        unset: string[];
+                    } | undefined;
+                    providerSessionResume?: {
+                        kind: 'provider_session.v1';
+                        providerSessionId: string;
+                    } | undefined;
+                    conversation?: {
+                        kind: 'shared_run';
+                    } | {
+                        kind: 'fresh';
+                    } | {
+                        kind: 'origin_session';
+                    } | {
+                        kind: 'from_step';
+                        producer: {
+                            blockId: string;
+                            scope: {
+                                kind: 'current';
+                            } | {
+                                kind: 'previous_iteration';
+                                loopBlockId: string;
+                            } | {
+                                kind: 'outer';
+                                levels: number;
+                            };
+                        };
+                    } | {
+                        kind: 'existing_session';
+                        sessionId: string;
+                        machineId: string;
+                    } | undefined;
+                    workspace?: {
+                        kind: 'inherit';
+                    } | {
+                        kind: 'project_checkout';
+                    } | {
+                        kind: 'from_step';
+                        producer: {
+                            blockId: string;
+                            scope: {
+                                kind: 'current';
+                            } | {
+                                kind: 'previous_iteration';
+                                loopBlockId: string;
+                            } | {
+                                kind: 'outer';
+                                levels: number;
+                            };
+                        };
+                    } | {
+                        kind: 'new_worktree';
+                        source: {
+                            kind: 'original';
+                        } | {
+                            kind: 'workflow';
+                        } | {
+                            kind: 'step';
+                            producer: {
+                                blockId: string;
+                                scope: {
+                                    kind: 'current';
+                                } | {
+                                    kind: 'previous_iteration';
+                                    loopBlockId: string;
+                                } | {
+                                    kind: 'outer';
+                                    levels: number;
+                                };
+                            };
+                        };
+                        displayName?: string | undefined;
+                        baseRef?: string | null | undefined;
+                    } | undefined;
+                    engine?: {
+                        role: string;
+                    } | {
+                        agentTarget: {
+                            kind: 'agent';
+                            identity: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            definitionId?: string | undefined;
+                        };
+                        modelSelection?: {
+                            v: 1;
+                            ref: {
+                                agentTargetKey: string;
+                                providerConnectionId: null;
+                                modelId: string;
+                            } | {
+                                agentTargetKey: string;
+                                providerConnectionId: string;
+                                modelId: string;
+                            };
+                            updatedAt: number;
+                        } | null | undefined;
+                        effort?: string | undefined;
+                    } | undefined;
+                    executionTarget?: {
+                        kind: 'session';
+                    } | {
+                        kind: 'detached_run';
+                    } | undefined;
+                };
+                roles?: readonly ({
+                    roleId: string;
+                    engine?: {
+                        agentTargetKey: string;
+                        modelId?: string | undefined;
+                        effort?: string | undefined;
+                    } | undefined;
+                    runsAs?: {
+                        kind: 'session';
+                    } | {
+                        kind: 'background_run';
+                        intent: 'agent' | 'review' | 'plan' | 'delegate' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary';
+                    } | undefined;
+                    profileId?: string | undefined;
+                    workspaceWrites?: 'allow' | 'deny' | undefined;
+                    secondOpinion?: 'off' | 'encouraged' | undefined;
+                } | {
+                    roleId: string;
+                    name: string;
+                    instructions: string;
+                    runsAs: {
+                        kind: 'session';
+                    } | {
+                        kind: 'background_run';
+                        intent: 'agent' | 'review' | 'plan' | 'delegate' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary';
+                    };
+                    engine?: {
+                        agentTargetKey: string;
+                        modelId?: string | undefined;
+                        effort?: string | undefined;
+                    } | undefined;
+                    profileId?: string | undefined;
+                    workspaceWrites?: 'allow' | 'deny' | undefined;
+                    secondOpinion?: 'off' | 'encouraged' | undefined;
+                })[] | undefined;
+                blocks: readonly PluginActionWorkflowBlockV1[];
+                finalOutput?: {
+                    kind: 'result';
+                    producer: {
+                        blockId: string;
+                        scope: {
+                            kind: 'current';
+                        } | {
+                            kind: 'previous_iteration';
+                            loopBlockId: string;
+                        } | {
+                            kind: 'outer';
+                            levels: number;
+                        };
+                    };
+                    path: (string | number)[];
+                    optional?: true | undefined;
+                } | undefined;
+            }>;
+        };
+    } | {
+        ok: false;
+        code: 'workflow_document_invalid_json' | 'workflow_document_unsupported_version' | 'workflow_document_invalid' | 'workflow_document_invalid_definition';
+        issues: {
+            code: 'invalid_version' | 'unknown_field' | 'invalid_id' | 'duplicate_id' | 'missing_reference' | 'invalid_reference_scope' | 'invalid_input' | 'missing_required_input' | 'invalid_result_contract' | 'invalid_condition' | 'invalid_repetition' | 'invalid_max_concurrent' | 'unsupported_persisted_attachment' | 'conversation_workspace_mismatch' | 'target_unavailable';
+            path: string;
+            message: string;
+            severity: 'error' | 'warning';
+            blockId?: string | undefined;
+        }[];
+        normalizedDefinition?: Readonly<{
+            version: 1;
+            inputs: readonly {
+                name: string;
+                valueType: 'string' | 'number' | 'boolean' | 'json';
+                required: boolean;
+                enum?: string[] | undefined;
+                default?: string | number | boolean | readonly JsonValue[] | {
+                    readonly [key: string]: JsonValue;
+                } | null | undefined;
+                description?: string | undefined;
+                optionsSourceId?: string | undefined;
+                inputType?: {
+                    pluginId: string;
+                    localId: string;
+                } | {
+                    hostType: 'usageQuery';
+                    field?: 'session' | 'period' | undefined;
+                } | {
+                    hostType: 'session' | 'workspace';
+                } | undefined;
+            }[];
+            defaults: {
+                agentTarget?: {
+                    kind: 'agent';
+                    identity: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    definitionId?: string | undefined;
+                } | null | undefined;
+                modelSelection?: {
+                    v: 1;
+                    ref: {
+                        agentTargetKey: string;
+                        providerConnectionId: null;
+                        modelId: string;
+                    } | {
+                        agentTargetKey: string;
+                        providerConnectionId: string;
+                        modelId: string;
+                    };
+                    updatedAt: number;
+                } | null | undefined;
+                profileId?: string | null | undefined;
+                permissionMode?: string | null | undefined;
+                acpSessionModeId?: string | null | undefined;
+                sessionConfigOptionOverrides?: {
+                    [x: string]: unknown;
+                    v: 1;
+                    updatedAt: number;
+                    overrides: Record<string, {
+                        [x: string]: unknown;
+                        updatedAt: number;
+                        value: string | number | boolean | null;
+                    }>;
+                } | null | undefined;
+                mcpSelection?: {
+                    forceIncludeServerIds: string[];
+                    forceExcludeServerIds: string[];
+                    v: 1;
+                    managedServersEnabled: boolean;
+                } | null | undefined;
+                connectedServices?: {
+                    v: 2;
+                    bindingsByServiceId: Record<string, {
+                        source: 'native';
+                    } | {
+                        source: 'connected';
+                        selection: 'group';
+                        groupId: string;
+                        profileId?: string | undefined;
+                    } | {
+                        source: 'connected';
+                        selection: 'profile';
+                        profileId: string;
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'direct';
+                        disclosedMember: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
+                        disclosedMember?: undefined;
+                    }>;
+                } | null | undefined;
+                transcriptStorage?: 'direct' | 'persisted' | null | undefined;
+                terminal?: {
+                    mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                    tmux?: {
+                        sessionName?: string | undefined;
+                        isolated?: boolean | undefined;
+                        tmpDir?: string | null | undefined;
+                    } | undefined;
+                    herdr?: {
+                        sessionName?: string | undefined;
+                    } | undefined;
+                    windows?: {
+                        launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
+                        console?: 'hidden' | 'visible' | undefined;
+                        windowName?: string | undefined;
+                    } | undefined;
+                } | null | undefined;
+                windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
+                windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
+                windowsTerminalWindowName?: string | null | undefined;
+                runtimeDescriptorV1?: {
+                    v: 1;
+                    agentId: string;
+                    agent: {
+                        backendMode: string;
+                        home?: 'user' | 'connectedService' | undefined;
+                        connectedServiceId?: string | undefined;
+                        connectedServiceProfileId?: string | undefined;
+                        connectedServiceGroupId?: string | undefined;
+                    };
+                } | null | undefined;
+                permissionModeUpdatedAt?: number | undefined;
+                launchEnvironment?: {
+                    values: Record<string, string>;
+                    unset: string[];
+                } | undefined;
+                providerSessionResume?: {
+                    kind: 'provider_session.v1';
+                    providerSessionId: string;
+                } | undefined;
+                conversation?: {
+                    kind: 'shared_run';
+                } | {
+                    kind: 'fresh';
+                } | {
+                    kind: 'origin_session';
+                } | {
+                    kind: 'from_step';
+                    producer: {
+                        blockId: string;
+                        scope: {
+                            kind: 'current';
+                        } | {
+                            kind: 'previous_iteration';
+                            loopBlockId: string;
+                        } | {
+                            kind: 'outer';
+                            levels: number;
+                        };
+                    };
+                } | {
+                    kind: 'existing_session';
+                    sessionId: string;
+                    machineId: string;
+                } | undefined;
+                workspace?: {
+                    kind: 'inherit';
+                } | {
+                    kind: 'project_checkout';
+                } | {
+                    kind: 'from_step';
+                    producer: {
+                        blockId: string;
+                        scope: {
+                            kind: 'current';
+                        } | {
+                            kind: 'previous_iteration';
+                            loopBlockId: string;
+                        } | {
+                            kind: 'outer';
+                            levels: number;
+                        };
+                    };
+                } | {
+                    kind: 'new_worktree';
+                    source: {
+                        kind: 'original';
+                    } | {
+                        kind: 'workflow';
+                    } | {
+                        kind: 'step';
+                        producer: {
+                            blockId: string;
+                            scope: {
+                                kind: 'current';
+                            } | {
+                                kind: 'previous_iteration';
+                                loopBlockId: string;
+                            } | {
+                                kind: 'outer';
+                                levels: number;
+                            };
+                        };
+                    };
+                    displayName?: string | undefined;
+                    baseRef?: string | null | undefined;
+                } | undefined;
+                engine?: {
+                    role: string;
+                } | {
+                    agentTarget: {
+                        kind: 'agent';
+                        identity: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        definitionId?: string | undefined;
+                    };
+                    modelSelection?: {
+                        v: 1;
+                        ref: {
+                            agentTargetKey: string;
+                            providerConnectionId: null;
+                            modelId: string;
+                        } | {
+                            agentTargetKey: string;
+                            providerConnectionId: string;
+                            modelId: string;
+                        };
+                        updatedAt: number;
+                    } | null | undefined;
+                    effort?: string | undefined;
+                } | undefined;
+                executionTarget?: {
+                    kind: 'session';
+                } | {
+                    kind: 'detached_run';
+                } | undefined;
+            };
+            roles?: readonly ({
+                roleId: string;
+                engine?: {
+                    agentTargetKey: string;
+                    modelId?: string | undefined;
+                    effort?: string | undefined;
+                } | undefined;
+                runsAs?: {
+                    kind: 'session';
+                } | {
+                    kind: 'background_run';
+                    intent: 'agent' | 'review' | 'plan' | 'delegate' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary';
+                } | undefined;
+                profileId?: string | undefined;
+                workspaceWrites?: 'allow' | 'deny' | undefined;
+                secondOpinion?: 'off' | 'encouraged' | undefined;
+            } | {
+                roleId: string;
+                name: string;
+                instructions: string;
+                runsAs: {
+                    kind: 'session';
+                } | {
+                    kind: 'background_run';
+                    intent: 'agent' | 'review' | 'plan' | 'delegate' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary';
+                };
+                engine?: {
+                    agentTargetKey: string;
+                    modelId?: string | undefined;
+                    effort?: string | undefined;
+                } | undefined;
+                profileId?: string | undefined;
+                workspaceWrites?: 'allow' | 'deny' | undefined;
+                secondOpinion?: 'off' | 'encouraged' | undefined;
+            })[] | undefined;
+            blocks: readonly PluginActionWorkflowBlockV1[];
+            finalOutput?: {
+                kind: 'result';
+                producer: {
+                    blockId: string;
+                    scope: {
+                        kind: 'current';
+                    } | {
+                        kind: 'previous_iteration';
+                        loopBlockId: string;
+                    } | {
+                        kind: 'outer';
+                        levels: number;
+                    };
+                };
+                path: (string | number)[];
+                optional?: true | undefined;
+            } | undefined;
+        }> | undefined;
+        version?: unknown;
+    };
+    readonly "workflow.definition.export": {
+        definitionId: string;
+        revision: {
+            headerVersion: number;
+            bodyVersion: number;
+        };
+        metadata: {
+            title: string;
+            description?: string | undefined;
+        };
+        document: {
+            kind: 'happier.workflow';
+            version: 1;
+            definition: Readonly<{
+                version: 1;
+                inputs: readonly {
+                    name: string;
+                    valueType: 'string' | 'number' | 'boolean' | 'json';
+                    required: boolean;
+                    enum?: string[] | undefined;
+                    default?: string | number | boolean | readonly JsonValue[] | {
+                        readonly [key: string]: JsonValue;
+                    } | null | undefined;
+                    description?: string | undefined;
+                    optionsSourceId?: string | undefined;
+                    inputType?: {
+                        pluginId: string;
+                        localId: string;
+                    } | {
+                        hostType: 'usageQuery';
+                        field?: 'session' | 'period' | undefined;
+                    } | {
+                        hostType: 'session' | 'workspace';
+                    } | undefined;
+                }[];
+                defaults: {
+                    agentTarget?: {
+                        kind: 'agent';
+                        identity: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        definitionId?: string | undefined;
+                    } | null | undefined;
+                    modelSelection?: {
+                        v: 1;
+                        ref: {
+                            agentTargetKey: string;
+                            providerConnectionId: null;
+                            modelId: string;
+                        } | {
+                            agentTargetKey: string;
+                            providerConnectionId: string;
+                            modelId: string;
+                        };
+                        updatedAt: number;
+                    } | null | undefined;
+                    profileId?: string | null | undefined;
+                    permissionMode?: string | null | undefined;
+                    acpSessionModeId?: string | null | undefined;
+                    sessionConfigOptionOverrides?: {
+                        [x: string]: unknown;
+                        v: 1;
+                        updatedAt: number;
+                        overrides: Record<string, {
+                            [x: string]: unknown;
+                            updatedAt: number;
+                            value: string | number | boolean | null;
+                        }>;
+                    } | null | undefined;
+                    mcpSelection?: {
+                        forceIncludeServerIds: string[];
+                        forceExcludeServerIds: string[];
+                        v: 1;
+                        managedServersEnabled: boolean;
+                    } | null | undefined;
+                    connectedServices?: {
+                        v: 2;
+                        bindingsByServiceId: Record<string, {
+                            source: 'native';
+                        } | {
+                            source: 'connected';
+                            selection: 'group';
+                            groupId: string;
+                            profileId?: string | undefined;
+                        } | {
+                            source: 'connected';
+                            selection: 'profile';
+                            profileId: string;
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'direct';
+                            disclosedMember: {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'brokered';
+                            disclosedMember?: undefined;
+                        }>;
+                    } | null | undefined;
+                    transcriptStorage?: 'direct' | 'persisted' | null | undefined;
+                    terminal?: {
+                        mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
+                        tmux?: {
+                            sessionName?: string | undefined;
+                            isolated?: boolean | undefined;
+                            tmpDir?: string | null | undefined;
+                        } | undefined;
+                        herdr?: {
+                            sessionName?: string | undefined;
+                        } | undefined;
+                        windows?: {
+                            launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
+                            console?: 'hidden' | 'visible' | undefined;
+                            windowName?: string | undefined;
+                        } | undefined;
+                    } | null | undefined;
+                    windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
+                    windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
+                    windowsTerminalWindowName?: string | null | undefined;
+                    runtimeDescriptorV1?: {
+                        v: 1;
+                        agentId: string;
+                        agent: {
+                            backendMode: string;
+                            home?: 'user' | 'connectedService' | undefined;
+                            connectedServiceId?: string | undefined;
+                            connectedServiceProfileId?: string | undefined;
+                            connectedServiceGroupId?: string | undefined;
+                        };
+                    } | null | undefined;
+                    permissionModeUpdatedAt?: number | undefined;
+                    launchEnvironment?: {
+                        values: Record<string, string>;
+                        unset: string[];
+                    } | undefined;
+                    providerSessionResume?: {
+                        kind: 'provider_session.v1';
+                        providerSessionId: string;
+                    } | undefined;
+                    conversation?: {
+                        kind: 'shared_run';
+                    } | {
+                        kind: 'fresh';
+                    } | {
+                        kind: 'origin_session';
+                    } | {
+                        kind: 'from_step';
+                        producer: {
+                            blockId: string;
+                            scope: {
+                                kind: 'current';
+                            } | {
+                                kind: 'previous_iteration';
+                                loopBlockId: string;
+                            } | {
+                                kind: 'outer';
+                                levels: number;
+                            };
+                        };
+                    } | {
+                        kind: 'existing_session';
+                        sessionId: string;
+                        machineId: string;
+                    } | undefined;
+                    workspace?: {
+                        kind: 'inherit';
+                    } | {
+                        kind: 'project_checkout';
+                    } | {
+                        kind: 'from_step';
+                        producer: {
+                            blockId: string;
+                            scope: {
+                                kind: 'current';
+                            } | {
+                                kind: 'previous_iteration';
+                                loopBlockId: string;
+                            } | {
+                                kind: 'outer';
+                                levels: number;
+                            };
+                        };
+                    } | {
+                        kind: 'new_worktree';
+                        source: {
+                            kind: 'original';
+                        } | {
+                            kind: 'workflow';
+                        } | {
+                            kind: 'step';
+                            producer: {
+                                blockId: string;
+                                scope: {
+                                    kind: 'current';
+                                } | {
+                                    kind: 'previous_iteration';
+                                    loopBlockId: string;
+                                } | {
+                                    kind: 'outer';
+                                    levels: number;
+                                };
+                            };
+                        };
+                        displayName?: string | undefined;
+                        baseRef?: string | null | undefined;
+                    } | undefined;
+                    engine?: {
+                        role: string;
+                    } | {
+                        agentTarget: {
+                            kind: 'agent';
+                            identity: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            definitionId?: string | undefined;
+                        };
+                        modelSelection?: {
+                            v: 1;
+                            ref: {
+                                agentTargetKey: string;
+                                providerConnectionId: null;
+                                modelId: string;
+                            } | {
+                                agentTargetKey: string;
+                                providerConnectionId: string;
+                                modelId: string;
+                            };
+                            updatedAt: number;
+                        } | null | undefined;
+                        effort?: string | undefined;
+                    } | undefined;
+                    executionTarget?: {
+                        kind: 'session';
+                    } | {
+                        kind: 'detached_run';
+                    } | undefined;
+                };
+                roles?: readonly ({
+                    roleId: string;
+                    engine?: {
+                        agentTargetKey: string;
+                        modelId?: string | undefined;
+                        effort?: string | undefined;
+                    } | undefined;
+                    runsAs?: {
+                        kind: 'session';
+                    } | {
+                        kind: 'background_run';
+                        intent: 'agent' | 'review' | 'plan' | 'delegate' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary';
+                    } | undefined;
+                    profileId?: string | undefined;
+                    workspaceWrites?: 'allow' | 'deny' | undefined;
+                    secondOpinion?: 'off' | 'encouraged' | undefined;
+                } | {
+                    roleId: string;
+                    name: string;
+                    instructions: string;
+                    runsAs: {
+                        kind: 'session';
+                    } | {
+                        kind: 'background_run';
+                        intent: 'agent' | 'review' | 'plan' | 'delegate' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary';
+                    };
+                    engine?: {
+                        agentTargetKey: string;
+                        modelId?: string | undefined;
+                        effort?: string | undefined;
+                    } | undefined;
+                    profileId?: string | undefined;
+                    workspaceWrites?: 'allow' | 'deny' | undefined;
+                    secondOpinion?: 'off' | 'encouraged' | undefined;
+                })[] | undefined;
+                blocks: readonly PluginActionWorkflowBlockV1[];
+                finalOutput?: {
+                    kind: 'result';
+                    producer: {
+                        blockId: string;
+                        scope: {
+                            kind: 'current';
+                        } | {
+                            kind: 'previous_iteration';
+                            loopBlockId: string;
+                        } | {
+                            kind: 'outer';
+                            levels: number;
+                        };
+                    };
+                    path: (string | number)[];
+                    optional?: true | undefined;
+                } | undefined;
+            }>;
+        };
+        json: string;
     };
     readonly "workflow.trigger.list": {
         sets: {
@@ -10383,6 +11633,11 @@ export type WorkflowsActionResultById = {
                         inputType?: {
                             pluginId: string;
                             localId: string;
+                        } | {
+                            hostType: 'usageQuery';
+                            field?: 'session' | 'period' | undefined;
+                        } | {
+                            hostType: 'session' | 'workspace';
                         } | undefined;
                     }[];
                     defaults: {
@@ -10392,6 +11647,7 @@ export type WorkflowsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            definitionId?: string | undefined;
                         } | null | undefined;
                         modelSelection?: {
                             v: 1;
@@ -10572,6 +11828,7 @@ export type WorkflowsActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                definitionId?: string | undefined;
                             };
                             modelSelection?: {
                                 v: 1;
@@ -10700,6 +11957,11 @@ export type WorkflowsActionResultById = {
                         inputType?: {
                             pluginId: string;
                             localId: string;
+                        } | {
+                            hostType: 'usageQuery';
+                            field?: 'session' | 'period' | undefined;
+                        } | {
+                            hostType: 'session' | 'workspace';
                         } | undefined;
                     }[];
                     defaults: {
@@ -10709,6 +11971,7 @@ export type WorkflowsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            definitionId?: string | undefined;
                         } | null | undefined;
                         modelSelection?: {
                             v: 1;
@@ -10889,6 +12152,7 @@ export type WorkflowsActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                definitionId?: string | undefined;
                             };
                             modelSelection?: {
                                 v: 1;
@@ -11206,6 +12470,11 @@ export type WorkflowsActionResultById = {
                         inputType?: {
                             pluginId: string;
                             localId: string;
+                        } | {
+                            hostType: 'usageQuery';
+                            field?: 'session' | 'period' | undefined;
+                        } | {
+                            hostType: 'session' | 'workspace';
                         } | undefined;
                     }[];
                     defaults: {
@@ -11215,6 +12484,7 @@ export type WorkflowsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            definitionId?: string | undefined;
                         } | null | undefined;
                         modelSelection?: {
                             v: 1;
@@ -11395,6 +12665,7 @@ export type WorkflowsActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                definitionId?: string | undefined;
                             };
                             modelSelection?: {
                                 v: 1;
@@ -11523,6 +12794,11 @@ export type WorkflowsActionResultById = {
                         inputType?: {
                             pluginId: string;
                             localId: string;
+                        } | {
+                            hostType: 'usageQuery';
+                            field?: 'session' | 'period' | undefined;
+                        } | {
+                            hostType: 'session' | 'workspace';
                         } | undefined;
                     }[];
                     defaults: {
@@ -11532,6 +12808,7 @@ export type WorkflowsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            definitionId?: string | undefined;
                         } | null | undefined;
                         modelSelection?: {
                             v: 1;
@@ -11712,6 +12989,7 @@ export type WorkflowsActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                definitionId?: string | undefined;
                             };
                             modelSelection?: {
                                 v: 1;
@@ -12031,6 +13309,11 @@ export type WorkflowsActionResultById = {
                         inputType?: {
                             pluginId: string;
                             localId: string;
+                        } | {
+                            hostType: 'usageQuery';
+                            field?: 'session' | 'period' | undefined;
+                        } | {
+                            hostType: 'session' | 'workspace';
                         } | undefined;
                     }[];
                     defaults: {
@@ -12040,6 +13323,7 @@ export type WorkflowsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            definitionId?: string | undefined;
                         } | null | undefined;
                         modelSelection?: {
                             v: 1;
@@ -12220,6 +13504,7 @@ export type WorkflowsActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                definitionId?: string | undefined;
                             };
                             modelSelection?: {
                                 v: 1;
@@ -12348,6 +13633,11 @@ export type WorkflowsActionResultById = {
                         inputType?: {
                             pluginId: string;
                             localId: string;
+                        } | {
+                            hostType: 'usageQuery';
+                            field?: 'session' | 'period' | undefined;
+                        } | {
+                            hostType: 'session' | 'workspace';
                         } | undefined;
                     }[];
                     defaults: {
@@ -12357,6 +13647,7 @@ export type WorkflowsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            definitionId?: string | undefined;
                         } | null | undefined;
                         modelSelection?: {
                             v: 1;
@@ -12537,6 +13828,7 @@ export type WorkflowsActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                definitionId?: string | undefined;
                             };
                             modelSelection?: {
                                 v: 1;
@@ -12856,6 +14148,11 @@ export type WorkflowsActionResultById = {
                         inputType?: {
                             pluginId: string;
                             localId: string;
+                        } | {
+                            hostType: 'usageQuery';
+                            field?: 'session' | 'period' | undefined;
+                        } | {
+                            hostType: 'session' | 'workspace';
                         } | undefined;
                     }[];
                     defaults: {
@@ -12865,6 +14162,7 @@ export type WorkflowsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            definitionId?: string | undefined;
                         } | null | undefined;
                         modelSelection?: {
                             v: 1;
@@ -13045,6 +14343,7 @@ export type WorkflowsActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                definitionId?: string | undefined;
                             };
                             modelSelection?: {
                                 v: 1;
@@ -13173,6 +14472,11 @@ export type WorkflowsActionResultById = {
                         inputType?: {
                             pluginId: string;
                             localId: string;
+                        } | {
+                            hostType: 'usageQuery';
+                            field?: 'session' | 'period' | undefined;
+                        } | {
+                            hostType: 'session' | 'workspace';
                         } | undefined;
                     }[];
                     defaults: {
@@ -13182,6 +14486,7 @@ export type WorkflowsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            definitionId?: string | undefined;
                         } | null | undefined;
                         modelSelection?: {
                             v: 1;
@@ -13362,6 +14667,7 @@ export type WorkflowsActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                definitionId?: string | undefined;
                             };
                             modelSelection?: {
                                 v: 1;
@@ -13461,6 +14767,141 @@ export type WorkflowsActionResultById = {
         };
         triggerId?: (string) | undefined;
         triggerRevision?: number | undefined;
+    };
+    readonly "workflow.trigger.run_now": {
+        run: {
+            id: string;
+            automationId: string;
+            revision: number;
+            triggerId: (string) | null;
+            triggerRetired: boolean;
+            state: 'queued' | 'claimed' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'expired' | 'dispatch_failed' | 'skipped' | 'missed' | 'outcome_uncertain';
+            cause: {
+                kind: 'trigger';
+                triggerId: string;
+                triggerRevision: number;
+                triggerKind: 'schedule';
+                occurrenceKey: string;
+                occurredAt: number;
+                evidence: {
+                    scheduledFor: number;
+                };
+            } | {
+                kind: 'trigger';
+                triggerId: string;
+                triggerRevision: number;
+                triggerKind: 'pluginEvent';
+                occurrenceKey: string;
+                occurredAt: number;
+                evidence: {
+                    eventRef: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    sourceSelectorId: string;
+                };
+            } | {
+                evidence: {
+                    event: 'parentTurnCompleted' | 'parentTurnFailed' | 'parentTurnCancelled';
+                    sourceSessionId: string;
+                    sourceTurnId: string;
+                    policy: {
+                        kind: 'nextMatches';
+                        count: number;
+                    } | {
+                        kind: 'currentTurn';
+                    } | {
+                        kind: 'firstMatch';
+                    } | {
+                        kind: 'everyMatch';
+                    };
+                } | {
+                    event: 'sessionStarted' | 'sessionArchived';
+                    sourceSessionId: string;
+                    policy: {
+                        kind: 'nextMatches';
+                        count: number;
+                    } | {
+                        kind: 'currentTurn';
+                    } | {
+                        kind: 'firstMatch';
+                    } | {
+                        kind: 'everyMatch';
+                    };
+                } | {
+                    event: 'userActionRequired';
+                    sourceSessionId: string;
+                    sourceTurnId: string;
+                    requestId: string;
+                    requestKind: 'permission' | 'user_action';
+                    policy: {
+                        kind: 'nextMatches';
+                        count: number;
+                    } | {
+                        kind: 'currentTurn';
+                    } | {
+                        kind: 'firstMatch';
+                    } | {
+                        kind: 'everyMatch';
+                    };
+                };
+                kind: 'trigger';
+                triggerId: string;
+                triggerRevision: number;
+                triggerKind: 'sessionLifecycle';
+                occurrenceKey: string;
+                occurredAt: number;
+            } | {
+                kind: 'trigger';
+                triggerId: string;
+                triggerRevision: number;
+                triggerKind: 'runLifecycle';
+                occurrenceKey: string;
+                occurredAt: number;
+                evidence: {
+                    source: {
+                        kind: 'execution_run';
+                        machineId: string;
+                        runId: string;
+                        sessionId?: string | undefined;
+                    } | {
+                        kind: 'workflow_run';
+                        runId: string;
+                    };
+                    condition: 'terminal' | 'needs_attention';
+                    sourceRevision: number;
+                    originRunId?: string | undefined;
+                };
+            } | {
+                kind: 'manual';
+                invokedAt: number;
+            } | {
+                kind: 'conversation';
+                occurrenceKey: string;
+                occurredAt: number;
+                triggerId?: (string) | undefined;
+            };
+            dueAt: number;
+            claimedAt: number | null;
+            startedAt: number | null;
+            finishedAt: number | null;
+            claimedByMachineId: string | null;
+            leaseExpiresAt: number | null;
+            attempt: number;
+            errorCode: string | null;
+            producedSessionId: string | null;
+            executionDispatchState: 'settled' | 'notStarted' | 'dispatchPermitted' | 'retryWaiting' | 'started' | 'outcomeUnknown' | null;
+            executionAttempt: number;
+            replyHandoffState: 'none' | 'suppressed' | 'accepted' | 'awaitingResult' | 'ready' | 'handingOff' | 'blocked';
+            replyHandoffAttempt: number;
+            replyHandoffDueAt: number | null;
+            createdAt: number;
+            updatedAt: number;
+        };
+        workflowRun?: {
+            recipeKind: 'workflow-v2';
+            workflowRunId: string;
+        } | undefined;
     };
     readonly "session.trigger.list": {
         sets: {
@@ -13681,6 +15122,11 @@ export type WorkflowsActionResultById = {
                         inputType?: {
                             pluginId: string;
                             localId: string;
+                        } | {
+                            hostType: 'usageQuery';
+                            field?: 'session' | 'period' | undefined;
+                        } | {
+                            hostType: 'session' | 'workspace';
                         } | undefined;
                     }[];
                     defaults: {
@@ -13690,6 +15136,7 @@ export type WorkflowsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            definitionId?: string | undefined;
                         } | null | undefined;
                         modelSelection?: {
                             v: 1;
@@ -13870,6 +15317,7 @@ export type WorkflowsActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                definitionId?: string | undefined;
                             };
                             modelSelection?: {
                                 v: 1;
@@ -13998,6 +15446,11 @@ export type WorkflowsActionResultById = {
                         inputType?: {
                             pluginId: string;
                             localId: string;
+                        } | {
+                            hostType: 'usageQuery';
+                            field?: 'session' | 'period' | undefined;
+                        } | {
+                            hostType: 'session' | 'workspace';
                         } | undefined;
                     }[];
                     defaults: {
@@ -14007,6 +15460,7 @@ export type WorkflowsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            definitionId?: string | undefined;
                         } | null | undefined;
                         modelSelection?: {
                             v: 1;
@@ -14187,6 +15641,7 @@ export type WorkflowsActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                definitionId?: string | undefined;
                             };
                             modelSelection?: {
                                 v: 1;
@@ -14513,6 +15968,11 @@ export type WorkflowsActionResultById = {
                         inputType?: {
                             pluginId: string;
                             localId: string;
+                        } | {
+                            hostType: 'usageQuery';
+                            field?: 'session' | 'period' | undefined;
+                        } | {
+                            hostType: 'session' | 'workspace';
                         } | undefined;
                     }[];
                     defaults: {
@@ -14522,6 +15982,7 @@ export type WorkflowsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            definitionId?: string | undefined;
                         } | null | undefined;
                         modelSelection?: {
                             v: 1;
@@ -14702,6 +16163,7 @@ export type WorkflowsActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                definitionId?: string | undefined;
                             };
                             modelSelection?: {
                                 v: 1;
@@ -14830,6 +16292,11 @@ export type WorkflowsActionResultById = {
                         inputType?: {
                             pluginId: string;
                             localId: string;
+                        } | {
+                            hostType: 'usageQuery';
+                            field?: 'session' | 'period' | undefined;
+                        } | {
+                            hostType: 'session' | 'workspace';
                         } | undefined;
                     }[];
                     defaults: {
@@ -14839,6 +16306,7 @@ export type WorkflowsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            definitionId?: string | undefined;
                         } | null | undefined;
                         modelSelection?: {
                             v: 1;
@@ -15019,6 +16487,7 @@ export type WorkflowsActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                definitionId?: string | undefined;
                             };
                             modelSelection?: {
                                 v: 1;
@@ -15338,6 +16807,11 @@ export type WorkflowsActionResultById = {
                         inputType?: {
                             pluginId: string;
                             localId: string;
+                        } | {
+                            hostType: 'usageQuery';
+                            field?: 'session' | 'period' | undefined;
+                        } | {
+                            hostType: 'session' | 'workspace';
                         } | undefined;
                     }[];
                     defaults: {
@@ -15347,6 +16821,7 @@ export type WorkflowsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            definitionId?: string | undefined;
                         } | null | undefined;
                         modelSelection?: {
                             v: 1;
@@ -15527,6 +17002,7 @@ export type WorkflowsActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                definitionId?: string | undefined;
                             };
                             modelSelection?: {
                                 v: 1;
@@ -15655,6 +17131,11 @@ export type WorkflowsActionResultById = {
                         inputType?: {
                             pluginId: string;
                             localId: string;
+                        } | {
+                            hostType: 'usageQuery';
+                            field?: 'session' | 'period' | undefined;
+                        } | {
+                            hostType: 'session' | 'workspace';
                         } | undefined;
                     }[];
                     defaults: {
@@ -15664,6 +17145,7 @@ export type WorkflowsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            definitionId?: string | undefined;
                         } | null | undefined;
                         modelSelection?: {
                             v: 1;
@@ -15844,6 +17326,7 @@ export type WorkflowsActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                definitionId?: string | undefined;
                             };
                             modelSelection?: {
                                 v: 1;
@@ -16163,6 +17646,11 @@ export type WorkflowsActionResultById = {
                         inputType?: {
                             pluginId: string;
                             localId: string;
+                        } | {
+                            hostType: 'usageQuery';
+                            field?: 'session' | 'period' | undefined;
+                        } | {
+                            hostType: 'session' | 'workspace';
                         } | undefined;
                     }[];
                     defaults: {
@@ -16172,6 +17660,7 @@ export type WorkflowsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            definitionId?: string | undefined;
                         } | null | undefined;
                         modelSelection?: {
                             v: 1;
@@ -16352,6 +17841,7 @@ export type WorkflowsActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                definitionId?: string | undefined;
                             };
                             modelSelection?: {
                                 v: 1;
@@ -16480,6 +17970,11 @@ export type WorkflowsActionResultById = {
                         inputType?: {
                             pluginId: string;
                             localId: string;
+                        } | {
+                            hostType: 'usageQuery';
+                            field?: 'session' | 'period' | undefined;
+                        } | {
+                            hostType: 'session' | 'workspace';
                         } | undefined;
                     }[];
                     defaults: {
@@ -16489,6 +17984,7 @@ export type WorkflowsActionResultById = {
                                 pluginId: string;
                                 localId: string;
                             };
+                            definitionId?: string | undefined;
                         } | null | undefined;
                         modelSelection?: {
                             v: 1;
@@ -16669,6 +18165,7 @@ export type WorkflowsActionResultById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                definitionId?: string | undefined;
                             };
                             modelSelection?: {
                                 v: 1;

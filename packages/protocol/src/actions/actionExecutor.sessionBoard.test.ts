@@ -41,6 +41,22 @@ function mutationResult(operation: 'upsert_item' | 'remove_item' | 'update_layou
 }
 
 describe('createActionExecutor (Session Board family)', () => {
+  it('creates transcript widgets without a Board footprint or layout dependency', async () => {
+    const executor = createActionExecutor({ isActionApprovalRequired: () => false,
+      widgetAccountScope: () => ({ serverId: 'home-1', accountId: 'account' }),
+      widgetInputs: createWidgetActionInputResolverV1({ readDescriptor: async () => ({ inputs: { fields: [] },
+        inputSchema: { type: 'object', additionalProperties: false } }),
+        readContext: async () => ({}), readViewerValues: async () => ({ values: {} }), validateValue: async () => ({ status: 'valid' }), resolveOptions: async () => [] }),
+      sessionBoardAction: async () => ({ v: 1, serverId: 'home-1', sessionId: 'session-1',
+        itemDestination: 'transcript', destination: null, preview: { title: 'Note', sourceKind: 'widget' },
+        result: { operation: 'upsert_item', itemId: 'note', outcome: 'created', itemRevision: revision } }),
+    });
+    await expect(executor.execute('session.board.item.upsert', { itemId: 'note', expectedItemRevision: null,
+      item: { ...item, source: { kind: 'widget', instance: { v: 1, id: 'note',
+        definition: { kind: 'builtin', id: 'session_summary' }, bindings: {} } } },
+    }, { surface: 'mcp', serverId: 'home-1', defaultSessionId: 'session-1', bypassApprovals: true }))
+      .resolves.toMatchObject({ ok: true, result: { itemDestination: 'transcript', destination: null } });
+  });
   it('admits declared native widget Add footprints atomically without restricting existing custom native shapes', async () => {
     const saved: SessionBoardItemUpsertInputV1[] = [];
     const executor = createActionExecutor({ widgetAccountScope: () => ({ serverId: 'home-1', accountId: 'account' }),
@@ -71,7 +87,7 @@ describe('createActionExecutor (Session Board family)', () => {
     expect(saved[1]).toMatchObject({ placement: { width: 'medium' }, item: { height: { mode: 'auto', fallback: 'regular' } } });
     const custom = { ...base, expectedItemRevision: revision, item: { ...configured, height: { mode: 'fixed', size: 'tall' } }, placement: { tabId: 'overview', width: 'compact' } };
     expect(await execute(custom)).toMatchObject({ ok: true });
-    expect(saved[2]).toEqual(custom);
+    expect(saved[2]).toEqual({ ...custom, destination: 'board' });
   });
   it.each(['agent', 'ui'] as const)('requires approval for shared layout edits through both %s fronts, while a policy waiver reaches the same writer', async surface => {
     let document: SessionBoardLayoutV1 = { v: 1, tabs: [{ id: 'overview', title: 'Overview', items: [{ itemId: 'copy', width: 'wide' }] }] };
@@ -102,19 +118,19 @@ describe('createActionExecutor (Session Board family)', () => {
       operation: { op: 'item.frameStyle' as const, tabId: 'overview', itemId: 'copy', frameStyle: 'plain' as const } };
     const widgetInput = { ref: { surface: { serverId: 'home-1', accountId: 'account',
       owner: { kind: 'sessionBoard' as const, sessionId: 'session-1' } }, instanceId: 'copy' }, frameStyle: 'plain' as const };
-    expect(await executor.execute('widgets.instance.frame.set', widgetInput, context))
+    expect(await executor.execute('widgets.item.frame.set', widgetInput, context))
       .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
     expect(document).toEqual(original);
     expect(await executor.execute('session.board.layout.update', domainInput, context))
       .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
     expect(document).toEqual(original);
     const actionsSettings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: {
-      'session.board.layout.update': [surface], 'widgets.instance.frame.set': [surface],
+      'session.board.layout.update': [surface], 'widgets.item.frame.set': [surface],
     } });
     expect(await executor.execute('session.board.layout.update', domainInput, { ...context, actionsSettings }))
       .toMatchObject({ ok: true });
     expect(document.tabs[0]?.items[0]?.frameStyle).toBe('plain');
-    expect(await executor.execute('widgets.instance.frame.set', { ...widgetInput, frameStyle: 'card' }, { ...context, actionsSettings }))
+    expect(await executor.execute('widgets.item.frame.set', { ...widgetInput, frameStyle: 'card' }, { ...context, actionsSettings }))
       .toMatchObject({ ok: true });
     expect(document.tabs[0]?.items[0]?.frameStyle).toBe('card');
   });
@@ -142,7 +158,7 @@ describe('createActionExecutor (Session Board family)', () => {
       signal?: AbortSignal;
     };
     expect(call.actionId).toBe('session.board.item.upsert');
-    expect(call.input).toEqual(upsertInput);
+    expect(call.input).toEqual({ ...upsertInput, destination: 'board' });
     expect(call.context.surface).toBe('agent');
     expect(call.context.defaultSessionId).toBe('session-1');
     expect(call.signal).toBe(controller.signal);

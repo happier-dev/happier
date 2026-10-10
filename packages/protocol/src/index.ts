@@ -1,4 +1,7 @@
 export const HAPPY_PROTOCOL_PACKAGE = '@happier-dev/protocol';
+export * from './usage/usageModelPriceCatalog.js';
+export * from './usage/usageAggregation.js';
+export * from './usage/usageLeaderProjection.js';
 export { resolveUsageTokenCategories } from './usage/usageTokenCategories.js';
 export {
   resolveUsageCostBasis,
@@ -7,6 +10,11 @@ export {
   resolveEffectiveUsageCostUsd,
   resolveUsageCostMode,
   resolveUsageCostPresentationSource,
+  estimateUsageModelCost,
+  repriceUsageAnalyticsResponse,
+  repriceUsageObservationCost,
+  type UsageModelCostEstimate,
+  resolveUsageContributionDimensionKey,
   type UsageCostMode,
   type UsageCostBasis,
 } from './usage/usageCost.js';
@@ -18,7 +26,7 @@ export * from './inputs/usageQuery.js';
 export { resolveUsageBucketBounds, resolveUsageCalendarInstant, resolveUsageCalendarDateStart } from './usage/usageCalendar.js';
 export { allocateUsageOutcomes, UsageWorkProjectionSchema, type UsageWorkContribution, type UsageWorkEvidence,
   type UsageWorkOutcome, type UsageWorkAllocation, type UsageWorkProjection } from './usage/usageOutcomeAllocation.js';
-export { projectUsageWorkIntervals, type UsageWorkIntervalFact, type UsageWorkPermissionFact, type UsageWorkIntervalsInput, type UsageWorkIntervalsProjection } from './usage/usageWorkIntervals.js';
+export { isUsageNightHour, projectUsageWorkIntervals, type UsageWorkIntervalFact, type UsageWorkPermissionFact, type UsageWorkIntervalsInput, type UsageWorkIntervalsProjection } from './usage/usageWorkIntervals.js';
 export { resolveUsageHowYouWork, UsageHowYouWorkSchema, type UsageHowYouWork, type UsageHowYouWorkDetailInput, type UsageAcceptedInputFact } from './usage/resolveUsageHowYouWork.js';
 export { projectUsageFootprint, UsageFootprintProjectionSchema, type UsageFootprintProjection } from './usage/usageFootprint.js';
 export * from './connect/connectedServicePoolSelection.js';
@@ -1482,7 +1490,6 @@ export {
   type PluginUiArtifactDigestV1,
   type PluginUiArtifactIntegrityBindingV1,
   type PluginUiTargetedContributionSurfaceV1,
-  MAX_PLUGIN_HOSTED_HTML_SOURCE_UTF8_BYTES_V1,
   PluginHostedHtmlSourceV1Schema,
   type PluginHostedHtmlSourceV1,
   PluginHostedWebBridgeBootstrapConfigV1Schema,
@@ -2295,7 +2302,6 @@ export {
   isExpoPushNotificationChannelEnabled,
   NEW_SESSION_DRAFT_ENTRY_MODES,
   SESSION_PROVIDER_USAGE_GAUGE_WINDOW_MODES,
-  resolveNotificationChannelsV1FromAccountSettings,
   SessionPendingQueueDeliveryTimingSchema,
   SessionPendingQueueDrainModeSchema,
   SessionInactiveResumePolicySchema,
@@ -2669,6 +2675,7 @@ export {
   UsageAnalyticsCoverageSchema,
   UsageAnalyticsContributionSchema,
   readUsageAccountingMetadata,
+  normalizeLegacyUsageTokens,
   UsageAnalyticsBreakdownDimensionSchema,
   UsageAnalyticsBreakdownEntrySchema,
   UsageAnalyticsBreakdownsSchema,
@@ -2679,6 +2686,9 @@ export {
   UsageAnalyticsSeriesBucketSchema,
   UsageAnalyticsTotalsSchema,
   UsageEventIngestRequestSchema,
+  UsageNativeAccountingSubjectSchema,
+  UsageNativeAccountingEvidenceSchema,
+  UsageNativeHistoryDeleteRequestSchema,
   UsageObservationContextSchema,
   UsageObservationCostSchema,
   UsageObservationScopeSchema,
@@ -2703,6 +2713,9 @@ export type {
   UsageAnalyticsSeriesBucket,
   UsageAnalyticsTotals,
   UsageEventIngestRequest,
+  UsageNativeAccountingSubject,
+  UsageNativeAccountingEvidence,
+  UsageNativeHistoryDeleteRequest,
   UsageObservationContext,
   UsageObservationCost,
   UsageObservationScope,
@@ -5713,6 +5726,8 @@ export {
   ExecutionRunLaunchOriginSchema,
   ExecutionRunRequestedConfigurationSchema,
   projectExecutionRunRequestedConfiguration,
+  ExecutionRunResolvedSelectionSchema,
+  projectExecutionRunResolvedSelection,
   ExecutionRunDraftCorrelationIdSchema,
   ExecutionRunPublicStateSchema,
   isExecutionRunActive,
@@ -5788,6 +5803,7 @@ export {
   type ExecutionRunDisplay,
   type ExecutionRunLaunchOrigin,
   type ExecutionRunRequestedConfiguration,
+  type ExecutionRunResolvedSelection,
   type ExecutionRunDraftCorrelationId,
   type ExecutionRunPublicState,
   type ExecutionRunInteractionV1,
@@ -7348,6 +7364,14 @@ export {
   MemorySearchCorpusV1Schema,
   MemoryDocumentSearchCoverageV1Schema,
   isMemoryDocumentSearchHitV1,
+  isMemoryExternalTranscriptSearchHitV1,
+  isMemorySessionSearchHitV1,
+  MemorySourceV1Schema,
+  MemoryExternalTranscriptSourceV1Schema,
+  MemoryExternalTranscriptSearchHitV1Schema,
+  type MemorySourceV1,
+  type MemoryExternalTranscriptSourceV1,
+  type MemoryExternalTranscriptSearchHitV1,
   negotiateMemorySearchV1,
   MemorySearchModeSchema,
   MemorySearchQueryV1Schema,
@@ -7369,8 +7393,14 @@ export {
 export {
   MemorySnippetV1Schema,
   MemoryWindowV1Schema,
+  MemoryWindowRequestV1Schema,
+  MemoryExternalWindowRequestV1Schema,
+  MemoryExternalSnippetV1Schema,
+  type MemoryExternalWindowRequestV1,
+  type MemoryExternalSnippetV1,
   type MemorySnippetV1,
   type MemoryWindowV1,
+  type MemoryWindowRequestV1,
 } from './memory/memoryWindow.js';
 
 export {
@@ -7389,11 +7419,13 @@ export {
   MemoryIndexLastRunStatusV1Schema,
   MemoryIndexQueueStatusV1Schema,
   MemoryStatusV1Schema,
+  MemoryIndexSourceStatusV1Schema,
   MemoryWorkerStatusV1Schema,
   type MemoryIndexContentStatusV1,
   type MemoryIndexLastRunStatusV1,
   type MemoryIndexQueueStatusV1,
   type MemoryStatusV1,
+  type MemoryIndexSourceStatusV1,
   type MemoryWorkerStatusV1,
 } from './memory/memoryStatus.js';
 
@@ -7414,6 +7446,7 @@ export {
   MemoryEmbeddingsSettingsV2Schema,
   MemoryHintsSettingsV1Schema,
   MemorySettingsV1Schema,
+  ConversationSearchSettingsV1Schema,
   MemoryWorkerSettingsV1Schema,
   normalizeMemoryEmbeddingsSettings,
   normalizeMemorySettings,
@@ -7432,6 +7465,7 @@ export {
   type MemoryEmbeddingsSettingsV2,
   type MemoryHintsSettingsV1,
   type MemorySettingsV1,
+  type ConversationSearchSettingsV1,
   type MemoryWorkerSettingsV1,
 } from './memory/memorySettings.js';
 
@@ -8750,6 +8784,7 @@ export {
 export * from './automations/automationAccountCurrentnessV1.js';
 export * from './automations/automationSessionLifecycle.js';
 export * from './automations/automationEventV1.js';
+export * from './automations/automationEventTestV1.js';
 export * from './automations/automationStoredContentEnvelopeV1.js';
 export * from './automations/automationReplyHandoffIdentityV1.js';
 export * from './automations/automationReplyHandoffStateV1.js';

@@ -1,8 +1,10 @@
 export type { ActionContract } from './service.js';
+export type { UsageCoachFinding, UsageCoachEvaluation } from './dtos/pluginActionDtoSupport.generated.js';
 export type { InputTypePickerLaunchInputV1 } from './inputHints.js';
 export { readInputTypePickerLaunchInput } from './inputHints.js';
 export type { SessionTerminalLayoutV1, QualifiedAudienceSelection, SessionAudienceSelectionV1 } from './dtos/pluginActionDtoSupport.generated.js';
 export type { ProviderCatalogParserV1, VoiceProviderSettingsJsonValueV1 } from './dtos/pluginActionDtoSupport.generated.js';
+export type { ExternalSessionsSource } from './dtos/pluginActionDtoSupport.generated.js';
 /** Named dependencies of the canonical host Action input/result maps. */
 export type { AccountApiTokensActionInputById, AccountApiTokensActionResultById } from './dtos/accountApiTokensActionDtos.generated.js';
 export type { AccountPluginDataActionInputById, AccountPluginDataActionResultById } from './dtos/accountPluginDataActionDtos.generated.js';
@@ -29,6 +31,8 @@ export type { CompanionControlsActionInputById, CompanionControlsActionResultByI
 export type { ComposerIngressActionInputById, ComposerIngressActionResultById } from './dtos/composerIngressActionDtos.generated.js';
 export type { ComputerControlActionInputById, ComputerControlActionResultById } from './dtos/computerControlActionDtos.generated.js';
 export type { ConnectedServicesConfigurationActionInputById, ConnectedServicesConfigurationActionResultById } from './dtos/connectedServicesConfigurationActionDtos.generated.js';
+export type { UsageActionInputById, UsageActionResultById } from './dtos/usageActionDtos.generated.js';
+export type { UsageSourcesActionInputById, UsageSourcesActionResultById } from './dtos/usageSourcesActionDtos.generated.js';
 export type { CurrentUiContextActionInputById, CurrentUiContextActionResultById } from './dtos/currentUiContextActionDtos.generated.js';
 export type { DaemonAdminActionInputById, DaemonAdminActionResultById } from './dtos/daemonAdminActionDtos.generated.js';
 export type { DevicesSimulatorActionInputById, DevicesSimulatorActionResultById } from './dtos/devicesSimulatorActionDtos.generated.js';

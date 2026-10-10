@@ -6,6 +6,7 @@ import type { ActionExecutorContext } from './actionExecutor.js';
 import { normalizeActionsSettingsV1, type ActionsSettingsV1 } from './actionSettings.js';
 import { getActionSpec } from './actionSpecs.js';
 import { FILESYSTEM_ACTION_IDS } from './filesystemActionFamily.js';
+import { NOTIFICATION_CONFIGURATION_ACTION_IDS } from './notificationConfigurationActionIds.js';
 import {
   AGENT_INITIATED_APPROVAL_REQUIRED_ACTION_IDS,
   isAgentInitiatedApprovalRequiredByDefault,
@@ -32,6 +33,52 @@ async function loadRoutingResolver() {
 }
 
 describe('isApprovalRequiredByActionsSettings', () => {
+  it('requires present-user approval on every Teams parity request even when requester settings waive approval', () => {
+    for (const actionId of ['teams.invitations.create', 'teams.invitations.reissue', 'teams.credentials.test',
+      'teams.directory.sources.remove', 'teams.directory.sources.remove.preview'] as const) {
+      const settings = normalizeActionsSettingsV1({ v: 1,
+        actions: { [actionId]: { approvalRequiredSurfaces: [] } },
+        approvalWaivedSurfaces: { [actionId]: ['agent', 'mcp'] },
+      });
+      for (const surface of ['agent', 'mcp'] as const) {
+        expect(resolveActionApprovalRouting({ actionId, spec: getActionSpec(actionId), settings,
+          requiredByPolicy: false, context: { surface, authority: 'account_automation' },
+        }), `${actionId}:${surface}`).toEqual({ required: true, flow: 'deferred', result: 'required' });
+      }
+    }
+  });
+  it('keeps Account service-configuration replacement Ask-first on UI and Agent without a separate prompt', () => {
+    const actionId = 'connectedServices.configuration.replace' as const;
+    const context = { surface: 'ui', authority: 'present_user' } as const;
+    expect(isApprovalRequiredByActionsSettings(actionId, EMPTY_SETTINGS, context)).toBe(true);
+    expect(isApprovalRequiredByActionsSettings('connectedServices.configuration.get', EMPTY_SETTINGS, context)).toBe(false);
+    const waived = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [actionId]: ['ui'] } });
+    expect(isApprovalRequiredByActionsSettings(actionId, waived, context)).toBe(false);
+    expect(isApprovalRequiredByActionsSettings(actionId, waived, { surface: 'agent' })).toBe(true);
+  });
+  it('keeps notification endpoint edits Ask-first on UI through the canonical surface policy', () => {
+    const context = { surface: 'ui', authority: 'present_user' } as const;
+    for (const actionId of NOTIFICATION_CONFIGURATION_ACTION_IDS) {
+      expect(isApprovalRequiredByActionsSettings(actionId, EMPTY_SETTINGS, context), actionId)
+        .toBe(actionId !== 'notifications.webhooks.list');
+    }
+    const actionId = 'notifications.webhooks.signingSecret.clear' as const;
+    const waived = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [actionId]: ['ui'] } });
+    expect(isApprovalRequiredByActionsSettings(actionId, waived, context)).toBe(false);
+    expect(isApprovalRequiredByActionsSettings(actionId, waived, { surface: 'agent' })).toBe(true);
+    const required = normalizeActionsSettingsV1({ ...waived,
+      actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } },
+    });
+    expect(isApprovalRequiredByActionsSettings(actionId, required, context)).toBe(true);
+  });
+  it('requires clear-index approval by default on UI and permits only its canonical surface waiver', () => {
+    const actionId = 'memory.clear_index' as const;
+    const context = { surface: 'ui', authority: 'present_user' } as const;
+    expect(isApprovalRequiredByActionsSettings(actionId, EMPTY_SETTINGS, context)).toBe(true);
+    const settings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [actionId]: ['ui'] } });
+    expect(isApprovalRequiredByActionsSettings(actionId, settings, context)).toBe(false);
+    expect(isApprovalRequiredByActionsSettings(actionId, settings, { surface: 'agent' })).toBe(true);
+  });
   it('keeps semantic filesystem RPC effects Ask-first without changing the general internal RPC exemption', () => {
     const context = { surface: 'rpc', authority: 'account_automation' } as const;
     for (const actionId of FILESYSTEM_ACTION_IDS) {
@@ -144,8 +191,8 @@ describe('isApprovalRequiredByActionsSettings', () => {
       { actionId: 'widgets.definition.update', input: {} },
       { actionId: 'widgets.definition.delete', input: {} },
       { actionId: 'widgets.snapshot.post', input: {} },
-      { actionId: 'widgets.instance.frame.set', input: { ref: { surface: shared, instanceId: 'copy' } } },
-      { actionId: 'widgets.instance.move', input: { ref: { surface: personal, instanceId: 'copy' }, to: { surface: shared, index: 0 } } },
+      { actionId: 'widgets.item.frame.set', input: { ref: { surface: shared, instanceId: 'copy' } } },
+      { actionId: 'widgets.item.move', input: { ref: { surface: personal, instanceId: 'copy' }, to: { surface: shared, index: 0 } } },
     ] as const;
     for (const edit of edits) {
       const args = { ...edit, spec: getActionSpec(edit.actionId), context, settings: normalizeActionsSettingsV1({ v: 1 }) };
@@ -154,7 +201,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
       expect(resolveActionApprovalRouting({ ...args, settings: waived }).required, edit.actionId).toBe(false);
     }
     for (const owner of [{ kind: 'home' }, { kind: 'companion', sessionId: 'shared' }] as const) {
-      expect(resolveActionApprovalRouting({ actionId: 'widgets.instance.frame.set', spec: getActionSpec('widgets.instance.frame.set'),
+      expect(resolveActionApprovalRouting({ actionId: 'widgets.item.frame.set', spec: getActionSpec('widgets.item.frame.set'),
         input: { ref: { surface: { ...shared, owner }, instanceId: 'copy' } }, context,
         defaultSafety: 'safe', settings: normalizeActionsSettingsV1({ v: 1 }),
       }).required).toBe(false);

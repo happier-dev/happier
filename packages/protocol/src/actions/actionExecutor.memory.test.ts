@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
+import { getActionSpec } from './actionSpecs.js';
+import { MemorySettingsV1Schema } from '../memory/memorySettings.js';
+import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
 
 function createDeps(): ActionExecutorDeps {
   return {
@@ -43,6 +46,67 @@ function createDeps(): ActionExecutorDeps {
 }
 
 describe('createActionExecutor (memory)', () => {
+  it.each(['agent', 'mcp', 'cli', 'ui'] as const)('opens a native memory window through the %s Action without fabricating Session seqs', async surface => {
+    const deps = createDeps();
+    const source = { type: 'external_transcript' as const, agentId: 'pi', sourceKey: 'local', nativeSessionId: 'native' };
+    const result = { v: 1, snippets: [], citations: [], externalSnippets: [{ source, sourceItemId: 'message', createdAtMs: 10, text: 'quartz' }] };
+    deps.daemonMemoryGetWindow = async args => {
+      expect(args).toEqual({ machineId: 'm1', source, sourceItemId: 'message', cursor: 'older', serverId: 'home' });
+      return result;
+    };
+    expect(await createActionExecutor(deps).execute('memory.get_window', {
+      machineId: 'm1', source, sourceItemId: 'message', cursor: 'older',
+    }, { surface, serverId: 'home' })).toEqual({ ok: true, result });
+    expect(getActionSpec('memory.get_window').inputSchema.safeParse({
+      machineId: 'm1', source, sourceItemId: 'message', seqFrom: 1, seqTo: 2,
+    }).success).toBe(false);
+  });
+  it('reads and saves per-machine Search settings through the canonical settings dependency', async () => {
+    const settings = MemorySettingsV1Schema.parse({ v: 1, conversationSearch: { standardSearch: { enabled: false } } });
+    const deps = createDeps();
+    let persisted = MemorySettingsV1Schema.parse({ v: 1 });
+    deps.daemonMemorySettingsGet = async () => persisted;
+    deps.daemonMemorySettingsSet = async ({ settings: next }) => { persisted = next; return persisted; };
+    const executor = createActionExecutor(deps);
+    const context = { surface: 'ui', authority: 'present_user', serverId: 'home-1' } as const;
+    expect(await executor.execute('search.settings.get', { machineId: 'm1' }, context)).toMatchObject({
+      ok: true, result: { conversationSearch: { standardSearch: { enabled: true } } },
+    });
+    expect(await executor.execute('search.settings.set', { machineId: 'm1', settings }, context)).toEqual({ ok: true, result: settings });
+    expect(await executor.execute('search.settings.get', { machineId: 'm1' }, context)).toEqual({ ok: true, result: settings });
+  });
+
+  it('keeps agent clear-index pending until the present user approves', async () => {
+    const deps = createDeps();
+    let approval: ApprovalRequest | null = null;
+    let cleared = false;
+    deps.daemonMemoryClearIndex = async () => { cleared = true; return { ok: true }; };
+    deps.approvalsCreate = async ({ request }) => { approval = request; return { artifactId: 'approval' }; };
+    deps.approvalsGet = async () => approval;
+    deps.approvalsUpdate = async ({ request }) => { approval = request; return { ok: true }; };
+    deps.isApprovalExecutionOriginCurrent = async () => true;
+    const executor = createActionExecutor(deps);
+    expect(getActionSpec('memory.clear_index').safety).toBe('danger');
+    expect(await executor.execute('memory.clear_index', { machineId: 'm1' }, {
+      surface: 'agent', defaultSessionId: 'worker', serverId: 'home', actionRequestId: 'clear-proposal',
+    })).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    expect(cleared).toBe(false);
+    await executor.execute('approval.request.decide', { artifactId: 'approval', decision: 'approve' }, {
+      surface: 'ui', authority: 'present_user', serverId: 'home',
+    });
+    expect(cleared).toBe(true);
+  });
+
+  it('relays conversation search to the existing mounted-client Action boundary', async () => {
+    const deps = createDeps();
+    const input = { query: { v: 1, query: 'needle', scope: { type: 'global' }, mode: 'deep' }, mode: 'auto' };
+    deps.clientActionExecute = async ({ actionId, input: admitted }) => ({ ok: true, result: { actionId, input: admitted } });
+    expect(getActionSpec('search.conversations').executionPlacement).toBe('client');
+    expect(await createActionExecutor(deps).execute('search.conversations', input, { surface: 'agent' })).toEqual({
+      ok: true, result: { actionId: 'search.conversations', input },
+    });
+  });
+
   it.each(['cli', 'mcp'] as const)('searches both corpora through the existing %s Action surface', async (surface) => {
     const deps = createDeps();
     const result = { v: 1, ok: true, hits: [{

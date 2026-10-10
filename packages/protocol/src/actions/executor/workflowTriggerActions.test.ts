@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { AutomationTriggerIdSchema } from '../../automations/automationTriggerIdentity.js';
-import type { AutomationDefinitionDetail, AutomationTriggerDetail } from '../../automations/automationApiV3.js';
+import type { AutomationDefinitionDetail, AutomationTriggerDetail, AutomationV3RunMutationResponse } from '../../automations/automationApiV3.js';
 import { WorkflowDefinitionV1Schema } from '../../workflows/workflowV1.js';
 import { resolveWorkflowDefinitionRefV1 } from '../../workflows/workflowDefinitionResolverV1.js';
 import { createWorkflowTriggerActions, type WorkflowTriggerActionsDependencies } from './workflowTriggerActions.js';
-import { SessionTriggerAddRequestV1Schema } from '../../workflows/triggers/workflowTriggerActionsV1.js';
+import { SessionTriggerAddRequestV1Schema, WorkflowTriggerWriteResultV1Schema } from '../../workflows/triggers/workflowTriggerActionsV1.js';
+import { normalizeUsageQuery } from '../../inputs/usageQuery.js';
+import { resolveUsagePageAggregation } from '../../usage/resolveUsagePageAggregation.js';
+import { ActionsSettingsV1Schema } from '../actionSettings.js';
+import { isApprovalRequiredByActionsSettings } from '../actionApprovalPolicy.js';
 import { createWorkflowDefinitionActions, type WorkflowDefinitionArtifactOperations } from './workflowDefinitions.js';
 import { DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1 } from '../../account/settings/sessionAgentSpawnPolicyV1.js';
 import { createWorkflowActionExecutor } from './workflowAccountActions.js';
@@ -28,6 +32,14 @@ const ownCaller = { surface: 'agent' as const, sessionAgentSpawnPolicyV1: DEFAUL
   agentStartContext: { caller: { kind: 'session' as const, sessionId: 'session-one', starterDepth: 0, turnDepth: 0 },
     baseline: { ...project, configuration: { agentTarget: definition.defaults!.agentTarget! } }, ledSubtreeSessionIds: [],
     workDepthLimit: 4, roles: {}, callerPermissionCeiling: 'default' as const } };
+
+function manualReceipt(automationId: string): AutomationV3RunMutationResponse {
+  return { run: { id: 'run-manual', automationId, revision: 1, triggerId: null,
+    triggerRetired: false, state: 'queued', cause: { kind: 'manual', invokedAt: 1 },
+    dueAt: 1, claimedAt: null, startedAt: null, finishedAt: null, claimedByMachineId: null, leaseExpiresAt: null,
+    attempt: 0, errorCode: null, producedSessionId: null, executionDispatchState: null, executionAttempt: 0,
+    replyHandoffState: 'none', replyHandoffAttempt: 0, replyHandoffDueAt: null, createdAt: 1, updatedAt: 1 } };
+}
 
 function fixture() {
   // These operations are the persistent/network Automation boundary; all Action semantics and validation run real.
@@ -146,6 +158,88 @@ function fixture() {
 }
 
 describe('workflow trigger Automation composition', () => {
+  it('admits a retained manual occurrence through the Automation transport without converting or rewriting its trigger set', async () => {
+    const f = fixture();
+    const receipt = manualReceipt('retained-manual');
+    const unexpected = (): never => { throw new Error('manual_admission_must_not_convert_or_save'); };
+    const actions = createWorkflowTriggerActions({ ...f.deps,
+      automations: { ...f.deps.automations, get: unexpected, create: unexpected, reconcile: unexpected,
+        runNow: async (id, options) => { expect(id).toBe('retained-manual'); expect(options).toEqual({ idempotencyKey: 'manual-retry' }); return receipt; } } });
+    await expect(f.executor(actions).execute('workflow.trigger.run_now', { automationId: 'retained-manual', idempotencyKey: 'manual-retry' },
+      { surface: 'ui', authority: 'present_user' })).resolves.toEqual({ ok: true, result: receipt });
+    expect(f.rows.size).toBe(0);
+  });
+  it('keeps a lost manual admission reply uncertain without issuing another occurrence', async () => {
+    const f = fixture();
+    let submitted = 0;
+    const actions = createWorkflowTriggerActions({ ...f.deps, automations: { ...f.deps.automations,
+      runNow: async () => { submitted += 1; throw Object.assign(new Error('Reply lost'), { code: 'workflow_outcome_unresolved' }); },
+    } });
+    expect(await f.executor(actions).execute('workflow.trigger.run_now', { automationId: 'retained-manual' },
+      { surface: 'ui', authority: 'present_user' })).toMatchObject({ ok: false, errorCode: 'workflow_outcome_unresolved' });
+    expect(submitted).toBe(1);
+  });
+  it('preserves the manual occurrence owner authentication refusal through the Action front door', async () => {
+    const f = fixture();
+    const actions = createWorkflowTriggerActions({ ...f.deps, automations: { ...f.deps.automations,
+      runNow: async () => { throw Object.assign(new Error('Not authenticated'), { code: 'not_authenticated' }); },
+    } });
+    expect(await f.executor(actions).execute('workflow.trigger.run_now', { automationId: 'retained-manual' },
+      { surface: 'ui', authority: 'present_user' })).toMatchObject({ ok: false, errorCode: 'not_authenticated' });
+  });
+  it('creates a Coach digest only through opted-in Automation Actions, retains approval rejection and removes through the same owner', async () => {
+    const f = fixture();
+    const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, sources: ['runtime'] });
+    const suggestion = resolveUsagePageAggregation({ queries: [query] }).results[0]!.coach!.digestSuggestion!;
+    expect(suggestion).toBeDefined();
+    expect(f.rows.size).toBe(0);
+    const request = { target: suggestion.target, project, trigger };
+    let approval: ApprovalRequest | null = null;
+    const settings = ActionsSettingsV1Schema.parse({ v: 1,
+      actions: { 'workflow.trigger.add': { approvalRequiredSurfaces: ['ui'] } } });
+    const gated = f.executor(f.actions, {
+      isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, settings, context),
+      approvalsCreate: async ({ request }) => { approval = request; return { artifactId: 'digest-approval' }; },
+      approvalsGet: async () => approval,
+      approvalsUpdate: async ({ request }) => { approval = request; return { ok: true }; },
+      isApprovalExecutionOriginCurrent: async ({ origin }) => origin.serverId === 'home'
+        && origin.accountId === 'owner' && origin.caller.kind === 'host',
+    });
+    const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId: 'home',
+      runtimeAccountId: 'owner', actionRequestId: 'digest-request', actionCaller: { kind: 'host' as const } };
+    const approvalResult = await gated.execute(suggestion.actionId, request, context);
+    expect(approvalResult, JSON.stringify(approvalResult))
+      .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    expect(f.rows.size).toBe(0);
+    expect(await gated.execute('approval.request.decide', { artifactId: 'digest-approval', decision: 'reject' }, context))
+      .toMatchObject({ ok: true });
+    expect(ApprovalRequestV2Schema.parse(approval).status).toBe('rejected');
+    expect(f.rows.size).toBe(0);
+    const optedIn = f.executor(f.actions);
+    expect(await optedIn.execute(suggestion.actionId, { ...request, project: { ...project, directory: '' } }, context))
+      .toMatchObject({ ok: false });
+    expect(f.rows.size).toBe(0);
+    expect(await gated.execute(suggestion.actionId, request, { ...context, actionRequestId: 'digest-approved-request' }))
+      .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    expect(f.rows.size).toBe(0);
+    const decided = await gated.execute('approval.request.decide', { artifactId: 'digest-approval', decision: 'approve' }, context);
+    expect(decided, JSON.stringify(decided)).toMatchObject({ ok: true });
+    const terminal = ApprovalRequestV2Schema.parse(approval);
+    expect(terminal.status).toBe('executed');
+    const created = terminal.execution;
+    expect(created, JSON.stringify(created)).toMatchObject({ ok: true });
+    if (!created?.ok) throw new Error('Expected the Automation owner receipt');
+    const receipt = WorkflowTriggerWriteResultV1Schema.parse(created.result);
+    expect(f.rows.get(receipt.set.automationId)).toMatchObject({
+      enabled: true, assignments: [{ machineId: project.machineId, enabled: true }],
+      triggers: [{ kind: 'schedule', enabled: true }],
+      executionRecipe: { workflow: { t: 'plain', v: { inlineDefinition: suggestion.target.definition } } },
+    });
+    expect(await optedIn.execute('workflow.trigger.remove', {
+      automationId: receipt.set.automationId, triggerId: receipt.triggerId,
+    }, context)).toMatchObject({ ok: true });
+    expect(f.rows.get(receipt.set.automationId)?.triggers).toEqual([]);
+  });
   it('moves only the exact managed inline scope binding after the resource controller changes', async () => {
     const f = fixture();
     const inline = WorkflowDefinitionV1Schema.parse({ version: 1, blocks: [{ kind: 'action', id: 'stop',
@@ -639,10 +733,22 @@ describe('workflow trigger Automation composition', () => {
   });
   it('admits Account agent add/update through the same materialized ORC trigger policy', async () => {
     const { deps, rows } = fixture();
+    const admitted: string[] = [];
     const actions = createWorkflowTriggerActions({ ...deps,
+      automations: { ...deps.automations, runNow: async (automationId) => {
+        admitted.push(automationId); return manualReceipt(automationId);
+      } },
       resolveMaterializer: async () => ({ effects: { resolveTargetAvailability: async () => true } }) });
     const added = await actions.add({ target: { kind: 'inline', definition }, project, trigger }, ownCaller);
     expect(added.set.health).toBe('available');
+    const retained = rows.get(added.set.automationId);
+    await expect(actions.runNow({ automationId: added.set.automationId }, ownCaller))
+      .resolves.toEqual(manualReceipt(added.set.automationId));
+    await expect(actions.runNow({ automationId: added.set.automationId }, { ...ownCaller,
+      agentStartContext: { ...ownCaller.agentStartContext, caller: { ...ownCaller.agentStartContext.caller, turnDepth: 4 } },
+    })).rejects.toMatchObject({ code: 'work_depth_exceeded' });
+    expect(admitted).toEqual([added.set.automationId]);
+    expect(rows.get(added.set.automationId)).toBe(retained);
     const updated = await actions.update({ automationId: added.set.automationId, expectedRevision: added.set.revision,
       patch: { enabled: false } }, ownCaller);
     expect(updated.set.enabled).toBe(false);

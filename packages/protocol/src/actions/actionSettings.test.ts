@@ -1,9 +1,18 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { ActionIdSchema } from './actionIds.js';
 import { ActionsSettingsV1Schema, isActionEnabledByActionsSettings, normalizeActionsSettingsV1 } from './actionSettings.js';
 
 describe('ActionsSettingsV1Schema', () => {
+  it('initializes Account policy from the Actions settings entry point', async () => {
+    vi.resetModules();
+    const { ActionsSettingsV1Schema: schema } = await import('./actionSettings.js');
+    const { accountSettingsParse } = await import('../account/settings/accountSettings.js');
+
+    expect(schema.parse({ v: 1 }).v).toBe(1);
+    expect(accountSettingsParse({}).actionsSettingsV1.v).toBe(1);
+  });
+
   it('keeps valid sibling policy and fails closed only a malformed known override on tolerant reads', () => {
     const parsed = normalizeActionsSettingsV1({
       v: 1,

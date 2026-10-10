@@ -11,8 +11,10 @@ describe('Action input hint path grammar', () => {
   ])('admits large valid declarations through Action, plugin View and widget owners', inputs => {
     expect(ActionInputHintsSchema.parse(inputs).fields).toEqual(inputs.fields);
     expect(PluginUiViewV2Schema.parse({ id: 'widget', renderer: 'native', container: 'widget', target: { kind: 'app' },
+      sizeDeclaration: { sizes: ['medium'], defaultSize: 'medium' },
       inputs, inputSchema: { type: 'object', additionalProperties: false } }).inputs?.fields).toEqual(inputs.fields);
     expect(WidgetDefinitionV1Schema.parse({ v: 1, id: 'definition', name: 'Widget',
+      sizeDeclaration: { sizes: ['medium'], defaultSize: 'medium' },
       body: { kind: 'installed', surface: { pluginId: 'acme.widgets', localId: 'widget' } },
       inputs, inputSchema: { type: 'object', additionalProperties: false }, provenance: { source: { kind: 'authored' } } }).inputs.fields).toEqual(inputs.fields);
   });

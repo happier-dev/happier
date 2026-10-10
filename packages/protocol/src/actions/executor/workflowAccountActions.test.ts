@@ -3,6 +3,7 @@ import { createActionExecutor, type ActionExecutorDeps } from '../actionExecutor
 import { createWorkflowActionExecutor } from './workflowAccountActions.js';
 import { createWorkflowDefinitionActions } from './workflowDefinitions.js';
 import { createWorkflowAccountRunActionOwner } from './workflowRunActions.js';
+import { parseWorkflowDocumentJsonIngressV1 } from '../../workflows/workflowDocumentV1.js';
 
 const definitionId = '11111111-1111-4111-8111-111111111111';
 const definition = { version: 1 as const, inputs: [], defaults: {}, blocks: [{ kind: 'wait' as const, id: 'wait',
@@ -32,6 +33,28 @@ function executor(invalidStoredHeader = false, readFailure?: unknown) {
 }
 
 describe('workflow Action refusal classification', () => {
+  it('imports a document through the Action seam as unsaved content without persistence or execution', async () => {
+    const actions = createActionExecutor({ workflowAction: executor() } as unknown as ActionExecutorDeps);
+    const json = JSON.stringify({ kind: 'happier.workflow', version: 1, definition });
+    await expect(actions.execute('workflow.definition.import', { json }, { surface: 'mcp' }))
+      .resolves.toEqual({ ok: true, result: { ...parseWorkflowDocumentJsonIngressV1(json), classification: 'unsaved_definition' } });
+    await expect(actions.execute('workflow.definition.import', { json: '{' }, { surface: 'mcp' }))
+      .resolves.toEqual({ ok: true, result: { ok: false, code: 'workflow_document_invalid_json', issues: [] } });
+    await expect(actions.execute('workflow.definition.import', { json: JSON.stringify({ kind: 'happier.workflow', version: 2, definition }) }, { surface: 'mcp' }))
+      .resolves.toMatchObject({ ok: true, result: { ok: false, code: 'workflow_document_unsupported_version' } });
+  });
+
+  it('exports the saved definition through its authorized Artifact reader as canonical portable JSON', async () => {
+    const actions = createActionExecutor({ workflowAction: executor() } as unknown as ActionExecutorDeps);
+    const result = await actions.execute('workflow.definition.export', { definitionId }, { surface: 'mcp' });
+    expect(result).toMatchObject({ ok: true, result: { definitionId, revision: { headerVersion: 1, bodyVersion: 1 },
+      document: { kind: 'happier.workflow', version: 1, definition }, json: expect.any(String) } });
+    if (!result.ok || !result.result || typeof result.result !== 'object' || !('json' in result.result)) throw new Error('missing_export');
+    expect(JSON.parse(String(result.result.json))).toEqual({ kind: 'happier.workflow', version: 1, definition });
+    await expect(createActionExecutor({ workflowAction: executor(true) } as unknown as ActionExecutorDeps)
+      .execute('workflow.definition.export', { definitionId }, { surface: 'mcp' }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'content_unavailable' });
+  });
   it.each([
     ['uncoded server failure', new Error('Failed to fetch artifact'), 'storage_unavailable'],
     ['unknown transport code', Object.assign(new Error('Connection reset'), { code: 'ECONNRESET' }), 'storage_unavailable'],

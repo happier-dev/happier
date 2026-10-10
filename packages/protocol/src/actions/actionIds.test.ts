@@ -11,6 +11,18 @@ import {
 } from './actionIds.js';
 
 describe('ActionIdSchema', () => {
+  it('admits reset-bound Pending set and cancel through the canonical session control family', () => {
+    for (const id of ['session.pending.resetStart.set', 'session.pending.resetStart.cancel']) {
+      expect(ActionIdSchema.safeParse(id).success).toBe(true);
+      expect(ACTION_ID_FAMILIES_V1.session_control).toContain(id);
+    }
+  });
+  it('admits Usage quota and selector reads in the existing Connected Services family', () => {
+    for (const id of ['connectedServices.quota.get', 'connectedServices.pools.selection.get']) {
+      expect(ActionIdSchema.safeParse(id).success).toBe(true);
+      expect(ACTION_ID_FAMILIES_V1.connected_services_configuration).toContain(id);
+    }
+  });
   it('admits the managed Machine creation and recovery family through the host Action vocabulary', () => {
     for (const actionId of ['machines.provisioners.list', 'machines.provisioners.check', 'machines.provisioners.options',
       'machines.managed.acquire', 'machines.managed.list', 'machines.managed.get', 'machines.managed.inspect',

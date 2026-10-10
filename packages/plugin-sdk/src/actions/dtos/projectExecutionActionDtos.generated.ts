@@ -206,6 +206,16 @@ export type ProjectExecutionActionResultById = {
                 errorCode: string;
                 error: string;
                 details?: {
+                    kind: 'no_worker_can_accept';
+                    unavailable: 'primary' | 'ask' | 'fail';
+                    reason: 'empty' | 'no_available_machine' | 'not_accepting' | 'draining' | 'unsupported' | 'forbidden' | 'workspace_unavailable' | 'memory_insufficient' | 'worker_copy_missing';
+                    workerCopy?: {
+                        serverId: string;
+                        sourceWorkspaceRefId: string;
+                        sourceMachineId: string;
+                        targetMachineId: string;
+                    } | undefined;
+                } | {
                     kind: 'pendingApproval';
                     code: 'project_setup_consent_required' | 'project_setup_effect_changed';
                     reviewedEffect: string | number | boolean | readonly JsonValue[] | {
@@ -213,6 +223,13 @@ export type ProjectExecutionActionResultById = {
                     } | null;
                     reviewedEffectDigest: string;
                     consentScope?: 'thisTime' | 'untilChanged' | undefined;
+                } | {
+                    kind: 'pendingApproval';
+                    code: 'project_script_effect_changed';
+                    reviewedEffect: string | number | boolean | readonly JsonValue[] | {
+                        readonly [key: string]: JsonValue;
+                    } | null;
+                    reviewedEffectDigest: string;
                 } | undefined;
             } | undefined;
             domainRef?: {
@@ -222,6 +239,7 @@ export type ProjectExecutionActionResultById = {
                 machineId: string;
                 workspaceRefId: string;
                 cwd: string;
+                lastCleanSyncAtMs?: number | null | undefined;
                 terminalId?: string | undefined;
                 sourceWorkspace?: {
                     serverId: string;
@@ -267,34 +285,34 @@ export type ProjectExecutionActionResultById = {
             } | {
                 kind: 'managedMachine';
                 id: string;
+                controller?: {
+                    machineId: string;
+                    installationId: string;
+                } | undefined;
+                resource?: {
+                    contributionRef: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    schemaVersion: number;
+                    value: PluginJsonValueV2;
+                    devcontainerObservation?: {
+                        nativeResourceId: string;
+                        user: string;
+                        workspaceFolder: string;
+                        storage: {
+                            kind: 'bind';
+                            hostPath: string;
+                            childPath: string;
+                        } | {
+                            kind: 'child';
+                            childPath: string;
+                        };
+                    } | undefined;
+                } | undefined;
                 bootstrapTask?: {
                     id: string;
                     taskKind: 'remote.ssh.bootstrapMachine.v1';
-                    controller?: {
-                        machineId: string;
-                        installationId: string;
-                    } | undefined;
-                    resource?: {
-                        contributionRef: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                        schemaVersion: number;
-                        value: PluginJsonValueV2;
-                        devcontainerObservation?: {
-                            nativeResourceId: string;
-                            user: string;
-                            workspaceFolder: string;
-                            storage: {
-                                kind: 'bind';
-                                hostPath: string;
-                                childPath: string;
-                            } | {
-                                kind: 'child';
-                                childPath: string;
-                            };
-                        } | undefined;
-                    } | undefined;
                 } | undefined;
             } | {
                 kind: 'systemTask';
@@ -304,6 +322,21 @@ export type ProjectExecutionActionResultById = {
                 kind: 'handoff';
                 id: string;
                 targetMachineId?: string | undefined;
+            } | {
+                kind: 'machineEnvironment';
+                serverId: string;
+                machineId: string;
+                preset: {
+                    id: string;
+                    revision: number;
+                };
+                managedId?: string | undefined;
+                terminalId?: string | undefined;
+                terminals?: {
+                    install?: string | undefined;
+                    setup?: string | undefined;
+                } | undefined;
+                exitCode?: number | undefined;
             } | {
                 kind: 'projectService';
                 purpose: 'relocation';
@@ -425,6 +458,16 @@ export type ProjectExecutionActionResultById = {
                 errorCode: string;
                 error: string;
                 details?: {
+                    kind: 'no_worker_can_accept';
+                    unavailable: 'primary' | 'ask' | 'fail';
+                    reason: 'empty' | 'no_available_machine' | 'not_accepting' | 'draining' | 'unsupported' | 'forbidden' | 'workspace_unavailable' | 'memory_insufficient' | 'worker_copy_missing';
+                    workerCopy?: {
+                        serverId: string;
+                        sourceWorkspaceRefId: string;
+                        sourceMachineId: string;
+                        targetMachineId: string;
+                    } | undefined;
+                } | {
                     kind: 'pendingApproval';
                     code: 'project_setup_consent_required' | 'project_setup_effect_changed';
                     reviewedEffect: string | number | boolean | readonly JsonValue[] | {
@@ -432,6 +475,13 @@ export type ProjectExecutionActionResultById = {
                     } | null;
                     reviewedEffectDigest: string;
                     consentScope?: 'thisTime' | 'untilChanged' | undefined;
+                } | {
+                    kind: 'pendingApproval';
+                    code: 'project_script_effect_changed';
+                    reviewedEffect: string | number | boolean | readonly JsonValue[] | {
+                        readonly [key: string]: JsonValue;
+                    } | null;
+                    reviewedEffectDigest: string;
                 } | undefined;
             } | undefined;
             domainRef?: {
@@ -441,6 +491,7 @@ export type ProjectExecutionActionResultById = {
                 machineId: string;
                 workspaceRefId: string;
                 cwd: string;
+                lastCleanSyncAtMs?: number | null | undefined;
                 terminalId?: string | undefined;
                 sourceWorkspace?: {
                     serverId: string;
@@ -486,34 +537,34 @@ export type ProjectExecutionActionResultById = {
             } | {
                 kind: 'managedMachine';
                 id: string;
+                controller?: {
+                    machineId: string;
+                    installationId: string;
+                } | undefined;
+                resource?: {
+                    contributionRef: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    schemaVersion: number;
+                    value: PluginJsonValueV2;
+                    devcontainerObservation?: {
+                        nativeResourceId: string;
+                        user: string;
+                        workspaceFolder: string;
+                        storage: {
+                            kind: 'bind';
+                            hostPath: string;
+                            childPath: string;
+                        } | {
+                            kind: 'child';
+                            childPath: string;
+                        };
+                    } | undefined;
+                } | undefined;
                 bootstrapTask?: {
                     id: string;
                     taskKind: 'remote.ssh.bootstrapMachine.v1';
-                    controller?: {
-                        machineId: string;
-                        installationId: string;
-                    } | undefined;
-                    resource?: {
-                        contributionRef: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                        schemaVersion: number;
-                        value: PluginJsonValueV2;
-                        devcontainerObservation?: {
-                            nativeResourceId: string;
-                            user: string;
-                            workspaceFolder: string;
-                            storage: {
-                                kind: 'bind';
-                                hostPath: string;
-                                childPath: string;
-                            } | {
-                                kind: 'child';
-                                childPath: string;
-                            };
-                        } | undefined;
-                    } | undefined;
                 } | undefined;
             } | {
                 kind: 'systemTask';
@@ -523,6 +574,21 @@ export type ProjectExecutionActionResultById = {
                 kind: 'handoff';
                 id: string;
                 targetMachineId?: string | undefined;
+            } | {
+                kind: 'machineEnvironment';
+                serverId: string;
+                machineId: string;
+                preset: {
+                    id: string;
+                    revision: number;
+                };
+                managedId?: string | undefined;
+                terminalId?: string | undefined;
+                terminals?: {
+                    install?: string | undefined;
+                    setup?: string | undefined;
+                } | undefined;
+                exitCode?: number | undefined;
             } | {
                 kind: 'projectService';
                 purpose: 'relocation';
@@ -644,6 +710,16 @@ export type ProjectExecutionActionResultById = {
                 errorCode: string;
                 error: string;
                 details?: {
+                    kind: 'no_worker_can_accept';
+                    unavailable: 'primary' | 'ask' | 'fail';
+                    reason: 'empty' | 'no_available_machine' | 'not_accepting' | 'draining' | 'unsupported' | 'forbidden' | 'workspace_unavailable' | 'memory_insufficient' | 'worker_copy_missing';
+                    workerCopy?: {
+                        serverId: string;
+                        sourceWorkspaceRefId: string;
+                        sourceMachineId: string;
+                        targetMachineId: string;
+                    } | undefined;
+                } | {
                     kind: 'pendingApproval';
                     code: 'project_setup_consent_required' | 'project_setup_effect_changed';
                     reviewedEffect: string | number | boolean | readonly JsonValue[] | {
@@ -651,6 +727,13 @@ export type ProjectExecutionActionResultById = {
                     } | null;
                     reviewedEffectDigest: string;
                     consentScope?: 'thisTime' | 'untilChanged' | undefined;
+                } | {
+                    kind: 'pendingApproval';
+                    code: 'project_script_effect_changed';
+                    reviewedEffect: string | number | boolean | readonly JsonValue[] | {
+                        readonly [key: string]: JsonValue;
+                    } | null;
+                    reviewedEffectDigest: string;
                 } | undefined;
             } | undefined;
             domainRef?: {
@@ -660,6 +743,7 @@ export type ProjectExecutionActionResultById = {
                 machineId: string;
                 workspaceRefId: string;
                 cwd: string;
+                lastCleanSyncAtMs?: number | null | undefined;
                 terminalId?: string | undefined;
                 sourceWorkspace?: {
                     serverId: string;
@@ -705,34 +789,34 @@ export type ProjectExecutionActionResultById = {
             } | {
                 kind: 'managedMachine';
                 id: string;
+                controller?: {
+                    machineId: string;
+                    installationId: string;
+                } | undefined;
+                resource?: {
+                    contributionRef: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    schemaVersion: number;
+                    value: PluginJsonValueV2;
+                    devcontainerObservation?: {
+                        nativeResourceId: string;
+                        user: string;
+                        workspaceFolder: string;
+                        storage: {
+                            kind: 'bind';
+                            hostPath: string;
+                            childPath: string;
+                        } | {
+                            kind: 'child';
+                            childPath: string;
+                        };
+                    } | undefined;
+                } | undefined;
                 bootstrapTask?: {
                     id: string;
                     taskKind: 'remote.ssh.bootstrapMachine.v1';
-                    controller?: {
-                        machineId: string;
-                        installationId: string;
-                    } | undefined;
-                    resource?: {
-                        contributionRef: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                        schemaVersion: number;
-                        value: PluginJsonValueV2;
-                        devcontainerObservation?: {
-                            nativeResourceId: string;
-                            user: string;
-                            workspaceFolder: string;
-                            storage: {
-                                kind: 'bind';
-                                hostPath: string;
-                                childPath: string;
-                            } | {
-                                kind: 'child';
-                                childPath: string;
-                            };
-                        } | undefined;
-                    } | undefined;
                 } | undefined;
             } | {
                 kind: 'systemTask';
@@ -742,6 +826,21 @@ export type ProjectExecutionActionResultById = {
                 kind: 'handoff';
                 id: string;
                 targetMachineId?: string | undefined;
+            } | {
+                kind: 'machineEnvironment';
+                serverId: string;
+                machineId: string;
+                preset: {
+                    id: string;
+                    revision: number;
+                };
+                managedId?: string | undefined;
+                terminalId?: string | undefined;
+                terminals?: {
+                    install?: string | undefined;
+                    setup?: string | undefined;
+                } | undefined;
+                exitCode?: number | undefined;
             } | {
                 kind: 'projectService';
                 purpose: 'relocation';

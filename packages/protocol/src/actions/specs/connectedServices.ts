@@ -1,5 +1,8 @@
 import type { ActionInputFieldHint, PreNormalizedActionSpec } from '../actionSpecs.js';
-import { CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1 as inputs, CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 as outputs } from '../../connect/configurationActionsV1.js';
+import { redactObservationInputPaths } from './observationRedaction.js';
+import { CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1 as inputs, CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 as outputs,
+  isConnectedServiceConfigurationMachineRequiredV1 } from '../../connect/configurationActionsV1.js';
+import { projectConnectedAccountAuthenticationObservation } from '../../connect/authenticationActionsV1.js';
 
 const common = {
   safety: 'danger', sideEffectClass: 'write', requiredAuthority: 'account_automation', executionPlacement: 'account',
@@ -9,6 +12,11 @@ const common = {
   cli: { commands: [], acceptsServerId: true },
 } satisfies Pick<PreNormalizedActionSpec, 'safety' | 'sideEffectClass' | 'requiredAuthority' | 'executionPlacement' | 'placements' | 'surfaces' | 'cli'>;
 const { cli: _cli, ...clientOnlyCommon } = common;
+const authentication = { ...common, executionPlacement: 'machine', sideEffectClass: 'external',
+  approvalResultCustody: 'live_only', projectObservationOutput: projectConnectedAccountAuthenticationObservation,
+} satisfies Partial<PreNormalizedActionSpec>;
+const authenticationMachineField = { path: 'machineId', title: 'Authentication machine', widget: 'text', required: true } as const;
+const authenticationAttemptFields = [authenticationMachineField, { path: 'attemptId', title: 'Exact authentication attempt', widget: 'text', required: true }] satisfies readonly ActionInputFieldHint[];
 const memberFields = [
   { path: 'group', title: 'Qualified pool', widget: 'json', required: true },
   { path: 'expectedGeneration', title: 'Expected pool generation', widget: 'text', required: true },
@@ -17,6 +25,78 @@ const memberFields = [
   { path: 'expectedRuntimeStateRevision', title: 'Expected runtime revision', widget: 'text' },
 ] satisfies readonly ActionInputFieldHint[];
 export const CONNECTED_SERVICE_CONFIGURATION_ACTION_SPECS = [
+  { ...authentication, id: 'connectedServices.authentication.beginConnect', title: 'Connect account', description: 'Begin the exact service authentication mode on this machine. Human OAuth, device and credential steps stay on their live continuation.',
+    bindings: { mcpToolName: 'connected_services_authentication_begin_connect' }, inputSchema: inputs['connectedServices.authentication.beginConnect'], outputSchema: outputs['connectedServices.authentication.beginConnect'], inputHints: { fields: [authenticationMachineField,
+      { path: 'service', title: 'Qualified service', widget: 'json', required: true }, { path: 'modeId', title: 'Authentication mode', widget: 'text', required: true }, { path: 'expectedConfigurationRevision', title: 'Expected configuration revision', widget: 'text' }] } },
+  { ...authentication, id: 'connectedServices.authentication.beginReconnect', title: 'Reconnect account', description: 'Begin reconnecting the exact qualified account through its daemon authentication owner.',
+    bindings: { mcpToolName: 'connected_services_authentication_begin_reconnect' }, inputSchema: inputs['connectedServices.authentication.beginReconnect'], outputSchema: outputs['connectedServices.authentication.beginReconnect'], inputHints: { fields: [authenticationMachineField,
+      { path: 'account', title: 'Qualified account', widget: 'json', required: true }, { path: 'expectedConfigurationRevision', title: 'Expected configuration revision', widget: 'text' }] } },
+  { ...authentication, id: 'connectedServices.authentication.continueConnect', title: 'Continue account connection', description: 'Continue the exact existing attempt after its reviewed configuration changes.',
+    bindings: { mcpToolName: 'connected_services_authentication_continue_connect' }, inputSchema: inputs['connectedServices.authentication.continueConnect'], outputSchema: outputs['connectedServices.authentication.continueConnect'], inputHints: { fields: [...authenticationAttemptFields,
+      { path: 'expectedConfigurationRevision', title: 'Expected configuration revision', widget: 'text' }] } },
+  { ...authentication, id: 'connectedServices.authentication.submitManual', title: 'Submit account credentials', description: 'Submit live-only credentials to the exact manual authentication attempt. Durable approvals and observations retain only the target.',
+    approvalInputCustody: 'live_only', projectObservationInput: redactObservationInputPaths('fields'),
+    bindings: { mcpToolName: 'connected_services_authentication_submit_manual' }, inputSchema: inputs['connectedServices.authentication.submitManual'], outputSchema: outputs['connectedServices.authentication.submitManual'], inputHints: { fields: [...authenticationAttemptFields,
+      { path: 'fields', title: 'Live credential fields', widget: 'json', required: true }] } },
+  { ...authentication, id: 'connectedServices.authentication.completeOAuth', title: 'Complete account OAuth', description: 'Deliver the human OAuth callback to the exact attempt. Callback codes and state remain in live-only custody.',
+    approvalInputCustody: 'live_only', projectObservationInput: redactObservationInputPaths('completion'),
+    bindings: { mcpToolName: 'connected_services_authentication_complete_oauth' }, inputSchema: inputs['connectedServices.authentication.completeOAuth'], outputSchema: outputs['connectedServices.authentication.completeOAuth'], inputHints: { fields: [...authenticationAttemptFields,
+      { path: 'completion', title: 'Live OAuth callback', widget: 'json', required: true }] } },
+  { ...authentication, id: 'connectedServices.authentication.pollDevice', title: 'Check device authentication', description: 'Poll the exact daemon-owned device authentication attempt after its human step.',
+    bindings: { mcpToolName: 'connected_services_authentication_poll_device' }, inputSchema: inputs['connectedServices.authentication.pollDevice'], outputSchema: outputs['connectedServices.authentication.pollDevice'], inputHints: { fields: authenticationAttemptFields } },
+  { ...authentication, id: 'connectedServices.authentication.resumeDevice', title: 'Resume device authentication', description: 'Resume the exact persisted device attempt through its existing daemon lifecycle.',
+    bindings: { mcpToolName: 'connected_services_authentication_resume_device' }, inputSchema: inputs['connectedServices.authentication.resumeDevice'], outputSchema: outputs['connectedServices.authentication.resumeDevice'], inputHints: { fields: authenticationAttemptFields } },
+  { ...authentication, id: 'connectedServices.authentication.reconcile', title: 'Reconcile account authentication', description: 'Verify the outcome of the exact uncertain attempt through its provider-native reconciliation owner.',
+    bindings: { mcpToolName: 'connected_services_authentication_reconcile' }, inputSchema: inputs['connectedServices.authentication.reconcile'], outputSchema: outputs['connectedServices.authentication.reconcile'], inputHints: { fields: authenticationAttemptFields } },
+  { ...authentication, id: 'connectedServices.authentication.cancel', title: 'Cancel account authentication', description: 'Cancel and clean up only the exact daemon-owned authentication attempt.',
+    bindings: { mcpToolName: 'connected_services_authentication_cancel' }, inputSchema: inputs['connectedServices.authentication.cancel'], outputSchema: outputs['connectedServices.authentication.cancel'], inputHints: { fields: authenticationAttemptFields } },
+  { ...authentication, id: 'connectedServices.authentication.read', safety: 'safe', sideEffectClass: 'read', title: 'Read account authentication', description: 'Read the exact attempt without starting another authentication flow. Human authorization details remain live-only.',
+    bindings: { mcpToolName: 'connected_services_authentication_read' }, inputSchema: inputs['connectedServices.authentication.read'], outputSchema: outputs['connectedServices.authentication.read'], inputHints: { fields: [...authenticationAttemptFields,
+      { path: 'restoreKind', title: 'Restore OAuth continuation', widget: 'text' }] } },
+  { ...common, id: 'connectedServices.authentication.pending.list', executionPlacement: 'machine', safety: 'safe', sideEffectClass: 'read', title: 'List pending account authentication', description: 'List resumable attempts for the exact qualified service on this machine without beginning or resuming them.',
+    bindings: { mcpToolName: 'connected_services_authentication_pending_list' }, inputSchema: inputs['connectedServices.authentication.pending.list'], outputSchema: outputs['connectedServices.authentication.pending.list'], inputHints: { fields: [authenticationMachineField,
+      { path: 'service', title: 'Qualified service', widget: 'json', required: true }] } },
+  { ...common, id: 'connectedServices.subscription.price.set', title: 'Set entered subscription price',
+    description: 'Set or clear your monthly amount and currency for this qualified connected account. This is labelled you entered, never a provider payment or list-price fact.',
+    bindings: { mcpToolName: 'connected_services_subscription_price_set' }, inputSchema: inputs['connectedServices.subscription.price.set'],
+    outputSchema: outputs['connectedServices.subscription.price.set'], inputHints: { fields: [
+      { path: 'account', title: 'Qualified account', widget: 'json', required: true },
+      { path: 'price', title: 'Monthly amount and currency, or null to clear', widget: 'json', required: true },
+    ] } },
+  { ...common, id: 'connectedServices.configuration.get', safety: 'safe', sideEffectClass: 'read', title: 'Read connected-service configuration',
+    executionPlacementForInput: input => isConnectedServiceConfigurationMachineRequiredV1('connectedServices.configuration.get', input) ? 'machine' : 'account',
+    description: 'Read Account-owned service configuration, or an exact machine account or attempt, without credential disclosure.',
+    bindings: { mcpToolName: 'connected_services_configuration_get' }, inputSchema: inputs['connectedServices.configuration.get'],
+    outputSchema: outputs['connectedServices.configuration.get'], inputHints: { fields: [
+      { path: 'service', title: 'Qualified service', widget: 'json' }, { path: 'modeId', title: 'Authentication mode', widget: 'text' },
+      { path: 'machineId', title: 'Exact configuration machine', widget: 'text' }, { path: 'target', title: 'Account or attempt target', widget: 'json' },
+    ] } },
+  { ...common, id: 'connectedServices.configuration.replace', title: 'Replace connected-service configuration',
+    executionPlacementForInput: input => isConnectedServiceConfigurationMachineRequiredV1('connectedServices.configuration.replace', input) ? 'machine' : 'account',
+    approvalInputCustody: 'live_only', projectObservationInput: redactObservationInputPaths('values', 'secretValues'),
+    description: 'Replace the exact service, account or attempt configuration revision through its incumbent owner, committing new SavedSecrets and references atomically.',
+    bindings: { mcpToolName: 'connected_services_configuration_replace' }, inputSchema: inputs['connectedServices.configuration.replace'],
+    outputSchema: outputs['connectedServices.configuration.replace'], inputHints: { fields: [
+      { path: 'service', title: 'Qualified service', widget: 'json' }, { path: 'modeId', title: 'Authentication mode', widget: 'text' },
+      { path: 'machineId', title: 'Exact configuration machine', widget: 'text' }, { path: 'target', title: 'Account or attempt target', widget: 'json' },
+      { path: 'expectedRevision', title: 'Expected configuration revision', widget: 'text' }, { path: 'values', title: 'Configuration', widget: 'json', required: true },
+      { path: 'secretValues', title: 'Secret replacements', widget: 'json', required: true },
+    ] } },
+  { ...clientOnlyCommon, id: 'connectedServices.billing.open', safety: 'safe', sideEffectClass: 'read', executionPlacement: 'client',
+    surfaces: { ui: true, voice: false, agent: true, mcp: false, cli: false, rpc: false }, title: 'Open provider billing',
+    description: 'Open the admitted provider billing destination on this client. This never cancels, upgrades, pays or changes a subscription. Verify the account signed into the provider.',
+    bindings: {}, inputSchema: inputs['connectedServices.billing.open'], outputSchema: outputs['connectedServices.billing.open'], inputHints: { fields: [
+      { path: 'account', title: 'Qualified account', widget: 'json', required: true }, { path: 'machineId', title: 'Catalog machine', widget: 'text', required: true },
+    ] } },
+  { ...common, id: 'connectedServices.quota.get', safety: 'safe', sideEffectClass: 'read', title: 'Read connected-service quota', description: 'Read the current accepted quota, requested history, witnessed pace and advisory targets without refreshing the provider.', bindings: { mcpToolName: 'connected_services_quota_get' }, inputSchema: inputs['connectedServices.quota.get'], outputSchema: outputs['connectedServices.quota.get'], inputHints: { fields: [
+    { path: 'source', title: 'Qualified usage source', widget: 'json', required: true },
+    { path: 'history', title: 'Requested history range and page', widget: 'json' },
+  ] } },
+  { ...common, id: 'connectedServices.pools.selection.get', safety: 'safe', sideEffectClass: 'read', executionPlacement: 'machine', title: 'Read connected-service pool selection', description: 'Read the current daemon selector decision and its comparator order without switching accounts.', bindings: { mcpToolName: 'connected_services_pools_selection_get' }, inputSchema: inputs['connectedServices.pools.selection.get'], outputSchema: outputs['connectedServices.pools.selection.get'], inputHints: { fields: [
+    { path: 'machineId', title: 'Machine id', widget: 'text', required: true },
+    { path: 'group', title: 'Qualified pool', widget: 'json', required: true },
+    { path: 'providerLimitId', title: 'Provider limit', widget: 'text' },
+  ] } },
   { ...common, id: 'connectedServices.accounts.revoke', executionPlacement: 'machine', sideEffectClass: 'danger', surfaces: { ...common.surfaces, voice: true }, title: 'Revoke connected account', description: 'Review and revoke the exact qualified account through its current daemon owner. Ordinary removal discloses retained resource dependencies; explicit emergency revocation keeps its existing semantics.', bindings: { mcpToolName: 'connected_services_accounts_revoke' }, inputSchema: inputs['connectedServices.accounts.revoke'], outputSchema: outputs['connectedServices.accounts.revoke'], inputHints: { fields: [
     { path: 'account', title: 'Qualified account', widget: 'json', required: true },
     { path: 'expectedCredentialRevision', title: 'Presented credential revision', widget: 'text' },
@@ -31,6 +111,28 @@ export const CONNECTED_SERVICE_CONFIGURATION_ACTION_SPECS = [
     { path: 'makeDefault', title: 'Use this account', widget: 'boolean', required: true },
     { path: 'machineId', title: 'Catalog machine', widget: 'text' },
   ] } },
+  { ...common, id: 'connectedServices.accounts.purposeDefault.set', title: 'Choose Agent sign-in default',
+    description: 'Choose an exact connected account, pool, shared resource or the Agent own login for its declared purposes of one service.',
+    bindings: { mcpToolName: 'connected_services_accounts_purpose_default_set' },
+    inputSchema: inputs['connectedServices.accounts.purposeDefault.set'], outputSchema: outputs['connectedServices.accounts.purposeDefault.set'],
+    inputHints: { fields: [
+      { path: 'agentId', title: 'Agent id', widget: 'text', required: true },
+      { path: 'service', title: 'Qualified service', widget: 'json', required: true },
+      { path: 'purpose', title: 'Declared purpose (all service purposes when omitted)', widget: 'text' },
+      { path: 'selection', title: 'Sign-in selection', widget: 'json', required: true },
+      { path: 'teamId', title: 'Shared-resource Team', widget: 'text' },
+      { path: 'machineId', title: 'Catalog machine', widget: 'text' },
+      { path: 'onlyIfUnset', title: 'Keep an intervening default', widget: 'boolean' },
+    ] } },
+  { ...common, id: 'connectedServices.purposes.default.set', title: 'Choose Resource connected-account default',
+    description: 'Choose the active personal account or pool for one purpose declared by the installed Resource on the selected machine.',
+    bindings: { mcpToolName: 'connected_services_purposes_default_set' },
+    inputSchema: inputs['connectedServices.purposes.default.set'], outputSchema: outputs['connectedServices.purposes.default.set'],
+    inputHints: { fields: [
+      { path: 'machineId', title: 'Declaration machine', widget: 'text', required: true },
+      { path: 'purpose', title: 'Qualified Resource purpose', widget: 'json', required: true },
+      { path: 'target', title: 'Qualified account or pool', widget: 'json', required: true },
+    ] } },
   { ...common, id: 'connectedServices.pools.create', title: 'Create connected-service pool', description: 'Create a pool through the qualified Connected Account owner.', bindings: { mcpToolName: 'connected_services_pools_create' }, inputSchema: inputs['connectedServices.pools.create'], outputSchema: outputs['connectedServices.pools.create'], inputHints: { fields: [
     { path: 'service', title: 'Qualified service', widget: 'json', required: true },
     { path: 'group', title: 'New pool identity, name and policy', widget: 'json', required: true },
@@ -64,4 +166,10 @@ export const CONNECTED_SERVICE_CONFIGURATION_ACTION_SPECS = [
   { ...common, id: 'connectedServices.quota.reset', executionPlacement: 'machine', title: 'Use connected-service quota reset', description: 'Spend one usage reset through the existing machine recovery-credit operation.', bindings: { mcpToolName: 'connected_services_quota_reset' }, inputSchema: inputs['connectedServices.quota.reset'], outputSchema: outputs['connectedServices.quota.reset'], inputHints: { fields: [{ path: 'machineId', title: 'Machine id', widget: 'text', required: true }, { path: 'serviceId', title: 'Legacy service id', widget: 'text', required: true }, { path: 'profileId', title: 'Account id', widget: 'text', required: true }, { path: 'providerCreditId', title: 'Reset credit id', widget: 'text' }, { path: 'sourceSnapshotFetchedAtMs', title: 'Usage snapshot timestamp', widget: 'text' }] } },
   { ...common, id: 'connectedServices.quota.refresh', safety: 'safe', title: 'Refresh connected-account quota', description: 'Request a quota refresh for one qualified account through its Home after the selected machine admits the quota-refresh operation.', bindings: { mcpToolName: 'connected_services_quota_refresh' }, inputSchema: inputs['connectedServices.quota.refresh'], outputSchema: outputs['connectedServices.quota.refresh'], inputHints: { fields: [{ path: 'account', title: 'Qualified account', widget: 'json', required: true }, { path: 'machineId', title: 'Admission machine id', widget: 'text', required: true }] } },
   { ...clientOnlyCommon, id: 'connectedServices.identityPrivacy.set', title: 'Hide connected-account identities', description: 'Change identity masking on this app device. It never writes Account settings or changes another device.', safety: 'safe', requiredAuthority: 'account_automation', executionPlacement: 'client', surfaces: { ui: true, voice: false, agent: true, mcp: false, cli: false, rpc: false }, inputSchema: inputs['connectedServices.identityPrivacy.set'], outputSchema: outputs['connectedServices.identityPrivacy.set'], inputHints: { fields: [{ path: 'hidden', title: 'Hide emails and ids', widget: 'boolean', required: true }] } },
+  { ...common, id: 'connectedServices.acknowledgements.set', safety: 'safe', title: 'Acknowledge Connected guidance', description: 'Set the exact Account or Machine warning, or qualified Agent pool adoption acknowledgement.', bindings: { mcpToolName: 'connected_services_acknowledgements_set' }, inputSchema: inputs['connectedServices.acknowledgements.set'], outputSchema: outputs['connectedServices.acknowledgements.set'], inputHints: { fields: [{ path: 'subject', title: 'Qualified acknowledgement subject', widget: 'json', required: true }, { path: 'acknowledged', title: 'Acknowledged', widget: 'boolean', required: true }] } },
+  { ...common, id: 'connectedServices.labels.set', safety: 'safe', title: 'Label Connected entity', description: 'Set the personal display label for one qualified connected account or pool without changing credentials or the pool definition.', bindings: { mcpToolName: 'connected_services_labels_set' }, inputSchema: inputs['connectedServices.labels.set'], outputSchema: outputs['connectedServices.labels.set'], inputHints: { fields: [{ path: 'subject', title: 'Qualified connected entity', widget: 'json', required: true }, { path: 'label', title: 'Personal label', widget: 'text', required: true }] } },
+  { ...common, id: 'connectedServices.labels.reset', safety: 'safe', title: 'Reset Connected label', description: 'Clear only one qualified account or pool personal label, retaining its credential and definition name.', bindings: { mcpToolName: 'connected_services_labels_reset' }, inputSchema: inputs['connectedServices.labels.reset'], outputSchema: outputs['connectedServices.labels.reset'], inputHints: { fields: [{ path: 'subject', title: 'Qualified connected entity', widget: 'json', required: true }] } },
+  { ...common, id: 'connectedServices.acknowledgements.reset', safety: 'safe', title: 'Reset Connected acknowledgement', description: 'Remove only the exact qualified acknowledgement, allowing its guidance to appear again.', bindings: { mcpToolName: 'connected_services_acknowledgements_reset' }, inputSchema: inputs['connectedServices.acknowledgements.reset'], outputSchema: outputs['connectedServices.acknowledgements.reset'], inputHints: { fields: [{ path: 'subject', title: 'Qualified acknowledgement subject', widget: 'json', required: true }] } },
+  { ...clientOnlyCommon, id: 'connectedServices.disclosure.set', safety: 'safe', title: 'Set Connected disclosure', description: 'Expand or collapse an exact connected account or pool member on this device only.', executionPlacement: 'client', surfaces: { ui: true, voice: false, agent: true, mcp: false, cli: false, rpc: false }, inputSchema: inputs['connectedServices.disclosure.set'], outputSchema: outputs['connectedServices.disclosure.set'], inputHints: { fields: [{ path: 'subject', title: 'Qualified disclosure subject', widget: 'json', required: true }, { path: 'collapsed', title: 'Collapsed', widget: 'boolean', required: true }] } },
+  { ...clientOnlyCommon, id: 'connectedServices.disclosure.reset', safety: 'safe', title: 'Reset Connected disclosure', description: 'Restore the default disclosure for one connected account or pool member on this device only.', executionPlacement: 'client', surfaces: { ui: true, voice: false, agent: true, mcp: false, cli: false, rpc: false }, inputSchema: inputs['connectedServices.disclosure.reset'], outputSchema: outputs['connectedServices.disclosure.reset'], inputHints: { fields: [{ path: 'subject', title: 'Qualified disclosure subject', widget: 'json', required: true }] } },
 ] as const satisfies readonly PreNormalizedActionSpec[];

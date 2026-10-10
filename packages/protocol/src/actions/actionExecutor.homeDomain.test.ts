@@ -199,9 +199,8 @@ describe('createActionExecutor (Home governance and Teams)', () => {
     expect(JSON.stringify(storedRequest)).not.toContain(encryptedDataKey);
   });
 
-  it.each(['reject', 'canceled'] as const)(
-    'scrubs a %s blocking approval input to the Action observation projection',
-    async (outcome) => {
+  it('scrubs a rejected deferred GitHub App approval input to the Action observation projection',
+    async () => {
       const privateKey = 'BEGIN-RSA-PRIVATE-KEY-material';
       const input = {
         owner: { kind: 'home' as const },
@@ -229,10 +228,6 @@ describe('createActionExecutor (Home governance and Teams)', () => {
           persisted.push(stored);
           return { ok: true as const };
         },
-        approvalsWaitForDecision: async ({ request }: { request: ApprovalRequest }) => ({
-          decision: outcome,
-          request,
-        }),
         isApprovalExecutionOriginCurrent: async () => true,
       } as unknown as ActionExecutorDeps);
 
@@ -244,13 +239,25 @@ describe('createActionExecutor (Home governance and Teams)', () => {
         actionRequestId: 'request-blocking-github-app',
         actionCaller: { kind: 'host' },
       })).resolves.toMatchObject({
-        ok: false,
-        errorCode: outcome === 'reject' ? 'approval_rejected' : 'approval_canceled',
+        ok: true,
+        result: { kind: 'approval_request_created', artifactId: 'approval-blocking-github-app' },
       });
+
+      expect(persisted.at(-1)?.actionArgs).toMatchObject({ secrets: { privateKey } });
+      await expect(executor.execute('approval.request.decide', {
+        artifactId: 'approval-blocking-github-app',
+        decision: 'reject',
+      }, {
+        surface: 'ui',
+        authority: 'present_user',
+        serverId: 'home-1',
+        runtimeAccountId: 'account-1',
+        actionCaller: { kind: 'host' },
+      })).resolves.toMatchObject({ ok: true });
 
       expect(homeDomainAction).not.toHaveBeenCalled();
       const settled = persisted.at(-1);
-      expect(settled?.status).toBe(outcome === 'reject' ? 'rejected' : 'canceled');
+      expect(settled?.status).toBe('rejected');
       expect(settled?.actionArgs).toEqual({
         owner: { kind: 'home' },
         githubHost: 'https://github.com',
@@ -710,19 +717,58 @@ describe('createActionExecutor (Home governance and Teams)', () => {
       recipientEmail: null,
       requestKey: 'request-reissue',
     }],
-  ] as const)('does not expose %s as an autonomous Agent invocation', async (actionId, input) => {
-    const homeDomainAction = vi.fn(async () => ({}));
+  ] as const)('keeps %s agent results safe and delivers its live bearer only to the approving UI on every call', async (actionId, input) => {
+    const invitation = {
+      id: 'invitation-1', teamId: 'team-1', state: 'active' as const,
+      role: 'member' as const, historyAccess: 'from_membership' as const,
+      recipientEmailMask: null, expiresAt: 2, createdAt: 1,
+      createdByAccountId: 'account-1', acceptedByAccountId: null, lastEmailDelivery: null,
+    };
+    const joinUrl = 'https://home.example/join/live-human-only-bearer';
+    const output = actionId === 'teams.invitations.create' ? { invitation, joinUrl }
+      : { previous: { ...invitation, state: 'revoked' as const }, replacement: invitation, joinUrl };
+    let stored: ApprovalRequest | null = null;
+    const persisted: ApprovalRequest[] = [];
+    const homeDomainAction = vi.fn(async () => output);
     const executor = createActionExecutor({
       homeDomainAction,
+      approvalsCreate: async ({ request }: { request: ApprovalRequest }) => {
+        stored = ApprovalRequestV2Schema.parse(request);
+        persisted.push(stored);
+        return { artifactId: 'invitation-approval' };
+      },
+      approvalsGet: async () => stored,
+      approvalsUpdate: async ({ request }: { request: ApprovalRequest }) => {
+        const transition = transitionStoredApproval(stored, request);
+        if (!transition.ok) return transition;
+        stored = ApprovalRequestV2Schema.parse(request);
+        persisted.push(stored);
+        return { ok: true as const };
+      },
+      isApprovalExecutionOriginCurrent: async () => true,
       isActionApprovalRequired: () => false,
     } as unknown as ActionExecutorDeps);
 
-    await expect(executor.execute(actionId, input, {
-      surface: 'agent',
-      authority: 'account_automation',
-      actionCaller: { kind: 'host' },
-    })).resolves.toMatchObject({ ok: false, errorCode: 'action_disabled' });
-    expect(homeDomainAction).not.toHaveBeenCalled();
+    for (const surface of ['agent', 'mcp'] as const) {
+      const requester = { surface, authority: 'account_automation' as const, serverId: 'home-1',
+        runtimeAccountId: 'account-1', actionRequestId: `request-${surface}`,
+        actionCaller: { kind: 'host' as const } };
+      const result = await executor.execute(actionId, input, requester);
+      expect(result).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+      expect(JSON.stringify(result)).not.toContain(joinUrl);
+      expect(homeDomainAction).toHaveBeenCalledTimes(surface === 'agent' ? 0 : 1);
+      const decision = await executor.execute('approval.request.decide', {
+        artifactId: 'invitation-approval', decision: 'approve',
+      }, { surface: 'ui', authority: 'present_user', serverId: 'home-1', runtimeAccountId: 'account-1',
+        actionCaller: { kind: 'host' } });
+      expect(decision).toMatchObject({ ok: true, result: { liveExecution: { ok: true, result: output } } });
+      const observed = await executor.execute('approval.request.get', { artifactId: 'invitation-approval' }, requester);
+      expect(observed.ok).toBe(true);
+      expect(JSON.stringify(observed)).not.toContain(joinUrl);
+      expect(persisted.at(-1)?.execution).toMatchObject({ ok: true, result: { joinUrl: null } });
+      expect(JSON.stringify(persisted)).not.toContain(joinUrl);
+    }
+    expect(homeDomainAction).toHaveBeenCalledTimes(2);
   });
 
   it.each([

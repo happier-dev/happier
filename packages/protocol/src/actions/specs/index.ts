@@ -23,6 +23,8 @@ import {
   LOCAL_SERVICES_RUNTIME_ACTION_OUTPUT_SCHEMAS,
   LOCAL_SERVICES_RUNTIME_ACTION_SPEC_FAMILY,
   LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS,
+  createLocalServiceActionCliProjection,
+  resolveLocalServiceDomainActionRpcBinding,
   resolveLocalServiceActionKindForRuntimeActionId,
 } from './localServices.js';
 import {
@@ -126,7 +128,10 @@ function createRuntimeActionSpecFor<
   const controlRpcMethod = Object.hasOwn(LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS, actionId)
     ? LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS[actionId as keyof typeof LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS] : undefined;
   const controlKind = resolveLocalServiceActionKindForRuntimeActionId(actionId);
-  const requiresAnsweringClient = controlKind === 'copy_url' || controlKind === 'open_preview';
+  const requiresAnsweringClient = controlKind === 'copy_url' || controlKind === 'open_preview'
+    || actionId === 'localServices.launcher.openPreview' || actionId === 'localServices.publicPreview.copyUrl';
+  const domainRpc = resolveLocalServiceDomainActionRpcBinding(actionId);
+  const serviceCli = createLocalServiceActionCliProjection(actionId);
   return {
     id: actionId,
     title,
@@ -135,12 +140,16 @@ function createRuntimeActionSpecFor<
     placements: [],
     surfaces: {
       ...resolveRuntimeActionSurfaces(actionId),
-      ...(actionId === 'localServices.launcher.start' || controlRpcMethod ? { rpc: true, cli: !requiresAnsweringClient, voice: !requiresAnsweringClient } : {}),
-      ...(actionId === 'localServices.launcher.start' || (controlRpcMethod && !requiresAnsweringClient) ? { mcp: true } : {}),
+      ...(actionId === 'localServices.launcher.start' || controlRpcMethod ? { rpc: !requiresAnsweringClient, cli: !requiresAnsweringClient, voice: !requiresAnsweringClient } : {}),
+      ...(domainRpc ? { cli: true, voice: true } : {}),
+      ...(actionId === 'localServices.launcher.start' || domainRpc || (controlRpcMethod && !requiresAnsweringClient) ? { mcp: true } : {}),
     },
     sideEffectClass,
     outputSchema: params.outputSchema,
     inputSchema: params.inputSchema,
+    ...(serviceCli ? { cli: serviceCli } : {}),
+    ...(domainRpc ? { executionPlacement: 'machine' as const, bindings: { rpcMethod: domainRpc.rpcMethod,
+      voiceClientToolName: actionId.replaceAll('.', '_'), mcpToolName: actionId.replaceAll('.', '_') } } : {}),
     ...(actionId === 'localServices.launcher.start' ? {
       executionPlacement: 'machine' as const,
       bindings: { rpcMethod: RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_START, voiceClientToolName: actionId.replaceAll('.', '_'),
@@ -149,6 +158,7 @@ function createRuntimeActionSpecFor<
     ...(controlRpcMethod ? { executionPlacement: 'machine' as const, bindings: { rpcMethod: controlRpcMethod,
       ...(!requiresAnsweringClient ? { voiceClientToolName: actionId.replaceAll('.', '_') } : {}),
       ...(!requiresAnsweringClient ? { mcpToolName: actionId.replaceAll('.', '_') } : {}) } } : {}),
+    ...(requiresAnsweringClient ? { executionPlacement: 'client' as const } : {}),
     ...(actionId === 'projects.service.relocate' ? {
       executionPlacement: 'machine' as const,
       operation: { version: 1 as const, visibility: 'activity' as const, progress: 'reported' as const,

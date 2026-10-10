@@ -11,15 +11,18 @@ export type NotificationConfigurationActionInputById = {
     readonly "notifications.webhooks.update": {
         channelId: string;
         patch: {
-            url?: string | undefined;
             enabled?: boolean | undefined;
             topics?: {
                 ready?: boolean | undefined;
                 permissionRequest?: boolean | undefined;
                 userActionRequest?: boolean | undefined;
+                connectedServiceAccountSwitch?: boolean | undefined;
+                connectedServiceQuotaBlocked?: boolean | undefined;
+                connectedServiceQuotaRecovered?: boolean | undefined;
             } | undefined;
             readyIncludeMessageText?: boolean | undefined;
             requestIncludeMessageText?: boolean | undefined;
+            url?: string | undefined;
         };
     };
     readonly "notifications.webhooks.remove": {
@@ -32,6 +35,23 @@ export type NotificationConfigurationActionInputById = {
     readonly "notifications.webhooks.signingSecret.clear": {
         channelId: string;
     };
+    readonly "notifications.expoPush.update": {
+        patch: {
+            enabled?: boolean | undefined;
+            topics?: {
+                ready?: boolean | undefined;
+                permissionRequest?: boolean | undefined;
+                userActionRequest?: boolean | undefined;
+                connectedServiceAccountSwitch?: boolean | undefined;
+                connectedServiceQuotaBlocked?: boolean | undefined;
+                connectedServiceQuotaRecovered?: boolean | undefined;
+            } | undefined;
+            readyIncludeMessageText?: boolean | undefined;
+            requestIncludeMessageText?: boolean | undefined;
+        };
+    };
+    readonly "notifications.desktop.permission.read": Record<string, never>;
+    readonly "notifications.desktop.permission.request": Record<string, never>;
 };
 export type NotificationConfigurationActionResultById = {
     readonly "notifications.webhooks.list": {
@@ -63,5 +83,14 @@ export type NotificationConfigurationActionResultById = {
     };
     readonly "notifications.webhooks.signingSecret.clear": {
         channelId: string;
+    };
+    readonly "notifications.expoPush.update": {
+        channelId: string;
+    };
+    readonly "notifications.desktop.permission.read": {
+        status: 'granted' | 'notGranted';
+    };
+    readonly "notifications.desktop.permission.request": {
+        status: 'granted' | 'notGranted';
     };
 };

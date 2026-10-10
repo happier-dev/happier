@@ -190,6 +190,14 @@ function collectSourceFiles(relativeRoot: string): string[] {
 }
 
 describe('protocol canonical layout', () => {
+    it('exposes the plain-record guard to browser consumers through its canonical subpath', () => {
+        expect(readProtocolExports()['./common/records']).toEqual({
+            'happier-source': './src/common/records.ts',
+            types: './dist/common/records.d.ts',
+            default: './dist/common/records.js',
+        });
+    });
+
     it('keeps external Action response limits under one browser-safe owner', () => {
         const exports = readProtocolExports();
 

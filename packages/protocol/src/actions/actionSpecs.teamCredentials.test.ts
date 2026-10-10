@@ -45,14 +45,14 @@ describe('Team credential Action contracts', () => {
       });
       expect(spec.inputSchema).toBe(TEAM_CREDENTIAL_ACTION_INPUT_SCHEMAS_V1[id]);
       expect(spec.outputSchema).toBe(TEAM_CREDENTIAL_ACTION_OUTPUT_SCHEMAS_V1[id]);
-      expect(spec.requiredAuthority).toBe('account_automation');
+      expect(spec.requiredAuthority).toBe(id === 'teams.credentials.test' ? 'present_user' : 'account_automation');
       expect(spec.executionPlacement).toBe('account');
       expect(spec.surfaces).toMatchObject({
         ui: true,
         cli: true,
-        agent: id !== 'teams.credentials.test',
-        mcp: false,
-        api: true,
+        agent: true,
+        mcp: id === 'teams.credentials.test' || id === 'teams.credentials.preparation.get',
+        api: id !== 'teams.credentials.test',
         plugin: true,
       });
       expect(spec.title).toEqual(expect.any(String));
@@ -143,7 +143,7 @@ describe('Team credential Action contracts', () => {
     }));
   });
 
-  it('registers the effectful connection test as a public, non-agent Home action', () => {
+  it('registers the effectful connection test as a human-approved agent request', () => {
     expect(ActionIdSchema.parse('teams.credentials.test')).toBe('teams.credentials.test');
     const spec = getActionSpec('teams.credentials.test');
     expect(spec.serverTransport).toEqual({
@@ -152,14 +152,14 @@ describe('Team credential Action contracts', () => {
     });
     expect(spec.safety).toBe('danger');
     expect(spec.sideEffectClass).toBe('external');
-    expect(spec.requiredAuthority).toBe('account_automation');
+    expect(spec.requiredAuthority).toBe('present_user');
     expect(spec.executionPlacement).toBe('account');
     expect(spec.surfaces).toMatchObject({
       ui: true,
       cli: true,
-      agent: false,
-      mcp: false,
-      api: true,
+      agent: true,
+      mcp: true,
+      api: false,
       plugin: true,
     });
     expect(spec.inputSchema.parse({ teamId: 'team-1', resourceId: 'resource-1' })).toEqual({
@@ -175,6 +175,23 @@ describe('Team credential Action contracts', () => {
       readiness: { kind: 'broker_unavailable' },
       recovery: 'Reconnect the broker Machine and try again.',
     });
+  });
+
+  it('exposes preparation as a strict aggregate readiness read without material or recipient identity', () => {
+    const spec = listActionSpecs().find(row => String(row.id) === 'teams.credentials.preparation.get');
+    expect(spec).toBeDefined();
+    if (!spec) throw new Error('Missing preparation Action');
+    expect(spec).toMatchObject({ requiredAuthority: 'account_automation', sideEffectClass: 'read',
+      surfaces: { agent: true, mcp: true, ui: true, cli: true } });
+    expect(spec.inputSchema.parse({ teamId: 'team/one', resourceId: 'resource-1' })).toEqual({
+      teamId: 'team/one', resourceId: 'resource-1', view: 'readiness',
+    });
+    const output = { status: 'not_ready', reason: 'preparation_pending', counts: { ready: 2, pending: 1 } };
+    expect(spec.outputSchema.parse(output)).toEqual(output);
+    for (const field of ['recipients', 'encryptedDataKey', 'storedContent', 'ciphertext']) {
+      expect(spec.outputSchema.safeParse({ ...output, [field]: 'private-material' }).success).toBe(false);
+    }
+    expect(spec.outputSchema.safeParse({ ...output, status: 'ready' }).success).toBe(false);
   });
 
   it('keeps non-refreshable credential results blocking while ordinary mutations may defer', () => {

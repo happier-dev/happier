@@ -5,7 +5,16 @@ import { ActionIdSchema, type ActionId } from './actionIds.js';
 const service = { pluginId: 'happier.agent.codex', localId: 'openai' };
 
 describe('connected-service configuration Action parity', () => {
+  it('keeps service-configuration secret replacements in live approval custody and outside observation', () => {
+    const spec = getActionSpec('connectedServices.configuration.replace');
+    const input = { service, modeId: 'configured', expectedRevision: 'before',
+      values: { endpoint: 'https://private-endpoint.test' }, secretValues: { token: 'private-replacement' } };
+    expect(spec.approvalInputCustody).toBe('live_only');
+    expect(spec.projectObservationInput?.(input)).toEqual({ service, modeId: 'configured', expectedRevision: 'before' });
+  });
   it.each([
+    ['connectedServices.configuration.get', { service, modeId: 'configured' }],
+    ['connectedServices.configuration.replace', { service, modeId: 'configured', expectedRevision: null, values: {}, secretValues: {} }],
     ['connectedServices.accounts.rename', { account: { service, accountId: 'work' }, label: 'Team' }],
     ['connectedServices.accounts.default.set', { account: { service, accountId: 'work' }, agentId: 'codex', makeDefault: true }],
     ['connectedServices.pools.create', { service, group: { groupId: 'pool', displayName: 'Team' } }],

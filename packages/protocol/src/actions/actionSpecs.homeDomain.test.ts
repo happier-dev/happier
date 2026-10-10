@@ -12,6 +12,55 @@ import {
 import { serializeActionSpec } from './actionCatalog.js';
 import { getActionSpec, listActionSpecs, PublicActionIdSchema } from './actionSpecs.js';
 import { PluginInvocableActionIdSchema } from './pluginActionSurface.js';
+import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
+
+describe('Home runtime Action parity', () => {
+  it('admits local runtime, access and Personal Home intents through the answering client', () => {
+    const reads = ['relay.access.status', 'relay.runtime.status', 'relay.runtime.personal_home.inspect',
+      'relay.runtime.personal_home.verify_backup', 'home.runtime.get'];
+    const writes = ['relay.access.configure', 'relay.access.disable', 'relay.runtime.install_or_update',
+      'relay.runtime.start', 'relay.runtime.stop', 'relay.runtime.restart', 'relay.runtime.uninstall',
+      'relay.runtime.personal_home.backup', 'relay.runtime.personal_home.restore',
+      'relay.runtime.personal_home.recover_restore', 'relay.runtime.personal_home.erase',
+      'relay.runtime.personal_home.claim', 'relay.runtime.personal_home.relocate'];
+    const specs = listActionSpecs();
+    for (const id of [...reads, ...writes]) {
+      const spec = specs.find(row => String(row.id) === id);
+      expect(spec, id).toBeDefined();
+      expect(spec?.executionPlacement, id).toBe('client');
+      expect(spec?.surfaces.agent, id).toBe(true);
+      expect(spec?.surfaces.mcp, id).toBe(true);
+      expect(spec?.surfaces.cli, id).toBe(true);
+      expect(spec?.safety, id).toBe(writes.includes(id) ? 'danger' : 'safe');
+    }
+  });
+
+  it('keeps destructive consent and rejects credentials or other runtime targets in local input', () => {
+    const spec = listActionSpecs().find(row => String(row.id) === 'relay.runtime.personal_home.erase');
+    expect(spec).toBeDefined();
+    if (!spec) return;
+    const input = { purpose: { kind: 'personal-home', canonicalServerUrl: 'http://localhost:3010' } };
+    expect(spec.inputSchema.safeParse(input).success).toBe(true);
+    expect(spec.inputSchema.safeParse({ ...input, target: { kind: 'ssh', password: 'secret' } }).success).toBe(false);
+    expect(resolveActionApprovalRouting({ actionId: spec.id, spec, input,
+      context: { surface: 'agent', authority: 'account_automation' } }).required).toBe(true);
+    expect(spec.outputSchema.safeParse({ status: 'task_started', taskId: 'erase-task' }).success).toBe(true);
+  });
+
+  it('makes search repair a present-user Home mutation and connected restart a Machine operation', () => {
+    const specs = listActionSpecs();
+    const rebuild = specs.find(row => String(row.id) === 'home.search.rebuild');
+    const restart = specs.find(row => String(row.id) === 'home.runtime.restart');
+    expect(rebuild).toBeDefined();
+    expect(rebuild?.requiredAuthority).toBe('present_user');
+    expect(rebuild?.serverTransport).toEqual({ method: 'POST', path: '/v1/home/search/rebuild' });
+    expect(restart?.executionPlacement).toBe('machine');
+    expect(restart?.inputSchema.safeParse({ machineId: 'machine-a', channel: 'stable', mode: 'user' }).success).toBe(true);
+    expect(restart?.outputSchema.safeParse({ status: 'completed', taskId: 'restart-task', result: {
+      protocolVersion: 1, taskId: 'restart-task', ok: false, error: { code: 'restart_failed', message: 'Failed' },
+    } }).success).toBe(true);
+  });
+});
 
 /**
  * The Home family is one consumed Action dependency over one exact Home. These
@@ -53,6 +102,7 @@ const LANE_01_ACTION_IDS = [
   'teams.members.suspend',
   'teams.members.reactivate',
   'teams.members.remove',
+  'teams.members.leave',
   'teams.members.management.set',
   'teams.groups.list',
   'teams.groups.get',
@@ -96,6 +146,9 @@ const LANE_01_SAFE_INPUT_HINT_PATHS = {
     'identityNetworkPolicy.hostnames',
     'identityNetworkPolicy.cidrs',
     'identityNetworkPolicy.ports',
+    'authenticationPolicy.anonymousSignup',
+    'authenticationPolicy.storagePolicy',
+    'confirmWidening',
   ],
   'teams.list': ['scope', 'archived'],
   'teams.get': ['teamId'],
@@ -121,6 +174,7 @@ const LANE_01_SAFE_INPUT_HINT_PATHS = {
   'teams.members.suspend': ['teamId', 'membershipId'],
   'teams.members.reactivate': ['teamId', 'membershipId'],
   'teams.members.remove': ['teamId', 'membershipId'],
+  'teams.members.leave': ['teamId'],
   'teams.members.management.set': [
     'teamId',
     'membershipId',
@@ -162,7 +216,7 @@ describe('Home and Teams Action family', () => {
     const registered = new Set(listActionSpecs().map((spec) => spec.id));
     const missing = LANE_01_ACTION_IDS.filter((actionId) => !registered.has(actionId));
     expect(missing).toEqual([]);
-    expect(LANE_01_ACTION_IDS.length).toBe(42);
+    expect(LANE_01_ACTION_IDS.length).toBe(43);
   });
 
   it('declares useful observation-safe input fields for every Lane 01 intent', () => {
@@ -224,22 +278,30 @@ describe('Home and Teams Action family', () => {
   it('derives every host transport lookup from the row that declared it', () => {
     for (const actionId of HOME_DOMAIN_ACTION_IDS_V1) {
       const declared = getActionSpec(actionId).serverTransport;
-      expect(declared?.path.startsWith('/v1/')).toBe(true);
-      expect(homeDomainActionTransportV1(actionId)).toEqual(declared);
+      expect(declared?.path, actionId).toMatch(/^\/v[12]\//);
+      expect(homeDomainActionTransportV1(actionId), actionId).toEqual(declared);
     }
   });
 
   /**
    * A contributed family may be REST-shaped and reuse one path under different
-   * methods, so the intent's address is the method and path together. Two rows
-   * sharing both would make the family ambiguous about which one a host reached.
+   * methods. Session organization also intentionally shares a snapshot read
+   * and each resource's upsert route between create and rename intents.
    */
-  it('gives each intent its own method and path', () => {
-    const addresses = HOME_DOMAIN_ACTION_IDS_V1.map((actionId) => {
+  it('shares method and path only for the existing Session organization snapshot and upserts', () => {
+    const byAddress = new Map<string, string[]>();
+    for (const actionId of HOME_DOMAIN_ACTION_IDS_V1) {
       const transport = homeDomainActionTransportV1(actionId);
-      return `${transport.method} ${transport.path}`;
+      const address = `${transport.method} ${transport.path}`;
+      const ids = byAddress.get(address) ?? [];
+      ids.push(actionId);
+      byAddress.set(address, ids);
+    }
+    expect(Object.fromEntries([...byAddress].filter(([, ids]) => ids.length > 1))).toEqual({
+      'GET /v2/session-organization': ['session.folders.list', 'session.tags.list'],
+      'POST /v2/session-organization/folders': ['session.folders.create', 'session.folders.rename'],
+      'POST /v2/session-organization/tags': ['session.tags.create', 'session.tags.rename'],
     });
-    expect(new Set(addresses).size).toBe(addresses.length);
   });
 
   it('carries every Lane 01 governance and Team intent over POST', () => {
@@ -274,6 +336,20 @@ describe('Home and Teams Action family', () => {
       teamId: 'team-1',
       serverId: 'home-a',
     }).success).toBe(false);
+  });
+
+  it('leaves only the acting membership with the same approval and surfaces as removal', () => {
+    const leave = getActionSpec('teams.members.leave');
+    const remove = getActionSpec('teams.members.remove');
+    expect(leave.surfaces).toEqual(remove.surfaces);
+    expect(leave.approval).toEqual(remove.approval);
+    expect(leave.requiredAuthority).toBe(remove.requiredAuthority);
+    expect(leave.sideEffectClass).toBe(remove.sideEffectClass);
+    expect(homeDomainActionTransportV1('teams.members.leave')).toEqual({ method: 'POST', path: '/v1/teams/members/leave' });
+    const input = homeDomainActionInputSchemaV1('teams.members.leave');
+    expect(input.safeParse({ v: 1, teamId: 'team' }).success).toBe(true);
+    expect(input.safeParse({ v: 1, teamId: 'team', membershipId: 'other' }).success).toBe(false);
+    expect(homeDomainActionOutputSchemaV1('teams.members.leave').safeParse({ status: 'removed', membershipId: 'self' }).success).toBe(true);
   });
 
   it('refuses a role the Home does not define and accepts one it does', () => {
@@ -356,26 +432,31 @@ describe('Home and Teams Action family', () => {
   });
 
   /**
-   * Placement is the family-wide fact: the Home decides these in its own
-   * transaction, so every row is Account-placed whatever machine invoked it.
-   * The authority floor is per-owner — a contributed row may narrow itself to a
-   * present user — so it is asserted over Lane 01's own rows.
+   * Sharing the exact-Home HTTP carrier does not change the execution owner:
+   * mutations targeting one Session retain Session placement.
    */
-  it('places every family row on the Account that owns the Home', () => {
+  it('retains Session placement for exact Session mutations and Account placement for Home resources', () => {
+    const sessionMutations = new Set(['session.delete', 'session.folder.set', 'session.tags.set']);
     for (const actionId of HOME_DOMAIN_ACTION_IDS_V1) {
-      expect(getActionSpec(actionId).executionPlacement).toBe('account');
+      expect(getActionSpec(actionId).executionPlacement, actionId)
+        .toBe(sessionMutations.has(actionId) ? 'session' : 'account');
     }
   });
 
   it('admits Lane 01 governance and Team intents as Account automation', () => {
     for (const actionId of LANE_01_ACTION_IDS) {
-      expect(getActionSpec(actionId).requiredAuthority).toBe('account_automation');
+      expect(getActionSpec(actionId).requiredAuthority).toBe(
+        actionId === 'teams.invitations.create' || actionId === 'teams.invitations.reissue'
+          ? 'present_user' : 'account_automation',
+      );
     }
   });
 
-  it('withholds the external MCP tool surface until its authority contract exists', () => {
-    for (const actionId of HOME_DOMAIN_ACTION_IDS_V1) {
-      expect(getActionSpec(actionId).surfaces.mcp).toBe(false);
+  it('keeps Lane 01 Account-automation rows off the MCP tool surface', () => {
+    for (const actionId of LANE_01_ACTION_IDS) {
+      expect(getActionSpec(actionId).surfaces.mcp).toBe(
+        actionId === 'teams.invitations.create' || actionId === 'teams.invitations.reissue',
+      );
     }
   });
 
@@ -386,7 +467,7 @@ describe('Home and Teams Action family', () => {
    * row may deliberately withhold it, and forcing agent exposure family-wide
    * would overrule that owner's narrower admission.
    */
-  it('reaches UI, CLI and trusted plugins, while one-time invitation bearers stay off the Agent surface', () => {
+  it('reaches UI, CLI and trusted plugins, with invitation minting requestable under human approval', () => {
     for (const actionId of HOME_DOMAIN_ACTION_IDS_V1) {
       if (actionId === 'teams.invitations.accept.prepareApproval') continue;
       const surfaces = getActionSpec(actionId).surfaces;
@@ -398,13 +479,11 @@ describe('Home and Teams Action family', () => {
     }
     for (const actionId of LANE_01_ACTION_IDS) {
       const surfaces = getActionSpec(actionId).surfaces;
-      expect(surfaces.api, actionId).toBe(true);
-      expect(PublicActionIdSchema.safeParse(actionId).success, actionId).toBe(true);
+      const humanMint = actionId === 'teams.invitations.create' || actionId === 'teams.invitations.reissue';
+      expect(surfaces.api, actionId).toBe(!humanMint);
+      expect(PublicActionIdSchema.safeParse(actionId).success, actionId).toBe(!humanMint);
       expect(PluginInvocableActionIdSchema.safeParse(actionId).success, actionId).toBe(true);
-      expect(surfaces.agent, actionId).toBe(
-        actionId !== 'teams.invitations.create'
-          && actionId !== 'teams.invitations.reissue',
-      );
+      expect(surfaces.agent, actionId).toBe(true);
     }
   });
 

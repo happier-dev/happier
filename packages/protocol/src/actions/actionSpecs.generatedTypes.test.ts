@@ -520,6 +520,8 @@ describe('ActionSpec-generated plugin action types', () => {
       'workflow.run.invocations.get',
       'workflow.definition.list',
       'workflow.definition.get',
+      'workflow.definition.import',
+      'workflow.definition.export',
       'workflow.trigger.list',
       'session.trigger.list',
     ]);
@@ -540,7 +542,7 @@ describe('ActionSpec-generated plugin action types', () => {
 
     for (const actionId of WORKFLOW_ACTION_IDS_V1) {
       const spec = getActionSpec(actionId);
-      expect(spec).toMatchObject({
+      expect(spec, actionId).toMatchObject({
         executionPlacement: actionId === 'workflow.run.start' ? 'machine' : 'account',
         requiredAuthority: actionId === 'workflow.run.invocations.complete_review' ? 'present_user' : 'account_automation',
         safety: dangerActionIds.has(actionId) ? 'danger' : 'safe',
@@ -602,7 +604,7 @@ describe('ActionSpec-generated plugin action types', () => {
     expect(PublicActionIdSchema.safeParse('projects.list').success).toBe(true);
     expect(PublicActionIdSchema.safeParse('ui.current_context.read').success).toBe(true);
     expect(PublicActionIdSchema.safeParse('devices.simulator.input.orientation').success).toBe(false);
-    expect(PublicActionIdSchema.safeParse('approval.request.decide').success).toBe(false);
+    expect(PublicActionIdSchema.safeParse('approval.request.decide').success).toBe(true);
     expect(PublicActionIdSchema.safeParse('plugins.install').success).toBe(false);
     expect(SignedRootActionIdSchema.safeParse('approval.request.decide').success).toBe(true);
     expect(SignedRootActionIdSchema.safeParse('plugins.install').success).toBe(true);
@@ -623,7 +625,7 @@ describe('ActionSpec-generated plugin action types', () => {
     expectTypeOf<Extract<PublicActionId, 'sessions.external.materialize.start'>>().toEqualTypeOf<never>();
     expectTypeOf<Extract<PublicActionId, 'plugins.permissions.grants.revoke'>>().toEqualTypeOf<never>();
     expectTypeOf<Extract<PublicActionId, 'devices.simulator.input.orientation'>>().toEqualTypeOf<never>();
-    expectTypeOf<Extract<PublicActionId, 'approval.request.decide'>>().toEqualTypeOf<never>();
+    expectTypeOf<Extract<PublicActionId, 'approval.request.decide'>>().toEqualTypeOf<'approval.request.decide'>();
     expectTypeOf<Extract<PublicActionId, 'plugins.install'>>().toEqualTypeOf<never>();
     expectTypeOf<Extract<PublicActionId, 'identity.providers.create'>>().toEqualTypeOf<never>();
     expectTypeOf<Extract<PublicActionId, 'identity.providers.list'>>()
@@ -640,7 +642,7 @@ describe('ActionSpec-generated plugin action types', () => {
     expectTypeOf<PublicActionResultByRuntimeSchemaMap>().toEqualTypeOf<PublicActionResultById>();
 
     const apiSpawnInput: PublicActionInputById['session.spawn_new'] = {
-      directory: '/workspace/project',
+      directory: { kind: 'path', path: '/workspace/project' },
       agentTarget: {
         kind: 'agent',
         identity: { pluginId: 'happier.agent.codex', localId: 'codex' },

@@ -411,7 +411,7 @@ describe('ActionsService source contract', () => {
             .toEqualTypeOf<Pick<ActionSpec, 'inputHints'>>();
     });
 
-    it('projects the canonical execution-run result DTOs without a second SDK result shape', () => {
+    it('projects canonical execution-run result DTOs with validator brands erased', () => {
         expect(getActionSpec('execution.run.start').outputSchema).toBe(ExecutionRunStartResponseSchema);
         expect(getActionSpec('execution.run.list').outputSchema).toBe(ExecutionRunListResponseSchema);
         expect(getActionSpec('execution.run.get').outputSchema).toBe(ExecutionRunGetResponseSchema);
@@ -419,29 +419,28 @@ describe('ActionsService source contract', () => {
         expect(getActionSpec('execution.run.stop').outputSchema).toBe(ExecutionRunStopResponseSchema);
         expect(getActionSpec('execution.run.wait').outputSchema).toBe(ExecutionRunWaitResultSchema);
 
-        const projectedStartToCanonical = (value: PluginActionResultById['execution.run.start']): ExecutionRunStartResponse => value;
         const canonicalStartToProjected = (value: ExecutionRunStartResponse): PluginActionResultById['execution.run.start'] => value;
-        const projectedListToCanonical = (value: PluginActionResultById['execution.run.list']): ExecutionRunListResponse => value;
         const canonicalListToProjected = (value: ExecutionRunListResponse): PluginActionResultById['execution.run.list'] => value;
-        const projectedGetToCanonical = (value: PluginActionResultById['execution.run.get']): ExecutionRunGetResponse => value;
         const canonicalGetToProjected = (value: ExecutionRunGetResponse): PluginActionResultById['execution.run.get'] => value;
         const projectedSendToCanonical = (value: PluginActionResultById['execution.run.send']): ExecutionRunSendResponse => value;
         const canonicalSendToProjected = (value: ExecutionRunSendResponse): PluginActionResultById['execution.run.send'] => value;
         const projectedStopToCanonical = (value: PluginActionResultById['execution.run.stop']): ExecutionRunStopResponse => value;
         const canonicalStopToProjected = (value: ExecutionRunStopResponse): PluginActionResultById['execution.run.stop'] => value;
-        const projectedWaitToCanonical = (value: PluginActionResultById['execution.run.wait']): ExecutionRunWaitResult => value;
         const canonicalWaitToProjected = (value: ExecutionRunWaitResult): PluginActionResultById['execution.run.wait'] => value;
-        void projectedStartToCanonical;
+        // Public DTO strings have not passed the canonical validator. Prove the
+        // intended parser-output → author-DTO direction without fabricating brands.
+        type PublicModelSelection = NonNullable<NonNullable<
+            PluginActionResultById['execution.run.start']['resolvedSelection']
+        >['modelSelection']>;
+        expectTypeOf<Extract<PublicModelSelection, { providerConnectionId: string }>['providerConnectionId']>()
+            .toEqualTypeOf<string>();
         void canonicalStartToProjected;
-        void projectedListToCanonical;
         void canonicalListToProjected;
-        void projectedGetToCanonical;
         void canonicalGetToProjected;
         void projectedSendToCanonical;
         void canonicalSendToProjected;
         void projectedStopToCanonical;
         void canonicalStopToProjected;
-        void projectedWaitToCanonical;
         void canonicalWaitToProjected;
         expectTypeOf<ExecutionRunStartResponse['wait']>()
             .toEqualTypeOf<ExecutionRunWaitResult | undefined>();
@@ -486,6 +485,12 @@ describe('ActionsService source contract', () => {
                 sessionId: 'session-1',
                 seqFrom: 1,
                 seqTo: 2,
+            });
+            void service.execute('memory.get_window', {
+                machineId: 'machine-1',
+                source: { type: 'external_transcript', agentId: 'claude', sourceKey: 'local', nativeSessionId: 'native-1' },
+                sourceItemId: 'message-1',
+                cursor: 'opaque-page',
             });
             void service.execute('identity.providers.test.start', {
                 owner: { kind: 'team', teamId: 'team-1' },

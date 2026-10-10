@@ -522,6 +522,18 @@ export const TEAM_ACTION_SPECS = Object.freeze([
     inputHints: { fields: [TEAM_ID_FIELD, MEMBERSHIP_ID_FIELD] },
   }),
   homeDomainActionRow({
+    id: 'teams.members.leave',
+    title: 'Leave Team',
+    description: 'End your own membership lifetime. Directory-managed members and the final active owner of a live Team cannot leave.',
+    safety: 'danger',
+    sideEffectClass: 'danger',
+    cliPath: ['teams', 'members', 'leave'],
+    path: '/v1/teams/members/leave',
+    inputSchema: TeamRefInputV1Schema,
+    outputSchema: TeamMemberRemoveResultV1Schema,
+    inputHints: { fields: [TEAM_ID_FIELD] },
+  }),
+  homeDomainActionRow({
     id: 'teams.members.management.set',
     title: 'Set Team member management',
     description: 'Convert who owns one membership\'s lifecycle while preserving its lifetime, role, status and horizon.',
@@ -531,7 +543,7 @@ export const TEAM_ACTION_SPECS = Object.freeze([
     path: '/v1/teams/members/management/set',
     inputSchema: TeamMemberManagementSetInputV1Schema,
     outputSchema: TeamMembershipV1Schema,
-    inputHints: { fields: [
+    inputHints: { description: 'Choose whether a Team member is managed by hand or by your directory. Their role and access stay the same.', fields: [
       TEAM_ID_FIELD,
       MEMBERSHIP_ID_FIELD,
       approvalField('management.kind', 'Management owner', { required: true }),

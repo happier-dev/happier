@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { ActionIdSchema } from '../actionIds.js';
-import { getActionSpec } from '@happier-dev/protocol/actions';
+import { getActionSpec } from '../actionSpecs.js';
 import { resolveActionApprovalRouting } from '../actionApprovalPolicy.js';
 import { createActionExecutor, type ActionExecutorDeps } from '../actionExecutor.js';
 import { createWorkspaceExecutionConfigClientV1 } from '../../workspaces/workspaceExecutionConfigClientV1.js';
-import { WorkspaceWorkerPreferenceGetInputV1Schema } from '@happier-dev/protocol/actions/specs/projectWorkers';
-import { ProjectServicePlacementActionInputSchemasV1 } from '@happier-dev/protocol/actions/specs/projectServicePlacement';
+import { WorkspaceWorkerPreferenceGetInputV1Schema } from './projectWorkers.js';
+import { ProjectServicePlacementActionInputSchemasV1 } from './projectServicePlacement.js';
 import { computeWorkspaceSyncPolicyDigest } from '../../sessions/control/handoff/workspaceSyncSchemas.js';
 
 describe('Project worker Actions', () => {
@@ -16,6 +16,7 @@ describe('Project worker Actions', () => {
     ['machines.worker.policy.get', false],
     ['machines.worker.policy.set', true],
     ['projects.worker.status', false],
+    ['projects.worker.copy.inspect', false],
     ['projects.worker.copy.retire', true],
     ['projects.service.placement.get', false],
     ['projects.service.placement.set', true],
@@ -35,6 +36,21 @@ describe('Project worker Actions', () => {
     expect(spec.cli?.commands).toContainEqual(expect.objectContaining({ path: id.split('.') }));
     expect(spec.outputSchema).toBeDefined();
     expect(spec.approval).toMatchObject(mutates ? { flow: 'deferred', result: 'optional' } : { result: 'required' });
+  });
+
+  it('exposes exact committed-copy review without caller paths or removal authority', () => {
+    const spec = getActionSpec(ActionIdSchema.parse('projects.worker.copy.inspect'));
+    const retire = getActionSpec('projects.worker.copy.retire');
+    const basis = JSON.parse(retire.examples!.voice!.argsExample!);
+    const input = { ...basis, kind: 'preview', targetMachineId: 'worker', targetWorkspaceRefId: 'copy' };
+    expect(spec.inputSchema.safeParse(input).success).toBe(true);
+    expect(spec.inputSchema.safeParse({ ...input, rootPath: '/caller/root' }).success).toBe(false);
+    expect(spec.inputSchema.safeParse({ ...input, removeTargetCopy: { workspaceRefId: 'copy', rootFingerprint: 'a'.repeat(64) } }).success).toBe(false);
+    expect(spec.inputSchema.safeParse({ ...input, expectedRelationship: undefined }).success).toBe(false);
+    const preview = { targetMachineId: 'worker', workspaceRefId: 'copy', rootFingerprint: 'a'.repeat(64), sizeBytes: 0 };
+    expect(spec.outputSchema?.safeParse({ ok: true, preview }).success).toBe(true);
+    expect(spec.outputSchema?.safeParse({ ok: true, preview: { ...preview, rootPath: '/unowned' } }).success).toBe(false);
+    expect(spec.outputSchema?.safeParse({ ok: false, errorCode: 'workspace_copy_not_owned' }).success).toBe(true);
   });
 
   it('publishes exact advisory status without admitting pool recursion or untyped observations', () => {

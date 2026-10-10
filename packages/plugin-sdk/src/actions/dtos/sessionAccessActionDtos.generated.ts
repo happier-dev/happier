@@ -65,6 +65,7 @@ export type SessionAccessActionInputById = {
         expiresAt?: number | undefined;
         maxUses?: number | undefined;
         isConsentRequired?: boolean | undefined;
+        networkOff?: boolean | undefined;
     };
     readonly "session.public_link.remove": {
         sessionId: string;
@@ -312,6 +313,7 @@ export type SessionAccessActionResultById = {
         useCount: number;
         isConsentRequired: boolean;
         updatedAt: number;
+        networkOff?: boolean | undefined;
         keyDerivation?: 'fragment_v1' | 'legacy_token_v1' | undefined;
         isolatedOrigin?: string | undefined;
     } | null;
@@ -323,6 +325,7 @@ export type SessionAccessActionResultById = {
         isConsentRequired: boolean;
         updatedAt: number;
         url: string;
+        networkOff?: boolean | undefined;
         keyDerivation?: 'fragment_v1' | 'legacy_token_v1' | undefined;
         isolatedOrigin?: string | undefined;
     };

@@ -1,6 +1,7 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
 import type { ActionInputFieldHint, PreNormalizedActionSpec } from './actionSpecs.js';
+import { FindOptionsSchema } from './findActionSpecs.js';
 
 export const WORKSPACE_ACTION_IDS = [
   'workspace.tabs.list', 'workspace.tabs.open', 'workspace.tabs.activate', 'workspace.tabs.close',
@@ -11,13 +12,21 @@ export const WORKSPACE_ACTION_IDS = [
 export type WorkspaceActionId = typeof WORKSPACE_ACTION_IDS[number];
 
 const id = z.string().trim().min(1);
+/** Private chat launch input, consumed by the existing pane handoff; never a URL or tab field. */
+export const WorkspaceChatFindSeedSchema = lazyZodSchema(() => z.object({
+  query: z.string().min(1), options: FindOptionsSchema.optional(),
+  target: z.object({ kind: z.literal('native-message'), agentId: id, remoteSessionId: id, sourceItemId: id }).strict(),
+}).strict());
 export const WORKSPACE_ACTION_INPUT_SCHEMAS = {
   'workspace.tabs.list': z.object({}).strict(),
   'workspace.tabs.open': z.object({ href: id.optional(), tabId: id.optional(), groupId: id.optional(),
+    find: WorkspaceChatFindSeedSchema.optional(),
     beforeTabId: id.nullable().optional(), reuseExisting: z.boolean().optional(),
     mode: z.enum(['preview', 'newTab', 'splitLeft', 'splitRight', 'splitUp', 'splitDown']).optional(),
   }).strict().refine(data => !data.mode?.startsWith('split') || (data.href !== undefined && data.tabId === undefined), {
     message: 'A destination split requires href and cannot replace an existing tab',
+  }).refine(data => !data.find || data.href !== undefined, {
+    message: 'Find launch input requires an addressed Session href',
   }),
   'workspace.tabs.activate': z.object({ tabId: id }).strict(),
   'workspace.tabs.close': z.object({ tabId: id }).strict(),
@@ -82,6 +91,7 @@ const inputFields = {
   'workspace.tabs.list': [],
   'workspace.tabs.open': [
     { path: 'href', title: 'Destination', widget: 'text' }, { ...tabIdHint, required: false },
+    { path: 'find', title: 'Native conversation hit', widget: 'json', description: 'Query/options and native message identity for a qualified Session destination. Private launch input; not persisted in the URL or tab.' },
     { ...groupIdHint, required: false }, beforeTabHint,
     { path: 'reuseExisting', title: 'Go to an existing tab', widget: 'boolean' },
     { path: 'mode', title: 'Opening mode', widget: 'select', options: [
@@ -133,9 +143,8 @@ function row<const TId extends WorkspaceActionId>(actionId: TId, title: string) 
     description: 'Operate on the mounted client workspace in its current Home, Account and window. A headless host without that workspace returns unsupported_action.',
     safety: 'safe', sideEffectClass: actionId === 'workspace.tabs.list' || actionId === 'workspace.tabs.closed.list' ? 'read' : 'external',
     executionPlacement: 'client', placements: [],
-    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: false, rpc: false },
     bindings: { mcpToolName: actionId.replaceAll('.', '_'), voiceClientToolName: actionId.replaceAll('.', '_') },
-    cli: { commands: [{ path: actionId.split('.'), visibility: 'canonical' }] },
     inputSchema: WORKSPACE_ACTION_INPUT_SCHEMAS[actionId], outputSchema: WORKSPACE_ACTION_OUTPUT_SCHEMAS[actionId],
     inputHints: { title, fields: inputFields[actionId] },
     examples: { voice: { argsExample: voiceExamples[actionId] } },

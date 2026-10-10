@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { buildSessionAwarenessListResultV1 } from '../sessions/awareness/action.js';
-import { bindHomeDomainActionHttpRequestV1 } from './homeDomainActionFamily.js';
+import { bindHomeDomainActionHttpRequestV1, readHomeDomainActionErrorV1 } from './homeDomainActionFamily.js';
 import { ActionIdSchema } from './actionIds.js';
 import { getActionSpec } from './actionSpecs.js';
 import { AgentStartSessionCallerV1Schema, type AgentStartContextV1 } from '../account/settings/admitAgentStartV1.js';
@@ -57,6 +57,13 @@ const canonicalSessionSpawnInput = {
 } as const;
 
 describe('createActionExecutor (session control)', () => {
+  it.each([
+    { error: 'Session not found or not owned by user', code: 'session_absent' },
+    { error: 'Session delete condition was lost', code: 'session_delete_conflict' },
+  ])('decodes the answering Home deletion refusal $code without losing recovery details', ({ error, code }) => {
+    expect(readHomeDomainActionErrorV1({ error })).toEqual({ code, details: { error } });
+    expect(readHomeDomainActionErrorV1({ error, injectedAuthority: true })).toBeNull();
+  });
   it('keeps resume intent distinct from ordinary Session navigation', async () => {
     const effects: unknown[] = [];
     // Session-open reaches the client/daemon boundary; parsing and admission remain real.
@@ -1112,6 +1119,30 @@ describe('createActionExecutor (session control)', () => {
     });
   });
 
+  it('cancels only the current turn through the scoped abort boundary on every requesting surface', async () => {
+    const id = ActionIdSchema.parse('session.turn.cancel');
+    const spec = getActionSpec(id);
+    expect(spec.surfaces).toMatchObject({ ui: true, agent: true, mcp: true, cli: true, rpc: true });
+    expect(spec.requiredAuthority).toBe('account_automation');
+    const effects: unknown[] = [];
+    const executor = createExecutor({
+      isActionApprovalRequired: undefined,
+      sessionTurnCancel: async input => { effects.push(input); return { requested: true }; },
+      sessionStop: async () => { throw new Error('Turn cancellation must not stop the session process'); },
+      resolveServerIdForSessionId: () => 'home-a',
+    });
+    for (const surface of ['ui', 'agent', 'mcp', 'cli'] as const) {
+      expect(await executor.execute(id, { sessionId: 's1' }, { surface, defaultSessionId: 's1' }))
+        .toMatchObject({ ok: true, result: { requested: true } });
+    }
+    expect(effects).toEqual(['ui', 'agent', 'mcp', 'cli'].map(surface => ({
+      sessionId: 's1', serverId: 'home-a', context: expect.objectContaining({ surface }),
+    })));
+    expect(spec.inputSchema.safeParse({ sessionId: 's1', permissionDecision: 'approved' }).success).toBe(false);
+    expect(await createExecutor({ isActionApprovalRequired: undefined }).execute(id, { sessionId: 's1' }, { surface: 'cli' }))
+      .toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+  });
+
   it('executes session.stop via deps.sessionStop', async () => {
     const sessionStop = vi.fn(async () => ({ ok: true, stopped: true }));
     const executor = createExecutor({
@@ -1236,7 +1267,7 @@ describe('createActionExecutor (session control)', () => {
 
     const res = await executor.execute(
       'session.permission_mode.set' as any,
-      { sessionId: 's1', permissionMode: 'read_only' },
+      { sessionId: 's1', permissionMode: 'read_only', applyTiming: 'next_prompt' },
       { surface: 'cli', defaultSessionId: null },
     );
 
@@ -1244,6 +1275,7 @@ describe('createActionExecutor (session control)', () => {
     expect(sessionPermissionModeSet).toHaveBeenCalledWith({
       sessionId: 's1',
       permissionMode: 'read-only',
+      applyTiming: 'next_prompt',
       serverId: 'server-a',
       context: { surface: 'cli', defaultSessionId: null },
     });

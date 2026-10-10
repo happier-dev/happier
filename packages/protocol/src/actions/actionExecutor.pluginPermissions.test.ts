@@ -244,26 +244,35 @@ describe('createActionExecutor (plugin permission grants)', () => {
         pluginId: 'acme.voice',
         contributionLocalId: 'permission-grants',
         sourceCustody: { kind: 'development', registeredRootId: 'voice-root-1' },
+        startedBy: 'trigger',
       },
     });
   });
 
-  it('keeps grant/dismiss on the deciding side while routing their host UI execution', async () => {
+  it('requests human approval for plugin grant/dismiss while routing present-user UI execution', async () => {
     const pluginPermissionGrantAction = vi.fn(async ({ actionId }) => actionId === 'plugins.permissions.grants.grant'
       ? { grant: activeGrant, pendingRequest: grantedPendingRequest }
       : { pendingRequest: dismissedPendingRequest });
-    const executor = createExecutor(pluginPermissionGrantAction);
+    const executor = createActionExecutor({ pluginPermissionGrantAction,
+      approvalsCreate: async () => ({ artifactId: 'grant-approval' }),
+      isActionApprovalRequired: () => false,
+    } as ActionExecutorDeps);
     const pluginContext = {
       surface: 'plugin' as const,
-      actionCaller: { kind: 'plugin' as const, pluginId: 'acme.voice' },
+      serverId: 'server-1',
+      actionRequestId: 'permission-grant-1',
+      actionCaller: {
+        kind: 'plugin' as const, pluginId: 'acme.voice', contributionLocalId: 'permission-grants',
+        sourceCustody: { kind: 'development' as const, registeredRootId: 'voice-root-1' },
+      },
     };
 
     await expect(executor.execute('plugins.permissions.grants.grant', {
       requestId: 'request-1',
-    }, pluginContext)).resolves.toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    }, pluginContext)).resolves.toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'grant-approval' } });
     await expect(executor.execute('plugins.permissions.grants.dismissRequest', {
       requestId: 'request-1',
-    }, pluginContext)).resolves.toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    }, pluginContext)).resolves.toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'grant-approval' } });
     expect(pluginPermissionGrantAction).not.toHaveBeenCalled();
 
     await expect(executor.execute('plugins.permissions.grants.grant', {

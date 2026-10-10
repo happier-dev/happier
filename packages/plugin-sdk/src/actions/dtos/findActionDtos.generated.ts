@@ -6,21 +6,25 @@
 export type FindActionInputById = {
     readonly "ui.find": {
         op: 'read';
+        target?: string | undefined;
     } | {
         op: 'set';
         query: string;
+        target?: string | undefined;
         options?: {
             matchCase: boolean;
             regex: boolean;
         } | undefined;
-        target?: string | undefined;
     } | {
         op: 'step';
         direction: 1 | -1;
+        target?: string | undefined;
     } | {
         op: 'stop';
+        target?: string | undefined;
     } | {
         op: 'close';
+        target?: string | undefined;
     };
 };
 export type FindActionResultById = {

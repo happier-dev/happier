@@ -23,16 +23,15 @@ describe('Account Security Action admission', () => {
       expect(spec.serverTransport).toEqual({ method, path });
       expect(resolveActionSurfaceAvailability({ actionId: id, surface: 'ui' }).available).toBe(true);
       expect(resolveActionSurfaceAvailability({ actionId: id, surface: 'cli' }).available).toBe(true);
-      // The safe read retains normal public API/plugin parity. Human-secret
-      // mutations remain private to first-party interactive hosts.
+      // Agent/MCP/plugin exposure admits an approval request, not present-user
+      // execution authority. Human-secret mutations stay off API-token ingress.
       for (const surface of ['agent', 'mcp', 'voice', 'rpc'] as const) {
-        expect(resolveActionSurfaceAvailability({ actionId: id, surface }).available)
-          .toBe((surface === 'agent' && id === 'account.security.get')
-            || ((surface === 'agent' || surface === 'mcp') && id === 'account.security.terminalPresentUser.set'));
+        expect(resolveActionSurfaceAvailability({ actionId: id, surface }).available, `${id} on ${surface}`)
+          .toBe(surface === 'agent' || surface === 'mcp');
       }
       for (const surface of ['api', 'plugin'] as const) {
-        expect(resolveActionSurfaceAvailability({ actionId: id, surface }).available)
-          .toBe(id === 'account.security.get');
+        expect(resolveActionSurfaceAvailability({ actionId: id, surface }).available, `${id} on ${surface}`)
+          .toBe(surface === 'plugin' || id === 'account.security.get');
       }
     }
   });

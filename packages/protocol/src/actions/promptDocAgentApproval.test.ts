@@ -7,15 +7,22 @@ import { PromptDocBodyV1Schema } from '../prompts/library/promptDocV2.js';
 // Artifact custody and document persistence are the real external storage boundaries.
 function harness() {
   let markdown = 'Now: investigate';
+  let revision = { headerVersion: 1, bodyVersion: 1 };
   let approval: ApprovalRequest | null = null;
   let created = 0;
   const store: PromptLibraryArtifactStore = {
     create: async () => { created += 1; return 'created'; },
     read: async (artifactId) => artifactId === 'memory' ? {
-      id: artifactId, revision: { headerVersion: 1, bodyVersion: 1 }, header: { v: 1, kind: 'prompt_doc.v2', title: 'Memory' },
+      id: artifactId, revision, header: { v: 1, kind: 'prompt_doc.v2', title: 'Memory' },
       body: JSON.stringify({ v: 1, markdown, createdAtMs: 1, updatedAtMs: 1 }),
     } : null,
-    update: async ({ body }) => { markdown = PromptDocBodyV1Schema.parse(JSON.parse(body)).markdown; },
+    update: async ({ body, expectedRevision }) => {
+      if (expectedRevision.headerVersion !== revision.headerVersion || expectedRevision.bodyVersion !== revision.bodyVersion) {
+        throw Object.assign(new Error('artifact_version_mismatch'), { code: 'version_mismatch' });
+      }
+      markdown = PromptDocBodyV1Schema.parse(JSON.parse(body)).markdown;
+      revision = { headerVersion: revision.headerVersion + 1, bodyVersion: revision.bodyVersion + 1 };
+    },
   };
   const empty = async () => ({});
   const inventory = async () => ({ items: [] });
@@ -46,6 +53,20 @@ function harness() {
 }
 
 describe('workstream memory document Agent approval', () => {
+  it('settles a stale reviewed approval as conflict while retaining the newer document', async () => {
+    const { executor, read } = harness();
+    const agent = { surface: 'agent', defaultSessionId: 'worker', serverId: 'home', actionRequestId: 'reviewed-proposal' } as const;
+    const preview = await executor.execute('prompt_doc.get', { artifactId: 'memory' }, agent);
+    expect(preview).toMatchObject({ ok: true, result: { revision: { headerVersion: 1, bodyVersion: 1 } } });
+    await executor.execute('prompt_doc.update', { artifactId: 'memory', title: 'Memory', markdown: 'Reviewed proposal',
+      expectedRevision: { headerVersion: 1, bodyVersion: 1 } }, agent);
+    const human = { surface: 'ui', authority: 'present_user', serverId: 'home' } as const;
+    await executor.execute('prompt_doc.update', { artifactId: 'memory', title: 'Memory', markdown: 'Newer content' }, human);
+    await executor.execute('approval.request.decide', { artifactId: 'approval', decision: 'approve' }, human);
+    expect(read()).toMatchObject({ markdown: 'Newer content', approval: { status: 'failed',
+      execution: { ok: false, errorCode: 'version_mismatch' } } });
+  });
+
   it('requires approval for agent creation and creates exactly once after approval', async () => {
     const { executor, read } = harness();
     const result = await executor.execute('prompt_doc.create', { title: 'Saved', markdown: 'Verbatim', favorite: true },

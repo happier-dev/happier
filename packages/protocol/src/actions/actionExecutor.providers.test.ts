@@ -9,6 +9,35 @@ import { applyProviderDefaultModelSelectionV1, SessionModelSelectionV1Schema } f
 const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
 
 describe('Provider Settings Actions', () => {
+  it('places Account catalog actions independently of optional machine execution', async () => {
+    const { getActionSpec, resolveActionExecutionPlacementForInput } = await import('./actionSpecs.js');
+    const cases = [
+      ['providers.connections.describe', {}, 'account'],
+      ['providers.connections.describe', { machineId: 'machine' }, 'machine'],
+      ['providers.connections.update', { action: 'update', connectionId: 'pc_gateway', expectedRevision: 1,
+        gatewayPlacement: { kind: 'machine', machineId: 'hub' } }, 'account'],
+      ['providers.connections.update', { action: 'update', machineId: 'machine', connectionId: 'pc_gateway', expectedRevision: 1,
+        claudeHelperModels: { fast: 'model' } }, 'account'],
+      ['providers.connections.enabled.set', { action: 'setEnabled', connectionId: 'pc_gateway', enabled: true, scope: 'account' }, 'account'],
+      ['providers.connections.enabled.set', { action: 'setEnabled', machineId: 'machine', connectionId: 'pc_gateway', enabled: true, scope: 'machine' }, 'machine'],
+      ['providers.models.list', { connectionId: 'pc_gateway' }, 'account'],
+      ['providers.models.manual.remove', { action: 'manualRemove', connectionId: 'pc_gateway', modelId: 'model', expectedConnectionRevision: 1 }, 'account'],
+      ['providers.models.source_visibility.set', { action: 'setConnectionVisibility', connectionId: 'pc_gateway', shown: true }, 'account'],
+      ['providers.connections.start_local', { action: 'startLocal', machineId: 'machine', contributionKey: 'example.gateway/gateway' }, 'machine'],
+    ] as const;
+    const admittedCases = cases.map(([id, input, expected]) => {
+      const spec = getActionSpec(id);
+      return { id, spec, input: spec.inputSchema.parse(input), expected };
+    });
+    for (const { id, spec, input, expected } of admittedCases) {
+      expect(spec.surfaces.agent, id).toBe(true);
+      expect(spec.surfaces.cli, id).toBe(true);
+      expect(resolveActionExecutionPlacementForInput(spec, input), id).toBe(expected);
+    }
+    expect(getActionSpec('providers.connections.update').executionPlacement).toBe('account');
+    expect(getActionSpec('providers.models.list').executionPlacement).toBe('account');
+  }, 60_000);
+
   it('admits the exact scoped credential operation and preserves a daemon unknown-outcome refusal', async () => {
     const actionId = 'providers.connections.secrets.bind';
     expect(ActionIdSchema.safeParse(actionId).success).toBe(true);
@@ -82,9 +111,9 @@ describe('Provider Settings Actions', () => {
   it('keeps a dispatched mutation ACK after retirement, but refuses a retired read and malformed mutation ACK', async () => {
     const { createActionExecutor } = await import('./actionExecutor.js');
     let current = true;
-    let reply: unknown = { status: 'success', action: 'delete', deletedConnectionId: 'connection' };
+    let reply: unknown = { status: 'success', action: 'setEnabled', connectionId: 'connection' };
     const settings = ActionsSettingsV1Schema.parse({ v: 1, actions: {},
-      approvalWaivedSurfaces: { 'providers.connections.delete': ['ui'] } });
+      approvalWaivedSurfaces: { 'providers.connections.enabled.set': ['ui'] } });
     const executor = createActionExecutor({
       isActionApprovalRequired: (id, ctx, input) => isApprovalRequiredByActionsSettings(id, settings, ctx, undefined, undefined, input),
       providerActionExecute: createProviderActionExecuteV1({
@@ -93,11 +122,12 @@ describe('Provider Settings Actions', () => {
       }),
     });
     const waivedContext = { ...context, actionsSettings: settings };
-    expect(await executor.execute('providers.connections.delete', { action: 'delete', machineId: 'machine', connectionId: 'connection' }, waivedContext))
+    const input = { action: 'setEnabled', machineId: 'machine', connectionId: 'connection', enabled: true, scope: 'machine' };
+    expect(await executor.execute('providers.connections.enabled.set', input, waivedContext))
       .toEqual({ ok: true, result: reply });
     current = true;
     reply = { unrecognized: true };
-    expect(await executor.execute('providers.connections.delete', { action: 'delete', machineId: 'machine', connectionId: 'connection' }, waivedContext))
+    expect(await executor.execute('providers.connections.enabled.set', input, waivedContext))
       .toMatchObject({ ok: false, errorCode: 'provider_rpc_mutation_outcome_unknown' });
     current = true;
     reply = { status: 'error', error: createProviderErrorV1('agent_unavailable') };

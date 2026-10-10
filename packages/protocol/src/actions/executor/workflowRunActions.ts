@@ -11,7 +11,7 @@ import { materializeWorkflowAcceptedSnapshotV1, readWorkflowAcceptedAgentStartLe
 import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, openWorkflowCheckpointStoredEnvelopeV1, openWorkflowFinalResultStoredEnvelopeV1, openWorkflowProgressStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1, sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowCheckpointStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '../../workflows/workflowStoredContentV1.js';
 import { validateWorkflowDefinition, matchesWorkflowAcceptedDefinitionV1 } from '../../workflows/workflowValidationV1.js';
 import { type WorkflowActionIdV1 } from '../actionIds.js';
-import { type WorkflowBlock, type WorkflowDefinitionV1, type WorkflowIngressContextV1 } from '../../workflows/workflowV1.js';
+import { workflowInputToFieldHint, type WorkflowBlock, type WorkflowDefinitionV1, type WorkflowIngressContextV1 } from '../../workflows/workflowV1.js';
 import { type WorkflowWorkspaceProgressV1 } from '../../workflows/workflowWorkspaceV1.js';
 import { formatWorkflowDefinitionRefV1 } from '../../workflows/workflowDefinitionRefV1.js';
 import { resolveWorkflowDefinitionRefV1 } from '../../workflows/workflowDefinitionResolverV1.js';
@@ -33,7 +33,7 @@ import type { ActionExecutorDeps, WorkflowActionExecuteArgs } from './types.js';
 import type { WorkflowRunActionOwner } from './workflowAccountActions.js';
 import { admitActionAgentStartV1, resolveActionAgentStartContextV1 } from './agentStartAdmission.js';
 import type { WorkflowPluginSourceReaderV1 } from '../../workflows/workflowPluginSourceV1.js';
-import { resolveInputTypeOptions, validateInputTypeValue } from '../../inputs/inputTypeRuntime.js';
+import { resolveInputTypeOptions, readInputFieldOptionsConstraint, validateInputFieldSchema, validateInputFieldValue } from '../../inputs/inputTypeRuntime.js';
 import type { InputOption } from '../../inputs/inputFields.js';
 import { ActionExecuteFailureSchema } from '../actionExecutionResult.js';
 import { WorkflowOperationErrorCodeV1Schema } from '../../workflows/workflowProgressV1.js';
@@ -796,10 +796,13 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     const resolvedInputs = resolveInputs(definition, input.inputs);
     for (const field of definition.inputs ?? []) {
       if (!field.inputType || resolvedInputs[field.name] === undefined) continue;
-      const type = await deps.inputTypeDeps?.resolveInputType?.(field.inputType, args.context);
-      if (!type || type.identity.pluginId !== field.inputType.pluginId || type.identity.localId !== field.inputType.localId) throw workflowError('input_type_unavailable');
+      const hint = workflowInputToFieldHint(field);
+      const type = 'pluginId' in field.inputType ? await deps.inputTypeDeps?.resolveInputType?.(field.inputType, args.context) : undefined;
+      args.context.signal?.throwIfAborted();
+      const schema = validateInputFieldSchema({ field: hint, value: resolvedInputs[field.name]!, type });
+      if (schema.status !== 'valid') throw workflowError(schema.reasonCode);
       let options: readonly InputOption[] | undefined;
-      if (type.definition.options) {
+      if (readInputFieldOptionsConstraint(hint, type).kind === 'dynamic') {
         const result = await resolveInputTypeOptions({ deps: deps.inputTypeDeps ?? {}, ctx: args.context, identity: field.inputType,
           ...(originSessionId ? { sessionId: originSessionId } : {}),
           readFailure: result => {
@@ -810,11 +813,15 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         if (!result.ok) throw workflowError(result.errorCode ?? 'input_type_options_unavailable');
         options = result.result;
       }
-      const validation = validateInputTypeValue(type, resolvedInputs[field.name], options);
+      const validation = validateInputFieldValue({ field: hint, value: resolvedInputs[field.name]!, type, options });
       if (validation.status !== 'valid') throw workflowError(validation.reasonCode);
+      if ('hostType' in field.inputType) resolvedInputs[field.name] = validation.value;
       args.context.signal?.throwIfAborted();
-      const current = await deps.inputTypeDeps?.resolveInputType?.(field.inputType, args.context);
-      if (!current || current.occurrenceId !== type.occurrenceId) throw workflowError('input_type_retired');
+      if (type && 'pluginId' in field.inputType) {
+        const current = await deps.inputTypeDeps?.resolveInputType?.(field.inputType, args.context);
+        args.context.signal?.throwIfAborted();
+        if (!current || current.occurrenceId !== type.occurrenceId) throw workflowError('input_type_retired');
+      }
     }
     if (!replaySource && !deps.prepareWorkspace) throw workflowError('target_unavailable');
     const preparedWorkspace = replaySource ? { ok: true as const, workspaceTarget: replaySource.accepted.workspaceTarget }
@@ -863,8 +870,12 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       try { return await projectExisting(); }
       catch (error) { if (!isNotFound(error)) throw error; }
     }
-    const enc = await encryption(args.context.signal);
-    const accountId = await deps.resolveAccountId(args.context.signal);
+    // These independent Account reads share the caller's cancellation owner.
+    // Both must succeed before key preparation or admission can write anything.
+    const [enc, accountId] = await Promise.all([
+      encryption(args.context.signal),
+      deps.resolveAccountId(args.context.signal),
+    ]);
     const sourceArtifactId = accepted.source.kind === 'saved' || accepted.source.kind === 'automation'
       ? accepted.source.definitionId ?? null
       : accepted.source.kind === 'inline' ? accepted.source.sourceArtifactId ?? replaySource?.snapshot.run.sourceArtifactId ?? null : null;

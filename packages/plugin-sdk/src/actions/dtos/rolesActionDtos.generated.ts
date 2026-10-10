@@ -196,6 +196,7 @@ export type RolesActionResultById = {
                 headerVersion: number;
                 bodyVersion: number;
             } | undefined;
+            pluginDisplayName?: string | undefined;
         }[];
         diagnostics: ({
             source: 'legacy-guidance';
@@ -236,6 +237,7 @@ export type RolesActionResultById = {
             headerVersion: number;
             bodyVersion: number;
         } | undefined;
+        pluginDisplayName?: string | undefined;
     };
     readonly "roles.create": {
         roleId: string;

@@ -193,6 +193,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       viewerRole: 'owner',
       capabilities: {
         viewTeam: true,
+        viewRoster: true,
         manageSettings: true,
         managePolicy: false,
         manageMembers: false,
@@ -206,6 +207,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       admission: {
         historyChoice: { admin: 'choice', member: 'choice', guest: 'hidden' },
       },
+      counts: null,
     } as const;
     const homeDomainAction = vi.fn(async () => updatedTeam);
     const executor = createActionExecutor({
@@ -684,10 +686,10 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
     }));
     const deferredSpawnArgs = sessionSpawnNew.mock.calls[0]?.[0];
     if (!deferredSpawnArgs?.context) throw new Error('Expected the captured spawn context');
-    const { actionCaller, defaultSessionMachineId, executionRunTargetMachineId, placement, ...capturedContext } = deferredSpawnArgs.context;
+    const { actionCaller, defaultSessionMachineId, executionRunTargetMachineId, placement } = deferredSpawnArgs.context;
     // Durable replay restores routing defaults that the direct invocation omits.
     expect({ actionCaller, defaultSessionMachineId, executionRunTargetMachineId, placement }).toEqual({
-      actionCaller: { kind: 'host' },
+      actionCaller: caller,
       defaultSessionMachineId: sessionSpawnInput.executionTarget.machineId,
       executionRunTargetMachineId: sessionSpawnInput.executionTarget.machineId,
       placement: null,
@@ -706,7 +708,13 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       workDepth: args.workDepth, originSessionId: args.originSessionId,
     }))).toEqual([0, 1].map(() => ({ actionCaller: caller, permissionMode: 'read-only',
       sessionAgentSpawnPolicyV1: policy, workDepth: 1, originSessionId: caller.sessionId })));
-    expect(sessionSpawnNew.mock.calls[1]?.[0]).toEqual({ ...deferredSpawnArgs, context: capturedContext });
+    for (const [args] of sessionSpawnNew.mock.calls) {
+      expect(args.context).toMatchObject({
+        actionCaller: caller, defaultSessionId: caller.sessionId,
+        sessionAgentSpawnPolicyV1: policy,
+        causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'safe-yolo' },
+      });
+    }
   });
 
   it('retains an Agent permission ceiling through durable Run approval replay', async () => {
@@ -1138,12 +1146,12 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       storedRequest = request;
       return { ok: true as const };
     });
-    const sessionTitleSet = vi.fn(async () => ({ updated: true }));
+    const sessionStateFieldSet = vi.fn(async () => ({ updated: true }));
     const observeActionExecution = vi.fn(async () => undefined);
     const executor = createActionExecutor({
       approvalsGet,
       approvalsUpdate,
-      sessionTitleSet,
+      sessionStateFieldSet,
       observeActionExecution,
     } as unknown as ActionExecutorDeps);
 
@@ -1162,7 +1170,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       status: 'failed',
       execution: { ok: false, errorCode: 'approval_stale' },
     });
-    expect(sessionTitleSet).not.toHaveBeenCalled();
+    expect(sessionStateFieldSet).not.toHaveBeenCalled();
     expect(observeActionExecution).not.toHaveBeenCalled();
   });
 
@@ -1225,12 +1233,12 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       storedRequest = request;
       return { ok: true as const };
     });
-    const sessionTitleSet = vi.fn(async () => ({ updated: true }));
+    const sessionStateFieldSet = vi.fn(async () => ({ updated: true }));
     const isApprovalExecutionOriginCurrent = vi.fn(async () => isCurrent);
     const executor = createActionExecutor({
       approvalsGet: async () => storedRequest,
       approvalsUpdate,
-      sessionTitleSet,
+      sessionStateFieldSet,
       isApprovalExecutionOriginCurrent,
     } as unknown as ActionExecutorDeps);
 
@@ -1268,7 +1276,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       status: 'failed',
       execution: { ok: false, errorCode: 'approval_stale' },
     });
-    expect(sessionTitleSet).not.toHaveBeenCalled();
+    expect(sessionStateFieldSet).not.toHaveBeenCalled();
   });
 
   it('routes an approval artifact through a current-device profile while validating the immutable creator profile and Home identity', async () => {
@@ -1302,11 +1310,11 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       storedRequest = request;
       return { ok: true as const };
     });
-    const sessionTitleSet = vi.fn(async () => ({ updated: true }));
+    const sessionStateFieldSet = vi.fn(async () => ({ updated: true }));
     const executor = createActionExecutor({
       approvalsGet,
       approvalsUpdate,
-      sessionTitleSet,
+      sessionStateFieldSet,
       isApprovalExecutionOriginCurrent: async ({ origin }) => origin.serverIdentityId === 'srv_shared_home',
     } as unknown as ActionExecutorDeps);
 
@@ -1329,7 +1337,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       artifactId: 'approval-cross-device-1',
       serverId: null,
     });
-    expect(sessionTitleSet).toHaveBeenCalledOnce();
+    expect(sessionStateFieldSet).toHaveBeenCalledOnce();
   });
 
   it('rejects an obsolete execution-run occurrence after the host origin remains current', async () => {
@@ -1419,7 +1427,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       actionArgs: { sessionId: 'session-1', title: 'From PAT' },
       summary: 'Set title',
     });
-    const sessionTitleSet = vi.fn(async () => ({ updated: true }));
+    const sessionStateFieldSet = vi.fn(async () => ({ updated: true }));
     const approvalsUpdate = vi.fn(async ({ request }: { request: ApprovalRequest }) => {
       storedRequest = request;
       return { ok: true as const };
@@ -1427,7 +1435,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
     const executor = createActionExecutor({
       approvalsGet: async () => storedRequest,
       approvalsUpdate,
-      sessionTitleSet,
+      sessionStateFieldSet,
       isApprovalExecutionOriginCurrent: async ({ origin }) => (
         origin.authority === 'account_automation'
         && origin.credentialId === 'credential-1'
@@ -1448,7 +1456,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       status: 'failed',
       execution: { ok: false, errorCode: 'approval_stale' },
     });
-    expect(sessionTitleSet).not.toHaveBeenCalled();
+    expect(sessionStateFieldSet).not.toHaveBeenCalled();
   });
   it('persists the exact Workflow Run caller in a durable approval origin', async () => {
     const approvalsCreate = vi.fn(async () => ({ artifactId: 'workflow-approval-1' }));
@@ -1472,7 +1480,7 @@ describe('createActionExecutor (durable plugin approval caller provenance)', () 
       serverId: 'server-1',
       actionRequestId: 'request-workflow-1',
       actionCaller: { kind: 'workflowRun', runId: 'run-1', authorization },
-    })).resolves.toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+    })).resolves.toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'workflow-approval-1' } });
 
     expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({
       request: expect.objectContaining({

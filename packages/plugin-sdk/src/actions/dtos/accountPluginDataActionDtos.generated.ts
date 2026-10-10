@@ -50,7 +50,7 @@ export type AccountPluginDataActionInputById = {
 };
 export type AccountPluginDataActionResultById = {
     readonly "account.plugins.data.erase": {
-        status: 'completed' | 'partial' | 'failed';
+        status: 'failed' | 'completed' | 'partial';
         settings: {
             status: 'completed';
             changed: boolean;

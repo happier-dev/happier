@@ -1,6 +1,7 @@
 import { ACTION_IDS } from './actionIds.js';
 import { MCP_SERVER_ACTION_IDS_V1 } from '../mcp/servers/serverActionIdsV1.js';
 import { PROVIDER_ACTION_IDS_V1 } from '../providers/providerActionIdsV1.js';
+import { USAGE_COACH_ACTION_IDS } from '../usage/usageActionIdsV1.js';
 import { isAutomationApprovalRequestSurface, canRequestPresentUserApprovalForActionInputV1 } from './decisionAuthority.js';
 import { ActionIdSchema, type ActionId } from './actionIds.js';
 import type { ActionExecutorContext } from './actionExecutor.js';
@@ -14,12 +15,53 @@ import { getActionSpec, type ActionSpec, type ActionSurfaces } from './actionSpe
 import { readWidgetActionSurfaceV1, readWidgetActionDestinationV1 } from '../widgets/actionsV1.js';
 import { isFilesystemActionId } from './filesystemActionFamily.js';
 import { isRemoteHostActionIdV1 } from '../remoteHosts/remoteHostActionIdsV1.js';
+import { NOTIFICATION_CONFIGURATION_ACTION_IDS } from './notificationConfigurationActionIds.js';
+import type { WidgetSurfaceRefV1 } from '../widgets/widgetInstanceV1.js';
+import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 
 export type ActionApprovalRoutingDecision = Readonly<{
   required: boolean;
   flow: ActionApprovalFlow;
   result: ActionApprovalResult;
 }>;
+
+/** Host-admitted personal presentation edits share the incumbent owner policy. */
+export function resolveWidgetActionContextualSafetyV1(args: Readonly<{
+  actionId: ActionId;
+  surface: WidgetSurfaceRefV1;
+  destination?: WidgetSurfaceRefV1 | null;
+  /** Current Artifact admission, never an Action input flag. */
+  isShared?: boolean;
+}>): ActionSpec['safety'] | undefined {
+  const { actionId, surface, destination, isShared } = args;
+  if (isShared === true) return 'danger';
+  const personalOwner = (target: WidgetSurfaceRefV1) => target.owner.kind === 'home' || target.owner.kind === 'companion';
+  if (destination && personalOwner(surface) && personalOwner(destination)) {
+    return surface.owner.kind === 'home' || destination.owner.kind === 'home'
+      ? getActionSpec('home.hub.layout.update').safety : getActionSpec('session.presentation.apply').safety;
+  }
+  if (destination && !sameStrictJsonValue(surface, destination)) return 'danger';
+  if (surface.owner.kind === 'home') return getActionSpec('home.hub.layout.update').safety;
+  if (surface.owner.kind === 'companion') return getActionSpec('session.presentation.apply').safety;
+  const personalArea = isShared === false && (surface.owner.kind === 'pluginArea' || surface.owner.kind === 'corePage'
+    || surface.owner.kind === 'project');
+  if (!personalArea) return undefined;
+  switch (actionId) {
+    case 'widgets.item.rename':
+    case 'widgets.item.size.set':
+    case 'widgets.item.frame.set':
+    case 'widgets.item.move':
+    case 'widgets.group.set':
+    case 'widgets.area.layout.create':
+    case 'widgets.area.layout.rename':
+    case 'widgets.area.layout.reorder':
+    case 'widgets.area.layout.reset':
+    case 'widgets.area.layout.undo':
+      return 'safe';
+    default:
+      return undefined;
+  }
+}
 
 export type ResolveActionApprovalRoutingArgs = Readonly<{
   actionId: ActionId;
@@ -164,14 +206,20 @@ const AGENT_INITIATED_APPROVAL_REQUIRED_ACTION_ID_SET: ReadonlySet<ActionId> = n
  *   widgets-platform §4 — the same configurable policy owns their UI approval.
  */
 const PRESENT_USER_UI_POLICY_CONFIRMED_ACTION_ID_SET: ReadonlySet<ActionId> = new Set<ActionId>([
+  'memory.clear_index',
   // MCP Actions have no separate UI-local confirmation host.
   ...MCP_SERVER_ACTION_IDS_V1.filter(id => getActionSpec(id).safety === 'danger'),
   // Provider settings use the canonical approval owner, not a local prompt.
   ...PROVIDER_ACTION_IDS_V1.filter(id => getActionSpec(id).safety === 'danger'),
+  // Endpoint edits have no separate UI-local confirmation host.
+  ...NOTIFICATION_CONFIGURATION_ACTION_IDS.filter(id => getActionSpec(id).safety === 'danger'),
+  // Coach uses this policy's confirmation owner, not a finding-card-local prompt.
+  ...USAGE_COACH_ACTION_IDS,
   // Legacy Provider conversion reviews collect input; this owner confirms the effect.
   'launch_profiles.legacy.convert',
   'launch_profiles.legacy.resolve_conflict',
   'connectedServices.accounts.revoke',
+  'connectedServices.configuration.replace',
   'action.operations.cancel',
   // Public admitted-creation CAS does not have a separate UI confirmation host.
   'machines.managed.cancel',

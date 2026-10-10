@@ -57,9 +57,10 @@ describe('managed GitHub App Action contracts', () => {
     });
   });
 
-  it('keeps secrets on interactive create surfaces', () => {
+  it('admits credential-bearing create requests without exposing direct API-token execution', () => {
     const spec = getActionSpec(ActionIdSchema.parse('identity.githubApps.create'));
-    expect(spec.surfaces).toMatchObject({ ui: true, cli: true, agent: false, mcp: false });
+    expect(spec.surfaces).toMatchObject({ ui: true, cli: true, agent: true, mcp: true, api: false, plugin: true });
+    expect(spec.requiredAuthority).toBe('present_user');
     expect(spec.inputSchema.safeParse({
       owner: { kind: 'team', teamId: 'team-1' },
       githubHost: 'https://github.com',
@@ -76,7 +77,7 @@ describe('managed GitHub App Action contracts', () => {
     }).success).toBe(false);
   });
 
-  it('exposes only the redacted managed App read to autonomous agents', () => {
+  it('admits managed App mutations as Agent/MCP requests while retaining human execution authority', () => {
     expect(getActionSpec(ActionIdSchema.parse('identity.githubApps.list')).surfaces)
       .toMatchObject({ ui: true, cli: true, agent: true, mcp: false });
     for (const id of [
@@ -86,16 +87,17 @@ describe('managed GitHub App Action contracts', () => {
       'identity.githubApps.verifyInstallation',
       'identity.githubApps.remove',
     ] as const) {
-      expect(getActionSpec(ActionIdSchema.parse(id)).surfaces.agent).toBe(false);
+      const spec = getActionSpec(ActionIdSchema.parse(id));
+      expect(spec.surfaces).toMatchObject({ agent: true, mcp: true, api: false });
+      expect(spec.requiredAuthority).toBe('present_user');
     }
   });
 
   it('keeps every secret-bearing or browser-mediated managed App operation on an authenticated human caller', () => {
-    // The safe redacted read is the one managed-App operation automation may
-    // carry; every other row registers or rebinds an App whose input carries
-    // write-only key material or whose result is a one-time browser handoff.
-    // Withholding it from the Agent tool surface is not enough: an API-token or
-    // trusted-plugin caller reaches the same spec through the public ABI.
+    // Only the safe redacted read permits autonomous execution; mutations may
+    // carry write-only key material or return a one-time browser handoff.
+    // Tool requestability never grants the authority needed to execute a
+    // mutation; authenticated human approval supplies that authority.
     expect(getActionSpec(ActionIdSchema.parse('identity.githubApps.list')).requiredAuthority)
       .toBe('account_automation');
     for (const id of [

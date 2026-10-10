@@ -28,12 +28,18 @@ export type BoardsActionInputById = {
                     } | {
                         kind: 'project';
                         projectId: string;
-                        dashboardId?: string | undefined;
+                        layoutId?: string | undefined;
                     } | {
                         kind: 'pluginArea';
                         pluginId: string;
                         pageId: string;
                         area: string;
+                        layoutId?: string | undefined;
+                    } | {
+                        kind: 'corePage';
+                        pageId: string;
+                        area: string;
+                        layoutId?: string | undefined;
                     };
                     artifactId?: string | undefined;
                 };
@@ -102,7 +108,13 @@ export type BoardsActionInputById = {
                                 inputType?: {
                                     pluginId: string;
                                     localId: string;
+                                } | {
+                                    hostType: 'usageQuery';
+                                    field?: 'period' | 'session' | undefined;
+                                } | {
+                                    hostType: 'session' | 'workspace';
                                 } | undefined;
+                                contextMode?: 'follow' | 'own' | undefined;
                                 required?: boolean | undefined;
                                 requireExplicitSelection?: boolean | undefined;
                                 listSeparator?: 'comma' | 'newline' | undefined;
@@ -170,12 +182,18 @@ export type BoardsActionInputById = {
                     } | {
                         kind: 'project';
                         projectId: string;
-                        dashboardId?: string | undefined;
+                        layoutId?: string | undefined;
                     } | {
                         kind: 'pluginArea';
                         pluginId: string;
                         pageId: string;
                         area: string;
+                        layoutId?: string | undefined;
+                    } | {
+                        kind: 'corePage';
+                        pageId: string;
+                        area: string;
+                        layoutId?: string | undefined;
                     };
                     artifactId?: string | undefined;
                 };
@@ -210,12 +228,18 @@ export type BoardsActionInputById = {
                     } | {
                         kind: 'project';
                         projectId: string;
-                        dashboardId?: string | undefined;
+                        layoutId?: string | undefined;
                     } | {
                         kind: 'pluginArea';
                         pluginId: string;
                         pageId: string;
                         area: string;
+                        layoutId?: string | undefined;
+                    } | {
+                        kind: 'corePage';
+                        pageId: string;
+                        area: string;
+                        layoutId?: string | undefined;
                     };
                     artifactId?: string | undefined;
                 };
@@ -280,7 +304,13 @@ export type BoardsActionInputById = {
                                 inputType?: {
                                     pluginId: string;
                                     localId: string;
+                                } | {
+                                    hostType: 'usageQuery';
+                                    field?: 'period' | 'session' | undefined;
+                                } | {
+                                    hostType: 'session' | 'workspace';
                                 } | undefined;
+                                contextMode?: 'follow' | 'own' | undefined;
                                 required?: boolean | undefined;
                                 requireExplicitSelection?: boolean | undefined;
                                 listSeparator?: 'comma' | 'newline' | undefined;
@@ -333,6 +363,7 @@ export type BoardsActionInputById = {
                 frameStyle: 'card' | 'plain' | null;
                 nativeIndex: number;
                 area?: 'main' | 'aside' | undefined;
+                groupId?: string | null | undefined;
                 size?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
                 tabId?: string | undefined;
                 hidden?: boolean | undefined;
@@ -363,12 +394,18 @@ export type BoardsActionInputById = {
                     } | {
                         kind: 'project';
                         projectId: string;
-                        dashboardId?: string | undefined;
+                        layoutId?: string | undefined;
                     } | {
                         kind: 'pluginArea';
                         pluginId: string;
                         pageId: string;
                         area: string;
+                        layoutId?: string | undefined;
+                    } | {
+                        kind: 'corePage';
+                        pageId: string;
+                        area: string;
+                        layoutId?: string | undefined;
                     };
                     artifactId?: string | undefined;
                 };
@@ -396,12 +433,18 @@ export type BoardsActionInputById = {
                     } | {
                         kind: 'project';
                         projectId: string;
-                        dashboardId?: string | undefined;
+                        layoutId?: string | undefined;
                     } | {
                         kind: 'pluginArea';
                         pluginId: string;
                         pageId: string;
                         area: string;
+                        layoutId?: string | undefined;
+                    } | {
+                        kind: 'corePage';
+                        pageId: string;
+                        area: string;
+                        layoutId?: string | undefined;
                     };
                     artifactId?: string | undefined;
                 };
@@ -429,12 +472,18 @@ export type BoardsActionInputById = {
                     } | {
                         kind: 'project';
                         projectId: string;
-                        dashboardId?: string | undefined;
+                        layoutId?: string | undefined;
                     } | {
                         kind: 'pluginArea';
                         pluginId: string;
                         pageId: string;
                         area: string;
+                        layoutId?: string | undefined;
+                    } | {
+                        kind: 'corePage';
+                        pageId: string;
+                        area: string;
+                        layoutId?: string | undefined;
                     };
                     artifactId?: string | undefined;
                 };
@@ -471,12 +520,18 @@ export type BoardsActionInputById = {
                     } | {
                         kind: 'project';
                         projectId: string;
-                        dashboardId?: string | undefined;
+                        layoutId?: string | undefined;
                     } | {
                         kind: 'pluginArea';
                         pluginId: string;
                         pageId: string;
                         area: string;
+                        layoutId?: string | undefined;
+                    } | {
+                        kind: 'corePage';
+                        pageId: string;
+                        area: string;
+                        layoutId?: string | undefined;
                     };
                     artifactId?: string | undefined;
                 };
@@ -504,12 +559,18 @@ export type BoardsActionInputById = {
                     } | {
                         kind: 'project';
                         projectId: string;
-                        dashboardId?: string | undefined;
+                        layoutId?: string | undefined;
                     } | {
                         kind: 'pluginArea';
                         pluginId: string;
                         pageId: string;
                         area: string;
+                        layoutId?: string | undefined;
+                    } | {
+                        kind: 'corePage';
+                        pageId: string;
+                        area: string;
+                        layoutId?: string | undefined;
                     };
                     artifactId?: string | undefined;
                 };
@@ -673,12 +734,18 @@ export type BoardsActionResultById = {
                         } | {
                             kind: 'project';
                             projectId: string;
-                            dashboardId?: string | undefined;
+                            layoutId?: string | undefined;
                         } | {
                             kind: 'pluginArea';
                             pluginId: string;
                             pageId: string;
                             area: string;
+                            layoutId?: string | undefined;
+                        } | {
+                            kind: 'corePage';
+                            pageId: string;
+                            area: string;
+                            layoutId?: string | undefined;
                         };
                         artifactId?: string | undefined;
                     };
@@ -743,7 +810,13 @@ export type BoardsActionResultById = {
                                     inputType?: {
                                         pluginId: string;
                                         localId: string;
+                                    } | {
+                                        hostType: 'usageQuery';
+                                        field?: 'period' | 'session' | undefined;
+                                    } | {
+                                        hostType: 'session' | 'workspace';
                                     } | undefined;
+                                    contextMode?: 'follow' | 'own' | undefined;
                                     required?: boolean | undefined;
                                     requireExplicitSelection?: boolean | undefined;
                                     listSeparator?: 'comma' | 'newline' | undefined;
@@ -863,12 +936,18 @@ export type BoardsActionResultById = {
                         } | {
                             kind: 'project';
                             projectId: string;
-                            dashboardId?: string | undefined;
+                            layoutId?: string | undefined;
                         } | {
                             kind: 'pluginArea';
                             pluginId: string;
                             pageId: string;
                             area: string;
+                            layoutId?: string | undefined;
+                        } | {
+                            kind: 'corePage';
+                            pageId: string;
+                            area: string;
+                            layoutId?: string | undefined;
                         };
                         artifactId?: string | undefined;
                     };
@@ -933,7 +1012,13 @@ export type BoardsActionResultById = {
                                     inputType?: {
                                         pluginId: string;
                                         localId: string;
+                                    } | {
+                                        hostType: 'usageQuery';
+                                        field?: 'period' | 'session' | undefined;
+                                    } | {
+                                        hostType: 'session' | 'workspace';
                                     } | undefined;
+                                    contextMode?: 'follow' | 'own' | undefined;
                                     required?: boolean | undefined;
                                     requireExplicitSelection?: boolean | undefined;
                                     listSeparator?: 'comma' | 'newline' | undefined;

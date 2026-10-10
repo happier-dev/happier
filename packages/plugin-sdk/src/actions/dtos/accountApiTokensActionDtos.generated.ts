@@ -20,7 +20,7 @@ export type AccountApiTokensActionInputById = {
         grant?: {
             v: 1;
             actions: {
-                families: ('find' | 'observation' | 'capture_viewing' | 'workspace_layout' | 'session_organization_move' | 'composer_ingress' | 'list_reorder' | 'todo_session_link' | 'workspace_file_search' | 'widgets' | 'launch_profiles' | 'discovery' | 'workflow_authoring' | 'session_authoring' | 'notifications' | 'home_hub_layout' | 'machine_agent_install' | 'machine_agent_sign_in' | 'machine_connection' | 'session_access' | 'session_lifecycle' | 'inventory' | 'messaging' | 'session_control' | 'session_organization_resources' | 'intent_start' | 'review_comments' | 'subagent_registry' | 'execution_run_control' | 'session_targeting' | 'session_follow' | 'session_transcripts' | 'session_attention' | 'session_permissions' | 'external_sessions' | 'voice_controls' | 'current_ui_context' | 'command_palette' | 'prompt_picker' | 'companion_controls' | 'memory' | 'agent_acp_catalog' | 'prompt_library' | 'daemon_admin' | 'browser_control' | 'browser_diagnostics' | 'browser_context' | 'browser_automation' | 'computer' | 'browser_recording' | 'local_services_inventory' | 'local_services_launcher' | 'local_services_preview' | 'local_services_public_preview' | 'local_services_actions' | 'peer_mediation_observability' | 'devices_simulator' | 'approvals' | 'plugin_dev_loop' | 'plugin_permission_grants' | 'plugin_webhooks' | 'account_plugin_data' | 'account_sessions' | 'account_security' | 'account_api_tokens' | 'automation_events' | 'automation_conversation' | 'scm_git' | 'scm_pull_request' | 'scm_repository' | 'scm_diff_summary' | 'project_sources' | 'project_execution' | 'project_definitions' | 'project_workers' | 'operation_output' | 'session_terminals' | 'filesystem' | 'scope' | 'connected_services_configuration' | 'boards' | 'roles' | 'artifact_folders' | 'workflows' | 'workflow_effects' | 'artifact_access' | 'artifacts' | 'settings_declarations' | 'app_shell' | 'notification_configuration' | 'app_updates' | 'machine_access' | 'machine_work_summary' | 'session_read_state' | 'session_board' | 'session_discussion' | 'plugin_settings_administration' | 'identity_github_apps' | 'identity_providers' | 'machine_pools' | 'managed_machines' | 'machine_presets' | 'ephemeral_runner' | 'home_governance' | 'teams' | 'saved_secret_sharing')[];
+                families: ('find' | 'usage' | 'observation' | 'capture_viewing' | 'workspace_layout' | 'session_organization_move' | 'composer_ingress' | 'list_reorder' | 'todo_session_link' | 'workspace_file_search' | 'workflow_event_catalog' | 'widgets' | 'launch_profiles' | 'discovery' | 'workflow_authoring' | 'workflow_diagnostics' | 'session_authoring' | 'notifications' | 'home_hub_layout' | 'machine_agent_install' | 'machine_agent_sign_in' | 'machine_connection' | 'session_access' | 'session_lifecycle' | 'inventory' | 'messaging' | 'session_control' | 'session_organization_resources' | 'intent_start' | 'review_comments' | 'subagent_registry' | 'execution_run_control' | 'session_targeting' | 'session_follow' | 'session_transcripts' | 'session_attention' | 'session_permissions' | 'external_sessions' | 'voice_controls' | 'current_ui_context' | 'command_palette' | 'prompt_picker' | 'companion_controls' | 'memory' | 'agent_acp_catalog' | 'prompt_library' | 'daemon_admin' | 'browser_control' | 'browser_diagnostics' | 'browser_context' | 'browser_automation' | 'computer' | 'browser_recording' | 'local_services_inventory' | 'local_services_launcher' | 'local_services_preview' | 'local_services_public_preview' | 'local_services_actions' | 'peer_mediation_observability' | 'devices_simulator' | 'approvals' | 'plugin_dev_loop' | 'plugin_permission_grants' | 'plugin_webhooks' | 'account_plugin_data' | 'account_sessions' | 'account_security' | 'account_api_tokens' | 'automation_events' | 'automation_conversation' | 'scm_git' | 'scm_pull_request' | 'scm_repository' | 'scm_diff_summary' | 'project_sources' | 'project_execution' | 'project_definitions' | 'project_workers' | 'operation_output' | 'session_terminals' | 'filesystem' | 'scope' | 'connected_services_configuration' | 'usage_sources' | 'boards' | 'roles' | 'mcp_servers' | 'providers' | 'remote_hosts' | 'home_runtime' | 'artifact_folders' | 'workflows' | 'workflow_effects' | 'artifact_access' | 'artifacts' | 'settings_declarations' | 'app_shell' | 'notification_configuration' | 'app_updates' | 'machine_access' | 'machine_work_summary' | 'session_read_state' | 'session_board' | 'session_discussion' | 'plugin_settings_administration' | 'identity_github_apps' | 'identity_providers' | 'machine_pools' | 'managed_machines' | 'machine_presets' | 'ephemeral_runner' | 'home_governance' | 'home_identity' | 'teams' | 'saved_secret_sharing')[];
                 ids: string[];
             } | null;
             targets: {
@@ -77,21 +77,43 @@ export type AccountApiTokensActionInputById = {
                 } | undefined;
                 radius?: 'sharp' | 'soft' | 'round' | undefined;
                 density?: 'compact' | 'comfortable' | undefined;
+                finish?: 'flat' | 'soft' | undefined;
                 parts?: {
                     userBubble?: {
                         radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                        finish?: 'flat' | 'soft' | undefined;
                     } | undefined;
                     composer?: {
                         radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                        finish?: 'flat' | 'soft' | undefined;
                     } | undefined;
                     toolCard?: {
                         radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                        finish?: 'flat' | 'soft' | undefined;
                     } | undefined;
                     approvalCard?: {
                         radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                        finish?: 'flat' | 'soft' | undefined;
                     } | undefined;
                     codeBlock?: {
                         radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                        finish?: 'flat' | 'soft' | undefined;
+                    } | undefined;
+                    card?: {
+                        radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                        finish?: 'flat' | 'soft' | undefined;
+                    } | undefined;
+                    floating?: {
+                        radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                        finish?: 'flat' | 'soft' | undefined;
+                    } | undefined;
+                    primaryButton?: {
+                        radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                        finish?: 'flat' | 'soft' | undefined;
+                    } | undefined;
+                    secondaryButton?: {
+                        radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                        finish?: 'flat' | 'soft' | undefined;
                     } | undefined;
                 } | undefined;
             } | null;
@@ -104,7 +126,7 @@ export type AccountApiTokensActionInputById = {
         grant?: {
             v: 1;
             actions: {
-                families: ('find' | 'observation' | 'capture_viewing' | 'workspace_layout' | 'session_organization_move' | 'composer_ingress' | 'list_reorder' | 'todo_session_link' | 'workspace_file_search' | 'widgets' | 'launch_profiles' | 'discovery' | 'workflow_authoring' | 'session_authoring' | 'notifications' | 'home_hub_layout' | 'machine_agent_install' | 'machine_agent_sign_in' | 'machine_connection' | 'session_access' | 'session_lifecycle' | 'inventory' | 'messaging' | 'session_control' | 'session_organization_resources' | 'intent_start' | 'review_comments' | 'subagent_registry' | 'execution_run_control' | 'session_targeting' | 'session_follow' | 'session_transcripts' | 'session_attention' | 'session_permissions' | 'external_sessions' | 'voice_controls' | 'current_ui_context' | 'command_palette' | 'prompt_picker' | 'companion_controls' | 'memory' | 'agent_acp_catalog' | 'prompt_library' | 'daemon_admin' | 'browser_control' | 'browser_diagnostics' | 'browser_context' | 'browser_automation' | 'computer' | 'browser_recording' | 'local_services_inventory' | 'local_services_launcher' | 'local_services_preview' | 'local_services_public_preview' | 'local_services_actions' | 'peer_mediation_observability' | 'devices_simulator' | 'approvals' | 'plugin_dev_loop' | 'plugin_permission_grants' | 'plugin_webhooks' | 'account_plugin_data' | 'account_sessions' | 'account_security' | 'account_api_tokens' | 'automation_events' | 'automation_conversation' | 'scm_git' | 'scm_pull_request' | 'scm_repository' | 'scm_diff_summary' | 'project_sources' | 'project_execution' | 'project_definitions' | 'project_workers' | 'operation_output' | 'session_terminals' | 'filesystem' | 'scope' | 'connected_services_configuration' | 'boards' | 'roles' | 'artifact_folders' | 'workflows' | 'workflow_effects' | 'artifact_access' | 'artifacts' | 'settings_declarations' | 'app_shell' | 'notification_configuration' | 'app_updates' | 'machine_access' | 'machine_work_summary' | 'session_read_state' | 'session_board' | 'session_discussion' | 'plugin_settings_administration' | 'identity_github_apps' | 'identity_providers' | 'machine_pools' | 'managed_machines' | 'machine_presets' | 'ephemeral_runner' | 'home_governance' | 'teams' | 'saved_secret_sharing')[];
+                families: ('find' | 'usage' | 'observation' | 'capture_viewing' | 'workspace_layout' | 'session_organization_move' | 'composer_ingress' | 'list_reorder' | 'todo_session_link' | 'workspace_file_search' | 'workflow_event_catalog' | 'widgets' | 'launch_profiles' | 'discovery' | 'workflow_authoring' | 'workflow_diagnostics' | 'session_authoring' | 'notifications' | 'home_hub_layout' | 'machine_agent_install' | 'machine_agent_sign_in' | 'machine_connection' | 'session_access' | 'session_lifecycle' | 'inventory' | 'messaging' | 'session_control' | 'session_organization_resources' | 'intent_start' | 'review_comments' | 'subagent_registry' | 'execution_run_control' | 'session_targeting' | 'session_follow' | 'session_transcripts' | 'session_attention' | 'session_permissions' | 'external_sessions' | 'voice_controls' | 'current_ui_context' | 'command_palette' | 'prompt_picker' | 'companion_controls' | 'memory' | 'agent_acp_catalog' | 'prompt_library' | 'daemon_admin' | 'browser_control' | 'browser_diagnostics' | 'browser_context' | 'browser_automation' | 'computer' | 'browser_recording' | 'local_services_inventory' | 'local_services_launcher' | 'local_services_preview' | 'local_services_public_preview' | 'local_services_actions' | 'peer_mediation_observability' | 'devices_simulator' | 'approvals' | 'plugin_dev_loop' | 'plugin_permission_grants' | 'plugin_webhooks' | 'account_plugin_data' | 'account_sessions' | 'account_security' | 'account_api_tokens' | 'automation_events' | 'automation_conversation' | 'scm_git' | 'scm_pull_request' | 'scm_repository' | 'scm_diff_summary' | 'project_sources' | 'project_execution' | 'project_definitions' | 'project_workers' | 'operation_output' | 'session_terminals' | 'filesystem' | 'scope' | 'connected_services_configuration' | 'usage_sources' | 'boards' | 'roles' | 'mcp_servers' | 'providers' | 'remote_hosts' | 'home_runtime' | 'artifact_folders' | 'workflows' | 'workflow_effects' | 'artifact_access' | 'artifacts' | 'settings_declarations' | 'app_shell' | 'notification_configuration' | 'app_updates' | 'machine_access' | 'machine_work_summary' | 'session_read_state' | 'session_board' | 'session_discussion' | 'plugin_settings_administration' | 'identity_github_apps' | 'identity_providers' | 'machine_pools' | 'managed_machines' | 'machine_presets' | 'ephemeral_runner' | 'home_governance' | 'home_identity' | 'teams' | 'saved_secret_sharing')[];
                 ids: string[];
             } | null;
             targets: {
@@ -161,21 +183,43 @@ export type AccountApiTokensActionInputById = {
                 } | undefined;
                 radius?: 'sharp' | 'soft' | 'round' | undefined;
                 density?: 'compact' | 'comfortable' | undefined;
+                finish?: 'flat' | 'soft' | undefined;
                 parts?: {
                     userBubble?: {
                         radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                        finish?: 'flat' | 'soft' | undefined;
                     } | undefined;
                     composer?: {
                         radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                        finish?: 'flat' | 'soft' | undefined;
                     } | undefined;
                     toolCard?: {
                         radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                        finish?: 'flat' | 'soft' | undefined;
                     } | undefined;
                     approvalCard?: {
                         radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                        finish?: 'flat' | 'soft' | undefined;
                     } | undefined;
                     codeBlock?: {
                         radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                        finish?: 'flat' | 'soft' | undefined;
+                    } | undefined;
+                    card?: {
+                        radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                        finish?: 'flat' | 'soft' | undefined;
+                    } | undefined;
+                    floating?: {
+                        radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                        finish?: 'flat' | 'soft' | undefined;
+                    } | undefined;
+                    primaryButton?: {
+                        radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                        finish?: 'flat' | 'soft' | undefined;
+                    } | undefined;
+                    secondaryButton?: {
+                        radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                        finish?: 'flat' | 'soft' | undefined;
                     } | undefined;
                 } | undefined;
             } | null;
@@ -201,7 +245,7 @@ export type AccountApiTokensActionResultById = {
             grant: {
                 v: 1;
                 actions: {
-                    families: ('find' | 'observation' | 'capture_viewing' | 'workspace_layout' | 'session_organization_move' | 'composer_ingress' | 'list_reorder' | 'todo_session_link' | 'workspace_file_search' | 'widgets' | 'launch_profiles' | 'discovery' | 'workflow_authoring' | 'session_authoring' | 'notifications' | 'home_hub_layout' | 'machine_agent_install' | 'machine_agent_sign_in' | 'machine_connection' | 'session_access' | 'session_lifecycle' | 'inventory' | 'messaging' | 'session_control' | 'session_organization_resources' | 'intent_start' | 'review_comments' | 'subagent_registry' | 'execution_run_control' | 'session_targeting' | 'session_follow' | 'session_transcripts' | 'session_attention' | 'session_permissions' | 'external_sessions' | 'voice_controls' | 'current_ui_context' | 'command_palette' | 'prompt_picker' | 'companion_controls' | 'memory' | 'agent_acp_catalog' | 'prompt_library' | 'daemon_admin' | 'browser_control' | 'browser_diagnostics' | 'browser_context' | 'browser_automation' | 'computer' | 'browser_recording' | 'local_services_inventory' | 'local_services_launcher' | 'local_services_preview' | 'local_services_public_preview' | 'local_services_actions' | 'peer_mediation_observability' | 'devices_simulator' | 'approvals' | 'plugin_dev_loop' | 'plugin_permission_grants' | 'plugin_webhooks' | 'account_plugin_data' | 'account_sessions' | 'account_security' | 'account_api_tokens' | 'automation_events' | 'automation_conversation' | 'scm_git' | 'scm_pull_request' | 'scm_repository' | 'scm_diff_summary' | 'project_sources' | 'project_execution' | 'project_definitions' | 'project_workers' | 'operation_output' | 'session_terminals' | 'filesystem' | 'scope' | 'connected_services_configuration' | 'boards' | 'roles' | 'artifact_folders' | 'workflows' | 'workflow_effects' | 'artifact_access' | 'artifacts' | 'settings_declarations' | 'app_shell' | 'notification_configuration' | 'app_updates' | 'machine_access' | 'machine_work_summary' | 'session_read_state' | 'session_board' | 'session_discussion' | 'plugin_settings_administration' | 'identity_github_apps' | 'identity_providers' | 'machine_pools' | 'managed_machines' | 'machine_presets' | 'ephemeral_runner' | 'home_governance' | 'teams' | 'saved_secret_sharing')[];
+                    families: ('find' | 'usage' | 'observation' | 'capture_viewing' | 'workspace_layout' | 'session_organization_move' | 'composer_ingress' | 'list_reorder' | 'todo_session_link' | 'workspace_file_search' | 'workflow_event_catalog' | 'widgets' | 'launch_profiles' | 'discovery' | 'workflow_authoring' | 'workflow_diagnostics' | 'session_authoring' | 'notifications' | 'home_hub_layout' | 'machine_agent_install' | 'machine_agent_sign_in' | 'machine_connection' | 'session_access' | 'session_lifecycle' | 'inventory' | 'messaging' | 'session_control' | 'session_organization_resources' | 'intent_start' | 'review_comments' | 'subagent_registry' | 'execution_run_control' | 'session_targeting' | 'session_follow' | 'session_transcripts' | 'session_attention' | 'session_permissions' | 'external_sessions' | 'voice_controls' | 'current_ui_context' | 'command_palette' | 'prompt_picker' | 'companion_controls' | 'memory' | 'agent_acp_catalog' | 'prompt_library' | 'daemon_admin' | 'browser_control' | 'browser_diagnostics' | 'browser_context' | 'browser_automation' | 'computer' | 'browser_recording' | 'local_services_inventory' | 'local_services_launcher' | 'local_services_preview' | 'local_services_public_preview' | 'local_services_actions' | 'peer_mediation_observability' | 'devices_simulator' | 'approvals' | 'plugin_dev_loop' | 'plugin_permission_grants' | 'plugin_webhooks' | 'account_plugin_data' | 'account_sessions' | 'account_security' | 'account_api_tokens' | 'automation_events' | 'automation_conversation' | 'scm_git' | 'scm_pull_request' | 'scm_repository' | 'scm_diff_summary' | 'project_sources' | 'project_execution' | 'project_definitions' | 'project_workers' | 'operation_output' | 'session_terminals' | 'filesystem' | 'scope' | 'connected_services_configuration' | 'usage_sources' | 'boards' | 'roles' | 'mcp_servers' | 'providers' | 'remote_hosts' | 'home_runtime' | 'artifact_folders' | 'workflows' | 'workflow_effects' | 'artifact_access' | 'artifacts' | 'settings_declarations' | 'app_shell' | 'notification_configuration' | 'app_updates' | 'machine_access' | 'machine_work_summary' | 'session_read_state' | 'session_board' | 'session_discussion' | 'plugin_settings_administration' | 'identity_github_apps' | 'identity_providers' | 'machine_pools' | 'managed_machines' | 'machine_presets' | 'ephemeral_runner' | 'home_governance' | 'home_identity' | 'teams' | 'saved_secret_sharing')[];
                     ids: string[];
                 } | null;
                 targets: {
@@ -260,21 +304,43 @@ export type AccountApiTokensActionResultById = {
                     } | undefined;
                     radius?: 'sharp' | 'soft' | 'round' | undefined;
                     density?: 'compact' | 'comfortable' | undefined;
+                    finish?: 'flat' | 'soft' | undefined;
                     parts?: {
                         userBubble?: {
                             radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                            finish?: 'flat' | 'soft' | undefined;
                         } | undefined;
                         composer?: {
                             radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                            finish?: 'flat' | 'soft' | undefined;
                         } | undefined;
                         toolCard?: {
                             radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                            finish?: 'flat' | 'soft' | undefined;
                         } | undefined;
                         approvalCard?: {
                             radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                            finish?: 'flat' | 'soft' | undefined;
                         } | undefined;
                         codeBlock?: {
                             radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                            finish?: 'flat' | 'soft' | undefined;
+                        } | undefined;
+                        card?: {
+                            radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                            finish?: 'flat' | 'soft' | undefined;
+                        } | undefined;
+                        floating?: {
+                            radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                            finish?: 'flat' | 'soft' | undefined;
+                        } | undefined;
+                        primaryButton?: {
+                            radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                            finish?: 'flat' | 'soft' | undefined;
+                        } | undefined;
+                        secondaryButton?: {
+                            radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                            finish?: 'flat' | 'soft' | undefined;
                         } | undefined;
                     } | undefined;
                 } | null;
@@ -294,7 +360,7 @@ export type AccountApiTokensActionResultById = {
             grant: {
                 v: 1;
                 actions: {
-                    families: ('find' | 'observation' | 'capture_viewing' | 'workspace_layout' | 'session_organization_move' | 'composer_ingress' | 'list_reorder' | 'todo_session_link' | 'workspace_file_search' | 'widgets' | 'launch_profiles' | 'discovery' | 'workflow_authoring' | 'session_authoring' | 'notifications' | 'home_hub_layout' | 'machine_agent_install' | 'machine_agent_sign_in' | 'machine_connection' | 'session_access' | 'session_lifecycle' | 'inventory' | 'messaging' | 'session_control' | 'session_organization_resources' | 'intent_start' | 'review_comments' | 'subagent_registry' | 'execution_run_control' | 'session_targeting' | 'session_follow' | 'session_transcripts' | 'session_attention' | 'session_permissions' | 'external_sessions' | 'voice_controls' | 'current_ui_context' | 'command_palette' | 'prompt_picker' | 'companion_controls' | 'memory' | 'agent_acp_catalog' | 'prompt_library' | 'daemon_admin' | 'browser_control' | 'browser_diagnostics' | 'browser_context' | 'browser_automation' | 'computer' | 'browser_recording' | 'local_services_inventory' | 'local_services_launcher' | 'local_services_preview' | 'local_services_public_preview' | 'local_services_actions' | 'peer_mediation_observability' | 'devices_simulator' | 'approvals' | 'plugin_dev_loop' | 'plugin_permission_grants' | 'plugin_webhooks' | 'account_plugin_data' | 'account_sessions' | 'account_security' | 'account_api_tokens' | 'automation_events' | 'automation_conversation' | 'scm_git' | 'scm_pull_request' | 'scm_repository' | 'scm_diff_summary' | 'project_sources' | 'project_execution' | 'project_definitions' | 'project_workers' | 'operation_output' | 'session_terminals' | 'filesystem' | 'scope' | 'connected_services_configuration' | 'boards' | 'roles' | 'artifact_folders' | 'workflows' | 'workflow_effects' | 'artifact_access' | 'artifacts' | 'settings_declarations' | 'app_shell' | 'notification_configuration' | 'app_updates' | 'machine_access' | 'machine_work_summary' | 'session_read_state' | 'session_board' | 'session_discussion' | 'plugin_settings_administration' | 'identity_github_apps' | 'identity_providers' | 'machine_pools' | 'managed_machines' | 'machine_presets' | 'ephemeral_runner' | 'home_governance' | 'teams' | 'saved_secret_sharing')[];
+                    families: ('find' | 'usage' | 'observation' | 'capture_viewing' | 'workspace_layout' | 'session_organization_move' | 'composer_ingress' | 'list_reorder' | 'todo_session_link' | 'workspace_file_search' | 'workflow_event_catalog' | 'widgets' | 'launch_profiles' | 'discovery' | 'workflow_authoring' | 'workflow_diagnostics' | 'session_authoring' | 'notifications' | 'home_hub_layout' | 'machine_agent_install' | 'machine_agent_sign_in' | 'machine_connection' | 'session_access' | 'session_lifecycle' | 'inventory' | 'messaging' | 'session_control' | 'session_organization_resources' | 'intent_start' | 'review_comments' | 'subagent_registry' | 'execution_run_control' | 'session_targeting' | 'session_follow' | 'session_transcripts' | 'session_attention' | 'session_permissions' | 'external_sessions' | 'voice_controls' | 'current_ui_context' | 'command_palette' | 'prompt_picker' | 'companion_controls' | 'memory' | 'agent_acp_catalog' | 'prompt_library' | 'daemon_admin' | 'browser_control' | 'browser_diagnostics' | 'browser_context' | 'browser_automation' | 'computer' | 'browser_recording' | 'local_services_inventory' | 'local_services_launcher' | 'local_services_preview' | 'local_services_public_preview' | 'local_services_actions' | 'peer_mediation_observability' | 'devices_simulator' | 'approvals' | 'plugin_dev_loop' | 'plugin_permission_grants' | 'plugin_webhooks' | 'account_plugin_data' | 'account_sessions' | 'account_security' | 'account_api_tokens' | 'automation_events' | 'automation_conversation' | 'scm_git' | 'scm_pull_request' | 'scm_repository' | 'scm_diff_summary' | 'project_sources' | 'project_execution' | 'project_definitions' | 'project_workers' | 'operation_output' | 'session_terminals' | 'filesystem' | 'scope' | 'connected_services_configuration' | 'usage_sources' | 'boards' | 'roles' | 'mcp_servers' | 'providers' | 'remote_hosts' | 'home_runtime' | 'artifact_folders' | 'workflows' | 'workflow_effects' | 'artifact_access' | 'artifacts' | 'settings_declarations' | 'app_shell' | 'notification_configuration' | 'app_updates' | 'machine_access' | 'machine_work_summary' | 'session_read_state' | 'session_board' | 'session_discussion' | 'plugin_settings_administration' | 'identity_github_apps' | 'identity_providers' | 'machine_pools' | 'managed_machines' | 'machine_presets' | 'ephemeral_runner' | 'home_governance' | 'home_identity' | 'teams' | 'saved_secret_sharing')[];
                     ids: string[];
                 } | null;
                 targets: {
@@ -353,21 +419,43 @@ export type AccountApiTokensActionResultById = {
                     } | undefined;
                     radius?: 'sharp' | 'soft' | 'round' | undefined;
                     density?: 'compact' | 'comfortable' | undefined;
+                    finish?: 'flat' | 'soft' | undefined;
                     parts?: {
                         userBubble?: {
                             radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                            finish?: 'flat' | 'soft' | undefined;
                         } | undefined;
                         composer?: {
                             radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                            finish?: 'flat' | 'soft' | undefined;
                         } | undefined;
                         toolCard?: {
                             radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                            finish?: 'flat' | 'soft' | undefined;
                         } | undefined;
                         approvalCard?: {
                             radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                            finish?: 'flat' | 'soft' | undefined;
                         } | undefined;
                         codeBlock?: {
                             radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                            finish?: 'flat' | 'soft' | undefined;
+                        } | undefined;
+                        card?: {
+                            radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                            finish?: 'flat' | 'soft' | undefined;
+                        } | undefined;
+                        floating?: {
+                            radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                            finish?: 'flat' | 'soft' | undefined;
+                        } | undefined;
+                        primaryButton?: {
+                            radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                            finish?: 'flat' | 'soft' | undefined;
+                        } | undefined;
+                        secondaryButton?: {
+                            radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                            finish?: 'flat' | 'soft' | undefined;
                         } | undefined;
                     } | undefined;
                 } | null;
@@ -387,7 +475,7 @@ export type AccountApiTokensActionResultById = {
             grant: {
                 v: 1;
                 actions: {
-                    families: ('find' | 'observation' | 'capture_viewing' | 'workspace_layout' | 'session_organization_move' | 'composer_ingress' | 'list_reorder' | 'todo_session_link' | 'workspace_file_search' | 'widgets' | 'launch_profiles' | 'discovery' | 'workflow_authoring' | 'session_authoring' | 'notifications' | 'home_hub_layout' | 'machine_agent_install' | 'machine_agent_sign_in' | 'machine_connection' | 'session_access' | 'session_lifecycle' | 'inventory' | 'messaging' | 'session_control' | 'session_organization_resources' | 'intent_start' | 'review_comments' | 'subagent_registry' | 'execution_run_control' | 'session_targeting' | 'session_follow' | 'session_transcripts' | 'session_attention' | 'session_permissions' | 'external_sessions' | 'voice_controls' | 'current_ui_context' | 'command_palette' | 'prompt_picker' | 'companion_controls' | 'memory' | 'agent_acp_catalog' | 'prompt_library' | 'daemon_admin' | 'browser_control' | 'browser_diagnostics' | 'browser_context' | 'browser_automation' | 'computer' | 'browser_recording' | 'local_services_inventory' | 'local_services_launcher' | 'local_services_preview' | 'local_services_public_preview' | 'local_services_actions' | 'peer_mediation_observability' | 'devices_simulator' | 'approvals' | 'plugin_dev_loop' | 'plugin_permission_grants' | 'plugin_webhooks' | 'account_plugin_data' | 'account_sessions' | 'account_security' | 'account_api_tokens' | 'automation_events' | 'automation_conversation' | 'scm_git' | 'scm_pull_request' | 'scm_repository' | 'scm_diff_summary' | 'project_sources' | 'project_execution' | 'project_definitions' | 'project_workers' | 'operation_output' | 'session_terminals' | 'filesystem' | 'scope' | 'connected_services_configuration' | 'boards' | 'roles' | 'artifact_folders' | 'workflows' | 'workflow_effects' | 'artifact_access' | 'artifacts' | 'settings_declarations' | 'app_shell' | 'notification_configuration' | 'app_updates' | 'machine_access' | 'machine_work_summary' | 'session_read_state' | 'session_board' | 'session_discussion' | 'plugin_settings_administration' | 'identity_github_apps' | 'identity_providers' | 'machine_pools' | 'managed_machines' | 'machine_presets' | 'ephemeral_runner' | 'home_governance' | 'teams' | 'saved_secret_sharing')[];
+                    families: ('find' | 'usage' | 'observation' | 'capture_viewing' | 'workspace_layout' | 'session_organization_move' | 'composer_ingress' | 'list_reorder' | 'todo_session_link' | 'workspace_file_search' | 'workflow_event_catalog' | 'widgets' | 'launch_profiles' | 'discovery' | 'workflow_authoring' | 'workflow_diagnostics' | 'session_authoring' | 'notifications' | 'home_hub_layout' | 'machine_agent_install' | 'machine_agent_sign_in' | 'machine_connection' | 'session_access' | 'session_lifecycle' | 'inventory' | 'messaging' | 'session_control' | 'session_organization_resources' | 'intent_start' | 'review_comments' | 'subagent_registry' | 'execution_run_control' | 'session_targeting' | 'session_follow' | 'session_transcripts' | 'session_attention' | 'session_permissions' | 'external_sessions' | 'voice_controls' | 'current_ui_context' | 'command_palette' | 'prompt_picker' | 'companion_controls' | 'memory' | 'agent_acp_catalog' | 'prompt_library' | 'daemon_admin' | 'browser_control' | 'browser_diagnostics' | 'browser_context' | 'browser_automation' | 'computer' | 'browser_recording' | 'local_services_inventory' | 'local_services_launcher' | 'local_services_preview' | 'local_services_public_preview' | 'local_services_actions' | 'peer_mediation_observability' | 'devices_simulator' | 'approvals' | 'plugin_dev_loop' | 'plugin_permission_grants' | 'plugin_webhooks' | 'account_plugin_data' | 'account_sessions' | 'account_security' | 'account_api_tokens' | 'automation_events' | 'automation_conversation' | 'scm_git' | 'scm_pull_request' | 'scm_repository' | 'scm_diff_summary' | 'project_sources' | 'project_execution' | 'project_definitions' | 'project_workers' | 'operation_output' | 'session_terminals' | 'filesystem' | 'scope' | 'connected_services_configuration' | 'usage_sources' | 'boards' | 'roles' | 'mcp_servers' | 'providers' | 'remote_hosts' | 'home_runtime' | 'artifact_folders' | 'workflows' | 'workflow_effects' | 'artifact_access' | 'artifacts' | 'settings_declarations' | 'app_shell' | 'notification_configuration' | 'app_updates' | 'machine_access' | 'machine_work_summary' | 'session_read_state' | 'session_board' | 'session_discussion' | 'plugin_settings_administration' | 'identity_github_apps' | 'identity_providers' | 'machine_pools' | 'managed_machines' | 'machine_presets' | 'ephemeral_runner' | 'home_governance' | 'home_identity' | 'teams' | 'saved_secret_sharing')[];
                     ids: string[];
                 } | null;
                 targets: {
@@ -446,21 +534,43 @@ export type AccountApiTokensActionResultById = {
                     } | undefined;
                     radius?: 'sharp' | 'soft' | 'round' | undefined;
                     density?: 'compact' | 'comfortable' | undefined;
+                    finish?: 'flat' | 'soft' | undefined;
                     parts?: {
                         userBubble?: {
                             radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                            finish?: 'flat' | 'soft' | undefined;
                         } | undefined;
                         composer?: {
                             radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                            finish?: 'flat' | 'soft' | undefined;
                         } | undefined;
                         toolCard?: {
                             radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                            finish?: 'flat' | 'soft' | undefined;
                         } | undefined;
                         approvalCard?: {
                             radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                            finish?: 'flat' | 'soft' | undefined;
                         } | undefined;
                         codeBlock?: {
                             radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                            finish?: 'flat' | 'soft' | undefined;
+                        } | undefined;
+                        card?: {
+                            radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                            finish?: 'flat' | 'soft' | undefined;
+                        } | undefined;
+                        floating?: {
+                            radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                            finish?: 'flat' | 'soft' | undefined;
+                        } | undefined;
+                        primaryButton?: {
+                            radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                            finish?: 'flat' | 'soft' | undefined;
+                        } | undefined;
+                        secondaryButton?: {
+                            radius?: 'sm' | 'md' | 'lg' | 'xl' | 'xxl' | 'modalCard' | undefined;
+                            finish?: 'flat' | 'soft' | undefined;
                         } | undefined;
                     } | undefined;
                 } | null;

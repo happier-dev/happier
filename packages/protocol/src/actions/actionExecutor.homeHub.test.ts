@@ -3,6 +3,8 @@ import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.
 import { getActionSpec } from './actionSpecs.js';
 import { createHomeHubArtifactPortV1 } from '../home/homeHubArtifactV1.js';
 import { createWorkBoardArtifactBoundary } from '../boards/workBoardArtifactV1.testkit.js';
+import { createWidgetActionInputResolverV1 } from '../widgets/widgetActionInputResolverV1.js';
+import { WidgetInstanceV1Schema } from '../widgets/widgetInstanceV1.js';
 
 describe('Home layout Account Actions', () => {
     it.each([true, false])('preserves the issued Artifact acknowledgment after retirement (applied: %s)', async applied => {
@@ -33,21 +35,39 @@ describe('Home layout Account Actions', () => {
         const boundary = createWorkBoardArtifactBoundary();
         const accountId = 'one';
         const port = createHomeHubArtifactPortV1(boundary.forAccount(accountId), { accountId });
-        const executor = createActionExecutor({ homeHubArtifacts: port } as unknown as ActionExecutorDeps);
+        const instance = WidgetInstanceV1Schema.parse({ v: 1, id: 'copy', definition: { kind: 'inline', definition: {
+            v: 1, id: 'count', name: 'Count', sizeDeclaration: { sizes: ['medium', 'full'], defaultSize: 'medium' },
+            inputs: { fields: [] }, inputSchema: { type: 'object', additionalProperties: false },
+            provenance: { source: { kind: 'authored' } },
+            body: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Count' } } },
+        } }, bindings: {} });
+        const deps = { homeHubArtifacts: port, widgetAccountScope: () => ({ serverId: 'home', accountId }),
+            widgetInputs: createWidgetActionInputResolverV1({
+                readDescriptor: async request => request.instance.definition.kind === 'inline' ? request.instance.definition.definition : null,
+                readContext: async () => ({}), readViewerValues: async () => ({ values: {} }),
+                validateValue: async () => ({ status: 'valid' }), resolveOptions: async () => [],
+            }),
+        };
+        const executor = createActionExecutor(deps as unknown as ActionExecutorDeps);
         expect(getActionSpec('home.hub.layout.update')).toMatchObject({ executionPlacement: 'account', surfaces: { cli: true, rpc: true } });
-        const instance = { v: 1, id: 'copy', definition: { kind: 'builtin', id: 'count' }, bindings: {} };
         expect(await executor.execute('home.hub.layout.update', { intent: { kind: 'widget_add', instance } }, { surface: 'cli' })).toMatchObject({ ok: true });
         expect(await executor.execute('home.hub.layout.update', { intent: { kind: 'setup_visibility', stepId: 'addPhone', hidden: true } }, { surface: 'agent' })).toMatchObject({ ok: true });
-        expect(await executor.execute('home.hub.layout.update', { intent: { kind: 'widget_width', instanceId: 'copy', width: 'full' } }, { surface: 'cli' })).toMatchObject({ ok: true });
-        const otherClient = createActionExecutor({ homeHubArtifacts: port } as unknown as ActionExecutorDeps);
+        expect(await executor.execute('home.hub.layout.update', { intent: { kind: 'widget_size', instanceId: 'copy', size: 'full' } }, { surface: 'cli' })).toMatchObject({ ok: true });
+        const otherClient = createActionExecutor(deps as unknown as ActionExecutorDeps);
         expect(await otherClient.execute('home.hub.layout.get', {}, { surface: 'mcp' })).toMatchObject({ ok: true, result: {
-            layout: { instances: [instance], sections: { copy: { width: 'full' } } }, hiddenSetupStepIds: ['addPhone'],
-            sections: expect.arrayContaining([{ kind: 'widget', id: 'copy', instance, width: 'full', hidden: false, hideable: true }]),
+            layout: { items: [{ kind: 'widget', instance, size: 'full' }] }, hiddenSetupStepIds: ['addPhone'],
+            sections: expect.arrayContaining([{ kind: 'widget', id: 'copy', instance, size: 'full', hidden: false, hideable: true }]),
         } });
         expect(await executor.execute('home.hub.layout.update', { intent: { kind: 'visibility', sectionId: 'attention', hidden: true } }, { surface: 'cli' })).toMatchObject({ ok: true });
         expect((await port.read()).hidden).not.toContain('attention');
         const before = await port.read();
         expect(await executor.execute('home.hub.layout.update', { intent: { kind: 'reorder', sectionIds: ['copy'] } }, { surface: 'agent' })).toMatchObject({ ok: false, errorCode: 'home_hub_order_incomplete' });
         expect(await port.read()).toEqual(before);
+        expect(await executor.execute('home.hub.layout.update', { intent: { kind: 'group_create', groupId: 'counts', instanceIds: ['copy'], title: 'Counts' } }, { surface: 'cli' }))
+            .toMatchObject({ ok: true });
+        expect(await otherClient.execute('home.hub.layout.get', {}, { surface: 'mcp' })).toMatchObject({ ok: true, result: {
+            layout: { items: [{ kind: 'group', id: 'counts', children: [{ instance, size: 'full' }] }] },
+            sections: expect.arrayContaining([expect.objectContaining({ kind: 'group', id: 'counts', children: [{ kind: 'widget', id: 'copy', instance, size: 'full', hidden: false, hideable: true, frameStyle: 'plain' }] })]),
+        } });
     });
 });

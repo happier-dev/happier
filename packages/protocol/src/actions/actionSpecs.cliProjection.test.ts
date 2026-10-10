@@ -39,6 +39,14 @@ function baseSpec(overrides: Record<string, unknown>): Record<string, unknown> {
 }
 
 describe('ActionSpec.cli declaration', () => {
+  it('routes Project context through its strict canonical Action input', () => {
+    const command = listActionCliCommandDeclarations().find((entry) => entry.spec.id === 'projects.context.update');
+    expect(command?.binding.path).toEqual(['projects', 'context', 'update']);
+    expect(command?.spec.inputSchema.safeParse({ target: { serverId: 'home', projectKey: 'project' },
+      expectedRevision: 3, intent: { kind: 'set_budget', entryId: 'entry', maxChars: null } }).success).toBe(true);
+    expect(command?.spec.inputSchema.safeParse({ target: { serverId: 'home', projectKey: 'project' },
+      intent: { kind: 'detach', entryId: 'entry' } }).success).toBe(false);
+  });
   it('projects the landed explanation lifecycle through canonical friendly CLI commands', () => {
     const commands = listActionCliCommandDeclarations();
     for (const [id, path] of [

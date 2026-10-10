@@ -1,12 +1,37 @@
 import { describe, expect, it, vi } from 'vitest';
+import { updatePersonalProjectContextV1 } from '../projects/projectContextV1.js';
+import type { ProjectAccountOrganizationV1 } from '../projects/projectAccountRowsV1.js';
+import { z } from 'zod';
 
 import { createActionExecutor as createRawActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import type { ActionDefinitionV1 } from './actionDefinitionV1.js';
-import { getActionSpec, PUBLIC_ACTION_OUTPUT_SCHEMAS } from './actionSpecs.js';
-import { ActionIdSchema } from './actionIds.js';
+import { getActionSpec, PUBLIC_ACTION_OUTPUT_SCHEMAS, resolveActionExecutionPlacementForInput } from './actionSpecs.js';
+import { ActionIdSchema, WorkflowActionIdV1Schema } from './actionIds.js';
 import type { MachinesAgentsListInput } from '../capabilities/machineAgentInventory.js';
 import { getActionRequiredServerFeatureId } from './actionRequiredServerFeature.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
+import { ActionOperationActionIdV1Schema } from './specs/actionOperations.js';
+import { WidgetInstanceActionIdV1Schema } from '../widgets/actionIdsV1.js';
+import { WidgetDefinitionActionIdV1Schema } from '../widgets/definitionActionIdsV1.js';
+import { WidgetLayoutFragmentActionIdV1Schema } from '../widgets/fragmentActionIdsV1.js';
+import { ReviewCommentActionIdV1Schema } from '../reviews/comments/actions.js';
+import { PluginPermissionGrantActionIdV1Schema } from '../plugins/permissions/actions.js';
+import { AutomationEventActionIdV1Schema, AutomationConversationActionIdV1Schema } from '../automations/automationActionSpecsV1.js';
+import { ArtifactAccessActionIdV1Schema } from '../artifacts/artifactAccessV1.js';
+import { ArtifactActionIdV1Schema } from '../artifacts/artifactActionsV1.js';
+import { ScopeActionIdSchema } from './scopeActionFamily.js';
+import { SessionBoardActionIdV1Schema } from '../sessions/board/actionIds.js';
+import { SessionDiscussionActionIdV1Schema } from '../sessions/discussions/actionIds.js';
+import { ManagedMachineActionIdV1Schema } from '../machines/managed/actionsV1.js';
+import { MachinePresetActionIdV1Schema } from '../machines/managed/machinePresetActionsV1.js';
+import { MachinePoolActionIdV1Schema } from '../machines/pools/actionsV1.js';
+import { ProjectWorkerActionIdV1Schema } from './specs/projectWorkers.js';
+import { MachineAccessActionIdSchema } from './specs/machineAccess.js';
+import { UsageSourceActionIdSchema } from '../usage/usageSources.js';
+import { ConnectedServiceConfigurationActionIdV1Schema } from '../connect/configurationActionsV1.js';
+import { EphemeralRunnerActionIdV1Schema } from '../ephemeralRunner/actionIdsV1.js';
+import { PluginWebhookActionIdV1Schema } from '../plugins/webhooks/endpointV1.js';
+import { PluginSettingsAdministrationActionIdV1Schema } from '../plugins/settingsAdministration.js';
 import { SPAWN_SESSION_ERROR_CODES } from '../sessions/spawnSession.js';
 import { SessionDirectoryIntentV1Schema } from '../sessions/creation/sessionDirectoryIntentV1.js';
 import { ExecutionRunLaunchOriginSchema } from '../execution/runs/startRequest.js';
@@ -74,6 +99,93 @@ function createActionExecutor(deps: ActionExecutorDeps): ReturnType<typeof creat
 }
 
 describe('machine Agent inventory execution', () => {
+  it('dispatches ordinary inventory reads for less CPU than failed family-schema probes', async () => {
+    // Inventory ports are external host boundaries; the executor and admission stay real.
+    const executor = createActionExecutor(createDeps());
+    const execute = () => executor.execute('paths.list_recent', {}, { surface: 'ui', authority: 'present_user' });
+    expect(await execute()).toEqual({ ok: true, result: { items: [] } });
+    // Incumbent dispatch's enum misses, in execution order. The comparator
+    // retains the real schemas, but omits all other execution/admission work.
+    const families = [ActionOperationActionIdV1Schema, WidgetDefinitionActionIdV1Schema,
+      WidgetLayoutFragmentActionIdV1Schema, WidgetInstanceActionIdV1Schema,
+      ReviewCommentActionIdV1Schema, PluginPermissionGrantActionIdV1Schema, AutomationEventActionIdV1Schema,
+      WidgetInstanceActionIdV1Schema, WidgetDefinitionActionIdV1Schema, WidgetLayoutFragmentActionIdV1Schema,
+      ArtifactAccessActionIdV1Schema, ArtifactActionIdV1Schema, WorkflowActionIdV1Schema,
+      AutomationConversationActionIdV1Schema, ScopeActionIdSchema, SessionBoardActionIdV1Schema,
+      SessionDiscussionActionIdV1Schema, ManagedMachineActionIdV1Schema, MachinePresetActionIdV1Schema,
+      MachinePoolActionIdV1Schema, ActionOperationActionIdV1Schema, ProjectWorkerActionIdV1Schema,
+      MachineAccessActionIdSchema, UsageSourceActionIdSchema, ConnectedServiceConfigurationActionIdV1Schema,
+      EphemeralRunnerActionIdV1Schema, PluginWebhookActionIdV1Schema, PluginSettingsAdministrationActionIdV1Schema];
+    for (let warm = 0; warm < 20; warm += 1) {
+      await execute();
+      for (const schema of families) schema.safeParse('paths.list_recent');
+    }
+    const samples = [];
+    for (let sample = 0; sample < 3; sample += 1) {
+      const executionStarted = process.cpuUsage();
+      for (let iteration = 0; iteration < 200; iteration += 1) await execute();
+      const executionCpu = process.cpuUsage(executionStarted);
+      const probeStarted = process.cpuUsage();
+      let misses = 0;
+      for (let iteration = 0; iteration < 200; iteration += 1) {
+        for (const schema of families) if (!schema.safeParse('paths.list_recent').success) misses += 1;
+      }
+      const probeCpu = process.cpuUsage(probeStarted);
+      expect(misses).toBe(200 * families.length);
+      samples.push({ executionCpuUs: executionCpu.user + executionCpu.system,
+        probeCpuUs: probeCpu.user + probeCpu.system });
+    }
+    const median = (values: number[]) => values.sort((a, b) => a - b)[1];
+    const executionCpuUs = median(samples.map(sample => sample.executionCpuUs));
+    const probeCpuUs = median(samples.map(sample => sample.probeCpuUs));
+    console.info(JSON.stringify({ executionCpuUs, probeCpuUs }));
+    expect(executionCpuUs).toBeLessThan(probeCpuUs);
+    expect(await executor.execute('paths.list_recent', { limit: 'invalid' }, { surface: 'ui', authority: 'present_user' }))
+      .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+  });
+
+  it('preserves Source transport refusals outside the domain result on every Action surface', async () => {
+    const refusal = { ok: false as const, errorCode: 'outcome_unknown', error: 'outcome_unknown' };
+    const executor = createActionExecutor({ ...createDeps(), projectSourcesCreate: async () => refusal });
+    const input = { serverId: 'home', requestKey: 'create-intent', name: 'Repository', repository: {
+      provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+      repository: { nameWithOwner: 'org/repo', cloneUrl: 'https://github.com/org/repo.git', visibility: 'private' },
+      protocol: 'https',
+    } };
+    for (const surface of ['ui', 'agent', 'mcp', 'voice', 'cli'] as const) {
+      expect(await executor.execute('projects.sources.create', input, { surface, authority: 'account_automation', bypassApprovals: true }))
+        .toEqual(refusal);
+    }
+  });
+  it('returns the same acknowledged Project context and stale conflict through UI, Agent, MCP, Voice and CLI', async () => {
+    let row: ProjectAccountOrganizationV1 = { hidden: true, pinned: true };
+    let revision: number | 'absent' = 'absent';
+    let writes = 0;
+    const executor = createActionExecutor({ ...createDeps(), projectsContextUpdate: (input, context) => updatePersonalProjectContextV1({
+      accountScope: () => ({ serverId: 'home', accountId: 'account' }),
+      readArtifact: async () => ({ id: 'doc', revision: { headerVersion: 0, bodyVersion: 0 },
+        header: { v: 1, kind: 'prompt_doc.v2', title: 'Instructions' },
+        body: JSON.stringify({ v: 1, markdown: 'Instructions', createdAtMs: 0, updatedAtMs: 0 }) }),
+      // These are the external persisted row/Artifact boundaries, with real entry admission beneath them.
+      mutateOrganization: async (request) => {
+        if (request.expectedRevision !== revision) return { status: 'conflict', revision: revision === 'absent' ? -1 : revision };
+        const next = request.mutate(row);
+        if (JSON.stringify(next) !== JSON.stringify(row)) { writes++; row = next; revision = revision === 'absent' ? 0 : revision + 1; }
+        return { status: 'updated', value: row, revision: revision === 'absent' ? 0 : revision };
+      },
+    }, input, context) });
+    const base = { target: { serverId: 'home', projectKey: 'project' },
+      intent: { kind: 'attach', entry: { id: 'entry', ref: { kind: 'doc', artifactId: 'doc' }, placement: 'system_append' } } };
+    for (const surface of ['ui', 'agent', 'mcp', 'voice', 'cli'] as const) {
+      const context = { surface, authority: 'account_automation' as const };
+      expect(await executor.execute('projects.context.update', { ...base, expectedRevision: revision }, context))
+        .toMatchObject({ ok: true, result: { ok: true, revision: 0, row: { hidden: true, pinned: true, promptStack: [{ id: 'entry' }] } } });
+      expect(await executor.execute('projects.context.update', { ...base, expectedRevision: 'absent' }, context))
+        .toMatchObject({ ok: true, result: { ok: false, errorCode: 'project_context_conflict', currentRevision: 0 } });
+    }
+    expect(writes).toBe(1);
+    expect(row.promptStack).toHaveLength(1);
+  });
   it('reads bound B options declaration while retaining physical A widget scope', async () => {
     const surface = { serverId: 'home', accountId: 'viewer', owner: { kind: 'sessionBoard' as const, sessionId: 'A' } };
     const definition = { kind: 'installed' as const, surface: { pluginId: 'com.acme.widgets', localId: 'checks' } };
@@ -82,6 +194,7 @@ describe('machine Agent inventory execution', () => {
       notificationChannelsList: async () => ({ items: [{ id: 'from-B', label: 'B' }] }),
       widgetCatalog: { list: async (_surface, _context, _signal, boundSession?: { serverId: string; sessionId: string }) => [{
         definition, title: 'Checks', availability: 'available', instanceCount: 0,
+        sizeDeclaration: { sizes: ['medium'], defaultSize: 'medium' },
         fields: [{ path: 'choice', title: 'Choice', widget: 'select', optionsSourceId: boundSession?.sessionId === 'B' ? 'notifications.channels.available' : 'paths.list_recent' }],
       }] },
     });
@@ -95,6 +208,7 @@ describe('machine Agent inventory execution', () => {
     const executor = createActionExecutor({ ...createDeps(),
       widgetAccountScope: () => ({ serverId: 'home', accountId: 'viewer' }),
       widgetCatalog: { list: async () => [{ definition, title: 'Checks', availability: 'available', instanceCount: 0,
+        sizeDeclaration: { sizes: ['medium'], defaultSize: 'medium' },
         fields: [{ path: 'choice', title: 'Choice', widget: 'select', options: [{ value: 'current', label: 'Current' }] }] }] },
     });
     await expect(executor.execute('action.options.resolve', {
@@ -141,6 +255,34 @@ const inventoryAgentStartContext = {
 } satisfies AgentStartContextV1;
 
 describe('createActionExecutor (inventory/discovery)', () => {
+  // Blocked: contributed field-owned sources remain rejected by author admission until all executable consumers are migrated.
+  it('[blocked: authored contributed source] resolves a granted typed widget field source before its type Resource and refuses ungranted discovery', async () => {
+    const surface = { serverId: 'home', accountId: 'account', owner: { kind: 'home' as const } };
+    const definition = { kind: 'installed' as const, surface: { pluginId: 'com.acme.inputs', localId: 'choice-widget' } };
+    const consumer = { kind: 'widget' as const, surface, definition };
+    const executor = createActionExecutor({ ...createDeps(),
+      widgetAccountScope: () => ({ serverId: 'home', accountId: 'account' }),
+      widgetCatalog: { list: async () => [{ definition, title: 'Choice',
+        sizeDeclaration: { sizes: ['medium'], defaultSize: 'medium' },
+        fields: [{ path: 'choice', title: 'Choice', widget: 'select',
+          inputType: { pluginId: 'com.acme.inputs', localId: 'choice' }, optionsSourceId: 'notifications.channels.available' }],
+        availability: 'available', instanceCount: 0 }] },
+      notificationChannelsList: async () => ({ items: [{ id: 'allowed', label: 'Allowed' }] }),
+      resolveInputType: async () => { throw new Error('The consuming source does not read a type Resource'); },
+      readAdmittedInputTypeOptions: async () => { throw new Error('The consuming source must not relay to the type Resource'); },
+    });
+    const granted = { surface: 'api' as const, authority: 'account_automation' as const,
+      externalActionCredential: { accountId: 'account', principalId: 'principal', credentialId: 'credential', grant: {
+        v: 1 as const, actions: { families: [], ids: ['widgets.catalog.list'] }, targets: null,
+        approve: false, origins: [], models: null, permissionModes: null, create: null,
+      } } };
+    expect(await executor.execute('action.options.resolve', { consumer, fieldPath: 'choice' }, granted))
+      .toMatchObject({ ok: true, result: { optionsSourceId: 'notifications.channels.available', options: [{ value: 'allowed', label: 'Allowed' }] } });
+    expect(await executor.execute('action.options.resolve', { consumer, fieldPath: 'choice' }, {
+      ...granted, externalActionCredential: { ...granted.externalActionCredential,
+        grant: { ...granted.externalActionCredential.grant, actions: { families: [], ids: ['paths.list_recent'] } } },
+    })).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+  });
   it('resolves declared plugin input options only through the granted consuming field', async () => {
     const inputType = { pluginId: 'com.acme.inputs', localId: 'repository' };
     const definition: ActionDefinitionV1 = {
@@ -173,6 +315,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
     const consumerExecutor = createActionExecutor({ ...deps,
       widgetAccountScope: () => ({ serverId: 'home', accountId: 'account' }),
       widgetCatalog: { list: async () => [{ definition: widgetDefinition, title: 'Repository',
+        sizeDeclaration: { sizes: ['medium'], defaultSize: 'medium' },
         fields: definition.inputHints!.fields, availability: 'available', instanceCount: 0 }] },
       workflowAction: async () => ({ definitions: [], pluginWorkflows: [{ workflow, pluginId: inputType.pluginId,
         version: '1.0.0', title: 'Review', definition: { version: 1, inputs: [{ name: 'repository', valueType: 'string', required: true, inputType }],
@@ -619,7 +762,8 @@ describe('createActionExecutor (inventory/discovery)', () => {
     if (!res.ok) throw new Error('Review Action did not dispatch');
     expect(getActionSpec('review.start').completion?.launched(res.result)).toEqual({
       runs: [],
-      failed: [{ key: 'coderabbit', errorCode: 'execution_run_not_allowed' }],
+      failed: [{ key: 'coderabbit', errorCode: 'execution_run_not_allowed',
+        runCreation: failureKind === 'returned' || failureKind === 'thrown' ? 'noRunCreated' : 'outcomeUnknown' }],
     });
   });
 
@@ -798,12 +942,40 @@ describe('createActionExecutor (inventory/discovery)', () => {
   it('routes projects.list to deps.projectsList', async () => {
     const deps = createDeps();
     const executor = createActionExecutor(deps);
+    expect(getActionSpec('projects.list').executionPlacement).toBe('account');
 
-    // The spec surfaces this on `ui` alone: its only caller is a mounted
-    // client surface reading the registry that client already holds.
-    const res = await executor.execute('projects.list', { machineId: 'm1', limit: 5 }, { surface: 'ui' });
+    const res = await executor.execute('projects.list', { serverId: 'home-a', machineId: 'm1', limit: 5, includeHidden: true }, { surface: 'agent' });
     expect(res.ok).toBe(true);
-    expect(deps.projectsList).toHaveBeenCalledWith({ machineId: 'm1', limit: 5 });
+    expect(deps.projectsList).toHaveBeenCalledWith({ serverId: 'home-a', machineId: 'm1', limit: 5, includeHidden: true }, expect.any(Object));
+  });
+
+  it('admits Source catalog reads on every eligible surface with the exact Home', async () => {
+    const projectSourcesList = vi.fn(async (input: { serverId: string }) => ({ ok: true as const, sources: [], coverage: { complete: true, nextCursor: null } }));
+    const executor = createActionExecutor({ ...createDeps(), projectSourcesList });
+    for (const surface of ['ui', 'voice', 'agent', 'mcp', 'cli'] as const) {
+      const result = await executor.execute('projects.sources.list', { serverId: 'home-a' }, { surface });
+      expect(result).toMatchObject({ ok: true, result: { sources: [], coverage: { complete: true } } });
+    }
+    expect(projectSourcesList.mock.calls).toHaveLength(5);
+    expect(projectSourcesList.mock.calls.every(([input]) => input.serverId === 'home-a')).toBe(true);
+  });
+
+  it('rejects malformed Source writes before reaching the metadata transport', async () => {
+    const projectSourcesDelete = vi.fn(async () => ({ ok: true as const, sourceId: 'source-a', revision: 2 }));
+    const executor = createActionExecutor({ ...createDeps(), projectSourcesDelete });
+    await expect(executor.execute('projects.sources.delete', {
+      serverId: 'home-a', sourceId: 'source-a', expectedRevision: 1, rootPath: '/repo',
+    })).resolves.toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    expect(projectSourcesDelete).not.toHaveBeenCalled();
+  });
+
+  it('keeps hidden Projects opt-in and rejects unrecognized Project list inputs', async () => {
+    const deps = createDeps();
+    const executor = createActionExecutor(deps);
+    expect((await executor.execute('projects.list', {}, { surface: 'mcp' })).ok).toBe(true);
+    expect(deps.projectsList).toHaveBeenCalledWith({}, expect.any(Object));
+    expect((await executor.execute('projects.list', { includeHidden: 'yes' }, { surface: 'agent' })).ok).toBe(false);
+    expect((await executor.execute('projects.list', { register: '/arbitrary' }, { surface: 'agent' })).ok).toBe(false);
   });
 
   /**
@@ -856,6 +1028,63 @@ describe('createActionExecutor (inventory/discovery)', () => {
 
     expect(res.ok).toBe(true);
     expect(deps.reviewEnginesList).toHaveBeenCalledWith({ sessionId: 's1', scope: 'paths' });
+  });
+
+  it.each(['ui', 'voice', 'agent', 'mcp', 'cli'] as const)('discovers review engines on %s for the explicit detached Machine without falling back to the active Session', async (surface) => {
+    const deps = createDeps();
+    const executor = createActionExecutor(deps);
+
+    const res = await executor.execute('review.engines.list', {
+      sessionId: null, machineId: 'machine-review', scope: 'paths',
+    }, { surface, defaultSessionId: 'session-active', serverId: 'home-review' });
+
+    expect(res).toMatchObject({ ok: true });
+    expect(deps.reviewEnginesList).toHaveBeenCalledWith({
+      sessionId: null, machineId: 'machine-review', scope: 'paths',
+    });
+  });
+
+  it('refuses detached review discovery without a captured Machine', async () => {
+    const deps = createDeps();
+    const executor = createActionExecutor(deps);
+    expect(await executor.execute('review.engines.list', { sessionId: null }, {
+      defaultSessionId: 'session-active',
+    })).toMatchObject({ ok: false, errorCode: 'machine_not_selected' });
+    expect(deps.reviewEnginesList).not.toHaveBeenCalled();
+  });
+
+  it('retains contextual Session discovery when the Session selector is omitted', async () => {
+    const deps = createDeps();
+    const executor = createActionExecutor(deps);
+    expect(await executor.execute('review.engines.list', {}, {
+      defaultSessionId: 'session-active',
+    })).toMatchObject({ ok: true });
+    expect(deps.reviewEnginesList).toHaveBeenCalledWith({ sessionId: 'session-active' });
+  });
+
+  it('rejects a detached engine inventory selector that contradicts its admitted Machine', async () => {
+    const deps = createDeps();
+    const executor = createActionExecutor(deps);
+    expect(await executor.execute('review.engines.list', { sessionId: null, machineId: 'machine-other' }, {
+      externalActionTarget: { kind: 'machine', machineId: 'machine-review' },
+    })).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    expect(deps.reviewEnginesList).not.toHaveBeenCalled();
+  });
+
+  it('routes detached review discovery to the Machine while retaining Session discovery placement', () => {
+    const spec = getActionSpec('review.engines.list');
+    expect(resolveActionExecutionPlacementForInput(spec, { sessionId: null, machineId: 'machine-review' })).toBe('machine');
+    expect(resolveActionExecutionPlacementForInput(spec, { sessionId: 'session-review' })).toBe('session');
+  });
+
+  it('resolves detached review engine picker options on the captured Machine', async () => {
+    const deps = createDeps();
+    deps.reviewEnginesList = vi.fn(async () => ({ items: [{ value: 'codex', label: 'Codex' }] }));
+    const executor = createActionExecutor(deps);
+    expect(await executor.execute('action.options.resolve', {
+      actionId: 'review.start', fieldPath: 'engineIds', sessionId: null, machineId: 'machine-review',
+    }, { defaultSessionId: 'session-active' })).toMatchObject({ ok: true, result: { options: [{ value: 'codex' }] } });
+    expect(deps.reviewEnginesList).toHaveBeenCalledWith({ sessionId: null, machineId: 'machine-review' });
   });
 
   it('keeps execution-run list scope out of the transport request', async () => {
@@ -1776,7 +2005,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
       fieldPath: 'backendTargetKeys',
       optionsSourceId: 'execution.backends.enabled',
       options: [
-        { value: 'backend:codex', label: 'Codex' },
+        { value: 'agent:happier.agent.codex/codex', label: 'Codex' },
         { value: 'backend:review-bot:configured:review-bot', label: 'Review Bot' },
       ],
     });
@@ -2290,33 +2519,34 @@ describe('createActionExecutor (inventory/discovery)', () => {
       id: 'session.spawn_new',
     }, { surface: 'agent' });
 
-    expect(spawnResult).toEqual(expect.objectContaining({
-      ok: true,
-      result: expect.objectContaining({
-        actionSpec: expect.objectContaining({
-          kindVersion: 1,
-          inputSchema: expect.objectContaining({
-            properties: expect.objectContaining({
-              executionTarget: expect.objectContaining({
-                properties: expect.objectContaining({
-                  serverId: expect.objectContaining({ minLength: 1, maxLength: 191 }),
-                }),
-              }),
-              organizationPlacement: expect.objectContaining({
-                properties: expect.objectContaining({
-                  tagIds: expect.objectContaining({ type: 'array', maxItems: 500 }),
-                }),
-              }),
-              agentSessionStartupInstructionsV1: expect.objectContaining({
-                properties: expect.objectContaining({
-                  revision: expect.objectContaining({ exclusiveMinimum: 0, maximum: 2_147_483_647 }),
-                }),
-              }),
-            }),
-          }),
-        }),
+    // Reused schema nodes may be referenced after Workflow triggers reach the
+    // spawn schema. Discovery must preserve the constraints, not inline them.
+    const discovery = z.object({ ok: z.literal(true), result: z.object({ actionSpec: z.object({
+      kindVersion: z.literal(1),
+      inputSchema: z.object({
+        properties: z.record(z.string(), z.record(z.string(), z.unknown())),
+        $defs: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
       }),
-    }));
+    }) }) }).parse(spawnResult);
+    const schema = discovery.result.actionSpec.inputSchema;
+    const resolveNode = (value: unknown) => {
+      const node = z.record(z.string(), z.unknown()).parse(value);
+      const reference = node.$ref;
+      if (typeof reference !== 'string') return node;
+      expect(reference).toMatch(/^#\/\$defs\/[^/]+$/u);
+      return z.record(z.string(), z.unknown()).parse(schema.$defs?.[reference.slice('#/$defs/'.length)]);
+    };
+    for (const [field, constraints] of [
+      ['executionTarget', { serverId: { minLength: 1, maxLength: 191 } }],
+      ['organizationPlacement', { tagIds: { type: 'array', maxItems: 500 } }],
+      ['agentSessionStartupInstructionsV1', { revision: { exclusiveMinimum: 0, maximum: 2_147_483_647 } }],
+    ] as const) {
+      const resolved = resolveNode(schema.properties[field]);
+      const properties = z.record(z.string(), z.unknown()).parse(resolved.properties);
+      for (const [property, constraint] of Object.entries(constraints)) {
+        expect(resolveNode(properties[property])).toMatchObject(constraint);
+      }
+    }
   });
 
   it('rejects action.spec.get for actions that are not surfaced on the current surface', async () => {

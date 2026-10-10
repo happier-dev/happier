@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor';
 import type { AgentStartContextV1 } from '../account/settings/admitAgentStartV1';
 import { ActionIdSchema } from './actionIds';
+import { projectActionWorkflowSelectionInputV1 } from './executor/agentStartAdmission';
+import { ExecutionRunStartRequestSchema } from '../execution/runs/startRequest';
 
 const workflowStartContext: AgentStartContextV1 = {
   caller: { kind: 'originless', runId: 'workflow-1', runDepth: 0 },
@@ -11,6 +13,63 @@ const workflowStartContext: AgentStartContextV1 = {
 };
 
 describe('createActionExecutor (review.start)', () => {
+  it.each([
+    { selected: 'openai-codex:group:pool-X', expected: { connectedServices: { v: 2, bindingsByServiceId: {
+      'happier.agent.codex/openai-codex': { source: 'connected', selection: 'group', groupId: 'pool-X' },
+    } } } },
+    { selected: 'native', expected: { connectedServices: null } },
+    { selected: 'openai-codex:native', expected: { connectedServices: { v: 2, bindingsByServiceId: {
+      'happier.agent.codex/openai-codex': { source: 'native' },
+    } } } },
+    { selected: 'openai-codex', expected: { connectedServicesDefaultServiceIds: ['happier.agent.codex/openai-codex'] } },
+  ])('preserves Workflow-selected $selected through admission to the Run input', async ({ selected, expected }) => {
+    const executionRunStart = vi.fn<ActionExecutorDeps['executionRunStart']>(async (_sessionId, input) => {
+      // The dispatched request crosses the machine transport boundary; validate with its real receiver schema.
+      ExecutionRunStartRequestSchema.parse(input);
+      return { runId: 'review-1', callId: 'review-call', sidechainId: 'review-call' };
+    });
+    const executor = createActionExecutor({ executionRunStart,
+      reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex' }] }),
+    } as ActionExecutorDeps);
+    const input = projectActionWorkflowSelectionInputV1('review.start', {
+      sessionId: 's1', engineIds: ['codex'], instructions: 'Review.',
+    }, { connectedServices: selected === 'native' ? null : selected === 'openai-codex:group:pool-X'
+      ? { v: 2, bindingsByServiceId: { 'happier.agent.codex/openai-codex': {
+          source: 'connected', selection: 'group', groupId: 'pool-X',
+        } } }
+      : undefined });
+    if (selected !== 'native' && selected !== 'openai-codex:group:pool-X') input.connectedServices = selected;
+    expect(await executor.execute('review.start', input, { surface: 'ui' })).toMatchObject({
+      ok: true, result: { results: [{ ok: true }] },
+    });
+    expect(executionRunStart.mock.calls[0]?.[1]).toMatchObject(expected);
+  });
+
+  it('applies per-target Connected-services over a blanket choice and refuses malformed fan-out before any start', async () => {
+    const requests: unknown[] = [];
+    const executionRunStart: ActionExecutorDeps['executionRunStart'] = async (_session, input) => {
+      requests.push(ExecutionRunStartRequestSchema.parse(input));
+      return { runId: 'review-1', callId: 'review-call', sidechainId: 'review-call' };
+    };
+    const executor = createActionExecutor({ executionRunStart,
+      reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex' }, { value: 'claude', label: 'Claude' }] }),
+    } as ActionExecutorDeps);
+    const input = { sessionId: 's1', engineIds: ['codex', 'claude'], instructions: 'Review.',
+      connectedServices: 'native', connectedServicesByBackendTargetKey: { codex: 'openai-codex:group:pool-X' } };
+    expect(await executor.execute('review.start', input, { surface: 'ui' })).toMatchObject({ ok: true });
+    expect(requests).toMatchObject([
+      { connectedServices: { v: 2, bindingsByServiceId: { 'happier.agent.codex/openai-codex': {
+        source: 'connected', selection: 'group', groupId: 'pool-X',
+      } } } },
+      { connectedServices: null },
+    ]);
+    requests.length = 0;
+    expect(await executor.execute('review.start', { ...input,
+      connectedServicesByBackendTargetKey: { codex: 'native', claude: 'unknown-service:group:pool-X' },
+    }, { surface: 'ui' })).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    expect(requests).toEqual([]);
+  });
+
   const narrationInventory = { items: [
     { value: 'codex', label: 'Codex', capabilities: { structuredNarration: true } },
     { value: 'claude', label: 'Claude', capabilities: { structuredNarration: true } },
@@ -174,10 +233,11 @@ describe('createActionExecutor (review.start)', () => {
   it.each([undefined, { kind: 'detached' as const }])('starts an originless workflow review with target %j and carries trusted workflow identity outside input', async (target) => {
     // Execution start/capability adapters are the machine transport boundary.
     const executionRunStart = vi.fn<ActionExecutorDeps['executionRunStart']>(async () => ({ runId: 'review-1', callId: 'call-review', sidechainId: 'call-review' }));
+    const reviewEnginesList = vi.fn<ActionExecutorDeps['reviewEnginesList']>(async () => ({ items: [{ value: 'codex', label: 'Codex' }] }));
     const executor = createActionExecutor({
       executionRunStart,
       executionRunCheckProtocolV2: async () => ({ ok: true }),
-      reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex' }] }),
+      reviewEnginesList,
     } as ActionExecutorDeps);
     const result = await executor.execute('review.start', {
       ...(target ? { target } : {}), engineIds: ['codex'], instructions: 'Review the workspace.',
@@ -192,6 +252,7 @@ describe('createActionExecutor (review.start)', () => {
       } },
     });
     expect(result).toMatchObject({ ok: true, result: { intent: 'review', sessionId: null } });
+    expect(reviewEnginesList).toHaveBeenCalledWith({ sessionId: null, machineId: 'machine-1', includeDisabled: false });
     expect(executionRunStart).toHaveBeenCalledWith(null, expect.objectContaining({ intent: 'review', cwd: '/repo' }),
       expect.objectContaining({ workflowRunId: 'workflow-1', targetMachineId: 'machine-1', actionRequestId: 'review-request',
         actionCaller: expect.objectContaining({ kind: 'workflowRun', runId: 'workflow-1' }) }));

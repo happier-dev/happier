@@ -1054,6 +1054,10 @@ const externalActionExecutionAuthorizationRoutingShapeV1 = () => ({
     managedContinuation: ExternalActionManagedContinuationV1Schema.optional(),
     handoffAdmission: ExternalActionHandoffBindingV1Schema.optional(),
     handoffContinuation: ExternalActionHandoffContinuationV1Schema.optional(),
+    handoffPreflight: z.object({
+      rootRequestId: ExternalActionRequestIdV1Schema,
+      rootRequestEnvelopeDigest: z.string().regex(/^[A-Za-z0-9_-]{43}$/u),
+    }).strict().optional(),
     accountEncryptionMode: AccountEncryptionModeSchema.optional(),
     sessionActionOrigin: SessionActionRpcOriginV1Schema.optional(),
     sessionActionSource: ExternalActionSessionSourceV1Schema.optional(),
@@ -1078,8 +1082,18 @@ export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema
     context.addIssue({ code: 'custom', path: ['sessionActionOrigin', 'requestId'], message: 'Session origin must match the signed invocation' });
   }
   if (value.handoffContinuation && (!value.handoffAdmission || value.managedContinuation
+    || value.handoffPreflight
     || value.handoffContinuation.rootRequestId !== value.requestId)) {
     context.addIssue({ code: 'custom', path: ['handoffContinuation'], message: 'Handoff continuation retains its exact original root' });
+  }
+  if (value.handoffPreflight && (!value.handoffAdmission || value.managedContinuation || value.handoffContinuation
+    || value.actionId !== 'session.handoff' || value.handoffPreflight.rootRequestId !== value.requestId
+    || value.target.kind !== 'machine' || value.target.machineId !== value.machineId
+    || !(value.machineId === value.handoffAdmission.sourceMachineId
+        && value.installationId === value.handoffAdmission.sourceInstallationId
+      || value.machineId === value.handoffAdmission.targetMachineId
+        && value.installationId === value.handoffAdmission.targetInstallationId))) {
+    context.addIssue({ code: 'custom', path: ['handoffPreflight'], message: 'Handoff preflight retains its exact original root and admitted peer' });
   }
 }));
 export type ExternalActionExecutionAuthorizationBindingV1 = z.infer<typeof ExternalActionExecutionAuthorizationBindingV1Schema>;
@@ -1209,15 +1223,16 @@ export const ExternalActionExecutionAuthorizationRequestV1Schema = lazyZodSchema
     authorization: ExternalActionExecutionAuthorizationV1Schema,
     handoffId: ExternalActionTargetIdV1Schema,
   }).strict().optional(),
+  handoffPreflight: z.object({ authorization: ExternalActionExecutionAuthorizationV1Schema }).strict().optional(),
 }).strict().superRefine((value, context) => {
   if (value.executionAuthorization && (value.sessionActionOrigin || value.sessionActionSource || value.workflowActionOrigin
-    || value.installationProof || value.managedContinuation || value.handoffContinuation)) {
+    || value.installationProof || value.managedContinuation || value.handoffContinuation || value.handoffPreflight)) {
     context.addIssue({ code: 'custom', path: ['executionAuthorization'], message: 'An admitted relay cannot author fresh origin or continuation claims' });
   }
   if ((value.sessionActionOrigin === undefined && value.workflowActionOrigin === undefined) !== (value.installationProof === undefined)) {
     context.addIssue({ code: 'custom', path: ['sessionActionOrigin'], message: 'Session origin requires its installed source proof' });
   }
-  if (value.workflowActionOrigin && (value.sessionActionOrigin || value.managedContinuation || value.handoffContinuation
+  if (value.workflowActionOrigin && (value.sessionActionOrigin || value.managedContinuation || value.handoffContinuation || value.handoffPreflight
     || value.workflowActionOrigin.requestId !== value.envelope.requestId
     || value.envelope.target?.kind !== 'machine' || value.envelope.target.machineId !== value.machineId)) {
     context.addIssue({ code: 'custom', path: ['workflowActionOrigin'], message: 'FIN origin requires its exact installed executor invocation' });
@@ -1239,7 +1254,8 @@ export const ExternalActionExecutionAuthorizationRequestV1Schema = lazyZodSchema
   if (value.handoffContinuation) {
     const root = value.handoffContinuation.authorization.binding;
     const handoff = value.envelope.handoffAdmission;
-    if (root.actionId !== 'session.handoff' || !root.handoffAdmission || root.handoffContinuation
+    if (root.actionId !== 'session.handoff' || !root.handoffAdmission || root.handoffContinuation || root.handoffPreflight
+      || value.handoffPreflight
       || value.managedContinuation || value.envelope.requestId !== root.requestId
       || value.sessionActionOrigin || value.sessionActionSource || value.installationProof
       || !handoff || handoff.sessionId !== root.handoffAdmission.sessionId
@@ -1248,6 +1264,20 @@ export const ExternalActionExecutionAuthorizationRequestV1Schema = lazyZodSchema
       || value.envelope.target?.kind !== 'machine' || value.envelope.target.machineId !== value.machineId
       || ![root.handoffAdmission.sourceMachineId, root.handoffAdmission.targetMachineId].includes(value.machineId)) {
       context.addIssue({ code: 'custom', path: ['handoffContinuation'], message: 'Handoff continuation requires its exact Home-issued root and destination' });
+    }
+  }
+  if (value.handoffPreflight) {
+    const root = value.handoffPreflight.authorization.binding;
+    const handoff = value.envelope.handoffAdmission;
+    if (root.actionId !== 'session.handoff' || !root.handoffAdmission || root.handoffContinuation || root.handoffPreflight
+      || value.managedContinuation || value.handoffContinuation || value.envelope.requestId !== root.requestId
+      || value.sessionActionOrigin || value.sessionActionSource || value.installationProof
+      || root.machineId !== root.handoffAdmission.sourceMachineId || root.installationId !== root.handoffAdmission.sourceInstallationId
+      || !handoff || handoff.sessionId !== root.handoffAdmission.sessionId
+      || handoff.sourceMachineId !== root.handoffAdmission.sourceMachineId || handoff.targetMachineId !== root.handoffAdmission.targetMachineId
+      || value.envelope.target?.kind !== 'machine' || value.envelope.target.machineId !== value.machineId
+      || ![handoff.sourceMachineId, handoff.targetMachineId].includes(value.machineId)) {
+      context.addIssue({ code: 'custom', path: ['handoffPreflight'], message: 'Handoff preflight requires its exact Home-issued root and destination' });
     }
   }
 }));

@@ -155,6 +155,62 @@ describe('shared workflow definition create', () => {
     expect(result).toEqual({ definitions: [], pluginWorkflows: [plugin] });
     expect(WorkflowDefinitionListResultV1Schema.parse(result)).toEqual(result);
   });
+  it.each(['direct plugin', 'saved child'] as const)('returns Account rows before resolving a nested %s destination', async (source) => {
+    const childId = '22222222-2222-4222-8222-222222222222';
+    const neighborId = '33333333-3333-4333-8333-333333333333';
+    const pluginRef = 'plugin:com.acme.workflows/review';
+    const withChild = (workflowRef: string, sessionId: string) => WorkflowDefinitionV1Schema.parse({
+      ...definition, defaults: { ...definition.defaults,
+        conversation: { kind: 'existing_session', sessionId, machineId: 'machine' } },
+      blocks: [{ kind: 'workflow', id: 'nested', workflowRef, input: {} }],
+    });
+    const parent = withChild(source === 'saved child' ? childId : pluginRef, 'parent-session');
+    const child = withChild(pluginRef, 'child-session');
+    const plugin = { workflow: pluginRef, pluginId: 'com.acme.workflows', version: '1.2.3', title: 'Plugin review',
+      definition: WorkflowDefinitionV1Schema.parse({ ...definition, defaults: { ...definition.defaults,
+        conversation: { kind: 'existing_session', sessionId: 'plugin-session', machineId: 'machine' } } }) };
+    const revision = { headerVersion: 1, bodyVersion: 1 };
+    const row = (artifactId: string, value: typeof definition) => ({
+      artifactId, headerVersion: 1, bodyVersion: 1, updatedAt: 1, ownerAccountId: 'owner', access: 'owner' as const,
+      header: { kind: 'workflow-definition.v1', definitionId: artifactId, revision, metadata: { title: artifactId } },
+      body: JSON.stringify({ kind: 'workflow-definition.v1', definition: value }),
+    });
+    const rows = [row(definitionId, parent), row(childId, child), row(neighborId, definition)];
+    const unused = (): never => { throw new Error('unexpected_write'); };
+    let pluginOffline = true;
+    // Artifact persistence and remote plugin discovery are boundaries; their real
+    // definition readers, recursive destination projection and list owner run here.
+    const owner = createWorkflowDefinitionActions({ artifactStore: {
+      list: async () => ({ items: [rows[0]!, rows[2]!] }),
+      read: async artifactId => {
+        const saved = rows.find(candidate => candidate.artifactId === artifactId);
+        return saved ? { ...saved, revision } : null;
+      }, create: unused, update: unused, delete: unused,
+    }, encodeListCursor: saved => saved.artifactId, assertDefinitionWriteAllowed: unused,
+    readWorkflowTriggerSummaries: readEmptyTriggerSummaries,
+    readPluginWorkflows: async () => {
+      if (pluginOffline) throw new Error('remote_plugin_catalog_offline');
+      return [plugin];
+    } });
+    const accountPage = WorkflowDefinitionListResultV1Schema.parse(await owner.list({}));
+    expect(accountPage.definitions.map(saved => saved.definitionId)).toEqual([definitionId, neighborId]);
+    expect(accountPage.definitions[0]).toMatchObject({ contentStatus: 'available', destinations: {
+      targetSessionIds: source === 'saved child' ? ['parent-session', 'child-session'] : ['parent-session'],
+      unresolvedWorkflowRefs: [pluginRef],
+    } });
+    expect(accountPage.definitions[1]).toMatchObject({ contentStatus: 'available' });
+    expect(accountPage.pluginWorkflows).toBeUndefined();
+    expect(accountPage.nextCursor).toBeDefined();
+    await expect(owner.list({ cursor: accountPage.nextCursor })).rejects.toThrow('remote_plugin_catalog_offline');
+    await expect(owner.get({ definitionId })).rejects.toThrow('remote_plugin_catalog_offline');
+    pluginOffline = false;
+    expect(WorkflowDefinitionListResultV1Schema.parse(await owner.list({ cursor: accountPage.nextCursor })))
+      .toEqual({ definitions: [], pluginWorkflows: [plugin] });
+    const opened = WorkflowDefinitionGetResultV1Schema.parse(await owner.get({ definitionId }));
+    expect(opened.destinations.targetSessionIds).toEqual(source === 'saved child'
+      ? ['parent-session', 'child-session', 'plugin-session'] : ['parent-session', 'plugin-session']);
+    expect(opened.destinations.unresolvedWorkflowRefs).toEqual([]);
+  });
   it.each(['edit', 'admin'] as const)('refuses deletion by a %s grantee before removing personal triggers', async (access) => {
     const writes: string[] = [];
     const artifactStore: WorkflowDefinitionArtifactOperations = {

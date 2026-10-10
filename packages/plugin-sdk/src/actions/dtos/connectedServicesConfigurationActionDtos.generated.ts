@@ -2,8 +2,194 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { PluginJsonValueV2 } from '../../identity.js';
+import type { BoundedLegacyJsonValue, PluginPolicyExpressionV2, PluginSettingFieldSchemaV2 } from './pluginActionDtoSupport.generated.js';
 
 export type ConnectedServicesConfigurationActionInputById = {
+    readonly "connectedServices.authentication.beginConnect": {
+        modeId: string;
+        service: {
+            pluginId: string;
+            localId: string;
+        };
+        machineId: string;
+        expectedConfigurationRevision?: string | undefined;
+    };
+    readonly "connectedServices.authentication.beginReconnect": {
+        account: {
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            accountId: string;
+        };
+        machineId: string;
+        expectedConfigurationRevision?: string | undefined;
+    };
+    readonly "connectedServices.authentication.continueConnect": {
+        attemptId: string;
+        machineId: string;
+        expectedConfigurationRevision?: string | undefined;
+    };
+    readonly "connectedServices.authentication.submitManual": {
+        attemptId: string;
+        fields: Record<string, string>;
+        machineId: string;
+    };
+    readonly "connectedServices.authentication.completeOAuth": {
+        attemptId: string;
+        completion: {
+            code: string;
+            callbackUrl: string;
+            state: string;
+        };
+        machineId: string;
+    };
+    readonly "connectedServices.authentication.pollDevice": {
+        attemptId: string;
+        machineId: string;
+    };
+    readonly "connectedServices.authentication.resumeDevice": {
+        attemptId: string;
+        machineId: string;
+    };
+    readonly "connectedServices.authentication.reconcile": {
+        attemptId: string;
+        machineId: string;
+    };
+    readonly "connectedServices.authentication.cancel": {
+        attemptId: string;
+        machineId: string;
+    };
+    readonly "connectedServices.authentication.read": {
+        attemptId: string;
+        machineId: string;
+        restoreKind?: 'oauth' | undefined;
+    };
+    readonly "connectedServices.authentication.pending.list": {
+        service: {
+            pluginId: string;
+            localId: string;
+        };
+        machineId: string;
+    };
+    readonly "connectedServices.subscription.price.set": {
+        account: {
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            accountId: string;
+        };
+        price: {
+            amount: number;
+            currency: string;
+        } | null;
+    };
+    readonly "connectedServices.configuration.get": {
+        modeId: string;
+        service: {
+            pluginId: string;
+            localId: string;
+        };
+    } | {
+        machineId: string;
+        target: {
+            kind: 'account';
+            account: {
+                service: {
+                    pluginId: string;
+                    localId: string;
+                };
+                accountId: string;
+            };
+        } | {
+            kind: 'attempt';
+            attemptId: string;
+        };
+    };
+    readonly "connectedServices.configuration.replace": {
+        modeId: string;
+        service: {
+            pluginId: string;
+            localId: string;
+        };
+        expectedRevision: string | null;
+        values: Record<string, unknown>;
+        secretValues: Record<string, string>;
+    } | {
+        machineId: string;
+        target: {
+            kind: 'account';
+            account: {
+                service: {
+                    pluginId: string;
+                    localId: string;
+                };
+                accountId: string;
+            };
+        } | {
+            kind: 'attempt';
+            attemptId: string;
+        };
+        expectedRevision: string | null;
+        values: Record<string, unknown>;
+        secretValues: Record<string, string>;
+    };
+    readonly "connectedServices.billing.open": {
+        account: {
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            accountId: string;
+        };
+        machineId: string;
+    };
+    readonly "connectedServices.quota.get": {
+        source: {
+            ref: {
+                service: {
+                    pluginId: string;
+                    localId: string;
+                };
+                accountId: string;
+            };
+            bindingKind: 'account';
+        } | {
+            ref: {
+                service: {
+                    pluginId: string;
+                    localId: string;
+                };
+                accountId: string;
+            };
+            bindingKind: 'group_member';
+            groupId: string;
+            groupGeneration?: number | undefined;
+        };
+        history?: {
+            range: {
+                startAtMs: number;
+                endAtMs: number;
+            };
+            pageSize: number;
+            cursor?: {
+                observedAtMs: number;
+                id: string;
+            } | undefined;
+        } | undefined;
+    };
+    readonly "connectedServices.pools.selection.get": {
+        machineId: string;
+        group: {
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            groupId: string;
+        };
+        providerLimitId?: string | undefined;
+    };
     readonly "connectedServices.accounts.revoke": {
         account: {
             service: {
@@ -68,6 +254,72 @@ export type ConnectedServicesConfigurationActionInputById = {
         agentId: string;
         makeDefault: boolean;
         machineId?: string | undefined;
+    };
+    readonly "connectedServices.accounts.purposeDefault.set": {
+        agentId: string;
+        service: {
+            pluginId: string;
+            localId: string;
+        };
+        selection: {
+            source: 'native';
+        } | {
+            source: 'connected';
+            selection: 'group';
+            groupId: string;
+            profileId?: string | undefined;
+        } | {
+            source: 'connected';
+            profileId: string;
+            selection?: 'profile' | undefined;
+        } | {
+            source: 'team_resource';
+            resourceId: string;
+            deliveryMode: 'direct';
+            disclosedMember: {
+                service: {
+                    pluginId: string;
+                    localId: string;
+                };
+                accountId: string;
+            };
+        } | {
+            source: 'team_resource';
+            resourceId: string;
+            deliveryMode: 'brokered';
+            disclosedMember?: undefined;
+        };
+        purpose?: string | undefined;
+        teamId?: string | undefined;
+        machineId?: string | undefined;
+        onlyIfUnset?: boolean | undefined;
+    };
+    readonly "connectedServices.purposes.default.set": {
+        machineId: string;
+        purpose: {
+            consumer: {
+                pluginId: string;
+                localId: string;
+            };
+            purpose: string;
+        };
+        target: {
+            kind: 'account';
+            account: {
+                service: {
+                    pluginId: string;
+                    localId: string;
+                };
+                accountId: string;
+            };
+        } | {
+            kind: 'group';
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            groupId: string;
+        };
     };
     readonly "connectedServices.pools.create": {
         service: {
@@ -293,8 +545,2803 @@ export type ConnectedServicesConfigurationActionInputById = {
     readonly "connectedServices.identityPrivacy.set": {
         hidden: boolean;
     };
+    readonly "connectedServices.acknowledgements.set": {
+        subject: {
+            kind: 'adoption';
+            agentTargetKey: string;
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            groupId: string;
+        } | {
+            kind: 'warning';
+            warningId: string;
+            scope: {
+                kind: 'account';
+            } | {
+                kind: 'machine';
+                machineId: string;
+            };
+        };
+        acknowledged: boolean;
+    };
+    readonly "connectedServices.labels.set": {
+        subject: {
+            kind: 'account';
+            account: {
+                service: {
+                    pluginId: string;
+                    localId: string;
+                };
+                accountId: string;
+            };
+        } | {
+            kind: 'group';
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            groupId: string;
+        };
+        label: string;
+    };
+    readonly "connectedServices.labels.reset": {
+        subject: {
+            kind: 'account';
+            account: {
+                service: {
+                    pluginId: string;
+                    localId: string;
+                };
+                accountId: string;
+            };
+        } | {
+            kind: 'group';
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            groupId: string;
+        };
+    };
+    readonly "connectedServices.acknowledgements.reset": {
+        subject: {
+            kind: 'adoption';
+            agentTargetKey: string;
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            groupId: string;
+        } | {
+            kind: 'warning';
+            warningId: string;
+            scope: {
+                kind: 'account';
+            } | {
+                kind: 'machine';
+                machineId: string;
+            };
+        };
+    };
+    readonly "connectedServices.disclosure.set": {
+        subject: {
+            kind: 'account';
+            account: {
+                service: {
+                    pluginId: string;
+                    localId: string;
+                };
+                accountId: string;
+            };
+        } | {
+            kind: 'group-member';
+            group: {
+                service: {
+                    pluginId: string;
+                    localId: string;
+                };
+                groupId: string;
+            };
+            accountId: string;
+        };
+        collapsed: boolean;
+    };
+    readonly "connectedServices.disclosure.reset": {
+        subject: {
+            kind: 'account';
+            account: {
+                service: {
+                    pluginId: string;
+                    localId: string;
+                };
+                accountId: string;
+            };
+        } | {
+            kind: 'group-member';
+            group: {
+                service: {
+                    pluginId: string;
+                    localId: string;
+                };
+                groupId: string;
+            };
+            accountId: string;
+        };
+    };
 };
 export type ConnectedServicesConfigurationActionResultById = {
+    readonly "connectedServices.authentication.beginConnect": {
+        status: 'starting';
+        attemptId: string;
+    } | {
+        status: 'awaitingManual';
+        attemptId: string;
+    } | {
+        status: 'awaitingOAuth';
+        attemptId: string;
+        callbackUrl: string;
+        authorizationUrl?: string | undefined;
+        expiresAtMs?: number | undefined;
+    } | {
+        status: 'awaitingDeviceAuthorization';
+        attemptId: string;
+        verificationUri?: string | undefined;
+        verificationUriComplete?: string | undefined;
+        userCode?: string | undefined;
+        expiresAtMs?: number | undefined;
+        pollIntervalMs?: number | undefined;
+    } | {
+        status: 'configurationRequired';
+        target: {
+            kind: 'service';
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            modeId: string;
+        } | {
+            kind: 'account';
+            account: {
+                service: {
+                    pluginId: string;
+                    localId: string;
+                };
+                accountId: string;
+            };
+            modeId: string;
+        } | {
+            kind: 'attempt';
+            attemptId: string;
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            modeId: string;
+        };
+        missingFieldIds: string[];
+        attemptId?: string | undefined;
+    } | {
+        status: 'pending';
+        attemptId: string;
+        retryAfterMs: number;
+    } | {
+        status: 'outcomeUnknown';
+        attemptId: string;
+        diagnostic: unknown;
+    } | {
+        status: 'reconnectRequired';
+        attemptId: string;
+        code: string;
+    } | {
+        status: 'connected';
+        attemptId: string;
+        account: {
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            accountId: string;
+        };
+    } | {
+        status: 'cancelled';
+        attemptId: string;
+    } | {
+        status: 'cleanupPending';
+        attemptId: string;
+        code: 'connected_account_attempt_cleanup_pending';
+    } | {
+        status: 'rejected';
+        code: string;
+        attemptId?: string | undefined;
+        diagnostic?: unknown;
+        failureClass?: 'rateLimit' | undefined;
+        retryNotBeforeMs?: number | undefined;
+    } | {
+        status: 'unavailable';
+        code: string;
+        attemptId?: string | undefined;
+        diagnostic?: unknown;
+        failureClass?: 'rateLimit' | undefined;
+        retryNotBeforeMs?: number | undefined;
+    } | {
+        status: 'conflict';
+        code: string;
+        attemptId?: string | undefined;
+        diagnostic?: unknown;
+    };
+    readonly "connectedServices.authentication.beginReconnect": {
+        status: 'starting';
+        attemptId: string;
+    } | {
+        status: 'awaitingManual';
+        attemptId: string;
+    } | {
+        status: 'awaitingOAuth';
+        attemptId: string;
+        callbackUrl: string;
+        authorizationUrl?: string | undefined;
+        expiresAtMs?: number | undefined;
+    } | {
+        status: 'awaitingDeviceAuthorization';
+        attemptId: string;
+        verificationUri?: string | undefined;
+        verificationUriComplete?: string | undefined;
+        userCode?: string | undefined;
+        expiresAtMs?: number | undefined;
+        pollIntervalMs?: number | undefined;
+    } | {
+        status: 'configurationRequired';
+        target: {
+            kind: 'service';
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            modeId: string;
+        } | {
+            kind: 'account';
+            account: {
+                service: {
+                    pluginId: string;
+                    localId: string;
+                };
+                accountId: string;
+            };
+            modeId: string;
+        } | {
+            kind: 'attempt';
+            attemptId: string;
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            modeId: string;
+        };
+        missingFieldIds: string[];
+        attemptId?: string | undefined;
+    } | {
+        status: 'pending';
+        attemptId: string;
+        retryAfterMs: number;
+    } | {
+        status: 'outcomeUnknown';
+        attemptId: string;
+        diagnostic: unknown;
+    } | {
+        status: 'reconnectRequired';
+        attemptId: string;
+        code: string;
+    } | {
+        status: 'connected';
+        attemptId: string;
+        account: {
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            accountId: string;
+        };
+    } | {
+        status: 'cancelled';
+        attemptId: string;
+    } | {
+        status: 'cleanupPending';
+        attemptId: string;
+        code: 'connected_account_attempt_cleanup_pending';
+    } | {
+        status: 'rejected';
+        code: string;
+        attemptId?: string | undefined;
+        diagnostic?: unknown;
+        failureClass?: 'rateLimit' | undefined;
+        retryNotBeforeMs?: number | undefined;
+    } | {
+        status: 'unavailable';
+        code: string;
+        attemptId?: string | undefined;
+        diagnostic?: unknown;
+        failureClass?: 'rateLimit' | undefined;
+        retryNotBeforeMs?: number | undefined;
+    } | {
+        status: 'conflict';
+        code: string;
+        attemptId?: string | undefined;
+        diagnostic?: unknown;
+    };
+    readonly "connectedServices.authentication.continueConnect": {
+        status: 'starting';
+        attemptId: string;
+    } | {
+        status: 'awaitingManual';
+        attemptId: string;
+    } | {
+        status: 'awaitingOAuth';
+        attemptId: string;
+        callbackUrl: string;
+        authorizationUrl?: string | undefined;
+        expiresAtMs?: number | undefined;
+    } | {
+        status: 'awaitingDeviceAuthorization';
+        attemptId: string;
+        verificationUri?: string | undefined;
+        verificationUriComplete?: string | undefined;
+        userCode?: string | undefined;
+        expiresAtMs?: number | undefined;
+        pollIntervalMs?: number | undefined;
+    } | {
+        status: 'configurationRequired';
+        target: {
+            kind: 'service';
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            modeId: string;
+        } | {
+            kind: 'account';
+            account: {
+                service: {
+                    pluginId: string;
+                    localId: string;
+                };
+                accountId: string;
+            };
+            modeId: string;
+        } | {
+            kind: 'attempt';
+            attemptId: string;
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            modeId: string;
+        };
+        missingFieldIds: string[];
+        attemptId?: string | undefined;
+    } | {
+        status: 'pending';
+        attemptId: string;
+        retryAfterMs: number;
+    } | {
+        status: 'outcomeUnknown';
+        attemptId: string;
+        diagnostic: unknown;
+    } | {
+        status: 'reconnectRequired';
+        attemptId: string;
+        code: string;
+    } | {
+        status: 'connected';
+        attemptId: string;
+        account: {
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            accountId: string;
+        };
+    } | {
+        status: 'cancelled';
+        attemptId: string;
+    } | {
+        status: 'cleanupPending';
+        attemptId: string;
+        code: 'connected_account_attempt_cleanup_pending';
+    } | {
+        status: 'rejected';
+        code: string;
+        attemptId?: string | undefined;
+        diagnostic?: unknown;
+        failureClass?: 'rateLimit' | undefined;
+        retryNotBeforeMs?: number | undefined;
+    } | {
+        status: 'unavailable';
+        code: string;
+        attemptId?: string | undefined;
+        diagnostic?: unknown;
+        failureClass?: 'rateLimit' | undefined;
+        retryNotBeforeMs?: number | undefined;
+    } | {
+        status: 'conflict';
+        code: string;
+        attemptId?: string | undefined;
+        diagnostic?: unknown;
+    };
+    readonly "connectedServices.authentication.submitManual": {
+        status: 'starting';
+        attemptId: string;
+    } | {
+        status: 'awaitingManual';
+        attemptId: string;
+    } | {
+        status: 'awaitingOAuth';
+        attemptId: string;
+        callbackUrl: string;
+        authorizationUrl?: string | undefined;
+        expiresAtMs?: number | undefined;
+    } | {
+        status: 'awaitingDeviceAuthorization';
+        attemptId: string;
+        verificationUri?: string | undefined;
+        verificationUriComplete?: string | undefined;
+        userCode?: string | undefined;
+        expiresAtMs?: number | undefined;
+        pollIntervalMs?: number | undefined;
+    } | {
+        status: 'configurationRequired';
+        target: {
+            kind: 'service';
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            modeId: string;
+        } | {
+            kind: 'account';
+            account: {
+                service: {
+                    pluginId: string;
+                    localId: string;
+                };
+                accountId: string;
+            };
+            modeId: string;
+        } | {
+            kind: 'attempt';
+            attemptId: string;
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            modeId: string;
+        };
+        missingFieldIds: string[];
+        attemptId?: string | undefined;
+    } | {
+        status: 'pending';
+        attemptId: string;
+        retryAfterMs: number;
+    } | {
+        status: 'outcomeUnknown';
+        attemptId: string;
+        diagnostic: unknown;
+    } | {
+        status: 'reconnectRequired';
+        attemptId: string;
+        code: string;
+    } | {
+        status: 'connected';
+        attemptId: string;
+        account: {
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            accountId: string;
+        };
+    } | {
+        status: 'cancelled';
+        attemptId: string;
+    } | {
+        status: 'cleanupPending';
+        attemptId: string;
+        code: 'connected_account_attempt_cleanup_pending';
+    } | {
+        status: 'rejected';
+        code: string;
+        attemptId?: string | undefined;
+        diagnostic?: unknown;
+        failureClass?: 'rateLimit' | undefined;
+        retryNotBeforeMs?: number | undefined;
+    } | {
+        status: 'unavailable';
+        code: string;
+        attemptId?: string | undefined;
+        diagnostic?: unknown;
+        failureClass?: 'rateLimit' | undefined;
+        retryNotBeforeMs?: number | undefined;
+    } | {
+        status: 'conflict';
+        code: string;
+        attemptId?: string | undefined;
+        diagnostic?: unknown;
+    };
+    readonly "connectedServices.authentication.completeOAuth": {
+        status: 'starting';
+        attemptId: string;
+    } | {
+        status: 'awaitingManual';
+        attemptId: string;
+    } | {
+        status: 'awaitingOAuth';
+        attemptId: string;
+        callbackUrl: string;
+        authorizationUrl?: string | undefined;
+        expiresAtMs?: number | undefined;
+    } | {
+        status: 'awaitingDeviceAuthorization';
+        attemptId: string;
+        verificationUri?: string | undefined;
+        verificationUriComplete?: string | undefined;
+        userCode?: string | undefined;
+        expiresAtMs?: number | undefined;
+        pollIntervalMs?: number | undefined;
+    } | {
+        status: 'configurationRequired';
+        target: {
+            kind: 'service';
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            modeId: string;
+        } | {
+            kind: 'account';
+            account: {
+                service: {
+                    pluginId: string;
+                    localId: string;
+                };
+                accountId: string;
+            };
+            modeId: string;
+        } | {
+            kind: 'attempt';
+            attemptId: string;
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            modeId: string;
+        };
+        missingFieldIds: string[];
+        attemptId?: string | undefined;
+    } | {
+        status: 'pending';
+        attemptId: string;
+        retryAfterMs: number;
+    } | {
+        status: 'outcomeUnknown';
+        attemptId: string;
+        diagnostic: unknown;
+    } | {
+        status: 'reconnectRequired';
+        attemptId: string;
+        code: string;
+    } | {
+        status: 'connected';
+        attemptId: string;
+        account: {
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            accountId: string;
+        };
+    } | {
+        status: 'cancelled';
+        attemptId: string;
+    } | {
+        status: 'cleanupPending';
+        attemptId: string;
+        code: 'connected_account_attempt_cleanup_pending';
+    } | {
+        status: 'rejected';
+        code: string;
+        attemptId?: string | undefined;
+        diagnostic?: unknown;
+        failureClass?: 'rateLimit' | undefined;
+        retryNotBeforeMs?: number | undefined;
+    } | {
+        status: 'unavailable';
+        code: string;
+        attemptId?: string | undefined;
+        diagnostic?: unknown;
+        failureClass?: 'rateLimit' | undefined;
+        retryNotBeforeMs?: number | undefined;
+    } | {
+        status: 'conflict';
+        code: string;
+        attemptId?: string | undefined;
+        diagnostic?: unknown;
+    };
+    readonly "connectedServices.authentication.pollDevice": {
+        status: 'starting';
+        attemptId: string;
+    } | {
+        status: 'awaitingManual';
+        attemptId: string;
+    } | {
+        status: 'awaitingOAuth';
+        attemptId: string;
+        callbackUrl: string;
+        authorizationUrl?: string | undefined;
+        expiresAtMs?: number | undefined;
+    } | {
+        status: 'awaitingDeviceAuthorization';
+        attemptId: string;
+        verificationUri?: string | undefined;
+        verificationUriComplete?: string | undefined;
+        userCode?: string | undefined;
+        expiresAtMs?: number | undefined;
+        pollIntervalMs?: number | undefined;
+    } | {
+        status: 'configurationRequired';
+        target: {
+            kind: 'service';
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            modeId: string;
+        } | {
+            kind: 'account';
+            account: {
+                service: {
+                    pluginId: string;
+                    localId: string;
+                };
+                accountId: string;
+            };
+            modeId: string;
+        } | {
+            kind: 'attempt';
+            attemptId: string;
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            modeId: string;
+        };
+        missingFieldIds: string[];
+        attemptId?: string | undefined;
+    } | {
+        status: 'pending';
+        attemptId: string;
+        retryAfterMs: number;
+    } | {
+        status: 'outcomeUnknown';
+        attemptId: string;
+        diagnostic: unknown;
+    } | {
+        status: 'reconnectRequired';
+        attemptId: string;
+        code: string;
+    } | {
+        status: 'connected';
+        attemptId: string;
+        account: {
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            accountId: string;
+        };
+    } | {
+        status: 'cancelled';
+        attemptId: string;
+    } | {
+        status: 'cleanupPending';
+        attemptId: string;
+        code: 'connected_account_attempt_cleanup_pending';
+    } | {
+        status: 'rejected';
+        code: string;
+        attemptId?: string | undefined;
+        diagnostic?: unknown;
+        failureClass?: 'rateLimit' | undefined;
+        retryNotBeforeMs?: number | undefined;
+    } | {
+        status: 'unavailable';
+        code: string;
+        attemptId?: string | undefined;
+        diagnostic?: unknown;
+        failureClass?: 'rateLimit' | undefined;
+        retryNotBeforeMs?: number | undefined;
+    } | {
+        status: 'conflict';
+        code: string;
+        attemptId?: string | undefined;
+        diagnostic?: unknown;
+    };
+    readonly "connectedServices.authentication.resumeDevice": {
+        status: 'starting';
+        attemptId: string;
+    } | {
+        status: 'awaitingManual';
+        attemptId: string;
+    } | {
+        status: 'awaitingOAuth';
+        attemptId: string;
+        callbackUrl: string;
+        authorizationUrl?: string | undefined;
+        expiresAtMs?: number | undefined;
+    } | {
+        status: 'awaitingDeviceAuthorization';
+        attemptId: string;
+        verificationUri?: string | undefined;
+        verificationUriComplete?: string | undefined;
+        userCode?: string | undefined;
+        expiresAtMs?: number | undefined;
+        pollIntervalMs?: number | undefined;
+    } | {
+        status: 'configurationRequired';
+        target: {
+            kind: 'service';
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            modeId: string;
+        } | {
+            kind: 'account';
+            account: {
+                service: {
+                    pluginId: string;
+                    localId: string;
+                };
+                accountId: string;
+            };
+            modeId: string;
+        } | {
+            kind: 'attempt';
+            attemptId: string;
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            modeId: string;
+        };
+        missingFieldIds: string[];
+        attemptId?: string | undefined;
+    } | {
+        status: 'pending';
+        attemptId: string;
+        retryAfterMs: number;
+    } | {
+        status: 'outcomeUnknown';
+        attemptId: string;
+        diagnostic: unknown;
+    } | {
+        status: 'reconnectRequired';
+        attemptId: string;
+        code: string;
+    } | {
+        status: 'connected';
+        attemptId: string;
+        account: {
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            accountId: string;
+        };
+    } | {
+        status: 'cancelled';
+        attemptId: string;
+    } | {
+        status: 'cleanupPending';
+        attemptId: string;
+        code: 'connected_account_attempt_cleanup_pending';
+    } | {
+        status: 'rejected';
+        code: string;
+        attemptId?: string | undefined;
+        diagnostic?: unknown;
+        failureClass?: 'rateLimit' | undefined;
+        retryNotBeforeMs?: number | undefined;
+    } | {
+        status: 'unavailable';
+        code: string;
+        attemptId?: string | undefined;
+        diagnostic?: unknown;
+        failureClass?: 'rateLimit' | undefined;
+        retryNotBeforeMs?: number | undefined;
+    } | {
+        status: 'conflict';
+        code: string;
+        attemptId?: string | undefined;
+        diagnostic?: unknown;
+    };
+    readonly "connectedServices.authentication.reconcile": {
+        status: 'starting';
+        attemptId: string;
+    } | {
+        status: 'awaitingManual';
+        attemptId: string;
+    } | {
+        status: 'awaitingOAuth';
+        attemptId: string;
+        callbackUrl: string;
+        authorizationUrl?: string | undefined;
+        expiresAtMs?: number | undefined;
+    } | {
+        status: 'awaitingDeviceAuthorization';
+        attemptId: string;
+        verificationUri?: string | undefined;
+        verificationUriComplete?: string | undefined;
+        userCode?: string | undefined;
+        expiresAtMs?: number | undefined;
+        pollIntervalMs?: number | undefined;
+    } | {
+        status: 'configurationRequired';
+        target: {
+            kind: 'service';
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            modeId: string;
+        } | {
+            kind: 'account';
+            account: {
+                service: {
+                    pluginId: string;
+                    localId: string;
+                };
+                accountId: string;
+            };
+            modeId: string;
+        } | {
+            kind: 'attempt';
+            attemptId: string;
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            modeId: string;
+        };
+        missingFieldIds: string[];
+        attemptId?: string | undefined;
+    } | {
+        status: 'pending';
+        attemptId: string;
+        retryAfterMs: number;
+    } | {
+        status: 'outcomeUnknown';
+        attemptId: string;
+        diagnostic: unknown;
+    } | {
+        status: 'reconnectRequired';
+        attemptId: string;
+        code: string;
+    } | {
+        status: 'connected';
+        attemptId: string;
+        account: {
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            accountId: string;
+        };
+    } | {
+        status: 'cancelled';
+        attemptId: string;
+    } | {
+        status: 'cleanupPending';
+        attemptId: string;
+        code: 'connected_account_attempt_cleanup_pending';
+    } | {
+        status: 'rejected';
+        code: string;
+        attemptId?: string | undefined;
+        diagnostic?: unknown;
+        failureClass?: 'rateLimit' | undefined;
+        retryNotBeforeMs?: number | undefined;
+    } | {
+        status: 'unavailable';
+        code: string;
+        attemptId?: string | undefined;
+        diagnostic?: unknown;
+        failureClass?: 'rateLimit' | undefined;
+        retryNotBeforeMs?: number | undefined;
+    } | {
+        status: 'conflict';
+        code: string;
+        attemptId?: string | undefined;
+        diagnostic?: unknown;
+    };
+    readonly "connectedServices.authentication.cancel": {
+        status: 'starting';
+        attemptId: string;
+    } | {
+        status: 'awaitingManual';
+        attemptId: string;
+    } | {
+        status: 'awaitingOAuth';
+        attemptId: string;
+        callbackUrl: string;
+        authorizationUrl?: string | undefined;
+        expiresAtMs?: number | undefined;
+    } | {
+        status: 'awaitingDeviceAuthorization';
+        attemptId: string;
+        verificationUri?: string | undefined;
+        verificationUriComplete?: string | undefined;
+        userCode?: string | undefined;
+        expiresAtMs?: number | undefined;
+        pollIntervalMs?: number | undefined;
+    } | {
+        status: 'configurationRequired';
+        target: {
+            kind: 'service';
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            modeId: string;
+        } | {
+            kind: 'account';
+            account: {
+                service: {
+                    pluginId: string;
+                    localId: string;
+                };
+                accountId: string;
+            };
+            modeId: string;
+        } | {
+            kind: 'attempt';
+            attemptId: string;
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            modeId: string;
+        };
+        missingFieldIds: string[];
+        attemptId?: string | undefined;
+    } | {
+        status: 'pending';
+        attemptId: string;
+        retryAfterMs: number;
+    } | {
+        status: 'outcomeUnknown';
+        attemptId: string;
+        diagnostic: unknown;
+    } | {
+        status: 'reconnectRequired';
+        attemptId: string;
+        code: string;
+    } | {
+        status: 'connected';
+        attemptId: string;
+        account: {
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            accountId: string;
+        };
+    } | {
+        status: 'cancelled';
+        attemptId: string;
+    } | {
+        status: 'cleanupPending';
+        attemptId: string;
+        code: 'connected_account_attempt_cleanup_pending';
+    } | {
+        status: 'rejected';
+        code: string;
+        attemptId?: string | undefined;
+        diagnostic?: unknown;
+        failureClass?: 'rateLimit' | undefined;
+        retryNotBeforeMs?: number | undefined;
+    } | {
+        status: 'unavailable';
+        code: string;
+        attemptId?: string | undefined;
+        diagnostic?: unknown;
+        failureClass?: 'rateLimit' | undefined;
+        retryNotBeforeMs?: number | undefined;
+    } | {
+        status: 'conflict';
+        code: string;
+        attemptId?: string | undefined;
+        diagnostic?: unknown;
+    };
+    readonly "connectedServices.authentication.read": {
+        status: 'starting';
+        attemptId: string;
+    } | {
+        status: 'awaitingManual';
+        attemptId: string;
+    } | {
+        status: 'awaitingOAuth';
+        attemptId: string;
+        callbackUrl: string;
+        authorizationUrl?: string | undefined;
+        expiresAtMs?: number | undefined;
+    } | {
+        status: 'awaitingDeviceAuthorization';
+        attemptId: string;
+        verificationUri?: string | undefined;
+        verificationUriComplete?: string | undefined;
+        userCode?: string | undefined;
+        expiresAtMs?: number | undefined;
+        pollIntervalMs?: number | undefined;
+    } | {
+        status: 'configurationRequired';
+        target: {
+            kind: 'service';
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            modeId: string;
+        } | {
+            kind: 'account';
+            account: {
+                service: {
+                    pluginId: string;
+                    localId: string;
+                };
+                accountId: string;
+            };
+            modeId: string;
+        } | {
+            kind: 'attempt';
+            attemptId: string;
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            modeId: string;
+        };
+        missingFieldIds: string[];
+        attemptId?: string | undefined;
+    } | {
+        status: 'pending';
+        attemptId: string;
+        retryAfterMs: number;
+    } | {
+        status: 'outcomeUnknown';
+        attemptId: string;
+        diagnostic: unknown;
+    } | {
+        status: 'reconnectRequired';
+        attemptId: string;
+        code: string;
+    } | {
+        status: 'connected';
+        attemptId: string;
+        account: {
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            accountId: string;
+        };
+    } | {
+        status: 'cancelled';
+        attemptId: string;
+    } | {
+        status: 'cleanupPending';
+        attemptId: string;
+        code: 'connected_account_attempt_cleanup_pending';
+    } | {
+        status: 'rejected';
+        code: string;
+        attemptId?: string | undefined;
+        diagnostic?: unknown;
+        failureClass?: 'rateLimit' | undefined;
+        retryNotBeforeMs?: number | undefined;
+    } | {
+        status: 'unavailable';
+        code: string;
+        attemptId?: string | undefined;
+        diagnostic?: unknown;
+        failureClass?: 'rateLimit' | undefined;
+        retryNotBeforeMs?: number | undefined;
+    } | {
+        status: 'conflict';
+        code: string;
+        attemptId?: string | undefined;
+        diagnostic?: unknown;
+    };
+    readonly "connectedServices.authentication.pending.list": {
+        status: 'conflict';
+        code: string;
+    } | {
+        status: 'unavailable';
+        code: string;
+    } | {
+        status: 'pendingAttempts';
+        attempts: {
+            attemptId: string;
+            kind: 'oauth' | 'device';
+            modeId: string;
+            intent: 'connect' | 'reconnect';
+            phase: 'awaitingOAuth' | 'awaitingDeviceAuthorization' | 'outcomeUnknown';
+            createdAtMs: number;
+            expiresAtMs: number;
+        }[];
+    };
+    readonly "connectedServices.subscription.price.set": {
+        applied: true;
+    };
+    readonly "connectedServices.configuration.get": {
+        target: {
+            kind: 'service';
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            modeId: string;
+        } | {
+            kind: 'account';
+            account: {
+                service: {
+                    pluginId: string;
+                    localId: string;
+                };
+                accountId: string;
+            };
+            modeId: string;
+        } | {
+            kind: 'attempt';
+            attemptId: string;
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            modeId: string;
+        };
+        mode: {
+            id: string;
+            kind: 'manual';
+            outcomeReconciliation: 'none';
+            fields: ({
+                secret: boolean;
+                id: string;
+                title: string | {
+                    key: string;
+                    fallback: string;
+                };
+                schema: PluginSettingFieldSchemaV2;
+                description?: string | {
+                    key: string;
+                    fallback: string;
+                } | undefined;
+                availability?: {
+                    when?: PluginPolicyExpressionV2 | undefined;
+                    disabledWhen?: undefined;
+                    disabledReason?: undefined;
+                } | {
+                    disabledWhen: PluginPolicyExpressionV2;
+                    disabledReason: string | {
+                        key: string;
+                        fallback: string;
+                    };
+                    when?: PluginPolicyExpressionV2 | undefined;
+                } | undefined;
+                presentation?: {
+                    control?: 'number' | 'auto' | 'text' | 'textarea' | 'switch' | 'select' | 'multiSelect' | 'json' | undefined;
+                    placeholder?: string | {
+                        key: string;
+                        fallback: string;
+                    } | undefined;
+                    options?: {
+                        value: PluginJsonValueV2;
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                        description?: string | {
+                            key: string;
+                            fallback: string;
+                        } | undefined;
+                    }[] | undefined;
+                    step?: number | undefined;
+                    binding?: {
+                        kind: 'direct';
+                        settingId?: string | undefined;
+                    } | {
+                        kind: 'perActiveServer';
+                        fallbackSettingId: string;
+                        byServerIdSettingId: string;
+                    } | undefined;
+                    hidden?: boolean | undefined;
+                    order?: number | undefined;
+                } | undefined;
+                analytics?: {
+                    valueKind: 'boolean' | 'enum' | 'bucket' | 'count' | 'presence';
+                    privacy: 'safe' | 'bucketed' | 'count_only' | 'presence_only' | 'forbidden';
+                    identityScope: 'person' | 'device_user';
+                    trackCurrentState?: boolean | undefined;
+                    trackChanges?: boolean | undefined;
+                    serializeCurrentRule?: 'orderedEnumArrayJoin' | 'jsonObjectStringPresence' | undefined;
+                } | undefined;
+                default?: undefined;
+            } | {
+                secret: boolean;
+                id: string;
+                title: string | {
+                    key: string;
+                    fallback: string;
+                };
+                schema: PluginSettingFieldSchemaV2;
+                description?: string | {
+                    key: string;
+                    fallback: string;
+                } | undefined;
+                availability?: {
+                    when?: PluginPolicyExpressionV2 | undefined;
+                    disabledWhen?: undefined;
+                    disabledReason?: undefined;
+                } | {
+                    disabledWhen: PluginPolicyExpressionV2;
+                    disabledReason: string | {
+                        key: string;
+                        fallback: string;
+                    };
+                    when?: PluginPolicyExpressionV2 | undefined;
+                } | undefined;
+                presentation?: {
+                    control?: 'number' | 'auto' | 'text' | 'textarea' | 'switch' | 'select' | 'multiSelect' | 'json' | undefined;
+                    placeholder?: string | {
+                        key: string;
+                        fallback: string;
+                    } | undefined;
+                    options?: {
+                        value: PluginJsonValueV2;
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                        description?: string | {
+                            key: string;
+                            fallback: string;
+                        } | undefined;
+                    }[] | undefined;
+                    step?: number | undefined;
+                    binding?: {
+                        kind: 'direct';
+                        settingId?: string | undefined;
+                    } | {
+                        kind: 'perActiveServer';
+                        fallbackSettingId: string;
+                        byServerIdSettingId: string;
+                    } | undefined;
+                    hidden?: boolean | undefined;
+                    order?: number | undefined;
+                } | undefined;
+                analytics?: {
+                    valueKind: 'boolean' | 'enum' | 'bucket' | 'count' | 'presence';
+                    privacy: 'safe' | 'bucketed' | 'count_only' | 'presence_only' | 'forbidden';
+                    identityScope: 'person' | 'device_user';
+                    trackCurrentState?: boolean | undefined;
+                    trackChanges?: boolean | undefined;
+                    serializeCurrentRule?: 'orderedEnumArrayJoin' | 'jsonObjectStringPresence' | undefined;
+                } | undefined;
+                default?: PluginJsonValueV2 | undefined;
+            })[];
+            title?: string | {
+                key: string;
+                fallback: string;
+            } | undefined;
+            configuration?: {
+                scope: 'service' | 'account';
+                changeBehavior: 'reconnect' | 'refresh';
+                fields: ({
+                    secret: true;
+                    id: string;
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                    };
+                    schema: PluginSettingFieldSchemaV2;
+                    description?: string | {
+                        key: string;
+                        fallback: string;
+                    } | undefined;
+                    availability?: {
+                        when?: PluginPolicyExpressionV2 | undefined;
+                        disabledWhen?: undefined;
+                        disabledReason?: undefined;
+                    } | {
+                        disabledWhen: PluginPolicyExpressionV2;
+                        disabledReason: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                        when?: PluginPolicyExpressionV2 | undefined;
+                    } | undefined;
+                    presentation?: {
+                        control?: 'number' | 'auto' | 'text' | 'textarea' | 'switch' | 'select' | 'multiSelect' | 'json' | undefined;
+                        placeholder?: string | {
+                            key: string;
+                            fallback: string;
+                        } | undefined;
+                        options?: {
+                            value: PluginJsonValueV2;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                            };
+                            description?: string | {
+                                key: string;
+                                fallback: string;
+                            } | undefined;
+                        }[] | undefined;
+                        step?: number | undefined;
+                        binding?: {
+                            kind: 'direct';
+                            settingId?: string | undefined;
+                        } | {
+                            kind: 'perActiveServer';
+                            fallbackSettingId: string;
+                            byServerIdSettingId: string;
+                        } | undefined;
+                        hidden?: boolean | undefined;
+                        order?: number | undefined;
+                    } | undefined;
+                    analytics?: {
+                        valueKind: 'boolean' | 'enum' | 'bucket' | 'count' | 'presence';
+                        privacy: 'safe' | 'bucketed' | 'count_only' | 'presence_only' | 'forbidden';
+                        identityScope: 'person' | 'device_user';
+                        trackCurrentState?: boolean | undefined;
+                        trackChanges?: boolean | undefined;
+                        serializeCurrentRule?: 'orderedEnumArrayJoin' | 'jsonObjectStringPresence' | undefined;
+                    } | undefined;
+                    default?: undefined;
+                    required?: boolean | undefined;
+                    semantic?: undefined;
+                } | {
+                    secret: false;
+                    id: string;
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                    };
+                    schema: PluginSettingFieldSchemaV2;
+                    description?: string | {
+                        key: string;
+                        fallback: string;
+                    } | undefined;
+                    availability?: {
+                        when?: PluginPolicyExpressionV2 | undefined;
+                        disabledWhen?: undefined;
+                        disabledReason?: undefined;
+                    } | {
+                        disabledWhen: PluginPolicyExpressionV2;
+                        disabledReason: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                        when?: PluginPolicyExpressionV2 | undefined;
+                    } | undefined;
+                    presentation?: {
+                        control?: 'number' | 'auto' | 'text' | 'textarea' | 'switch' | 'select' | 'multiSelect' | 'json' | undefined;
+                        placeholder?: string | {
+                            key: string;
+                            fallback: string;
+                        } | undefined;
+                        options?: {
+                            value: PluginJsonValueV2;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                            };
+                            description?: string | {
+                                key: string;
+                                fallback: string;
+                            } | undefined;
+                        }[] | undefined;
+                        step?: number | undefined;
+                        binding?: {
+                            kind: 'direct';
+                            settingId?: string | undefined;
+                        } | {
+                            kind: 'perActiveServer';
+                            fallbackSettingId: string;
+                            byServerIdSettingId: string;
+                        } | undefined;
+                        hidden?: boolean | undefined;
+                        order?: number | undefined;
+                    } | undefined;
+                    analytics?: {
+                        valueKind: 'boolean' | 'enum' | 'bucket' | 'count' | 'presence';
+                        privacy: 'safe' | 'bucketed' | 'count_only' | 'presence_only' | 'forbidden';
+                        identityScope: 'person' | 'device_user';
+                        trackCurrentState?: boolean | undefined;
+                        trackChanges?: boolean | undefined;
+                        serializeCurrentRule?: 'orderedEnumArrayJoin' | 'jsonObjectStringPresence' | undefined;
+                    } | undefined;
+                    default?: PluginJsonValueV2 | undefined;
+                    required?: boolean | undefined;
+                    semantic?: undefined;
+                } | {
+                    secret: false;
+                    id: string;
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                    };
+                    semantic: 'connectedAccountOrigin';
+                    schema: {
+                        type: 'string';
+                        minLength: number;
+                        title?: string | undefined;
+                        description?: string | undefined;
+                        maxLength?: number | undefined;
+                    };
+                    required: true;
+                    description?: string | {
+                        key: string;
+                        fallback: string;
+                    } | undefined;
+                    availability?: {
+                        when?: PluginPolicyExpressionV2 | undefined;
+                        disabledWhen?: undefined;
+                        disabledReason?: undefined;
+                    } | {
+                        disabledWhen: PluginPolicyExpressionV2;
+                        disabledReason: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                        when?: PluginPolicyExpressionV2 | undefined;
+                    } | undefined;
+                    presentation?: {
+                        control?: 'number' | 'auto' | 'text' | 'textarea' | 'switch' | 'select' | 'multiSelect' | 'json' | undefined;
+                        placeholder?: string | {
+                            key: string;
+                            fallback: string;
+                        } | undefined;
+                        options?: {
+                            value: PluginJsonValueV2;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                            };
+                            description?: string | {
+                                key: string;
+                                fallback: string;
+                            } | undefined;
+                        }[] | undefined;
+                        step?: number | undefined;
+                        binding?: {
+                            kind: 'direct';
+                            settingId?: string | undefined;
+                        } | {
+                            kind: 'perActiveServer';
+                            fallbackSettingId: string;
+                            byServerIdSettingId: string;
+                        } | undefined;
+                        hidden?: boolean | undefined;
+                        order?: number | undefined;
+                    } | undefined;
+                    analytics?: {
+                        valueKind: 'boolean' | 'enum' | 'bucket' | 'count' | 'presence';
+                        privacy: 'safe' | 'bucketed' | 'count_only' | 'presence_only' | 'forbidden';
+                        identityScope: 'person' | 'device_user';
+                        trackCurrentState?: boolean | undefined;
+                        trackChanges?: boolean | undefined;
+                        serializeCurrentRule?: 'orderedEnumArrayJoin' | 'jsonObjectStringPresence' | undefined;
+                    } | undefined;
+                    default?: undefined;
+                } | {
+                    secret: false;
+                    id: string;
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                    };
+                    semantic: 'connectedAccountFixedOrigin';
+                    schema: {
+                        type: 'string';
+                        enum: string[];
+                        title?: string | undefined;
+                        description?: string | undefined;
+                    };
+                    originByValue: Record<string, string>;
+                    required: true;
+                    description?: string | {
+                        key: string;
+                        fallback: string;
+                    } | undefined;
+                    availability?: {
+                        when?: PluginPolicyExpressionV2 | undefined;
+                        disabledWhen?: undefined;
+                        disabledReason?: undefined;
+                    } | {
+                        disabledWhen: PluginPolicyExpressionV2;
+                        disabledReason: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                        when?: PluginPolicyExpressionV2 | undefined;
+                    } | undefined;
+                    presentation?: {
+                        control?: 'number' | 'auto' | 'text' | 'textarea' | 'switch' | 'select' | 'multiSelect' | 'json' | undefined;
+                        placeholder?: string | {
+                            key: string;
+                            fallback: string;
+                        } | undefined;
+                        options?: {
+                            value: PluginJsonValueV2;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                            };
+                            description?: string | {
+                                key: string;
+                                fallback: string;
+                            } | undefined;
+                        }[] | undefined;
+                        step?: number | undefined;
+                        binding?: {
+                            kind: 'direct';
+                            settingId?: string | undefined;
+                        } | {
+                            kind: 'perActiveServer';
+                            fallbackSettingId: string;
+                            byServerIdSettingId: string;
+                        } | undefined;
+                        hidden?: boolean | undefined;
+                        order?: number | undefined;
+                    } | undefined;
+                    analytics?: {
+                        valueKind: 'boolean' | 'enum' | 'bucket' | 'count' | 'presence';
+                        privacy: 'safe' | 'bucketed' | 'count_only' | 'presence_only' | 'forbidden';
+                        identityScope: 'person' | 'device_user';
+                        trackCurrentState?: boolean | undefined;
+                        trackChanges?: boolean | undefined;
+                        serializeCurrentRule?: 'orderedEnumArrayJoin' | 'jsonObjectStringPresence' | undefined;
+                    } | undefined;
+                    default?: undefined;
+                } | {
+                    secret: false;
+                    id: string;
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                    };
+                    semantic: 'connectedAccountBase';
+                    schema: {
+                        type: 'string';
+                        minLength: number;
+                        title?: string | undefined;
+                        description?: string | undefined;
+                        maxLength?: number | undefined;
+                    };
+                    required: true;
+                    description?: string | {
+                        key: string;
+                        fallback: string;
+                    } | undefined;
+                    availability?: {
+                        when?: PluginPolicyExpressionV2 | undefined;
+                        disabledWhen?: undefined;
+                        disabledReason?: undefined;
+                    } | {
+                        disabledWhen: PluginPolicyExpressionV2;
+                        disabledReason: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                        when?: PluginPolicyExpressionV2 | undefined;
+                    } | undefined;
+                    presentation?: {
+                        control?: 'number' | 'auto' | 'text' | 'textarea' | 'switch' | 'select' | 'multiSelect' | 'json' | undefined;
+                        placeholder?: string | {
+                            key: string;
+                            fallback: string;
+                        } | undefined;
+                        options?: {
+                            value: PluginJsonValueV2;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                            };
+                            description?: string | {
+                                key: string;
+                                fallback: string;
+                            } | undefined;
+                        }[] | undefined;
+                        step?: number | undefined;
+                        binding?: {
+                            kind: 'direct';
+                            settingId?: string | undefined;
+                        } | {
+                            kind: 'perActiveServer';
+                            fallbackSettingId: string;
+                            byServerIdSettingId: string;
+                        } | undefined;
+                        hidden?: boolean | undefined;
+                        order?: number | undefined;
+                    } | undefined;
+                    analytics?: {
+                        valueKind: 'boolean' | 'enum' | 'bucket' | 'count' | 'presence';
+                        privacy: 'safe' | 'bucketed' | 'count_only' | 'presence_only' | 'forbidden';
+                        identityScope: 'person' | 'device_user';
+                        trackCurrentState?: boolean | undefined;
+                        trackChanges?: boolean | undefined;
+                        serializeCurrentRule?: 'orderedEnumArrayJoin' | 'jsonObjectStringPresence' | undefined;
+                    } | undefined;
+                    default?: undefined;
+                })[];
+            } | undefined;
+            directExport?: {
+                contractVersion: 'happier.team-credential-manual-connected-account-direct.v1';
+            } | undefined;
+        } | {
+            id: string;
+            kind: 'oauthAuthorizationCode';
+            pkce: 'required';
+            outcomeReconciliation: 'none' | 'providerCheck' | 'lateEvidence';
+            title?: string | {
+                key: string;
+                fallback: string;
+            } | undefined;
+            callbackUrl?: string | undefined;
+            scopes?: string[] | undefined;
+            allowRawAuthorizationCode?: boolean | undefined;
+            configuration?: {
+                scope: 'service' | 'account';
+                changeBehavior: 'reconnect' | 'refresh';
+                fields: ({
+                    secret: true;
+                    id: string;
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                    };
+                    schema: PluginSettingFieldSchemaV2;
+                    description?: string | {
+                        key: string;
+                        fallback: string;
+                    } | undefined;
+                    availability?: {
+                        when?: PluginPolicyExpressionV2 | undefined;
+                        disabledWhen?: undefined;
+                        disabledReason?: undefined;
+                    } | {
+                        disabledWhen: PluginPolicyExpressionV2;
+                        disabledReason: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                        when?: PluginPolicyExpressionV2 | undefined;
+                    } | undefined;
+                    presentation?: {
+                        control?: 'number' | 'auto' | 'text' | 'textarea' | 'switch' | 'select' | 'multiSelect' | 'json' | undefined;
+                        placeholder?: string | {
+                            key: string;
+                            fallback: string;
+                        } | undefined;
+                        options?: {
+                            value: PluginJsonValueV2;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                            };
+                            description?: string | {
+                                key: string;
+                                fallback: string;
+                            } | undefined;
+                        }[] | undefined;
+                        step?: number | undefined;
+                        binding?: {
+                            kind: 'direct';
+                            settingId?: string | undefined;
+                        } | {
+                            kind: 'perActiveServer';
+                            fallbackSettingId: string;
+                            byServerIdSettingId: string;
+                        } | undefined;
+                        hidden?: boolean | undefined;
+                        order?: number | undefined;
+                    } | undefined;
+                    analytics?: {
+                        valueKind: 'boolean' | 'enum' | 'bucket' | 'count' | 'presence';
+                        privacy: 'safe' | 'bucketed' | 'count_only' | 'presence_only' | 'forbidden';
+                        identityScope: 'person' | 'device_user';
+                        trackCurrentState?: boolean | undefined;
+                        trackChanges?: boolean | undefined;
+                        serializeCurrentRule?: 'orderedEnumArrayJoin' | 'jsonObjectStringPresence' | undefined;
+                    } | undefined;
+                    default?: undefined;
+                    required?: boolean | undefined;
+                    semantic?: undefined;
+                } | {
+                    secret: false;
+                    id: string;
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                    };
+                    schema: PluginSettingFieldSchemaV2;
+                    description?: string | {
+                        key: string;
+                        fallback: string;
+                    } | undefined;
+                    availability?: {
+                        when?: PluginPolicyExpressionV2 | undefined;
+                        disabledWhen?: undefined;
+                        disabledReason?: undefined;
+                    } | {
+                        disabledWhen: PluginPolicyExpressionV2;
+                        disabledReason: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                        when?: PluginPolicyExpressionV2 | undefined;
+                    } | undefined;
+                    presentation?: {
+                        control?: 'number' | 'auto' | 'text' | 'textarea' | 'switch' | 'select' | 'multiSelect' | 'json' | undefined;
+                        placeholder?: string | {
+                            key: string;
+                            fallback: string;
+                        } | undefined;
+                        options?: {
+                            value: PluginJsonValueV2;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                            };
+                            description?: string | {
+                                key: string;
+                                fallback: string;
+                            } | undefined;
+                        }[] | undefined;
+                        step?: number | undefined;
+                        binding?: {
+                            kind: 'direct';
+                            settingId?: string | undefined;
+                        } | {
+                            kind: 'perActiveServer';
+                            fallbackSettingId: string;
+                            byServerIdSettingId: string;
+                        } | undefined;
+                        hidden?: boolean | undefined;
+                        order?: number | undefined;
+                    } | undefined;
+                    analytics?: {
+                        valueKind: 'boolean' | 'enum' | 'bucket' | 'count' | 'presence';
+                        privacy: 'safe' | 'bucketed' | 'count_only' | 'presence_only' | 'forbidden';
+                        identityScope: 'person' | 'device_user';
+                        trackCurrentState?: boolean | undefined;
+                        trackChanges?: boolean | undefined;
+                        serializeCurrentRule?: 'orderedEnumArrayJoin' | 'jsonObjectStringPresence' | undefined;
+                    } | undefined;
+                    default?: PluginJsonValueV2 | undefined;
+                    required?: boolean | undefined;
+                    semantic?: undefined;
+                } | {
+                    secret: false;
+                    id: string;
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                    };
+                    semantic: 'connectedAccountOrigin';
+                    schema: {
+                        type: 'string';
+                        minLength: number;
+                        title?: string | undefined;
+                        description?: string | undefined;
+                        maxLength?: number | undefined;
+                    };
+                    required: true;
+                    description?: string | {
+                        key: string;
+                        fallback: string;
+                    } | undefined;
+                    availability?: {
+                        when?: PluginPolicyExpressionV2 | undefined;
+                        disabledWhen?: undefined;
+                        disabledReason?: undefined;
+                    } | {
+                        disabledWhen: PluginPolicyExpressionV2;
+                        disabledReason: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                        when?: PluginPolicyExpressionV2 | undefined;
+                    } | undefined;
+                    presentation?: {
+                        control?: 'number' | 'auto' | 'text' | 'textarea' | 'switch' | 'select' | 'multiSelect' | 'json' | undefined;
+                        placeholder?: string | {
+                            key: string;
+                            fallback: string;
+                        } | undefined;
+                        options?: {
+                            value: PluginJsonValueV2;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                            };
+                            description?: string | {
+                                key: string;
+                                fallback: string;
+                            } | undefined;
+                        }[] | undefined;
+                        step?: number | undefined;
+                        binding?: {
+                            kind: 'direct';
+                            settingId?: string | undefined;
+                        } | {
+                            kind: 'perActiveServer';
+                            fallbackSettingId: string;
+                            byServerIdSettingId: string;
+                        } | undefined;
+                        hidden?: boolean | undefined;
+                        order?: number | undefined;
+                    } | undefined;
+                    analytics?: {
+                        valueKind: 'boolean' | 'enum' | 'bucket' | 'count' | 'presence';
+                        privacy: 'safe' | 'bucketed' | 'count_only' | 'presence_only' | 'forbidden';
+                        identityScope: 'person' | 'device_user';
+                        trackCurrentState?: boolean | undefined;
+                        trackChanges?: boolean | undefined;
+                        serializeCurrentRule?: 'orderedEnumArrayJoin' | 'jsonObjectStringPresence' | undefined;
+                    } | undefined;
+                    default?: undefined;
+                } | {
+                    secret: false;
+                    id: string;
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                    };
+                    semantic: 'connectedAccountFixedOrigin';
+                    schema: {
+                        type: 'string';
+                        enum: string[];
+                        title?: string | undefined;
+                        description?: string | undefined;
+                    };
+                    originByValue: Record<string, string>;
+                    required: true;
+                    description?: string | {
+                        key: string;
+                        fallback: string;
+                    } | undefined;
+                    availability?: {
+                        when?: PluginPolicyExpressionV2 | undefined;
+                        disabledWhen?: undefined;
+                        disabledReason?: undefined;
+                    } | {
+                        disabledWhen: PluginPolicyExpressionV2;
+                        disabledReason: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                        when?: PluginPolicyExpressionV2 | undefined;
+                    } | undefined;
+                    presentation?: {
+                        control?: 'number' | 'auto' | 'text' | 'textarea' | 'switch' | 'select' | 'multiSelect' | 'json' | undefined;
+                        placeholder?: string | {
+                            key: string;
+                            fallback: string;
+                        } | undefined;
+                        options?: {
+                            value: PluginJsonValueV2;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                            };
+                            description?: string | {
+                                key: string;
+                                fallback: string;
+                            } | undefined;
+                        }[] | undefined;
+                        step?: number | undefined;
+                        binding?: {
+                            kind: 'direct';
+                            settingId?: string | undefined;
+                        } | {
+                            kind: 'perActiveServer';
+                            fallbackSettingId: string;
+                            byServerIdSettingId: string;
+                        } | undefined;
+                        hidden?: boolean | undefined;
+                        order?: number | undefined;
+                    } | undefined;
+                    analytics?: {
+                        valueKind: 'boolean' | 'enum' | 'bucket' | 'count' | 'presence';
+                        privacy: 'safe' | 'bucketed' | 'count_only' | 'presence_only' | 'forbidden';
+                        identityScope: 'person' | 'device_user';
+                        trackCurrentState?: boolean | undefined;
+                        trackChanges?: boolean | undefined;
+                        serializeCurrentRule?: 'orderedEnumArrayJoin' | 'jsonObjectStringPresence' | undefined;
+                    } | undefined;
+                    default?: undefined;
+                } | {
+                    secret: false;
+                    id: string;
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                    };
+                    semantic: 'connectedAccountBase';
+                    schema: {
+                        type: 'string';
+                        minLength: number;
+                        title?: string | undefined;
+                        description?: string | undefined;
+                        maxLength?: number | undefined;
+                    };
+                    required: true;
+                    description?: string | {
+                        key: string;
+                        fallback: string;
+                    } | undefined;
+                    availability?: {
+                        when?: PluginPolicyExpressionV2 | undefined;
+                        disabledWhen?: undefined;
+                        disabledReason?: undefined;
+                    } | {
+                        disabledWhen: PluginPolicyExpressionV2;
+                        disabledReason: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                        when?: PluginPolicyExpressionV2 | undefined;
+                    } | undefined;
+                    presentation?: {
+                        control?: 'number' | 'auto' | 'text' | 'textarea' | 'switch' | 'select' | 'multiSelect' | 'json' | undefined;
+                        placeholder?: string | {
+                            key: string;
+                            fallback: string;
+                        } | undefined;
+                        options?: {
+                            value: PluginJsonValueV2;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                            };
+                            description?: string | {
+                                key: string;
+                                fallback: string;
+                            } | undefined;
+                        }[] | undefined;
+                        step?: number | undefined;
+                        binding?: {
+                            kind: 'direct';
+                            settingId?: string | undefined;
+                        } | {
+                            kind: 'perActiveServer';
+                            fallbackSettingId: string;
+                            byServerIdSettingId: string;
+                        } | undefined;
+                        hidden?: boolean | undefined;
+                        order?: number | undefined;
+                    } | undefined;
+                    analytics?: {
+                        valueKind: 'boolean' | 'enum' | 'bucket' | 'count' | 'presence';
+                        privacy: 'safe' | 'bucketed' | 'count_only' | 'presence_only' | 'forbidden';
+                        identityScope: 'person' | 'device_user';
+                        trackCurrentState?: boolean | undefined;
+                        trackChanges?: boolean | undefined;
+                        serializeCurrentRule?: 'orderedEnumArrayJoin' | 'jsonObjectStringPresence' | undefined;
+                    } | undefined;
+                    default?: undefined;
+                })[];
+            } | undefined;
+        } | {
+            id: string;
+            kind: 'oauthDeviceCode';
+            outcomeReconciliation: 'none' | 'providerCheck' | 'lateEvidence';
+            title?: string | {
+                key: string;
+                fallback: string;
+            } | undefined;
+            scopes?: string[] | undefined;
+            configuration?: {
+                scope: 'service' | 'account';
+                changeBehavior: 'reconnect' | 'refresh';
+                fields: ({
+                    secret: true;
+                    id: string;
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                    };
+                    schema: PluginSettingFieldSchemaV2;
+                    description?: string | {
+                        key: string;
+                        fallback: string;
+                    } | undefined;
+                    availability?: {
+                        when?: PluginPolicyExpressionV2 | undefined;
+                        disabledWhen?: undefined;
+                        disabledReason?: undefined;
+                    } | {
+                        disabledWhen: PluginPolicyExpressionV2;
+                        disabledReason: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                        when?: PluginPolicyExpressionV2 | undefined;
+                    } | undefined;
+                    presentation?: {
+                        control?: 'number' | 'auto' | 'text' | 'textarea' | 'switch' | 'select' | 'multiSelect' | 'json' | undefined;
+                        placeholder?: string | {
+                            key: string;
+                            fallback: string;
+                        } | undefined;
+                        options?: {
+                            value: PluginJsonValueV2;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                            };
+                            description?: string | {
+                                key: string;
+                                fallback: string;
+                            } | undefined;
+                        }[] | undefined;
+                        step?: number | undefined;
+                        binding?: {
+                            kind: 'direct';
+                            settingId?: string | undefined;
+                        } | {
+                            kind: 'perActiveServer';
+                            fallbackSettingId: string;
+                            byServerIdSettingId: string;
+                        } | undefined;
+                        hidden?: boolean | undefined;
+                        order?: number | undefined;
+                    } | undefined;
+                    analytics?: {
+                        valueKind: 'boolean' | 'enum' | 'bucket' | 'count' | 'presence';
+                        privacy: 'safe' | 'bucketed' | 'count_only' | 'presence_only' | 'forbidden';
+                        identityScope: 'person' | 'device_user';
+                        trackCurrentState?: boolean | undefined;
+                        trackChanges?: boolean | undefined;
+                        serializeCurrentRule?: 'orderedEnumArrayJoin' | 'jsonObjectStringPresence' | undefined;
+                    } | undefined;
+                    default?: undefined;
+                    required?: boolean | undefined;
+                    semantic?: undefined;
+                } | {
+                    secret: false;
+                    id: string;
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                    };
+                    schema: PluginSettingFieldSchemaV2;
+                    description?: string | {
+                        key: string;
+                        fallback: string;
+                    } | undefined;
+                    availability?: {
+                        when?: PluginPolicyExpressionV2 | undefined;
+                        disabledWhen?: undefined;
+                        disabledReason?: undefined;
+                    } | {
+                        disabledWhen: PluginPolicyExpressionV2;
+                        disabledReason: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                        when?: PluginPolicyExpressionV2 | undefined;
+                    } | undefined;
+                    presentation?: {
+                        control?: 'number' | 'auto' | 'text' | 'textarea' | 'switch' | 'select' | 'multiSelect' | 'json' | undefined;
+                        placeholder?: string | {
+                            key: string;
+                            fallback: string;
+                        } | undefined;
+                        options?: {
+                            value: PluginJsonValueV2;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                            };
+                            description?: string | {
+                                key: string;
+                                fallback: string;
+                            } | undefined;
+                        }[] | undefined;
+                        step?: number | undefined;
+                        binding?: {
+                            kind: 'direct';
+                            settingId?: string | undefined;
+                        } | {
+                            kind: 'perActiveServer';
+                            fallbackSettingId: string;
+                            byServerIdSettingId: string;
+                        } | undefined;
+                        hidden?: boolean | undefined;
+                        order?: number | undefined;
+                    } | undefined;
+                    analytics?: {
+                        valueKind: 'boolean' | 'enum' | 'bucket' | 'count' | 'presence';
+                        privacy: 'safe' | 'bucketed' | 'count_only' | 'presence_only' | 'forbidden';
+                        identityScope: 'person' | 'device_user';
+                        trackCurrentState?: boolean | undefined;
+                        trackChanges?: boolean | undefined;
+                        serializeCurrentRule?: 'orderedEnumArrayJoin' | 'jsonObjectStringPresence' | undefined;
+                    } | undefined;
+                    default?: PluginJsonValueV2 | undefined;
+                    required?: boolean | undefined;
+                    semantic?: undefined;
+                } | {
+                    secret: false;
+                    id: string;
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                    };
+                    semantic: 'connectedAccountOrigin';
+                    schema: {
+                        type: 'string';
+                        minLength: number;
+                        title?: string | undefined;
+                        description?: string | undefined;
+                        maxLength?: number | undefined;
+                    };
+                    required: true;
+                    description?: string | {
+                        key: string;
+                        fallback: string;
+                    } | undefined;
+                    availability?: {
+                        when?: PluginPolicyExpressionV2 | undefined;
+                        disabledWhen?: undefined;
+                        disabledReason?: undefined;
+                    } | {
+                        disabledWhen: PluginPolicyExpressionV2;
+                        disabledReason: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                        when?: PluginPolicyExpressionV2 | undefined;
+                    } | undefined;
+                    presentation?: {
+                        control?: 'number' | 'auto' | 'text' | 'textarea' | 'switch' | 'select' | 'multiSelect' | 'json' | undefined;
+                        placeholder?: string | {
+                            key: string;
+                            fallback: string;
+                        } | undefined;
+                        options?: {
+                            value: PluginJsonValueV2;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                            };
+                            description?: string | {
+                                key: string;
+                                fallback: string;
+                            } | undefined;
+                        }[] | undefined;
+                        step?: number | undefined;
+                        binding?: {
+                            kind: 'direct';
+                            settingId?: string | undefined;
+                        } | {
+                            kind: 'perActiveServer';
+                            fallbackSettingId: string;
+                            byServerIdSettingId: string;
+                        } | undefined;
+                        hidden?: boolean | undefined;
+                        order?: number | undefined;
+                    } | undefined;
+                    analytics?: {
+                        valueKind: 'boolean' | 'enum' | 'bucket' | 'count' | 'presence';
+                        privacy: 'safe' | 'bucketed' | 'count_only' | 'presence_only' | 'forbidden';
+                        identityScope: 'person' | 'device_user';
+                        trackCurrentState?: boolean | undefined;
+                        trackChanges?: boolean | undefined;
+                        serializeCurrentRule?: 'orderedEnumArrayJoin' | 'jsonObjectStringPresence' | undefined;
+                    } | undefined;
+                    default?: undefined;
+                } | {
+                    secret: false;
+                    id: string;
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                    };
+                    semantic: 'connectedAccountFixedOrigin';
+                    schema: {
+                        type: 'string';
+                        enum: string[];
+                        title?: string | undefined;
+                        description?: string | undefined;
+                    };
+                    originByValue: Record<string, string>;
+                    required: true;
+                    description?: string | {
+                        key: string;
+                        fallback: string;
+                    } | undefined;
+                    availability?: {
+                        when?: PluginPolicyExpressionV2 | undefined;
+                        disabledWhen?: undefined;
+                        disabledReason?: undefined;
+                    } | {
+                        disabledWhen: PluginPolicyExpressionV2;
+                        disabledReason: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                        when?: PluginPolicyExpressionV2 | undefined;
+                    } | undefined;
+                    presentation?: {
+                        control?: 'number' | 'auto' | 'text' | 'textarea' | 'switch' | 'select' | 'multiSelect' | 'json' | undefined;
+                        placeholder?: string | {
+                            key: string;
+                            fallback: string;
+                        } | undefined;
+                        options?: {
+                            value: PluginJsonValueV2;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                            };
+                            description?: string | {
+                                key: string;
+                                fallback: string;
+                            } | undefined;
+                        }[] | undefined;
+                        step?: number | undefined;
+                        binding?: {
+                            kind: 'direct';
+                            settingId?: string | undefined;
+                        } | {
+                            kind: 'perActiveServer';
+                            fallbackSettingId: string;
+                            byServerIdSettingId: string;
+                        } | undefined;
+                        hidden?: boolean | undefined;
+                        order?: number | undefined;
+                    } | undefined;
+                    analytics?: {
+                        valueKind: 'boolean' | 'enum' | 'bucket' | 'count' | 'presence';
+                        privacy: 'safe' | 'bucketed' | 'count_only' | 'presence_only' | 'forbidden';
+                        identityScope: 'person' | 'device_user';
+                        trackCurrentState?: boolean | undefined;
+                        trackChanges?: boolean | undefined;
+                        serializeCurrentRule?: 'orderedEnumArrayJoin' | 'jsonObjectStringPresence' | undefined;
+                    } | undefined;
+                    default?: undefined;
+                } | {
+                    secret: false;
+                    id: string;
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                    };
+                    semantic: 'connectedAccountBase';
+                    schema: {
+                        type: 'string';
+                        minLength: number;
+                        title?: string | undefined;
+                        description?: string | undefined;
+                        maxLength?: number | undefined;
+                    };
+                    required: true;
+                    description?: string | {
+                        key: string;
+                        fallback: string;
+                    } | undefined;
+                    availability?: {
+                        when?: PluginPolicyExpressionV2 | undefined;
+                        disabledWhen?: undefined;
+                        disabledReason?: undefined;
+                    } | {
+                        disabledWhen: PluginPolicyExpressionV2;
+                        disabledReason: string | {
+                            key: string;
+                            fallback: string;
+                        };
+                        when?: PluginPolicyExpressionV2 | undefined;
+                    } | undefined;
+                    presentation?: {
+                        control?: 'number' | 'auto' | 'text' | 'textarea' | 'switch' | 'select' | 'multiSelect' | 'json' | undefined;
+                        placeholder?: string | {
+                            key: string;
+                            fallback: string;
+                        } | undefined;
+                        options?: {
+                            value: PluginJsonValueV2;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                            };
+                            description?: string | {
+                                key: string;
+                                fallback: string;
+                            } | undefined;
+                        }[] | undefined;
+                        step?: number | undefined;
+                        binding?: {
+                            kind: 'direct';
+                            settingId?: string | undefined;
+                        } | {
+                            kind: 'perActiveServer';
+                            fallbackSettingId: string;
+                            byServerIdSettingId: string;
+                        } | undefined;
+                        hidden?: boolean | undefined;
+                        order?: number | undefined;
+                    } | undefined;
+                    analytics?: {
+                        valueKind: 'boolean' | 'enum' | 'bucket' | 'count' | 'presence';
+                        privacy: 'safe' | 'bucketed' | 'count_only' | 'presence_only' | 'forbidden';
+                        identityScope: 'person' | 'device_user';
+                        trackCurrentState?: boolean | undefined;
+                        trackChanges?: boolean | undefined;
+                        serializeCurrentRule?: 'orderedEnumArrayJoin' | 'jsonObjectStringPresence' | undefined;
+                    } | undefined;
+                    default?: undefined;
+                })[];
+            } | undefined;
+        };
+        configuration: {
+            status: 'ready' | 'configurationRequired';
+            revision: string | null;
+            values: Record<string, BoundedLegacyJsonValue>;
+            configuredSecretFieldIds: string[];
+            missingFieldIds: string[];
+        };
+    };
+    readonly "connectedServices.configuration.replace": {
+        applied: true;
+        revision: string;
+    };
+    readonly "connectedServices.billing.open": {
+        opened: true;
+    };
+    readonly "connectedServices.quota.get": {
+        source: {
+            ref: {
+                service: {
+                    pluginId: string;
+                    localId: string;
+                };
+                accountId: string;
+            };
+            bindingKind: 'account';
+        } | {
+            ref: {
+                service: {
+                    pluginId: string;
+                    localId: string;
+                };
+                accountId: string;
+            };
+            bindingKind: 'group_member';
+            groupId: string;
+            groupGeneration?: number | undefined;
+        };
+        current: {
+            v: 1;
+            recordId: string;
+            recordKey: {
+                providerId: string;
+                accountSubjectId: string;
+                subjectKind: 'unknown' | 'account' | 'subscription' | 'workspace' | 'organization' | 'tenant' | 'project' | 'modelFamily';
+                quotaScope: 'unknown' | 'account' | 'provider' | 'model' | 'workspace' | 'organization' | 'project';
+                quotaScopeId?: string | undefined;
+            };
+            providerId: string;
+            accountSubject: {
+                kind: 'providerSubject' | 'provisionalLocalSubject';
+                id: string;
+                mergeKey?: string | undefined;
+            };
+            observedAtMs: number;
+            fetchedAtMs: number;
+            staleAfterMs: number;
+            source: 'unknown' | 'manual' | 'cached' | 'runtimeSignal' | 'providerHttp' | 'proxy' | 'connectedServiceProbe';
+            confidence: 'unknown' | 'estimated' | 'confirmed';
+            state: 'not_loaded' | 'loaded_empty' | 'loaded_data' | 'stale_data' | 'error_last_known_good';
+            meters: {
+                meterId: string;
+                label: string;
+                used: number | null;
+                limit: number | null;
+                unit: 'unknown' | 'count' | 'credits' | 'tokens' | 'usd' | 'requests';
+                utilizationPct: number | null;
+                resetsAt: number | null;
+                status: 'unavailable' | 'ok' | 'estimated';
+                details: {
+                    note?: string | null | undefined;
+                    code?: string | undefined;
+                    rawScope?: string | undefined;
+                    remainingPct?: number | null | undefined;
+                    scope?: 'unknown' | 'tokens' | 'requests' | 'primary' | 'secondary' | 'daily' | 'weekly' | 'monthly' | 'five_hour' | 'seven_day' | 'session' | 'rolling' | 'model' | undefined;
+                    providerLimitId?: string | undefined;
+                    limitCategory?: 'unknown' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_invalid' | 'plan_invalid' | 'validation_failed' | 'disabled' | undefined;
+                };
+                remaining?: number | null | undefined;
+                remainingPct?: number | null | undefined;
+                usedPct?: number | null | undefined;
+                resetAtMs?: number | null | undefined;
+                resetSource?: 'unknown' | 'provider' | 'manual' | 'in_band_snapshot' | 'header' | 'body' | 'provider_event' | 'provider_probe' | 'computed' | 'retry_after' | undefined;
+                providerLimitId?: string | undefined;
+                windowDurationMs?: number | undefined;
+                modelId?: string | null | undefined;
+                isExhausted?: boolean | undefined;
+                isSoftLimited?: boolean | undefined;
+                isCapacityLimited?: boolean | undefined;
+                source?: 'unknown' | 'provider_api' | 'background_fetch' | 'runtime_event' | 'runtime_probe' | 'in_band_snapshot' | 'in_band_provider_snapshot' | 'manual_refresh' | 'user_probe' | 'cached' | undefined;
+                scope?: 'unknown' | 'tokens' | 'requests' | 'primary' | 'secondary' | 'daily' | 'weekly' | 'monthly' | 'five_hour' | 'seven_day' | 'session' | 'rolling' | 'model' | undefined;
+                limitScope?: 'unknown' | 'account' | 'provider' | 'session' | 'model' | 'workspace' | 'organization' | undefined;
+                confidence?: 'unknown' | 'exact' | 'derived' | 'estimated' | 'stale' | undefined;
+            }[];
+            planLabel?: string | null | undefined;
+            accountLabel?: string | null | undefined;
+            subscription?: {
+                status: 'unavailable' | 'none' | 'subscribed';
+                renewal: 'unknown' | 'off' | 'on';
+                observedAtMs: number;
+                staleAfterMs: number;
+                currentPeriodStartAtMs?: number | undefined;
+                currentPeriodEndAtMs?: number | undefined;
+                monetaryFacts?: {
+                    kind: 'paid' | 'list';
+                    amount: number;
+                    currency: string;
+                    period: {
+                        startAtMs: number;
+                        endAtMs: number;
+                    };
+                    source: {
+                        kind: 'provider' | 'published';
+                        id: string;
+                        version: string;
+                    };
+                    effectiveAtMs: number;
+                    asOfMs: number;
+                    tier?: string | undefined;
+                    region?: string | undefined;
+                }[] | undefined;
+                enteredMonthlyPrice?: {
+                    amount: number;
+                    currency: string;
+                    enteredAtMs: number;
+                } | undefined;
+                lastRefreshError?: {
+                    observedAtMs: number;
+                    code: 'network' | 'malformed' | 'provider_backoff' | 'auth_failure' | 'missing_auth';
+                    status?: number | undefined;
+                } | undefined;
+            } | undefined;
+            recoveryCredits?: {
+                availableCount: number;
+                credits: {
+                    kind: 'unknown' | 'usage_limit_reset' | 'rate_limit_reset' | 'quota_reset';
+                    status: 'unknown' | 'unavailable' | 'available' | 'redeeming' | 'redeemed' | 'expired';
+                    id?: string | undefined;
+                    providerResetType?: string | undefined;
+                    appliesToProviderLimitId?: string | null | undefined;
+                    grantedAtMs?: number | null | undefined;
+                    expiresAtMs?: number | null | undefined;
+                    redeemStartedAtMs?: number | null | undefined;
+                    redeemedAtMs?: number | null | undefined;
+                    title?: string | null | undefined;
+                    description?: string | null | undefined;
+                }[];
+                totalCount?: number | undefined;
+                nextExpiresAtMs?: number | null | undefined;
+                source?: 'unknown' | 'provider_api' | 'background_fetch' | 'runtime_event' | 'runtime_probe' | 'in_band_snapshot' | 'in_band_provider_snapshot' | 'manual_refresh' | 'user_probe' | 'cached' | undefined;
+                confidence?: 'unknown' | 'exact' | 'derived' | 'estimated' | 'stale' | undefined;
+            } | undefined;
+            diagnostics?: {
+                kind: 'unknown' | 'unavailable' | 'storage' | 'validation' | 'provider_http' | 'runtime_signal' | 'projection';
+                code?: string | undefined;
+                message?: string | undefined;
+                status?: number | undefined;
+                headers?: Record<string, string> | undefined;
+                observedAtMs?: number | undefined;
+                retryAtMs?: number | undefined;
+            }[] | undefined;
+        } | null;
+        pace: {
+            meterId: string;
+            value: {
+                status: 'available';
+                window: {
+                    recordId: string;
+                    meterId: string;
+                    resetAtMs: number;
+                    windowStartAtMs: number;
+                    windowDurationMs: number;
+                };
+                usedFraction: number;
+                elapsedFraction: number;
+                evenPaceFraction: number;
+                pace: number;
+                projectedResetUtilizationFraction: number;
+                qualification: 'estimated' | 'confirmed';
+                sampleCount: number;
+                empiricalRange?: {
+                    min: number;
+                    max: number;
+                } | undefined;
+                observedCurve?: {
+                    observedAtMs: number;
+                    usedFraction: number;
+                }[] | undefined;
+                depletesAtMs?: number | null | undefined;
+            } | {
+                status: 'unavailable';
+                reason: 'stale' | 'not_loaded' | 'unknown_window' | 'zero_elapsed' | 'outside_window' | 'unknown_utilization' | 'inconsistent_counters' | 'counter_reset' | 'reset_changed' | 'denominator_changed' | 'entitlement_changed' | 'non_renewing_end';
+            };
+        }[];
+        targets: {
+            id: string;
+            scope: {
+                kind: 'personal';
+            } | {
+                kind: 'pool';
+                group: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    groupId: string;
+                };
+            };
+            utilizationFraction: number;
+            meterId?: string | undefined;
+        }[];
+        waitingWork: {
+            status: 'available';
+            entries: {
+                sessionId: string;
+                localId: string;
+                recordId: string;
+                meterId: string;
+                readiness: {
+                    status: 'ready';
+                } | {
+                    status: 'waiting';
+                    reason: 'unknown_window' | 'denominator_changed' | 'entitlement_changed' | 'authority_unavailable' | 'witness_unavailable' | 'before_reset' | 'quota_unavailable' | 'quota_stale' | 'reset_not_observed' | 'window_changed' | 'window_expired';
+                    nextCheckAtMs?: number | undefined;
+                };
+            }[];
+        } | {
+            status: 'unavailable';
+            reason: 'authority_unavailable' | 'unsupported' | 'read_failed';
+        };
+        history?: {
+            entries: {
+                id: string;
+                observedAtMs: number;
+                snapshot: {
+                    v: 1;
+                    recordId: string;
+                    recordKey: {
+                        providerId: string;
+                        accountSubjectId: string;
+                        subjectKind: 'unknown' | 'account' | 'subscription' | 'workspace' | 'organization' | 'tenant' | 'project' | 'modelFamily';
+                        quotaScope: 'unknown' | 'account' | 'provider' | 'model' | 'workspace' | 'organization' | 'project';
+                        quotaScopeId?: string | undefined;
+                    };
+                    providerId: string;
+                    accountSubject: {
+                        kind: 'providerSubject' | 'provisionalLocalSubject';
+                        id: string;
+                        mergeKey?: string | undefined;
+                    };
+                    observedAtMs: number;
+                    fetchedAtMs: number;
+                    staleAfterMs: number;
+                    source: 'unknown' | 'manual' | 'cached' | 'runtimeSignal' | 'providerHttp' | 'proxy' | 'connectedServiceProbe';
+                    confidence: 'unknown' | 'estimated' | 'confirmed';
+                    state: 'not_loaded' | 'loaded_empty' | 'loaded_data' | 'stale_data' | 'error_last_known_good';
+                    meters: {
+                        meterId: string;
+                        label: string;
+                        used: number | null;
+                        limit: number | null;
+                        unit: 'unknown' | 'count' | 'credits' | 'tokens' | 'usd' | 'requests';
+                        utilizationPct: number | null;
+                        resetsAt: number | null;
+                        status: 'unavailable' | 'ok' | 'estimated';
+                        details: {
+                            note?: string | null | undefined;
+                            code?: string | undefined;
+                            rawScope?: string | undefined;
+                            remainingPct?: number | null | undefined;
+                            scope?: 'unknown' | 'tokens' | 'requests' | 'primary' | 'secondary' | 'daily' | 'weekly' | 'monthly' | 'five_hour' | 'seven_day' | 'session' | 'rolling' | 'model' | undefined;
+                            providerLimitId?: string | undefined;
+                            limitCategory?: 'unknown' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_invalid' | 'plan_invalid' | 'validation_failed' | 'disabled' | undefined;
+                        };
+                        remaining?: number | null | undefined;
+                        remainingPct?: number | null | undefined;
+                        usedPct?: number | null | undefined;
+                        resetAtMs?: number | null | undefined;
+                        resetSource?: 'unknown' | 'provider' | 'manual' | 'in_band_snapshot' | 'header' | 'body' | 'provider_event' | 'provider_probe' | 'computed' | 'retry_after' | undefined;
+                        providerLimitId?: string | undefined;
+                        windowDurationMs?: number | undefined;
+                        modelId?: string | null | undefined;
+                        isExhausted?: boolean | undefined;
+                        isSoftLimited?: boolean | undefined;
+                        isCapacityLimited?: boolean | undefined;
+                        source?: 'unknown' | 'provider_api' | 'background_fetch' | 'runtime_event' | 'runtime_probe' | 'in_band_snapshot' | 'in_band_provider_snapshot' | 'manual_refresh' | 'user_probe' | 'cached' | undefined;
+                        scope?: 'unknown' | 'tokens' | 'requests' | 'primary' | 'secondary' | 'daily' | 'weekly' | 'monthly' | 'five_hour' | 'seven_day' | 'session' | 'rolling' | 'model' | undefined;
+                        limitScope?: 'unknown' | 'account' | 'provider' | 'session' | 'model' | 'workspace' | 'organization' | undefined;
+                        confidence?: 'unknown' | 'exact' | 'derived' | 'estimated' | 'stale' | undefined;
+                    }[];
+                    planLabel?: string | null | undefined;
+                    accountLabel?: string | null | undefined;
+                    subscription?: {
+                        status: 'unavailable' | 'none' | 'subscribed';
+                        renewal: 'unknown' | 'off' | 'on';
+                        observedAtMs: number;
+                        staleAfterMs: number;
+                        currentPeriodStartAtMs?: number | undefined;
+                        currentPeriodEndAtMs?: number | undefined;
+                        monetaryFacts?: {
+                            kind: 'paid' | 'list';
+                            amount: number;
+                            currency: string;
+                            period: {
+                                startAtMs: number;
+                                endAtMs: number;
+                            };
+                            source: {
+                                kind: 'provider' | 'published';
+                                id: string;
+                                version: string;
+                            };
+                            effectiveAtMs: number;
+                            asOfMs: number;
+                            tier?: string | undefined;
+                            region?: string | undefined;
+                        }[] | undefined;
+                        enteredMonthlyPrice?: {
+                            amount: number;
+                            currency: string;
+                            enteredAtMs: number;
+                        } | undefined;
+                        lastRefreshError?: {
+                            observedAtMs: number;
+                            code: 'network' | 'malformed' | 'provider_backoff' | 'auth_failure' | 'missing_auth';
+                            status?: number | undefined;
+                        } | undefined;
+                    } | undefined;
+                    recoveryCredits?: {
+                        availableCount: number;
+                        credits: {
+                            kind: 'unknown' | 'usage_limit_reset' | 'rate_limit_reset' | 'quota_reset';
+                            status: 'unknown' | 'unavailable' | 'available' | 'redeeming' | 'redeemed' | 'expired';
+                            id?: string | undefined;
+                            providerResetType?: string | undefined;
+                            appliesToProviderLimitId?: string | null | undefined;
+                            grantedAtMs?: number | null | undefined;
+                            expiresAtMs?: number | null | undefined;
+                            redeemStartedAtMs?: number | null | undefined;
+                            redeemedAtMs?: number | null | undefined;
+                            title?: string | null | undefined;
+                            description?: string | null | undefined;
+                        }[];
+                        totalCount?: number | undefined;
+                        nextExpiresAtMs?: number | null | undefined;
+                        source?: 'unknown' | 'provider_api' | 'background_fetch' | 'runtime_event' | 'runtime_probe' | 'in_band_snapshot' | 'in_band_provider_snapshot' | 'manual_refresh' | 'user_probe' | 'cached' | undefined;
+                        confidence?: 'unknown' | 'exact' | 'derived' | 'estimated' | 'stale' | undefined;
+                    } | undefined;
+                    diagnostics?: {
+                        kind: 'unknown' | 'unavailable' | 'storage' | 'validation' | 'provider_http' | 'runtime_signal' | 'projection';
+                        code?: string | undefined;
+                        message?: string | undefined;
+                        status?: number | undefined;
+                        headers?: Record<string, string> | undefined;
+                        observedAtMs?: number | undefined;
+                        retryAtMs?: number | undefined;
+                    }[] | undefined;
+                };
+            }[];
+            nextCursor: {
+                observedAtMs: number;
+                id: string;
+            } | null;
+        } | undefined;
+        unusedCapacity?: {
+            historyStatus: 'unavailable' | 'not_loaded' | 'partial' | 'returned_page';
+            windows: {
+                window: {
+                    recordId: string;
+                    meterId: string;
+                    resetAtMs: number;
+                    windowStartAtMs: number;
+                    windowDurationMs: number;
+                };
+                value: {
+                    status: 'available';
+                    unusedAmount: number;
+                    unusedFraction: number;
+                    unit: string;
+                    observedAtMs: number;
+                    sampleCount: number;
+                    qualification: 'estimated' | 'confirmed';
+                    method: 'terminal_observation' | 'linear_pace_at_last_observation';
+                } | {
+                    status: 'insufficient_basis';
+                    reason: string;
+                };
+            }[];
+        } | undefined;
+    };
+    readonly "connectedServices.pools.selection.get": {
+        group: {
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            groupId: string;
+        };
+        observedAtMs: number;
+        selection: {
+            selected: {
+                profileId: string;
+                priority: number;
+                createdAtMs: number;
+                enabled: boolean;
+                leastLimitedScore: number | null;
+                preferenceDeadlineMs?: number | null | undefined;
+            } | null;
+            reason: 'selected' | 'manual_strategy' | 'no_eligible_members';
+            excluded: {
+                profileId: string;
+                reason: 'auth_invalid' | 'disabled' | 'current_active' | 'cooldown' | 'quota_exhausted' | 'capacity_limited' | 'credential_unavailable' | 'plan_unavailable' | 'validation_blocked' | 'policy_wait_until_reset';
+                retryAtMs?: number | null | undefined;
+            }[];
+            decisionTrace: {
+                activeProfileId: string | null;
+                reason: 'selected' | 'manual_strategy' | 'no_eligible_members';
+                strategy: 'manual' | 'expiry_first' | 'priority' | 'least_limited';
+                selectionBasis: 'manual_strategy' | 'no_eligible_members' | 'preference' | 'primary_restore' | 'active_stickiness' | 'soft_switch';
+                sticky: boolean;
+                orderedEligibleCandidates: {
+                    profileId: string;
+                    priority: number;
+                    createdAtMs: number;
+                    enabled: boolean;
+                    leastLimitedScore: number | null;
+                    preferenceDeadlineMs?: number | null | undefined;
+                }[];
+                candidates: {
+                    profileId: string;
+                    decision: 'selected' | 'excluded' | 'eligible';
+                    quotaEvidence: {
+                        status: 'fresh' | 'stale_or_missing';
+                        remainingPercent?: number | null | undefined;
+                        capturedAtMs?: number | undefined;
+                        exhausted?: boolean | undefined;
+                    };
+                    exclusionReason?: 'auth_invalid' | 'disabled' | 'current_active' | 'cooldown' | 'quota_exhausted' | 'capacity_limited' | 'credential_unavailable' | 'plan_unavailable' | 'validation_blocked' | 'policy_wait_until_reset' | undefined;
+                    retryAtMs?: number | null | undefined;
+                }[];
+            };
+        };
+    } | {
+        status: 'unavailable';
+        code: 'unsupported' | 'connected_account_daemon_owner_unavailable' | 'connected_account_daemon_runtime_unavailable' | 'connected_account_daemon_response_invalid';
+    };
     readonly "connectedServices.accounts.revoke": {
         status: 'conflict';
         code: string;
@@ -417,8 +3464,31 @@ export type ConnectedServicesConfigurationActionResultById = {
             };
             accountId: string;
         };
+    } | {
+        status: 'revoked';
+        account: {
+            service: {
+                pluginId: string;
+                localId: string;
+            };
+            accountId: string;
+        };
+        remoteStatus: 'remoteRevoked' | 'remoteUnsupported' | 'remoteNotAttempted';
+        metadataCleanup?: {
+            status: 'complete';
+        } | {
+            status: 'cleanup-pending';
+            reason: string;
+        } | undefined;
     };
     readonly "connectedServices.accounts.default.set": {
+        applied: true;
+    };
+    readonly "connectedServices.accounts.purposeDefault.set": {
+        applied: true;
+        changed?: false | undefined;
+    };
+    readonly "connectedServices.purposes.default.set": {
         applied: true;
     };
     readonly "connectedServices.pools.create": {
@@ -597,6 +3667,12 @@ export type ConnectedServicesConfigurationActionResultById = {
     };
     readonly "connectedServices.pools.delete": {
         applied: true;
+        metadataCleanup?: {
+            status: 'complete';
+        } | {
+            status: 'cleanup-pending';
+            reason: string;
+        } | undefined;
     };
     readonly "connectedServices.pools.members.add": {
         group: {
@@ -887,7 +3963,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                 label: string;
                 used: number | null;
                 limit: number | null;
-                unit: 'unknown' | 'credits' | 'count' | 'tokens' | 'usd' | 'requests';
+                unit: 'unknown' | 'count' | 'credits' | 'tokens' | 'usd' | 'requests';
                 utilizationPct: number | null;
                 resetsAt: number | null;
                 status: 'unavailable' | 'ok' | 'estimated';
@@ -913,7 +3989,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                 isCapacityLimited?: boolean | undefined;
                 source?: 'unknown' | 'provider_api' | 'background_fetch' | 'runtime_event' | 'runtime_probe' | 'in_band_snapshot' | 'in_band_provider_snapshot' | 'manual_refresh' | 'user_probe' | 'cached' | undefined;
                 scope?: 'unknown' | 'tokens' | 'requests' | 'primary' | 'secondary' | 'daily' | 'weekly' | 'monthly' | 'five_hour' | 'seven_day' | 'session' | 'rolling' | 'model' | undefined;
-                limitScope?: 'account' | 'unknown' | 'provider' | 'session' | 'model' | 'workspace' | 'organization' | undefined;
+                limitScope?: 'unknown' | 'account' | 'provider' | 'session' | 'model' | 'workspace' | 'organization' | undefined;
                 confidence?: 'unknown' | 'exact' | 'derived' | 'estimated' | 'stale' | undefined;
             }[];
             providerId?: string | undefined;
@@ -958,12 +4034,44 @@ export type ConnectedServicesConfigurationActionResultById = {
                 staleAfterMs: number;
                 currentPeriodStartAtMs?: number | undefined;
                 currentPeriodEndAtMs?: number | undefined;
+                monetaryFacts?: {
+                    kind: 'paid' | 'list';
+                    amount: number;
+                    currency: string;
+                    period: {
+                        startAtMs: number;
+                        endAtMs: number;
+                    };
+                    source: {
+                        kind: 'provider' | 'published';
+                        id: string;
+                        version: string;
+                    };
+                    effectiveAtMs: number;
+                    asOfMs: number;
+                    tier?: string | undefined;
+                    region?: string | undefined;
+                }[] | undefined;
+                enteredMonthlyPrice?: {
+                    amount: number;
+                    currency: string;
+                    enteredAtMs: number;
+                } | undefined;
                 lastRefreshError?: {
                     observedAtMs: number;
                     code: 'network' | 'malformed' | 'provider_backoff' | 'auth_failure' | 'missing_auth';
                     status?: number | undefined;
                 } | undefined;
             } | undefined;
+            diagnostics?: {
+                kind: 'unknown' | 'unavailable' | 'storage' | 'validation' | 'provider_http' | 'runtime_signal' | 'projection';
+                code?: string | undefined;
+                message?: string | undefined;
+                status?: number | undefined;
+                headers?: Record<string, string> | undefined;
+                observedAtMs?: number | undefined;
+                retryAtMs?: number | undefined;
+            }[] | undefined;
         } | null;
         receipt: {
             [x: string]: unknown;
@@ -987,6 +4095,24 @@ export type ConnectedServicesConfigurationActionResultById = {
         applied: true;
     };
     readonly "connectedServices.identityPrivacy.set": {
+        applied: true;
+    };
+    readonly "connectedServices.acknowledgements.set": {
+        applied: true;
+    };
+    readonly "connectedServices.labels.set": {
+        applied: true;
+    };
+    readonly "connectedServices.labels.reset": {
+        applied: true;
+    };
+    readonly "connectedServices.acknowledgements.reset": {
+        applied: true;
+    };
+    readonly "connectedServices.disclosure.set": {
+        applied: true;
+    };
+    readonly "connectedServices.disclosure.reset": {
         applied: true;
     };
 };

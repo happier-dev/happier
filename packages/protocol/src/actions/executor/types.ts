@@ -5,13 +5,16 @@ import type { AcpCatalogSnapshotV1, AcpCatalogRowMutationV1 } from '../../acp/ca
 import type { AcpCatalogCleanupV1 } from '../../acp/catalog/catalogMutationsV1.js';
 import type { RequesterWorkAttributionV1 } from '../../machines/requesterWorkAttributionV1.js';
 import type { UsageSourceActionPort } from './usageSourceActions.js';
+import type { CapabilitiesDetectRequest, CapabilitiesInvokeRequest } from '../../capabilities/index.js';
 export type { MemorySessionSnapshotV1, MemoryAccountContextV1, MemoryInheritedContextV1, MemoryScopeContextV1, MemoryLibraryActionPortV1 } from './memoryDocumentActions.js';
 export type { MemoryScopeTargetV1 } from '../../prompts/library/memoryActionsV1.js';
 import type { SetSessionPinRequest } from '../../sessions/organization/mutations.js';
 import type { ProfileActionRequestV1 } from '../../profiles/profileActionsV1.js';
+import type { PromptDocCreateActionInputV1 } from '../../prompts/library/promptDocV2.js';
 import type { McpServerActionRequestV1 } from '../../mcp/servers/serverActionsV1.js';
 import type { ProviderActionRequestV1 } from '../../providers/providerActionsV1.js';
 import type { RemoteHostActionRequestV1 } from '../../remoteHosts/remoteHostActionsV1.js';
+import type { HomeRuntimeActionRequestV1 } from '../../home/runtime/actionsV1.js';
 import type { FilesystemActionId } from '../filesystemActionFamily.js';
 import type { SessionStateFieldActionWrite } from '../sessionStateFieldActions.js';
 import type { ProjectContextUpdateInputV1, ProjectContextUpdateOutputV1 } from '../../projects/projectContextV1.js';
@@ -55,6 +58,7 @@ import type { ArtifactActionIdV1 } from '../../artifacts/artifactActionsV1.js';
 import type { SessionRoleConfigurationV1, SessionRolesV1 } from '../../prompts/roles/sessionRolesSnapshot.js';
 import type { ExecutionRunSendRequest, ExecutionRunCancelTurnRequest } from '../../execution/runs/index.js';
 import type { ExecutionRunGetResponse } from '../../execution/runs/responseSchemas.js';
+import type { ExecutionRunLaunchOrigin } from '../../execution/runs/startRequest.js';
 import type { ActionsSettingsV1 } from '../actionSettings.js';
 import type { ScopeActionId } from '../scopeActionFamily.js';
 import type {
@@ -70,6 +74,7 @@ import type { ApiTokenGrantV1, CallerInputConstraintsV1 } from '../../auth/apiTo
 import type { SessionPermissionRespondActionDecisionV1, SessionPermissionRespondRpcParamsV1 } from '../../sessions/permissions/respondRpcParamsV1.js';
 import type { AgentsBackendsListOutput } from '../agentBackendInventory.js';
 import type { MachinesAgentsListInput, MachinesAgentsListOutput } from '../../capabilities/machineAgentInventory.js';
+import type { WorkflowEventsListInputV1, WorkflowEventsListOutputV1 } from '../specs/workflowEvents.js';
 import type { DaemonWorkspaceFileSearchResponse } from '../../machines/workspaceFiles.js';
 import type {
   ActionId,
@@ -93,6 +98,7 @@ import type { SessionCanvasActionId } from '../sessionCanvasActionFamily.js';
 import type { SessionTerminalActionId } from '../sessionTerminalActionFamily.js';
 import type { ConnectedServiceConfigurationActionIdV1 } from '../../connect/configurationActionsV1.js';
 import type { SettingsDeclarationActionIdV1 } from '../settingsDeclarationActionFamily.js';
+import type { SettingsOwnerActionExecuteV1 } from '../settings/settingsOwnerActions.js';
 import type { VoiceConversationActionId } from '../voiceConversationActionFamily.js';
 import type { AppShellActionId } from '../appShellActionFamily.js';
 import type { NotificationConfigurationActionId } from '../notificationConfigurationActionFamily.js';
@@ -640,12 +646,15 @@ export type ActionExecutorContext = Readonly<{
   defaultSessionMachineId?: string | null;
 
   /**
-   * Exact machine admitted by a mounted host for a detached execution run.
+   * Exact machine admitted by a mounted host for an execution run.
    * This is host context rather than Action input, so an Action caller cannot
    * retarget an admitted invocation. The execution-run V2 preflight owns the
-   * final exact machine selection used for dispatch.
+   * final exact machine selection used for V2 dispatch; attached starts retain
+   * the mounted target for the transport's current-Session target check.
    */
   executionRunTargetMachineId?: string | null;
+  /** Mounted host launch provenance/correlation; never caller-supplied Action input. */
+  executionRunLaunchOrigin?: ExecutionRunLaunchOrigin;
 
   /** Host-resolved caller, baseline and roles; never accepted from Action input. */
   agentStartContext?: AgentStartContextV1;
@@ -885,7 +894,7 @@ type ExecutionRunActionOptions = Readonly<{
    */
   originSessionId?: string | null;
   /**
-   * Host-stamped candidate for detached scope before V2 capability preflight
+   * Host-stamped target for attached scope, or candidate before V2 capability preflight
    * returns the exact machine id. Never accepted from Action input.
    */
   targetMachineId?: string | null;
@@ -986,6 +995,8 @@ export type ActionExecutorDeps = Readonly<{
   widgetAccountScope?: () => Readonly<{ serverId: string; accountId: string }> | null;
   widgetSurfaceActions?: Partial<Readonly<Record<WidgetSurfaceRefV1['owner']['kind'], WidgetActionSurfacePortV1>>>;
   widgetAreaLayouts?: import('../../widgets/actionsV1.js').WidgetAreaLayoutActionPortV1;
+  /** Answering mounted area owner; a successful selection changes only its device-local presentation. */
+  widgetAreaLayoutSelect?: (surface: WidgetSurfaceRefV1, context: ActionExecutorContext, signal?: AbortSignal) => Promise<ActionExecuteResult>;
   widgetInputs?: WidgetActionInputResolverV1;
   widgetCatalog?: Readonly<{ list(surface: WidgetSurfaceRefV1, context: ActionExecutorContext, signal?: AbortSignal, boundSession?: Readonly<{ serverId: string; sessionId: string }>): Promise<readonly WidgetCatalogSourceEntryV1[] | ActionExecuteFailure> }>;
   /** Host-captured viewer Account inventory for an already-admitted widget field. */
@@ -1177,6 +1188,8 @@ export type ActionExecutorDeps = Readonly<{
   mcpServerAction?: (request: McpServerActionRequestV1) => Promise<ActionExecuteResult>;
   providerActionExecute?: (request: ProviderActionRequestV1, context: ActionExecutorContext) => Promise<ActionExecuteResult>;
   remoteHostActionExecute?: (request: RemoteHostActionRequestV1, context: ActionExecutorContext) => Promise<ActionExecuteResult>;
+  /** Client runtime controls delegate to the answering client's native SystemTask owner. */
+  homeRuntimeActionExecute?: (request: HomeRuntimeActionRequestV1, context: ActionExecutorContext) => Promise<ActionExecuteResult>;
   roleActionExecute?: (args: Readonly<{
     actionId: RoleActionIdV1;
     input: unknown;
@@ -1262,6 +1275,7 @@ export type ActionExecutorDeps = Readonly<{
     targetMachineId: string;
     targetPath?: string;
     targetSessionStorageMode?: 'direct' | 'persisted';
+    stateTransfer?: 'transfer' | 'existing';
     workspaceAction?: HandoffWorkspaceActionV1;
     serverId?: string | null;
     actionRequestId?: string | null;
@@ -1439,7 +1453,7 @@ export type ActionExecutorDeps = Readonly<{
   machinePairingCreate?: (input: z.infer<typeof MachinePairingCreateInputSchema>, context: ActionExecutorContext) => Promise<z.infer<typeof MachinePairingCreateOutputSchema> | ActionExecuteFailure>;
   machineTerminalAction?: (request: Readonly<{ actionId: MachineTerminalActionId; input: MachineTerminalActionInput; context: ActionExecutorContext; signal?: AbortSignal }>) => Promise<unknown>;
   serversList: (args: Readonly<{ limit?: number }>) => Promise<unknown>;
-  reviewEnginesList: (args: Readonly<{ sessionId: string | null; includeDisabled?: boolean; scope?: 'paths' }>) => Promise<unknown>;
+  reviewEnginesList: (args: Readonly<{ sessionId: string | null; machineId?: string; includeDisabled?: boolean; scope?: 'paths' }>) => Promise<unknown>;
   /** Caller-owned Account delivery; the host checks visibility of any deep link. */
   notificationsNotifyMe?: (
     input: NotificationsNotifyMeInputV1,
@@ -1474,6 +1488,7 @@ export type ActionExecutorDeps = Readonly<{
   machineAgentSignInCancel?: (args: MachinesAgentsSignInCancelInput & { serverId?: string; signal?: AbortSignal }) => Promise<MachinesAgentsSignInCancelOutput>;
   machineAgentSignInRestart?: (args: MachinesAgentsSignInCancelInput & { serverId?: string; signal?: AbortSignal }) => Promise<MachinesAgentsSignInStartOutput>;
   machinesAgentsList?: (args: MachinesAgentsListInput, context: ActionExecutorContext) => Promise<MachinesAgentsListOutput | ActionExecuteFailure>;
+  workflowEventsList?: (args: WorkflowEventsListInputV1, context: ActionExecutorContext) => Promise<WorkflowEventsListOutputV1 | ActionExecuteFailure>;
   workspaceFilesSearch?: (args: PublicActionInputById['workspace.files.search'], context: ActionExecutorContext) => Promise<DaemonWorkspaceFileSearchResponse | ActionExecuteFailure>;
   machineAgentInstallStart?: (args: DaemonAgentInstallStartRequest & { machineId: string; serverId?: string; signal?: AbortSignal }) => Promise<DaemonAgentInstallStartResponse>;
   machineAgentInstallRead?: (args: DaemonAgentInstallReadRequest & { machineId: string; serverId?: string; signal?: AbortSignal }) => Promise<DaemonAgentInstallReadResponse>;
@@ -1555,6 +1570,7 @@ export type ActionExecutorDeps = Readonly<{
   }>) => Promise<unknown>;
   sessionStateFieldSet?: (args: SessionStateFieldActionWrite) => Promise<unknown>;
   sessionStop?: (args: Readonly<{ sessionId: string; serverId?: string | null }>) => Promise<unknown>;
+  sessionTurnCancel?: (args: Readonly<{ sessionId: string; serverId?: string | null; context: ActionExecutorContext; signal?: AbortSignal }>) => Promise<unknown>;
   sessionTerminalComposerClear?: (args: Readonly<{
     sessionId: string;
     expectedStateAtMs?: number;
@@ -1583,6 +1599,7 @@ export type ActionExecutorDeps = Readonly<{
     context?: ActionExecutorContext;
     callerInputConstraints?: CallerInputConstraintsV1;
     permissionMode: string;
+    applyTiming?: 'immediate' | 'next_prompt';
     serverId?: string | null;
   }>) => Promise<unknown>;
   sessionModelSet?: (args: Readonly<{
@@ -1857,10 +1874,12 @@ export type ActionExecutorDeps = Readonly<{
     serverId?: string | null;
   }>) => Promise<{ resolved: boolean }>;
   /**
-   * Private host factory port for one actual containing operation. It changes
+   * Private host factory port for one actual containing operation or exact
+   * CLI invocation holding prompted material in memory. It changes
    * approval custody, never policy or consent, and is not an Action input.
    */
-  hostActionApprovalLifetime?: Readonly<{ operationId: string; signal: AbortSignal }>;
+  hostActionApprovalLifetime?: Readonly<{ operationId: string; signal: AbortSignal }>
+    | Readonly<{ actionId: ActionId; signal: AbortSignal }>;
   approvalsWaitForDecision?: (args: Readonly<{
     artifactId: string;
     request: ApprovalRequest;
@@ -1946,8 +1965,7 @@ export type ActionExecutorDeps = Readonly<{
   }>) => Promise<Readonly<{ ok: true; revision: number; cleanup?: AcpCatalogCleanupV1 }> | Readonly<{ ok: false; errorCode: string; error: string; details?: ActionExecuteFailure['details'] }>>;
   workBoardArtifacts?: Pick<WorkBoardArtifactPortV1, 'read' | 'apply' | 'readBoardAccess'> & Partial<Pick<WorkBoardArtifactPortV1, 'readBoard'>>;
   promptDocGet?: (args: Readonly<{ artifactId: string; signal?: AbortSignal }>) => Promise<unknown>;
-  promptDocCreate?: (args: Readonly<{ title: string; markdown: string; folderId?: string | null;
-    tags?: readonly string[]; favorite?: boolean; signal?: AbortSignal }>) => Promise<unknown>;
+  promptDocCreate?: (args: PromptDocCreateActionInputV1 & Readonly<{ signal?: AbortSignal }>) => Promise<unknown>;
   promptDocFavoriteSet?: (args: Readonly<{ artifactId: string; favorite: boolean; signal?: AbortSignal }>) => Promise<unknown>;
   promptsLibraryList?: (args: Readonly<{ query?: string; includeBundles?: false; signal?: AbortSignal }>) => Promise<unknown>;
   promptDocUpdate?: (args: Readonly<{
@@ -2144,6 +2162,15 @@ export type ActionExecutorDeps = Readonly<{
    */
   pluginWebhookAction?: (args: PluginWebhookActionArgs) => Promise<unknown>;
 
+  /** Exact connected-Machine capability transport; the shared restart owner controls task lifecycle. */
+  homeRuntimeTaskRpc?: (args: Readonly<{
+    machineId: string;
+    context: ActionExecutorContext;
+  }> & (
+    | Readonly<{ method: 'detect'; request: CapabilitiesDetectRequest }>
+    | Readonly<{ method: 'invoke'; request: CapabilitiesInvokeRequest }>
+  )) => Promise<unknown>;
+
   /**
    * The one Home family port: Home governance and Team intents both travel to
    * one exact Home over the host's existing server-Account request authority.
@@ -2187,6 +2214,8 @@ export type ActionExecutorDeps = Readonly<{
     actionId: SettingsDeclarationActionIdV1;
     input: unknown;
     context: ActionExecutorContext;
+    /** Nested domain Actions re-enter this executor's ordinary grant and consent admission. */
+    executeOwnerAction: SettingsOwnerActionExecuteV1;
   }>) => Promise<unknown>;
 
   /** The answering client's canonical Voice owner; daemon and headless hosts have no microphone. */

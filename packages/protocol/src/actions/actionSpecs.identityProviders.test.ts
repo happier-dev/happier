@@ -21,7 +21,7 @@ describe('managed identity-provider Action contracts', () => {
     }
   });
 
-  it('keeps every provider mutation except the bounded test flow on authenticated human surfaces', () => {
+  it('admits provider mutation requests while retaining authenticated human execution authority', () => {
     for (const id of [
       'identity.providers.create',
       'identity.providers.update',
@@ -33,7 +33,7 @@ describe('managed identity-provider Action contracts', () => {
     ] as const) {
       const spec = getActionSpec(id);
       expect(spec.requiredAuthority).toBe('present_user');
-      expect(spec.surfaces).toMatchObject({ ui: true, cli: true, agent: false, mcp: false });
+      expect(spec.surfaces).toMatchObject({ ui: true, cli: true, agent: true, mcp: true, api: false });
     }
   });
 

@@ -482,6 +482,10 @@ export type TeamsActionInputById = {
         teamId: string;
         membershipId: string;
     };
+    readonly "teams.members.leave": {
+        v: 1;
+        teamId: string;
+    };
     readonly "teams.members.management.set": {
         v: 1;
         teamId: string;
@@ -605,7 +609,6 @@ export type TeamsActionInputById = {
     };
     readonly "teams.identity.connections.create": {
         v: 1;
-        teamId: string;
         providerInstanceId: string;
         externalReference: {
             v: 1;
@@ -635,6 +638,7 @@ export type TeamsActionInputById = {
             kind: 'github_app_identity';
             organizationLogin: string;
         };
+        teamId: string;
     };
     readonly "teams.identity.connections.settings.update": {
         v: 1;
@@ -696,6 +700,7 @@ export type TeamsActionInputById = {
     readonly "teams.identity.workos.connection.create": {
         v: 1;
         teamId: string;
+        displayName?: string | undefined;
     };
     readonly "teams.identity.workos.adminPortalLink.create": {
         v: 1;
@@ -1711,6 +1716,8 @@ export type TeamsActionResultById = {
                 reportedUsd: number;
                 estimatedUsd: number;
                 currency: string;
+                apiEquivalentUsd?: number | undefined;
+                pricingSource?: string | undefined;
                 invoiceUsd?: number | undefined;
                 billingContext?: 'unknown' | 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | undefined;
                 costSource?: 'provider_reported' | 'provider_reported_api_equivalent' | 'pricing_estimate' | 'invoice' | 'none' | undefined;
@@ -1746,6 +1753,8 @@ export type TeamsActionResultById = {
                     reportedUsd: number;
                     estimatedUsd: number;
                     currency: string;
+                    apiEquivalentUsd?: number | undefined;
+                    pricingSource?: string | undefined;
                     invoiceUsd?: number | undefined;
                     billingContext?: 'unknown' | 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | undefined;
                     costSource?: 'provider_reported' | 'provider_reported_api_equivalent' | 'pricing_estimate' | 'invoice' | 'none' | undefined;
@@ -1785,6 +1794,8 @@ export type TeamsActionResultById = {
                     reportedUsd: number;
                     estimatedUsd: number;
                     currency: string;
+                    apiEquivalentUsd?: number | undefined;
+                    pricingSource?: string | undefined;
                     invoiceUsd?: number | undefined;
                     billingContext?: 'unknown' | 'api_usage' | 'subscription_included' | 'subscription_with_possible_overage' | undefined;
                     costSource?: 'provider_reported' | 'provider_reported_api_equivalent' | 'pricing_estimate' | 'invoice' | 'none' | undefined;
@@ -1885,6 +1896,7 @@ export type TeamsActionResultById = {
             viewerRole: 'member' | 'admin' | 'guest' | 'owner' | null;
             capabilities: {
                 viewTeam: boolean;
+                viewRoster: boolean;
                 manageSettings: boolean;
                 managePolicy: boolean;
                 manageMembers: boolean;
@@ -1894,6 +1906,7 @@ export type TeamsActionResultById = {
                 manageAuthentication: boolean;
                 archiveTeam: boolean;
                 restoreTeam: boolean;
+                leave: boolean;
             };
             admission: {
                 historyChoice: {
@@ -1902,6 +1915,12 @@ export type TeamsActionResultById = {
                     guest: 'choice' | 'hidden';
                 };
             };
+            counts: {
+                members: number;
+                suspendedMembers: number;
+                groups: number;
+                waitingInvitations: number | null;
+            } | null;
         }[];
         nextCursor: string | null;
     };
@@ -1943,6 +1962,7 @@ export type TeamsActionResultById = {
         viewerRole: 'member' | 'admin' | 'guest' | 'owner' | null;
         capabilities: {
             viewTeam: boolean;
+            viewRoster: boolean;
             manageSettings: boolean;
             managePolicy: boolean;
             manageMembers: boolean;
@@ -1952,6 +1972,7 @@ export type TeamsActionResultById = {
             manageAuthentication: boolean;
             archiveTeam: boolean;
             restoreTeam: boolean;
+            leave: boolean;
         };
         admission: {
             historyChoice: {
@@ -1960,6 +1981,12 @@ export type TeamsActionResultById = {
                 guest: 'choice' | 'hidden';
             };
         };
+        counts: {
+            members: number;
+            suspendedMembers: number;
+            groups: number;
+            waitingInvitations: number | null;
+        } | null;
     };
     readonly "teams.create": {
         id: string;
@@ -1999,6 +2026,7 @@ export type TeamsActionResultById = {
         viewerRole: 'member' | 'admin' | 'guest' | 'owner' | null;
         capabilities: {
             viewTeam: boolean;
+            viewRoster: boolean;
             manageSettings: boolean;
             managePolicy: boolean;
             manageMembers: boolean;
@@ -2008,6 +2036,7 @@ export type TeamsActionResultById = {
             manageAuthentication: boolean;
             archiveTeam: boolean;
             restoreTeam: boolean;
+            leave: boolean;
         };
         admission: {
             historyChoice: {
@@ -2016,6 +2045,12 @@ export type TeamsActionResultById = {
                 guest: 'choice' | 'hidden';
             };
         };
+        counts: {
+            members: number;
+            suspendedMembers: number;
+            groups: number;
+            waitingInvitations: number | null;
+        } | null;
     };
     readonly "teams.update": {
         id: string;
@@ -2055,6 +2090,7 @@ export type TeamsActionResultById = {
         viewerRole: 'member' | 'admin' | 'guest' | 'owner' | null;
         capabilities: {
             viewTeam: boolean;
+            viewRoster: boolean;
             manageSettings: boolean;
             managePolicy: boolean;
             manageMembers: boolean;
@@ -2064,6 +2100,7 @@ export type TeamsActionResultById = {
             manageAuthentication: boolean;
             archiveTeam: boolean;
             restoreTeam: boolean;
+            leave: boolean;
         };
         admission: {
             historyChoice: {
@@ -2072,6 +2109,12 @@ export type TeamsActionResultById = {
                 guest: 'choice' | 'hidden';
             };
         };
+        counts: {
+            members: number;
+            suspendedMembers: number;
+            groups: number;
+            waitingInvitations: number | null;
+        } | null;
     };
     readonly "teams.logo.set": {
         id: string;
@@ -2111,6 +2154,7 @@ export type TeamsActionResultById = {
         viewerRole: 'member' | 'admin' | 'guest' | 'owner' | null;
         capabilities: {
             viewTeam: boolean;
+            viewRoster: boolean;
             manageSettings: boolean;
             managePolicy: boolean;
             manageMembers: boolean;
@@ -2120,6 +2164,7 @@ export type TeamsActionResultById = {
             manageAuthentication: boolean;
             archiveTeam: boolean;
             restoreTeam: boolean;
+            leave: boolean;
         };
         admission: {
             historyChoice: {
@@ -2128,6 +2173,12 @@ export type TeamsActionResultById = {
                 guest: 'choice' | 'hidden';
             };
         };
+        counts: {
+            members: number;
+            suspendedMembers: number;
+            groups: number;
+            waitingInvitations: number | null;
+        } | null;
     };
     readonly "teams.logo.remove": {
         id: string;
@@ -2167,6 +2218,7 @@ export type TeamsActionResultById = {
         viewerRole: 'member' | 'admin' | 'guest' | 'owner' | null;
         capabilities: {
             viewTeam: boolean;
+            viewRoster: boolean;
             manageSettings: boolean;
             managePolicy: boolean;
             manageMembers: boolean;
@@ -2176,6 +2228,7 @@ export type TeamsActionResultById = {
             manageAuthentication: boolean;
             archiveTeam: boolean;
             restoreTeam: boolean;
+            leave: boolean;
         };
         admission: {
             historyChoice: {
@@ -2184,6 +2237,12 @@ export type TeamsActionResultById = {
                 guest: 'choice' | 'hidden';
             };
         };
+        counts: {
+            members: number;
+            suspendedMembers: number;
+            groups: number;
+            waitingInvitations: number | null;
+        } | null;
     };
     readonly "teams.policy.set": {
         id: string;
@@ -2223,6 +2282,7 @@ export type TeamsActionResultById = {
         viewerRole: 'member' | 'admin' | 'guest' | 'owner' | null;
         capabilities: {
             viewTeam: boolean;
+            viewRoster: boolean;
             manageSettings: boolean;
             managePolicy: boolean;
             manageMembers: boolean;
@@ -2232,6 +2292,7 @@ export type TeamsActionResultById = {
             manageAuthentication: boolean;
             archiveTeam: boolean;
             restoreTeam: boolean;
+            leave: boolean;
         };
         admission: {
             historyChoice: {
@@ -2240,6 +2301,12 @@ export type TeamsActionResultById = {
                 guest: 'choice' | 'hidden';
             };
         };
+        counts: {
+            members: number;
+            suspendedMembers: number;
+            groups: number;
+            waitingInvitations: number | null;
+        } | null;
     };
     readonly "teams.archive": {
         id: string;
@@ -2279,6 +2346,7 @@ export type TeamsActionResultById = {
         viewerRole: 'member' | 'admin' | 'guest' | 'owner' | null;
         capabilities: {
             viewTeam: boolean;
+            viewRoster: boolean;
             manageSettings: boolean;
             managePolicy: boolean;
             manageMembers: boolean;
@@ -2288,6 +2356,7 @@ export type TeamsActionResultById = {
             manageAuthentication: boolean;
             archiveTeam: boolean;
             restoreTeam: boolean;
+            leave: boolean;
         };
         admission: {
             historyChoice: {
@@ -2296,6 +2365,12 @@ export type TeamsActionResultById = {
                 guest: 'choice' | 'hidden';
             };
         };
+        counts: {
+            members: number;
+            suspendedMembers: number;
+            groups: number;
+            waitingInvitations: number | null;
+        } | null;
     };
     readonly "teams.restore": {
         id: string;
@@ -2335,6 +2410,7 @@ export type TeamsActionResultById = {
         viewerRole: 'member' | 'admin' | 'guest' | 'owner' | null;
         capabilities: {
             viewTeam: boolean;
+            viewRoster: boolean;
             manageSettings: boolean;
             managePolicy: boolean;
             manageMembers: boolean;
@@ -2344,6 +2420,7 @@ export type TeamsActionResultById = {
             manageAuthentication: boolean;
             archiveTeam: boolean;
             restoreTeam: boolean;
+            leave: boolean;
         };
         admission: {
             historyChoice: {
@@ -2352,6 +2429,12 @@ export type TeamsActionResultById = {
                 guest: 'choice' | 'hidden';
             };
         };
+        counts: {
+            members: number;
+            suspendedMembers: number;
+            groups: number;
+            waitingInvitations: number | null;
+        } | null;
     };
     readonly "teams.members.list": {
         items: {
@@ -2567,6 +2650,12 @@ export type TeamsActionResultById = {
         joinedAt: number;
     };
     readonly "teams.members.remove": {
+        status: 'removed';
+        membershipId: string;
+    } | {
+        status: 'unchanged';
+    };
+    readonly "teams.members.leave": {
         status: 'removed';
         membershipId: string;
     } | {
@@ -3217,7 +3306,6 @@ export type TeamsActionResultById = {
         items: {
             v: 1;
             id: string;
-            teamId: string;
             provider: {
                 id: string;
                 kind: 'oidc' | 'workos_sso' | 'github_app_identity';
@@ -3255,7 +3343,6 @@ export type TeamsActionResultById = {
             firstEnabledAt: number | null;
             revision: number;
             state: 'needs_attention' | 'disabled' | 'unavailable' | 'prohibited' | 'not_configured' | 'setting_up' | 'connected';
-            allowedActions: ('teams.identity.connections.settings.update' | 'teams.identity.connections.enable' | 'teams.identity.connections.disable' | 'teams.identity.connections.remove' | 'teams.identity.connections.test.start' | 'teams.identity.workos.adminPortalLink.create' | 'teams.identity.workos.reconcile' | 'teams.identity.workos.connection.set')[];
             lastObservation: {
                 v: 1;
                 kind: 'oidc';
@@ -3279,6 +3366,8 @@ export type TeamsActionResultById = {
             } | null;
             createdAt: number;
             updatedAt: number;
+            teamId: string;
+            allowedActions: ('teams.identity.connections.settings.update' | 'teams.identity.connections.enable' | 'teams.identity.connections.disable' | 'teams.identity.connections.remove' | 'teams.identity.connections.test.start' | 'teams.identity.workos.adminPortalLink.create' | 'teams.identity.workos.reconcile' | 'teams.identity.workos.connection.set')[];
         }[];
         eligibleProviders: {
             v: 1;
@@ -3323,7 +3412,7 @@ export type TeamsActionResultById = {
                     };
                 } | {
                     kind: 'create_managed';
-                    actionId: 'teams.identity.workos.connection.create' | 'identity.providers.create' | 'identity.githubApps.manifestSetup.start';
+                    actionId: 'teams.identity.workos.connection.create' | 'home.identity.workos.connection.create' | 'identity.providers.create' | 'identity.githubApps.manifestSetup.start';
                 } | {
                     kind: 'contact_home_admin';
                 };
@@ -3358,7 +3447,6 @@ export type TeamsActionResultById = {
         connection: {
             v: 1;
             id: string;
-            teamId: string;
             provider: {
                 id: string;
                 kind: 'oidc' | 'workos_sso' | 'github_app_identity';
@@ -3396,7 +3484,6 @@ export type TeamsActionResultById = {
             firstEnabledAt: number | null;
             revision: number;
             state: 'needs_attention' | 'disabled' | 'unavailable' | 'prohibited' | 'not_configured' | 'setting_up' | 'connected';
-            allowedActions: ('teams.identity.connections.settings.update' | 'teams.identity.connections.enable' | 'teams.identity.connections.disable' | 'teams.identity.connections.remove' | 'teams.identity.connections.test.start' | 'teams.identity.workos.adminPortalLink.create' | 'teams.identity.workos.reconcile' | 'teams.identity.workos.connection.set')[];
             lastObservation: {
                 v: 1;
                 kind: 'oidc';
@@ -3420,13 +3507,14 @@ export type TeamsActionResultById = {
             } | null;
             createdAt: number;
             updatedAt: number;
+            teamId: string;
+            allowedActions: ('teams.identity.connections.settings.update' | 'teams.identity.connections.enable' | 'teams.identity.connections.disable' | 'teams.identity.connections.remove' | 'teams.identity.connections.test.start' | 'teams.identity.workos.adminPortalLink.create' | 'teams.identity.workos.reconcile' | 'teams.identity.workos.connection.set')[];
         };
     };
     readonly "teams.identity.connections.settings.update": {
         connection: {
             v: 1;
             id: string;
-            teamId: string;
             provider: {
                 id: string;
                 kind: 'oidc' | 'workos_sso' | 'github_app_identity';
@@ -3464,7 +3552,6 @@ export type TeamsActionResultById = {
             firstEnabledAt: number | null;
             revision: number;
             state: 'needs_attention' | 'disabled' | 'unavailable' | 'prohibited' | 'not_configured' | 'setting_up' | 'connected';
-            allowedActions: ('teams.identity.connections.settings.update' | 'teams.identity.connections.enable' | 'teams.identity.connections.disable' | 'teams.identity.connections.remove' | 'teams.identity.connections.test.start' | 'teams.identity.workos.adminPortalLink.create' | 'teams.identity.workos.reconcile' | 'teams.identity.workos.connection.set')[];
             lastObservation: {
                 v: 1;
                 kind: 'oidc';
@@ -3488,13 +3575,14 @@ export type TeamsActionResultById = {
             } | null;
             createdAt: number;
             updatedAt: number;
+            teamId: string;
+            allowedActions: ('teams.identity.connections.settings.update' | 'teams.identity.connections.enable' | 'teams.identity.connections.disable' | 'teams.identity.connections.remove' | 'teams.identity.connections.test.start' | 'teams.identity.workos.adminPortalLink.create' | 'teams.identity.workos.reconcile' | 'teams.identity.workos.connection.set')[];
         };
     };
     readonly "teams.identity.connections.enable": {
         connection: {
             v: 1;
             id: string;
-            teamId: string;
             provider: {
                 id: string;
                 kind: 'oidc' | 'workos_sso' | 'github_app_identity';
@@ -3532,7 +3620,6 @@ export type TeamsActionResultById = {
             firstEnabledAt: number | null;
             revision: number;
             state: 'needs_attention' | 'disabled' | 'unavailable' | 'prohibited' | 'not_configured' | 'setting_up' | 'connected';
-            allowedActions: ('teams.identity.connections.settings.update' | 'teams.identity.connections.enable' | 'teams.identity.connections.disable' | 'teams.identity.connections.remove' | 'teams.identity.connections.test.start' | 'teams.identity.workos.adminPortalLink.create' | 'teams.identity.workos.reconcile' | 'teams.identity.workos.connection.set')[];
             lastObservation: {
                 v: 1;
                 kind: 'oidc';
@@ -3556,13 +3643,14 @@ export type TeamsActionResultById = {
             } | null;
             createdAt: number;
             updatedAt: number;
+            teamId: string;
+            allowedActions: ('teams.identity.connections.settings.update' | 'teams.identity.connections.enable' | 'teams.identity.connections.disable' | 'teams.identity.connections.remove' | 'teams.identity.connections.test.start' | 'teams.identity.workos.adminPortalLink.create' | 'teams.identity.workos.reconcile' | 'teams.identity.workos.connection.set')[];
         };
     };
     readonly "teams.identity.connections.disable": {
         connection: {
             v: 1;
             id: string;
-            teamId: string;
             provider: {
                 id: string;
                 kind: 'oidc' | 'workos_sso' | 'github_app_identity';
@@ -3600,7 +3688,6 @@ export type TeamsActionResultById = {
             firstEnabledAt: number | null;
             revision: number;
             state: 'needs_attention' | 'disabled' | 'unavailable' | 'prohibited' | 'not_configured' | 'setting_up' | 'connected';
-            allowedActions: ('teams.identity.connections.settings.update' | 'teams.identity.connections.enable' | 'teams.identity.connections.disable' | 'teams.identity.connections.remove' | 'teams.identity.connections.test.start' | 'teams.identity.workos.adminPortalLink.create' | 'teams.identity.workos.reconcile' | 'teams.identity.workos.connection.set')[];
             lastObservation: {
                 v: 1;
                 kind: 'oidc';
@@ -3624,77 +3711,13 @@ export type TeamsActionResultById = {
             } | null;
             createdAt: number;
             updatedAt: number;
+            teamId: string;
+            allowedActions: ('teams.identity.connections.settings.update' | 'teams.identity.connections.enable' | 'teams.identity.connections.disable' | 'teams.identity.connections.remove' | 'teams.identity.connections.test.start' | 'teams.identity.workos.adminPortalLink.create' | 'teams.identity.workos.reconcile' | 'teams.identity.workos.connection.set')[];
         };
     };
     readonly "teams.identity.connections.remove.preview": {
         v: 1;
         canRemove: boolean;
-        connection: {
-            v: 1;
-            id: string;
-            teamId: string;
-            provider: {
-                id: string;
-                kind: 'oidc' | 'workos_sso' | 'github_app_identity';
-                displayName: string;
-            };
-            externalReference: {
-                v: 1;
-                kind: 'oidc';
-            } | {
-                v: 1;
-                kind: 'workos_sso';
-                organizationId: string | null;
-                connectionId: string | null;
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-                installationId: string;
-            };
-            settings: {
-                v: 1;
-                kind: 'oidc';
-                allowedUsers: string[];
-                allowedEmailDomains: string[];
-                groupsAny: string[];
-                groupsAll: string[];
-            } | {
-                v: 1;
-                kind: 'workos_sso';
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-                organizationLogin: string;
-            };
-            enabled: boolean;
-            firstEnabledAt: number | null;
-            revision: number;
-            state: 'needs_attention' | 'disabled' | 'unavailable' | 'prohibited' | 'not_configured' | 'setting_up' | 'connected';
-            allowedActions: ('teams.identity.connections.settings.update' | 'teams.identity.connections.enable' | 'teams.identity.connections.disable' | 'teams.identity.connections.remove' | 'teams.identity.connections.test.start' | 'teams.identity.workos.adminPortalLink.create' | 'teams.identity.workos.reconcile' | 'teams.identity.workos.connection.set')[];
-            lastObservation: {
-                v: 1;
-                kind: 'oidc';
-            } | {
-                v: 1;
-                kind: 'workos_sso';
-                presentation: {
-                    displayName: string;
-                    strategy: string;
-                    status: string;
-                    lastCheckedAt: number;
-                } | null;
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-            } | null;
-            lastSuccessfulTest: {
-                at: number;
-                runtimeFingerprint: string;
-                current: boolean;
-            } | null;
-            createdAt: number;
-            updatedAt: number;
-        };
         impact: {
             linkedAccounts: number;
             accountsRequiringAlternateLogin: number;
@@ -3702,7 +3725,73 @@ export type TeamsActionResultById = {
             externalGroupBindings: number;
             managedMemberships: number;
         };
-        blockers: ('team_authentication_policy_in_use' | 'team_authentication_policy_unavailable' | 'account_would_lose_login' | 'home_authentication_policy_unavailable' | 'directory_source_in_use' | 'external_group_binding_in_use' | 'managed_membership_in_use')[];
+        blockers: ('identity_connection_in_use' | 'team_authentication_policy_in_use' | 'team_authentication_policy_unavailable' | 'account_would_lose_login' | 'home_authentication_policy_unavailable' | 'directory_source_in_use' | 'external_group_binding_in_use' | 'managed_membership_in_use')[];
+        connection: {
+            v: 1;
+            id: string;
+            provider: {
+                id: string;
+                kind: 'oidc' | 'workos_sso' | 'github_app_identity';
+                displayName: string;
+            };
+            externalReference: {
+                v: 1;
+                kind: 'oidc';
+            } | {
+                v: 1;
+                kind: 'workos_sso';
+                organizationId: string | null;
+                connectionId: string | null;
+            } | {
+                v: 1;
+                kind: 'github_app_identity';
+                installationId: string;
+            };
+            settings: {
+                v: 1;
+                kind: 'oidc';
+                allowedUsers: string[];
+                allowedEmailDomains: string[];
+                groupsAny: string[];
+                groupsAll: string[];
+            } | {
+                v: 1;
+                kind: 'workos_sso';
+            } | {
+                v: 1;
+                kind: 'github_app_identity';
+                organizationLogin: string;
+            };
+            enabled: boolean;
+            firstEnabledAt: number | null;
+            revision: number;
+            state: 'needs_attention' | 'disabled' | 'unavailable' | 'prohibited' | 'not_configured' | 'setting_up' | 'connected';
+            lastObservation: {
+                v: 1;
+                kind: 'oidc';
+            } | {
+                v: 1;
+                kind: 'workos_sso';
+                presentation: {
+                    displayName: string;
+                    strategy: string;
+                    status: string;
+                    lastCheckedAt: number;
+                } | null;
+            } | {
+                v: 1;
+                kind: 'github_app_identity';
+            } | null;
+            lastSuccessfulTest: {
+                at: number;
+                runtimeFingerprint: string;
+                current: boolean;
+            } | null;
+            createdAt: number;
+            updatedAt: number;
+            teamId: string;
+            allowedActions: ('teams.identity.connections.settings.update' | 'teams.identity.connections.enable' | 'teams.identity.connections.disable' | 'teams.identity.connections.remove' | 'teams.identity.connections.test.start' | 'teams.identity.workos.adminPortalLink.create' | 'teams.identity.workos.reconcile' | 'teams.identity.workos.connection.set')[];
+        };
     };
     readonly "teams.identity.connections.remove": {
         outcome: 'removed' | 'already_absent';
@@ -3715,7 +3804,6 @@ export type TeamsActionResultById = {
         connection: {
             v: 1;
             id: string;
-            teamId: string;
             provider: {
                 id: string;
                 kind: 'oidc' | 'workos_sso' | 'github_app_identity';
@@ -3753,7 +3841,6 @@ export type TeamsActionResultById = {
             firstEnabledAt: number | null;
             revision: number;
             state: 'needs_attention' | 'disabled' | 'unavailable' | 'prohibited' | 'not_configured' | 'setting_up' | 'connected';
-            allowedActions: ('teams.identity.connections.settings.update' | 'teams.identity.connections.enable' | 'teams.identity.connections.disable' | 'teams.identity.connections.remove' | 'teams.identity.connections.test.start' | 'teams.identity.workos.adminPortalLink.create' | 'teams.identity.workos.reconcile' | 'teams.identity.workos.connection.set')[];
             lastObservation: {
                 v: 1;
                 kind: 'oidc';
@@ -3777,6 +3864,8 @@ export type TeamsActionResultById = {
             } | null;
             createdAt: number;
             updatedAt: number;
+            teamId: string;
+            allowedActions: ('teams.identity.connections.settings.update' | 'teams.identity.connections.enable' | 'teams.identity.connections.disable' | 'teams.identity.connections.remove' | 'teams.identity.connections.test.start' | 'teams.identity.workos.adminPortalLink.create' | 'teams.identity.workos.reconcile' | 'teams.identity.workos.connection.set')[];
         };
         diagnostics?: {
             subjectPresent: boolean;
@@ -3804,7 +3893,6 @@ export type TeamsActionResultById = {
         connection: {
             v: 1;
             id: string;
-            teamId: string;
             provider: {
                 id: string;
                 kind: 'oidc' | 'workos_sso' | 'github_app_identity';
@@ -3842,7 +3930,6 @@ export type TeamsActionResultById = {
             firstEnabledAt: number | null;
             revision: number;
             state: 'needs_attention' | 'disabled' | 'unavailable' | 'prohibited' | 'not_configured' | 'setting_up' | 'connected';
-            allowedActions: ('teams.identity.connections.settings.update' | 'teams.identity.connections.enable' | 'teams.identity.connections.disable' | 'teams.identity.connections.remove' | 'teams.identity.connections.test.start' | 'teams.identity.workos.adminPortalLink.create' | 'teams.identity.workos.reconcile' | 'teams.identity.workos.connection.set')[];
             lastObservation: {
                 v: 1;
                 kind: 'oidc';
@@ -3866,6 +3953,8 @@ export type TeamsActionResultById = {
             } | null;
             createdAt: number;
             updatedAt: number;
+            teamId: string;
+            allowedActions: ('teams.identity.connections.settings.update' | 'teams.identity.connections.enable' | 'teams.identity.connections.disable' | 'teams.identity.connections.remove' | 'teams.identity.connections.test.start' | 'teams.identity.workos.adminPortalLink.create' | 'teams.identity.workos.reconcile' | 'teams.identity.workos.connection.set')[];
         };
     };
     readonly "teams.identity.workos.adminPortalLink.create": {
@@ -3876,7 +3965,6 @@ export type TeamsActionResultById = {
         connection: {
             v: 1;
             id: string;
-            teamId: string;
             provider: {
                 id: string;
                 kind: 'oidc' | 'workos_sso' | 'github_app_identity';
@@ -3914,7 +4002,6 @@ export type TeamsActionResultById = {
             firstEnabledAt: number | null;
             revision: number;
             state: 'needs_attention' | 'disabled' | 'unavailable' | 'prohibited' | 'not_configured' | 'setting_up' | 'connected';
-            allowedActions: ('teams.identity.connections.settings.update' | 'teams.identity.connections.enable' | 'teams.identity.connections.disable' | 'teams.identity.connections.remove' | 'teams.identity.connections.test.start' | 'teams.identity.workos.adminPortalLink.create' | 'teams.identity.workos.reconcile' | 'teams.identity.workos.connection.set')[];
             lastObservation: {
                 v: 1;
                 kind: 'oidc';
@@ -3938,13 +4025,14 @@ export type TeamsActionResultById = {
             } | null;
             createdAt: number;
             updatedAt: number;
+            teamId: string;
+            allowedActions: ('teams.identity.connections.settings.update' | 'teams.identity.connections.enable' | 'teams.identity.connections.disable' | 'teams.identity.connections.remove' | 'teams.identity.connections.test.start' | 'teams.identity.workos.adminPortalLink.create' | 'teams.identity.workos.reconcile' | 'teams.identity.workos.connection.set')[];
         };
     } | {
         outcome: 'connected';
         connection: {
             v: 1;
             id: string;
-            teamId: string;
             provider: {
                 id: string;
                 kind: 'oidc' | 'workos_sso' | 'github_app_identity';
@@ -3982,7 +4070,6 @@ export type TeamsActionResultById = {
             firstEnabledAt: number | null;
             revision: number;
             state: 'needs_attention' | 'disabled' | 'unavailable' | 'prohibited' | 'not_configured' | 'setting_up' | 'connected';
-            allowedActions: ('teams.identity.connections.settings.update' | 'teams.identity.connections.enable' | 'teams.identity.connections.disable' | 'teams.identity.connections.remove' | 'teams.identity.connections.test.start' | 'teams.identity.workos.adminPortalLink.create' | 'teams.identity.workos.reconcile' | 'teams.identity.workos.connection.set')[];
             lastObservation: {
                 v: 1;
                 kind: 'oidc';
@@ -4006,13 +4093,14 @@ export type TeamsActionResultById = {
             } | null;
             createdAt: number;
             updatedAt: number;
+            teamId: string;
+            allowedActions: ('teams.identity.connections.settings.update' | 'teams.identity.connections.enable' | 'teams.identity.connections.disable' | 'teams.identity.connections.remove' | 'teams.identity.connections.test.start' | 'teams.identity.workos.adminPortalLink.create' | 'teams.identity.workos.reconcile' | 'teams.identity.workos.connection.set')[];
         };
     } | {
         outcome: 'needs_attention';
         connection: {
             v: 1;
             id: string;
-            teamId: string;
             provider: {
                 id: string;
                 kind: 'oidc' | 'workos_sso' | 'github_app_identity';
@@ -4050,7 +4138,6 @@ export type TeamsActionResultById = {
             firstEnabledAt: number | null;
             revision: number;
             state: 'needs_attention' | 'disabled' | 'unavailable' | 'prohibited' | 'not_configured' | 'setting_up' | 'connected';
-            allowedActions: ('teams.identity.connections.settings.update' | 'teams.identity.connections.enable' | 'teams.identity.connections.disable' | 'teams.identity.connections.remove' | 'teams.identity.connections.test.start' | 'teams.identity.workos.adminPortalLink.create' | 'teams.identity.workos.reconcile' | 'teams.identity.workos.connection.set')[];
             lastObservation: {
                 v: 1;
                 kind: 'oidc';
@@ -4074,13 +4161,14 @@ export type TeamsActionResultById = {
             } | null;
             createdAt: number;
             updatedAt: number;
+            teamId: string;
+            allowedActions: ('teams.identity.connections.settings.update' | 'teams.identity.connections.enable' | 'teams.identity.connections.disable' | 'teams.identity.connections.remove' | 'teams.identity.connections.test.start' | 'teams.identity.workos.adminPortalLink.create' | 'teams.identity.workos.reconcile' | 'teams.identity.workos.connection.set')[];
         };
     } | {
         outcome: 'selection_required';
         connection: {
             v: 1;
             id: string;
-            teamId: string;
             provider: {
                 id: string;
                 kind: 'oidc' | 'workos_sso' | 'github_app_identity';
@@ -4118,7 +4206,6 @@ export type TeamsActionResultById = {
             firstEnabledAt: number | null;
             revision: number;
             state: 'needs_attention' | 'disabled' | 'unavailable' | 'prohibited' | 'not_configured' | 'setting_up' | 'connected';
-            allowedActions: ('teams.identity.connections.settings.update' | 'teams.identity.connections.enable' | 'teams.identity.connections.disable' | 'teams.identity.connections.remove' | 'teams.identity.connections.test.start' | 'teams.identity.workos.adminPortalLink.create' | 'teams.identity.workos.reconcile' | 'teams.identity.workos.connection.set')[];
             lastObservation: {
                 v: 1;
                 kind: 'oidc';
@@ -4142,6 +4229,8 @@ export type TeamsActionResultById = {
             } | null;
             createdAt: number;
             updatedAt: number;
+            teamId: string;
+            allowedActions: ('teams.identity.connections.settings.update' | 'teams.identity.connections.enable' | 'teams.identity.connections.disable' | 'teams.identity.connections.remove' | 'teams.identity.connections.test.start' | 'teams.identity.workos.adminPortalLink.create' | 'teams.identity.workos.reconcile' | 'teams.identity.workos.connection.set')[];
         };
         candidates: {
             connectionId: string;
@@ -4154,7 +4243,6 @@ export type TeamsActionResultById = {
         connection: {
             v: 1;
             id: string;
-            teamId: string;
             provider: {
                 id: string;
                 kind: 'oidc' | 'workos_sso' | 'github_app_identity';
@@ -4192,7 +4280,6 @@ export type TeamsActionResultById = {
             firstEnabledAt: number | null;
             revision: number;
             state: 'needs_attention' | 'disabled' | 'unavailable' | 'prohibited' | 'not_configured' | 'setting_up' | 'connected';
-            allowedActions: ('teams.identity.connections.settings.update' | 'teams.identity.connections.enable' | 'teams.identity.connections.disable' | 'teams.identity.connections.remove' | 'teams.identity.connections.test.start' | 'teams.identity.workos.adminPortalLink.create' | 'teams.identity.workos.reconcile' | 'teams.identity.workos.connection.set')[];
             lastObservation: {
                 v: 1;
                 kind: 'oidc';
@@ -4216,6 +4303,8 @@ export type TeamsActionResultById = {
             } | null;
             createdAt: number;
             updatedAt: number;
+            teamId: string;
+            allowedActions: ('teams.identity.connections.settings.update' | 'teams.identity.connections.enable' | 'teams.identity.connections.disable' | 'teams.identity.connections.remove' | 'teams.identity.connections.test.start' | 'teams.identity.workos.adminPortalLink.create' | 'teams.identity.workos.reconcile' | 'teams.identity.workos.connection.set')[];
         };
     };
     readonly "teams.externalGroupBindings.list": {

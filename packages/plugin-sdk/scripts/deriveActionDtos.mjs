@@ -15,6 +15,9 @@ const flags = ts.TypeFormatFlags.NoTruncation | ts.TypeFormatFlags.UseStructural
   | ts.TypeFormatFlags.UseSingleQuotesForStringLiteralType;
 
 const supportBindings = [
+  // Host finding author values share the existing Action-result DTO projection.
+  ['usage/coach/coachFinding.ts', 'UsageCoachFinding'],
+  ['usage/coach/coachFinding.ts', 'UsageCoachEvaluation'],
   ['plugins/contributions/jsonSchema.ts', 'PluginJsonSchemaV2'],
   ['plugins/contributions/publicTypes.ts', 'PluginPolicyExpressionV2'],
   // Public barrel exports remain roots even when schema inference inlines their use.
@@ -32,9 +35,6 @@ const supportBindings = [
   ['sessions/metadata/runtimeDescriptorV1.ts', 'PortableRuntimeDescriptorV1', 'PluginActionWorkflowPortableRuntimeDescriptorV1'],
   ...['WorkflowSessionAuthoringSelection', 'WorkflowStepExecutionSelection', 'WorkflowStep', 'WorkflowFailurePolicy', 'WorkflowItemExecutionMode', 'WorkflowEvaluatorHistoryMode', 'WorkflowParallelBranch', 'WorkflowRepetition', 'WorkflowBlock', 'WorkflowIngressBlock'].map(name => ['workflows/workflowV1.ts', name, `PluginAction${name}V1`]),
   ['actions/actionSpecs.ts', 'PluginInvocableActionSpec', 'ActionSpec'],
-  ...['EntityDragItemV1', 'EntityDragScopeV1', 'EntityDragKindV1', 'EntityDropAdmissionV1', 'EntityDropEffectV1', 'EntityDropPreviewV1', 'EntityDropReasonV1', 'EntityDropOutcomeV1'].map(name => ['plugins/ui/entityDragDrop.ts', name]),
-  ...['PluginUiReadEntityDragItemRequestV1', 'PluginUiUpdateEntityDragDropRequestV1', 'PluginUiUpdateEntityDragDropResultV1', 'PluginUiWatchEntityDragDropRequestV1', 'PluginUiEntityDragDropStateV1', 'PluginUiEntityDropDestinationV1'].map(name => ['plugins/ui/entityDragDropHost.ts', name]),
-  ...['PluginUiWidgetAreaRequestV1', 'PluginUiWidgetAreaResultV1', 'PluginUiWidgetAreaOperationV1'].map(name => ['plugins/ui/widgetArea.ts', name]),
   ['sessions/presentation/currentSessionPresentationV1.ts', 'SessionCompanionPresentationAuthorItemRefV1', 'SessionCompanionPresentationItem'],
   ['sessions/presentation/currentSessionPresentationV1.ts', 'CurrentSessionPresentationAuthorIntentV1', 'CurrentSessionPresentationIntentV1'],
 ];
@@ -82,6 +82,10 @@ function selectSchemaRows(protocol, keys, readSource) {
       return found ? property(found.path, found.node, key) : null;
     }
     if (ts.isCallExpression(node) && node.expression.getText(source(path)) === 'Object.freeze') return property(path, node.arguments[0], key);
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'lazyDefinition') {
+      const create = node.arguments[0];
+      if (create && ts.isArrowFunction(create) && !ts.isBlock(create.body)) return property(path, create.body, key);
+    }
     if (!ts.isObjectLiteralExpression(node)) return null;
     // Object spreads use ordinary last-write semantics.
     for (const member of [...node.properties].reverse()) {
@@ -163,6 +167,37 @@ function selectSchemaRows(protocol, keys, readSource) {
   };
   for (const path of specPaths) {
     const visit = node => {
+      // Scope adapters may construct rows by passing a literal Action id to
+      // a helper. Resolve only its keyed schema maps, without evaluating the
+      // helper's runtime metadata or duplicating the family's schema owner.
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)
+        && node.arguments.length === 1 && ts.isStringLiteral(node.arguments[0])) {
+        const key = node.arguments[0].text;
+        const helper = source(path).statements.find(statement => ts.isFunctionDeclaration(statement)
+          && statement.name?.text === node.expression.text && statement.body);
+        const parameter = helper?.parameters.length === 1 && ts.isIdentifier(helper.parameters[0].name)
+          ? helper.parameters[0].name.text : null;
+        if (parameter && keys.includes(key) && !selected.has(key)) {
+          for (const statement of helper.body?.statements ?? []) {
+            if (!ts.isReturnStatement(statement) || !statement.expression) continue;
+            const row = unwrapped(statement.expression);
+            if (!ts.isObjectLiteralExpression(row)) continue;
+            const id = row.properties.find(member => member.name?.text === 'id');
+            const idExpression = id && (ts.isShorthandPropertyAssignment(id) ? id.name
+              : ts.isPropertyAssignment(id) ? id.initializer : undefined);
+            if (!idExpression || !ts.isIdentifier(idExpression) || idExpression.text !== parameter) continue;
+            const keyed = name => {
+              const field = property(path, row, name);
+              if (!field || !ts.isElementAccessExpression(field.node)
+                || !ts.isIdentifier(field.node.argumentExpression)
+                || field.node.argumentExpression.text !== parameter) return null;
+              return property(field.path, field.node.expression, key);
+            };
+            const input = keyed('inputSchema'), output = keyed('outputSchema');
+            if (input && output) selected.set(key, [input, output]);
+          }
+        }
+      }
       // Some canonical spec owners map declared Action ids through schema maps.
       // Resolve those maps by the actual id, never by evaluating runtime specs.
       if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === 'map') {
@@ -223,11 +258,11 @@ const neutralImports = {
 const builtins = new Set(['Readonly', 'Record', 'Partial', 'Required', 'Pick', 'Omit', 'Exclude', 'Extract',
   'NonNullable', 'Array', 'ReadonlyArray', 'Promise', 'PropertyKey', 'Uint8Array', 'ArrayBuffer', 'Date']);
 
-export function readActionCatalog(repoRoot, recordInput = () => {}) {
+export function readActionCatalog(repoRoot, recordInput = () => {}, readSource = path => readFileSync(path, 'utf8')) {
   const sources = new Map();
   const source = path => {
     if (!sources.has(path)) {
-      const text = readFileSync(path, 'utf8');
+      const text = readSource(path);
       recordInput(path, text);
       sources.set(path, ts.createSourceFile(path, text, ts.ScriptTarget.ES2022, true));
     }
@@ -267,6 +302,7 @@ export function readActionCatalog(repoRoot, recordInput = () => {}) {
     if (ts.isArrayLiteralExpression(node)) return node.elements.flatMap(n => ts.isSpreadElement(n) ? evaluate(path, n.expression) : [evaluate(path, n)]);
     if (ts.isObjectLiteralExpression(node)) return Object.assign({}, ...node.properties.map(n => ts.isSpreadAssignment(n) ? evaluate(path, n.expression) : { [n.name.text]: evaluate(path, n.initializer) }));
     if (ts.isCallExpression(node) && node.expression.getText(source(path)) === 'Object.freeze') return evaluate(path, node.arguments[0]);
+    if (ts.isCallExpression(node) && node.expression.getText(source(path)) === 'Object.values') return Object.values(evaluate(path, node.arguments[0]));
     throw Error(`Unsupported Action catalog expression: ${node.getText(source(path))}`);
   };
   const protocol = resolve(repoRoot, 'packages/protocol/src');
@@ -282,17 +318,28 @@ export function readActionCatalog(repoRoot, recordInput = () => {}) {
     familyOwners, excluded: value(resolve(protocol, 'actions/pluginActionSurface.ts'), 'PLUGIN_SURFACE_EXCLUSION_REASONS') };
 }
 
-function createDerivationHost() {
+function createDerivationHost(inputSnapshot) {
   const options = { strict: true, skipLibCheck: true, target: ts.ScriptTarget.ES2022,
     module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler,
     // Match Protocol's ambient contract. Imported declarations still resolve;
     // unrelated application @types must not inflate every family or its input identity.
     types: ['node'] };
   const host = ts.createCompilerHost(options);
-  const read = host.readFile.bind(host);
+  const read = inputSnapshot ? path => inputSnapshot.get(resolve(path)) : host.readFile.bind(host);
   const parse = host.getSourceFile.bind(host);
   const sources = new Map();
   const session = { options, host, read, inputs: new Map(), overlays: new Map(), metrics: null };
+  if (inputSnapshot) {
+    const directories = new Set();
+    for (const path of inputSnapshot.keys()) {
+      for (let directory = dirname(path); !directories.has(directory); directory = dirname(directory)) {
+        directories.add(directory);
+        if (dirname(directory) === directory) break;
+      }
+    }
+    host.fileExists = path => session.overlays.has(path) || inputSnapshot.has(resolve(path));
+    host.directoryExists = path => directories.has(resolve(path));
+  }
   host.readFile = path => {
     if (session.overlays.has(path)) return session.overlays.get(path);
     const text = session.inputs.get(path) ?? read(path);
@@ -318,6 +365,31 @@ function createDerivationHost() {
     return source;
   };
   return session;
+}
+
+// Resolve the complete canonical compiler closure once, without constructing a
+// checker. Families may replace schema overlays, but never reread live inputs.
+// Include resolution metadata and imported declarations as well as Protocol text.
+export function captureActionSchemaInputs(repoRoot) {
+  const { options } = createDerivationHost();
+  const host = ts.createCompilerHost(options);
+  const inputs = new Map();
+  const read = host.readFile.bind(host);
+  host.readFile = path => {
+    const key = resolve(path);
+    if (!inputs.has(key)) inputs.set(key, read(path));
+    return inputs.get(key);
+  };
+  readActionCatalog(repoRoot, () => {}, host.readFile);
+  const protocol = resolve(repoRoot, 'packages/protocol/src');
+  const roots = ['actions/actionSpecs.ts', ...supportBindings.map(([path]) => path),
+    ...uiBindings.map(([path]) => path), ...Object.values(neutralImports)]
+    .map(path => resolve(protocol, path)).filter(host.fileExists);
+  ts.createProgram([...new Set(roots)], options, host);
+  for (const path of ['identity.ts', 'scm/projections.ts']) {
+    host.readFile(resolve(repoRoot, 'packages/plugin-sdk/src', path));
+  }
+  return new Map([...inputs].filter(([, text]) => text !== undefined));
 }
 
 function deriveProgram({ repoRoot, keys, bindings, extraNames = [], extraInputNames = [] }, session = createDerivationHost()) {
@@ -372,6 +444,10 @@ function deriveProgram({ repoRoot, keys, bindings, extraNames = [], extraInputNa
         }
       }
       const statements = full.statements.flatMap(statement => {
+        if (ts.isImportDeclaration(statement) && statement.importClause?.namedBindings
+          && ts.isNamespaceImport(statement.importClause.namedBindings)) {
+          return needed.has(statement.importClause.namedBindings.name.text) ? [statement.getText(full)] : [];
+        }
         if (ts.isImportDeclaration(statement) && statement.importClause?.namedBindings && ts.isNamedImports(statement.importClause.namedBindings)) {
           const elements = statement.importClause.namedBindings.elements.filter(n => needed.has(n.name.text));
           if (!elements.length) return [];
@@ -389,8 +465,8 @@ function deriveProgram({ repoRoot, keys, bindings, extraNames = [], extraInputNa
     bindings = bindings.map(([, name, out, input]) => ['actions/actionDtoDerivation.ts', name, out, input]);
   }
   // Reuse only unchanged ASTs through the shared compiler host. Each
-  // family still gets its own checker and virtual schemas; source bytes are
-  // read/fenced afresh, so a changed overlay or imported file is never reused.
+  // family still gets its own checker and virtual schemas. Immutable input
+  // bytes stay shared; a changed virtual overlay is parsed afresh.
   const programStart = performance.now();
   const program = ts.createProgram([...new Set(bindings.map(([path]) => resolve(protocol, path)))], options, host);
   const checker = program.getTypeChecker();
@@ -423,6 +499,13 @@ function deriveProgram({ repoRoot, keys, bindings, extraNames = [], extraInputNa
     if (file.parseDiagnostics.length) throw Error('Schema projection did not parse');
     const transformed = ts.transform(file.statements[0].type, [context => {
       const visit = node => {
+        if (ts.isMappedTypeNode(node)) {
+          const name = node.typeParameter.name.text;
+          const alreadyScoped = parameters.has(name);
+          parameters.add(name);
+          try { return ts.visitEachChild(node, visit, context); }
+          finally { if (!alreadyScoped) parameters.delete(name); }
+        }
         if (ts.isIntersectionTypeNode(node)) {
           const retained = node.types.filter(n => !/^(?:z\.core\.)?\$brand</u.test(n.getText(file)));
           if (retained.length !== node.types.length) return ts.visitNode(retained.length === 1 ? retained[0] : ts.factory.createIntersectionTypeNode(retained), visit);
@@ -587,9 +670,19 @@ async function worker(request) {
   } finally { rmSync(directory, { recursive: true, force: true }); }
 }
 
-export async function deriveActionDtoSchemas({ repoRoot, recordInput = () => {}, recordDigest = () => {}, onlyFamilies } = {}) {
+export async function deriveActionDtoSchemas({ repoRoot, recordInput = () => {}, recordDigest = () => {}, onlyFamilies,
+  inputSnapshot = captureActionSchemaInputs(repoRoot) } = {}) {
+  const directory = mkdtempSync(resolve(tmpdir(), 'happier-action-inputs-'));
+  try {
+    const inputSnapshotPath = resolve(directory, 'inputs.json');
+    writeFileSync(inputSnapshotPath, JSON.stringify([...inputSnapshot]));
+    return await deriveSnapshot({ repoRoot, recordInput, recordDigest, onlyFamilies, inputSnapshot, inputSnapshotPath });
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+}
+
+async function deriveSnapshot({ repoRoot, recordInput, recordDigest, onlyFamilies, inputSnapshot, inputSnapshotPath }) {
   const protocol = resolve(repoRoot, 'packages/protocol/src');
-  const { families, familyOwners, excluded } = readActionCatalog(repoRoot, recordInput);
+  const { families, familyOwners, excluded } = readActionCatalog(repoRoot, recordInput, path => inputSnapshot.get(path));
   const selectedFamilies = Object.entries(families).flatMap(([family, ids]) => {
     if (onlyFamilies && !onlyFamilies.includes(family)) return [];
     const keys = ids.filter(id => !Object.hasOwn(excluded, id));
@@ -610,7 +703,7 @@ export async function deriveActionDtoSchemas({ repoRoot, recordInput = () => {},
     const hosts = Math.min(cores, Math.ceil(requests.length / cores));
     const perHost = Math.ceil(requests.length / hosts);
     for (let index = 0; index < requests.length; index += perHost) {
-      const batch = await worker({ repoRoot, requests: requests.slice(index, index + perHost) });
+      const batch = await worker({ repoRoot, inputSnapshotPath, requests: requests.slice(index, index + perHost) });
       for (const [path, digest] of batch.inputDigests) recordDigest(path, digest);
       results.push(...batch.results);
     }
@@ -654,7 +747,7 @@ export async function deriveActionDtoSchemas({ repoRoot, recordInput = () => {},
   }
   if (!onlyFamilies) {
     const start = performance.now();
-    const support = consume('support', await worker({ repoRoot, bindings: [...supportBindings, ...uiBindings], extraNames: [...dependencies], extraInputNames: [...inputDependencies] }),
+    const support = consume('support', await worker({ repoRoot, inputSnapshotPath, bindings: [...supportBindings, ...uiBindings], extraNames: [...dependencies], extraInputNames: [...inputDependencies] }),
       performance.now() - start);
     for (const name of dependencies) {
       const renamed = [...supportBindings, ...uiBindings].find(([, canonical]) => canonical === name)?.[2] ?? name;
@@ -690,8 +783,7 @@ export async function deriveActionDtoSchemas({ repoRoot, recordInput = () => {},
   return { outputs, metrics };
 }
 
-function deriveFamilyBatch({ repoRoot, requests }) {
-  const session = createDerivationHost();
+function deriveFamilyBatch({ repoRoot, requests }, session) {
   const inputDigests = new Map();
   const results = requests.map(request => {
     const start = performance.now();
@@ -707,5 +799,7 @@ function deriveFamilyBatch({ repoRoot, requests }) {
 
 if (process.argv[1] && resolve(process.argv[1]) === SCRIPT) {
   const request = JSON.parse(readFileSync(process.argv[2], 'utf8'));
-  writeFileSync(process.argv[3], JSON.stringify(request.requests ? deriveFamilyBatch(request) : deriveProgram(request)));
+  const snapshot = request.inputSnapshotPath ? new Map(JSON.parse(readFileSync(request.inputSnapshotPath, 'utf8'))) : undefined;
+  const session = createDerivationHost(snapshot);
+  writeFileSync(process.argv[3], JSON.stringify(request.requests ? deriveFamilyBatch(request, session) : deriveProgram(request, session)));
 }

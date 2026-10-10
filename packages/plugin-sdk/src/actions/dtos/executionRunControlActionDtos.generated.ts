@@ -451,7 +451,7 @@ export type ExecutionRunControlActionInputById = {
             agentTargetKey: string;
             providerConnectionId: string;
             modelId: string;
-        } | undefined;
+        } | null | undefined;
         teamCredentialModel?: {
             kind: 'team_credential_provider_model';
             resourceId: string;
@@ -1041,7 +1041,7 @@ export type ExecutionRunControlActionInputById = {
                 agentTargetKey: string;
                 providerConnectionId: string;
                 modelId: string;
-            } | undefined;
+            } | null | undefined;
             teamCredentialModel?: {
                 kind: 'team_credential_provider_model';
                 resourceId: string;
@@ -1236,6 +1236,59 @@ export type ExecutionRunControlActionInputById = {
                     modelId?: string | undefined;
                     reasoningEffort?: string | undefined;
                 } | undefined;
+                resolvedSelection?: {
+                    source: 'inherited' | 'explicit' | 'independent' | 'retained';
+                    modelSelection?: {
+                        agentTargetKey: string;
+                        providerConnectionId: null;
+                        modelId: string;
+                    } | {
+                        agentTargetKey: string;
+                        providerConnectionId: string;
+                        modelId: string;
+                    } | undefined;
+                    teamCredentialModel?: {
+                        kind: 'team_credential_provider_model';
+                        resourceId: string;
+                        teamId: string;
+                        expectedResourceRevision: number;
+                        agentTargetKey: string;
+                        modelId: string;
+                        deliveryMode: 'brokered' | 'direct';
+                    } | undefined;
+                    modelId?: string | undefined;
+                    connectedServices?: {
+                        v: 2;
+                        bindingsByServiceId?: Record<string, {
+                            source: 'native';
+                        } | {
+                            source: 'connected';
+                            selection: 'group';
+                            groupId: string;
+                            profileId?: string | undefined;
+                        } | {
+                            source: 'connected';
+                            profileId: string;
+                            selection?: 'profile' | undefined;
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'direct';
+                            disclosedMember: {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'brokered';
+                            disclosedMember?: undefined;
+                        }> | undefined;
+                    } | null | undefined;
+                } | undefined;
                 turnInFlight?: boolean | undefined;
                 inputTurns?: {
                     occurrenceId: string;
@@ -1382,6 +1435,59 @@ export type ExecutionRunControlActionResultById = {
             modelId?: string | undefined;
             reasoningEffort?: string | undefined;
         } | undefined;
+        resolvedSelection?: {
+            source: 'inherited' | 'explicit' | 'independent' | 'retained';
+            modelSelection?: {
+                agentTargetKey: string;
+                providerConnectionId: null;
+                modelId: string;
+            } | {
+                agentTargetKey: string;
+                providerConnectionId: string;
+                modelId: string;
+            } | undefined;
+            teamCredentialModel?: {
+                kind: 'team_credential_provider_model';
+                resourceId: string;
+                teamId: string;
+                expectedResourceRevision: number;
+                agentTargetKey: string;
+                modelId: string;
+                deliveryMode: 'brokered' | 'direct';
+            } | undefined;
+            modelId?: string | undefined;
+            connectedServices?: {
+                v: 2;
+                bindingsByServiceId: Record<string, {
+                    source: 'native';
+                } | {
+                    source: 'connected';
+                    selection: 'group';
+                    groupId: string;
+                    profileId?: string | undefined;
+                } | {
+                    source: 'connected';
+                    selection: 'profile';
+                    profileId: string;
+                } | {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'direct';
+                    disclosedMember: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                } | {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'brokered';
+                    disclosedMember?: undefined;
+                }>;
+            } | null | undefined;
+        } | undefined;
         wait?: {
             ok: true;
             status: 'succeeded' | 'failed' | 'cancelled' | 'timeout';
@@ -1430,6 +1536,59 @@ export type ExecutionRunControlActionResultById = {
                     requestedConfiguration?: {
                         modelId?: string | undefined;
                         reasoningEffort?: string | undefined;
+                    } | undefined;
+                    resolvedSelection?: {
+                        source: 'inherited' | 'explicit' | 'independent' | 'retained';
+                        modelSelection?: {
+                            agentTargetKey: string;
+                            providerConnectionId: null;
+                            modelId: string;
+                        } | {
+                            agentTargetKey: string;
+                            providerConnectionId: string;
+                            modelId: string;
+                        } | undefined;
+                        teamCredentialModel?: {
+                            kind: 'team_credential_provider_model';
+                            resourceId: string;
+                            teamId: string;
+                            expectedResourceRevision: number;
+                            agentTargetKey: string;
+                            modelId: string;
+                            deliveryMode: 'brokered' | 'direct';
+                        } | undefined;
+                        modelId?: string | undefined;
+                        connectedServices?: {
+                            v: 2;
+                            bindingsByServiceId: Record<string, {
+                                source: 'native';
+                            } | {
+                                source: 'connected';
+                                selection: 'group';
+                                groupId: string;
+                                profileId?: string | undefined;
+                            } | {
+                                source: 'connected';
+                                selection: 'profile';
+                                profileId: string;
+                            } | {
+                                source: 'team_resource';
+                                resourceId: string;
+                                deliveryMode: 'direct';
+                                disclosedMember: {
+                                    service: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    accountId: string;
+                                };
+                            } | {
+                                source: 'team_resource';
+                                resourceId: string;
+                                deliveryMode: 'brokered';
+                                disclosedMember?: undefined;
+                            }>;
+                        } | null | undefined;
                     } | undefined;
                     turnInFlight?: boolean | undefined;
                     inputTurns?: {
@@ -1640,6 +1799,59 @@ export type ExecutionRunControlActionResultById = {
                         modelId?: string | undefined;
                         reasoningEffort?: string | undefined;
                     } | undefined;
+                    resolvedSelection?: {
+                        source: 'inherited' | 'explicit' | 'independent' | 'retained';
+                        modelSelection?: {
+                            agentTargetKey: string;
+                            providerConnectionId: null;
+                            modelId: string;
+                        } | {
+                            agentTargetKey: string;
+                            providerConnectionId: string;
+                            modelId: string;
+                        } | undefined;
+                        teamCredentialModel?: {
+                            kind: 'team_credential_provider_model';
+                            resourceId: string;
+                            teamId: string;
+                            expectedResourceRevision: number;
+                            agentTargetKey: string;
+                            modelId: string;
+                            deliveryMode: 'brokered' | 'direct';
+                        } | undefined;
+                        modelId?: string | undefined;
+                        connectedServices?: {
+                            v: 2;
+                            bindingsByServiceId: Record<string, {
+                                source: 'native';
+                            } | {
+                                source: 'connected';
+                                selection: 'group';
+                                groupId: string;
+                                profileId?: string | undefined;
+                            } | {
+                                source: 'connected';
+                                selection: 'profile';
+                                profileId: string;
+                            } | {
+                                source: 'team_resource';
+                                resourceId: string;
+                                deliveryMode: 'direct';
+                                disclosedMember: {
+                                    service: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    accountId: string;
+                                };
+                            } | {
+                                source: 'team_resource';
+                                resourceId: string;
+                                deliveryMode: 'brokered';
+                                disclosedMember?: undefined;
+                            }>;
+                        } | null | undefined;
+                    } | undefined;
                     turnInFlight?: boolean | undefined;
                     inputTurns?: {
                         occurrenceId: string;
@@ -1848,6 +2060,59 @@ export type ExecutionRunControlActionResultById = {
                     requestedConfiguration?: {
                         modelId?: string | undefined;
                         reasoningEffort?: string | undefined;
+                    } | undefined;
+                    resolvedSelection?: {
+                        source: 'inherited' | 'explicit' | 'independent' | 'retained';
+                        modelSelection?: {
+                            agentTargetKey: string;
+                            providerConnectionId: null;
+                            modelId: string;
+                        } | {
+                            agentTargetKey: string;
+                            providerConnectionId: string;
+                            modelId: string;
+                        } | undefined;
+                        teamCredentialModel?: {
+                            kind: 'team_credential_provider_model';
+                            resourceId: string;
+                            teamId: string;
+                            expectedResourceRevision: number;
+                            agentTargetKey: string;
+                            modelId: string;
+                            deliveryMode: 'brokered' | 'direct';
+                        } | undefined;
+                        modelId?: string | undefined;
+                        connectedServices?: {
+                            v: 2;
+                            bindingsByServiceId: Record<string, {
+                                source: 'native';
+                            } | {
+                                source: 'connected';
+                                selection: 'group';
+                                groupId: string;
+                                profileId?: string | undefined;
+                            } | {
+                                source: 'connected';
+                                selection: 'profile';
+                                profileId: string;
+                            } | {
+                                source: 'team_resource';
+                                resourceId: string;
+                                deliveryMode: 'direct';
+                                disclosedMember: {
+                                    service: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    accountId: string;
+                                };
+                            } | {
+                                source: 'team_resource';
+                                resourceId: string;
+                                deliveryMode: 'brokered';
+                                disclosedMember?: undefined;
+                            }>;
+                        } | null | undefined;
                     } | undefined;
                     turnInFlight?: boolean | undefined;
                     inputTurns?: {
@@ -2061,6 +2326,59 @@ export type ExecutionRunControlActionResultById = {
                     requestedConfiguration?: {
                         modelId?: string | undefined;
                         reasoningEffort?: string | undefined;
+                    } | undefined;
+                    resolvedSelection?: {
+                        source: 'inherited' | 'explicit' | 'independent' | 'retained';
+                        modelSelection?: {
+                            agentTargetKey: string;
+                            providerConnectionId: null;
+                            modelId: string;
+                        } | {
+                            agentTargetKey: string;
+                            providerConnectionId: string;
+                            modelId: string;
+                        } | undefined;
+                        teamCredentialModel?: {
+                            kind: 'team_credential_provider_model';
+                            resourceId: string;
+                            teamId: string;
+                            expectedResourceRevision: number;
+                            agentTargetKey: string;
+                            modelId: string;
+                            deliveryMode: 'brokered' | 'direct';
+                        } | undefined;
+                        modelId?: string | undefined;
+                        connectedServices?: {
+                            v: 2;
+                            bindingsByServiceId: Record<string, {
+                                source: 'native';
+                            } | {
+                                source: 'connected';
+                                selection: 'group';
+                                groupId: string;
+                                profileId?: string | undefined;
+                            } | {
+                                source: 'connected';
+                                selection: 'profile';
+                                profileId: string;
+                            } | {
+                                source: 'team_resource';
+                                resourceId: string;
+                                deliveryMode: 'direct';
+                                disclosedMember: {
+                                    service: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    accountId: string;
+                                };
+                            } | {
+                                source: 'team_resource';
+                                resourceId: string;
+                                deliveryMode: 'brokered';
+                                disclosedMember?: undefined;
+                            }>;
+                        } | null | undefined;
                     } | undefined;
                     turnInFlight?: boolean | undefined;
                     inputTurns?: {
@@ -2283,6 +2601,59 @@ export type ExecutionRunControlActionResultById = {
                 modelId?: string | undefined;
                 reasoningEffort?: string | undefined;
             } | undefined;
+            resolvedSelection?: {
+                source: 'inherited' | 'explicit' | 'independent' | 'retained';
+                modelSelection?: {
+                    agentTargetKey: string;
+                    providerConnectionId: null;
+                    modelId: string;
+                } | {
+                    agentTargetKey: string;
+                    providerConnectionId: string;
+                    modelId: string;
+                } | undefined;
+                teamCredentialModel?: {
+                    kind: 'team_credential_provider_model';
+                    resourceId: string;
+                    teamId: string;
+                    expectedResourceRevision: number;
+                    agentTargetKey: string;
+                    modelId: string;
+                    deliveryMode: 'brokered' | 'direct';
+                } | undefined;
+                modelId?: string | undefined;
+                connectedServices?: {
+                    v: 2;
+                    bindingsByServiceId: Record<string, {
+                        source: 'native';
+                    } | {
+                        source: 'connected';
+                        selection: 'group';
+                        groupId: string;
+                        profileId?: string | undefined;
+                    } | {
+                        source: 'connected';
+                        selection: 'profile';
+                        profileId: string;
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'direct';
+                        disclosedMember: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
+                        disclosedMember?: undefined;
+                    }>;
+                } | null | undefined;
+            } | undefined;
             turnInFlight?: boolean | undefined;
             inputTurns?: {
                 occurrenceId: string;
@@ -2481,6 +2852,59 @@ export type ExecutionRunControlActionResultById = {
             requestedConfiguration?: {
                 modelId?: string | undefined;
                 reasoningEffort?: string | undefined;
+            } | undefined;
+            resolvedSelection?: {
+                source: 'inherited' | 'explicit' | 'independent' | 'retained';
+                modelSelection?: {
+                    agentTargetKey: string;
+                    providerConnectionId: null;
+                    modelId: string;
+                } | {
+                    agentTargetKey: string;
+                    providerConnectionId: string;
+                    modelId: string;
+                } | undefined;
+                teamCredentialModel?: {
+                    kind: 'team_credential_provider_model';
+                    resourceId: string;
+                    teamId: string;
+                    expectedResourceRevision: number;
+                    agentTargetKey: string;
+                    modelId: string;
+                    deliveryMode: 'brokered' | 'direct';
+                } | undefined;
+                modelId?: string | undefined;
+                connectedServices?: {
+                    v: 2;
+                    bindingsByServiceId: Record<string, {
+                        source: 'native';
+                    } | {
+                        source: 'connected';
+                        selection: 'group';
+                        groupId: string;
+                        profileId?: string | undefined;
+                    } | {
+                        source: 'connected';
+                        selection: 'profile';
+                        profileId: string;
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'direct';
+                        disclosedMember: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
+                        disclosedMember?: undefined;
+                    }>;
+                } | null | undefined;
             } | undefined;
             turnInFlight?: boolean | undefined;
             inputTurns?: {
@@ -2794,6 +3218,59 @@ export type ExecutionRunControlActionResultById = {
                     modelId?: string | undefined;
                     reasoningEffort?: string | undefined;
                 } | undefined;
+                resolvedSelection?: {
+                    source: 'inherited' | 'explicit' | 'independent' | 'retained';
+                    modelSelection?: {
+                        agentTargetKey: string;
+                        providerConnectionId: null;
+                        modelId: string;
+                    } | {
+                        agentTargetKey: string;
+                        providerConnectionId: string;
+                        modelId: string;
+                    } | undefined;
+                    teamCredentialModel?: {
+                        kind: 'team_credential_provider_model';
+                        resourceId: string;
+                        teamId: string;
+                        expectedResourceRevision: number;
+                        agentTargetKey: string;
+                        modelId: string;
+                        deliveryMode: 'brokered' | 'direct';
+                    } | undefined;
+                    modelId?: string | undefined;
+                    connectedServices?: {
+                        v: 2;
+                        bindingsByServiceId: Record<string, {
+                            source: 'native';
+                        } | {
+                            source: 'connected';
+                            selection: 'group';
+                            groupId: string;
+                            profileId?: string | undefined;
+                        } | {
+                            source: 'connected';
+                            selection: 'profile';
+                            profileId: string;
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'direct';
+                            disclosedMember: {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'brokered';
+                            disclosedMember?: undefined;
+                        }>;
+                    } | null | undefined;
+                } | undefined;
                 turnInFlight?: boolean | undefined;
                 inputTurns?: {
                     occurrenceId: string;
@@ -3003,6 +3480,59 @@ export type ExecutionRunControlActionResultById = {
                     modelId?: string | undefined;
                     reasoningEffort?: string | undefined;
                 } | undefined;
+                resolvedSelection?: {
+                    source: 'inherited' | 'explicit' | 'independent' | 'retained';
+                    modelSelection?: {
+                        agentTargetKey: string;
+                        providerConnectionId: null;
+                        modelId: string;
+                    } | {
+                        agentTargetKey: string;
+                        providerConnectionId: string;
+                        modelId: string;
+                    } | undefined;
+                    teamCredentialModel?: {
+                        kind: 'team_credential_provider_model';
+                        resourceId: string;
+                        teamId: string;
+                        expectedResourceRevision: number;
+                        agentTargetKey: string;
+                        modelId: string;
+                        deliveryMode: 'brokered' | 'direct';
+                    } | undefined;
+                    modelId?: string | undefined;
+                    connectedServices?: {
+                        v: 2;
+                        bindingsByServiceId: Record<string, {
+                            source: 'native';
+                        } | {
+                            source: 'connected';
+                            selection: 'group';
+                            groupId: string;
+                            profileId?: string | undefined;
+                        } | {
+                            source: 'connected';
+                            selection: 'profile';
+                            profileId: string;
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'direct';
+                            disclosedMember: {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'brokered';
+                            disclosedMember?: undefined;
+                        }>;
+                    } | null | undefined;
+                } | undefined;
                 turnInFlight?: boolean | undefined;
                 inputTurns?: {
                     occurrenceId: string;
@@ -3211,6 +3741,59 @@ export type ExecutionRunControlActionResultById = {
                 requestedConfiguration?: {
                     modelId?: string | undefined;
                     reasoningEffort?: string | undefined;
+                } | undefined;
+                resolvedSelection?: {
+                    source: 'inherited' | 'explicit' | 'independent' | 'retained';
+                    modelSelection?: {
+                        agentTargetKey: string;
+                        providerConnectionId: null;
+                        modelId: string;
+                    } | {
+                        agentTargetKey: string;
+                        providerConnectionId: string;
+                        modelId: string;
+                    } | undefined;
+                    teamCredentialModel?: {
+                        kind: 'team_credential_provider_model';
+                        resourceId: string;
+                        teamId: string;
+                        expectedResourceRevision: number;
+                        agentTargetKey: string;
+                        modelId: string;
+                        deliveryMode: 'brokered' | 'direct';
+                    } | undefined;
+                    modelId?: string | undefined;
+                    connectedServices?: {
+                        v: 2;
+                        bindingsByServiceId: Record<string, {
+                            source: 'native';
+                        } | {
+                            source: 'connected';
+                            selection: 'group';
+                            groupId: string;
+                            profileId?: string | undefined;
+                        } | {
+                            source: 'connected';
+                            selection: 'profile';
+                            profileId: string;
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'direct';
+                            disclosedMember: {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'brokered';
+                            disclosedMember?: undefined;
+                        }>;
+                    } | null | undefined;
                 } | undefined;
                 turnInFlight?: boolean | undefined;
                 inputTurns?: {
@@ -3424,6 +4007,59 @@ export type ExecutionRunControlActionResultById = {
                 requestedConfiguration?: {
                     modelId?: string | undefined;
                     reasoningEffort?: string | undefined;
+                } | undefined;
+                resolvedSelection?: {
+                    source: 'inherited' | 'explicit' | 'independent' | 'retained';
+                    modelSelection?: {
+                        agentTargetKey: string;
+                        providerConnectionId: null;
+                        modelId: string;
+                    } | {
+                        agentTargetKey: string;
+                        providerConnectionId: string;
+                        modelId: string;
+                    } | undefined;
+                    teamCredentialModel?: {
+                        kind: 'team_credential_provider_model';
+                        resourceId: string;
+                        teamId: string;
+                        expectedResourceRevision: number;
+                        agentTargetKey: string;
+                        modelId: string;
+                        deliveryMode: 'brokered' | 'direct';
+                    } | undefined;
+                    modelId?: string | undefined;
+                    connectedServices?: {
+                        v: 2;
+                        bindingsByServiceId: Record<string, {
+                            source: 'native';
+                        } | {
+                            source: 'connected';
+                            selection: 'group';
+                            groupId: string;
+                            profileId?: string | undefined;
+                        } | {
+                            source: 'connected';
+                            selection: 'profile';
+                            profileId: string;
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'direct';
+                            disclosedMember: {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'brokered';
+                            disclosedMember?: undefined;
+                        }>;
+                    } | null | undefined;
                 } | undefined;
                 turnInFlight?: boolean | undefined;
                 inputTurns?: {

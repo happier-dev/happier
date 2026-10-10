@@ -80,6 +80,80 @@ export type McpServersActionInputById = {
                 } | null> | undefined;
             } | undefined;
         }[];
+    } | {
+        entries: {
+            entry: {
+                id: string;
+                name: string;
+                transport: 'stdio' | 'http' | 'sse';
+                env: Record<string, {
+                    t: 'literal';
+                    v: string;
+                } | {
+                    t: 'savedSecret';
+                    secretId: string;
+                }>;
+                createdAt: number;
+                updatedAt: number;
+                title?: string | undefined;
+                description?: string | undefined;
+                stdio?: {
+                    command: string;
+                    args: string[];
+                } | undefined;
+                remote?: {
+                    url: string;
+                    headers: Record<string, {
+                        t: 'literal';
+                        v: string;
+                    } | {
+                        t: 'savedSecret';
+                        secretId: string;
+                    }>;
+                } | undefined;
+            };
+            bindings: {
+                id: string;
+                serverId: string;
+                enabled: boolean;
+                target: {
+                    t: 'allMachines';
+                } | {
+                    t: 'machine';
+                    machineId: string;
+                } | {
+                    t: 'workspace';
+                    machineId: string;
+                    workspaceRoot: string;
+                };
+                createdAt: number;
+                updatedAt: number;
+                overrides?: {
+                    stdio?: {
+                        command?: string | undefined;
+                        args?: string[] | undefined;
+                    } | undefined;
+                    remote?: {
+                        url?: string | undefined;
+                        headersPatch?: Record<string, {
+                            t: 'literal';
+                            v: string;
+                        } | {
+                            t: 'savedSecret';
+                            secretId: string;
+                        } | null> | undefined;
+                    } | undefined;
+                    envPatch?: Record<string, {
+                        t: 'literal';
+                        v: string;
+                    } | {
+                        t: 'savedSecret';
+                        secretId: string;
+                    } | null> | undefined;
+                } | undefined;
+            }[];
+        }[];
+        expectedRevision: number | 'absent';
     };
     readonly "mcp.servers.update": {
         expectedRevision: number | 'absent';
@@ -322,10 +396,22 @@ export type McpServersActionInputById = {
     readonly "mcp.bindings.enable": {
         expectedRevision: number | 'absent';
         bindingId: string;
+        captureBefore?: boolean | undefined;
+        expectedEnabled?: boolean | undefined;
+        expectedScope?: {
+            serverId: string;
+            accountId: string;
+        } | undefined;
     };
     readonly "mcp.bindings.disable": {
         expectedRevision: number | 'absent';
         bindingId: string;
+        captureBefore?: boolean | undefined;
+        expectedEnabled?: boolean | undefined;
+        expectedScope?: {
+            serverId: string;
+            accountId: string;
+        } | undefined;
     };
     readonly "mcp.bindings.remove": {
         expectedRevision: number | 'absent';
@@ -425,79 +511,6 @@ export type McpServersActionResultById = {
         status: 'unavailable';
         reason: 'account-not-found' | 'account-inconsistent' | 'account-mode-mismatch' | 'encryption-material-unavailable' | 'invalid-stored-content' | 'invalid-reference' | 'unauthorized' | 'forbidden' | 'unsupported' | 'unreachable' | 'scope-retired' | 'cancelled' | 'source-version-conflict' | 'authority-not-confirmed';
     } | {
-        catalog: {
-            v: 1;
-            servers: {
-                id: string;
-                name: string;
-                transport: 'stdio' | 'http' | 'sse';
-                env: Record<string, {
-                    t: 'literal';
-                    v: string;
-                } | {
-                    t: 'savedSecret';
-                    secretId: string;
-                }>;
-                createdAt: number;
-                updatedAt: number;
-                title?: string | undefined;
-                description?: string | undefined;
-                stdio?: {
-                    command: string;
-                    args: string[];
-                } | undefined;
-                remote?: {
-                    url: string;
-                    headers: Record<string, {
-                        t: 'literal';
-                        v: string;
-                    } | {
-                        t: 'savedSecret';
-                        secretId: string;
-                    }>;
-                } | undefined;
-            }[];
-            bindings: {
-                id: string;
-                serverId: string;
-                enabled: boolean;
-                target: {
-                    t: 'allMachines';
-                } | {
-                    t: 'machine';
-                    machineId: string;
-                } | {
-                    t: 'workspace';
-                    machineId: string;
-                    workspaceRoot: string;
-                };
-                createdAt: number;
-                updatedAt: number;
-                overrides?: {
-                    stdio?: {
-                        command?: string | undefined;
-                        args?: string[] | undefined;
-                    } | undefined;
-                    remote?: {
-                        url?: string | undefined;
-                        headersPatch?: Record<string, {
-                            t: 'literal';
-                            v: string;
-                        } | {
-                            t: 'savedSecret';
-                            secretId: string;
-                        } | null> | undefined;
-                    } | undefined;
-                    envPatch?: Record<string, {
-                        t: 'literal';
-                        v: string;
-                    } | {
-                        t: 'savedSecret';
-                        secretId: string;
-                    } | null> | undefined;
-                } | undefined;
-            }[];
-        };
         revision: number | 'absent';
         authority: 'active' | 'inactive';
         diagnostics: {
@@ -505,49 +518,18 @@ export type McpServersActionResultById = {
             reason: 'invalid-stored-content' | 'unclassified-reference';
         }[];
         status: 'ready';
-        cleanup?: {
-            status: 'complete';
-        } | {
-            status: 'cleanup-pending';
-            reason: 'cancelled' | 'source-unavailable' | 'source-conflict' | 'history-incomplete';
-        } | undefined;
-    } | {
         catalog: {
             v: 1;
             servers: {
                 id: string;
                 name: string;
                 transport: 'stdio' | 'http' | 'sse';
-                env: Record<string, {
-                    t: 'literal';
-                    v: string;
-                } | {
-                    t: 'savedSecret';
-                    secretId: string;
-                }>;
                 createdAt: number;
                 updatedAt: number;
                 title?: string | undefined;
                 description?: string | undefined;
-                stdio?: {
-                    command: string;
-                    args: string[];
-                } | undefined;
-                remote?: {
-                    url: string;
-                    headers: Record<string, {
-                        t: 'literal';
-                        v: string;
-                    } | {
-                        t: 'savedSecret';
-                        secretId: string;
-                    }>;
-                } | undefined;
             }[];
             bindings: {
-                id: string;
-                serverId: string;
-                enabled: boolean;
                 target: {
                     t: 'allMachines';
                 } | {
@@ -558,33 +540,20 @@ export type McpServersActionResultById = {
                     machineId: string;
                     workspaceRoot: string;
                 };
+                serverId: string;
+                id: string;
                 createdAt: number;
                 updatedAt: number;
-                overrides?: {
-                    stdio?: {
-                        command?: string | undefined;
-                        args?: string[] | undefined;
-                    } | undefined;
-                    remote?: {
-                        url?: string | undefined;
-                        headersPatch?: Record<string, {
-                            t: 'literal';
-                            v: string;
-                        } | {
-                            t: 'savedSecret';
-                            secretId: string;
-                        } | null> | undefined;
-                    } | undefined;
-                    envPatch?: Record<string, {
-                        t: 'literal';
-                        v: string;
-                    } | {
-                        t: 'savedSecret';
-                        secretId: string;
-                    } | null> | undefined;
-                } | undefined;
+                enabled: boolean;
             }[];
         };
+        cleanup?: {
+            status: 'complete';
+        } | {
+            status: 'cleanup-pending';
+            reason: 'cancelled' | 'source-unavailable' | 'source-conflict' | 'history-incomplete';
+        } | undefined;
+    } | {
         revision: number | 'absent';
         authority: 'active' | 'inactive';
         diagnostics: {
@@ -592,6 +561,35 @@ export type McpServersActionResultById = {
             reason: 'invalid-stored-content' | 'unclassified-reference';
         }[];
         status: 'partial';
+        catalog: {
+            v: 1;
+            servers: {
+                id: string;
+                name: string;
+                transport: 'stdio' | 'http' | 'sse';
+                createdAt: number;
+                updatedAt: number;
+                title?: string | undefined;
+                description?: string | undefined;
+            }[];
+            bindings: {
+                target: {
+                    t: 'allMachines';
+                } | {
+                    t: 'machine';
+                    machineId: string;
+                } | {
+                    t: 'workspace';
+                    machineId: string;
+                    workspaceRoot: string;
+                };
+                serverId: string;
+                id: string;
+                createdAt: number;
+                updatedAt: number;
+                enabled: boolean;
+            }[];
+        };
         cleanup?: {
             status: 'complete';
         } | {
@@ -947,10 +945,6 @@ export type McpServersActionResultById = {
         reason?: string | undefined;
     };
     readonly "mcp.bindings.enable": {
-        status: 'updated';
-        revision: number;
-        cursor: number;
-    } | {
         status: 'conflict';
         revision: number;
     } | {
@@ -959,12 +953,22 @@ export type McpServersActionResultById = {
     } | {
         status: 'account-not-found' | 'account-inconsistent' | 'account-mode-mismatch' | 'invalid-stored-content' | 'invalid-reference';
         reason?: string | undefined;
+    } | {
+        status: 'updated';
+        revision: number;
+        cursor: number;
+        reversal?: {
+            scope: {
+                serverId: string;
+                accountId: string;
+            };
+            bindingId: string;
+            before: boolean;
+            applied: boolean;
+            revision: number;
+        } | undefined;
     };
     readonly "mcp.bindings.disable": {
-        status: 'updated';
-        revision: number;
-        cursor: number;
-    } | {
         status: 'conflict';
         revision: number;
     } | {
@@ -973,6 +977,20 @@ export type McpServersActionResultById = {
     } | {
         status: 'account-not-found' | 'account-inconsistent' | 'account-mode-mismatch' | 'invalid-stored-content' | 'invalid-reference';
         reason?: string | undefined;
+    } | {
+        status: 'updated';
+        revision: number;
+        cursor: number;
+        reversal?: {
+            scope: {
+                serverId: string;
+                accountId: string;
+            };
+            bindingId: string;
+            before: boolean;
+            applied: boolean;
+            revision: number;
+        } | undefined;
     };
     readonly "mcp.bindings.remove": {
         status: 'updated';

@@ -7,18 +7,22 @@ describe('Action SDK method-name validation', () => {
   it('validates only the canonical API-public projection', () => {
     const publicActionIds = new Set<string>(PUBLIC_ACTION_IDS);
 
-    // Present-user Actions reach the interactive signed root, not the public API
-    // projection, so their SDK method path is never validated here.
+    // Plugin installation is excluded from API-token ingress. Permission
+    // decisions are public for tokens with the explicit Approve grant.
+    expect(() => assertPublicActionSdkMethodNames([
+      { id: 'plugins.install', bindings: { sdkMethod: 'execute' } },
+    ], publicActionIds)).not.toThrow();
+
     expect(() => assertPublicActionSdkMethodNames([
       { id: 'session.permission.respond', bindings: { sdkMethod: 'execute' } },
-    ], publicActionIds)).not.toThrow();
+    ], publicActionIds)).toThrow(/invalid SDK method path/u);
 
     expect(() => assertPublicActionSdkMethodNames([
       { id: 'teams.directory.sourceSetup.list', bindings: { sdkMethod: 'execute' } },
     ], publicActionIds)).toThrow(/invalid SDK method path/u);
 
     expect(() => assertPublicActionSdkMethodNames([
-      { id: 'session.permission.respond', bindings: { sdkMethod: 'session.open' } },
+      { id: 'plugins.install', bindings: { sdkMethod: 'session.open' } },
       { id: 'teams.directory.sourceSetup.list', bindings: { sdkMethod: 'session.open' } },
     ], publicActionIds)).not.toThrow();
 

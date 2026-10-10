@@ -3,6 +3,12 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ActionExecutorDeps, ActionPluginCaller } from './executor/types.js';
 import { createActionExecutor } from './actionExecutor.js';
 import { getActionSpec, listActionSpecs } from './actionSpecs.js';
+import { normalizeUsageQuery } from '../inputs/usageQuery.js';
+import { resolveUsagePageAggregation } from '../usage/resolveUsagePageAggregation.js';
+import { UsageAnalyticsQueryResponseSchema } from '../usage/usageAnalyticsContracts.js';
+import { UsageFileResultSchema } from '../usage/usageExport.js';
+import { decodeBase64 } from '../crypto/base64.js';
+import { PluginUiResourceSubscriptionRequestV1Schema } from '../plugins/ui/subscriptions.js';
 
 function pluginCaller(
   pluginId: string,
@@ -28,6 +34,38 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
 }
 
 describe('createActionExecutor plugin caller policy', () => {
+  it('permits selected-field export under safe-read caller admission while retaining the Resource ceiling', async () => {
+    const query = normalizeUsageQuery({});
+    const accounting = UsageAnalyticsQueryResponseSchema.parse({ v: 1, totals: { eventCount: 1,
+      tokens: { input: 10, output: 2, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 12 },
+      cost: { reportedUsd: 1, estimatedUsd: 0, currency: 'USD' } } });
+    const executor = createExecutor({ usageActions: { query: async request => resolveUsagePageAggregation({ queries: request.queries,
+      accounting: [{ query, value: accounting, status: 'available', asOfMs: 150 }] }) } });
+    const request = { query, format: 'json', fields: ['totals'] };
+    const permitted = await executor.execute('usage.export', request, { surface: 'plugin', actionCaller: pluginCaller('example.usage') });
+    expect(permitted.ok).toBe(true);
+    const file = UsageFileResultSchema.parse(permitted.ok ? permitted.result : undefined);
+    expect(JSON.parse(new TextDecoder().decode(decodeBase64(file.base64))).accounting).toEqual({ totals: accounting.totals });
+    expect(await executor.execute('usage.export', request, { surface: 'plugin' })).toMatchObject({ ok: false, errorCode: 'plugin_action_caller_required' });
+    const stale = createExecutor({ usageActions: { query: async () => ({ ok: false, errorCode: 'credential_scope_retired', error: 'credential_scope_retired' }) } });
+    expect(await stale.execute('usage.export', request, { surface: 'plugin', actionCaller: pluginCaller('example.usage') }))
+      .toMatchObject({ ok: false, errorCode: 'credential_scope_retired' });
+    expect(PluginUiResourceSubscriptionRequestV1Schema.safeParse({ resource: { hostRead: 'usage.export', input: request }, subscriptionId: 'export' }).success).toBe(false);
+  });
+  it('enforces explicit caller policy on safe host reads in both prepare and execute', async () => {
+    const executor = createExecutor();
+    const context = { surface: 'plugin' as const };
+    const input = { queries: [{}] };
+    await expect(executor.prepare('usage.query', input, context)).resolves.toMatchObject({
+      kind: 'settled', result: { ok: false, errorCode: 'plugin_action_caller_required' },
+    });
+    await expect(executor.execute('usage.query', input, context)).resolves.toMatchObject({
+      ok: false, errorCode: 'plugin_action_caller_required',
+    });
+    await expect(executor.prepare('usage.query', input, { ...context,
+      actionCaller: { kind: 'plugin', pluginId: 'acme.author', contributionLocalId: 'surface' },
+    })).resolves.toMatchObject({ kind: 'ready' });
+  });
   it('keeps trusted-plugin Actions open while classifying every non-safe plugin Action', () => {
     for (const [actionId, requiredAuthority] of [
       ['plugins.scaffold', 'account_automation'],
@@ -60,38 +98,67 @@ describe('createActionExecutor plugin caller policy', () => {
     });
   });
 
-  it('rejects plugin uninstall automation before side effects and admits an interactive present user', async () => {
+  it('defers plugin uninstall until a present user approves, including interactive plugin requests', async () => {
     const pluginsDevLoopAction = vi.fn(async () => ({
       ok: true as const,
       kind: 'plugins_uninstall',
     }));
-    const executor = createExecutor({ pluginsDevLoopAction });
-
-    await expect(executor.execute('plugins.uninstall', {
-      pluginId: 'acme.author',
-    }, {
-      surface: 'plugin',
-      authority: 'account_automation',
-      actionCaller: pluginCaller('acme.author'),
-    })).resolves.toEqual({
-      ok: false,
-      errorCode: 'present_user_required',
-      error: 'present_user_required',
+    let storedRequest: Parameters<NonNullable<ActionExecutorDeps['approvalsCreate']>>[0]['request'] | null = null;
+    const approvalsCreate = vi.fn(async ({ request }: Parameters<NonNullable<ActionExecutorDeps['approvalsCreate']>>[0]) => {
+      storedRequest = request;
+      return { artifactId: 'uninstall-approval' };
     });
-    expect(pluginsDevLoopAction).not.toHaveBeenCalled();
+    const executor = createExecutor({
+      pluginsDevLoopAction, approvalsCreate,
+      approvalsGet: async () => storedRequest,
+      approvalsUpdate: async ({ request }) => {
+        storedRequest = request;
+        return { ok: true };
+      },
+      isApprovalExecutionOriginCurrent: async () => true,
+    });
 
     await expect(executor.execute('plugins.uninstall', {
       pluginId: 'acme.author',
     }, {
       surface: 'plugin',
-      authority: 'present_user',
-      actionCaller: pluginCaller('acme.author'),
+      serverId: 'server-1',
+      actionRequestId: 'uninstall-1',
+      authority: 'account_automation',
+      actionCaller: {
+        ...pluginCaller('acme.author'),
+        sourceCustody: { kind: 'development', registeredRootId: 'author-root-1' },
+      },
     })).resolves.toEqual({
       ok: true,
-      result: {
-        ok: true,
-        kind: 'plugins_uninstall',
+      result: { kind: 'approval_request_created', artifactId: 'uninstall-approval', actionId: 'plugins.uninstall' },
+    });
+    expect(pluginsDevLoopAction).not.toHaveBeenCalled();
+    expect(approvalsCreate).toHaveBeenCalledWith(expect.objectContaining({ request: expect.objectContaining({
+      status: 'open', actionId: 'plugins.uninstall', actionArgs: { pluginId: 'acme.author' },
+    }) }));
+
+    await expect(executor.execute('approval.request.decide', {
+      artifactId: 'uninstall-approval', decision: 'approve',
+    }, {
+      surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+    })).resolves.toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+    expect(pluginsDevLoopAction).toHaveBeenCalledTimes(1);
+
+    await expect(executor.execute('plugins.uninstall', {
+      pluginId: 'acme.author',
+    }, {
+      surface: 'plugin',
+      serverId: 'server-1',
+      actionRequestId: 'interactive-uninstall-1',
+      authority: 'present_user',
+      actionCaller: {
+        ...pluginCaller('acme.author'),
+        sourceCustody: { kind: 'development', registeredRootId: 'author-root-1' },
       },
+    })).resolves.toEqual({
+      ok: true,
+      result: { kind: 'approval_request_created', artifactId: 'uninstall-approval', actionId: 'plugins.uninstall' },
     });
     expect(pluginsDevLoopAction).toHaveBeenCalledTimes(1);
   });

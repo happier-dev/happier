@@ -9,10 +9,59 @@ export type SettingsDeclarationsActionInputById = {
     };
     readonly "settings.get": {
         anchor: string;
+        target?: {
+            kind: 'home';
+            serverId: string;
+        } | {
+            kind: 'team';
+            serverId: string;
+            teamId: string;
+        } | {
+            kind: 'team_identity_connection';
+            serverId: string;
+            teamId: string;
+            connectionId: string;
+        } | undefined;
+        includeVersion?: true | undefined;
     };
     readonly "settings.set": {
         anchor: string;
         value: unknown;
+        target?: {
+            kind: 'home';
+            serverId: string;
+        } | {
+            kind: 'team';
+            serverId: string;
+            teamId: string;
+        } | {
+            kind: 'team_identity_connection';
+            serverId: string;
+            teamId: string;
+            connectionId: string;
+        } | undefined;
+        expectedSettingsVersion?: number | undefined;
+        reversal?: {
+            kind: 'capture';
+        } | {
+            scope: {
+                serverId: string;
+                accountId: string;
+            };
+            beforeVersion: number;
+            appliedVersion: number;
+            before: {
+                unset: true;
+            } | {
+                value: string | number | boolean | null;
+            };
+            applied: {
+                unset: true;
+            } | {
+                value: string | number | boolean | null;
+            };
+            kind: 'restore';
+        } | undefined;
     };
     readonly "settings.invoke": {
         anchor: string;
@@ -55,6 +104,8 @@ export type SettingsDeclarationsActionResultById = {
             sensitive: boolean;
             description?: string | undefined;
             storageScope?: 'account' | 'local' | undefined;
+            targetKinds?: ('home' | 'team' | 'team_identity_connection')[] | undefined;
+            targetRequired?: boolean | undefined;
             allowedValues?: (string | number | boolean | null)[] | undefined;
             operation?: {
                 actionId: 'settings.invoke';
@@ -69,15 +120,60 @@ export type SettingsDeclarationsActionResultById = {
         value: string | number | boolean | readonly JsonValue[] | {
             readonly [key: string]: JsonValue;
         } | null;
+        settingsVersion?: number | undefined;
     } | {
         anchor: string;
         unset: true;
+        settingsVersion?: number | undefined;
     };
     readonly "settings.set": {
         anchor: string;
         value: string | number | boolean | readonly JsonValue[] | {
             readonly [key: string]: JsonValue;
         } | null;
+        settingsVersion?: number | undefined;
+        reversal?: {
+            scope: {
+                serverId: string;
+                accountId: string;
+            };
+            beforeVersion: number;
+            appliedVersion: number;
+            before: {
+                unset: true;
+            } | {
+                value: string | number | boolean | null;
+            };
+            applied: {
+                unset: true;
+            } | {
+                value: string | number | boolean | null;
+            };
+        } | undefined;
+        reversalUnavailableReason?: 'no_change' | undefined;
+    } | {
+        anchor: string;
+        unset: true;
+        settingsVersion?: number | undefined;
+        reversal?: {
+            scope: {
+                serverId: string;
+                accountId: string;
+            };
+            beforeVersion: number;
+            appliedVersion: number;
+            before: {
+                unset: true;
+            } | {
+                value: string | number | boolean | null;
+            };
+            applied: {
+                unset: true;
+            } | {
+                value: string | number | boolean | null;
+            };
+        } | undefined;
+        reversalUnavailableReason?: 'no_change' | undefined;
     };
     readonly "settings.invoke": {
         anchor: string;

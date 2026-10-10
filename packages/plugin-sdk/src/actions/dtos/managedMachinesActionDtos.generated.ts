@@ -2,7 +2,7 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue, PluginJsonValueV2 } from '../../identity.js';
-import type { PluginActionWorkflowBlockV1, PluginJsonSchemaV2 } from './pluginActionDtoSupport.generated.js';
+import type { InputPredicate, PluginActionWorkflowBlockV1, PluginJsonSchemaV2 } from './pluginActionDtoSupport.generated.js';
 
 export type ManagedMachinesActionInputById = {
     readonly "machines.provisioners.list": {
@@ -127,6 +127,7 @@ export type ManagedMachinesActionInputById = {
                     pluginId: string;
                     localId: string;
                 };
+                definitionId?: string | undefined;
             };
             title?: string | undefined;
             creationKey?: string | undefined;
@@ -252,6 +253,14 @@ export type ManagedMachinesActionInputById = {
                 baseRef: string | null;
                 branchMode?: 'new' | 'existing' | undefined;
             } | null | undefined;
+            managedCreation?: {
+                homeId: string;
+                managedId: string;
+                controller: {
+                    machineId: string;
+                    installationId: string;
+                };
+            } | undefined;
             memoryEnabled?: boolean | undefined;
             promptStack?: {
                 id: string;
@@ -914,6 +923,11 @@ export type ManagedMachinesActionInputById = {
                             inputType?: {
                                 pluginId: string;
                                 localId: string;
+                            } | {
+                                hostType: 'usageQuery';
+                                field?: 'session' | 'period' | undefined;
+                            } | {
+                                hostType: 'session' | 'workspace';
                             } | undefined;
                         }[];
                         defaults: {
@@ -923,6 +937,7 @@ export type ManagedMachinesActionInputById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                definitionId?: string | undefined;
                             } | null | undefined;
                             modelSelection?: {
                                 v: 1;
@@ -1103,6 +1118,7 @@ export type ManagedMachinesActionInputById = {
                                         pluginId: string;
                                         localId: string;
                                     };
+                                    definitionId?: string | undefined;
                                 };
                                 modelSelection?: {
                                     v: 1;
@@ -1417,6 +1433,20 @@ export type ManagedMachinesActionInputById = {
                         key: string;
                         fallback: string;
                     };
+                    description?: string | {
+                        key: string;
+                        fallback: string;
+                    } | undefined;
+                    preview?: {
+                        resource: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accessibilityLabel?: string | {
+                            key: string;
+                            fallback: string;
+                        } | undefined;
+                    } | undefined;
                 } | undefined;
                 location?: {
                     id: string;
@@ -1424,6 +1454,7 @@ export type ManagedMachinesActionInputById = {
                         key: string;
                         fallback: string;
                     };
+                    countryCode?: string | undefined;
                 } | undefined;
                 duration?: {
                     id: string;
@@ -1434,6 +1465,20 @@ export type ManagedMachinesActionInputById = {
                     afterMs: number;
                 } | undefined;
                 monthlyCapStatus?: 'unknown' | 'none' | undefined;
+            } | undefined;
+            environment?: {
+                toolchain?: {
+                    adapterId: string;
+                    config: string;
+                } | undefined;
+                setupScript?: string | undefined;
+                secretRefs?: {
+                    v: 1;
+                    bindings: Record<string, {
+                        ref: string;
+                        revision?: number | undefined;
+                    }>;
+                } | undefined;
             } | undefined;
             preset?: {
                 id: string;
@@ -1478,6 +1523,7 @@ export type ManagedMachinesActionInputById = {
                     pluginId: string;
                     localId: string;
                 };
+                definitionId?: string | undefined;
             };
             title?: string | undefined;
             creationKey?: string | undefined;
@@ -1603,6 +1649,14 @@ export type ManagedMachinesActionInputById = {
                 baseRef: string | null;
                 branchMode?: 'new' | 'existing' | undefined;
             } | null | undefined;
+            managedCreation?: {
+                homeId: string;
+                managedId: string;
+                controller: {
+                    machineId: string;
+                    installationId: string;
+                };
+            } | undefined;
             memoryEnabled?: boolean | undefined;
             promptStack?: {
                 id: string;
@@ -2265,6 +2319,11 @@ export type ManagedMachinesActionInputById = {
                             inputType?: {
                                 pluginId: string;
                                 localId: string;
+                            } | {
+                                hostType: 'usageQuery';
+                                field?: 'session' | 'period' | undefined;
+                            } | {
+                                hostType: 'session' | 'workspace';
                             } | undefined;
                         }[];
                         defaults: {
@@ -2274,6 +2333,7 @@ export type ManagedMachinesActionInputById = {
                                     pluginId: string;
                                     localId: string;
                                 };
+                                definitionId?: string | undefined;
                             } | null | undefined;
                             modelSelection?: {
                                 v: 1;
@@ -2454,6 +2514,7 @@ export type ManagedMachinesActionInputById = {
                                         pluginId: string;
                                         localId: string;
                                     };
+                                    definitionId?: string | undefined;
                                 };
                                 modelSelection?: {
                                     v: 1;
@@ -2768,6 +2829,20 @@ export type ManagedMachinesActionInputById = {
                         key: string;
                         fallback: string;
                     };
+                    description?: string | {
+                        key: string;
+                        fallback: string;
+                    } | undefined;
+                    preview?: {
+                        resource: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accessibilityLabel?: string | {
+                            key: string;
+                            fallback: string;
+                        } | undefined;
+                    } | undefined;
                 } | undefined;
                 location?: {
                     id: string;
@@ -2775,6 +2850,7 @@ export type ManagedMachinesActionInputById = {
                         key: string;
                         fallback: string;
                     };
+                    countryCode?: string | undefined;
                 } | undefined;
                 duration?: {
                     id: string;
@@ -2785,6 +2861,20 @@ export type ManagedMachinesActionInputById = {
                     afterMs: number;
                 } | undefined;
                 monthlyCapStatus?: 'unknown' | 'none' | undefined;
+            } | undefined;
+            environment?: {
+                toolchain?: {
+                    adapterId: string;
+                    config: string;
+                } | undefined;
+                setupScript?: string | undefined;
+                secretRefs?: {
+                    v: 1;
+                    bindings: Record<string, {
+                        ref: string;
+                        revision?: number | undefined;
+                    }>;
+                } | undefined;
             } | undefined;
             preset?: {
                 id: string;
@@ -2818,6 +2908,17 @@ export type ManagedMachinesActionInputById = {
         expectedIntentRevision: number;
         homeId: string;
         managedId: string;
+    };
+    readonly "machines.managed.setup.skip": {
+        expectedIntentRevision: number;
+        homeId: string;
+        managedId: string;
+    };
+    readonly "machines.environment.apply": {
+        homeId: string;
+        machineId: string;
+        presetId: string;
+        presetRevision: number;
     };
     readonly "machines.managed.power.set": {
         intent: 'stop' | 'start' | 'suspend' | 'resume';
@@ -2958,6 +3059,19 @@ export type ManagedMachinesActionResultById = {
                     power?: string | undefined;
                     rebuild?: string | undefined;
                 };
+                kindTitle?: string | {
+                    key: string;
+                    fallback: string;
+                } | undefined;
+                description?: string | {
+                    key: string;
+                    fallback: string;
+                } | undefined;
+                nativeDurationInput?: {
+                    path: string;
+                    unit: 'milliseconds' | 'seconds';
+                } | undefined;
+                resourceIdPath?: string | undefined;
                 bootstrapTransport?: {
                     kind: 'native';
                     exec: string;
@@ -2966,16 +3080,49 @@ export type ManagedMachinesActionResultById = {
                 bootstrapCredential?: {
                     kind: 'ssh' | 'native-token';
                 } | undefined;
+                credentialPurposeRequirements?: {
+                    purpose: string;
+                    optionalWhen: InputPredicate;
+                }[] | undefined;
                 reconciliation?: {
                     nativeOperationSchema: PluginJsonSchemaV2;
                     action: string;
+                    cleanup?: string | undefined;
+                    continueAcquire?: true | undefined;
                 } | undefined;
             };
+            credentialPurposes?: {
+                purpose: {
+                    consumer: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    purpose: string;
+                };
+                options: {
+                    value: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                    label: string;
+                }[];
+            }[] | undefined;
         }[];
+        controller?: {
+            machineId: string;
+            installationId: string;
+        } | undefined;
     };
     readonly "machines.provisioners.check": {
         available: boolean;
         code?: string | undefined;
+        status?: string | {
+            key: string;
+            fallback: string;
+        } | undefined;
         prerequisites?: {
             requirement: {
                 kind: 'managedDependency';
@@ -3027,6 +3174,17 @@ export type ManagedMachinesActionResultById = {
                     fallback: string;
                 } | undefined;
             }[] | undefined;
+            retention?: {
+                supportedIntents: ('stop' | 'delete' | 'start' | 'suspend' | 'resume' | 'rebuild')[];
+                finiteOnly?: boolean | undefined;
+                nativeExpiry?: {
+                    kind: 'unused';
+                    afterMs: number;
+                } | {
+                    kind: 'deadline';
+                    at: number;
+                } | undefined;
+            } | undefined;
             nativeFacts?: {
                 size?: {
                     id: string;
@@ -3044,6 +3202,20 @@ export type ManagedMachinesActionResultById = {
                         key: string;
                         fallback: string;
                     };
+                    description?: string | {
+                        key: string;
+                        fallback: string;
+                    } | undefined;
+                    preview?: {
+                        resource: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accessibilityLabel?: string | {
+                            key: string;
+                            fallback: string;
+                        } | undefined;
+                    } | undefined;
                 } | undefined;
                 location?: {
                     id: string;
@@ -3051,6 +3223,7 @@ export type ManagedMachinesActionResultById = {
                         key: string;
                         fallback: string;
                     };
+                    countryCode?: string | undefined;
                 } | undefined;
                 duration?: {
                     id: string;
@@ -3067,7 +3240,7 @@ export type ManagedMachinesActionResultById = {
                 reviewedEffectDigest: string;
                 effects: {
                     scope: 'host' | 'child';
-                    kind: 'image' | 'user' | 'initialize' | 'build' | 'compose' | 'feature' | 'mount' | 'network' | 'environment' | 'lifecycle';
+                    kind: 'image' | 'environment' | 'user' | 'initialize' | 'build' | 'compose' | 'feature' | 'mount' | 'network' | 'lifecycle';
                     title: string;
                     details: string[];
                 }[];
@@ -3267,6 +3440,20 @@ export type ManagedMachinesActionResultById = {
                             key: string;
                             fallback: string;
                         };
+                        description?: string | {
+                            key: string;
+                            fallback: string;
+                        } | undefined;
+                        preview?: {
+                            resource: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accessibilityLabel?: string | {
+                                key: string;
+                                fallback: string;
+                            } | undefined;
+                        } | undefined;
                     } | undefined;
                     location?: {
                         id: string;
@@ -3274,6 +3461,7 @@ export type ManagedMachinesActionResultById = {
                             key: string;
                             fallback: string;
                         };
+                        countryCode?: string | undefined;
                     } | undefined;
                     duration?: {
                         id: string;
@@ -3285,11 +3473,46 @@ export type ManagedMachinesActionResultById = {
                     } | undefined;
                     monthlyCapStatus?: 'unknown' | 'none' | undefined;
                 } | undefined;
+                environment?: {
+                    toolchain?: {
+                        adapterId: string;
+                        config: string;
+                    } | undefined;
+                    setupScript?: string | undefined;
+                    secretRefs?: {
+                        v: 1;
+                        bindings: Record<string, {
+                            ref: string;
+                            revision?: number | undefined;
+                        }>;
+                    } | undefined;
+                } | undefined;
                 preset?: {
                     id: string;
                     revision: number;
                     name?: string | undefined;
                 } | undefined;
+            } | undefined;
+            environmentSetup?: {
+                environment: {
+                    toolchain?: {
+                        adapterId: string;
+                        config: string;
+                    } | undefined;
+                    setupScript?: string | undefined;
+                    secretRefs?: {
+                        v: 1;
+                        bindings: Record<string, {
+                            ref: string;
+                            revision?: number | undefined;
+                        }>;
+                    } | undefined;
+                };
+                state: 'succeeded' | 'failed' | 'pending' | 'running' | 'skipped';
+                operation?: {
+                    operationId: string;
+                } | undefined;
+                errorCode?: string | undefined;
             } | undefined;
             nativeOperationRef?: {
                 value: PluginJsonValueV2;
@@ -3587,6 +3810,20 @@ export type ManagedMachinesActionResultById = {
                         key: string;
                         fallback: string;
                     };
+                    description?: string | {
+                        key: string;
+                        fallback: string;
+                    } | undefined;
+                    preview?: {
+                        resource: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accessibilityLabel?: string | {
+                            key: string;
+                            fallback: string;
+                        } | undefined;
+                    } | undefined;
                 } | undefined;
                 location?: {
                     id: string;
@@ -3594,6 +3831,7 @@ export type ManagedMachinesActionResultById = {
                         key: string;
                         fallback: string;
                     };
+                    countryCode?: string | undefined;
                 } | undefined;
                 duration?: {
                     id: string;
@@ -3605,11 +3843,46 @@ export type ManagedMachinesActionResultById = {
                 } | undefined;
                 monthlyCapStatus?: 'unknown' | 'none' | undefined;
             } | undefined;
+            environment?: {
+                toolchain?: {
+                    adapterId: string;
+                    config: string;
+                } | undefined;
+                setupScript?: string | undefined;
+                secretRefs?: {
+                    v: 1;
+                    bindings: Record<string, {
+                        ref: string;
+                        revision?: number | undefined;
+                    }>;
+                } | undefined;
+            } | undefined;
             preset?: {
                 id: string;
                 revision: number;
                 name?: string | undefined;
             } | undefined;
+        } | undefined;
+        environmentSetup?: {
+            environment: {
+                toolchain?: {
+                    adapterId: string;
+                    config: string;
+                } | undefined;
+                setupScript?: string | undefined;
+                secretRefs?: {
+                    v: 1;
+                    bindings: Record<string, {
+                        ref: string;
+                        revision?: number | undefined;
+                    }>;
+                } | undefined;
+            };
+            state: 'succeeded' | 'failed' | 'pending' | 'running' | 'skipped';
+            operation?: {
+                operationId: string;
+            } | undefined;
+            errorCode?: string | undefined;
         } | undefined;
         nativeOperationRef?: {
             value: PluginJsonValueV2;
@@ -3918,6 +4191,20 @@ export type ManagedMachinesActionResultById = {
                             key: string;
                             fallback: string;
                         };
+                        description?: string | {
+                            key: string;
+                            fallback: string;
+                        } | undefined;
+                        preview?: {
+                            resource: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accessibilityLabel?: string | {
+                                key: string;
+                                fallback: string;
+                            } | undefined;
+                        } | undefined;
                     } | undefined;
                     location?: {
                         id: string;
@@ -3925,6 +4212,7 @@ export type ManagedMachinesActionResultById = {
                             key: string;
                             fallback: string;
                         };
+                        countryCode?: string | undefined;
                     } | undefined;
                     duration?: {
                         id: string;
@@ -3936,11 +4224,46 @@ export type ManagedMachinesActionResultById = {
                     } | undefined;
                     monthlyCapStatus?: 'unknown' | 'none' | undefined;
                 } | undefined;
+                environment?: {
+                    toolchain?: {
+                        adapterId: string;
+                        config: string;
+                    } | undefined;
+                    setupScript?: string | undefined;
+                    secretRefs?: {
+                        v: 1;
+                        bindings: Record<string, {
+                            ref: string;
+                            revision?: number | undefined;
+                        }>;
+                    } | undefined;
+                } | undefined;
                 preset?: {
                     id: string;
                     revision: number;
                     name?: string | undefined;
                 } | undefined;
+            } | undefined;
+            environmentSetup?: {
+                environment: {
+                    toolchain?: {
+                        adapterId: string;
+                        config: string;
+                    } | undefined;
+                    setupScript?: string | undefined;
+                    secretRefs?: {
+                        v: 1;
+                        bindings: Record<string, {
+                            ref: string;
+                            revision?: number | undefined;
+                        }>;
+                    } | undefined;
+                };
+                state: 'succeeded' | 'failed' | 'pending' | 'running' | 'skipped';
+                operation?: {
+                    operationId: string;
+                } | undefined;
+                errorCode?: string | undefined;
             } | undefined;
             nativeOperationRef?: {
                 value: PluginJsonValueV2;
@@ -4252,6 +4575,20 @@ export type ManagedMachinesActionResultById = {
                             key: string;
                             fallback: string;
                         };
+                        description?: string | {
+                            key: string;
+                            fallback: string;
+                        } | undefined;
+                        preview?: {
+                            resource: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accessibilityLabel?: string | {
+                                key: string;
+                                fallback: string;
+                            } | undefined;
+                        } | undefined;
                     } | undefined;
                     location?: {
                         id: string;
@@ -4259,6 +4596,7 @@ export type ManagedMachinesActionResultById = {
                             key: string;
                             fallback: string;
                         };
+                        countryCode?: string | undefined;
                     } | undefined;
                     duration?: {
                         id: string;
@@ -4270,11 +4608,46 @@ export type ManagedMachinesActionResultById = {
                     } | undefined;
                     monthlyCapStatus?: 'unknown' | 'none' | undefined;
                 } | undefined;
+                environment?: {
+                    toolchain?: {
+                        adapterId: string;
+                        config: string;
+                    } | undefined;
+                    setupScript?: string | undefined;
+                    secretRefs?: {
+                        v: 1;
+                        bindings: Record<string, {
+                            ref: string;
+                            revision?: number | undefined;
+                        }>;
+                    } | undefined;
+                } | undefined;
                 preset?: {
                     id: string;
                     revision: number;
                     name?: string | undefined;
                 } | undefined;
+            } | undefined;
+            environmentSetup?: {
+                environment: {
+                    toolchain?: {
+                        adapterId: string;
+                        config: string;
+                    } | undefined;
+                    setupScript?: string | undefined;
+                    secretRefs?: {
+                        v: 1;
+                        bindings: Record<string, {
+                            ref: string;
+                            revision?: number | undefined;
+                        }>;
+                    } | undefined;
+                };
+                state: 'succeeded' | 'failed' | 'pending' | 'running' | 'skipped';
+                operation?: {
+                    operationId: string;
+                } | undefined;
+                errorCode?: string | undefined;
             } | undefined;
             nativeOperationRef?: {
                 value: PluginJsonValueV2;
@@ -4392,6 +4765,379 @@ export type ManagedMachinesActionResultById = {
             waitForTerminal?: true | undefined;
             includeSetupReview?: true | undefined;
         } | undefined;
+    };
+    readonly "machines.managed.setup.skip": {
+        id: string;
+        homeId: string;
+        custodianAccountId: string;
+        launch: {
+            provider: {
+                pluginId: string;
+                localId: string;
+            };
+            schemaVersion: number;
+            name: string;
+            choices: PluginJsonValueV2;
+            credentials?: {
+                purpose: {
+                    consumer: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    purpose: string;
+                };
+                account: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+                configurationRevision?: string | null | undefined;
+            }[] | undefined;
+        };
+        controller: {
+            machineId: string;
+            installationId: string;
+        };
+        allocation: 'unsubmitted' | 'may-exist' | 'bound' | 'confirmed-absent';
+        creationState: 'active' | 'canceled' | 'retired';
+        desired: 'stop' | 'delete' | 'start' | 'suspend' | 'resume' | 'rebuild';
+        desiredWhen: 'now' | 'after-idle';
+        intentRevision: number;
+        retention: {
+            kind: 'until-delete';
+        } | {
+            kind: 'unused';
+            afterMs: number;
+            effect: 'stop' | 'delete';
+        } | {
+            kind: 'deadline';
+            at: number;
+            effect: 'stop' | 'delete';
+            interrupts: true;
+        };
+        wakeOnAcceptedMessage: boolean;
+        preset?: {
+            id: string;
+            revision: number;
+        } | undefined;
+        reviewedFacts?: {
+            launch: {
+                provider: {
+                    pluginId: string;
+                    localId: string;
+                };
+                schemaVersion: number;
+                name: string;
+                choices: PluginJsonValueV2;
+                credentials?: {
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    account: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                }[] | undefined;
+            };
+            controller: {
+                machineId: string;
+                installationId: string;
+            };
+            optionStatus: 'unavailable' | 'current' | 'loading';
+            billing: {
+                location: 'unknown' | 'local' | 'cloud';
+                stoppedBilling: 'unknown' | 'billed' | 'not-billed';
+                storageCharges?: {
+                    amount: string;
+                    currency: string;
+                    unit: string;
+                    source: string;
+                    observedAt: number;
+                    label?: string | {
+                        key: string;
+                        fallback: string;
+                    } | undefined;
+                }[] | undefined;
+            };
+            prerequisites: {
+                requirement: {
+                    kind: 'managedDependency';
+                    id: string | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                } | {
+                    kind: 'systemTool';
+                    id: string | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                };
+                status: 'unknown' | 'unavailable' | 'available';
+                reason?: string | undefined;
+                repairAction?: {
+                    action: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    input: PluginJsonValueV2;
+                } | undefined;
+            }[];
+            retentionCapabilities: {
+                supportedIntents: ('stop' | 'delete' | 'start' | 'suspend' | 'resume' | 'rebuild')[];
+                finiteOnly?: boolean | undefined;
+                nativeExpiry?: {
+                    kind: 'unused';
+                    afterMs: number;
+                } | {
+                    kind: 'deadline';
+                    at: number;
+                } | undefined;
+            };
+            retention: {
+                kind: 'until-delete';
+            } | {
+                kind: 'unused';
+                afterMs: number;
+                effect: 'stop' | 'delete';
+            } | {
+                kind: 'deadline';
+                at: number;
+                effect: 'stop' | 'delete';
+                interrupts: true;
+            };
+            wakeOnAcceptedMessage: boolean;
+            prices?: {
+                amount: string;
+                currency: string;
+                unit: string;
+                source: string;
+                observedAt: number;
+                label?: string | {
+                    key: string;
+                    fallback: string;
+                } | undefined;
+            }[] | undefined;
+            localResources?: {
+                observedAt: number;
+                availableCpuCores?: number | undefined;
+                availableMemoryBytes?: number | undefined;
+                availableDiskBytes?: number | undefined;
+            } | undefined;
+            nativeFacts?: {
+                size?: {
+                    id: string;
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                    };
+                    cpuCores?: number | undefined;
+                    memoryBytes?: number | undefined;
+                    diskBytes?: number | undefined;
+                } | undefined;
+                image?: {
+                    id: string;
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                    };
+                    description?: string | {
+                        key: string;
+                        fallback: string;
+                    } | undefined;
+                    preview?: {
+                        resource: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accessibilityLabel?: string | {
+                            key: string;
+                            fallback: string;
+                        } | undefined;
+                    } | undefined;
+                } | undefined;
+                location?: {
+                    id: string;
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                    };
+                    countryCode?: string | undefined;
+                } | undefined;
+                duration?: {
+                    id: string;
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                    };
+                    afterMs: number;
+                } | undefined;
+                monthlyCapStatus?: 'unknown' | 'none' | undefined;
+            } | undefined;
+            environment?: {
+                toolchain?: {
+                    adapterId: string;
+                    config: string;
+                } | undefined;
+                setupScript?: string | undefined;
+                secretRefs?: {
+                    v: 1;
+                    bindings: Record<string, {
+                        ref: string;
+                        revision?: number | undefined;
+                    }>;
+                } | undefined;
+            } | undefined;
+            preset?: {
+                id: string;
+                revision: number;
+                name?: string | undefined;
+            } | undefined;
+        } | undefined;
+        environmentSetup?: {
+            environment: {
+                toolchain?: {
+                    adapterId: string;
+                    config: string;
+                } | undefined;
+                setupScript?: string | undefined;
+                secretRefs?: {
+                    v: 1;
+                    bindings: Record<string, {
+                        ref: string;
+                        revision?: number | undefined;
+                    }>;
+                } | undefined;
+            };
+            state: 'succeeded' | 'failed' | 'pending' | 'running' | 'skipped';
+            operation?: {
+                operationId: string;
+            } | undefined;
+            errorCode?: string | undefined;
+        } | undefined;
+        nativeOperationRef?: {
+            value: PluginJsonValueV2;
+            contributionRef: {
+                pluginId: string;
+                localId: string;
+            };
+            schemaVersion: number;
+        } | undefined;
+        recovery?: {
+            reference: string;
+            reason: string;
+            consoleUrl?: string | undefined;
+        } | undefined;
+        bootstrapCredentialRef?: {
+            kind: 'shared_resource';
+            resourceId: string;
+        } | undefined;
+        resource?: {
+            contributionRef: {
+                pluginId: string;
+                localId: string;
+            };
+            schemaVersion: number;
+            value: PluginJsonValueV2;
+            devcontainerObservation?: {
+                nativeResourceId: string;
+                user: string;
+                workspaceFolder: string;
+                storage: {
+                    kind: 'bind';
+                    hostPath: string;
+                    childPath: string;
+                } | {
+                    kind: 'child';
+                    childPath: string;
+                };
+            } | undefined;
+        } | undefined;
+        devcontainerChild?: {
+            relation: {
+                managedMachineId: string;
+                managedMachineKind: 'devcontainer';
+                parentMachineId: string;
+            };
+            observation: {
+                nativeResourceId: string;
+                user: string;
+                workspaceFolder: string;
+                storage: {
+                    kind: 'bind';
+                    hostPath: string;
+                    childPath: string;
+                } | {
+                    kind: 'child';
+                    childPath: string;
+                };
+            };
+        } | undefined;
+        enrolledMachineId?: string | undefined;
+        desiredAfterMs?: number | undefined;
+        archivedAt?: number | undefined;
+        submittedNativeEffect?: {
+            intentRevision: number;
+            requestId: string;
+            intent: 'stop' | 'delete' | 'start' | 'suspend' | 'resume' | 'rebuild';
+            controller: {
+                machineId: string;
+                installationId: string;
+            };
+            reviewedEffectDigest?: string | undefined;
+        } | undefined;
+        observation?: {
+            observedAt: number;
+            availability: 'unavailable' | 'present' | 'absent';
+            power?: 'unknown' | 'running' | 'stopped' | 'suspended' | undefined;
+            storage?: 'unknown' | 'retained' | 'lost' | undefined;
+            daemon?: 'unknown' | 'connected' | 'disconnected' | undefined;
+            billing?: {
+                location: 'unknown' | 'local' | 'cloud';
+                stoppedBilling: 'unknown' | 'billed' | 'not-billed';
+                storageCharges?: {
+                    amount: string;
+                    currency: string;
+                    unit: string;
+                    source: string;
+                    observedAt: number;
+                    label?: string | {
+                        key: string;
+                        fallback: string;
+                    } | undefined;
+                }[] | undefined;
+            } | undefined;
+            prices?: {
+                amount: string;
+                currency: string;
+                unit: string;
+                source: string;
+                observedAt: number;
+                label?: string | {
+                    key: string;
+                    fallback: string;
+                } | undefined;
+            }[] | undefined;
+            nativeExpiry?: number | undefined;
+            reason?: string | undefined;
+        } | undefined;
+        cleanup?: {
+            disposition: 'unavailable' | 'pending';
+            reason: string;
+        } | undefined;
+    };
+    readonly "machines.environment.apply": {
+        operationId: string;
+        terminalId?: string | undefined;
     };
     readonly "machines.managed.power.set": {
         kind: 'accepted';
@@ -4609,6 +5355,20 @@ export type ManagedMachinesActionResultById = {
                         key: string;
                         fallback: string;
                     };
+                    description?: string | {
+                        key: string;
+                        fallback: string;
+                    } | undefined;
+                    preview?: {
+                        resource: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accessibilityLabel?: string | {
+                            key: string;
+                            fallback: string;
+                        } | undefined;
+                    } | undefined;
                 } | undefined;
                 location?: {
                     id: string;
@@ -4616,6 +5376,7 @@ export type ManagedMachinesActionResultById = {
                         key: string;
                         fallback: string;
                     };
+                    countryCode?: string | undefined;
                 } | undefined;
                 duration?: {
                     id: string;
@@ -4627,11 +5388,46 @@ export type ManagedMachinesActionResultById = {
                 } | undefined;
                 monthlyCapStatus?: 'unknown' | 'none' | undefined;
             } | undefined;
+            environment?: {
+                toolchain?: {
+                    adapterId: string;
+                    config: string;
+                } | undefined;
+                setupScript?: string | undefined;
+                secretRefs?: {
+                    v: 1;
+                    bindings: Record<string, {
+                        ref: string;
+                        revision?: number | undefined;
+                    }>;
+                } | undefined;
+            } | undefined;
             preset?: {
                 id: string;
                 revision: number;
                 name?: string | undefined;
             } | undefined;
+        } | undefined;
+        environmentSetup?: {
+            environment: {
+                toolchain?: {
+                    adapterId: string;
+                    config: string;
+                } | undefined;
+                setupScript?: string | undefined;
+                secretRefs?: {
+                    v: 1;
+                    bindings: Record<string, {
+                        ref: string;
+                        revision?: number | undefined;
+                    }>;
+                } | undefined;
+            };
+            state: 'succeeded' | 'failed' | 'pending' | 'running' | 'skipped';
+            operation?: {
+                operationId: string;
+            } | undefined;
+            errorCode?: string | undefined;
         } | undefined;
         nativeOperationRef?: {
             value: PluginJsonValueV2;
@@ -4977,6 +5773,20 @@ export type ManagedMachinesActionResultById = {
                         key: string;
                         fallback: string;
                     };
+                    description?: string | {
+                        key: string;
+                        fallback: string;
+                    } | undefined;
+                    preview?: {
+                        resource: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accessibilityLabel?: string | {
+                            key: string;
+                            fallback: string;
+                        } | undefined;
+                    } | undefined;
                 } | undefined;
                 location?: {
                     id: string;
@@ -4984,6 +5794,7 @@ export type ManagedMachinesActionResultById = {
                         key: string;
                         fallback: string;
                     };
+                    countryCode?: string | undefined;
                 } | undefined;
                 duration?: {
                     id: string;
@@ -4995,11 +5806,46 @@ export type ManagedMachinesActionResultById = {
                 } | undefined;
                 monthlyCapStatus?: 'unknown' | 'none' | undefined;
             } | undefined;
+            environment?: {
+                toolchain?: {
+                    adapterId: string;
+                    config: string;
+                } | undefined;
+                setupScript?: string | undefined;
+                secretRefs?: {
+                    v: 1;
+                    bindings: Record<string, {
+                        ref: string;
+                        revision?: number | undefined;
+                    }>;
+                } | undefined;
+            } | undefined;
             preset?: {
                 id: string;
                 revision: number;
                 name?: string | undefined;
             } | undefined;
+        } | undefined;
+        environmentSetup?: {
+            environment: {
+                toolchain?: {
+                    adapterId: string;
+                    config: string;
+                } | undefined;
+                setupScript?: string | undefined;
+                secretRefs?: {
+                    v: 1;
+                    bindings: Record<string, {
+                        ref: string;
+                        revision?: number | undefined;
+                    }>;
+                } | undefined;
+            };
+            state: 'succeeded' | 'failed' | 'pending' | 'running' | 'skipped';
+            operation?: {
+                operationId: string;
+            } | undefined;
+            errorCode?: string | undefined;
         } | undefined;
         nativeOperationRef?: {
             value: PluginJsonValueV2;
@@ -5296,6 +6142,20 @@ export type ManagedMachinesActionResultById = {
                         key: string;
                         fallback: string;
                     };
+                    description?: string | {
+                        key: string;
+                        fallback: string;
+                    } | undefined;
+                    preview?: {
+                        resource: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accessibilityLabel?: string | {
+                            key: string;
+                            fallback: string;
+                        } | undefined;
+                    } | undefined;
                 } | undefined;
                 location?: {
                     id: string;
@@ -5303,6 +6163,7 @@ export type ManagedMachinesActionResultById = {
                         key: string;
                         fallback: string;
                     };
+                    countryCode?: string | undefined;
                 } | undefined;
                 duration?: {
                     id: string;
@@ -5314,11 +6175,46 @@ export type ManagedMachinesActionResultById = {
                 } | undefined;
                 monthlyCapStatus?: 'unknown' | 'none' | undefined;
             } | undefined;
+            environment?: {
+                toolchain?: {
+                    adapterId: string;
+                    config: string;
+                } | undefined;
+                setupScript?: string | undefined;
+                secretRefs?: {
+                    v: 1;
+                    bindings: Record<string, {
+                        ref: string;
+                        revision?: number | undefined;
+                    }>;
+                } | undefined;
+            } | undefined;
             preset?: {
                 id: string;
                 revision: number;
                 name?: string | undefined;
             } | undefined;
+        } | undefined;
+        environmentSetup?: {
+            environment: {
+                toolchain?: {
+                    adapterId: string;
+                    config: string;
+                } | undefined;
+                setupScript?: string | undefined;
+                secretRefs?: {
+                    v: 1;
+                    bindings: Record<string, {
+                        ref: string;
+                        revision?: number | undefined;
+                    }>;
+                } | undefined;
+            };
+            state: 'succeeded' | 'failed' | 'pending' | 'running' | 'skipped';
+            operation?: {
+                operationId: string;
+            } | undefined;
+            errorCode?: string | undefined;
         } | undefined;
         nativeOperationRef?: {
             value: PluginJsonValueV2;

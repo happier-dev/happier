@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { computeWorkspaceSyncPolicyDigest } from '../sessions/control/handoff/workspaceSyncSchemas.js';
+import { PUBLIC_ACTION_INPUT_SCHEMAS, PLUGIN_ACTION_INPUT_SCHEMAS } from './actionSpecs.js';
 
 function createDeps(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutorDeps {
   return {
@@ -43,6 +44,34 @@ function createDeps(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutor
 }
 
 describe('createActionExecutor (session.handoff)', () => {
+  it('keeps public callers on the same no-copy policy and rejects contradictory workspace work', async () => {
+    const input = { sessionId: 'session_1', targetMachineId: 'target', stateTransfer: 'existing', workspaceAction: { kind: 'none' } };
+    const copying = { ...input, workspaceAction: { kind: 'copy_once', contentPolicy: {
+      v: 1, selection: 'git_worktree', extraIgnorePatterns: [], extraIncludePatterns: [],
+      policyDigest: computeWorkspaceSyncPolicyDigest({ v: 1, selection: 'git_worktree', extraIgnorePatterns: [], extraIncludePatterns: [] }),
+    } } };
+    for (const schema of [PUBLIC_ACTION_INPUT_SCHEMAS['session.handoff'], PLUGIN_ACTION_INPUT_SCHEMAS['session.handoff']]) {
+      expect(schema.parse(input)).toEqual(input);
+      expect(schema.safeParse(copying).success).toBe(false);
+      expect(schema.safeParse({ ...input, sourceMachineId: 'forged' }).success).toBe(false);
+    }
+    const executor = createActionExecutor(createDeps());
+    expect(await executor.execute('session.handoff', copying, { surface: 'ui', authority: 'present_user' })).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+  });
+
+  it('carries existing-state policy through the public Action and preserves target absence', async () => {
+    const sessionHandoffStart = vi.fn(async () => ({ ok: false as const, errorCode: 'existing_session_state_unavailable', error: 'Turn on session data transfer' }));
+    const executor = createActionExecutor(createDeps({
+      sessionHandoffStart,
+      sessionHandoffTargetReplacementApprovalPreflight: vi.fn(async () => ({ type: 'not_required' as const })),
+    }));
+    const result = await executor.execute('session.handoff', {
+      sessionId: 'session_1', targetMachineId: 'target', stateTransfer: 'existing', workspaceAction: { kind: 'none' },
+    }, { surface: 'ui', authority: 'present_user' });
+    expect(result).toEqual({ ok: false, errorCode: 'existing_session_state_unavailable', error: 'Turn on session data transfer' });
+    expect(sessionHandoffStart).toHaveBeenCalledWith(expect.objectContaining({ stateTransfer: 'existing' }));
+  });
+
   it('returns unsupported_action when the handoff dependency is unavailable', async () => {
     const deps = createDeps();
     const executor = createActionExecutor(deps);

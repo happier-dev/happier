@@ -22,8 +22,8 @@ describe('session.attention.set (ORC R-10)', () => {
     );
     expect(spec.inputSchema).toBe(SessionAttentionSetInputV1Schema);
     expect(spec.requiredAuthority).toBe('account_automation');
-    expect(spec.surfaces).toMatchObject({ ui: true, cli: true, voice: true, agent: true, mcp: false, plugin: false, api: true });
-    expect(isPluginSurfaceExcludedActionId(spec.id)).toBe(true);
+    expect(spec.surfaces).toMatchObject({ ui: true, cli: true, voice: true, agent: true, mcp: false, plugin: true, api: true });
+    expect(isPluginSurfaceExcludedActionId(spec.id)).toBe(false);
   });
 
   it('writes Settle as standing:false and snooze as remindAt through one port, with the exact Home', async () => {

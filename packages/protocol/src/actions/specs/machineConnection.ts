@@ -105,12 +105,13 @@ export const MACHINE_CONNECTION_ACTION_SPECS = [
       { path: 'port', title: 'SSH port', widget: 'text' }, { path: 'authMode', title: 'SSH authentication', widget: 'text' }, { path: 'identityFilePath', title: 'Identity file', widget: 'text' }] },
   },
   {
-    id: 'machines.pairing.create', title: 'Create another-computer pairing link',
+    id: 'machines.pairing.create', title: 'Create link to add another computer',
     description: 'Issue a short-lived Home pairing link through the trusted device enrollment lifecycle. Keep this client running until the computer joins.',
     safety: 'danger', sideEffectClass: 'danger', executionPlacement: 'client', placements: [], surfaces: clientSurfaces,
     bindings: { mcpToolName: 'machines_pairing_create' }, inputSchema: MachinePairingCreateInputSchema, outputSchema: MachinePairingCreateOutputSchema,
     projectObservationOutput: () => ({ redacted: true }),
     approvalResultCustody: 'live_only',
-    inputHints: { fields: [{ path: 'serverId', title: 'Home ID', widget: 'text', required: true }] },
+    inputHints: { description: 'Make a link that adds another computer to a Home. It works for a short time; keep this device open until the computer has joined.',
+      fields: [{ path: 'serverId', title: 'Home ID', widget: 'text', required: true }] },
   },
 ] as const satisfies readonly PreNormalizedActionSpec[];

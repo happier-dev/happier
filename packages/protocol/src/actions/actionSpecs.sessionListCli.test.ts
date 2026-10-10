@@ -3,6 +3,14 @@ import { describe, expect, it } from 'vitest';
 import { getActionSpec } from './actionSpecs.js';
 
 describe('session.list CLI projection', () => {
+  it('projects the friendly Bot facet into the ordinary canonical query', () => {
+    const spec = getActionSpec('session.list');
+    const caller = spec.cli?.inputSchema?.parse({ bot: 'bot', includeInactive: true });
+    expect(spec.cli?.bindInput?.(caller, { actionId: spec.id, invocationId: 'bot-list' })).toMatchObject({
+      query: { bot: 'bot', scope: 'my_work', includeInactive: true, audiences: [], tagIds: [] },
+    });
+    expect(spec.cli?.inputSchema?.safeParse({ bot: 'pinned' }).success).toBe(false);
+  });
   it('owns the nested and first-class spellings plus their CLI-only transport behavior', () => {
     const cli = getActionSpec('session.list').cli;
 

@@ -162,10 +162,15 @@ describe('Workflow per-run key admission', () => {
         parentRevision: 6, progress: { blockKind: 'wait', invocationPath: { blockId: 'wait-1' } } } });
     expect(await readAs(false).execute({ actionId: 'workflow.run.invocations.list', input: { runId }, context: {} }))
       .toEqual({ invocations: [index], parentRevision: 6 });
+    expect(await readAs(false).execute({ actionId: 'workflow.run.invocations.list', input: { runId, includeContent: true }, context: {} }))
+      .toMatchObject({ invocations: [index], parentRevision: 6, invocationDetails: [{ index,
+        parentRevision: 6, progress: { blockKind: 'wait', invocationPath: { blockId: 'wait-1' } } }] });
+    await expect(readAs(true).execute({ actionId: 'workflow.run.invocations.list', input: { runId, includeContent: true }, context: {} }))
+      .rejects.toMatchObject({ code: 'encryption_setup_required' });
     expect(await readAs(false).execute({ actionId: 'workflow.run.invocations.list', input: { runId, parentRecordId: rootId, limit: 1 }, context: {} }))
       .toEqual({ invocations: [index], parentRevision: 6, nextCursor: 'next-page' });
     expect(await readAs(false).execute({ actionId: 'workflow.run.invocations.list', input: { runId, parentRecordId: rootId, cursor: 'next-page' }, context: {} }))
       .toEqual({ invocations: [], parentRevision: 6 });
-    await expect(readAs(true).execute(request)).rejects.toMatchObject({ code: 'content_unavailable' });
+    await expect(readAs(true).execute(request)).rejects.toMatchObject({ code: 'encryption_setup_required' });
   });
 });

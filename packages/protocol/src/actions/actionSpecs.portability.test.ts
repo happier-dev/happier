@@ -23,6 +23,7 @@ describe('ActionSpec registry portability', () => {
   it('bundles the canonical schema closure without runtime crypto or Node dependencies', async () => {
     const source = fileURLToPath(new URL('./actionSpecs.ts', import.meta.url));
     const forbiddenModules: string[] = [];
+    const forbiddenImportChains: string[][] = [];
     await build({
       configFile: false,
       logLevel: 'silent',
@@ -47,6 +48,15 @@ describe('ActionSpec registry portability', () => {
               || id.endsWith('/machines/peer/mediation/tunnel/authorization.ts')
             ) {
               forbiddenModules.push(id);
+              const chain = [id];
+              let current = id;
+              while (current !== source) {
+                const importer = this.getModuleInfo(current)?.importers.find((candidate) => !chain.includes(candidate));
+                if (!importer) break;
+                chain.unshift(importer);
+                current = importer;
+              }
+              forbiddenImportChains.push(chain);
             }
           }
         },
@@ -62,11 +72,12 @@ describe('ActionSpec registry portability', () => {
         },
       },
     });
-    expect(forbiddenModules).toEqual([]);
+    expect(forbiddenModules, JSON.stringify(forbiddenImportChains, null, 2)).toEqual([]);
   }, 30_000);
 
   it('retains schema identity through the incumbent crypto facades', async () => {
-    const [metadata, portableMetadata, authorization, portableAuthorization, usage, portableUsage, usageRefs] = await Promise.all([
+    const [metadata, portableMetadata, authorization, portableAuthorization, usage, portableUsage, usageRefs,
+      profileTransfer, profileTransferSchema] = await Promise.all([
       import('../sessions/metadata/sessionMetadataEnvelopesV1.js'),
       import('../sessions/metadata/sessionMetadataSchemasV1.js'),
       import('../machines/peer/mediation/tunnel/authorization.js'),
@@ -74,6 +85,8 @@ describe('ActionSpec registry portability', () => {
       import('../connect/accountUsage.js'),
       import('../connect/providerAccountUsagePrimitives.js'),
       import('../sessions/metadata/providerAccountUsageRefsV1.js'),
+      import('../profiles/profileTransferV1.js'),
+      import('../profiles/profileTransferSchemaV1.js'),
     ]);
     expect(metadata.SessionSharedMetadataV1Schema).toBe(portableMetadata.SessionSharedMetadataV1Schema);
     expect(metadata.SessionOwnerMetadataV1Schema).toBe(portableMetadata.SessionOwnerMetadataV1Schema);
@@ -82,6 +95,8 @@ describe('ActionSpec registry portability', () => {
     expect(authorization.ProviderBrokerExternalApiKeyRelayBindingV1Schema).toBe(portableAuthorization.ProviderBrokerExternalApiKeyRelayBindingV1Schema);
     expect(usage.ProviderAccountUsageSnapshotV1Schema).toBe(portableUsage.ProviderAccountUsageSnapshotV1Schema);
     expect(usageRefs.ProviderAccountUsageRefsV1Schema.shape.recordIds.element).toBe(portableUsage.ProviderAccountUsageRecordIdSchema);
+    expect(profileTransfer.ProfileTransferContentV1Schema).toBe(profileTransferSchema.ProfileTransferContentV1Schema);
+    expect(profileTransfer.ProfileTransferMutationV1Schema).toBe(profileTransferSchema.ProfileTransferMutationV1Schema);
   });
 
   it('initializes without evaluating mixed socket, persistence, or transport owners', async () => {

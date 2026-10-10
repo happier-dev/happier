@@ -5,6 +5,54 @@ import type { JsonValue } from '../../identity.js';
 import type { SessionUsageLimitCheckNowRequestV1Input, SessionUsageLimitConsumeResetCreditRequestV1Input, VoiceProviderSettingsJsonValueV1 } from './pluginActionDtoSupport.generated.js';
 
 export type SessionControlActionInputById = {
+    readonly "session.pending.withdraw": {
+        sessionId: string;
+        localId: string;
+        serverId?: string | undefined;
+        targetExecutionRunId?: string | undefined;
+    };
+    readonly "session.pending.resetStart.set": {
+        sessionId: string;
+        localId: string;
+        reset: {
+            source: {
+                ref: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+                bindingKind: 'account';
+            } | {
+                ref: {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+                bindingKind: 'group_member';
+                groupId: string;
+                groupGeneration?: number | undefined;
+            };
+            recordId: string;
+            meterId: string;
+            witness: {
+                observedAtMs: number;
+                id: string;
+            };
+        };
+        serverId?: string | undefined;
+    };
+    readonly "session.pending.resetStart.cancel": {
+        sessionId: string;
+        localId: string;
+        serverId?: string | undefined;
+    };
+    readonly "session.turn.cancel": {
+        sessionId: string;
+    };
     readonly "session.stop": {
         [x: string]: unknown;
         sessionId: string;
@@ -19,12 +67,6 @@ export type SessionControlActionInputById = {
         sessionId: string;
         localId: string;
         expectedStateAtMs?: number | undefined;
-    };
-    readonly "session.pending.withdraw": {
-        sessionId: string;
-        localId: string;
-        serverId?: string | undefined;
-        targetExecutionRunId?: string | undefined;
     };
     readonly "session.title.set": {
         [x: string]: unknown;
@@ -125,6 +167,7 @@ export type SessionControlActionInputById = {
         [x: string]: unknown;
         sessionId: string;
         permissionMode: unknown;
+        applyTiming?: 'immediate' | 'next_prompt' | undefined;
     };
     readonly "session.model.set": {
         [x: string]: unknown;
@@ -142,6 +185,43 @@ export type SessionControlActionInputById = {
         } | undefined;
         teamVisibilityGrantConsent?: {
             teamId: string;
+        } | undefined;
+        captureBefore?: boolean | undefined;
+        expected?: {
+            owner: 'active';
+            scope: {
+                serverId: string;
+                accountId: string;
+                sessionId: string;
+            };
+            runId: string;
+            selection: {
+                agentTargetKey: string;
+                providerConnectionId: null;
+                modelId: string;
+            } | {
+                agentTargetKey: string;
+                providerConnectionId: string;
+                modelId: string;
+            };
+            updatedAt: number;
+        } | {
+            owner: 'inactive';
+            scope: {
+                serverId: string;
+                accountId: string;
+                sessionId: string;
+            };
+            selection: {
+                agentTargetKey: string;
+                providerConnectionId: null;
+                modelId: string;
+            } | {
+                agentTargetKey: string;
+                providerConnectionId: string;
+                modelId: string;
+            };
+            updatedAt: number;
         } | undefined;
     };
     readonly "session.archive": {
@@ -180,7 +260,7 @@ export type SessionControlActionInputById = {
         [x: string]: unknown;
         sessionId: string;
         objective?: string | undefined;
-        status?: 'unknown' | 'pending' | 'active' | 'paused' | 'blocked' | 'complete' | 'cancelled' | undefined;
+        status?: 'unknown' | 'active' | 'pending' | 'paused' | 'blocked' | 'complete' | 'cancelled' | undefined;
         tokenBudget?: number | null | undefined;
     };
     readonly "session.goal.clear": {
@@ -235,6 +315,54 @@ export type SessionControlActionInputById = {
     readonly "session.pending.next": Record<string, never>;
 };
 export type SessionControlActionResultById = {
+    readonly "session.pending.withdraw": {
+        outcome: 'removed' | 'already_delivered' | 'delivery_unknown';
+    };
+    readonly "session.pending.resetStart.set": {
+        didUpdate: boolean;
+        requestedAction: {
+            v: 1;
+            kind: 'enqueue' | 'steer_if_active' | 'steer_now' | 'send_now';
+        } | {
+            v: 1;
+            kind: 'reset_start';
+            reset: {
+                source: {
+                    ref: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                    bindingKind: 'account';
+                } | {
+                    ref: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                    bindingKind: 'group_member';
+                    groupId: string;
+                    groupGeneration?: number | undefined;
+                };
+                recordId: string;
+                meterId: string;
+                witness: {
+                    observedAtMs: number;
+                    id: string;
+                };
+            };
+        };
+    };
+    readonly "session.pending.resetStart.cancel": {
+        outcome: 'removed' | 'already_delivered' | 'delivery_unknown';
+    };
+    readonly "session.turn.cancel": string | number | boolean | readonly JsonValue[] | {
+        readonly [key: string]: JsonValue;
+    } | null;
     readonly "session.stop": string | number | boolean | readonly JsonValue[] | {
         readonly [key: string]: JsonValue;
     } | null;
@@ -265,9 +393,6 @@ export type SessionControlActionResultById = {
         localId: string;
         errorCode?: string | undefined;
         error?: string | undefined;
-    };
-    readonly "session.pending.withdraw": {
-        outcome: 'removed' | 'already_delivered' | 'delivery_unknown';
     };
     readonly "session.title.set": string | number | boolean | readonly JsonValue[] | {
         readonly [key: string]: JsonValue;

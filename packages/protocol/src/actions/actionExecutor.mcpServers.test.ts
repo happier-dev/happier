@@ -32,8 +32,7 @@ describe('MCP catalog Actions', () => {
       expectedRevision: 3 })).toEqual({ serverId: 'one', expectedRevision: 3 });
   });
   it('keeps credential configuration, process tests and destructive deletion Ask-first on present-user UI', () => {
-    for (const actionId of ['mcp.servers.create', 'mcp.servers.update', 'mcp.servers.delete',
-      'mcp.bindings.enable', 'mcp.bindings.remove', 'mcp.servers.test'] as const) {
+    for (const actionId of MCP_SERVER_ACTION_IDS_V1.filter(id => getActionSpec(id).safety === 'danger')) {
       const args = { actionId, spec: getActionSpec(actionId), context: { surface: 'ui', authority: 'present_user' } as const };
       expect(resolveActionApprovalRouting(args).required, actionId).toBe(true);
       expect(resolveActionApprovalRouting({ ...args, settings: normalizeActionsSettingsV1({ v: 1,

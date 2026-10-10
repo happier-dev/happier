@@ -1,4 +1,4 @@
-import { describe, expect, expectTypeOf, it } from 'vitest';
+import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import { z } from 'zod';
 
 import * as protocol from '../index.js';
@@ -25,6 +25,7 @@ import { ROLE_ACTION_IDS_V1 } from '../prompts/roles/roleActionIdsV1.js';
 import { MEMORY_DOCUMENT_ACTION_IDS_V1 } from '../prompts/library/memoryActionsV1.js';
 import { MANAGED_GITHUB_APP_ACTION_IDS_V1 } from '../identity/githubApps.js';
 import { resolveRuntimeActionSurfaces } from './surfaces.js';
+import { resolveActionSurfaceAvailability } from './actionSurfaceAvailability.js';
 import { LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS } from './specs/localServices.js';
 import type { ActionSpec } from './actionSpecs.js';
 import {
@@ -43,6 +44,19 @@ const RETIRED_UNBACKED_RUNTIME_ACTION_IDS = [
   'devices.simulator.stream.close',
 ] as const;
 
+it('looks up canonical Action specs without scanning the catalog on each call', () => {
+  const specs = listActionSpecs();
+  // Observe the real built-in operation, without replacing its implementation.
+  const find = vi.spyOn(Array.prototype, 'find');
+  try {
+    for (const spec of specs) expect(getActionSpec(spec.id)).toBe(spec);
+    expect(find.mock.contexts.filter(context => context === specs)).toHaveLength(0);
+    expect(() => getActionSpec('missing.spec' as ActionId)).toThrow('Unknown action spec: missing.spec');
+  } finally {
+    find.mockRestore();
+  }
+});
+
 describe('Profile entity operation parity', () => {
   it('admits typed row edits and requires consent for deletion and secret selection', () => {
     const edit = listActionSpecs().find((spec) => spec.id === 'launch_profiles.save');
@@ -52,6 +66,33 @@ describe('Profile entity operation parity', () => {
     expect(edit?.inputSchema.safeParse({ operation: 'save', payload: {} }).success).toBe(false);
     expect(listActionSpecs().find((spec) => spec.id === 'launch_profiles.delete')?.safety).toBe('danger');
     expect(listActionSpecs().find((spec) => spec.id === 'launch_profiles.secrets.select')?.safety).toBe('danger');
+  });
+});
+
+describe('Work authoring surface parity', () => {
+  it('makes every Role intent and profile publication discoverable on MCP with the existing mutation policy', () => {
+    for (const id of [...ROLE_ACTION_IDS_V1, 'launch_profiles.publish'] as const) {
+      expect(resolveActionSurfaceAvailability({ actionId: id, surface: 'mcp', requireToolBinding: true }))
+        .toMatchObject({ available: true });
+    }
+    for (const id of ['roles.create', 'roles.update', 'roles.delete', 'roles.override.set', 'roles.override.reset', 'launch_profiles.publish'] as const) {
+      expect(getActionSpec(id).safety, id).toBe('danger');
+    }
+  });
+
+  it('projects the review verdict and existing-run resume operations to the CLI and MCP', () => {
+    for (const id of ['reviews.comments.list', 'reviews.comments.transition', 'reviews.comments.setDisposition', 'execution.run.ensure'] as const) {
+      expect(resolveActionSurfaceAvailability({ actionId: id, surface: 'cli' }))
+        .toMatchObject({ available: true });
+      expect(getActionSpec(id).cli?.commands.some(command => command.visibility === 'canonical'), id).toBe(true);
+      expect(resolveActionSurfaceAvailability({ actionId: id, surface: 'mcp', requireToolBinding: true }))
+        .toMatchObject({ available: true });
+    }
+    expect(getActionSpec('reviews.comments.setDisposition').cli?.commands)
+      .toContainEqual({ path: ['reviews', 'comments', 'set-disposition'], visibility: 'canonical' });
+    expect(getActionSpec('execution.run.ensure').surfaces.ui).toBe(true);
+    expect(getActionSpec('execution.run.ensure').bindings?.rpcMethod).toBe(SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE);
+    expect(getActionSpec('execution.run.ensure').inputSchema.safeParse({ sessionId: 'session', runId: 'run', resume: true }).success).toBe(true);
   });
 });
 
@@ -227,6 +268,8 @@ const WORKFLOW_READ_ACTION_ID_SET = new Set([
   'workflow.validate',
   'workflow.definition.list',
   'workflow.definition.get',
+  'workflow.definition.import',
+  'workflow.definition.export',
   'workflow.run.list',
   'workflow.run.summaries',
   'workflow.run.get',
@@ -4041,6 +4084,13 @@ describe('Action Spec Registry', () => {
     const spec = getActionSpec('session.fork');
     expect(spec.id).toBe('session.fork');
     expect(spec.surfaces.ui).toBe(true);
+    expect(spec.surfaces).toMatchObject({ agent: true, mcp: true, cli: true });
+    expect(spec.requiredAuthority).toBe('account_automation');
+    expect(spec.bindings?.mcpToolName).toBe('session_fork');
+    expect(spec.cli?.commands).toContainEqual({ path: ['session', 'fork'], positionals: ['sessionId'], visibility: 'canonical' });
+    expect(spec.inputSchema.safeParse({ sessionId: 'parent', strategy: 'native', forkPoint: { type: 'seq', upToSeqInclusive: 12 } }).success).toBe(true);
+    expect(spec.inputSchema.safeParse({ sessionId: 'parent', strategy: 'unrecognized' }).success).toBe(false);
+    expect(spec.inputSchema.safeParse({ sessionId: 'parent', forkPoint: { type: 'seq', upToSeqInclusive: -1 } }).success).toBe(false);
     expect(spec.placements).toContain('session_action_menu');
   });
 
@@ -4677,6 +4727,10 @@ describe('Action Spec Registry', () => {
 
   it('advertises current session permission intent names while accepting compatible aliases', () => {
     const spec = getActionSpec('session.permission_mode.set');
+    expect(spec.surfaces).toMatchObject({ ui: true, agent: true, mcp: true, cli: true });
+    expect(spec.inputSchema.parse({ sessionId: 's1', permissionMode: 'default', applyTiming: 'next_prompt' }))
+      .toMatchObject({ applyTiming: 'next_prompt' });
+    expect(spec.inputSchema.safeParse({ sessionId: 's1', permissionMode: 'default', applyTiming: 'eventually' }).success).toBe(false);
 
     expect(spec.description).toContain('read_only/default/auto/yolo');
     expect((spec.inputSchema as z.ZodTypeAny).parse({

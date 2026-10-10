@@ -9,9 +9,10 @@ describe('Home hub customization Action parity', () => {
     for (const id of ids) {
       expect(ActionIdSchema.safeParse(id).success, id).toBe(true);
       const spec = listActionSpecs().find((row) => row.id === id)!;
-      expect(spec.executionPlacement).toBe('client');
-      // API catalog admission is canonical; client placement still requires a mounted UI owner.
-      expect(spec.surfaces).toMatchObject({ ui: true, agent: true, mcp: true, cli: false, api: true });
+      const isDeviceLocal = id === 'home.reachNudge.dismiss';
+      expect(spec.executionPlacement).toBe(isDeviceLocal ? 'client' : 'account');
+      // Artifact layout is Account-owned; the reachability dismissal remains local.
+      expect(spec.surfaces).toMatchObject({ ui: true, agent: true, mcp: true, cli: !isDeviceLocal, api: true });
       expect(actionSpecToActionDefinitionV1(spec, { surface: 'agent' }).id).toBe(id);
       expect(searchSerializedActionSpecsForSurface({ query: id, surface: 'agent', isActionEnabled: (candidate) => ids.includes(candidate) }).some((row) => row.id === id)).toBe(true);
     }

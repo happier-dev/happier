@@ -26,6 +26,31 @@ const mutations = [
 ] as const;
 
 describe('SCM Action parity', () => {
+  it('admits no-Session UI and Voice change selection through the real typed Action and retains policy refusal', async () => {
+    const { createActionExecutor } = await import('./actionExecutor.js');
+    type Deps = import('./executor/types.js').ActionExecutorDeps;
+    const calls: unknown[] = [];
+    const executor = createActionExecutor({ isActionApprovalRequired: () => false,
+      scmActionExecute: async ({ input, context }: Parameters<NonNullable<Deps['scmActionExecute']>>[0]) => {
+        calls.push({ input, target: context.externalActionTarget, sessionId: context.defaultSessionId });
+        return { success: true };
+      },
+    // The fixture supplies only the owning-machine transport boundary.
+    } as unknown as Deps);
+    for (const surface of ['ui', 'voice'] as const) {
+      expect(await executor.execute('scm.change.include', { cwd: '/repo', paths: ['file.ts'] }, {
+        surface, externalActionTarget: { kind: 'machine', machineId: 'machine' },
+      })).toMatchObject({ ok: true, result: { success: true } });
+    }
+    expect(calls).toEqual(Array.from({ length: 2 }, () => ({ input: { cwd: '/repo', paths: ['file.ts'] },
+      target: { kind: 'machine', machineId: 'machine' }, sessionId: undefined })));
+    const disabled = createActionExecutor({ isActionEnabled: () => false,
+      scmActionExecute: async () => { throw new Error('Disabled Action reached transport'); },
+    } as unknown as Deps);
+    expect(await disabled.execute('scm.change.include', { cwd: '/repo', paths: ['file.ts'] }, {
+      surface: 'ui', externalActionTarget: { kind: 'machine', machineId: 'machine' },
+    })).toMatchObject({ ok: false, errorCode: 'action_disabled' });
+  });
   it('resolves credential-free addresses through a safe machine read on all surfaces', async () => {
     const { getActionSpec } = await import('./actionSpecs.js');
     const spec = getActionSpec(ActionIdSchema.parse('scm.hostingRepository.resolveAddress'));

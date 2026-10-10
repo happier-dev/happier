@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { getActionSpec } from './actionSpecs.js';
 import type { ActionId } from './actionIds.js';
-import { buildWorkBoardItemKeyV1, WorkBoardsV1Schema, type BoardItemRefV1, type WorkBoardIntentV1 } from '../boards/workBoardV1.js';
+import { buildWorkBoardItemKeyV1, createWorkBoardV1, WorkBoardsV1Schema, type BoardItemRefV1, type WorkBoardIntentV1 } from '../boards/workBoardV1.js';
 import { normalizeSessionListFilterV1 } from '../sessions/listFilter/sessionListFilterV1.js';
 import { createWorkBoardArtifactPortV1 } from '../boards/workBoardArtifactV1.js';
 import { createWorkBoardArtifactBoundary } from '../boards/workBoardArtifactV1.testkit.js';
@@ -24,6 +24,26 @@ function createBoundary(initial: unknown = null) {
 }
 
 describe('Boards through the canonical Action executor', () => {
+  it('admits retained native widget edits through this Home while preserving stored refs and strict generic targets', async () => {
+    const storedSurface = { serverId: 'ui-profile', accountId: 'account', owner: { kind: 'workBoard', boardId: 'b1' } } as const;
+    const instance = { v: 1, id: 'copy', definition: { kind: 'builtin', id: 'changes' }, bindings: {} } as const;
+    const storedRef = { surface: storedSurface, instanceId: instance.id };
+    const boundary = createWorkBoardArtifactBoundary([{ ...createWorkBoardV1({ id: 'b1', name: 'Retained' }), widgets: [{ kind: 'widget', ref: storedRef, instance, size: 'medium' }] }]);
+    const row = boundary.rows.get('b1')!;
+    boundary.rows.set('b1', { ...row, ownerAccountId: 'account' });
+    const executor = createActionExecutor({ workBoardArtifacts: createWorkBoardArtifactPortV1(boundary.transport),
+      widgetAccountScope: () => ({ serverId: 'cli-profile', accountId: 'account' }) });
+    const context = { serverId: 'cli-profile', surface: 'mcp', bypassApprovals: true } as const;
+    const intent = { kind: 'widget_rename', boardId: 'b1', ref: storedRef, displayName: 'From CLI' } as const;
+    const renamed = await executor.execute('boards.apply', { intent }, context);
+    expect(renamed, JSON.stringify(renamed)).toMatchObject({ ok: true, result: { board: { widgets: [{ ref: storedRef, instance: { displayName: 'From CLI' } }] } } });
+    const before = boundary.updates.length;
+    expect(await executor.execute('widgets.item.remove', { ref: storedRef }, context)).toMatchObject({ ok: false, errorCode: 'server_target_mismatch' });
+    expect(await executor.execute('boards.apply', { intent }, { ...context, serverId: 'different-home' })).toMatchObject({ ok: false, errorCode: 'server_target_mismatch' });
+    expect(await executor.execute('boards.apply', { intent: { ...intent, ref: { ...storedRef, surface: { ...storedSurface, accountId: 'other' } } } }, context)).toMatchObject({ ok: false, errorCode: 'account_target_mismatch' });
+    expect(await executor.execute('boards.apply', { intent: { kind: 'widget_add', boardId: 'b1', ref: { ...storedRef, instanceId: 'new' }, instance: { ...instance, id: 'new' } } }, context)).toMatchObject({ ok: false, errorCode: 'server_target_mismatch' });
+    expect(boundary.updates).toHaveLength(before);
+  });
   it('admits raw Board widget adds and input edits exactly like widget Actions before persistence', async () => {
     const boundary = createWorkBoardArtifactBoundary([{ id: 'b1', name: 'Widgets', source: { picked: [] } }]);
     const surface = { serverId: 'home', accountId: 'account', owner: { kind: 'workBoard', boardId: 'b1' } } as const;
@@ -41,12 +61,12 @@ describe('Boards through the canonical Action executor', () => {
     const invalid = { ...instance, bindings: { count: { kind: 'value', value: 'not-an-integer' } } } as const;
     const rejected = { ok: false, errorCode: 'widget_inputs_invalid', details: { status: 'invalid', fields: [{ reasonCode: 'widget_input_schema_invalid' }] } };
     const before = boundary.updates.length;
-    expect(await executor.execute('widgets.instance.add', { surface, instance: invalid }, context)).toMatchObject(rejected);
+    expect(await executor.execute('widgets.item.add', { surface, instance: invalid }, context)).toMatchObject(rejected);
     expect(await executor.execute('boards.apply', { intent: { kind: 'widget_add', boardId: 'b1', ref, instance: invalid } }, context)).toMatchObject(rejected);
     expect(boundary.updates).toHaveLength(before);
     expect(await executor.execute('boards.apply', { intent: { kind: 'widget_add', boardId: 'b1', ref, instance } }, context)).toMatchObject({ ok: true });
     const saved = boundary.readCollection();
-    expect(await executor.execute('widgets.instance.inputs.set', { ref, bindings: invalid.bindings }, context)).toMatchObject(rejected);
+    expect(await executor.execute('widgets.item.inputs.set', { ref, bindings: invalid.bindings }, context)).toMatchObject(rejected);
     expect(await executor.execute('boards.apply', { intent: { kind: 'widget_inputs', boardId: 'b1', ref, bindings: invalid.bindings } }, context)).toMatchObject(rejected);
     expect(boundary.readCollection()).toEqual(saved);
     sourceAdmitted = false;
@@ -56,10 +76,11 @@ describe('Boards through the canonical Action executor', () => {
     expect(boundary.readCollection()).toEqual(saved);
     sourceAdmitted = true;
     expect(await executor.execute('boards.apply', { intent: { kind: 'widget_inputs', boardId: 'b1', ref, bindings: { count: { kind: 'value', value: 9 } } } }, context)).toMatchObject({ ok: true });
-    expect(await executor.execute('widgets.instance.inputs.get', { ref }, context)).toMatchObject({ ok: true, result: { bindings: { count: { kind: 'value', value: 9 } } } });
+    expect(await executor.execute('widgets.item.inputs.get', { ref }, context)).toMatchObject({ ok: true, result: { bindings: { count: { kind: 'value', value: 9 } } } });
   });
   it('dispatches configured WorkBoard copies through the canonical widget Action family', async () => {
     const boundary = createWorkBoardArtifactBoundary([{ id: 'b1', name: 'Widgets', source: { picked: [ref('home', 's1')], sections: ['running'] } }]);
+    boundary.rows.set('b1', { ...boundary.rows.get('b1')!, ownerAccountId: 'account' });
     const surface = { serverId: 'home', accountId: 'account', owner: { kind: 'workBoard', boardId: 'b1' } } as const;
     const instance = { v: 1, id: 'one', definition: { kind: 'builtin', id: 'counter' }, bindings: { count: { kind: 'value', value: 1 } } } as const;
     const executor = createActionExecutor({ workBoardArtifacts: createWorkBoardArtifactPortV1(boundary.transport),
@@ -70,18 +91,18 @@ describe('Boards through the canonical Action executor', () => {
     } as unknown as ActionExecutorDeps);
     const context = { serverId: 'home', surface: 'mcp', bypassApprovals: true } as const;
     const target = { ref: { surface, instanceId: 'one' } };
-    expect(await executor.execute('widgets.instance.add', { surface, instance }, context)).toMatchObject({ ok: true, result: { instance } });
-    expect(await executor.execute('widgets.instance.add', { surface, instance: { ...instance, id: 'two' } }, context)).toMatchObject({ ok: true });
-    expect(await executor.execute('widgets.instance.size.set', { ...target, size: 'full' }, context)).toMatchObject({ ok: true });
-    expect(await executor.execute('widgets.instance.size.set', { ...target, size: 'wide' }, context)).toMatchObject({ ok: false, errorCode: 'widget_size_unsupported' });
-    expect(await executor.execute('widgets.instance.inputs.set', { ...target, bindings: { count: { kind: 'value', value: 9 } } }, context)).toMatchObject({ ok: true });
-    expect(await executor.execute('widgets.instance.inputs.get', target, context)).toMatchObject({ ok: true, result: { bindings: { count: { kind: 'value', value: 9 } } } });
-    expect(await executor.execute('widgets.instance.move', { ...target, toIndex: 1 }, context)).toMatchObject({ ok: true });
-    expect(await executor.execute('widgets.instance.list', { surface }, context)).toMatchObject({ ok: true, result: { instances: [{ instance: { id: 'two', bindings: instance.bindings } }, { instance: { id: 'one' }, size: 'full' }] } });
-    expect(await executor.execute('widgets.instance.rename', { ...target, displayName: 'First' }, context)).toMatchObject({ ok: true, result: { instance: { displayName: 'First' } } });
-    expect(await executor.execute('widgets.instance.frame.set', { ...target, frameStyle: 'plain' }, context)).toMatchObject({ ok: true });
-    expect(await executor.execute('widgets.instance.inputs.reset', target, context)).toMatchObject({ ok: true, result: { instance: { bindings: {} } } });
-    expect(await executor.execute('widgets.instance.remove', target, context)).toMatchObject({ ok: true });
+    expect(await executor.execute('widgets.item.add', { surface, instance }, context)).toMatchObject({ ok: true, result: { instance } });
+    expect(await executor.execute('widgets.item.add', { surface, instance: { ...instance, id: 'two' } }, context)).toMatchObject({ ok: true });
+    expect(await executor.execute('widgets.item.size.set', { ...target, size: 'full' }, context)).toMatchObject({ ok: true });
+    expect(await executor.execute('widgets.item.size.set', { ...target, size: 'wide' }, context)).toMatchObject({ ok: false, errorCode: 'widget_size_unsupported' });
+    expect(await executor.execute('widgets.item.inputs.set', { ...target, bindings: { count: { kind: 'value', value: 9 } } }, context)).toMatchObject({ ok: true });
+    expect(await executor.execute('widgets.item.inputs.get', target, context)).toMatchObject({ ok: true, result: { bindings: { count: { kind: 'value', value: 9 } } } });
+    expect(await executor.execute('widgets.item.move', { ...target, toIndex: 1 }, context)).toMatchObject({ ok: true });
+    expect(await executor.execute('widgets.item.list', { surface }, context)).toMatchObject({ ok: true, result: { instances: [{ instance: { id: 'two', bindings: instance.bindings } }, { instance: { id: 'one' }, size: 'full' }] } });
+    expect(await executor.execute('widgets.item.rename', { ...target, displayName: 'First' }, context)).toMatchObject({ ok: true, result: { instance: { displayName: 'First' } } });
+    expect(await executor.execute('widgets.item.frame.set', { ...target, frameStyle: 'plain' }, context)).toMatchObject({ ok: true });
+    expect(await executor.execute('widgets.item.inputs.reset', target, context)).toMatchObject({ ok: true, result: { instance: { bindings: {} } } });
+    expect(await executor.execute('widgets.item.remove', target, context)).toMatchObject({ ok: true });
     expect(boundary.readCollection()?.boards[0]?.source).toEqual({ picked: [ref('home', 's1')], sections: ['running'] });
     const before = boundary.updates.length;
     expect(await executor.execute('boards.apply', { intent: { kind: 'widget_add', boardId: 'b1', ref: { surface: { ...surface, accountId: 'other' }, instanceId: instance.id }, instance } }, context)).toMatchObject({ ok: false, errorCode: 'account_target_mismatch' });

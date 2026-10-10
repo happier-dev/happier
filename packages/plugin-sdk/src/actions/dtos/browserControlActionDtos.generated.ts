@@ -598,6 +598,7 @@ export type BrowserControlActionResultById = {
                 } | undefined;
                 interruptionSettling?: boolean | undefined;
                 uncertain?: boolean | undefined;
+                confidentialityHeld?: boolean | undefined;
             };
             navigationGeneration?: number | undefined;
         } | {
@@ -689,6 +690,7 @@ export type BrowserControlActionResultById = {
             retryable?: boolean | undefined;
         };
         adapterKind?: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface' | undefined;
+        completion?: 'unknown' | 'known' | undefined;
     } | {
         v: 1;
         status: 'interrupted';
@@ -1087,6 +1089,7 @@ export type BrowserControlActionResultById = {
                 } | undefined;
                 interruptionSettling?: boolean | undefined;
                 uncertain?: boolean | undefined;
+                confidentialityHeld?: boolean | undefined;
             };
             navigationGeneration?: number | undefined;
         } | {
@@ -1178,6 +1181,7 @@ export type BrowserControlActionResultById = {
             retryable?: boolean | undefined;
         };
         adapterKind?: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface' | undefined;
+        completion?: 'unknown' | 'known' | undefined;
     } | {
         v: 1;
         status: 'interrupted';
@@ -1576,6 +1580,7 @@ export type BrowserControlActionResultById = {
                 } | undefined;
                 interruptionSettling?: boolean | undefined;
                 uncertain?: boolean | undefined;
+                confidentialityHeld?: boolean | undefined;
             };
             navigationGeneration?: number | undefined;
         } | {
@@ -1667,6 +1672,7 @@ export type BrowserControlActionResultById = {
             retryable?: boolean | undefined;
         };
         adapterKind?: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface' | undefined;
+        completion?: 'unknown' | 'known' | undefined;
     };
     readonly "browser.view.close": {
         v: 1;
@@ -2060,6 +2066,7 @@ export type BrowserControlActionResultById = {
                 } | undefined;
                 interruptionSettling?: boolean | undefined;
                 uncertain?: boolean | undefined;
+                confidentialityHeld?: boolean | undefined;
             };
             navigationGeneration?: number | undefined;
         } | {
@@ -2151,6 +2158,7 @@ export type BrowserControlActionResultById = {
             retryable?: boolean | undefined;
         };
         adapterKind?: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface' | undefined;
+        completion?: 'unknown' | 'known' | undefined;
     };
     readonly "browser.view.focus": {
         v: 1;
@@ -2544,6 +2552,7 @@ export type BrowserControlActionResultById = {
                 } | undefined;
                 interruptionSettling?: boolean | undefined;
                 uncertain?: boolean | undefined;
+                confidentialityHeld?: boolean | undefined;
             };
             navigationGeneration?: number | undefined;
         } | {
@@ -2635,6 +2644,7 @@ export type BrowserControlActionResultById = {
             retryable?: boolean | undefined;
         };
         adapterKind?: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface' | undefined;
+        completion?: 'unknown' | 'known' | undefined;
     };
     readonly "browser.target.set": {
         v: 1;
@@ -3028,6 +3038,7 @@ export type BrowserControlActionResultById = {
                 } | undefined;
                 interruptionSettling?: boolean | undefined;
                 uncertain?: boolean | undefined;
+                confidentialityHeld?: boolean | undefined;
             };
             navigationGeneration?: number | undefined;
         } | {
@@ -3119,6 +3130,7 @@ export type BrowserControlActionResultById = {
             retryable?: boolean | undefined;
         };
         adapterKind?: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface' | undefined;
+        completion?: 'unknown' | 'known' | undefined;
     };
     readonly "browser.navigate": {
         v: 1;
@@ -3512,6 +3524,7 @@ export type BrowserControlActionResultById = {
                 } | undefined;
                 interruptionSettling?: boolean | undefined;
                 uncertain?: boolean | undefined;
+                confidentialityHeld?: boolean | undefined;
             };
             navigationGeneration?: number | undefined;
         } | {
@@ -3603,6 +3616,7 @@ export type BrowserControlActionResultById = {
             retryable?: boolean | undefined;
         };
         adapterKind?: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface' | undefined;
+        completion?: 'unknown' | 'known' | undefined;
     };
     readonly "browser.reload": {
         v: 1;
@@ -3996,6 +4010,7 @@ export type BrowserControlActionResultById = {
                 } | undefined;
                 interruptionSettling?: boolean | undefined;
                 uncertain?: boolean | undefined;
+                confidentialityHeld?: boolean | undefined;
             };
             navigationGeneration?: number | undefined;
         } | {
@@ -4087,6 +4102,7 @@ export type BrowserControlActionResultById = {
             retryable?: boolean | undefined;
         };
         adapterKind?: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface' | undefined;
+        completion?: 'unknown' | 'known' | undefined;
     };
     readonly "browser.goBack": {
         v: 1;
@@ -4480,6 +4496,7 @@ export type BrowserControlActionResultById = {
                 } | undefined;
                 interruptionSettling?: boolean | undefined;
                 uncertain?: boolean | undefined;
+                confidentialityHeld?: boolean | undefined;
             };
             navigationGeneration?: number | undefined;
         } | {
@@ -4571,6 +4588,7 @@ export type BrowserControlActionResultById = {
             retryable?: boolean | undefined;
         };
         adapterKind?: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface' | undefined;
+        completion?: 'unknown' | 'known' | undefined;
     };
     readonly "browser.goForward": {
         v: 1;
@@ -4964,6 +4982,7 @@ export type BrowserControlActionResultById = {
                 } | undefined;
                 interruptionSettling?: boolean | undefined;
                 uncertain?: boolean | undefined;
+                confidentialityHeld?: boolean | undefined;
             };
             navigationGeneration?: number | undefined;
         } | {
@@ -5055,6 +5074,7 @@ export type BrowserControlActionResultById = {
             retryable?: boolean | undefined;
         };
         adapterKind?: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface' | undefined;
+        completion?: 'unknown' | 'known' | undefined;
     };
     readonly "browser.stop": {
         v: 1;
@@ -5448,6 +5468,7 @@ export type BrowserControlActionResultById = {
                 } | undefined;
                 interruptionSettling?: boolean | undefined;
                 uncertain?: boolean | undefined;
+                confidentialityHeld?: boolean | undefined;
             };
             navigationGeneration?: number | undefined;
         } | {
@@ -5539,5 +5560,6 @@ export type BrowserControlActionResultById = {
             retryable?: boolean | undefined;
         };
         adapterKind?: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface' | undefined;
+        completion?: 'unknown' | 'known' | undefined;
     };
 };

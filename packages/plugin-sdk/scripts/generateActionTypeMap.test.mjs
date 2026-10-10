@@ -429,7 +429,7 @@ test('Action map projection failure tracks dependencies discovered by the failed
   assert.match(readFileSync(outputPath, 'utf8'), /Fixed/);
 });
 
-test('Action map input edited during derivation rejects publication, so the next run re-derives', async (t) => {
+test('Action map input edited during derivation publishes the snapshot, reports stale, and re-derives next run', async (t) => {
   const directory = mkdtempSync(resolve(tmpdir(), 'happier-action-type-map-race-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const sourcePath = resolve(directory, 'action.ts');
@@ -451,7 +451,7 @@ test('Action map input edited during derivation rejects publication, so the next
 
   writeFileSync(outputPath, 'previous current output');
   await assert.rejects(() => runCachedActionTypeMap({ cachePath, outputPath, derive: () => derive({ editDuringDerivation: true }) }), /inputs changed/i);
-  assert.equal(readFileSync(outputPath, 'utf8'), 'previous current output');
+  assert.equal(readFileSync(outputPath, 'utf8'), 'export type Action = "first";\n');
   assert.equal(existsSync(cachePath), false);
 
   // The next run sees no cache and re-derives from the edited input.
@@ -461,25 +461,28 @@ test('Action map input edited during derivation rejects publication, so the next
   assert.equal(existsSync(cachePath), true);
 });
 
-test('Action map rejects inputs already stale or changed during publication', async (t) => {
+test('Action map finishes every snapshot output before reporting inputs stale or changed during publication', async (t) => {
   const directory = mkdtempSync(resolve(tmpdir(), 'happier-action-map-publication-race-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const sourcePath = resolve(directory, 'source.ts');
   const outputPath = resolve(directory, 'generated.ts');
+  const siblingPath = resolve(directory, 'sibling.ts');
   const cachePath = resolve(directory, 'cache.json');
-  for (const stale of [true, false]) {
+  for (const mode of ['--write', '--check']) for (const stale of [true, false]) {
     writeFileSync(sourcePath, 'first');
     writeFileSync(outputPath, 'previous');
     await assert.rejects(() => runCachedActionTypeMap({
-      cachePath, outputPath,
-      derive: () => ({ inputPaths: [sourcePath], inputDigests: [[sourcePath, createHash('sha256').update('first').digest('hex')]], output: 'first', stale }),
-      publish: async (prepared) => {
-        writeFileSync(outputPath, prepared.output);
+      cachePath, outputPath, mode,
+      derive: () => ({ inputPaths: [sourcePath], inputDigests: [[sourcePath, createHash('sha256').update('first').digest('hex')]],
+        output: 'first', outputs: new Map([[outputPath, 'first'], [siblingPath, 'same snapshot']]), stale, timing: () => {} }),
+      publish: async (prepared, context) => {
         writeFileSync(sourcePath, 'second');
+        await publishPreparedActionTypeMap(mode, prepared, { ...context, assertOwned: () => {} });
       },
     }), /inputs changed/i);
     assert.equal(existsSync(cachePath), false);
-    if (stale) assert.equal(readFileSync(outputPath, 'utf8'), 'previous');
+    assert.equal(readFileSync(outputPath, 'utf8'), mode === '--write' ? 'first' : 'previous');
+    if (mode === '--write') assert.equal(readFileSync(siblingPath, 'utf8'), 'same snapshot');
   }
 });
 
@@ -830,6 +833,48 @@ test('generated Action DTO signatures use the canonical SDK public declarations'
   }
 });
 
+test('Action DTO projection scopes mapped keys without hiding external declarations', () => {
+  const repoRoot = resolve(tmpdir(), 'happier-mapped-dto-fixture');
+  const protocolRoot = resolve(repoRoot, 'packages/protocol/src');
+  // Substitute only source-file reads; the catalog and declaration parsers stay real.
+  const catalogSources = new Map([
+    [resolve(protocolRoot, 'actions/actionIds.ts'), "export const ACTION_ID_FAMILIES_V1 = { fixture: ['fixture.read'] };"],
+    [resolve(protocolRoot, 'actions/pluginActionSurface.ts'), 'export const PLUGIN_SURFACE_EXCLUSION_REASONS = {};'],
+  ]);
+  const project = (extra) => actionTypeMapGenerator.projectActionDtoDeclarations({
+    repoRoot,
+    declarations: new Map([[resolve(protocolRoot, 'actions/pluginActionDtos.ts'),
+      'export type PluginActionInputById = { "fixture.read": {} };\n'
+        + 'export type PluginActionResultById = { "fixture.read": {} };\n'
+        + extra]]),
+    readSource: (path) => {
+      const source = catalogSources.get(path);
+      assert.ok(source !== undefined, `Unexpected source read: ${path}`);
+      return source;
+    },
+  }).outputs.get('packages/plugin-sdk/src/actions/actionTypeMap.generated.ts');
+
+  const mapped = project('export type MappedDto<T> = { [K in keyof T]: T[K] };');
+  assert.match(mapped, /export type MappedDto<T> =/u);
+  assert.doesNotMatch(mapped, /import type \{[^}]*\bK\b/u);
+  validateGeneratedModuleSyntax(mapped);
+
+  const withExternalKey = project(
+    'type K = { value: string };\n'
+      + 'export type MappedDto<T> = { [K in keyof T]: T[K] } & { external: K };',
+  );
+  assert.match(withExternalKey, /type K = \{/u);
+  assert.match(withExternalKey, /external: K/u);
+  validateGeneratedModuleSyntax(withExternalKey);
+
+  const withExternalConstraint = project(
+    'type K = { value: string };\n'
+      + 'export type MappedDto = { [K in keyof K]: K };',
+  );
+  assert.match(withExternalConstraint, /type K = \{/u);
+  validateGeneratedModuleSyntax(withExternalConstraint);
+});
+
 test('generated Plugin Action projection does not publish the host Action census', () => {
   const { outputs } = actionTypeMapGenerator.projectActionDtoDeclarations();
   const output = [...outputs.values()].join('\n');
@@ -850,7 +895,7 @@ test('generated Plugin Action projection does not publish the host Action census
   }
 });
 
-test('generated Plugin Action maps retain the safe Account read without human credential lifecycle Actions', () => {
+test('generated Plugin Action maps include Account requests admitted by the trusted-plugin surface', () => {
   const { inputKeys } = actionTypeMapGenerator.projectActionDtoDeclarations();
   assert.ok(inputKeys.includes('account.security.get'));
   for (const actionId of [
@@ -863,6 +908,6 @@ test('generated Plugin Action maps retain the safe Account read without human cr
     'account.apiTokens.revoke',
     'account.apiTokens.revokeAll',
   ]) {
-    assert.ok(!inputKeys.includes(actionId), `${actionId} is not plugin-invocable`);
+    assert.ok(inputKeys.includes(actionId), `${actionId} is plugin-invocable`);
   }
 });

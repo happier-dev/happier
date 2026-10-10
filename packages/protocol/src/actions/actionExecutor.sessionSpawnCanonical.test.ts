@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 
 import { RPC_ERROR_CODES } from '../rpc/index.js';
 import { RpcError } from '../rpc/errors.js';
@@ -59,6 +60,8 @@ function createExternalSpawnApprovalContext(requestId: string) {
         credentialId,
         grant: API_TOKEN_FULL_GRANT_V1,
         machineId: target.machineId,
+        custodianAccountId: 'account-1',
+        installationId: 'installation-1',
         actionId: 'session.spawn_new' as const,
         requestId,
         requestEnvelopeDigest: 'a'.repeat(43),
@@ -105,15 +108,15 @@ describe('session.spawn_new canonical execution', () => {
       actionCaller: { kind: 'plugin' as const, pluginId: 'plugin.example', contributionLocalId: 'feature-a' },
       defaultSessionId: 'parent-session',
       agentStartContext: { ...agentStartContext, roles },
-      sessionRoleConfiguration: { sessionRoles: {}, overrides: {}, notes: 'Finish the bounded worker task',
-        memoryDocRef: { kind: 'doc' as const, artifactId: 'lead-memory' } },
+      sessionRoleConfiguration: { sessionRoles: {}, overrides: {}, notes: 'Finish the bounded worker task' },
     };
 
     expect((await executor.execute('session.spawn_new', { ...canonicalInput, roleId: 'builder' }, context)).ok).toBe(true);
     expect(sessionSpawnNew.mock.calls[0]?.[0]).toMatchObject({ initialSessionRolesV1: {
       roleId: 'builder', inheritedFrom: 'parent-session', overrides: {}, sessionRoles: roles,
-      notes: 'Finish the bounded worker task', memoryDocRef: { kind: 'doc', artifactId: 'lead-memory' },
+      notes: 'Finish the bounded worker task',
     } });
+    expect(sessionSpawnNew.mock.calls[0]?.[0].initialSessionRolesV1).not.toHaveProperty('memoryDocRef');
     roles.builder!.instructions = 'A later edit';
     expect(sessionSpawnNew.mock.calls[0]?.[0].initialSessionRolesV1?.sessionRoles.builder?.instructions)
       .toBe('Resolved project and Account instructions');
@@ -166,6 +169,8 @@ describe('session.spawn_new canonical execution', () => {
           credentialId: '11111111-1111-4111-8111-111111111111',
           grant: API_TOKEN_FULL_GRANT_V1,
           machineId: 'machine-1',
+          custodianAccountId: 'account-1',
+          installationId: 'installation-1',
           actionId: 'session.spawn_new',
           requestId: 'spawn-request-1',
           requestEnvelopeDigest: 'a'.repeat(43),
@@ -661,6 +666,31 @@ describe('session.spawn_new canonical execution', () => {
       limit: 1,
     }, context);
 
+    // Reused schema nodes may be local references after the trigger contract
+    // reaches this catalog. Assert the advertised directory shape, not Zod's
+    // choice to inline or reuse that shape.
+    const discovery = z.object({ result: z.object({ actionSpec: z.object({ inputSchema: z.object({
+      properties: z.object({ directory: z.record(z.string(), z.unknown()) }),
+      $defs: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
+    }) }) }) }).parse(getResult);
+    const advertisedSchema = discovery.result.actionSpec.inputSchema;
+    const reference = advertisedSchema.properties.directory.$ref;
+    if (typeof reference === 'string') expect(reference).toMatch(/^#\/\$defs\/[^/]+$/u);
+    const directorySchema = typeof reference === 'string'
+      ? advertisedSchema.$defs?.[reference.slice('#/$defs/'.length)]
+      : advertisedSchema.properties.directory;
+    expect(directorySchema).toMatchObject({
+      oneOf: expect.arrayContaining([
+        expect.objectContaining({ type: 'object', properties: expect.objectContaining({
+          kind: expect.objectContaining({ const: 'path' }),
+          path: expect.objectContaining({ type: 'string', minLength: 1 }),
+        }) }),
+        expect.objectContaining({ type: 'object', properties: expect.objectContaining({
+          kind: expect.objectContaining({ const: 'managed' }),
+        }) }),
+      ]),
+    });
+
     expect(getResult, JSON.stringify(getResult)).toMatchObject({
       ok: true,
       result: {
@@ -668,23 +698,7 @@ describe('session.spawn_new canonical execution', () => {
           kindVersion: 1,
           inputSchema: {
             properties: {
-              directory: expect.objectContaining({
-                oneOf: expect.arrayContaining([
-                  expect.objectContaining({
-                    type: 'object',
-                    properties: expect.objectContaining({
-                      kind: expect.objectContaining({ const: 'path' }),
-                      path: expect.objectContaining({ type: 'string', minLength: 1 }),
-                    }),
-                  }),
-                  expect.objectContaining({
-                    type: 'object',
-                    properties: expect.objectContaining({
-                      kind: expect.objectContaining({ const: 'managed' }),
-                    }),
-                  }),
-                ]),
-              }),
+              directory: expect.any(Object),
             },
           },
           inputHints: {

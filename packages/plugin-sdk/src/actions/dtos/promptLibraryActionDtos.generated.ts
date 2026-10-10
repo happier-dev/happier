@@ -13,6 +13,8 @@ export type PromptLibraryActionInputById = {
         folderId?: string | null | undefined;
         tags?: string[] | undefined;
         favorite?: boolean | undefined;
+    } | {
+        starter: 'happier_guide';
     };
     readonly "prompt_doc.favorite.set": {
         artifactId: string;
@@ -21,6 +23,41 @@ export type PromptLibraryActionInputById = {
     readonly "prompts.library.list": {
         query?: string | undefined;
         includeBundles?: false | undefined;
+    };
+    readonly "prompts.stack.update": {
+        surface: 'coding' | 'voice';
+        expectedRevision: number | 'absent';
+        intent: {
+            kind: 'attach';
+            entry: {
+                id: string;
+                ref: {
+                    kind: 'doc' | 'bundle';
+                    artifactId: string;
+                    serverId?: string | undefined;
+                };
+                enabled?: boolean | undefined;
+                placement?: 'system_append' | 'composer_insert' | 'skill_instructions' | 'provider_asset' | undefined;
+                maxChars?: number | undefined;
+                required?: boolean | undefined;
+            };
+        } | {
+            kind: 'detach';
+            entryId: string;
+        } | {
+            kind: 'reorder';
+            entryId: string;
+            siblingId: string;
+            position: 'before' | 'after';
+        } | {
+            kind: 'set_budget';
+            entryId: string;
+            maxChars: number | null;
+        } | {
+            kind: 'set_enabled';
+            entryId: string;
+            enabled: boolean;
+        };
     };
     readonly "prompt_doc.update": {
         artifactId: string;
@@ -73,6 +110,18 @@ export type PromptLibraryActionInputById = {
             installMode?: 'copy' | 'symlink' | undefined;
         } | undefined;
     };
+    readonly "prompts.invocation.create": {
+        token: string;
+        title: string;
+        target: {
+            artifactId: string;
+            kind: 'doc';
+            serverId?: string | undefined;
+        };
+        behavior?: 'insert' | 'insert_on_send' | 'insert_and_send' | undefined;
+        allowArgs?: boolean | undefined;
+        availableIn?: 'global' | 'session_only' | undefined;
+    };
 };
 export type PromptLibraryActionResultById = {
     readonly "prompt_doc.get": {
@@ -104,6 +153,19 @@ export type PromptLibraryActionResultById = {
             updatedAtMs: number;
         }[];
     };
+    readonly "prompts.stack.update": {
+        status: 'updated';
+        revision: number;
+    } | {
+        status: 'conflict';
+        revision: number;
+    } | {
+        status: 'unavailable';
+        reason: string;
+    } | {
+        status: 'invalid';
+        reason: 'entry_conflict' | 'entry_not_found' | 'invalid_parameters';
+    };
     readonly "prompt_doc.update": {
         ok: true;
         artifactId: string;
@@ -121,4 +183,19 @@ export type PromptLibraryActionResultById = {
     readonly "prompt_registry.install": string | number | boolean | readonly JsonValue[] | {
         readonly [key: string]: JsonValue;
     } | null;
+    readonly "prompts.invocation.create": {
+        status: 'updated';
+        invocationId: string;
+        token: string;
+        revision: number;
+    } | {
+        status: 'invalid';
+        reason: 'invalid' | 'reserved' | 'actionCollision' | 'duplicate';
+    } | {
+        status: 'conflict';
+        revision: number;
+    } | {
+        status: 'unavailable';
+        reason: string;
+    };
 };

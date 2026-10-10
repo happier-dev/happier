@@ -167,6 +167,6 @@ export type MachinePoolsActionResultById = {
     } | {
         kind: 'unavailable';
         poolId: string;
-        reason: 'empty' | 'no_available_machine' | 'presence_unavailable';
+        reason: 'empty' | 'no_available_machine' | 'presence_unavailable' | 'worker_status_unavailable';
     };
 };

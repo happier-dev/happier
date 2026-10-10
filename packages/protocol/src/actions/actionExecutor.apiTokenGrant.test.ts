@@ -15,6 +15,46 @@ function context(ids: string[], sessions = ['s1']): ActionExecutorContext {
 }
 
 describe('ActionExecutor API token grant admission', () => {
+  it('admits machine-granted persisted Session reads only through authenticated source attribution', async () => {
+    const sessionTranscriptGet = async () => ({ ok: true as const, sessionId: 's1', items: [], nextCursor: null, hasMore: false,
+      diagnostics: { rawRowsScanned: 0, pagesFetched: 0, scanLimitReached: false, payloadTruncations: 0 } });
+    const ctx = context(['session.transcript.get'], []);
+    ctx.externalActionTarget = { kind: 'machine', machineId: 'm1' };
+    if (!ctx.externalActionCredential?.grant) throw new Error('Expected grant');
+    ctx.externalActionCredential.grant.targets = { sessions: [], machines: ['m1'] };
+    // The host attribution port models authenticated HTTP, not the grant evaluator.
+    let sourceMachineId = 'm1';
+    const executor = createActionExecutor({ sessionTranscriptGet,
+      resolveApiTokenGrantSessionMachineId: async () => sourceMachineId,
+    } as unknown as ActionExecutorDeps);
+    const read = await executor.execute('session.transcript.get', { sessionId: 's1' }, ctx);
+    expect(read.ok ? null : read).toBeNull();
+    const prepared = await executor.prepare('session.transcript.get', { sessionId: 's1' }, ctx);
+    expect(prepared.kind).toBe('ready');
+    if (prepared.kind !== 'ready') throw new Error('Expected admitted read');
+    expect(await prepared.invocation.run()).toMatchObject({ ok: true });
+    const moved = await executor.prepare('session.transcript.get', { sessionId: 's1' }, ctx);
+    if (moved.kind !== 'ready') throw new Error('Expected prepared read');
+    sourceMachineId = 'm2';
+    expect(await moved.invocation.run()).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+    for (const machineId of ['m2', null]) {
+      const denied = createActionExecutor({ sessionTranscriptGet,
+        resolveApiTokenGrantSessionMachineId: async () => machineId,
+      } as unknown as ActionExecutorDeps);
+      expect(await denied.execute('session.transcript.get', { sessionId: 's1' }, ctx))
+        .toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+      expect(await denied.prepare('session.transcript.get', { sessionId: 's1' }, ctx))
+        .toMatchObject({ kind: 'settled', result: { ok: false, errorCode: 'credential_scope_denied' } });
+    }
+    expect(await createActionExecutor({ sessionTranscriptGet } as unknown as ActionExecutorDeps)
+      .execute('session.transcript.get', { sessionId: 's1' }, ctx))
+      .toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+    expect(await createActionExecutor({ sessionTranscriptGet,
+      resolveApiTokenGrantSessionMachineId: async () => { throw new Error('Network unavailable'); },
+    } as unknown as ActionExecutorDeps).execute('session.transcript.get', { sessionId: 's1' }, ctx))
+      .toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+  });
+
   it.each(['approved_for_session', 'abort'] as const)('preserves %s and response metadata at the Session RPC boundary', async (decision) => {
     const requests: SessionPermissionRespondRpcParamsV1[] = [];
     const sessionPermissionRespond: NonNullable<ActionExecutorDeps['sessionPermissionRespond']> = async (args) => {
@@ -104,27 +144,27 @@ describe('ActionExecutor API token grant admission', () => {
   });
 
   it('refuses an ungranted action at prepare and execute before any host dependency', async () => {
-    const sessionTitleSet = vi.fn(async () => ({}));
+    const sessionStateFieldSet = vi.fn(async () => ({}));
     // Dependencies model host transports. Unused required ports are unreachable in these slices.
-    const executor = createActionExecutor({ sessionTitleSet } as unknown as ActionExecutorDeps);
+    const executor = createActionExecutor({ sessionStateFieldSet } as unknown as ActionExecutorDeps);
     const ctx = context(['session.message.send']);
     expect(await executor.execute('session.title.set', { sessionId: 's1', title: 'hello' }, ctx))
       .toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
     expect(await executor.prepare('session.title.set', { sessionId: 's1', title: 'hello' }, ctx))
       .toMatchObject({ kind: 'settled', result: { ok: false, errorCode: 'credential_scope_denied' } });
-    expect(sessionTitleSet).not.toHaveBeenCalled();
+    expect(sessionStateFieldSet).not.toHaveBeenCalled();
   });
 
   it('rechecks the credential grant when a prepared invocation starts', async () => {
-    const sessionTitleSet = vi.fn(async () => ({ ok: true }));
-    const executor = createActionExecutor({ sessionTitleSet } as unknown as ActionExecutorDeps);
+    const sessionStateFieldSet = vi.fn(async () => ({ ok: true }));
+    const executor = createActionExecutor({ sessionStateFieldSet } as unknown as ActionExecutorDeps);
     const ctx = context(['session.title.set']);
     const prepared = await executor.prepare('session.title.set', { sessionId: 's1', title: 'hello' }, ctx);
     expect(prepared.kind).toBe('ready');
     if (prepared.kind !== 'ready' || !ctx.externalActionCredential?.grant) throw new Error('Expected prepared grant');
     ctx.externalActionCredential.grant.actions = { families: [], ids: ['session.message.send'] };
     expect(await prepared.invocation.run()).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
-    expect(sessionTitleSet).not.toHaveBeenCalled();
+    expect(sessionStateFieldSet).not.toHaveBeenCalled();
   });
 
   it('filters discovery and refuses schemas and options for an ungranted action', async () => {

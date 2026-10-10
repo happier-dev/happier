@@ -4,6 +4,18 @@ import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.
 import { getActionSpec } from './actionSpecs.js';
 
 describe('app shell Actions', () => {
+  it.each(['session.work.get', 'inbox.get'] as const)('exposes %s as a strict client read with explicit availability', (actionId) => {
+    const spec = getActionSpec(actionId);
+    expect(spec.executionPlacement).toBe('client');
+    expect(spec.sideEffectClass).toBe('read');
+    expect(spec.requiredAuthority).toBe('account_automation');
+    expect(spec.surfaces.agent).toBe(true);
+    expect(spec.inputSchema.safeParse(actionId === 'session.work.get'
+      ? { sessionId: 'lead' } : {}).success).toBe(true);
+    expect(spec.inputSchema.safeParse({ unknown: true }).success).toBe(false);
+    expect(spec.outputSchema?.safeParse({ status: 'unavailable' }).success).toBe(true);
+    expect(spec.outputSchema?.safeParse({ status: 'ready', rawStore: {} }).success).toBe(false);
+  });
   it('registers ordinary automated Inbox acknowledgement over exact Home addresses', () => {
     const spec = getActionSpec('inbox.mark_all_read');
     expect(spec.requiredAuthority).toBe('account_automation');

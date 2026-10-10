@@ -9,6 +9,19 @@ export type WorkspaceLayoutActionInputById = {
         href?: string | undefined;
         tabId?: string | undefined;
         groupId?: string | undefined;
+        find?: {
+            query: string;
+            target: {
+                kind: 'native-message';
+                agentId: string;
+                remoteSessionId: string;
+                sourceItemId: string;
+            };
+            options?: {
+                matchCase: boolean;
+                regex: boolean;
+            } | undefined;
+        } | undefined;
         beforeTabId?: string | null | undefined;
         reuseExisting?: boolean | undefined;
         mode?: 'preview' | 'newTab' | 'splitLeft' | 'splitRight' | 'splitUp' | 'splitDown' | undefined;

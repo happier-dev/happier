@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { ActionIdSchema } from './actionIds.js';
+import { markSessionListQueryResultV1 } from '../sessions/awareness/action.js';
+import { computeWorkspaceSyncPolicyDigest, type HandoffWorkspaceActionV1 } from '../sessions/control/handoff/workspaceSyncSchemas.js';
 
 function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
   // Dependencies represent host transport/effect boundaries; internal admission stays real.
@@ -9,9 +11,56 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
 }
 
 describe('hands-off Action admission', () => {
+  it('refuses handoff copy and new relationship effects while preserving no-transfer and linked handoffs', async () => {
+    const issued: Array<Readonly<{ phase: 'preflight' | 'handoff'; workspaceAction?: HandoffWorkspaceActionV1 }>> = [];
+    const executor = createExecutor({
+      // These are the host's network/effect boundaries, not mocked admission logic.
+      sessionHandoffTargetReplacementApprovalPreflight: async input => {
+        issued.push({ phase: 'preflight', workspaceAction: input.workspaceAction });
+        return { type: 'not_required' };
+      },
+      sessionHandoffStart: async input => {
+        issued.push({ phase: 'handoff', workspaceAction: input.workspaceAction });
+        return { ok: false, errorCode: 'handoff_transport_unavailable', error: 'handoff_transport_unavailable' };
+      },
+    });
+    const context = { surface: 'rpc' as const, workspaceWrites: 'deny' as const,
+      authority: 'account_automation' as const, actionRequestId: 'handoff-write-ceiling', serverId: 'home' };
+    const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
+    const contentPolicy = { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) };
+    const writes: HandoffWorkspaceActionV1[] = [
+      { kind: 'copy_once', contentPolicy },
+      { kind: 'create_relationship', mode: 'keep_synced', contentPolicy, flushBeforeCommit: true },
+    ];
+    for (const workspaceAction of writes) {
+      const input = { sessionId: 'source', targetMachineId: 'target', targetPath: '/target', workspaceAction };
+      await expect(executor.prepare('session.handoff', input, context)).resolves.toMatchObject({
+        kind: 'settled', result: { ok: false, errorCode: 'workspace_write_denied' },
+      });
+      await expect(executor.execute('session.handoff', input, context))
+        .resolves.toMatchObject({ ok: false, errorCode: 'workspace_write_denied' });
+    }
+    expect(issued).toEqual([]);
+    for (const workspaceAction of [{ kind: 'none' }, { kind: 'linked_workspace' }] as const) {
+      await expect(executor.execute('session.handoff', {
+        sessionId: 'source', targetMachineId: 'target', targetPath: '/target', workspaceAction,
+      }, context)).resolves.toMatchObject({ ok: false, errorCode: 'handoff_transport_unavailable' });
+    }
+    expect(issued).toEqual([
+      { phase: 'handoff', workspaceAction: { kind: 'none' } },
+      { phase: 'handoff', workspaceAction: { kind: 'linked_workspace' } },
+    ]);
+  });
+
   it('admits session role edits only for the agent own or server-proved led sessions', async () => {
     const roleActionExecute = vi.fn(async () => ({ updated: true }));
-    const executor = createExecutor({ roleActionExecute });
+    let accessible = true;
+    const executor = createExecutor({ roleActionExecute,
+      sessionList: async () => markSessionListQueryResultV1({
+        sessions: accessible ? [{ id: 'report', active: false, presence: 'offline', updatedAt: 10 }] : [],
+        nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
+      }),
+    });
     const context = { surface: 'agent' as const, defaultSessionId: 'self', workspaceWrites: 'allow' as const,
       agentStartContext: { caller: { kind: 'session' as const, sessionId: 'self', starterDepth: 0, turnDepth: 0 },
         baseline: { machineId: 'machine-1', directory: '/repo' }, ledSubtreeSessionIds: ['report'],
@@ -20,6 +69,15 @@ describe('hands-off Action admission', () => {
       .resolves.toMatchObject({ ok: false, errorCode: 'subtree_denied' });
     expect(roleActionExecute).not.toHaveBeenCalled();
     await expect(executor.execute('session.notes.set', { sessionId: 'report', notes: 'task' }, context))
+      .resolves.toMatchObject({ ok: true });
+    const prepared = await executor.prepare('session.notes.set', { sessionId: 'report', notes: 'stale task' }, context);
+    expect(prepared.kind).toBe('ready');
+    if (prepared.kind !== 'ready') throw new Error('Expected admitted led Session notes');
+    accessible = false;
+    roleActionExecute.mockClear();
+    await expect(prepared.invocation.run()).resolves.toMatchObject({ ok: false, errorCode: 'subtree_denied' });
+    expect(roleActionExecute).not.toHaveBeenCalled();
+    await expect(executor.execute('session.notes.set', { sessionId: 'self', notes: 'own task' }, context))
       .resolves.toMatchObject({ ok: true });
   });
   it('rechecks the live workspace ceiling when a prepared invocation finally dispatches', async () => {

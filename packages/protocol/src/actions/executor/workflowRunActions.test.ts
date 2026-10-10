@@ -17,6 +17,8 @@ import { normalizeWorkflowActionThrownError } from './workflowAccountActions.js'
 import { WorkflowRunRecipientCensusResponseV1Schema, WorkflowRunRecipientKeyEnvelopesV1Schema } from '../../workflows/workflowRunKeyV1.js';
 import { WorkflowAcceptedSnapshotV1Schema, type WorkflowAcceptedSnapshotV1 } from '../../workflows/workflowDefinitionV1.js';
 import { measureExternalActionResultResponseEnvelopeUtf8BytesV1 } from '../externalActionLimits.js';
+import { REVIEW_AND_CONVERGE_WORKFLOW_V1 } from '../../workflows/builtins/reviewAndConverge.js';
+import { PLAN_WITH_A_PANEL_WORKFLOW_V1 } from '../../workflows/builtins/planWithAPanel.js';
 
 const runId = '11111111-1111-4111-8111-111111111111';
 const definition = validateWorkflowDefinition({
@@ -73,6 +75,130 @@ function ownerDeps(storage: WorkflowAccountRunActionDeps['storage']): WorkflowAc
 }
 
 describe('shared Account workflow run owner', () => {
+  it.each([
+    ['Review & converge', REVIEW_AND_CONVERGE_WORKFLOW_V1, { engines: ['agent:happier.agent.codex/codex'] }, 4],
+    ['Plan with a panel', PLAN_WITH_A_PANEL_WORKFLOW_V1, { request: 'Plan the change', engines: ['agent:happier.agent.codex/codex'] }, 4],
+    ...(['review.start', 'subagents.plan.start'] as const).map(actionId => [actionId, {
+      version: 1, defaults: {}, blocks: [
+        { kind: 'wait', id: 'choose', document: { text: 'Choose engines', references: [], attachments: [] },
+          result: { kind: 'json', schema: { type: 'array', items: { type: 'string' } } } },
+        { kind: 'action', id: 'panel', actionId, input: {
+          [actionId === 'review.start' ? 'engineIds' : 'backendTargetKeys']: {
+            kind: 'result', producer: { blockId: 'choose', scope: { kind: 'current' } }, path: [],
+          },
+          ...(actionId === 'review.start' ? { sessionId: { kind: 'origin_session_id' } }
+            : { target: { kind: 'literal', value: { kind: 'detached' } } }),
+          instructions: { kind: 'literal', value: 'Plan or review the change' },
+        } },
+      ],
+    }, {}, 2] as const),
+  ] as const)('admits and reauthorizes an agent-started %s with invoke-time choices', async (_name, authored, inputs, workDepthLimit) => {
+    let committed: ReturnType<typeof runSnapshot> | undefined;
+    const target = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
+    const owner = createWorkflowAccountRunActionOwner({
+      ...ownerDeps({ execute: async operation => {
+        if (operation.operation === 'get') {
+          if (!committed) throw Object.assign(new Error('run_not_found'), { code: 'run_not_found' });
+          return committed;
+        }
+        if (operation.operation === 'invocations.list') return { invocations: [] };
+        if (operation.operation !== 'admit') throw new Error('unexpected_storage_operation');
+        committed = { ...runSnapshot(), acceptedEnvelope: String(operation.acceptedEnvelope) };
+        return { kind: 'created', run: committed.run };
+      } }),
+      prepareWorkspace: async () => ({ ok: true, workspaceTarget: { project: {
+        machineId: 'machine-a', directory: '/repo', checkoutRootPath: '/repo' } } }),
+      resolveMaterializationContext: async () => ({
+        roleSelection: { defaultEngine: { agentTargetKey: 'agent:happier.agent.codex/codex' },
+          availableAgentTargetKeys: ['agent:happier.agent.codex/codex'] },
+        effects: { resolveTargetAvailability: async () => true,
+          readActionContract: async () => ({ inputSchema: { type: 'object' }, outputSchema: {} }) },
+      }),
+      resolveAgentStartContext: async () => ({ caller: { kind: 'session', sessionId: 'origin-1', starterDepth: 1, turnDepth: 1 },
+        baseline: { machineId: 'machine-a', directory: '/repo', configuration: { agentTarget: target, permissionMode: 'default' } },
+        roles: {}, callerPermissionCeiling: 'default', ledSubtreeSessionIds: [], workDepthLimit }),
+    });
+    const args = { actionId: 'workflow.run.start' as const, input: { runId, source: { kind: 'inline' as const, definition: authored }, inputs },
+      context: { surface: 'agent' as const, authority: 'account_automation' as const, callerPermissionMode: 'default',
+        sessionAgentSpawnPolicyV1: SessionAgentSpawnPolicyV1StrictSchema.parse({}),
+        actionCaller: { kind: 'session' as const, sessionId: 'origin-1', starterDepth: 1, turnDepth: 1 }, defaultSessionId: 'origin-1',
+        externalActionTarget: { kind: 'machine' as const, machineId: 'machine-a', project: { machineId: 'machine-a', directory: '/repo' } } } };
+    await expect(owner.execute(args)).resolves.toMatchObject({ admission: 'created' });
+    const opened = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+      envelope: parseWorkflowStoredContentEnvelopeV1(committed!.acceptedEnvelope)!,
+      binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId } });
+    expect(opened).toMatchObject({ kind: 'available', content: { workDepth: 2 } });
+    await expect(owner.execute(args)).resolves.toMatchObject({ admission: 'existing' });
+  });
+
+  it('admits a Wait run after the slower independent Account read, without serial round trips', async () => {
+    vi.useFakeTimers();
+    try {
+      const encryptionDelayMs = 120;
+      const accountIdDelayMs = 80;
+      const owner = createWorkflowAccountRunActionOwner({
+        ...ownerDeps({ execute: async operation => {
+          if (operation.operation === 'get') throw Object.assign(new Error('run_not_found'), { code: 'run_not_found' });
+          if (operation.operation === 'admit') return { kind: 'created', run: runSnapshot().run };
+          throw new Error('unexpected_storage_operation');
+        } }),
+        // Account HTTP reads and the clock are genuine boundaries. Validation,
+        // materialization, key preparation and sealing remain real.
+        resolveEncryption: () => new Promise(resolve => setTimeout(() => resolve({ kind: 'available',
+          witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }), encryptionDelayMs)),
+        resolveAccountId: () => new Promise(resolve => setTimeout(() => resolve('account-1'), accountIdDelayMs)),
+        prepareWorkspace: async () => ({ ok: true, workspaceTarget: { project: {
+          machineId: 'machine-a', directory: '/repo', checkoutRootPath: '/repo' } } }),
+        resolveMaterializationContext: async () => ({ effects: { resolveTargetAvailability: async () => true } }),
+      });
+      const startedAt = Date.now();
+      let elapsedMs: number | undefined;
+      const result = owner.execute({ actionId: 'workflow.run.start', input: { runId,
+        source: { kind: 'inline', definition: { version: 1, blocks: [{ kind: 'wait', id: 'wait',
+          document: { text: 'Choose', references: [], attachments: [] } }] } },
+      }, context: { surface: 'ui', authority: 'present_user', callerPermissionMode: 'default',
+        externalActionTarget: { kind: 'machine', machineId: 'machine-a',
+          project: { machineId: 'machine-a', directory: '/repo' } } },
+      }).then(value => { elapsedMs = Date.now() - startedAt; return value; });
+      await vi.advanceTimersByTimeAsync(encryptionDelayMs + accountIdDelayMs);
+      await expect(result).resolves.toMatchObject({ admission: 'created', run: { id: runId } });
+      expect(elapsedMs).toBe(Math.max(encryptionDelayMs, accountIdDelayMs));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(['encryption', 'account-id'] as const)('does not admit after the independent %s read fails', async failingRead => {
+    const failure = new Error('account_read_unavailable');
+    let admitted = false;
+    const owner = createWorkflowAccountRunActionOwner({
+      ...ownerDeps({ execute: async operation => {
+        if (operation.operation === 'get') throw Object.assign(new Error('run_not_found'), { code: 'run_not_found' });
+        admitted = true;
+        throw new Error('must_not_write_after_failed_account_read');
+      } }),
+      resolveEncryption: async () => {
+        if (failingRead === 'encryption') throw failure;
+        return { kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } };
+      },
+      resolveAccountId: async () => {
+        if (failingRead === 'account-id') throw failure;
+        return 'account-1';
+      },
+      prepareWorkspace: async () => ({ ok: true, workspaceTarget: { project: {
+        machineId: 'machine-a', directory: '/repo', checkoutRootPath: '/repo' } } }),
+      resolveMaterializationContext: async () => ({ effects: { resolveTargetAvailability: async () => true } }),
+    });
+    await expect(owner.execute({ actionId: 'workflow.run.start', input: { runId,
+      source: { kind: 'inline', definition: { version: 1, blocks: [{ kind: 'wait', id: 'wait',
+        document: { text: 'Choose', references: [], attachments: [] } }] } },
+    }, context: { surface: 'ui', authority: 'present_user', callerPermissionMode: 'default',
+      externalActionTarget: { kind: 'machine', machineId: 'machine-a',
+        project: { machineId: 'machine-a', directory: '/repo' } } },
+    })).rejects.toBe(failure);
+    expect(admitted).toBe(false);
+  });
+
   it.each(['history_not_readable', 'encryption_setup_required', 'waiting_for_keys'] as const)(
     'preserves %s through accepted detail, exact invocation, content list and result reads', async reason => {
       const snapshot = runSnapshot();
@@ -424,6 +550,32 @@ describe('shared Account workflow run owner', () => {
     }), context: { surface: 'ui', authority: 'present_user', callerPermissionMode: 'default', externalActionTarget: { kind: 'machine', machineId: 'machine-a',
       project: { machineId: 'machine-a', directory: '/repo' } } } })).rejects.toMatchObject({ code: 'input_type_value_invalid' });
     expect(prepareWorkspace).not.toHaveBeenCalled();
+    expect(operations).not.toContain('admit');
+  });
+  it('admits host Session input without plugin discovery and rejects malformed values before Run admission', async () => {
+    const operations: string[] = [];
+    const owner = createWorkflowAccountRunActionOwner({ ...ownerDeps({ execute: async operation => {
+      operations.push(String(operation.operation));
+      if (operation.operation === 'get') throw Object.assign(new Error('run_not_found'), { code: 'run_not_found' });
+      if (operation.operation === 'admit') return { kind: 'created', run: runSnapshot().run };
+      throw new Error('unexpected_storage_operation');
+    } }), prepareWorkspace: async () => ({ ok: true, workspaceTarget: {
+      project: { machineId: 'machine-a', directory: '/repo', checkoutRootPath: '/repo' } } }),
+      resolveMaterializationContext: async () => ({ effects: { resolveTargetAvailability: async () => true } }),
+      inputTypeDeps: { resolveInputType: async () => { throw new Error('Host input must not acquire a plugin identity'); } },
+    });
+    const input = WorkflowRunStartRequestV1Schema.parse({ runId,
+      source: { kind: 'inline', definition: { ...definition, inputs: [{ name: 'session', valueType: 'json',
+        required: true, inputType: { hostType: 'session' } }] } }, inputs: { session: { serverId: 'home', sessionId: 'B' } },
+    });
+    const checkedDefinition = validateWorkflowDefinition(input.source.kind === 'inline' ? input.source.definition : {});
+    expect(checkedDefinition.valid, JSON.stringify(checkedDefinition.issues)).toBe(true);
+    const context = { surface: 'ui' as const, authority: 'present_user' as const, callerPermissionMode: 'default',
+      externalActionTarget: { kind: 'machine' as const, machineId: 'machine-a', project: { machineId: 'machine-a', directory: '/repo' } } };
+    await expect(owner.execute({ actionId: 'workflow.run.start', input, context })).resolves.toMatchObject({ admission: 'created' });
+    operations.length = 0;
+    await expect(owner.execute({ actionId: 'workflow.run.start', input: { ...input, inputs: { session: { sessionId: 'B' } } }, context }))
+      .rejects.toMatchObject({ code: 'input_type_value_invalid' });
     expect(operations).not.toContain('admit');
   });
   it('returns the frozen child definitions with authorized Run detail rather than resolving current library content', async () => {

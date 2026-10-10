@@ -174,6 +174,8 @@ export type IntentStartActionInputById = {
             kind: 'development';
             registeredRootId: string;
         } | undefined;
+        connectedServices?: unknown;
+        connectedServicesByBackendTargetKey?: Record<string, unknown> | undefined;
         secretReferenceOverlay?: {
             v: 1;
             bindings: Record<string, {
@@ -181,6 +183,15 @@ export type IntentStartActionInputById = {
                 revision?: number | undefined;
             }>;
         } | undefined;
+        modelSelection?: {
+            agentTargetKey: string;
+            providerConnectionId: null;
+            modelId: string;
+        } | {
+            agentTargetKey: string;
+            providerConnectionId: string;
+            modelId: string;
+        } | null | undefined;
         teamCredentialModel?: {
             kind: 'team_credential_provider_model';
             resourceId: string;
@@ -230,6 +241,15 @@ export type IntentStartActionInputById = {
         sessionId?: string | undefined;
         notifyParentOnCompletion?: boolean | undefined;
         modelId?: string | undefined;
+        modelSelection?: {
+            agentTargetKey: string;
+            providerConnectionId: null;
+            modelId: string;
+        } | {
+            agentTargetKey: string;
+            providerConnectionId: string;
+            modelId: string;
+        } | null | undefined;
         teamCredentialModel?: {
             kind: 'team_credential_provider_model';
             resourceId: string;
@@ -283,6 +303,15 @@ export type IntentStartActionInputById = {
         sessionId?: string | undefined;
         notifyParentOnCompletion?: boolean | undefined;
         modelId?: string | undefined;
+        modelSelection?: {
+            agentTargetKey: string;
+            providerConnectionId: null;
+            modelId: string;
+        } | {
+            agentTargetKey: string;
+            providerConnectionId: string;
+            modelId: string;
+        } | null | undefined;
         teamCredentialModel?: {
             kind: 'team_credential_provider_model';
             resourceId: string;
@@ -333,6 +362,15 @@ export type IntentStartActionInputById = {
         sessionId?: string | undefined;
         notifyParentOnCompletion?: boolean | undefined;
         modelId?: string | undefined;
+        modelSelection?: {
+            agentTargetKey: string;
+            providerConnectionId: null;
+            modelId: string;
+        } | {
+            agentTargetKey: string;
+            providerConnectionId: string;
+            modelId: string;
+        } | null | undefined;
         teamCredentialModel?: {
             kind: 'team_credential_provider_model';
             resourceId: string;

@@ -51,6 +51,7 @@ export type ArtifactsActionInputById = {
     };
     readonly "artifact.publish_from_file": {
         path: string;
+        entrypoint?: string | undefined;
         title?: string | undefined;
         mime?: string | undefined;
         kind?: string | undefined;
@@ -237,6 +238,7 @@ export type ArtifactsActionResultById = {
             maxUses: number | null;
             useCount: number;
             isConsentRequired: boolean;
+            networkOff: boolean;
             createdAt: number;
             updatedAt: number;
             keyDerivation: 'fragment_v1' | 'legacy_token_v1';
@@ -254,6 +256,7 @@ export type ArtifactsActionResultById = {
             maxUses: number | null;
             useCount: number;
             isConsentRequired: boolean;
+            networkOff: boolean;
             createdAt: number;
             updatedAt: number;
             keyDerivation: 'fragment_v1' | 'legacy_token_v1';

@@ -160,6 +160,63 @@ describe('createActionExecutor (prompt library actions)', () => {
     expect(JSON.stringify(unavailable)).not.toContain('private transport material');
     expect(artifacts.get('created-2')?.body).toContain('Retained too');
   });
+  it('reads the complete personal folder tree including empty folders through the admitted Action owner', async () => {
+    let unavailable = false;
+    let current = true;
+    const record: PromptLibraryRecordV1 = { key: 'folders', value: { v: 1, folders: [
+      { id: 'parent', name: 'Parent' }, { id: 'empty', name: 'Empty child', parentId: 'parent' },
+    ], artifactHeadersById: { private: { folderId: 'parent', tags: ['Personal'] } } } };
+    const executor = createExecutor({ artifactFolders: {
+      serverId: 'home', assertCurrent: () => { if (!current) throw Object.assign(new Error('Retired Home'), { code: 'scope-retired' }); },
+      readCatalog: async () => ({ catalog: unavailable
+        ? { status: 'unavailable' as const, reason: 'encryption-material-unavailable' as const }
+        : { status: 'ready' as const, rows: [{ record, revision: 7 }], tombstones: [], diagnostics: [] } }),
+      writeRecord: async () => { throw new Error('A folder read must not mutate its catalog'); },
+      readArtifactHeader: async () => { throw new Error('Folder reads must include empty folders independently of Artifact availability'); },
+      listArtifactHeaders: async () => { throw new Error('Folder reads must not require Artifact enumeration'); },
+    } });
+    for (const surface of ['ui', 'agent', 'mcp', 'cli', 'rpc'] as const) {
+      const context = { surface, serverId: 'home' };
+      expect(await executor.execute('artifact.folders.read', { folderId: 'empty' }, context)).toEqual({ ok: true, result: {
+        status: 'ready', item: { id: 'empty', name: 'Empty child', parentId: 'parent' }, revision: 7, coverage: 'complete',
+      } });
+      expect(await executor.execute('artifact.folders.list', {}, context)).toEqual({ ok: true, result: {
+        status: 'ready', items: [{ id: 'parent', name: 'Parent', parentId: null }, { id: 'empty', name: 'Empty child', parentId: 'parent' }],
+        revision: 7, coverage: 'complete', nextCursor: null,
+      } });
+    }
+    expect(await executor.execute('artifact.folders.read', { folderId: 'missing' }, { surface: 'cli', serverId: 'home' }))
+      .toEqual({ ok: true, result: { status: 'not_found', revision: 7, coverage: 'complete' } });
+    expect(await executor.execute('artifact.folders.list', {}, { surface: 'agent', serverId: 'foreign' }))
+      .toMatchObject({ ok: false, errorCode: 'server_target_mismatch' });
+    unavailable = true;
+    expect(await executor.execute('artifact.folders.list', {}, { surface: 'agent', serverId: 'home' }))
+      .toEqual({ ok: true, result: { status: 'unavailable', reason: 'encryption-material-unavailable' } });
+    unavailable = false;
+    current = false;
+    expect(await executor.execute('artifact.folders.read', { folderId: 'empty' }, { surface: 'agent', serverId: 'home' }))
+      .toMatchObject({ ok: false });
+  });
+
+  it('distinguishes an authoritative empty folder tree from unavailable or incomplete folder data', async () => {
+    let catalog: import('../prompts/library/promptLibraryCatalogV1.js').PromptLibraryCatalogSnapshotV1 = {
+      status: 'ready', rows: [], tombstones: [{ key: 'folders', revision: 9 }], diagnostics: [],
+    };
+    const executor = createExecutor({ artifactFolders: {
+      serverId: 'home', assertCurrent: () => {}, readCatalog: async () => ({ catalog }),
+      writeRecord: async () => { throw new Error('read-only'); }, readArtifactHeader: async () => null,
+      listArtifactHeaders: async () => ({ items: [], coverage: 'complete' as const }),
+    } });
+    const context = { surface: 'cli' as const, serverId: 'home' };
+    expect(await executor.execute('artifact.folders.list', {}, context))
+      .toEqual({ ok: true, result: { status: 'ready', items: [], revision: 9, coverage: 'complete', nextCursor: null } });
+    catalog = { status: 'partial', rows: [], tombstones: [], diagnostics: [{ key: 'folders', revision: 9, reason: 'invalid-stored-content' }] };
+    expect(await executor.execute('artifact.folders.list', {}, context))
+      .toMatchObject({ ok: true, result: { status: 'unavailable' } });
+    expect(await executor.execute('artifact.folders.list', { cursor: 'invented' }, context)).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    expect(await executor.execute('artifact.folders.read', { folderId: 'empty', payload: {} }, context)).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+  });
+
   it('organizes every Artifact kind in the private folder row through safe Actions without changing shared content', async () => {
     let record: PromptLibraryRecordV1 = { key: 'folders', value: { v: 1, folders: [] } };
     let revision = 1;

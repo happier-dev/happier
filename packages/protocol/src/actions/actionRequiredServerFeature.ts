@@ -1,12 +1,11 @@
 import type { FeatureId } from '../features/catalog.js';
-import { ACTION_ID_FAMILIES_V1, WorkflowActionIdV1Schema, isSessionAccessActionId } from './actionIds.js';
-import { isSessionBoardActionIdV1 } from '../sessions/board/actionIds.js';
+import { ACTION_ID_FAMILIES_V1, WORKFLOW_ACTION_IDS_V1, isSessionAccessActionId } from './actionIds.js';
 import { isSessionDiscussionActionIdV1 } from '../sessions/discussions/actionIds.js';
-import { TeamCredentialActionIdV1Schema } from '../teams/credentials/actionsV1.js';
-import { TeamActionIdV1Schema } from '../teams/actionsV1.js';
+import { TEAM_CREDENTIAL_ACTION_IDS_V1 } from '../teams/credentials/actionIdsV1.js';
+import { TEAM_ACTION_IDS_V1 } from '../teams/actionsV1.js';
 import { isSessionFollowActionIdV1 } from '../sessions/follow/actions.js';
-import { MachinePoolActionIdV1Schema } from '../machines/pools/actionsV1.js';
-import { EphemeralRunnerActionIdV1Schema } from '../ephemeralRunner/actionIdsV1.js';
+import { MACHINE_POOL_ACTION_IDS_V1 } from '../machines/pools/actionsV1.js';
+import { EPHEMERAL_RUNNER_ACTION_IDS_V1 } from '../ephemeralRunner/actionIdsV1.js';
 import { isRemoteHostActionIdV1 } from '../remoteHosts/remoteHostActionIdsV1.js';
 
 // Native navigation mutates the page just like the automation family. Human
@@ -15,6 +14,15 @@ const browserAutomationActionIds: ReadonlySet<string> = new Set([
   ...ACTION_ID_FAMILIES_V1.browser_automation,
   'browser.navigate', 'browser.goBack', 'browser.goForward', 'browser.reload', 'browser.stop',
 ]);
+
+// These are the same owner-declared vocabularies used by the enum schemas.
+// Membership misses are ordinary catalog branching, not validation failures:
+// parsing them would construct five Zod errors for every unrelated Action.
+const workflowActionIds: readonly string[] = WORKFLOW_ACTION_IDS_V1;
+const teamCredentialActionIds: readonly string[] = TEAM_CREDENTIAL_ACTION_IDS_V1;
+const teamActionIds: readonly string[] = TEAM_ACTION_IDS_V1;
+const machinePoolActionIds: readonly string[] = MACHINE_POOL_ACTION_IDS_V1;
+const ephemeralRunnerActionIds: readonly string[] = EPHEMERAL_RUNNER_ACTION_IDS_V1;
 
 /**
  * The canonical server feature each gated Action family depends on.
@@ -30,20 +38,26 @@ const browserAutomationActionIds: ReadonlySet<string> = new Set([
  * Action adapter; this is availability only.
  */
 export function getActionRequiredServerFeatureId(actionId: string): FeatureId | null {
+  // Device-local trust withdrawal and resource cleanup do not use the Home's
+  // management service, and must remain available after that service is disabled.
+  if (actionId === 'remote_hosts.trusted_keys.list' || actionId === 'remote_hosts.trusted_keys.remove'
+    || actionId === 'remote_hosts.trusted_keys.clear' || actionId === 'remote_hosts.tunnel.stop') return null;
   if (isRemoteHostActionIdV1(actionId)) return 'remoteHosts.management';
   if (browserAutomationActionIds.has(actionId)) return 'browser.automation';
   if (actionId.startsWith('artifact.public_link.')) return 'sharing.public';
-  if (WorkflowActionIdV1Schema.safeParse(actionId).success) return 'workflows';
-  if (isSessionBoardActionIdV1(actionId)) return 'sessions.board';
+  if (workflowActionIds.includes(actionId)) return 'workflows';
+  // Item Actions also serve transcript visuals; their operands decide layout
+  // admission at execution. Only the layout-only Action is Board availability.
+  if (actionId === 'session.board.layout.update') return 'sessions.board';
   if (isSessionDiscussionActionIdV1(actionId)) return 'sessions.conversations';
-  if (TeamCredentialActionIdV1Schema.safeParse(actionId).success) {
+  if (teamCredentialActionIds.includes(actionId)) {
     return actionId.startsWith('teams.credentials.externalKeys.')
       ? 'teams.credentialResources.externalApi'
       : 'teams.credentialResources';
   }
   // Team governance depends on Teams. Saved Secret resources are Account-owned;
   // only an operation's actual Team audience depends on the Team service gate.
-  if (TeamActionIdV1Schema.safeParse(actionId).success) return 'teams';
+  if (teamActionIds.includes(actionId)) return 'teams';
   if (isSessionFollowActionIdV1(actionId)) return 'sessions.following';
   if (isSessionAccessActionId(actionId)) {
     // The public-link intents are served by the public-share routes, whose
@@ -52,7 +66,7 @@ export function getActionRequiredServerFeatureId(actionId: string): FeatureId | 
     // `sharing.session` is enabled.
     return actionId.startsWith('session.public_link.') ? 'sharing.public' : 'sharing.session';
   }
-  if (MachinePoolActionIdV1Schema.safeParse(actionId).success) return 'machines.pools';
-  if (EphemeralRunnerActionIdV1Schema.safeParse(actionId).success) return 'sessions.ephemeralRunner';
+  if (machinePoolActionIds.includes(actionId)) return 'machines.pools';
+  if (ephemeralRunnerActionIds.includes(actionId)) return 'sessions.ephemeralRunner';
   return null;
 }
