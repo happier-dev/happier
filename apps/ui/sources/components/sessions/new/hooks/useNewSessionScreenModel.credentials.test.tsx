@@ -32,6 +32,12 @@ import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getRes
 import { refreshAcpCatalog } from '@/sync/engine/settings/acpCatalogEngine';
 import { refreshProfileCatalog } from '@/sync/engine/settings/profileCatalogEngine';
 import { getProfileCatalogSnapshot } from '@/sync/store/settings/profileCatalogSnapshot';
+import { readAccountAgentProviderRequirements } from '@/providers/catalog/accountProviderDeclarations';
+import { createProviderModelProjectionFixture, createProviderModelProjectionGroupFixture } from '@/dev/testkit/harness/providerSettingsHarness';
+import { resolveProviderBindingCompatibilityWithFingerprintV1 } from '@happier-dev/protocol/providers/binding-compatibility';
+import { ProviderContributionV1Schema } from '@happier-dev/protocol/providers/contributions';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { LMSTUDIO_PROVIDER_CONTRIBUTION } from '../../../../../../../packages/plugins/lmstudio/src/provider/contribution';
 
 // Only platform/navigation, secure storage, HTTP, Socket.IO and machine RPC
 // boundaries are replaced. The complete launcher and all domain owners stay real.
@@ -166,6 +172,8 @@ describe('New Session selected credential launch gate', () => {
         { native: 'signedOut' as const, connected: true, selected: 'connected', acpReady: true, ready: true },
         { native: 'signedOut' as const, connected: false, selected: 'native', acpReady: true, ready: false },
         { native: 'signedIn' as const, connected: true, selected: 'native', acpReady: false, ready: true },
+        { native: 'signedOut' as const, connected: false, selected: 'provider', acpReady: true, ready: true },
+        { native: 'signedOut' as const, connected: false, selected: 'native-with-provider', acpReady: true, ready: false },
     ])('loads readiness with the picker closed and keeps Start on the exact launch credential: %j', async (scenario) => {
         await prepareSessionDraftPersistenceStorage();
         const bridge = await loadSyncSingletonForTests();
@@ -211,16 +219,43 @@ describe('New Session selected credential launch gate', () => {
             id: 'claude', identity: consumer, isBuiltIn: true, title: 'Claude', connectedAccounts: [declaration],
             capabilities: { surfaces: [], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
         } } });
+        const agentTargetKey = 'agent:happier.agent.claude/claude';
+        const agentRequirements = readAccountAgentProviderRequirements(agentTargetKey);
+        if (!agentRequirements) throw new Error('Expected real first-party Claude Provider requirements');
+        const lmstudio = ProviderContributionV1Schema.parse(LMSTUDIO_PROVIDER_CONTRIBUTION);
+        const modelDescriptor = { id: 'local-model', name: 'Local model' };
+        const providerGroup = createProviderModelProjectionGroupFixture({
+            connectionId: 'pc_lmstudio', providerName: lmstudio.name, connectionName: lmstudio.name,
+            suppressedConnectedServiceIds: agentRequirements.authIsolation.suppressConnectedServiceIds,
+            rows: [{ ref: { agentTargetKey, providerConnectionId: 'pc_lmstudio', modelId: modelDescriptor.id },
+                descriptor: modelDescriptor, sources: { probe: true, manual: false, static: false }, confidence: 'probe',
+                compatibility: { ...resolveProviderBindingCompatibilityWithFingerprintV1({ agentTargetKey,
+                    endpoints: lmstudio.endpointTemplates, credential: lmstudio.credential, agent: agentRequirements,
+                    model: modelDescriptor, adapterVersion: 3 }), confirmed: true },
+                endpointHealth: 'available', catalog: { stale: false }, loadState: 'loaded', visibility: 'visible' }],
+        });
+        const providerProjection = createProviderModelProjectionFixture({ agentTargetKey, groups: [providerGroup] });
         rpc.mockImplementation(async ({ method }: { method: string }) => {
             if (method.includes('contributionRegistryProjection.describe')) return { protocolVersion: 1, projection };
+            if (method === RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION) return providerProjection;
             if (method === 'capabilities.detect') return { protocolVersion: 1, results: { 'cli.claude': { ok: true, checkedAt: Date.now(), data: nativeFacts(scenario.native) } } };
             return { jobs: [] };
         });
-        const hook = await renderHook(() => useNewSessionScreenModel({ draftId: `credential-${scenario.native}-${scenario.connected}-${scenario.selected}` }));
+        const draftId = `credential-${scenario.native}-${scenario.connected}-${scenario.selected}`;
+        if (scenario.selected === 'provider') writeNewSessionDraftToRepository({ scope, draftId, draft: {
+            input: 'hello', selectedMachineId: machine.id, selectedPath: '/repo', targetServerId: scope.serverId,
+            backendTarget: { kind: 'backend', backendId: 'claude' },
+            modelSelection: { v: 1, updatedAt: 1, ref: providerGroup.rows[0]!.ref },
+            permissionMode: 'default', updatedAt: 1,
+        } });
+        const hook = await renderHook(() => useNewSessionScreenModel({ draftId }));
         try {
             await vi.waitFor(() => expect(machineAgentInventoryStore.read(serverAccountScopedResourceKey(scope, 'machine-agents', machine.id)))
                 .toMatchObject({ status: 'ready', agents: [{ agentId: 'claude', installed: true }] }));
             await flushHookEffects();
+            if (scenario.selected === 'provider') await vi.waitFor(() => {
+                expect(rpc.mock.calls.some(([request]) => request.method === RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION)).toBe(true);
+            });
             const model = hook.getCurrent();
             if (model.variant !== 'simple') throw new Error('Expected real simple launcher');
             const observedAdmission = JSON.stringify({
