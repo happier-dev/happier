@@ -4,6 +4,7 @@ import { DaemonProviderConnectionMutationResponseV1Schema, DaemonProviderConnect
 import type { createProviderConnectionService } from './service';
 
 type ProviderConnectionService = ReturnType<typeof createProviderConnectionService>;
+type PreparedSavedSecret = Parameters<ProviderConnectionService['create']>[0]['preparedSavedSecret'];
 type FlatConnectionMutationResult = Awaited<ReturnType<ProviderConnectionService['setEnabled']>>;
 type FlatConnectionMutationAction =
   | 'enableDetected'
@@ -30,17 +31,17 @@ function projectFlatConnectionMutationResult(
 
 export function createProviderConnectionRpcAdapter(service: ProviderConnectionService): Readonly<{
   describeConnections(input: DaemonProviderConnectionsDescribeRequestV1): Promise<DaemonProviderConnectionsDescribeResponseV1>;
-  mutateConnection(input: DaemonProviderConnectionMutationRequestV1): Promise<DaemonProviderConnectionMutationResponseV1>;
+  mutateConnection(input: DaemonProviderConnectionMutationRequestV1, preparedSavedSecret?: PreparedSavedSecret): Promise<DaemonProviderConnectionMutationResponseV1>;
 }> {
   return Object.freeze({
     describeConnections: async (input) => DaemonProviderConnectionsDescribeResponseV1Schema.parse(
       await service.describe(input),
     ),
-    mutateConnection: async (input) => {
+    mutateConnection: async (input, preparedSavedSecret) => {
       switch (input.action) {
         case 'createContribution':
         case 'createCustom': {
-          const result = await service.create(input);
+          const result = await service.create({ ...input, ...(preparedSavedSecret ? { preparedSavedSecret } : {}) });
           return DaemonProviderConnectionMutationResponseV1Schema.parse(result.status === 'error'
             ? result
             : { status: 'success', action: input.action, connection: result.connection, created: result.created });
@@ -59,8 +60,12 @@ export function createProviderConnectionRpcAdapter(service: ProviderConnectionSe
         case 'setEndpointOverride':
         case 'duplicate':
         case 'setEnabled':
-        case 'bindSecret': {
+        {
           const result = await service[input.action](input as never);
+          return projectFlatConnectionMutationResult(input.action, result);
+        }
+        case 'bindSecret': {
+          const result = await service.bindSecret({ ...input, ...(preparedSavedSecret ? { preparedSavedSecret } : {}) });
           return projectFlatConnectionMutationResult(input.action, result);
         }
         case 'delete': {

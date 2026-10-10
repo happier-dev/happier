@@ -20,7 +20,7 @@ import { createInMemoryAccountProviderActions } from '@/providers/connections/se
 import type { ProviderConnectionServiceDeps } from '@/providers/connections/service/types';
 import type { ProviderModelLoadResult } from '@/providers/modelManagement/load';
 import { executeProvidersCommand, ProviderCliError, type ProviderCliDependencies } from './index';
-import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { routeProviderCliActions } from './actionDependencies';
 import { createProviderActionExecuteV1 } from '@happier-dev/protocol/providers/executeProviderActionV1';
@@ -191,17 +191,18 @@ describe('happier providers command domain', () => {
     const deps = routeProviderCliActions(h.deps, async (actionId, input, options) => {
       const rpc = createProviderConnectionRpcAdapter(h.connectionService);
       const signal = new AbortController().signal;
+      const approvals = {
+        approvalsCreate: async ({ request }) => { approvalRecords.push(request); return { artifactId: 'approval-1' }; },
+        approvalsWaitForDecision: async ({ request }) => ({ decision: decision as 'reject' | 'canceled' | 'approve', request }),
+        approvalsUpdate: async ({ request }) => { approvalRecords.push(request); return { ok: true as const }; },
+      } satisfies Pick<ActionExecutorDeps, 'approvalsCreate' | 'approvalsWaitForDecision' | 'approvalsUpdate'>;
       const executor = createActionExecutor({
         isActionApprovalRequired: (id, context) => isApprovalRequiredByActionsSettings(id, {}, context),
         hostActionApprovalLifetime: { actionId, signal },
         // Captured credentials are a genuine host boundary; the Action owner validates their stored origin.
         isApprovalExecutionOriginCurrent: async ({ origin }) => origin.serverId === 'home'
           && origin.accountId === 'account' && origin.requestId === 'request-1',
-        ...(decision === 'missing' ? {} : {
-          approvalsCreate: async ({ request }) => { approvalRecords.push(request); return { artifactId: 'approval-1' }; },
-          approvalsWaitForDecision: async ({ request }) => ({ decision: decision as 'reject' | 'canceled' | 'approve', request }),
-          approvalsUpdate: async ({ request }) => { approvalRecords.push(request); return { ok: true as const }; },
-        }),
+        ...(decision === 'missing' ? {} : approvals),
         providerActionExecute: createProviderActionExecuteV1({ assertCurrent() {},
           async rpc({ request, machineId }) {
             expect(machineId).toBe('machine-a');

@@ -3,6 +3,7 @@ import { errorFrame } from '@happier-dev/cli-common/output';
 
 import type { CommandContext } from '@/cli/commandRegistry';
 import { printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
+import { tryHandleApprovalRequestCreated } from '@/cli/commands/session/shared/tryHandleApprovalRequestCreated';
 import { presentProviderCliRefusal } from '@/providers/lifecycle/presentProviderCliRefusal';
 import { executeProvidersCommand, ProviderCliError } from './providers/index';
 import { hasFlag } from './providers/args';
@@ -57,7 +58,7 @@ export async function handleProvidersCliCommand(
                 `Agent setup moved to 'happier agents ${subcommand}'; 'happier providers' now manages model providers`,
             );
         }
-        const deps = await resolveDependencies();
+        const deps = context.signal ? await resolveDependencies({ signal: context.signal }) : await resolveDependencies();
         const result = await executeProvidersCommand(
             args,
             deps,
@@ -79,6 +80,8 @@ export async function handleProvidersCliCommand(
         const cliError = error instanceof ProviderCliError
             ? error
             : new ProviderCliError('operation_failed', error instanceof Error ? error.message : 'Unknown provider operation failure');
+        if (await tryHandleApprovalRequestCreated({ envelopeKind: `providers_${String(args[0] ?? 'unknown').replaceAll('-', '_')}`,
+            json, result: cliError.details })) return;
         if (json) {
             await printJsonEnvelope({
                 ok: false,

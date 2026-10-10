@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
 import { SavedSecretSchema } from '@happier-dev/protocol/profiles/backendProfileSchema';
+import { DaemonProviderConnectionMutationRequestV1Schema } from '@happier-dev/protocol/rpc/providers';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { AccountSettings } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
@@ -25,8 +27,10 @@ import {
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { promptInput, promptSecretInput } from '@/terminal/prompts/promptInput';
 import { ensureMachineIdForCredentials } from '@/ui/auth';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 
 import { ProviderCliError, type ProviderCliDependencies, type ProviderCliModelRow } from './types';
+import { routeProviderCliActions } from './actionDependencies';
 
 const MAX_ADVANCED_JSON_BYTES = 64 * 1024;
 
@@ -78,7 +82,7 @@ export function createProviderCliModelManagementServices(
   });
 }
 
-export async function resolveProviderCliDependencies(): Promise<ProviderCliDependencies> {
+export async function resolveProviderCliDependencies(requestOptions: Readonly<{ signal?: AbortSignal }> = {}): Promise<ProviderCliDependencies> {
   const providersFeature = await resolveCliFeatureDecisionForServer({
     featureId: 'providers',
     env: process.env,
@@ -124,8 +128,10 @@ export async function resolveProviderCliDependencies(): Promise<ProviderCliDepen
   };
   const loadSnapshot: ProviderCliDependencies['loadSnapshot'] = async () => {
     const { activeSnapshot: _activeSnapshot, ...snapshot } = await loadProviderCliSnapshot();
+    observedMachineId = snapshot.machineId;
     return snapshot;
   };
+  let observedMachineId: string | undefined;
   let runtimeServices: ReturnType<typeof createRuntimeProviderModelManagementServices> | null = null;
   const resolveRuntimeServices = async () => {
     const snapshot = await loadProviderCliSnapshot();
@@ -144,8 +150,11 @@ export async function resolveProviderCliDependencies(): Promise<ProviderCliDepen
     return runtimeServices;
   };
   let connectionRuntimeServices: ReturnType<typeof createRuntimeProviderConnectionServices> | null = null;
-  const resolveConnectionServices = async () => {
+  const resolveConnectionServices = async (expectedMachineId?: string) => {
     const snapshot = await loadProviderCliSnapshot();
+    if (expectedMachineId && snapshot.machineId !== expectedMachineId) {
+      throw new ProviderCliError('provider_machine_mismatch', 'The captured local Provider machine is no longer current');
+    }
     connectionRuntimeServices ??= createRuntimeProviderConnectionServices({
       machineId: snapshot.machineId,
       credentials,
@@ -156,7 +165,7 @@ export async function resolveProviderCliDependencies(): Promise<ProviderCliDepen
     });
     return connectionRuntimeServices.service;
   };
-  return {
+  const deps: ProviderCliDependencies = {
     assertProvidersFeatureEnabled: () => {
       if (providersFeature.decision.state !== 'enabled') {
         throw new ProviderCliError('provider_feature_disabled', 'Providers are disabled by server policy');
@@ -206,4 +215,36 @@ export async function resolveProviderCliDependencies(): Promise<ProviderCliDepen
       return { id, record };
     },
   };
+  return routeProviderCliActions(deps, async (actionId, input, options) => {
+    const preparedSavedSecret = options?.preparedSavedSecret;
+    const machineId = observedMachineId;
+    if (preparedSavedSecret && !machineId) throw new ProviderCliError('provider_machine_mismatch', 'Load the exact local machine before preparing a credential');
+    // Only prompted material retains this live invocation. Ordinary reference
+    // writes keep the canonical CLI's deferred approval behavior unchanged.
+    const invocationSignal = options?.signal ?? requestOptions.signal;
+    const signal = preparedSavedSecret ? invocationSignal ?? new AbortController().signal : invocationSignal;
+    const executor = createCliActionExecutorFromCredentials({ credentials,
+      ...(preparedSavedSecret && machineId ? {
+        machineId,
+        providerPreparedSavedSecret: preparedSavedSecret,
+        hostActionApprovalLifetime: { actionId, signal: signal! },
+        machineActionDirectTargetTransport: {
+          machineId,
+          invoke: async (method, request, invocation) => {
+            invocation?.signal?.throwIfAborted();
+            if (method !== RPC_METHODS.DAEMON_PROVIDERS_CONNECTION_MUTATE) {
+              throw new ProviderCliError('unsupported_action', 'Prepared Provider credentials belong only to their connection mutation');
+            }
+            const operand = DaemonProviderConnectionMutationRequestV1Schema.parse(request);
+            if (operand.machineId !== machineId || observedMachineId !== machineId) {
+              throw new ProviderCliError('provider_machine_mismatch', 'The prepared credential belongs to the captured local machine');
+            }
+            await resolveConnectionServices(machineId);
+            return connectionRuntimeServices!.mutateConnection(operand, preparedSavedSecret);
+          },
+        },
+      } : {}),
+    });
+    return executor.execute(actionId, input, { surface: 'cli', actionRequestId: randomUUID(), ...(signal ? { signal } : {}) });
+  });
 }
