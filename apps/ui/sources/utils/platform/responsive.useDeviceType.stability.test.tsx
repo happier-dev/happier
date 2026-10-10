@@ -1,8 +1,8 @@
 import React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 
-import { useDeviceType } from './responsive';
+import { getDeviceType, useDeviceType } from './responsive';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -46,10 +46,33 @@ function DeviceTypeLabel() {
 }
 
 describe('useDeviceType (stability)', () => {
+    afterEach(() => vi.unstubAllGlobals());
     beforeEach(() => {
         screenState.platformOS = 'web';
         screenState.hookDims = { width: 800, height: 700 };
         screenState.staticDims = { width: 800, height: 700 };
+    });
+
+    it.each([
+        { host: 'Windows touch desktop', userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', fine: false, width: 1440, height: 400, expected: 'tablet' },
+        { host: 'X11 touch desktop', userAgent: 'Mozilla/5.0 (X11; Linux x86_64)', fine: false, width: 1440, height: 540, expected: 'tablet' },
+        { host: 'narrow desktop', userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', fine: false, width: 390, height: 844, expected: 'phone' },
+        { host: 'Android phone with pointer', userAgent: 'Mozilla/5.0 (Linux; Android 14)', fine: true, width: 844, height: 390, expected: 'phone' },
+        { host: 'iPad with pointer in short split view', userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15)', fine: true, width: 844, height: 390, expected: 'phone' },
+        { host: 'portrait iPad with pointer', userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15)', fine: true, width: 834, height: 1194, expected: 'tablet' },
+        { host: 'landscape iPad with pointer', userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15)', fine: true, width: 1194, height: 834, expected: 'tablet' },
+    ])('uses hardware identity in reactive and snapshot classification: $host', async ({ userAgent, fine, width, height, expected }) => {
+        vi.stubGlobal('navigator', { userAgent, maxTouchPoints: 5 });
+        vi.stubGlobal('window', {
+            matchMedia: (query: string) => ({ matches: fine
+                ? query === '(pointer: fine)' || query === '(hover: hover)'
+                : query === '(pointer: coarse)' || query === '(hover: none)' }),
+        });
+        screenState.hookDims = { width, height };
+        screenState.staticDims = { width, height };
+        const screen = await renderScreen(<DeviceTypeLabel />);
+        expect(screen.findByProps({ 'data-testid': 'deviceType' }).children[0]).toBe(expected);
+        expect(getDeviceType()).toBe(expected);
     });
 
     it('keeps the last valid deviceType when useWindowDimensions returns zero temporarily', async () => {

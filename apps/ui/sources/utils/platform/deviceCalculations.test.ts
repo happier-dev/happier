@@ -37,6 +37,35 @@ describe('responsive utilities', () => {
     });
 
     describe('determineDeviceType', () => {
+        it.each([540, 400])('keeps desktop windows wide at 1440×%i', (heightPoints) => {
+            expect(determineDeviceType({
+                platform: 'web', isWebMobileHost: false, widthPoints: 1440, heightPoints,
+            })).toBe('tablet');
+        });
+
+        it('keeps portrait and landscape phones compact while tablets retain their classification', () => {
+            for (const platform of ['web', 'ios', 'android']) {
+                expect(determineDeviceType({
+                    platform, isWebMobileHost: true, widthPoints: 844, heightPoints: 390,
+                })).toBe('phone');
+                expect(determineDeviceType({
+                    platform, isWebMobileHost: true, widthPoints: 390, heightPoints: 844,
+                })).toBe('phone');
+                expect(determineDeviceType({
+                    platform, isWebMobileHost: true, widthPoints: 834, heightPoints: 1194,
+                })).toBe('tablet');
+            }
+        });
+
+        it('keeps native desktop windows wide without changing native landscape phones', () => {
+            expect(determineDeviceType({
+                platform: 'ios', isMacCatalyst: true, widthPoints: 1440, heightPoints: 400,
+            })).toBe('tablet');
+            expect(determineDeviceType({
+                platform: 'ios', widthPoints: 844, heightPoints: 390,
+            })).toBe('phone');
+        });
+
         it('treats iOS iPads as tablets (don’t special-case iPad mini)', () => {
             const result = determineDeviceType({
                 platform: 'ios',

@@ -3,6 +3,7 @@ import { useWindowDimensions } from 'react-native';
 import { useEffect, useMemo, useRef } from 'react';
 import { calculateDeviceDimensions, determineDeviceType, calculateHeaderHeight } from './deviceCalculations';
 import { isRunningOnMac } from './platform';
+import { isWebMobileHost } from './webMobileHeuristics';
 
 // Re-export calculation functions for use in other components
 export { calculateDeviceDimensions, determineDeviceType, calculateHeaderHeight };
@@ -23,12 +24,16 @@ export function getDeviceType(): 'phone' | 'tablet' {
     const { width, height } = Dimensions.get('window');
     const isPad = Platform.OS === 'ios' ? (Platform as any).isPad === true : false;
 
-    return determineDeviceType({ platform: Platform.OS, isPad, widthPoints: width, heightPoints: height });
+    return determineDeviceType({
+        platform: Platform.OS, isPad, widthPoints: width, heightPoints: height,
+        isWebMobileHost: isWebMobileHost(), isMacCatalyst: isRunningOnMac(),
+    });
 }
 
 // Hook to get device type (reactive to dimension changes)
 export function useDeviceType(): 'phone' | 'tablet' {
     const { width, height } = useWindowDimensions();
+    const webMobileHost = isWebMobileHost();
     const fallbackDims = Dimensions.get('window');
     const fallbackWidth = (fallbackDims as any)?.width;
     const fallbackHeight = (fallbackDims as any)?.height;
@@ -65,10 +70,12 @@ export function useDeviceType(): 'phone' | 'tablet' {
         return determineDeviceType({
             platform: Platform.OS,
             isPad,
+            isWebMobileHost: webMobileHost,
+            isMacCatalyst: isRunningOnMac(),
             widthPoints: resolvedDims.width,
             heightPoints: resolvedDims.height,
         });
-    }, [resolvedDims.height, resolvedDims.width]);
+    }, [webMobileHost, resolvedDims.height, resolvedDims.width]);
 }
 
 // Hook to detect if device is tablet

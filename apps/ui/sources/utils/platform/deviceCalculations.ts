@@ -24,12 +24,21 @@ export function determineDeviceType(params: {
     widthPoints: number;
     heightPoints: number;
     isPad?: boolean;
+    isWebMobileHost?: boolean;
+    isMacCatalyst?: boolean;
     tabletMinEdgePoints?: number; // Default aligns with viewport-class `tabletMin`
 }): 'phone' | 'tablet' {
     const { tabletMinEdgePoints = VIEWPORT_CLASS_MIN_EDGE_BREAKPOINTS_PX.tabletMin } = params;
 
     const metrics = calculateDeviceDimensions({ widthPoints: params.widthPoints, heightPoints: params.heightPoints });
     if (!Number.isFinite(metrics.minEdgePoints) || metrics.minEdgePoints <= 0) return 'phone';
+    // Desktop windows recompose by width; a short window is not a landscape
+    // phone. Mobile hardware retains the minimum-edge rule, including with a pointer.
+    const desktop = (params.platform === 'web' && params.isWebMobileHost === false)
+        || params.isMacCatalyst === true
+        || params.platform === 'macos'
+        || params.platform === 'windows';
+    if (desktop) return Math.abs(params.widthPoints) >= tabletMinEdgePoints ? 'tablet' : 'phone';
     return metrics.minEdgePoints >= tabletMinEdgePoints ? 'tablet' : 'phone';
 }
 
