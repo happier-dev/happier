@@ -636,10 +636,13 @@ When only desktop publication remains, an authorized maintainer can dispatch
 `build-tauri.yml` from corrected `dev` control with `source_ref` set to the exact
 approved candidate, `resume_run_id` set to its terminal original run, and
 `release_notes_id` set to the approved notes. For a release origin, also set
-`resume_workflow=release.yml` or `release-preview-and-production.yml` and
+`resume_workflow=release.yml` for either single-channel or combined releases, and
 `resume_operation_id` to the exact conductor operation. `environment` selects
 the channel's status and artifacts; the canonical resolver still verifies the
-operation, source, run, and archive digests. All available finalized platforms
+operation, source, run, and archive digests. It selects the channel-scoped status
+for combined origins and the unscoped status for single-channel or nightly
+origins; ambiguous status topology or a missing channel fails admission.
+All available finalized platforms
 skip builds, signing, and notarization. This desktop-only recovery does not run
 mobile flows or change the failed parent operation's status.
 
@@ -647,6 +650,10 @@ mobile flows or change the failed parent operation's status.
 
 Standard release recovery can retain accepted OTA, native iOS/Android, and APK
 flows from exact-source successful jobs and their decisive successful steps.
+The admitted status binds the approved candidate source and conductor operation;
+job evidence binds the exact origin run, workflow control SHA, and channel. A
+different workflow control SHA from the candidate does not discard completed
+flows when those bindings and successful steps match.
 The canonical status projection records the original Expo action; completion is
 reused only for that same action. Missing historical mode or ambiguous job evidence
 keeps the flow enabled. Saved status also carries the original web, Expo, and

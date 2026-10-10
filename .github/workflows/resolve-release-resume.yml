@@ -23,7 +23,7 @@ on:
         type: string
       status_artifact_name:
         required: false
-        default: happier-release-status
+        default: ''
         type: string
     outputs:
       desktop_run_number:

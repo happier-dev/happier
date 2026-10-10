@@ -7,6 +7,8 @@ import os from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
+import { inspectReleaseResumeOrigin, resolveReleaseResume } from '../pipeline/release/resolve-release-resume.mjs';
+import { projectReleaseStatus } from '../pipeline/release/project-release-status.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
@@ -15,6 +17,73 @@ const workflowPath = join(repoRoot, '.github', 'workflows', 'build-tauri.yml');
 async function loadFile(rel) {
   return readFile(join(repoRoot, rel), 'utf8');
 }
+
+test('selective desktop recovery composes current workflow inputs with canonical channel status admission', async () => {
+  const desktop = parse(await readFile(workflowPath, 'utf8'));
+  const reusable = parse(await loadFile('.github/workflows/resolve-release-resume.yml'));
+  const channelWorkflow = parse(await loadFile('.github/workflows/release-channel.yml'));
+  const releaseWorkflow = parse(await loadFile('.github/workflows/release.yml'));
+  const nightly = parse(await loadFile('.github/workflows/nightly-dev.yml'));
+  const evaluate = (value, inputs) => typeof value === 'string' && value.startsWith('${{')
+    ? Function('inputs', 'format', `return ${value.slice(3, -2)}`)(inputs, (pattern, name) => pattern.replace('{0}', name)) : value;
+  const resolveExpected = (caller, callerInputs) => {
+    const inputs = Object.fromEntries(Object.entries(reusable.on.workflow_call.inputs).map(([name, input]) => [name, input.default]));
+    Object.assign(inputs, Object.fromEntries(Object.entries(caller.with)
+      .map(([name, value]) => [name, evaluate(value, callerInputs)])));
+    return { repository: 'happier-dev/happier', workflowPath: inputs.expected_workflow, channel: inputs.expected_channel,
+      sourceSha: inputs.expected_source_sha, operationId: inputs.expected_operation_id, statusArtifactName: inputs.status_artifact_name };
+  };
+  const sourceSha = 'a'.repeat(40);
+  const digest = `sha256:${'b'.repeat(64)}`;
+  const operationId = 'rel_desktoprecovery37';
+  const runId = 123;
+  const repository = 'happier-dev/happier';
+  for (const [workflow, environment, combined] of [
+    ['release.yml', 'preview', true], ['release.yml', 'production', true],
+    ['release.yml', 'preview', false], ['release.yml', 'production', false], ['nightly-dev.yml', 'dev', false],
+  ]) {
+    const consumerInputs = { resume_run_id: String(runId), resume_workflow: workflow, environment,
+      resume_operation_id: workflow === 'release.yml' ? operationId : '', source_ref: sourceSha };
+    const expected = resolveExpected(desktop.jobs.resolve_resume, consumerInputs);
+    const producer = workflow === 'release.yml' ? channelWorkflow : nightly;
+    const upload = Object.values(producer.jobs).flatMap((job) => job.steps ?? [])
+      .find((step) => String(step.with?.name ?? '').includes('happier-release-status'));
+    const artifactName = evaluate(upload.with.name, { environment, combined_preview_production: combined });
+    const originRun = { id: runId, run_number: 337, path: `.github/workflows/${workflow}`, event: 'workflow_dispatch',
+      status: 'completed', conclusion: 'failure', head_sha: sourceSha, head_branch: 'dev',
+      html_url: `https://github.com/${repository}/actions/runs/${runId}`,
+      repository: { full_name: repository }, head_repository: { full_name: repository } };
+    const artifact = (name, id) => ({ id, name, expired: false, digest, workflow_run: { id: runId, head_sha: sourceSha } });
+    const artifacts = [artifact(artifactName, 10), artifact(`tauri-updates-${environment}-windows-x86_64`, 11)];
+    if (combined) artifacts.push(artifact(`happier-release-status-${environment === 'preview' ? 'production' : 'preview'}`, 12));
+    const status = projectReleaseStatus(workflow === 'release.yml' ? 'standard' : 'nightly', {
+      SOURCE_SHA: sourceSha, RELEASE_RUN: String(runId), RELEASE_RUN_URL: originRun.html_url,
+      RELEASE_RUN_NAME: consumerInputs.resume_operation_id ? `RELEASE ${consumerInputs.resume_operation_id}` : 'NIGHTLY — Dev Releases', RELEASE_CHANNEL: environment,
+      HMAINT_OPERATION_ID: consumerInputs.resume_operation_id, REQUEST_CLI: 'true', CLI_CANDIDATE_RESULT: 'success',
+      CLI_VERSION: environment === 'production' ? '0.3.0' : `0.3.0-${environment}.73`,
+      CLI_CANDIDATE_VERSION: `0.3.0-${environment}.73`,
+      IMMUTABLE_VERIFICATION_RESULT: 'success', REQUEST_DEPLOY_UI: 'true', DEPLOY_UI_RESULT: 'failure',
+      DEPLOY_UI_DESKTOP_MODE: 'build_and_publish', DEPLOY_UI_EXPO_ACTION: 'native_submit',
+    });
+    const originJob = releaseWorkflow.jobs[combined ? `release_${environment}` : 'release_single'];
+    const job = { id: 77, run_id: runId, head_sha: sourceSha,
+      name: `${originJob.name} / deploy_ui / Mobile native (local runner) / Build (ios)`,
+      status: 'completed', conclusion: 'success',
+      steps: [{ name: 'EAS build (local runner) (pipeline)', status: 'completed', conclusion: 'success' }] };
+    const inspected = inspectReleaseResumeOrigin({ originRun, artifacts, expected });
+    assert.equal(inspected.artifactId, 10, `${workflow} ${environment} must admit its producer's status`);
+    const resolved = resolveReleaseResume({ originRun, artifacts, expected, downloadedDigest: digest, status, jobs: [job] });
+    assert.deepEqual(resolved.desktop.finalizedArtifacts['windows-x86_64'], { id: 11, digest });
+    if (workflow === 'release.yml') {
+      assert.equal(resolved.uiCompleted.nativeIos, true, 'job evidence must use the actual selected status topology');
+      const fullExpected = resolveExpected(channelWorkflow.jobs.resolve_resume, { resume_run_id: String(runId), environment,
+        authorized_promotion_source_sha: sourceSha, hmaint_operation_id: operationId, combined_preview_production: !combined });
+      const full = resolveReleaseResume({ originRun, artifacts, expected: fullExpected, downloadedDigest: digest, status, jobs: [job] });
+      assert.deepEqual(full.desktop, resolved.desktop, 'full recovery consumes origin topology even when the new invocation changes channel grouping');
+      assert.equal(full.uiCompleted.nativeIos, true);
+    }
+  }
+});
 
 test('Tauri source metadata rejects malicious versions before publishing workflow outputs', async () => {
   const parsed = parse(await readFile(workflowPath, 'utf8'));
@@ -439,20 +508,19 @@ test('candidate code is isolated from Tauri and Apple private signing authority'
       : value,
   ]));
   const source = 'a'.repeat(40);
-  for (const [workflow, environment, operation, artifact] of [
-    ['release-preview-and-production.yml', 'production', 'rel_exact', 'happier-release-status'],
-    ['nightly-dev.yml', 'dev', '', 'happier-release-status'],
-    ['release.yml', 'production', 'rel_exact', 'happier-release-status'],
-    ['release-preview-and-production.yml', 'preview', 'rel_exact', 'happier-release-status-preview'],
+  for (const [workflow, environment, operation] of [
+    ['nightly-dev.yml', 'dev', ''],
+    ['release.yml', 'production', 'rel_exact'],
+    ['release.yml', 'preview', 'rel_exact'],
   ]) {
     assert.deepEqual(resolveInputs({ resume_run_id: '123', resume_workflow: workflow, resume_operation_id: operation, environment, source_ref: source }), {
       origin_run_id: '123', expected_workflow: `.github/workflows/${workflow}`, expected_channel: environment,
-      expected_source_sha: source, expected_operation_id: operation, status_artifact_name: artifact,
+      expected_source_sha: source, expected_operation_id: operation,
     });
   }
   assert.equal(resolveInputs({ resume_run_id: '123', environment: 'dev', source_ref: source }).expected_workflow, '.github/workflows/nightly-dev.yml');
   assert.equal(parsed.on.workflow_dispatch.inputs.resume_workflow.default, 'nightly-dev.yml');
-  assert.deepEqual(parsed.on.workflow_dispatch.inputs.resume_workflow.options, ['nightly-dev.yml', 'release.yml', 'release-preview-and-production.yml']);
+  assert.deepEqual(parsed.on.workflow_dispatch.inputs.resume_workflow.options, ['nightly-dev.yml', 'release.yml']);
   const download = finalize.steps.find((step) => step.name === 'Download and verify admitted desktop candidate');
   assert.equal(download.if, "${{ matrix.artifact_id != '' }}");
   assert.equal(download.env.ARTIFACT_ID, '${{ matrix.artifact_id }}');

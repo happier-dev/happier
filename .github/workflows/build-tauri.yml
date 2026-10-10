@@ -49,7 +49,6 @@ on:
         options:
           - nightly-dev.yml
           - release.yml
-          - release-preview-and-production.yml
       resume_operation_id:
         description: "Recovery — Exact conductor operation ID for a release origin (empty for nightly)"
         required: false
@@ -172,7 +171,6 @@ jobs:
       expected_channel: ${{ inputs.environment }}
       expected_source_sha: ${{ inputs.source_ref }}
       expected_operation_id: ${{ inputs.resume_operation_id || '' }}
-      status_artifact_name: ${{ inputs.resume_workflow == 'release-preview-and-production.yml' && inputs.environment == 'preview' && 'happier-release-status-preview' || 'happier-release-status' }}
 
   resolve_source:
     name: Resolve source ref to SHA
