@@ -27,6 +27,11 @@ describe('initialMachineMetadata', () => {
       happyHomeDir: '/old-happier-home',
       happyLibDir: '/old-lib',
       displayName: 'Company gateway',
+      devcontainerChild: {
+        relation: { managedMachineId: 'managed-child', managedMachineKind: 'devcontainer' as const, parentMachineId: 'controller' },
+        observation: { nativeResourceId: 'native-child', user: 'custom-user', workspaceFolder: '/work/custom',
+          storage: { kind: 'child' as const, childPath: '/work/custom' } },
+      },
     };
 
     expect(refreshMachineMetadataForCurrentDaemon(current, {
@@ -63,6 +68,23 @@ describe('initialMachineMetadata', () => {
       happyHomeDir: current.happyHomeDir,
       happyLibDir: current.happyLibDir,
     })).toBe(current);
+  });
+
+  it('republishes a current admitted namespace after retained-home rebuild without changing user metadata', () => {
+    const relation = { managedMachineId: 'managed-child', managedMachineKind: 'devcontainer' as const, parentMachineId: 'controller' };
+    const observation = { nativeResourceId: 'old-native', user: 'coder', workspaceFolder: '/work/custom',
+      storage: { kind: 'child' as const, childPath: '/work/custom' } };
+    const current = { ...initialMachineMetadata, displayName: 'My child', devcontainerChild: { relation, observation } };
+    const replacement = { relation, observation: { ...observation, nativeResourceId: 'replacement-native' } };
+    const fields = { host: current.host, platform: current.platform, happyCliVersion: current.happyCliVersion,
+      homeDir: current.homeDir, happyHomeDir: current.happyHomeDir, happyLibDir: current.happyLibDir,
+      devcontainerChild: replacement };
+    const published = refreshMachineMetadataForCurrentDaemon(current, fields);
+    expect(published).toMatchObject({ displayName: 'My child', devcontainerChild: replacement });
+    expect(refreshMachineMetadataForCurrentDaemon(published, fields)).toBe(published);
+    const retired = refreshMachineMetadataForCurrentDaemon(published, { ...fields, devcontainerChild: null });
+    expect(retired.devcontainerChild).toBeUndefined();
+    expect(retired.displayName).toBe('My child');
   });
 
   it('publishes the daemon\'s CLI update facts (K5) and republishes only when they change', () => {
