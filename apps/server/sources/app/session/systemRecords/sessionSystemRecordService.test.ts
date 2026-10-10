@@ -74,7 +74,7 @@ vi.mock("@/storage/db", async () => {
             // transaction boundary answers the same synthetic database rows.
             $transaction: async <T>(fn: (tx: TxMock) => Promise<T>) => {
                 const tx = testState.currentTx as TxMock;
-                return await fn({
+                const reader = {
                     ...tx,
                     session: {
                         ...tx.session,
@@ -84,7 +84,8 @@ vi.mock("@/storage/db", async () => {
                     },
                     homeSettings: { findUnique: async () => null },
                     homeGovernancePolicy: { findUnique: async () => null },
-                });
+                };
+                return await fn(reader);
             },
         },
     };
@@ -214,12 +215,14 @@ describe("sessionSystemRecordService account scoping", () => {
     const storagePolicyEnv = createEnvPatcher([
         "HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY",
         "HAPPIER_FEATURE_SESSIONS_BOARD__ENABLED",
+        "HAPPIER_DB_PROVIDER",
     ]);
 
     beforeEach(async () => {
         storagePolicyEnv.restore();
         storagePolicyEnv.set("HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY", "optional");
         storagePolicyEnv.set("HAPPIER_FEATURE_SESSIONS_BOARD__ENABLED", "1");
+        storagePolicyEnv.set("HAPPIER_DB_PROVIDER", "postgres");
         vi.clearAllMocks();
         resetSessionSystemRecordsProtocolV1ActivationForTests();
         await initializeSessionSystemRecordsProtocolV1Activation({
