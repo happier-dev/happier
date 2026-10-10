@@ -67,6 +67,67 @@ In the CLI:
 - `happier connect claude ...`
 - `happier connect gemini`
 
+The 0.3 development storage contract keeps personal labels and dismissal choices
+with your signed-in Account, while account and pool-member expansion choices
+stay on the device. These presentation choices do not change credentials, pool
+membership or which account an Agent uses.
+
+In 0.3 development, you can open a saved account's details and change its label
+without selecting a machine, including when a previously selected machine is
+offline. Sign-in, account-credential configuration and requesting fresh quota still
+require an available machine for those operations; choosing one does not unlock
+or change which Happier Account owns the saved details.
+
+In 0.3 development, a service that declares **service-wide configuration** can
+also have that configuration read and edited for the signed-in Account without
+selecting a machine. Saving checks the configuration revision; a concurrent edit
+keeps your draft instead of overwriting the newer configuration. New secret
+values and their configuration references are saved together, and reads show
+which secret fields are configured without returning their values.
+
+This saves configuration, not a machine's sign-in or running process. A later
+runtime operation uses the new revision; any required refresh or reconnect still
+happens on the machine. Account-specific credentials and in-progress sign-in
+configuration remain machine operations. If a save's outcome is unknown, read
+the saved configuration before deciding whether to retry; do not assume it failed.
+
+## Gateways in 0.3 development
+
+The unreleased gateway integration projects your managed Provider connections
+into Connected services using the same connection and detail as Providers.
+Gateways use existing single-vendor accounts and pools; enabling a pool for a
+chosen gateway assigns that vendor slot, and disabling it clears the slot only
+if it still belongs to that pool. Multiple gateways require an explicit choice.
+These operations use the existing approval policy and revision-checked
+connection update, rather than a separate pool-routing setting.
+
+The gateway configuration and collection integration are still being validated.
+See [managed gateways](/agents/provider-integrations#managed-gateways-in-development)
+for placement, Claude helper-model choices and experimental routing limits.
+
+## Google Antigravity in 0.3 development
+
+The unreleased integration adds **Google Antigravity** as its own Connected
+Account. Sign in with Google through the existing paste-code flow, label each
+account, and choose an account or pool for Antigravity. Gemini credentials are
+separate; connecting the same Google identity to both requires separate sign-ins.
+
+Selected-account launches keep token and authentication settings private while
+inheriting the configured skills, hooks and MCP settings. The default shared-state
+policy links only ACP conversation and artifact directories, so account changes
+can use the same history. Choosing isolated state, or being unable to establish
+shared links, prevents cross-account resume before cutover. Discovery probes use
+temporary isolated conversation state without changing the saved sharing policy.
+
+Each ACP process needs its own restart to consume changed credentials. Account
+usage comes from Google's selected-account quota response; the context indicator
+uses ACP turn usage. These are different measurements. Sign-in, refresh, quota
+attribution and A→B→A resume still require authenticated validation, including
+native Windows and macOS isolation checks. The integration uses Antigravity's own
+OAuth client and Google's internal quota API, which Google can change or block.
+
+See [Antigravity](/agents/antigravity) for the managed ACP/native CLI boundary.
+
 ## Model-capacity retries
 
 In development builds, a terminal model-capacity failure such as Codex
@@ -145,8 +206,8 @@ window with no reported duration is left unlabeled rather than shown as “1 win
 
 ### Composer gauges in development builds
 
-Choose **Gauge windows** under **Settings → Connected services → Provider usage**
-or **Settings → Session → Provider limits and usage → Provider usage**. Both
+Choose **Gauge windows** under **Settings → Connected services → Usage**
+or **Settings → Session → Limits and usage → Usage**. Both
 locations edit the same preference for all accounts. The default is one
 **Most constrained** gauge; select several windows, such as **Daily** and
 **Weekly**, to display one gauge for each available window.
@@ -334,6 +395,19 @@ See:
 
 - [Session handoff](/sessions/session-handoff)
 - [Agent authentication](/agents/provider-authentication)
+
+## Child account choices in 0.3 development
+
+The unreleased attached-child integration inherits the account or pool actually
+applied to its parent when no explicit choice is supplied. It keeps the pool
+identity so the existing pool selection and rotation rules remain in charge;
+it does not pin the child to the parent's current pool member or copy credentials.
+Explicit account, pool or native-login choices override inheritance.
+
+Independent detached and scheduled work keeps its own choices or Account
+defaults. Resuming a child retains its own choice after a parent/default edit.
+See [child model choices](/agents/model-and-engine-selection#child-choices-in-03-development)
+for model-source and different-Agent behavior.
 
 ## Profiles, defaults, and labels
 

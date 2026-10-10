@@ -80,6 +80,24 @@ private Sync source route retain the local profile for credentials and requester
 custody, while Workspace and Source addressing uses the admitted Home id. Current
 Machine admission and requester authorization remain required.
 
+Daemon authenticated startup establishes an exact descriptor for a saved URL-only
+profile through `server/serverProfiles.ts#refreshServerProfileHomeConnectionDescriptor`
+before exposing Project Open. This covers credentials seeded, copied, or restored
+without interactive enrollment, including retained 0.2 profiles. The authenticated
+feature projection supplies both identity and descriptor; public predecessor fallback
+does not acquire exact authority. Startup then resolves its pinned profile again so
+downstream owners consume the established Home binding. Ordinary networking remains
+available when an older Home has no authenticated descriptor projection.
+
+CLI Action target resolution reads that persisted exact identity for explicit and
+ambient saved profiles while retaining the local profile id for credential routing.
+Widget Account scope, areas, and input admission consume the qualified Home identity
+from that target; a routing profile id is not substituted for an available Home id.
+The existing Action context carries that identity independently of its routing
+profile id. Protocol's widget surface admission compares the qualified context
+identity and captured Widget scope exactly; contexts without that field retain
+their existing `serverId` comparison.
+
 Retained Project Open intent belongs to Protocol's
 `projects/openProjectDraftV1.ts` and the existing V2 draft repository at
 `apps/ui/sources/sync/ops/sessionDrafts/sessionDraftRepository.ts`. Its
@@ -306,13 +324,14 @@ Execution invalidates that fact before a new attempt; only observed success of
 every applicable setup step can write it again. Consent is not completion.
 
 Development `projects.inspect` readiness uses `projectSetupPreparation.ts#inspectProjectSetupReadiness`
-to compare that target completion with the current reviewed `successBasis`, inside
-the requester's private review and native-invocation lifetime. Retained operation
-success is history, not current readiness. The installed inspection owner has no
-captured requester configuration/secret-binding review producer yet; it returns
-typed `unknown` until that producer is wired, rather than borrowing custodian
-settings or claiming Ready. This passive comparison does not execute setup or
-grant consent.
+to compare target completion with the current passive `successBasis`, using the
+captured requester's private review context, never custodian settings. Retained
+operation success is history, not current readiness. Inspection captures contained
+files, native references, adapter versions and provenance without acquiring native
+production or invoking a plugin's effect-capable command resolver. When those facts
+cannot establish readiness, including unresolved plugin-native setup, it returns
+typed `unknown`. Native evaluation belongs to the admitted execution lifetime after
+setup consent; inspection neither evaluates setup nor grants consent.
 
 `projectFiniteAction.ts` owns `projects.prepare`, `projects.script.run` and
 `projects.compute.exec` intake through the shared Action policy and authenticated
@@ -376,10 +395,34 @@ service lifetime and requester attribution. An endpoint-none owned process can
 be Running without being HTTP Healthy. Native resource custody requires an actual
 native instance and its lifecycle witness; starter-process exit is not native
 resource termination. Unsupported or unconfirmed native Stop retains custody.
-Plugin-native service resolution carries the real manifest-declared native
-instance; the same selected lease supplies its lifecycle codec. Built-in
-detached Compose/Flox resources still lack a characterized lifecycle producer,
-so their Start is typed unavailable rather than replaced by an owned-child launch.
+Plugin-native foreground commands (no `nativeInstance`) use the same owned-process
+supervisor as builtin foreground commands. A detached result carries an exact
+manifest-declared native instance; the selected lease supplies its lifecycle codec.
+Project-native lifecycle callbacks receive admitted invocation services in the
+optional third `context` argument, after `instance` and cancellation options.
+The host binds the reviewed root and environment, retains the invocation until
+native settlement, and reacquires only the lifecycle role for recovery: it never
+replays command resolution or Start to obtain inspection/Stop services.
+
+Builtin Compose uses detached `up` under a stable requester-scoped project name,
+then the same native supervisor observes immutable Docker container IDs. Successful
+starter exit is not container death. Recovery inspects surviving containers before
+considering Start; unknown observation forbids replacement. Stop addresses those
+same IDs and needs a fresh stopped/absence witness, not just an accepted command.
+Inspection, native stdout/stderr log diagnostics and Stop use the admitted Docker
+tuple and do not depend on the YAML continuing to exist. Native published-port
+observation supplies an optional loopback endpoint; absent/ambiguous ports do not
+invent an address or prevent a portless service from running. Normal Stop preserves
+Compose containers, networks and volumes; fixture cleanup removes its own resources.
+This is development-source Linux qualification for Docker 29.9.0 / Compose 5.6.0,
+not stable/preview availability or macOS/Windows certification.
+
+Flox 1.18.1 remains `native_service_lifecycle_unsupported`: the installed binary
+requires activation before services Start and stops services when the last
+activation ends. A shell-owned activation holder would not meet the required
+starter-independent native lifetime. Selected-worker native/non-host effects
+still return `project_service_worker_effect_unavailable`; their effect/currentness
+producer is separate from these native codecs.
 
 The existing launcher feed projects that same managed occurrence and exact
 workspace/declaration/cwd. Hide and history clear change only presentation, not
@@ -413,8 +456,9 @@ device qualification, and the later Services visual composition remains separate
 environment effects, separately from passive definition inspection. Its ready
 result is the complete environment, not an additive patch: launch integration
 must replace the inherited environment so native removals survive, then apply
-exact Saved Secret bindings. The callable adapter is characterized for Mise
-2026.10.4 on Linux x64; uncharacterized tools, versions and platforms refuse without
+exact Saved Secret bindings. Development-qualified Linux x64 contracts are Mise
+2026.10.4, Devbox 0.18.4, devenv 2.4.0, Flox 1.18.1-gf264cf2 and Nix flake
+(Nix 2.35.2); uncharacterized tools, versions and platforms refuse without
 a host fallback. The selected config must be resolved and reviewed before this
 call. It reuses the passive owner's contained-file reader before evaluation;
 missing or escaping files refuse. Config paths are resolved against the reviewed
@@ -439,11 +483,25 @@ the corresponding installed native tool.
 
 `projectSetup/projectNativeIo.ts` composes passive command lookup with admitted
 native process IO. It preserves installed argument prefixes and characterizes
-Linux x64 Mise's actual version using its documented [`--version`](https://mise.jdx.dev/cli/version.html)
-command through the same operation-scoped supervised IO as environment production;
+actual versions through each descriptor's installed version-only CLI command
+(`version` for Devbox, `--version` for the others) using the same operation-scoped supervised IO as environment production;
 the retained invocation covers the version probe too. It does not probe during inspect, infer
 a version from a declaration or download a missing tool. Only the qualified
-Mise version is activated by the environment owner above.
+versions are activated by the environment owner above. Passive inspection never
+runs version probes or activation. Machine-global installation remains Mise-only;
+Project environment qualification does not imply a native global-setup contract.
+
+Devbox `shellenv` emits shell export statements, while devenv/Nix
+`print-dev-env --json` emits typed variables and shell functions. These plans do
+not capture the complete post-hook environment. The producer instead runs the
+installed activation (`devbox run`, `devenv shell`, `flox activate -c`, or
+`nix develop --command`) and captures a framed NUL-separated full export.
+Flox's characterized bash shell-command mode includes common/bash profiles and
+suppresses service auto-start with `--no-start-services` (service lifecycle is separate);
+direct exec would omit them. The fixed probe restores the consumer's actual cwd
+with literal arguments and separates hook diagnostics from environment entries.
+The selected native config filename must be supported rather than evaluating an
+unrelated default file. Native macOS and Windows remain unqualified.
 
 `plugins/runtime/invocation/services/exec.ts` owns final tuple production for
 admitted Project effects. The host-only authorization entries take the prepared
@@ -863,6 +921,15 @@ Absence cannot prove rejection while the original request may still commit.
 An explicit transport `notSent` witness remains a typed, retryable failure.
 The Account lifetime fences reads, projection and navigation; server-side
 admission remains idempotent for the same Run UUID.
+
+In current 0.3 development source, Workflow cancellation ends authored work
+even when a child's launch or stop outcome remains unknown. The canonical
+coordinator transitions the Run to terminal `cancelled` while retaining
+`pending` custody and the unresolved child facts. It does not claim that the
+child stopped or that a missing launch record proves rejection. Terminal Runs
+are no longer reclaimed; the existing indexed recovery reader observes their
+child custody and settles it only when genuine evidence permits. This source
+contract does not certify cancellation in an already-loaded daemon.
 
 In 0.3 development, Automation-origin Workflow claims materialize the accepted
 snapshot only on first admission. Subsequent claims carry the Run-owned snapshot
@@ -1412,6 +1479,50 @@ Configuration lives in `src/configuration.ts`:
 - In the 0.3 development stack, stack-scoped CLI invocations pass both URLs and reconcile the stack-stable active profile through `server set`, including on a fresh CLI home. The wrapper verifies the persisted profile before forwarding the requested command and fails closed if reconciliation did not apply.
 - Recovery-key login failures retain the originating error code and operation phase (plus HTTP status when present). The CLI writes a local-only, redacted error diagnostic; attached HTTP bodies and credentials are never serialized into that diagnostic.
 - `HAPPIER_VARIANT`, `HAPPIER_EXPERIMENTAL`, `HAPPIER_DISABLE_CAFFEINATE` control behavior.
+
+### Account-managed MCP configuration
+
+In 0.3 development source, Account-managed MCP definitions and bindings share
+`@happier/account/mcp/v1/catalog` and one row revision. The
+[Protocol catalog owner](../packages/protocol/src/mcp/servers/serverCatalogV1.ts)
+owns admission and semantic mutations; the CLI `mcpServerStore`/`hydrateMcpServerCatalog`
+and UI `apiMcpServerCatalog` consume that same contract. This Account row is
+distinct from the daemon's executable plugin-contribution catalog.
+
+Persisted Account encryption mode admits Plain content or domain-bound
+`account_mcp_catalog` ciphertext (43). Unavailable material, a mode mismatch or
+an incomplete reference inventory supplies no runtime authority. The scalar
+`mcpServersStrictMode` remains an Account Settings preference, not a second
+definition catalog.
+
+An inactive `mcpServersSettingsV1` source is transfer input only. Actual personal
+SavedSecret references require canonical promotion before first-row admission
+at a fresh Settings baseline; empty or literal-only MCP sources do not require
+unrelated credential imports. Source cleanup preserves strict policy and uses
+the existing typed history owner. Active or deleted rows never reseed from the
+retained root. Runtime readers use the admitted catalog and canonical materializer;
+mode conversion preserves the complete admitted stored payload and envelope metadata.
+These are development-source contracts, not completed package or live-stack certification.
+
+In 0.3 development, unused-MCP Coach evidence follows the actual runtime
+selection: `resolveRunnerMcpServers` captures the selected, materialized enabled
+binding's catalog IDs and row revision. Claude's native SDK tool inventory and
+successful, settled foreground stream witness per-binding invocation counts.
+Missing inventory, ambiguous tool mapping or hidden delegated/task activity
+cannot prove zero usage; other Agent boundaries without equivalent evidence
+remain insufficient. Native schema sizes are not exposed and stay `null`.
+
+The host correlates native names transiently, then commits strict
+`mcp-binding-usage` events through the existing Session transcript owner.
+Retained evidence contains only IDs, revisions, counts, optional sizes and the
+witnessed window, not server names, configuration or tool arguments. It follows
+the Session's existing mode-aware content protection, not plaintext accounting.
+A partial transcript page never establishes complete query coverage. Coach
+reports observed-unused bindings across complete windows of the latest witnessed
+catalog revision; it does not infer token savings or causal overhead. Apply is
+offered only for one matching, currently enabled binding at that same catalog
+row revision, through `mcp.bindings.disable`; exact Undo delegates to the catalog
+owner and refuses intervening edits.
 
 ### One default channel per Happier home
 
@@ -1988,10 +2099,17 @@ Closing an owned shell stops its PTY before removing the view; hiding retains it
 Package-script launch intent is resolved after directory admission by the existing
 Local services run-target owner and admitted through the finite Project Action
 owner. Its reviewed native executable, argv, cwd and environment reach the same
-PTY manager directly; display previews are never executable authority. Local
-services Start still refuses package scripts. Terminal URL discovery reuses the existing output detector and
-`terminal_url` inventory. These are development-source contracts; the redesigned
-strip, list, Jump and phone controls require the terminal UI integration.
+PTY manager directly; display previews are never executable authority. This finite
+terminal execution is separate from starting a long-lived declared Project Service.
+The latter, including declared native package scripts, uses
+`local/services/launch/projectDeclarations.ts` and the existing managed-process
+supervisor without a finite execution reservation. A portless Service can remain
+running without an address; optional owned-tree endpoint observation is not a
+readiness requirement and ambiguous listeners produce no address. Terminal URL
+discovery separately reuses the existing output detector and `terminal_url`
+inventory. These are 0.3 development-source contracts, not stable or preview
+availability; the redesigned strip, list, Jump and phone controls require the
+terminal UI integration.
 
 Finite Project commands use the same `TerminalPtySessionManager` with a direct
 executable/argv/cwd and the final native environment. Admission acquires a
@@ -2431,9 +2549,26 @@ In current development source, primary CLI runners own Session locks through a l
 `sessionRunnerLock.ts`. Fresh startup claims the resolved Session id before
 constructing its realtime client or committing pending first input; existing
 startup claims before attaching. Daemon presence and resume preflight already
-read that same lock, so a runner waiting to publish its first webhook prevents
-another activation from allocating a terminal host. Startup failure and normal
-runner exit release the scope's locks; process-exit cleanup uses the same owner.
+read that same lock. A fresh runner can publish its Session row before receiving
+the id and claiming that lock. `resolveExistingSessionSpawnPreGate.ts` also
+recognizes an accepted child still awaiting its first webhook: it reads the
+existing attach metadata, requires the same Machine and Happier home, correlates
+the reported runner through the shared webhook PID/parent/exact Windows custody
+owner, and verifies `hostProcessStartTimeMs` against the current OS process
+generation. Verified identity joins the tracked child through the existing
+runner-presence owner. Missing generation or unavailable presence fences Resume;
+a positively different generation leaves the child unbound. Acceptance does not
+acknowledge startup: the qualified webhook still owns canonical marker adoption,
+readiness reconciliation, and the original spawn awaiter. Pending Windows
+Terminal launches retain custody when only the launcher exits. The
+shared presence owner uses one paired runner PID/generation fact for ordinary
+wrappers and exact Windows launches, preserving launcher identity until normal
+marker promotion. Heartbeat and visible-console observations delegate retirement
+to the canonical exit owner; the console poll does not independently settle
+startup. Missing process evidence keeps existing startup finalization or
+cancellation authoritative, and a reused runner PID cannot be promoted. Stop and
+retirement retain their existing lifecycle checks. Startup failure and normal runner exit
+release the scope's locks; process-exit cleanup uses the same owner.
 
 In current 0.3 development, descriptor-backed Home transport preparation verifies
 the selected Home identity before sending an Account credential or publishing a
@@ -2697,10 +2832,15 @@ resolved against the same Home catalog read as the default, and an explicit slot
 choice wins.
 
 In the 0.3 development implementation, direct Connected Account snapshots use
-the contribution's existing configuration target. Account configuration remains
-revision-bound to the credential; supported service configuration is read from
-the source Account's Settings and resolves its Saved Secret references through
-the canonical materializer. Ordinary configuration admission supplies declared
+the contribution's existing configuration target. Per-credential Account configuration
+remains revision-bound to the credential; supported service configuration comes
+from the source Account's mode-admitted Connected configuration catalog and resolves
+its Saved Secret references through the canonical materializer. Active catalog
+authority, including an empty catalog or deleted row, never falls back to the
+retained Settings source. Only an absent catalog can admit that source; genuine
+personal Saved Secret bindings require canonical import and a fresh source snapshot
+before admission. Partial or unavailable catalogs refuse materialization.
+Ordinary configuration admission supplies declared
 defaults and rejects missing required configuration before projection. Account
 and attempt configuration still reject
 Saved Secret references. The recipient receives resolved values, never source

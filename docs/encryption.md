@@ -103,6 +103,17 @@ later provider refresh. New observations start new history. This describes
 unreleased development behavior, not continuity across mode conversion or
 completed loaded-runtime validation.
 
+User-entered monthly subscription amounts are a separate, qualified-account
+facet on the existing Provider Account Usage record. Its metadata retains an
+explicit plain or encrypted content envelope; encrypted amounts use the
+existing provider-usage cipher domain and an addressed, strict price payload.
+The price-only mutation checks persisted Account mode before writing, and the
+authorized quota opener verifies mode and qualified identity before disclosure.
+Provider refreshes retain this user facet independently of their own sealed
+subscription observations. Mode conversion and record deletion have B's
+existing destructive lifecycle described above. These are 0.3 development
+source contracts, not released availability or completed live validation.
+
 ### Private Profile rows (0.3 development)
 
 The development Profile row contract uses the reserved Account-row owner, not
@@ -182,6 +193,14 @@ and fresh-invocation recovery use the same owned-resource authority. Unknown
 root shapes remain pending; no replacement inference consumer is introduced.
 The retained alias reader is needed until this source and its retained history
 have been transferred, not as a second credential writer.
+In 0.3 development this grammar lives only at
+`savedSecretMutationOwner.ts#readSavedSecretTransferSourceV1`; the key is absent
+from the writable Settings catalog and effective preference projection. It is
+deliberately not a globally retired raw root: preference mutation and restore
+keep the latest untransferred carrier, and history normalization removes only a
+characterized source with admitted destination proof. Failed authoring-memory
+destination commits similarly leave their original Settings carrier intact;
+source removal follows the existing destination acknowledgement, never precedes it.
 
 ### Notification endpoint catalog (0.3 development)
 
@@ -260,6 +279,10 @@ cannot substitute for that old census. Resource creation retains SavedSecret's
 present-user admission, without restricting metadata-only host writes.
 Source cleanup uses the admitted destination revision;
 that revision alone cannot authorize discarding historical SSH credentials.
+An admitted complete destination remains usable for SSH tasks and current-row
+edits while source/history cleanup is pending. Those operations recheck Account
+mode, catalog revision and the referenced Resource material; they do not wait
+for or authorize historical erasure.
 Each historical slot needs its own characterized material and exact-value proof
 against a usable, owned SavedSecret Resource at its captured revision. Unknown,
 unopenable or different material stays cleanup-pending rather than authorizing
@@ -305,6 +328,15 @@ display does not authorize runtime, destructive reference changes, source/histor
 cleanup or Account-mode conversion. A retained deletion keeps its revision and
 must not be reseeded from an older Settings root.
 
+Provider, Connected, Notification, RemoteHost, MCP and ACP catalog adapters share
+the Account-storage admission failure classifier.
+An HTTP 401 or 403 from either Account-mode admission or currentness withdraws
+previously loaded private projections, as do scope retirement and unavailable
+encryption material. A genuine transport failure retains stale display
+continuity without restoring mutation authority. A mode-endpoint refusal must
+not be reinterpreted as offline merely because its error carries an HTTP status
+rather than a catalog-specific code.
+
 Provider conversion participates through `providerConnections` in the existing
 Account migration request and receipt. Migration admission checks the original
 Plain body or decrypted E2EE body, not the tolerant display projection. Complete
@@ -330,6 +362,15 @@ Account or Machine warning scopes and sparse boolean values, including false.
 Stored readers project additive fields away and expose valid neighboring entries
 with diagnostics when a known entry is malformed. That partial display does not
 authorize rewriting the incomplete catalog.
+
+The current Settings preference facade omits Remote-host and notification endpoint
+inventories, Connected personal labels, disclosure state and acknowledgements.
+Their raw retained Settings carriers remain readable only by the domain import,
+conversion and history owners until destination and credential-material proofs
+authorize cleanup. Removing a facade field does not globally retire its raw
+history key or authorize discarding an untransferred latest baseline. Finite
+notification delivery/privacy and Connected quota/default preferences remain
+ordinary Settings.
 
 The credential-free demo world publishes its personal labels as an ephemeral
 display projection through the same UI catalog projection owner. Only the
@@ -1699,6 +1740,10 @@ identity/category stays unknown.
 
 These are private Session detail for opened-client projections, not prompt text,
 plaintext Usage accounting metadata, or server-queryable human-loop analytics.
+Usage's selected-Session reader and opened-snapshot projector honor the canonical
+`access.capabilities.readTranscript` descriptor: an explicit denial prevents the
+message read and excludes previously opened private work/permission/input facts,
+without suppressing independently authorized Account accounting.
 An opened snapshot or retained message page is partial evidence, not proof of
 complete Session history. The existing accounting disclosure contract above is
 unchanged.
@@ -3246,6 +3291,18 @@ Plain Sessions and Plain Accounts require no recipient-key collection: it settle
 `not_required` before any recipient key work and the editor renders no encryption row.
 An unavailable Account-owned layout-1 envelope can still lock a plain Session's
 owner view until a later successful open.
+
+Development Usage Coach evidence uses these same Session owners. Selected
+transcript reads require readable Session content and transcript access under
+the captured Home/Account authority; each message is opened through
+`readStoredSessionMessage`. Host request identities are scoped opaque digests,
+not retained prompt text. MCP witnesses retain binding/catalog IDs, revisions,
+counts and window sizes, not configuration, native names or tool arguments.
+These events remain Session-protected and are not copied into plaintext
+accounting. Unopened rows and incomplete pages never establish complete private
+model-request coverage. Coach suppression preferences remain Account-mode-aware
+Settings; a suggested digest becomes an ordinary approval-gated Automation,
+whose existing owner protects its stored recipe and schedule.
 
 The ordinary Account-backed Follow runtime now observes, hydrates, re-admits, injects,
 and acknowledges exact source updates through the canonical Session runtime. In current

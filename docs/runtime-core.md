@@ -6,7 +6,7 @@ This page describes **0.3 development source**, not a shipped release or a compl
 
 ## Native Agent seam
 
-[`AgentRuntime`](../packages/plugin-sdk/src/agentRuntime/runtime.ts) has two mutually exclusive forms: a Session factory or an execution-only Run factory. A Session-capable Agent does not supply a second finite Run implementation. The host binds its Session runtime into the shared Execution Run adapter in [`nativeAgentExecutionRun.ts`](../apps/cli/src/agent/runtime/bridges/executionRun/nativeAgentExecutionRun.ts). The shared SDK implementation in [`executionRun.ts`](../packages/plugin-sdk/src/agentRuntime/executionRun.ts) owns correlated Run events, cancellation, terminalization and disposal for the finite/conversation adapters.
+[`AgentRuntime`](../packages/plugin-sdk/src/agentRuntime/runtime.ts) has two mutually exclusive forms: a Session factory or an execution-only Run factory. A Session-capable Agent does not add an independent Run lifecycle. For Session-owned Runs, the host binds its Session runtime into the shared Execution Run adapter in [`nativeAgentExecutionRun.ts`](../apps/cli/src/agent/runtime/bridges/executionRun/nativeAgentExecutionRun.ts). Detached execution requires the Session factory's declared `executionRunContextV1` facet; it cannot fabricate a parent Session. The shared SDK implementation in [`executionRun.ts`](../packages/plugin-sdk/src/agentRuntime/executionRun.ts) owns correlated Run events, cancellation, terminalization and disposal for the finite/conversation adapters.
 
 The engine registry's [`runtimeCore.ts`](../apps/cli/src/agent/runtime/registry/engineRegistry/runtimeCore.ts) resolves the admitted Agent runtime and composes host services. Agent code receives the scoped public context, not raw host lifecycle controls. Agent-native configuration in `RuntimeDescriptorV1.agent` is interpreted by its Agent; generic host code must not infer its meaning from an Agent id.
 
@@ -34,6 +34,34 @@ In current 0.3 development source, the daemon's [admission drain](../apps/cli/sr
 Finite Windows PTY work now consumes the existing [native process-custody owner](../apps/cli/src/subprocess/supervision/processCustody.ts), not ConPTY's root-exit notification as a descendant-settlement fact. Its finite helper mode assigns the actual target to the same Job before execution, retains the Job until positive kernel membership absence, and returns the recorded root exit code. Ordinary managed-service helper semantics remain separate and unchanged. Completion-port notifications may be lost; explicit Stop queries/terminates that same established Job and a positive zero-membership result wakes the retained helper. A Get/Wait or output EOF alone is not this recovery. Consumer, native-platform and loaded-runtime validation remain open in development source.
 
 POSIX natural-root uncertainty preserves the original exit waiter, cancellation subscription, output custody and finite reservation until a positive owned-group settlement or explicit recovery. That group witness does not itself prove that a non-disowned descendant in another process group exited; the job-control process-tree validation remains open. Native preparation's host-private Exec custody similarly must retain its actual supervisor resource through unconfirmed cleanup, rather than treating callback completion as process settlement.
+
+### Project finite worker execution (0.3 development)
+
+The existing [worker admission owner](../apps/cli/src/workspaces/execution/projectWorkerAdmission.ts)
+owns process-local FIFO admission and finite reservations, not a second Session
+queue. The [finite Project Action owner](../apps/cli/src/workspaces/projectSetup/projectFiniteAction.ts)
+captures the SOURCE declaration and exact target, reserves before clean Workspace
+Sync preparation, then reviews copied TARGET definitions, setup and environment
+before final PTY admission. Queue acceptance is not execution or setup completion;
+copying, setup and running are observations of the same retained Action operation.
+Cancellation while queued can prove no launch. After preparation/process custody
+begins, uncertain cleanup retains that operation, output and reservation until the
+canonical owner proves settlement. Inspect and explicit Stop observe/control the
+same occurrence rather than replaying it or releasing capacity from elapsed time.
+
+Worker-copy retirement uses the existing [Project worker Action](../apps/cli/src/workspaces/execution/projectWorkerAction.ts)
+and Workspace Sync relationship owner. Active queue/preparation/process/Service/Sync
+dependencies can refuse retirement. Removing a relationship definition and removing
+copy bytes are distinct outcomes: confirmed definition retirement followed by
+uncertain byte removal remains `outcomeUnknown`, requiring inspection, not automatic
+retry. Long-lived Services use their managed-process/native custody owner and do
+not consume the finite FIFO lifetime reservation. A confirmed Stop during Service
+Move is retained before cancellable copying; unconfirmed Stop is not settlement.
+
+These are development-source ownership contracts. New-machine acquisition, cold
+wake, foreign-requester Source/Sync authority, compound placement-save + Move and
+their composed live journeys remain separate integration obligations; this page
+does not claim those paths are available or release-certified.
 
 ### Managed activity inventory
 
@@ -158,8 +186,12 @@ durable mutation admission before releasing Session custody. The issue uses
 missing Agent credentials. Once startup is admitted, the standalone GET
 notification stream uses the startup registrations without a fresh catalog read:
 the MCP transport cannot dispatch tools from GET. POST requests and native tool
-RPCs still require the current executable catalog and fail closed when it is
-unavailable. Daemonless runtimes retain their explicitly supplied registry lease.
+RPCs reuse the admitted inventory's catalog while the daemon projection fact and
+Session connection epoch are unchanged. The [plugin projection signal](plugin-platform.md)
+invalidates it; the next request reads once and an unavailable refresh fails
+closed, rather than dispatching stale tools. Replies without that signal contract
+retain per-request reads. Daemonless runtimes retain their explicitly supplied
+registry lease; effect-time contributor occurrence admission is unchanged.
 These are development-source contracts, not completed live proof.
 
 Accepted spawn nonce observation uses the daemon Session startup budget by default. Explicit finite observation durations are not reduced by phase-local caps; detached abandoned-spawn stop/archive observation retains its separate ten-minute default. The CLI nonce observer, daemon nonce endpoint, target RPC handler and shared acknowledgement race re-arm long deadlines in Node-supported timer chunks. Relay forwarding retains Socket.IO's native signed-timer boundary (about 24.8 days), so these local owners do not establish unbounded end-to-end relay observation.
@@ -270,6 +302,20 @@ does not consult a changed parent or Account default. The additive
 route or an authorization input. Voice chat and commit resolve their choices
 separately; unsupported Team custody refuses before a Voice Run is published.
 These source contracts do not certify the composed loaded-runtime journey.
+
+Managed Provider preparation for a Run consumes its actual admitted controller
+occurrence and cancellation lifetime. The host-private source adapter supplies
+the issued Account snapshot and qualified-purpose resolver to the incumbent
+Provider catalog/source owners; it does not borrow another active Session's
+Account or create a second scheduler. Direct Provider materialization revalidates
+that source before commit/backend creation. Attached source operations use the
+existing private runner-to-daemon transport and authenticated Session Run RPC;
+the actual Run record must attest the accepted Provider connection/model and
+Agent target as well as the current occurrence. A cleanup handle never supplies
+that authority. After daemon replacement, a fresh read carries the original
+proof and re-admits that same target; it does not replay an existing stream.
+The composed loaded-runtime journey remains part of unreleased Providers
+integration validation.
 
 ## Execution Run recovery and observation
 
