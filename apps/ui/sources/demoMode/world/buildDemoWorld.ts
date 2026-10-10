@@ -7,7 +7,8 @@ import type { Machine, PendingMessage, Session } from '@/sync/domains/state/stor
 import type { NormalizedMessage } from "@happier-dev/session-core/raw";
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 
-import { buildDemoProfile, type DemoWorldProfile } from './connectedAccounts';
+import { buildDemoConnectedMetadataCatalog, buildDemoProfile, type DemoWorldProfile } from './connectedAccounts';
+import type { ConnectedMetadataCatalogV1 } from '@happier-dev/protocol/connect/connectedMetadataCatalogV1';
 import { buildDemoLocalSettings, type DemoWorldLocalSettings } from './localSettings';
 
 import {
@@ -40,6 +41,7 @@ export type DemoWorld = Readonly<{
     settings: DemoWorldSettings;
     localSettings: DemoWorldLocalSettings;
     profile: DemoWorldProfile;
+    connectedMetadata: ConnectedMetadataCatalogV1;
 }>;
 
 export function buildDemoWorld(): DemoWorld {
@@ -54,6 +56,7 @@ export function buildDemoWorld(): DemoWorld {
         settings: buildDemoSettings(),
         localSettings: buildDemoLocalSettings(),
         profile: buildDemoProfile(),
+        connectedMetadata: buildDemoConnectedMetadataCatalog(),
     };
 }
 

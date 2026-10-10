@@ -1,9 +1,10 @@
 import type { ConnectedServicesDefaultAuthByAgentIdV1 } from '@happier-dev/protocol';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ConnectedServiceAuthGroupPolicyV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
+import { ConnectedPresentationRecordV1Schema } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
+import type { ConnectedMetadataCatalogV1 } from '@happier-dev/protocol/connect/connectedMetadataCatalogV1';
 import { CANONICAL_AGENTS_CORE } from '@happier-dev/agents';
 
-import { connectedServiceProfileKey } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
 import type { Profile } from '@/sync/domains/profiles/profile';
 import type { Settings } from '@/sync/domains/settings/settings';
 
@@ -133,12 +134,11 @@ function buildDemoConnectedServices(): DemoConnectedService[] {
 export type DemoConnectedServicesSettings = Pick<
     Settings,
     | 'connectedServicesDefaultProfileByServiceId'
-    | 'connectedServicesProfileLabelByKey'
     | 'connectedServicesDefaultAuthByAgentIdV1'
 >;
 
 /**
- * The account-side of the same beat: friendly labels, a per-service default, and
+ * The preference-side of the same beat: a per-service default and
  * the agent defaults that make the pools load-bearing instead of decorative.
  * Binding keys are canonical qualified Connected Account service keys — demo
  * mode never writes bare scalar service ids.
@@ -174,16 +174,24 @@ export function buildDemoConnectedServicesSettings(): DemoConnectedServicesSetti
             [CLAUDE_SUBSCRIPTION_SERVICE_KEY]: 'max',
             [GITHUB_SERVICE_KEY]: 'personal',
         },
-        connectedServicesProfileLabelByKey: {
-            [connectedServiceProfileKey({ serviceId: CODEX_SERVICE_KEY, profileId: 'personal' })]: 'Personal',
-            [connectedServiceProfileKey({ serviceId: CODEX_SERVICE_KEY, profileId: 'work' })]: 'Work',
-            [connectedServiceProfileKey({ serviceId: CODEX_SERVICE_KEY, profileId: 'oncall' })]: 'On-call',
-            [connectedServiceProfileKey({ serviceId: CLAUDE_SUBSCRIPTION_SERVICE_KEY, profileId: 'max' })]: 'Personal Max',
-            [connectedServiceProfileKey({ serviceId: CLAUDE_SUBSCRIPTION_SERVICE_KEY, profileId: 'team' })]: 'Team',
-            [connectedServiceProfileKey({ serviceId: GITHUB_SERVICE_KEY, profileId: 'personal' })]: 'Personal',
-        },
         connectedServicesDefaultAuthByAgentIdV1: defaultAuth,
     };
+}
+
+/** Read-only demo presentation; these revisions are fixtures, never Account row authority. */
+export function buildDemoConnectedMetadataCatalog(): ConnectedMetadataCatalogV1 {
+    const accountLabel = (service: { pluginId: string; localId: string }, accountId: string, label: string) =>
+        ({ v: 1 as const, subject: { kind: 'account' as const, account: { service, accountId } }, label });
+    const presentation = ConnectedPresentationRecordV1Schema.parse({ v: 1, entries: [
+        accountLabel(CODEX_SERVICE, 'personal', 'Personal'),
+        accountLabel(CODEX_SERVICE, 'work', 'Work'),
+        accountLabel(CODEX_SERVICE, 'oncall', 'On-call'),
+        accountLabel(CLAUDE_SUBSCRIPTION_SERVICE, 'max', 'Personal Max'),
+        accountLabel(CLAUDE_SUBSCRIPTION_SERVICE, 'team', 'Team'),
+        accountLabel(GITHUB_SERVICE, 'personal', 'Personal'),
+    ] });
+    return { presentation: { status: 'ready', entries: presentation.entries, revision: 0, diagnostics: [] },
+        acknowledgements: { status: 'ready', entries: [], revision: 0, diagnostics: [] }, disclosure: [] };
 }
 
 export type DemoWorldProfile = Pick<Profile, 'connectedServicesV2' | 'connectedAccountsV4' | 'connectedAccountGroupsV4'>;

@@ -15,9 +15,7 @@ const DEMO_WORLD_SETTINGS_KEYS = [
     'sessionListSectionModeV1',
     'sessionListAttentionPromotionModeV1',
     'sessionListWorkingPlacementModeV1',
-    'rolesV1',
     'connectedServicesDefaultProfileByServiceId',
-    'connectedServicesProfileLabelByKey',
     'connectedServicesDefaultAuthByAgentIdV1',
     'scmCommitStrategy',
     'scmRemoteConfirmPolicy',
@@ -44,7 +42,6 @@ export function buildDemoSettings(): DemoWorldSettings {
         sessionListSectionModeV1: 'single',
         sessionListAttentionPromotionModeV1: 'global',
         sessionListWorkingPlacementModeV1: 'global',
-        rolesV1: { overrides: {} },
         ...buildDemoConnectedServicesSettings(),
         // A9 source control: a workspace someone has actually configured — live Git
         // staging, a confirmation before anything leaves the machine, generated

@@ -11,6 +11,7 @@ import {
 import { listServerProfileScopeIds } from '@/sync/domains/server/selection/serverSelectionProfileScopeIds';
 import { storage } from '@/sync/domains/state/storage';
 import { deleteServerFeaturesSnapshot, primeServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+import { setDemoConnectedMetadataCatalogProjection } from '@/sync/store/settings/connectedMetadataCatalogSnapshot';
 
 import { enterDemoMode, exitDemoMode, isDemoModeActive } from '../runtime/enterExitDemoMode';
 import { buildDemoWorld, type DemoWorld } from '../world/buildDemoWorld';
@@ -175,6 +176,7 @@ export async function seedDemoWorld(options: SeedDemoWorldOptions = {}): Promise
         artifacts: { ...current.artifacts, ...Object.fromEntries(world.artifacts.map((artifact) => [artifact.id, artifact])) },
         artifactsLoaded: true,
     }));
+    setDemoConnectedMetadataCatalogProjection(world.connectedMetadata);
     const state = storage.getState();
     state.applyMachines(world.machines);
     state.applySessions(world.sessions);
@@ -212,10 +214,12 @@ export async function seedDemoWorld(options: SeedDemoWorldOptions = {}): Promise
 export async function clearDemoWorld(options: ClearDemoWorldOptions = {}): Promise<ClearDemoWorldResult> {
     const active = activeDemoSnapshot;
     if (!active) {
+        setDemoConnectedMetadataCatalogProjection(null);
         if (isDemoModeActive()) exitDemoMode();
         return { residueFindings: [] };
     }
 
+    setDemoConnectedMetadataCatalogProjection(null);
     storage.setState((current) => buildStoreStateAfterDemoRestore({
         current,
         snapshot: active.snapshot,

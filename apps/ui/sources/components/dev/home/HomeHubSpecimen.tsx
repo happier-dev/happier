@@ -12,7 +12,7 @@ import { VOICE_SETUP_STEP_ID } from '@/voice/settings/setup/useVoiceSetupItem';
 import { buildVoiceSetupFixtureItem, LAB_BRIEF, type VoiceSetupFixtureFrame } from './voiceSetupFixtures';
 import { VoiceBriefButtonView, VoiceBriefList } from '@/components/voice/brief/VoiceBrief';
 import { View } from 'react-native';
-import { HubUsageSectionView } from '@/components/hub/HubUsageSection';
+import { HubUsageCardGrid } from '@/components/hub/usage/HubUsageCardGrid';
 import { HubCustomizeButton } from '@/components/hub/header/HubCustomizeButton';
 import { HubStatusLineView } from '@/components/hub/header/HubStatusLine';
 import { HOME_HUB_BUILTIN_SECTIONS } from '@/components/hub/homeHubSections';
@@ -206,7 +206,7 @@ export function HomeHubSpecimen(props: Readonly<{ machines: boolean; firstRun?: 
                         case 'setup':
                             return <React.Fragment key={section.id}><HubSetupGridView items={setupItems} phone={phone} openId={props.voice && props.voice !== 'SA' ? VOICE_SETUP_STEP_ID : undefined} /></React.Fragment>;
                         case 'usage':
-                            return <React.Fragment key={section.id}><HubUsageSectionView entries={LAB_USAGE} asOf={NOW} /></React.Fragment>;
+                            return <React.Fragment key={section.id}><ItemGroup title={t('settingsOverview.usageTitle')} surface="none"><HubUsageCardGrid entries={LAB_USAGE} /></ItemGroup></React.Fragment>;
                         case 'automations':
                             return (
                                 <WidgetFrame

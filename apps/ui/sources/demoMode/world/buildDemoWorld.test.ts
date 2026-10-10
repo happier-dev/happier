@@ -4,7 +4,6 @@ import {
     readNonAuthoritativeLinkedExternalSessionV1FromMetadata,
     readServerEnabledBit,
     RoleArtifactV1Schema,
-    RolesV1Schema,
     parseBackendTargetKeyV2,
 } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
@@ -170,9 +169,8 @@ describe('buildDemoWorld', () => {
     it('seeds every feature the dream beats claim on their own stage', () => {
         const world = buildDemoWorld();
 
-        // A5 uses the canonical Roles settings root and role documents.
-        expect(world.settings).toHaveProperty('rolesV1', { overrides: {} });
-        expect(RolesV1Schema.safeParse(world.settings.rolesV1).success).toBe(true);
+        // A5 uses Role documents; demo preferences must not recreate the retired writer.
+        expect(world.settings).not.toHaveProperty('rolesV1');
         expect(world.settings).not.toHaveProperty('executionRunsGuidanceEntries');
         expect(world.settings).not.toHaveProperty('executionRunsGuidanceEnabled');
         expect(world.settings).not.toHaveProperty('executionRunsGuidanceMaxChars');

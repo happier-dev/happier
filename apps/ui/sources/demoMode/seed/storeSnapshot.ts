@@ -17,7 +17,7 @@ export type DemoSettingKey = DemoWorldSettingKey | typeof DEMO_SEEDER_SETTING_KE
 
 export type DemoLocalSettingKey = 'themeProfiles';
 
-export type DemoProfileKey = 'connectedServicesV2';
+export type DemoProfileKey = 'connectedServicesV2' | 'connectedAccountsV4' | 'connectedAccountGroupsV4';
 
 export type StoreSnapshot = Readonly<{
     artifacts: StorageState['artifacts'];
@@ -66,9 +66,7 @@ export function takeStoreSnapshot(state: StorageState): StoreSnapshot {
             sessionListWorkingPlacementModeV1: state.settings.sessionListWorkingPlacementModeV1,
             serverSelectionActiveTargetKind: state.settings.serverSelectionActiveTargetKind,
             serverSelectionActiveTargetId: state.settings.serverSelectionActiveTargetId,
-            rolesV1: cloneData(state.settings.rolesV1),
             connectedServicesDefaultProfileByServiceId: cloneData(state.settings.connectedServicesDefaultProfileByServiceId),
-            connectedServicesProfileLabelByKey: cloneData(state.settings.connectedServicesProfileLabelByKey),
             connectedServicesDefaultAuthByAgentIdV1: cloneData(state.settings.connectedServicesDefaultAuthByAgentIdV1),
             scmCommitStrategy: state.settings.scmCommitStrategy,
             scmRemoteConfirmPolicy: state.settings.scmRemoteConfirmPolicy,
@@ -82,6 +80,8 @@ export function takeStoreSnapshot(state: StorageState): StoreSnapshot {
         },
         profile: {
             connectedServicesV2: cloneData(state.profile.connectedServicesV2),
+            connectedAccountsV4: cloneData(state.profile.connectedAccountsV4),
+            connectedAccountGroupsV4: cloneData(state.profile.connectedAccountGroupsV4),
         },
     };
 }

@@ -9,24 +9,20 @@ import { loadProfile } from '@/sync/domains/state/profilePersistence';
 import { loadLocalSettings, loadSettings, saveSettings } from '@/sync/domains/state/settingsPersistence';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { getSessionStorageKind } from '@/sync/domains/session/sessionStorageKind';
+import { getConnectedMetadataCatalog } from '@/sync/store/settings/connectedMetadataCatalogSnapshot';
+import { connectedServiceProfileKey } from '@happier-dev/protocol/connect/connectedServiceProfilePreferences';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { Socket as SocketIoClientSocket } from 'socket.io-client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DEMO_SERVER_BASE_URL } from '../world/constants';
 import { buildDemoWorld, DEMO_RICH_SESSION_ID } from '../world/buildDemoWorld';
 import { isDemoModeActive, resetDemoModeDepthForTests } from '../runtime/enterExitDemoMode';
+import { getDemoFirewallDenyLog, installDemoFirewall, uninstallDemoFirewall } from '../guards/demoFirewall';
 import { clearDemoWorld, seedDemoWorld } from './seedDemoWorld';
 import { takeStoreSnapshot } from './storeSnapshot';
 
 let storedCredentials: AuthCredentials | null = null;
-
-vi.mock('@/text/i18n', () => ({
-    setPreferredLanguageFromSettings: vi.fn(),
-}));
-
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
 
 vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => ({
     ...(await importOriginal<typeof import('@/auth/storage/tokenStorage')>()),
@@ -227,6 +223,51 @@ describe('seedDemoWorld and clearDemoWorld', () => {
         expect(loadLocalSettings().themeProfiles).toEqual(beforeThemeProfiles);
     });
 
+    it('projects demo personal labels through the canonical catalog and restores the real world on clear', async () => {
+        const beforeCatalog = getConnectedMetadataCatalog(null);
+        const beforeProfile = structuredClone(storage.getState().profile);
+        const beforeDurableProfile = structuredClone(loadProfile());
+        const beforeDurableSettings = structuredClone(loadSettings());
+        const originalLabels = { deliberatelyUnqualified: 'Retained Settings value' };
+        storage.setState(current => ({
+            // Poison an old hydrated source without restoring a retired field to effective Settings.
+            settings: { ...current.settings, connectedServicesProfileLabelByKey: originalLabels },
+        }));
+
+        installDemoFirewall();
+        try {
+            const world = await seedDemoWorld();
+            const work = world.profile.connectedAccountsV4.find(account => account.ref.accountId === 'work');
+            if (!work) throw new Error('Demo world must include the qualified work account');
+            const key = connectedServiceProfileKey({
+                serviceId: buildQualifiedPluginContributionKey(work.ref.service), profileId: work.ref.accountId,
+            });
+            storage.setState(current => ({
+                profile: { ...current.profile, connectedAccountsV4: current.profile.connectedAccountsV4.map(account =>
+                    account.ref.accountId === work.ref.accountId ? { ...account, displayName: 'Provider-native name' } : account) },
+            }));
+
+            expect(getConnectedMetadataCatalog(null).labelsByKey[key]).toBe('Work');
+            expect(Reflect.get(storage.getState().settings, 'connectedServicesProfileLabelByKey')).toEqual(originalLabels);
+            expect(loadProfile()).toEqual(beforeDurableProfile);
+            expect(loadSettings()).toEqual(beforeDurableSettings);
+            expect(getDemoFirewallDenyLog()).toEqual([]);
+
+            await clearDemoWorld();
+
+            expect(getConnectedMetadataCatalog(null)).toBe(beforeCatalog);
+            expect(storage.getState().profile.connectedAccountsV4).toEqual(beforeProfile.connectedAccountsV4);
+            expect(storage.getState().profile.connectedAccountGroupsV4).toEqual(beforeProfile.connectedAccountGroupsV4);
+            expect(Reflect.get(storage.getState().settings, 'connectedServicesProfileLabelByKey')).toEqual(originalLabels);
+            expect(loadProfile()).toEqual(beforeDurableProfile);
+            expect(loadSettings()).toEqual(beforeDurableSettings);
+            expect(getDemoFirewallDenyLog()).toEqual([]);
+        } finally {
+            await clearDemoWorld();
+            uninstallDemoFirewall();
+        }
+    });
+
     it('activates the demo server while seeded and restores the previous active server on clear', async () => {
         const previous = await upsertAndActivateServer({
             serverUrl: 'https://previous-demo-seed.example.test',
@@ -309,12 +350,12 @@ describe('seedDemoWorld and clearDemoWorld', () => {
             ?.filter((item) => item.type === 'session')
             .map((item) => item.sessionId) ?? [];
 
+        expect(getSessionStorageKind(storage.getState().sessions[DEMO_RICH_SESSION_ID])).toBe('direct');
         expect(activeIndex?.some((item) => (
             item.type === 'session'
             && item.sessionId === DEMO_RICH_SESSION_ID
             && item.storageKind === 'direct'
         ))).toBe(true);
-        expect(getSessionStorageKind(storage.getState().sessions[DEMO_RICH_SESSION_ID])).toBe('direct');
         expect(visibleSessionIds).toHaveLength(9);
     });
 
