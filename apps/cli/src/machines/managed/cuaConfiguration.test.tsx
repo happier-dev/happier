@@ -18,8 +18,10 @@ import { CUA_PLUGIN } from '../../../../../packages/plugins/machine-cua/src/mani
 import { createCuaNativeClient } from '../../../../../packages/plugins/machine-cua/src/machine/nativeClient';
 import { createCuaLocalProvisioner } from '../../../../../packages/plugins/machine-cua/src/machine/localProvisioner';
 import { createCuaByoc } from '../../../../../packages/plugins/machine-cua/src/machine/byoc';
+import { ByocOptionsQueryV1Schema } from '../../../../../packages/plugins/machine-cua/src/machine/remoteSchemas';
 import { createCuaFleet } from '../../../../../packages/plugins/machine-cua/src/machine/fleet';
 import { MachineProvisionerOptionsResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { ManagedMachinePresetV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import type { PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 
 const boundary = vi.hoisted(() => ({ rpc: vi.fn() }));
@@ -53,6 +55,7 @@ function processResult(value: unknown): PluginProcessResult {
 // Only native processes and HTTP are substituted. The actual declared query,
 // native option parsing, shared form and strict launch owner execute together.
 function nativeOptions(id: string, query: unknown) {
+    const cloud = id === 'byoc' ? ByocOptionsQueryV1Schema.parse(query).cloud : 'aws';
     const native = createCuaNativeClient({ executable: { kind: 'systemTool', id: 'cua' }, exec: { async run(request) {
         const args = request.args ?? [];
         if (args.includes('doctor')) return processResult({ host: { os: 'linux', arch: 'x86_64', kvm: true, accel: { x86_64: 'kvm', aarch64: 'tcg' } },
@@ -60,7 +63,7 @@ function nativeOptions(id: string, query: unknown) {
             container: { reachable: false, gvisor: false, runtimes: [] } });
         if (args.includes('images')) return processResult([{ ref: imageId, os: 'linux', arch: ['amd64'], local: 'qemu', published: true, spacesd: true,
             digest, sizes: { digest, platforms: [{ arch: 'amd64', disk: size.diskBytes }] } }]);
-        if (args.includes('status')) return processResult({ providers: [{ name: 'aws', connected: true, region: 'us-west-2', ttl_hours: 0,
+        if (args.includes('status')) return processResult({ providers: [{ name: cloud, connected: true, region: 'us-west-2', ttl_hours: cloud === 'modal' ? 2 : 0,
             kinds: [{ image: 'linux', supported: true, machine_type: 't3.medium', usd_per_hour: 0.0416 }] }], resources: [] });
         throw new Error('Configuration must not allocate a resource');
     } }, fleet: { origin: 'https://fleet.example/', http: { async request(request) {
@@ -71,18 +74,22 @@ function nativeOptions(id: string, query: unknown) {
                 runtime: 'kubevirt', cpuCores: 4, memory: '8Gi', services: [{ name: 'env', targetPort: 3211 }] } } };
         return { status: 200, finalUrl: request.url, headers: {}, body: new TextEncoder().encode(JSON.stringify(value)) };
     } } } });
-    if (id === 'byoc') return createCuaByoc(native).options('aws', 10);
+    if (id === 'byoc') return createCuaByoc(native).options(cloud, 10);
     if (id === 'fleet') return createCuaFleet(native).options(query);
     return createCuaLocalProvisioner(native, id === 'local-space' ? 'local-space' : 'local-sandbox', 10).options(query);
 }
 
 describe('fresh Cua declarations through the mounted shared configurator', () => {
-    it.each([
+    it.each<{ id: string; fields: string[][]; savedCloud?: 'modal' | 'aws' | 'gcp' }>([
         { id: 'local-sandbox', fields: [['runtimeId', 'qemu'], ['imageId', imageId], ['size.cpu', '4'], ['size.memoryBytes', String(size.memoryBytes)], ['size.diskBytes', String(size.diskBytes)]] },
         { id: 'local-space', fields: [['runtimeId', 'qemu'], ['imageId', imageId], ['size.cpu', '4'], ['size.memoryBytes', String(size.memoryBytes)], ['size.diskBytes', String(size.diskBytes)]] },
         { id: 'byoc', fields: [['cloud', 'aws']] },
+        { id: 'byoc', fields: [['cloud', 'modal']] },
         { id: 'fleet', fields: [['namespace', 'reviewed-pool'], ['nativeLease.durationSeconds', '7200']] },
-    ])('produces a strict complete $id launch with Create and Save enabled', async ({ id, fields }) => {
+        { id: 'byoc', fields: [], savedCloud: 'modal' },
+        { id: 'byoc', fields: [], savedCloud: 'aws' },
+        { id: 'byoc', fields: [], savedCloud: 'gcp' },
+    ])('produces a strict complete $id launch ($savedCloud) with Create and Save enabled', async ({ id, fields, savedCloud }) => {
         const descriptor = CUA_PLUGIN.manifest.contributes.machineProvisioners?.find(value => value.id === id);
         if (!descriptor) throw new Error('Missing actual Cua descriptor');
         const declaration = CUA_PLUGIN.manifest.contributes.actions?.find(value => value.id === descriptor.actions.options);
@@ -107,6 +114,15 @@ describe('fresh Cua declarations through the mounted shared configurator', () =>
             const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
             return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result } } };
         } });
+        if (savedCloud) {
+            const savedLaunch = (await nativeOptions(id, { cloud: savedCloud })).choices[0]?.launch;
+            if (!savedLaunch) throw new Error('Native BYOC setup must qualify the saved launch');
+            const saved = ManagedMachinePresetV1Schema.parse({ id: 'saved-byoc', homeId: `srv_${id}`, revision: 1, name: 'Saved BYOC',
+                owner: { kind: 'account', accountId: 'owner' }, controller,
+                recipe: { provider: contribution, schemaVersion: descriptor.schemaVersion, name: 'Saved BYOC', choices: savedLaunch },
+                retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true });
+            home.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: saved } });
+        }
         let choices: ReturnType<typeof MachineProvisionerOptionsResultV1Schema.parse>['choices'] = [];
         home.answer(serverId, '/v1/actions/machines.provisioners.options', { async select(value) {
             const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
@@ -117,15 +133,16 @@ describe('fresh Cua declarations through the mounted shared configurator', () =>
             return { body: { v: 1, actionId: 'machines.provisioners.options', requestId: request.requestId, execution: { ok: true, result } } };
         } });
         const { ManagedMachineConfigurationView } = await import('../../../../ui/sources/components/settings/machines/managed/ManagedMachineConfigurationView');
-        const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId} provisioner={buildQualifiedPluginContributionKey(contribution)} initialController={controller} />);
-        await waitForHomeGovernance(() => expect(screen.findByTestId(`managed-config.field:${fields[0][0]}`)).not.toBeNull());
+        const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId} provisioner={buildQualifiedPluginContributionKey(contribution)} initialController={controller}
+            presetId={savedCloud ? 'saved-byoc' : undefined} />);
+        if (fields.length) await waitForHomeGovernance(() => expect(screen.findByTestId(`managed-config.field:${fields[0][0]}`)).not.toBeNull());
         for (const [path, value] of fields) await act(async () => screen.changeTextByTestId(`managed-config.field:${path}`, value));
         await waitForHomeGovernance(() => expect(choices.some(choice => choice.launch !== undefined)).toBe(true));
         const choice = choices.find(choice => choice.launch !== undefined);
         if (!choice) throw new Error('Native options must produce a complete launch');
         const validateLaunch = await compilePluginJsonSchema(descriptor.launchSchema);
         expect(validateLaunch(choice.launch)).toBe(true);
-        for (const dimension of ['size', 'image', 'location'] as const) {
+        for (const dimension of savedCloud ? [] : ['size', 'image', 'location'] as const) {
             const nativeFact = choice.nativeFacts?.[dimension];
             if (!nativeFact) continue;
             const section = dimension === 'size' ? 'sizes' : dimension === 'image' ? 'images' : 'locations';
@@ -135,6 +152,19 @@ describe('fresh Cua declarations through the mounted shared configurator', () =>
         }
         await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(false));
         expect(screen.findByTestId('managed-config.save-preset')?.props.disabled).toBe(false);
+        if (savedCloud) {
+            const { ManagedMachineKeepControl } = await import('../../../../ui/sources/components/settings/machines/managed/ManagedMachineKeepControl');
+            const controls = screen.tree.findAllByType(ManagedMachineKeepControl);
+            expect(controls).toHaveLength(1);
+            expect(controls[0].props.finiteOnly).toBe(savedCloud === 'modal');
+            if (savedCloud === 'modal') {
+                expect(controls[0].props.nativeDuration).toMatchObject({ value: '7200', choices: [{ id: '7200' }] });
+                expect(controls[0].props.policy).toMatchObject({ retention: { kind: 'unused', effect: 'delete' }, wakeOnAcceptedMessage: false });
+            } else {
+                expect(controls[0].props.policy.retention).toEqual({ kind: 'until-delete' });
+                expect(controls[0].props.nativeDuration).toBeUndefined();
+            }
+        }
         expect(home.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);
         await screen.unmount();
     });

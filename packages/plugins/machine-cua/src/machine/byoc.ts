@@ -134,11 +134,18 @@ export function createCuaByoc(native: CuaNativeClient) {
                     nativeLifetime: provider.ttl_hours === 0 ? { kind: 'no-native-ttl' }
                         : { kind: 'finite', durationSeconds: provider.ttl_hours * 3600 } });
                 if (!launch.success || qualifyByocLaunch(launch.data, provider).kind !== 'qualified') return [];
+                const lifetime = launch.data.nativeLifetime;
+                const retention: NonNullable<MachineProvisionerOptionsResultV1['choices'][number]['retention']> = {
+                    supportedIntents: cloud === 'modal' ? ['delete'] : ['start', 'stop', 'delete'],
+                    finiteOnly: lifetime.kind === 'finite',
+                };
                 const choice = { id: `${kind.image}:${kind.machine_type}`,
                     title: { key: 'machineCua.byoc.nativeChoice', fallback: `${kind.image} · ${kind.machine_type}` },
-                    launch: launch.data, available: true, nativeFacts: {
+                    launch: launch.data, available: true, retention, nativeFacts: {
                         size: { id: kind.machine_type, title: kind.machine_type }, image: { id: kind.image, title: kind.image },
                         location: { id: provider.region, title: provider.region },
+                        ...(lifetime.kind === 'finite' ? { duration: { id: String(lifetime.durationSeconds),
+                            title: `${lifetime.durationSeconds} s`, afterMs: lifetime.durationSeconds * 1000 } } : {}),
                     } };
                 const priced = MachineProvisionerOptionsResultV1Schema.safeParse({ choices: [{ ...choice, prices: [{
                     amount: String(kind.usd_per_hour), currency: 'USD', unit: 'hour',

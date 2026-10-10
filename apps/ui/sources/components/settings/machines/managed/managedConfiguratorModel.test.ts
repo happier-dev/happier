@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { MachineProvisionerContributionV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { MachineProvisionerContributionV1Schema, MachineProvisionerOptionsResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { ManagedCredentialSelectionV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/publicTypes';
 import { writeInputPath } from '@happier-dev/protocol/inputs/inputFieldRuntime';
 import { FlyLaunchQueryV1Schema, FlyLaunchV1Schema } from '../../../../../../../packages/plugins/machine-fly/src/machine/schemas';
 import { CRABBOX_PLUGIN } from '../../../../../../../packages/plugins/machine-crabbox/src/manifest';
+import { CUA_PLUGIN } from '../../../../../../../packages/plugins/machine-cua/src/manifest';
 import { createManagedConfiguratorDraft, refreshManagedConfiguratorOptions, selectManagedConfiguratorChoice, selectManagedConfiguratorDimension, managedConfiguratorDimensionSelection, managedConfiguratorDimensionChoices, managedConfiguratorFacts, managedConfiguratorAcquireInput, managedConfiguratorOptionsSelectors, setManagedConfiguratorOptionsSelectors, managedConfiguratorCredentialSelections } from './managedConfiguratorModel';
 
 const descriptor = MachineProvisionerContributionV1Schema.parse({
@@ -22,6 +23,50 @@ const options = { choices: [
 ] };
 
 describe('managed configurator draft owner', () => {
+    it('qualifies saved BYOC recipes using the current selected native variant, with descriptor fallback', () => {
+        const descriptor = MachineProvisionerContributionV1Schema.parse(CUA_PLUGIN.manifest.contributes.machineProvisioners?.find(entry => entry.id === 'byoc'));
+        const byoc = { contribution: { pluginId: CUA_PLUGIN.manifest.id, localId: descriptor.id }, occurrenceId: 'byoc', descriptor };
+        for (const cloud of ['modal', 'aws', 'gcp'] as const) {
+            const finite = cloud === 'modal';
+            const launch = { cloud, region: 'west', nativeImageId: 'linux', nativeSizeId: 'native-size',
+                nativeLifetime: finite ? { kind: 'finite', durationSeconds: 7200 } : { kind: 'no-native-ttl' } };
+            const loaded = MachineProvisionerOptionsResultV1Schema.parse({ choices: [{ id: 'native-choice', title: 'Native choice', launch,
+                retention: finite ? { supportedIntents: ['delete'], finiteOnly: true }
+                    : { supportedIntents: ['start', 'stop', 'delete'], finiteOnly: false },
+                nativeFacts: { size: { id: 'native-size', title: 'Native size' }, image: { id: 'linux', title: 'Linux' },
+                    location: { id: 'west', title: 'West' },
+                    ...(finite ? { duration: { id: '7200', title: '2 hours', afterMs: 7_200_000 } } : {}) },
+            }] });
+            const saved = { ...createManagedConfiguratorDraft({ provisioner: byoc, controller, name: 'Saved BYOC',
+                preset: { id: 'saved-byoc', revision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true } }),
+                selected: { id: 'preset:saved-byoc', title: 'Saved BYOC', launch } };
+            const refreshed = refreshManagedConfiguratorOptions(saved, loaded);
+            const facts = managedConfiguratorFacts(refreshed);
+            expect(facts?.retentionCapabilities).toEqual(loaded.choices[0]!.retention);
+            expect(facts?.retention.kind).toBe(finite ? 'unused' : 'until-delete');
+            expect(facts?.wakeOnAcceptedMessage).toBe(!finite);
+            expect(managedConfiguratorAcquireInput(refreshed, 'home')?.reviewedFacts?.retentionCapabilities).toEqual(facts?.retentionCapabilities);
+            if (finite) {
+                expect(facts?.nativeFacts?.duration?.afterMs).toBe(7_200_000);
+                expect(managedConfiguratorAcquireInput(refreshed, 'home')?.selection).toMatchObject({ retention: { effect: 'delete' }, wakeOnAcceptedMessage: false });
+                let fresh = refreshManagedConfiguratorOptions(createManagedConfiguratorDraft({ provisioner: byoc, controller, name: 'New BYOC' }), loaded);
+                for (const [dimension, id] of [['size', 'native-size'], ['image', 'linux'], ['location', 'west']] as const)
+                    fresh = selectManagedConfiguratorDimension(fresh, dimension, id);
+                expect(managedConfiguratorAcquireInput(fresh, 'home')?.selection).toMatchObject({ launch: { choices: launch }, wakeOnAcceptedMessage: false });
+                // A real duration alternative still requires an explicit selection of its complete launch.
+                const ambiguous = refreshManagedConfiguratorOptions(createManagedConfiguratorDraft({ provisioner: byoc, controller, name: 'New BYOC' }), {
+                    choices: [...loaded.choices, { ...loaded.choices[0]!, id: 'longer', launch: { ...launch, nativeLifetime: { kind: 'finite', durationSeconds: 10800 } },
+                        nativeFacts: { ...loaded.choices[0]!.nativeFacts, duration: { id: '10800', title: '3 hours', afterMs: 10_800_000 } } }],
+                });
+                let staged = ambiguous;
+                for (const [dimension, id] of [['size', 'native-size'], ['image', 'linux'], ['location', 'west']] as const)
+                    staged = selectManagedConfiguratorDimension(staged, dimension, id);
+                expect(managedConfiguratorAcquireInput(staged, 'home')).toBeNull();
+            }
+            const withoutQualification = refreshManagedConfiguratorOptions(saved, { choices: [{ id: 'native-choice', title: 'Native choice', launch }] });
+            expect(managedConfiguratorFacts(withoutQualification)?.retentionCapabilities).toEqual(descriptor.retention);
+        }
+    });
     it('selects a dimension of a valid scalar launch without inventing object selectors', () => {
         const scalar = { ...provisioner, descriptor: { ...descriptor,
             launchSchema: { type: 'string', enum: ['small', 'large'] } satisfies PluginJsonSchemaV2 } };

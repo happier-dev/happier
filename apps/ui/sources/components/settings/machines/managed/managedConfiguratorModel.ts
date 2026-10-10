@@ -37,6 +37,10 @@ export type ManagedConfiguratorDraft = Readonly<{
 export type ManagedConfiguratorDimension = 'size' | 'image' | 'location' | 'duration';
 const dimensions: readonly ManagedConfiguratorDimension[] = ['size', 'image', 'location', 'duration'];
 type Choice = MachineProvisionerOptionsResultV1['choices'][number];
+/** One selected-variant capability input for configuration, policy and admission facts. */
+export function managedConfiguratorRetentionCapabilities(draft: Pick<ManagedConfiguratorDraft, 'provisioner' | 'selected'>) {
+    return draft.selected?.retention ?? draft.provisioner.descriptor.retention;
+}
 export function managedConfiguratorDimensionSelection(draft: ManagedConfiguratorDraft): Partial<Record<ManagedConfiguratorDimension, string>> {
     return draft.dimensionSelection ?? Object.fromEntries(dimensions.flatMap(dimension => {
         const fact = draft.selected?.nativeFacts?.[dimension];
@@ -76,15 +80,22 @@ export function managedConfiguratorDimensionChoices(draft: ManagedConfiguratorDr
 }
 /** Native launch values remain indivisible. A dimension change never synthesizes provider selectors. */
 export function selectManagedConfiguratorDimension(draft: ManagedConfiguratorDraft, dimension: ManagedConfiguratorDimension, id: string): ManagedConfiguratorDraft {
-    const independentDimensions = draft.provisioner.descriptor.retention.finiteOnly && draft.provisioner.descriptor.nativeDurationInput
+    const independentDimensions = managedConfiguratorRetentionCapabilities(draft).finiteOnly && draft.provisioner.descriptor.nativeDurationInput
         ? dimensions.filter(key => key !== 'duration') : dimensions;
     // A bound duration is edited through the declared options field, not selected a second time.
     const selection = { ...Object.fromEntries(Object.entries(managedConfiguratorDimensionSelection(draft))
         .filter(([key]) => independentDimensions.some(dimensionKey => dimensionKey === key))), [dimension]: id };
-    const choice = draft.choices.find(candidate => candidate.available !== false && compatibleDimensionChoice(candidate, selection)
+    const matching = draft.choices.filter(candidate => candidate.available !== false && compatibleDimensionChoice(candidate, selection)
         && compatibleLaunchSelectors(candidate.launch, draft.optionsSelectors ?? {}));
+    const choice = matching[0];
     if (!draft.choices.some(candidate => candidate.available !== false && candidate.nativeFacts?.[dimension]?.id === id)) return draft;
-    const complete = independentDimensions.every(key => !draft.choices.some(candidate => candidate.nativeFacts?.[key]) || !!selection[key]);
+    // A fixed finite lifetime is part of the complete native variant. Requiring
+    // its Ends control before that variant is selected would make it unreachable.
+    // Distinct native duration alternatives still require an explicit selection.
+    const fixedFiniteDuration = choice?.retention?.finiteOnly === true && choice.nativeFacts?.duration
+        && matching.every(candidate => candidate.nativeFacts?.duration?.id === choice.nativeFacts?.duration?.id);
+    const complete = independentDimensions.every(key => !draft.choices.some(candidate => candidate.nativeFacts?.[key])
+        || !!selection[key] || key === 'duration' && fixedFiniteDuration);
     return { ...draft, dimensionSelection: complete && choice ? undefined : selection, selected: complete && choice ? choice : null };
 }
 export function createManagedConfiguratorDraft(input: Pick<ManagedConfiguratorDraft, 'provisioner' | 'controller' | 'name' | 'credentials' | 'environment' | 'categoryPreferences' | 'override' | 'preset'>): ManagedConfiguratorDraft {
@@ -144,7 +155,7 @@ export function managedConfiguratorFacts(draft: ManagedConfiguratorDraft): Manag
         launch: { provider: draft.provisioner.contribution, schemaVersion: draft.provisioner.descriptor.schemaVersion,
             name: draft.name, choices: parsed.data, ...(credentials?.length ? { credentials } : {}) }, controller: draft.controller,
         optionStatus: draft.optionStatus !== 'current' ? draft.optionStatus : available ? 'current' : 'unavailable',
-        billing: draft.provisioner.descriptor.billing, retentionCapabilities: draft.provisioner.descriptor.retention,
+        billing: draft.provisioner.descriptor.billing, retentionCapabilities: managedConfiguratorRetentionCapabilities(draft),
         prerequisites: draft.check?.prerequisites ?? [], localResources: draft.check?.localResources,
         prices: selected.prices,
         nativeFacts: selected.nativeFacts, machineOverride: draft.override, preset: draft.preset, environment: draft.environment,

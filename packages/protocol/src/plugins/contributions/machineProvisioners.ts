@@ -179,6 +179,8 @@ const machineProvisionerCheckResult = lazyDefinition(() => mini.strictObject({
 const machineProvisionerOptionsResult = lazyDefinition(() => mini.strictObject({
   choices: mini.array(mini.strictObject({ id: text(), title: PluginLocalizedStringV2Schema,
     launch: mini.optional(PluginJsonValueV2Schema), available: mini.optional(mini.boolean()), prices: mini.optional(mini.array(ProviderPriceV1Schema)),
+    /** Selected native variant capabilities replace the descriptor fallback. */
+    retention: mini.optional(RetentionCapabilitiesV1Schema),
     nativeFacts: mini.optional(ProviderNativeOptionFactsV1Schema),
     effectReview: mini.optional(DevcontainerEffectReviewV1Schema),
   })),

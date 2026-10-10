@@ -173,6 +173,11 @@ describe('public machine provisioner role schemas', () => {
     };
     const choice = { id: 'selected', title: 'Selected configuration', launch: { nativeSizeId: 'small' }, nativeFacts };
     expect(provisioners.MachineProvisionerOptionsResultProtocolV1Schema.parse({ choices: [choice] })).toEqual({ choices: [choice] });
+    const qualified = { ...choice, retention: { supportedIntents: ['delete'], finiteOnly: true } };
+    expect(provisioners.MachineProvisionerOptionsResultProtocolV1Schema.parse({ choices: [qualified] })).toEqual({ choices: [qualified] });
+    for (const retention of [{ ...qualified.retention, finiteOnly: 'yes' }, { ...qualified.retention, token: 'private' }]) {
+      expect(provisioners.MachineProvisionerOptionsResultV1Schema.safeParse({ choices: [{ ...choice, retention }] }).success).toBe(false);
+    }
     expect(provisioners.MachineProvisionerOptionsResultProtocolV1Schema.parse({ choices: [choice] }).choices[0]?.nativeFacts?.size).not.toHaveProperty('diskBytes');
     for (const size of [{ ...nativeFacts.size, memoryBytes: '1024' }, { ...nativeFacts.size, token: 'private' }]) {
       expect(provisioners.MachineProvisionerOptionsResultProtocolV1Schema.safeParse({ choices: [{ ...choice, nativeFacts: { ...nativeFacts, size } }] }).success).toBe(false);

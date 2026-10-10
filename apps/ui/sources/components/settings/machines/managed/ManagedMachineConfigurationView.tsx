@@ -49,7 +49,7 @@ import { ManagedFieldRow } from './MachinePresetDetail';
 import { useQualifiedConnectedAccountTargetPresentations } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountTargetPresentations';
 import type { ManagedReceiptModel } from './MachineConfigurationReceipt';
 import { createManagedConfiguratorDraft, refreshManagedConfiguratorOptions, selectManagedConfiguratorChoice,
-    managedConfiguratorFacts, managedConfiguratorAcquireInput, managedConfiguratorOptionsSelectors, setManagedConfiguratorOptionsSelectors, setManagedConfiguratorCredentials, managedConfiguratorCredentialSelections,
+    managedConfiguratorFacts, managedConfiguratorAcquireInput, managedConfiguratorOptionsSelectors, setManagedConfiguratorOptionsSelectors, setManagedConfiguratorCredentials, managedConfiguratorCredentialSelections, managedConfiguratorRetentionCapabilities,
     type ManagedConfiguratorDraft } from './managedConfiguratorModel';
 import { describeRetentionConsequence, retentionCategoryTitle } from './managedRetentionPresentation';
 import { countryName, formatProviderAmount, formatPriceUnit } from './managedMachineDisplay';
@@ -283,14 +283,15 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         && pluginJsonValuesEqual(draft.selected.launch, captured.launch.choices) ? captured : null);
     const credentialTargets = React.useMemo(() => receiptFacts ? managedCredentialReceiptTargets(receiptFacts.launch) : [], [receiptFacts?.launch]);
     const credentialAccounts = useQualifiedConnectedAccountTargetPresentations({ binding: catalog.binding, targets: credentialTargets });
+    const retentionCapabilities = draft ? managedConfiguratorRetentionCapabilities(draft) : provisioner?.descriptor.retention;
     const defaultPolicy = provisioner ? resolveMachineRetentionPolicyV1({ billing: provisioner.descriptor.billing,
-        nativeCapabilities: provisioner.descriptor.retention, presetOverride: props.presetOnly ? undefined : draft?.preset, categoryPreferences: accountSettings.settings?.machineRetentionDefaultsV1 }) : null;
-    const finiteOnly = provisioner?.descriptor.retention.finiteOnly === true;
+        nativeCapabilities: retentionCapabilities, presetOverride: props.presetOnly ? undefined : draft?.preset, categoryPreferences: accountSettings.settings?.machineRetentionDefaultsV1 }) : null;
+    const finiteOnly = retentionCapabilities?.finiteOnly === true;
     const nativeDurationField = finiteOnly && provisioner?.descriptor.nativeDurationInput
         ? fields.find(field => field.path === provisioner.descriptor.nativeDurationInput?.path) : undefined;
     const recipeFields = fields.filter(field => field !== nativeDurationField);
     const keepPolicy = facts ?? (finiteOnly ? defaultPolicy : null);
-    const nativeExpiry = provisioner?.descriptor.retention.nativeExpiry;
+    const nativeExpiry = retentionCapabilities?.nativeExpiry;
     const receiptController = receiptFacts?.controller ?? controller;
     const controllerName = getMachineDisplayName(machines.find(machine => machine.id === receiptController?.machineId
         && machine.installationId === receiptController?.installationId)) ?? t('common.unknown');
@@ -408,8 +409,8 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             } } : {}),
             ...(nativeExpiry ? { nativeExpiry: t('managedRetention.nativeExpiry', { provider: title,
                 time: nativeExpiry.kind === 'deadline' ? formatAsOfTime(nativeExpiry.at) : formatRetentionDuration(nativeExpiry.afterMs) }) } : {}),
-            effects: provisioner?.descriptor.retention.supportedIntents.filter((intent): intent is 'stop' | 'delete' => intent === 'stop' || intent === 'delete'),
-            canWake: provisioner?.descriptor.retention.supportedIntents.includes('start'),
+            effects: retentionCapabilities?.supportedIntents.filter((intent): intent is 'stop' | 'delete' => intent === 'stop' || intent === 'delete'),
+            canWake: retentionCapabilities?.supportedIntents.includes('start'),
             consequence: retention => describeRetentionConsequence(retention, { ...(provisioner?.descriptor.billing ?? { location: 'unknown', stoppedBilling: 'unknown' }), provider: title }),
             onChange: policy => setDraft(current => current ? { ...current, override: policy } : current),
             onReset: () => setDraft(current => current ? { ...current, override: undefined,

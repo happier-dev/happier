@@ -36,11 +36,26 @@ function harness(...values: unknown[]) {
 }
 
 describe('Cua BYOC native operations', () => {
+    it('publishes the configured Modal lifetime without assigning a finite lifetime to no-TTL AWS or GCP', async () => {
+        const modal = harness({ providers: [{ ...provider, name: 'modal', ttl_hours: 2 }], resources: [] });
+        expect(await modal.byoc.options('modal', 1234)).toMatchObject({ choices: [{
+            launch: { cloud: 'modal', nativeLifetime: { kind: 'finite', durationSeconds: 7200 } },
+            retention: { supportedIntents: ['delete'], finiteOnly: true },
+            nativeFacts: { duration: { id: '7200', afterMs: 7_200_000 } },
+        }] });
+        for (const cloud of ['aws', 'gcp'] as const) {
+            const durable = harness({ providers: [{ ...provider, name: cloud, ttl_hours: 0 }], resources: [] });
+            const result = await durable.byoc.options(cloud, 1234);
+            expect(result.choices[0]?.launch).toMatchObject({ nativeLifetime: { kind: 'no-native-ttl' } });
+            expect(result.choices[0]).toMatchObject({ retention: { supportedIntents: ['start', 'stop', 'delete'], finiteOnly: false } });
+            expect(result.choices[0]?.nativeFacts?.duration).toBeUndefined();
+        }
+    });
     it('projects source-timed configured choices without inventing cloud setup or a price', async () => {
         const h = harness(status);
         expect(await h.byoc.options('aws', 1234)).toEqual({ choices: [{
             id: 'linux:t3.medium', title: { key: 'machineCua.byoc.nativeChoice', fallback: 'linux · t3.medium' },
-            launch, available: true, nativeFacts: { size: { id: 't3.medium', title: 't3.medium' },
+            launch, available: true, retention: { supportedIntents: ['start', 'stop', 'delete'], finiteOnly: false }, nativeFacts: { size: { id: 't3.medium', title: 't3.medium' },
                 image: { id: 'linux', title: 'linux' }, location: { id: 'us-west-2', title: 'us-west-2' } },
             prices: [{ amount: '0.0416', currency: 'USD', unit: 'hour',
                 source: 'cua-native-cloud-status', observedAt: 1234 }],

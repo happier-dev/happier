@@ -12,6 +12,7 @@ import { inTx } from "@/storage/inTx";
 import { createPluginJsonSchemaZodValueAdapter } from "@happier-dev/protocol/plugins/actions/json-schema-validation";
 import { db, isPrismaUniqueConstraintError } from "@/storage/db";
 import { resolveMachineRetentionPolicyV1 } from "@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1";
+import type { RetentionCapabilitiesV1 } from "@happier-dev/protocol/machines/managed/providerFactsV1";
 import {
     ManagedMachineError, invalidateManagedMachineInTx, projectManagedMachine,
     requireManagedControllerInTx, resolveManagedDeclarationInTx, sameManagedInput,
@@ -25,8 +26,8 @@ import { resolveMachinePresetForAcquireInTx, validateManagedRecipeInTx } from ".
 import type { TeamOperationAuthenticationContext } from "@/app/teams/actorContext";
 
 /** Explicit reviewed policy still receives the sole resolver's native qualification. */
-export function qualifyManagedAcquisitionPolicy(input: Pick<ReturnType<typeof resolveManagedAcquireReviewV1>, "retention" | "wakeOnAcceptedMessage">, declaration: Pick<ManagedDeclaration, "billing" | "retention">) {
-    return resolveMachineRetentionPolicyV1({ billing: declaration.billing, nativeCapabilities: declaration.retention, machineOverride: input });
+export function qualifyManagedAcquisitionPolicy(input: Pick<ReturnType<typeof resolveManagedAcquireReviewV1>, "retention" | "wakeOnAcceptedMessage">, declaration: Pick<ManagedDeclaration, "billing" | "retention">, selectedCapabilities?: RetentionCapabilitiesV1) {
+    return resolveMachineRetentionPolicyV1({ billing: declaration.billing, nativeCapabilities: selectedCapabilities ?? declaration.retention, machineOverride: input });
 }
 
 /**
@@ -73,11 +74,11 @@ export async function admitManagedAcquire(params: Readonly<{
             environment = selected.preset.environment;
             declaration = selected.declaration;
         }
-        const policy = qualifyManagedAcquisitionPolicy(review, declaration);
         const parsedFacts = request.input.reviewedFacts === undefined ? undefined
             : createManagedConfigurationFactsV1Schema(createPluginJsonSchemaZodValueAdapter(declaration.launchSchema)).safeParse(request.input.reviewedFacts);
         if (parsedFacts && !parsedFacts.success) throw new ManagedMachineError("invalid_request");
         const reviewedFacts = parsedFacts?.success ? parsedFacts.data : undefined;
+        const policy = qualifyManagedAcquisitionPolicy(review, declaration, reviewedFacts?.retentionCapabilities);
         if (reviewedFacts && (!sameManagedInput(reviewedFacts.launch, launch)
             || !sameManagedInput(reviewedFacts.controller, review.controller)
             || !sameManagedInput(reviewedFacts.retention, policy.retention)

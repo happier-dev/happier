@@ -6,6 +6,8 @@ import { inTx } from "@/storage/inTx";
 import { requireCurrentManagedMachineInTx, readMachineDevcontainerChildInTx } from "./managedRows";
 import { qualifyManagedAcquisitionPolicy } from "./managedAcquire";
 import { admitManagedAcquire } from "./managedAcquire";
+import { buildManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
+import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { ManagedAcquireInputV1Schema, PluginManifestV2Schema, signMachineInstallationProof, createManagedPolicyCensusProofV1, createManagedPolicyProofV1, encodeManagedPolicyProofV1, MANAGED_POLICY_PROOF_HEADER, ManagedWakeTargetV1Schema, type ManagedCommittedIdleEvidenceV1 } from "@happier-dev/protocol";
 import tweetnacl from 'tweetnacl';
 import { defineProtocolObject, defineProtocolString } from "@happier-dev/protocol/plugins/actions/protocol-composable-schema";
@@ -122,6 +124,36 @@ describe("managed acquisition durable authority", () => {
 
     it("qualifies retained wake against the selected native provisioner at admission", () => {
         expect(qualifyManagedAcquisitionPolicy({ retention: { kind: "unused", afterMs: 17, effect: "stop" }, wakeOnAcceptedMessage: true }, { billing: { location: "cloud", stoppedBilling: "billed" }, retention: { supportedIntents: ["delete"] } })).toMatchObject({ retention: { kind: "unused", afterMs: 17, effect: "delete" }, wakeOnAcceptedMessage: false });
+    });
+
+    it("qualifies acquisition against selected native variant capabilities before the descriptor fallback", () => {
+        const declaration: Parameters<typeof qualifyManagedAcquisitionPolicy>[1] = { billing: { location: 'cloud', stoppedBilling: 'unknown' },
+            retention: { supportedIntents: ['start', 'stop', 'delete'] } };
+        const requested = { retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: true };
+        expect(qualifyManagedAcquisitionPolicy(requested, declaration, { supportedIntents: ['delete'], finiteOnly: true }))
+            .toMatchObject({ retention: { kind: 'unused', effect: 'delete' }, wakeOnAcceptedMessage: false });
+        expect(qualifyManagedAcquisitionPolicy(requested, declaration, { supportedIntents: ['start', 'stop', 'delete'], finiteOnly: false }))
+            .toMatchObject(requested);
+        expect(qualifyManagedAcquisitionPolicy(requested, declaration)).toMatchObject(requested);
+    });
+
+    it('admits the selected finite variant policy and refuses a receipt for another launch', async () => {
+        const { account, controller, input, request, launch } = await createManagedComputeFixture('selected-variant',
+            { location: 'cloud', stoppedBilling: 'billed' });
+        const reviewedFacts = buildManagedConfigurationFactsV1({ choicesSchema: createPluginJsonSchemaZodValueAdapter(launch.jsonSchema),
+            launch: input.selection.launch, controller, optionStatus: 'current', prerequisites: [],
+            billing: { location: 'cloud', stoppedBilling: 'billed' }, retentionCapabilities: { supportedIntents: ['delete'], finiteOnly: true },
+            machineOverride: { retention: input.selection.retention, wakeOnAcceptedMessage: input.selection.wakeOnAcceptedMessage } });
+        const reviewedRequest = { ...request, input: { ...request.input, input: { ...input, reviewedFacts } } };
+        await expect(admitManagedAcquire({ ...reviewedRequest, input: { ...reviewedRequest.input, requestId: 'other-variant-receipt',
+            input: { ...input, reviewedFacts: { ...reviewedFacts, launch: { ...reviewedFacts.launch, choices: { image: 'another-image' } } } } } }))
+            .rejects.toMatchObject({ code: 'invalid_request' });
+        expect(await db.managedMachine.count({ where: { custodianAccountId: account.id } })).toBe(0);
+        const created = await admitManagedAcquire(reviewedRequest);
+        expect(created.machine).toMatchObject({ retention: { kind: 'unused', effect: 'delete' }, wakeOnAcceptedMessage: false, reviewedFacts });
+        expect(await db.managedMachine.findUniqueOrThrow({ where: { id: created.machine.id } })).toMatchObject({
+            retention: reviewedFacts.retention, wakeOnAcceptedMessage: false, reviewedFacts });
+        expect(await admitManagedAcquire(reviewedRequest)).toMatchObject({ replayed: true, machine: { id: created.machine.id } });
     });
 
     it("retains managed allocation independently of a Machine or initiating process", async () => {
