@@ -1,6 +1,9 @@
 
 
 export const en = {
+    scopeChooseComputer: 'Choose computer',
+    scopeSetUpComputer: 'Set up a computer',
+    scopeOffline: ({ machine }: { machine: string }) => `${machine} is offline.`,
     defaultsTitle: "Machine defaults",
     localVirtualMachines: "Local virtual machines",
     runningOnly: "Cloud billed only while running",
