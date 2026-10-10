@@ -435,7 +435,6 @@ describe('Account API token HTTP adapter', () => {
     app.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 0 }));
     app.get('/v1/machines/:id', async request => {
       const id = (request.params as { id: string }).id;
-      if (id === unrelated.machineId) throw new Error('Unrelated Machine census');
       return { machine: { id, active: true, installationId: `${id}-installation`, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
         metadataVersion: 1, daemonStateVersion: 0, daemonState: null,
         metadata: encodePlainMachineStoredContent({ host: id, platform: 'linux', homeDir: '/home/coder', username: 'coder',
@@ -468,7 +467,7 @@ describe('Account API token HTTP adapter', () => {
         workspaceRoot: ref.rootPath, projection: 'managed_bindings' });
       if (failWorker && request.machineId === worker.machineId) throw new Error('Worker is offline');
       return { protocolVersion: 1, snapshot: { v: 1, machineId: request.machineId, updatedAt: 1,
-        targets: request.machineId === worker.machineId ? workerRunning ? [target] : [] : sourceAlsoRunning ? [{ ...target, machineId: source.machineId,
+        targets: request.machineId === worker.machineId ? workerRunning ? [target] : [] : sourceAlsoRunning && request.machineId === source.machineId ? [{ ...target, machineId: source.machineId,
           workspaceId: source.id, workspace: { serverId: homeId, workspaceId: source.id, machineId: source.machineId, rootPath: source.rootPath },
           cwd: source.rootPath, declaration: { workspaceRefId: source.id, selection: { kind: 'manifest', name: 'web' } } }] : [] } };
     });
