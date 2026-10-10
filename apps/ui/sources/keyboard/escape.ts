@@ -77,12 +77,15 @@ export function isEscapeEventHandled(event: unknown): boolean {
     return (event as Record<string, unknown>)[ESCAPE_EVENT_HANDLED_KEY] === true;
 }
 
-function isEscapeKeyEvent(event: unknown): boolean {
+export function isEscapeKeyEvent(event: unknown): boolean {
     if (!event || typeof event !== 'object') return false;
-    const keyboardEvent = event as { key?: unknown; isComposing?: unknown; keyCode?: unknown };
-    return keyboardEvent.key === 'Escape'
+    const keyboardEvent = event as { key?: unknown; isComposing?: unknown; keyCode?: unknown;
+        nativeEvent?: { key?: unknown; isComposing?: unknown; keyCode?: unknown } };
+    return (keyboardEvent.key ?? keyboardEvent.nativeEvent?.key) === 'Escape'
         && keyboardEvent.isComposing !== true
-        && keyboardEvent.keyCode !== 229;
+        && keyboardEvent.nativeEvent?.isComposing !== true
+        && keyboardEvent.keyCode !== 229
+        && keyboardEvent.nativeEvent?.keyCode !== 229;
 }
 
 function isEditableEscapeTarget(target: unknown): boolean {
