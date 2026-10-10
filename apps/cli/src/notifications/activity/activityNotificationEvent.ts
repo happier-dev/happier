@@ -1,6 +1,8 @@
 import type { WorkflowRunUpdateNotificationV1 } from '@happier-dev/protocol';
+import type { ConnectedServiceUsageNotificationV1 } from '@happier-dev/protocol/activity/webhookPayload';
 
 export type ActivityNotificationEvent =
+  | ConnectedServiceUsageNotificationV1
   | WorkflowRunUpdateNotificationV1
   | Readonly<{
     topic: 'notify_me';

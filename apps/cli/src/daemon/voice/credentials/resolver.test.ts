@@ -81,6 +81,15 @@ function publishQualified(params: Readonly<{
     settingsVersion: params.settingsVersion ?? 1,
     loadedAtMs: 1,
     settingsSecretsReadKeys: [],
+    connectedPurposeCatalog: { status: 'ready', revision: 1, record: { key: 'purposes', value: {
+      v: 1,
+      bindings: params.credentialSource === 'connectedAccount' ? [{
+        purpose: { consumer: params.contribution, purpose: 'voice.client-auth' },
+        target: { kind: 'account', account: {
+          service: { pluginId: 'happier.agent.openai', localId: 'openai' }, accountId: 'openai-account',
+        } },
+      }] : [],
+    } } },
     settings: {
       secrets: params.includeSecret === false
         ? []
@@ -127,23 +136,6 @@ function publishQualified(params: Readonly<{
             }
           : {}),
       },
-      ...(params.credentialSource === 'connectedAccount'
-        ? {
-            connectedAccountPurposeBindingsV1: {
-              v: 1,
-              bindings: [{
-                purpose: { consumer: params.contribution, purpose: 'voice.client-auth' },
-                target: {
-                  kind: 'account',
-                  account: {
-                    service: { pluginId: 'happier.agent.openai', localId: 'openai' },
-                    accountId: 'openai-account',
-                  },
-                },
-              }],
-            },
-          }
-        : {}),
     } as never,
     ...(params.savedSecretResources ? { savedSecretResources: params.savedSecretResources } : {}),
     ...(params.savedSecretCatalogState ? { savedSecretCatalogState: params.savedSecretCatalogState } : {}),

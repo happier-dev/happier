@@ -98,6 +98,21 @@ export function buildActivityNotificationContent(
     ? null
     : event.sessionTitle;
   const includePreview = options.previewBehavior === undefined || options.previewBehavior === 'include_preview';
+  if (event.topic === 'connected_service_usage') {
+    const descriptions = {
+      pace: 'Usage has crossed above even pace for this allowance window.',
+      depletion: 'Observed usage now projects above the allowance at reset.',
+      almost_out: 'Remaining allowance crossed your chosen notification threshold.',
+      reset: 'A new allowance window has been observed.',
+      ending: 'The allowance window crossed your chosen ending-notice threshold.',
+      unused: 'The last observed allowance had unused capacity before the witnessed reset.',
+      credit_expiry: 'A reset credit crossed your chosen expiry-notice threshold.',
+    } as const;
+    return { title: 'Usage update', body: includePreview ? descriptions[event.kind] : '',
+      data: { topic: event.topic, kind: event.kind, ...(includePreview ? {
+        serviceId: event.serviceId, profileId: event.profileId, issueFingerprint: event.issueFingerprint, evidence: event.evidence,
+      } : {}) } };
+  }
   if (event.topic === 'notify_me') {
     return {
       title: options.previewBehavior === 'status_only' ? 'You have a new notification' : event.title ?? 'Workflow update',
@@ -341,7 +356,7 @@ export function buildActivityNotificationContent(
     body: 'Session activity changed.',
     data: {
       topic: event.topic,
-      sessionId: event.sessionId,
+      sessionId: 'sessionId' in event ? event.sessionId : undefined,
     },
   };
 }

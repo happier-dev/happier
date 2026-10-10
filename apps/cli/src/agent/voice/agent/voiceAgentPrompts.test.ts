@@ -2,6 +2,21 @@ import { describe, expect, it } from 'vitest';
 import { buildVoiceAgentBootstrapPrompt, buildVoiceAgentSeededUserTurnPrompt } from './voiceAgentPrompts';
 
 describe('voiceAgentPrompts', () => {
+  it.each(['  Exact greeting.\n\n', '   ', ''])('retains explicitly selected welcome bytes %j', (welcomeText) => {
+    const prompt = buildVoiceAgentBootstrapPrompt({
+      verbosity: 'short', initialContext: '', mode: 'welcome', welcomeText,
+    });
+    expect(prompt).toContain(`Start this session by greeting the user with exactly this message:\n${welcomeText}\n\nThen, wait`);
+    expect(prompt).not.toContain('Start this session with a short friendly greeting');
+  });
+  it('uses the admitted welcome policy literal without a conflicting default greeting', () => {
+    const prompt = buildVoiceAgentBootstrapPrompt({ verbosity: 'short', initialContext: '', mode: 'welcome',
+      voicePolicy: { welcome: { enabled: true, mode: 'immediate', text: '  ADMITTED_DOC\n' } },
+    });
+    expect(prompt).toContain('exactly this message:\n  ADMITTED_DOC\n\n\nThen, wait');
+    expect(prompt).not.toContain('Start this session with a short friendly greeting');
+  });
+
   it('filters disabled actions out of the embedded local voice system prompt', async () => {
     const prev = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
     process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({

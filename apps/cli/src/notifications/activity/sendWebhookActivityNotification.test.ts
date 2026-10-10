@@ -1,12 +1,11 @@
 import { createServer, type IncomingMessage } from 'node:http';
 import { once } from 'node:events';
+import { createHmac } from 'node:crypto';
 
 import { describe, expect, it } from 'vitest';
 
-import {
-  WebhookNotificationChannelV1Schema,
-  type WebhookNotificationChannelV1,
-} from '@happier-dev/protocol';
+import { WebhookNotificationChannelRecordV1Schema,
+  type WebhookNotificationChannelRecordV1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 
 import type {
   PinnedHttpStreamRequest,
@@ -14,7 +13,14 @@ import type {
 } from '@/network/pinnedHttp';
 
 import type { ActivityNotificationEvent } from './activityNotificationEvent';
-import { postWebhookJsonAsync, sendWebhookActivityNotificationAsync } from './sendWebhookActivityNotification';
+import { postWebhookJsonAsync, sendWebhookActivityNotificationAsync as sendWebhookActivityNotification } from './sendWebhookActivityNotification';
+import { createSavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
+import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { buildProviderAccountUsageRecordId } from '@happier-dev/protocol/connect/account-usage-primitives';
+import { clearActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshot, setActiveAccountSettingsSnapshot,
+  resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { createSavedSecretMaterializerFromSnapshotV1 } from '@/settings/secrets/savedSecretCatalog';
 
 const READY_EVENT: ActivityNotificationEvent = {
   topic: 'ready',
@@ -24,14 +30,22 @@ const READY_EVENT: ActivityNotificationEvent = {
   assistantPreviewText: 'The branch is ready to review.',
 };
 
-function webhookChannel(url: string): WebhookNotificationChannelV1 {
-  return WebhookNotificationChannelV1Schema.parse({
+function sendWebhookActivityNotificationAsync(params: Parameters<typeof sendWebhookActivityNotification>[0]) {
+  return sendWebhookActivityNotification({ savedSecretMaterializer: createSavedSecretMaterializerV1({ accountSettings: {},
+    settingsSecretsReadKeys: [], resourceCatalogState: 'ready', resources: [{ resourceId: 'webhook-test-signing',
+      ownerAccountId: 'account', displayName: 'Signing', kind: 'other', revision: 1, encryptionMode: 'plain', materialStatus: 'ready',
+      storedContent: sealSavedSecretResourceStoredContentV1({ resourceId: 'webhook-test-signing', mode: 'plain',
+        content: { v: 1, name: 'Signing', kind: 'other', value: 'webhook-secret' } }) }] }), ...params });
+}
+
+function webhookChannel(url: string): WebhookNotificationChannelRecordV1 {
+  return WebhookNotificationChannelRecordV1Schema.parse({
     v: 1,
     id: 'webhook-primary',
     kind: 'webhook',
     enabled: true,
     url,
-    signingSecret: { _isSecretValue: true, value: 'webhook-secret' },
+    signingSecretRef: 'happier:shared-secret:v1:webhook-test-signing',
     topics: { ready: true, permissionRequest: true, userActionRequest: true },
     readyIncludeMessageText: true,
   });
@@ -65,6 +79,15 @@ function resolvesTo(...addresses: readonly string[]) {
 }
 
 describe('workflow JSON webhook transport', () => {
+  it('permits an explicitly authored public HTTP Action URL without weakening notification HTTPS', async () => {
+    const transport = createRecordingTransport({ status: 202 });
+    const network = { resolveAddresses: resolvesTo('93.184.216.34'), openPinnedStream: transport.openPinnedStream };
+    await expect(postWebhookJsonAsync({ url: 'http://hooks.example.test/work', body: {},
+      idempotencyKey: 'run/step/0', network })).resolves.toEqual({ status: 202, body: '' });
+    await expect(sendWebhookActivityNotificationAsync({ channel: webhookChannel('http://hooks.example.test/work'),
+      event: READY_EVENT, network })).rejects.toThrow('must use HTTPS');
+    expect(transport.requests).toHaveLength(1);
+  });
   it('posts JSON with the host idempotency identity and retains a redirect response without following it', async () => {
     const requests: PinnedHttpStreamRequest[] = [];
     const chunks = [Buffer.from('redirect '), Buffer.from('body')];
@@ -96,6 +119,68 @@ describe('workflow JSON webhook transport', () => {
 });
 
 describe('sendWebhookActivityNotificationAsync', () => {
+  it('carries witnessed Account usage evidence only when the canonical preview policy admits it', async () => {
+    const transport = createRecordingTransport({ status: 202 });
+    const event: ActivityNotificationEvent = { topic: 'connected_service_usage', kind: 'reset',
+      serviceId: 'happier.agent.codex/openai-codex', profileId: 'account', issueFingerprint: 'window-reset',
+      evidence: { recordId: buildProviderAccountUsageRecordId({ providerId: 'test', accountSubjectId: 'account',
+        subjectKind: 'account', quotaScope: 'account' }), meterId: 'weekly', resetAtMs: 2000,
+        windowStartAtMs: 1000, windowDurationMs: 1000, observedAtMs: 1100, previousObservedAtMs: 900,
+        usedFraction: 0.01, elapsedFraction: 0.1, pace: 0.1, projectedResetUtilizationFraction: 0.1,
+        qualification: 'estimated', sampleCount: 1 } };
+    const params = { channel: webhookChannel('https://hooks.example.test/work'), event,
+      network: { resolveAddresses: resolvesTo('93.184.216.34'), openPinnedStream: transport.openPinnedStream } };
+    await sendWebhookActivityNotificationAsync({ ...params, previewBehavior: 'include_preview' });
+    await sendWebhookActivityNotificationAsync({ ...params, previewBehavior: 'status_only' });
+    const payloads = transport.requests.map(request => JSON.parse(Buffer.from(request.body!).toString('utf8')));
+    expect(payloads[0]).toMatchObject({ topic: 'connected_service_usage', metadata: { kind: 'reset', evidence: event.evidence } });
+    expect(payloads[0].session).toBeUndefined();
+    expect(payloads[1].metadata).toEqual({ topic: 'connected_service_usage', kind: 'reset' });
+    expect(JSON.stringify(payloads[1])).not.toContain('window-reset');
+    expect(JSON.stringify(payloads[1])).not.toContain('weekly');
+  });
+  it('rechecks the selected resource after DNS before opening the outbound connection', async () => {
+    const transport = createRecordingTransport({ status: 202 });
+    const resourceId = 'retired-signing';
+    setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}), settingsVersion: 1,
+      scopeKey: 'notification-signing-lifetime', loadedAtMs: 1, settingsSecretsReadKeys: [], savedSecretCatalogState: 'ready',
+      savedSecretResources: [{ resourceId, ownerAccountId: 'account', displayName: 'Signing', kind: 'other', revision: 2,
+        encryptionMode: 'plain', materialStatus: 'ready', storedContent: sealSavedSecretResourceStoredContentV1({
+          resourceId, mode: 'plain', content: { v: 1, name: 'Signing', kind: 'other', value: 'signing-bytes' },
+        }) }] });
+    try {
+      const snapshot = getActiveAccountSettingsSnapshot()!;
+      const channel = webhookChannel('https://hooks.example.test/happier');
+      await expect(sendWebhookActivityNotificationAsync({
+        channel: { ...channel, signingSecretRef: `happier:shared-secret:v1:${resourceId}` },
+        savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(snapshot), event: READY_EVENT,
+        network: { resolveAddresses: async () => { clearActiveAccountSettingsSnapshot(); return ['93.184.216.34']; },
+          openPinnedStream: transport.openPinnedStream },
+      })).rejects.toMatchObject({ code: 'saved_secret_resolution_failed', status: 'temporarily_unavailable' });
+      expect(transport.requests).toHaveLength(0);
+    } finally { resetActiveAccountSettingsSnapshotForTests(); }
+  });
+  it('signs with exact SavedSecret resource bytes and refuses an unavailable selected resource', async () => {
+    const transport = createRecordingTransport({ status: 202 });
+    const value = '  exact signing bytes\n';
+    const resourceId = 'webhook-signing';
+    const materializer = createSavedSecretMaterializerV1({ accountSettings: {}, settingsSecretsReadKeys: [],
+      resourceCatalogState: 'ready', resources: [{ resourceId, ownerAccountId: 'account', displayName: 'Signing', kind: 'other',
+        revision: 2, encryptionMode: 'plain', materialStatus: 'ready', storedContent: sealSavedSecretResourceStoredContentV1({
+          resourceId, mode: 'plain', content: { v: 1, name: 'Signing', kind: 'other', value },
+        }) }] });
+    const channel = webhookChannel('https://hooks.example.test/happier');
+    const request = { channel: { ...channel, signingSecretRef: `happier:shared-secret:v1:${resourceId}` },
+      event: READY_EVENT, savedSecretMaterializer: materializer,
+      network: { resolveAddresses: resolvesTo('93.184.216.34'), openPinnedStream: transport.openPinnedStream } };
+    await sendWebhookActivityNotificationAsync(request);
+    const posted = transport.requests[0]!;
+    expect(posted.headers['x-happier-signature-256']).toBe(`sha256=${createHmac('sha256', value)
+      .update(Buffer.from(posted.body!)).digest('hex')}`);
+    await expect(sendWebhookActivityNotificationAsync({ ...request, channel: { ...request.channel,
+      signingSecretRef: 'happier:shared-secret:v1:revoked' } })).rejects.toMatchObject({ code: 'saved_secret_resolution_failed' });
+    expect(transport.requests).toHaveLength(1);
+  });
   it('projects a workflow update through the strict webhook arm without Session or private content', async () => {
     const transport = createRecordingTransport({ status: 202 });
 

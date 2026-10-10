@@ -1,6 +1,9 @@
 import type { AccountSettings, WorkflowRunUpdateKindV1 } from '@happier-dev/protocol';
+import type { NotificationChannelCatalogSnapshotV1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
+import { createSavedSecretMaterializerFromSnapshotV1, type SavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
 
-import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken,
+  isActiveAccountSettingsSnapshotLifetimeCurrent } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { WorkflowCoordinatorResult } from '@/daemon/workflows/coordinator';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { logger } from '@/ui/logger';
@@ -12,6 +15,9 @@ import type { ExpoPushActivityNotificationSender } from './sendExpoPushActivityN
 type SettingsSnapshot = Readonly<{
   settings: AccountSettings | null | undefined;
   settingsSecretsReadKeys?: ReadonlyArray<Uint8Array | null | undefined>;
+  notificationChannelCatalog?: NotificationChannelCatalogSnapshotV1;
+  savedSecretMaterializer?: SavedSecretMaterializerV1;
+  isCurrent?: () => boolean | Promise<boolean>;
 }>;
 
 type CommittedWorkflowTransition = Readonly<{
@@ -50,8 +56,15 @@ export function createWorkflowRunCommittedNotificationHandler(params: Readonly<{
     if (!updateKind) return;
     try {
       const snapshot = getSettingsSnapshot();
+      const active = getActiveAccountSettingsSnapshot();
+      const incumbent = snapshot === active && active?.scopeKey
+        ? { scopeKey: active.scopeKey, lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken() } : null;
       await dispatch({
         settings: snapshot?.settings,
+        notificationChannelCatalog: snapshot?.notificationChannelCatalog,
+        savedSecretMaterializer: snapshot?.savedSecretMaterializer ?? (snapshot === active && active
+          ? createSavedSecretMaterializerFromSnapshotV1(active) : undefined),
+        isCurrent: snapshot?.isCurrent ?? (incumbent ? () => isActiveAccountSettingsSnapshotLifetimeCurrent(incumbent) : undefined),
         ...(snapshot?.settingsSecretsReadKeys
           ? { settingsSecretsReadKeys: snapshot.settingsSecretsReadKeys }
           : {}),

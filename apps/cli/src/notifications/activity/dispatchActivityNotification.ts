@@ -1,12 +1,18 @@
-import { accountSettingsParse, resolveNotificationChannelsV1FromAccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
-import type { AttentionDeliveryDecision, AttentionDeliveryEventId, PluginNotificationChannelKindV1, AccountSettings, ExpoPushNotificationChannelV1 } from '@happier-dev/protocol';
-import { BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID } from '@happier-dev/protocol/account/settings/notificationChannels';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { isUsageQuotaNotificationEnabled } from '@happier-dev/protocol/account/settings/usagePacingPreferencesV1';
+import { UsageNoticeArtifactHeaderV1Schema, UsageNoticeArtifactBodyV1Schema, USAGE_NOTICE_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
+import type { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
+import type { AttentionDeliveryDecision, AttentionDeliveryEventId, PluginNotificationChannelKindV1, AccountSettings } from '@happier-dev/protocol';
+import type { NotificationChannelCatalogSnapshotV1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 import { isPushNotificationBundledSoundId, resolveExpoNotificationSoundName } from '@happier-dev/protocol/push/pushNotificationActions';
 import { resolveAttentionDeliveryPolicyDecision } from '@happier-dev/protocol/account/settings/attentionDeliveryPolicyDecision';
 
 import type { PushNotificationClient, PushNotificationDeliveryOptions } from '@/api/pushNotifications';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { logger } from '@/ui/logger';
+import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken,
+  isActiveAccountSettingsSnapshotLifetimeCurrent } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { createSavedSecretMaterializerFromSnapshotV1, type SavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
 import type { ActivityNotificationEvent } from './activityNotificationEvent';
 import type { StablePluginNotificationsOwner } from '@/plugins/runtime/invocation/services/notifications';
 import { buildActivityNotificationContent } from './buildActivityNotificationContent';
@@ -22,6 +28,7 @@ import {
   type ExpoPushActivityNotificationSender,
 } from './sendExpoPushActivityNotification';
 import {
+  resolveWebhookNotificationSigningSecret,
   sendWebhookActivityNotificationAsync,
   type WebhookActivityNotificationNetworkDependencies,
 } from './sendWebhookActivityNotification';
@@ -35,6 +42,7 @@ function isTopicEnabled(channel: {
     connectedServiceAccountSwitch?: boolean;
     connectedServiceQuotaBlocked?: boolean;
     connectedServiceQuotaRecovered?: boolean;
+    connectedServiceUsage?: boolean;
   };
 }, topic: ActivityNotificationEvent['topic']): boolean {
   if (channel.enabled !== true) return false;
@@ -46,12 +54,16 @@ function isTopicEnabled(channel: {
   if (topic === 'connected_service_credential_health') return channel.topics.connectedServiceAccountSwitch === true;
   if (topic === 'connected_service_quota_blocked') return channel.topics.connectedServiceQuotaBlocked === true;
   if (topic === 'connected_service_quota_recovered') return channel.topics.connectedServiceQuotaRecovered === true;
+  if (topic === 'connected_service_usage') return channel.topics.connectedServiceUsage === true;
   return false;
 }
 
 const recentDispatchesByKey = new Map<string, number>();
 
-function notificationDedupeKey(event: ActivityNotificationEvent): string | null {
+function notificationDedupeKey(event: ActivityNotificationEvent, accountId?: string): string | null {
+  if (event.topic === 'connected_service_usage') return accountId
+    ? [event.topic, accountId, event.kind, event.serviceId, event.profileId, event.issueFingerprint].join('\0')
+    : null;
   if (event.topic === 'notify_me') {
     return event.actionRequestId ? [event.topic, event.actionRequestId].join('\0') : null;
   }
@@ -100,11 +112,12 @@ function notificationDedupeKey(event: ActivityNotificationEvent): string | null 
 
 function isSuppressedDuplicate(input: Readonly<{
   event: ActivityNotificationEvent;
+  accountId?: string;
   nowMs: number;
   dedupeWindowMs: number;
 }>): boolean {
   if (input.dedupeWindowMs <= 0) return false;
-  const key = notificationDedupeKey(input.event);
+  const key = notificationDedupeKey(input.event, input.accountId);
   if (!key) return false;
   const lastDispatchedAtMs = recentDispatchesByKey.get(key);
   return typeof lastDispatchedAtMs === 'number' && input.nowMs - lastDispatchedAtMs < input.dedupeWindowMs;
@@ -112,11 +125,12 @@ function isSuppressedDuplicate(input: Readonly<{
 
 function recordDeliveredNotificationForDedupe(input: Readonly<{
   event: ActivityNotificationEvent;
+  accountId?: string;
   nowMs: number;
   dedupeWindowMs: number;
 }>): void {
   if (input.dedupeWindowMs <= 0) return;
-  const key = notificationDedupeKey(input.event);
+  const key = notificationDedupeKey(input.event, input.accountId);
   if (!key) return;
   recentDispatchesByKey.set(key, input.nowMs);
 }
@@ -170,32 +184,47 @@ function resolveExpoPushDeliveryOptions(decision: AttentionDeliveryDecision): Pu
   };
 }
 
-function buildCanonicalExpoPushChannel(decision: AttentionDeliveryDecision): ExpoPushNotificationChannelV1 {
-  return {
-    v: 1,
-    id: BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID,
-    kind: 'expo_push',
-    enabled: true,
-    topics: {
-      ready: true,
-      permissionRequest: true,
-      userActionRequest: true,
-      connectedServiceAccountSwitch: true,
-      connectedServiceQuotaBlocked: true,
-      connectedServiceQuotaRecovered: true,
-    },
-    readyIncludeMessageText: decision.previewBehavior === 'include_preview',
-    requestIncludeMessageText: decision.previewBehavior === 'include_preview',
-  };
+export class NotificationChannelCatalogUnavailableError extends Error {
+  readonly code = 'notification_channel_catalog_unavailable' as const;
+  constructor(readonly reason: string) {
+    super('Notification channel catalog is unavailable');
+    this.name = 'NotificationChannelCatalogUnavailableError';
+  }
+}
+
+function readRuntimeNotificationCatalog(params: Readonly<{
+  settings: AccountSettings | null | undefined;
+  notificationChannelCatalog?: NotificationChannelCatalogSnapshotV1;
+  savedSecretMaterializer?: SavedSecretMaterializerV1;
+  isCurrent?: () => boolean | Promise<boolean>;
+}>) {
+  const active = getActiveAccountSettingsSnapshot();
+  const captured = active?.settings === params.settings ? active : null;
+  const catalog = params.notificationChannelCatalog ?? captured?.notificationChannelCatalog ?? { status: 'loading' as const };
+  if (catalog.status !== 'ready') throw new NotificationChannelCatalogUnavailableError(
+    catalog.status === 'unavailable' ? catalog.reason : catalog.status === 'partial' ? 'catalog-incomplete' : 'loading');
+  const lifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
+  const incumbent = !params.notificationChannelCatalog && captured?.scopeKey ? { scopeKey: captured.scopeKey, lifetimeToken } : null;
+  const isCurrent = params.isCurrent ?? (incumbent ? () => isActiveAccountSettingsSnapshotLifetimeCurrent(incumbent) : undefined);
+  return { channels: catalog.channels, assertCurrent: async () => {
+    if (isCurrent && !await isCurrent()) throw new NotificationChannelCatalogUnavailableError('scope-retired');
+  },
+    savedSecretMaterializer: params.savedSecretMaterializer ?? (!params.notificationChannelCatalog && captured
+      ? createSavedSecretMaterializerFromSnapshotV1(captured) : undefined) };
 }
 
 /** Discovery projects the same configured delivery set the Activity owner dispatches. */
 export async function listActivityNotificationChannels(params: Readonly<{
   settings: AccountSettings | null | undefined;
+  notificationChannelCatalog?: NotificationChannelCatalogSnapshotV1;
+  savedSecretMaterializer?: SavedSecretMaterializerV1;
+  isCurrent?: () => boolean | Promise<boolean>;
   pluginNotifications?: Pick<StablePluginNotificationsOwner, 'availableHostChannels'> | null;
   pushTokenReader?: Pick<PushNotificationClient, 'fetchPushTokens'>;
 }>): Promise<readonly Readonly<{ value: string; label: string; disabled: boolean }>[]> {
   const settings = accountSettingsParse(params.settings ?? {});
+  const { channels, savedSecretMaterializer, assertCurrent } = readRuntimeNotificationCatalog(params);
+  await assertCurrent();
   const pluginNotifications = params.pluginNotifications === undefined
     ? createHostPluginNotificationChannels()
     : params.pluginNotifications;
@@ -206,21 +235,26 @@ export async function listActivityNotificationChannels(params: Readonly<{
     // is registered. Disabled channels/events remain unavailable in the catalog.
     return decision.delivery !== 'suppress' || decision.reason === 'quiet_hours';
   };
-  const pushConfigured = configuredForNotifyMe('expo_push') && params.pushTokenReader
+  const pushConfigured = channels.some(channel => channel.kind === 'expo_push' && channel.enabled)
+    && configuredForNotifyMe('expo_push') && params.pushTokenReader
     ? (await params.pushTokenReader.fetchPushTokens()).length > 0 : false;
+  await assertCurrent();
+  const pluginChannels = await pluginNotifications?.availableHostChannels() ?? [];
+  await assertCurrent();
   return [
-    { value: BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID, label: 'Push notifications', disabled: !pushConfigured },
-    ...resolveNotificationChannelsV1FromAccountSettings(settings)
-      .filter((channel) => channel.kind === 'webhook')
-      .map((channel) => ({ value: channel.id, label: channel.id,
-        disabled: !channel.enabled || !configuredForNotifyMe('webhook') })),
-    ...(await pluginNotifications?.availableHostChannels() ?? [])
+    ...channels.map((channel) => ({ value: channel.id, label: channel.kind === 'expo_push' ? 'Push notifications' : channel.id,
+      disabled: !channel.enabled || (channel.kind === 'expo_push' ? !pushConfigured : !configuredForNotifyMe('webhook')
+        || channel.signingSecretRef !== null && savedSecretMaterializer?.inspect(channel.signingSecretRef).status !== 'ready') })),
+    ...pluginChannels
       .map(({ value, label, kind }) => ({ value, label, disabled: !configuredForNotifyMe(kind) })),
   ];
 }
 
 export async function dispatchActivityNotificationAsync(params: Readonly<{
   settings: AccountSettings | null | undefined;
+  notificationChannelCatalog?: NotificationChannelCatalogSnapshotV1;
+  savedSecretMaterializer?: SavedSecretMaterializerV1;
+  isCurrent?: () => boolean | Promise<boolean>;
   settingsSecretsReadKeys?: ReadonlyArray<Uint8Array | null | undefined>;
   event: ActivityNotificationEvent;
   expoPushSender?: ExpoPushActivityNotificationSender | null;
@@ -231,15 +265,22 @@ export async function dispatchActivityNotificationAsync(params: Readonly<{
   fetchSessionNotificationContext?: SessionNotificationContextReader['fetchSessionNotificationContext'];
   channels?: readonly string[];
   pluginNotifications?: Pick<StablePluginNotificationsOwner, 'availableHostChannels' | 'sendHostNotification'> | null;
+  usageNoticeArtifactStore?: Readonly<{ accountId: string; store: Pick<ReturnType<typeof createAccountArtifactStore>, 'create'> }>;
 }>): Promise<Readonly<{ attemptedChannels: number; deliveredChannels: number }>> {
   if (!await isSessionActivityNotificationEligible(params)) {
     return { attemptedChannels: 0, deliveredChannels: 0 };
   }
   const settings = accountSettingsParse(params.settings ?? {});
-  const channels = resolveNotificationChannelsV1FromAccountSettings(settings);
+  if (params.event.topic === 'connected_service_usage'
+    && !isUsageQuotaNotificationEnabled(settings.usageQuotaNotificationsV1, params.event.kind)) {
+    return { attemptedChannels: 0, deliveredChannels: 0 };
+  }
+  const { channels, savedSecretMaterializer, assertCurrent } = readRuntimeNotificationCatalog(params);
+  await assertCurrent();
   const nowMs = params.nowMs?.() ?? Date.now();
   const dedupeWindowMs = params.dedupeWindowMs ?? 60_000;
-  if (isSuppressedDuplicate({ event: params.event, nowMs, dedupeWindowMs })) {
+  const accountId = params.usageNoticeArtifactStore?.accountId;
+  if (isSuppressedDuplicate({ event: params.event, accountId, nowMs, dedupeWindowMs })) {
     return { attemptedChannels: 0, deliveredChannels: 0 };
   }
   const policyNow = new Date(nowMs);
@@ -251,18 +292,62 @@ export async function dispatchActivityNotificationAsync(params: Readonly<{
     ? createHostPluginNotificationChannels()
     : params.pluginNotifications;
 
+  // Admit the entire selected signing set before any outward delivery. A
+  // missing credential must not produce a partially delivered occurrence.
+  for (const channel of channels) {
+    if (channel.kind !== 'webhook' || !selects(channel.id) || !isTopicEnabled(channel, params.event.topic)) continue;
+    const decision = resolveChannelDecision({ settings, channel: 'webhook', event: params.event, now: policyNow });
+    if (decision.delivery !== 'suppress') {
+      await resolveWebhookNotificationSigningSecret({ channel, savedSecretMaterializer });
+    }
+  }
+  await assertCurrent();
+
+  // Inbox is an existing private Account Artifact projection. Its badge policy is
+  // noninterruptive; push/webhook preview policy remains independent below.
+  if (params.event.topic === 'connected_service_usage' && params.usageNoticeArtifactStore && !selectedChannelIds) {
+    const decision = resolveChannelDecision({ settings, channel: 'badge', event: params.event, now: policyNow });
+    if (decision.delivery !== 'suppress') {
+      const notice = params.event;
+      const content = buildActivityNotificationContent(notice, {
+        readyIncludeMessageText: true, requestIncludeMessageText: true, previewBehavior: 'include_preview',
+      });
+      await assertCurrent();
+      attemptedChannels += 1;
+      try {
+        await params.usageNoticeArtifactStore.store.create({
+          usageNoticeAccountId: params.usageNoticeArtifactStore.accountId,
+          beforeWrite: assertCurrent,
+          header: UsageNoticeArtifactHeaderV1Schema.parse({ v: 1, kind: USAGE_NOTICE_ARTIFACT_KIND_V1, title: content.body, status: 'open', notice }),
+          body: JSON.stringify(UsageNoticeArtifactBodyV1Schema.parse({ v: 1, notice })),
+        });
+        deliveredChannels += 1;
+      } catch (error) {
+        // The Artifact id is this Account's witnessed occurrence. Never overwrite
+        // its read/dismiss state or deliver the same occurrence again.
+        if (error !== null && typeof error === 'object' && 'code' in error && error.code === 'conflict') {
+          return { attemptedChannels, deliveredChannels };
+        }
+        throw error;
+      }
+    }
+  }
+
   const expoDecision = resolveChannelDecision({
     settings,
     channel: 'expo_push',
     event: params.event,
     now: policyNow,
   });
-  if (selects(BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID) && expoDecision.delivery !== 'suppress') {
+  for (const channel of channels) {
+    if (channel.kind !== 'expo_push' || !selects(channel.id) || !isTopicEnabled(channel, params.event.topic)
+      || expoDecision.delivery === 'suppress') continue;
     attemptedChannels += 1;
     if (params.expoPushSender) {
+      await assertCurrent();
       try {
         const accepted = await sendExpoPushActivityNotificationAsync({
-          channel: buildCanonicalExpoPushChannel(expoDecision),
+          channel,
           event: params.event,
           sender: params.expoPushSender,
           deliveryOptions: {
@@ -293,6 +378,7 @@ export async function dispatchActivityNotificationAsync(params: Readonly<{
       })
     : null;
   if (liveActivityRequest && params.liveActivityRemoteSender) {
+    await assertCurrent();
     attemptedChannels += 1;
     try {
       await sendLiveActivityRemoteUpdate({
@@ -318,24 +404,28 @@ export async function dispatchActivityNotificationAsync(params: Readonly<{
     if (decision.delivery === 'suppress') {
       continue;
     }
+    await assertCurrent();
     attemptedChannels += 1;
     try {
       await sendWebhookActivityNotificationAsync({
         channel,
         previewBehavior: decision.previewBehavior,
         event: params.event,
-        settingsSecretsReadKeys: params.settingsSecretsReadKeys,
+        savedSecretMaterializer,
+        assertCurrent,
         nowMs: params.nowMs,
         ...(params.webhookNetwork ? { network: params.webhookNetwork } : {}),
       });
       deliveredChannels += 1;
     } catch (error) {
+      if (error instanceof NotificationChannelCatalogUnavailableError) throw error;
       logger.debug('[activityNotifications] Failed to dispatch outbound notification', serializeAxiosErrorForLog(error));
     }
   }
 
   if (pluginNotifications) {
     for (const channel of await pluginNotifications.availableHostChannels()) {
+      await assertCurrent();
       if (!selects(channel.value)) continue;
       const decision = resolveChannelDecision({ settings,
         channel: channel.kind,
@@ -350,8 +440,10 @@ export async function dispatchActivityNotificationAsync(params: Readonly<{
           });
           if (await pluginNotifications.sendHostNotification({
             channelId: channel.value, title: content.title, body: content.body, data: content.data,
+            beforeSend: assertCurrent,
           })) deliveredChannels += 1;
         } catch (error) {
+          if (error instanceof NotificationChannelCatalogUnavailableError) throw error;
           logger.debug('[activityNotifications] Failed to dispatch plugin notification', serializeAxiosErrorForLog(error));
         }
       }
@@ -359,7 +451,7 @@ export async function dispatchActivityNotificationAsync(params: Readonly<{
   }
 
   if (deliveredChannels > 0) {
-    recordDeliveredNotificationForDedupe({ event: params.event, nowMs, dedupeWindowMs });
+    recordDeliveredNotificationForDedupe({ event: params.event, accountId, nowMs, dedupeWindowMs });
   }
 
   return {

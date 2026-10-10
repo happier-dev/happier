@@ -28,6 +28,16 @@ Island, Orb and Companion consume that same attempt; plugins do not choose place
 or reinterpret Mute, End or Retry. Dictation remains a separate input purpose that
 returns editable composer text rather than admitting a conversation turn.
 
+The development Session voice preference reuses the contribution's declared
+voice-selection field and settings schema. Preserve its catalog, custom or string
+value shape; do not expose a second per-session provider or credential selector.
+The host rejects a preference for another contribution or an unrelated setting.
+Unknown application stays unknown in current-attempt status, rather than showing
+the saved next choice as running audio. Exact-bound instructions and native
+carriers remain separate integration requirements; declaring a voice field does
+not prove those paths work. Lifecycle Actions retain normal human approval and
+captured target/attempt authority.
+
 Credentials declare one slot, effective source, exact host-mediated operation
 or raw grant. The host retains source selection, current binding/grant checks,
 disclosure approval, cancellation, and materialization. Conversation code must

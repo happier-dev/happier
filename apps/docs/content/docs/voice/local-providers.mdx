@@ -273,10 +273,11 @@ processing it inside Happier.
 ### Device STT (experimental)
 
 This uses the browser's or the platform's built-in speech recognition where available.
-On web that is the Web Speech API, which usually sends audio to the browser vendor's
-service; some browsers offer an on-device recognizer that Happier will use when it is
-available, and will report the difference. Treat device speech-to-text as "someone else
-handles the audio" unless you have confirmed on-device recognition on that browser.
+On web that is the Web Speech API using the browser's default recognizer. The browser
+or operating system decides where recognition runs, and may process audio off-device.
+Happier does not automatically select or verify on-device browser recognition. Treat
+device speech-to-text as "someone else handles the audio" unless you have independently
+confirmed how that browser or operating system processes it.
 
 When the selected engine supports endpoint-driven capture, Happier exposes
 **hands-free** controls such as:

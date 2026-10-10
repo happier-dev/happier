@@ -1,3 +1,4 @@
+import { unexpectedProjectNativeAdapterResolution } from "@/plugins/testkit/unexpectedProjectNativeAdapterResolution";
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { accountSettingsParse, VoiceProviderContributionSchema } from '@happier-dev/protocol';
@@ -125,16 +126,15 @@ function snapshot(accountId: string): ActiveAccountSettingsSnapshot {
     settingsVersion: 4,
     loadedAtMs: 1,
     settingsSecretsReadKeys: [],
+    connectedPurposeCatalog: { status: 'ready', revision: 4, record: { key: 'purposes', value: { v: 1, bindings: [{
+      purpose: bindingPurpose, target: { kind: 'account', account: { service, accountId } },
+    }] } } },
     settings: accountSettingsParse({
       voiceSettingsV1: { credentialBindings: [{
         contribution,
         credentialSlotId: 'api_key',
         credentialSource: { kind: 'connectedAccount' },
         credentialBindings: { account: {} },
-      }] },
-      connectedAccountPurposeBindingsV1: { v: 1, bindings: [{
-        purpose: bindingPurpose,
-        target: { kind: 'account', account: { service, accountId } },
       }] },
     }),
   };
@@ -147,16 +147,15 @@ function groupSnapshot(groupId: string): ActiveAccountSettingsSnapshot {
     settingsVersion: 4,
     loadedAtMs: 1,
     settingsSecretsReadKeys: [],
+    connectedPurposeCatalog: { status: 'ready', revision: 4, record: { key: 'purposes', value: { v: 1, bindings: [{
+      purpose: bindingPurpose, target: { kind: 'group', service, groupId },
+    }] } } },
     settings: accountSettingsParse({
       voiceSettingsV1: { credentialBindings: [{
         contribution,
         credentialSlotId: 'api_key',
         credentialSource: { kind: 'connectedAccount' },
         credentialBindings: { account: {} },
-      }] },
-      connectedAccountPurposeBindingsV1: { v: 1, bindings: [{
-        purpose: bindingPurpose,
-        target: { kind: 'group', service, groupId },
       }] },
     }),
   };
@@ -244,6 +243,7 @@ async function registerHandler(input: Readonly<{
       pluginDiagnosticsByPluginId: {}, activatedPluginIds: new Set([contribution.pluginId]),
       activateContributionsOnDemand: async () => [], resolvePromptAssetBlocks: async () => [],
       resolveCaptureSource: async () => null,
+      resolveProjectNativeAdapter: unexpectedProjectNativeAdapterResolution,
       addRuntimeDisposable: (_pluginId, disposable) => disposable,
       createAgentInvocationServices: async () => {
         const { createUnavailablePluginServices } = await import('@/plugins/runtime/invocation/services/unavailable');

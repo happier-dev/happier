@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
 
 import {
-  accountSettingsParse,
   deriveSettingsSecretsKeyV1,
   encryptSecretStringV1,
   LiveActivityRemoteUpdateRequestV1Schema,
@@ -14,14 +14,32 @@ import type {
   PinnedHttpStreamResponse,
 } from '@/network/pinnedHttp';
 import {
-  dispatchActivityNotificationAsync,
-  listActivityNotificationChannels,
+  dispatchActivityNotificationAsync as dispatchActivityNotification,
+  listActivityNotificationChannels as listNotificationChannels,
   resolveActivityNotificationPolicyEvent,
 } from './dispatchActivityNotification';
 import type { ActivityNotificationEvent } from './activityNotificationEvent';
 import { createSessionNotificationContextFixture } from '@/testkit/backends/sessionFixtures';
-import { createStablePluginNotificationsOwner } from '@/plugins/runtime/invocation/services/notifications';
+import { createStablePluginNotificationsOwner, type PluginNotificationSenderBinding } from '@/plugins/runtime/invocation/services/notifications';
 import { createWorkflowRunReviewEntryNotificationHandler } from './dispatchWorkflowRunUpdateNotification';
+import { NotificationChannelRecordV1Schema, openNotificationChannelCatalogContentV1,
+  sealNotificationChannelCatalogContentV1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
+import { prepareLegacyNotificationChannelCatalogV1 } from '@happier-dev/protocol/account/settings/notificationChannelCatalogV1';
+import { createSavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
+import { createAccountArtifactStore, createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
+import { notificationSettingsFixture as accountSettingsParse, notificationCatalogFixture } from './activityNotification.testkit';
+import { clearActiveAccountSettingsSnapshot, setActiveAccountSettingsSnapshot,
+  resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+
+function dispatchActivityNotificationAsync(params: Parameters<typeof dispatchActivityNotification>[0]) {
+  return dispatchActivityNotification({ ...(!params.notificationChannelCatalog && params.settings
+    ? notificationCatalogFixture(params.settings, params.settingsSecretsReadKeys) : {}), ...params });
+}
+
+function listActivityNotificationChannels(params: Parameters<typeof listNotificationChannels>[0]) {
+  return listNotificationChannels({ ...(!params.notificationChannelCatalog && params.settings
+    ? notificationCatalogFixture(params.settings) : {}), ...params });
+}
 
 const fetchSessionNotificationContext = async (sessionId: string) => createSessionNotificationContextFixture(sessionId);
 
@@ -32,10 +50,245 @@ vi.mock('@/ui/logger', () => ({
 }));
 
 describe('dispatchActivityNotificationAsync', () => {
+  it('refuses the private notice write when its Account retires during the real Artifact mode read', async () => {
+    let current = true;
+    let started: (() => void) | undefined;
+    let release: (() => void) | undefined;
+    const entered = new Promise<void>(resolve => { started = resolve; });
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const get = vi.spyOn(axios, 'get').mockImplementation(async () => {
+      started?.(); await held;
+      return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+    });
+    const written: unknown[] = [];
+    const post = vi.spyOn(axios, 'post').mockImplementation(async (_url, data: { id: string }) => {
+      written.push(data); return { status: 200, data: { id: data.id, headerVersion: 1, bodyVersion: 1 } };
+    });
+    const accountId = 'retiring-notice-account';
+    const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`, encryption: null };
+    let drain: Promise<unknown> | undefined;
+    try {
+      const result = dispatchActivityNotification({ settings: accountSettingsParse({ usageQuotaNotificationsV1: { pace: true } }),
+        notificationChannelCatalog: { status: 'ready', revision: 1, diagnostics: [], channels: [] },
+        isCurrent: () => current, pluginNotifications: null, nowMs: () => 600,
+        usageNoticeArtifactStore: { accountId, store: createCredentialedAccountArtifactStore(credentials) },
+        event: { topic: 'connected_service_usage', kind: 'pace', serviceId: 'happier.agent.codex/openai-codex', profileId: 'work',
+          issueFingerprint: 'retirement-during-artifact-mode', evidence: { recordId: 'paug_v1_account_retirement', meterId: 'weekly',
+            windowStartAtMs: 0, resetAtMs: 1000, windowDurationMs: 1000, observedAtMs: 600, previousObservedAtMs: 500,
+            usedFraction: 0.7, elapsedFraction: 0.6, pace: 7 / 6, projectedResetUtilizationFraction: 7 / 6,
+            qualification: 'confirmed', sampleCount: 1 } } });
+      const outcome = result.then(value => ({ ok: true as const, value }), (error: unknown) => ({ ok: false as const, error }));
+      drain = outcome;
+      const first = await Promise.race([entered.then(() => ({ entered: true as const })), outcome]);
+      if (!('entered' in first)) {
+        if (!first.ok) throw first.error;
+        throw new Error('Notice dispatch settled before Artifact mode admission');
+      }
+      current = false; release?.();
+      expect(await outcome).toMatchObject({ ok: false, error: { code: 'notification_channel_catalog_unavailable', reason: 'scope-retired' } });
+      expect(written).toEqual([]);
+    } finally { release?.(); await drain; get.mockRestore(); post.mockRestore(); }
+  });
+  it('dedupes usage occurrences within their captured Account, never across requester Accounts', async () => {
+    const settings = accountSettingsParse({ usageQuotaNotificationsV1: { pace: true },
+      attentionDeliveryPolicyV1: { channels: { badge: { enabled: false } } } });
+    const notificationChannelCatalog = { status: 'ready' as const, revision: 1, diagnostics: [],
+      channels: [NotificationChannelRecordV1Schema.parse({ v: 1, id: 'usage-account-dedupe', kind: 'expo_push',
+        topics: { connectedServiceUsage: true } })] };
+    const event = { topic: 'connected_service_usage' as const, kind: 'pace' as const, serviceId: 'happier.agent.codex/openai-codex',
+      profileId: 'same-profile', issueFingerprint: 'requester-account-dedupe-occurrence', evidence: {
+        recordId: 'paug_v1_same-account', meterId: 'weekly', windowStartAtMs: 0, resetAtMs: 1000, windowDurationMs: 1000,
+        observedAtMs: 600, previousObservedAtMs: 500, usedFraction: 0.7, elapsedFraction: 0.6, pace: 7 / 6,
+        projectedResetUtilizationFraction: 7 / 6, qualification: 'confirmed' as const, sampleCount: 1 } };
+    const delivered: string[] = [];
+    const emit = (accountId: string) => dispatchActivityNotification({ settings, notificationChannelCatalog,
+      pluginNotifications: null, event, nowMs: () => 600,
+      usageNoticeArtifactStore: { accountId, store: createAccountArtifactStore({
+        credentials: { token: `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`, encryption: null },
+        getAccountEncryptionMode: async () => 'plain' }) },
+      expoPushSender: { sendToAllDevicesAsync: async () => { delivered.push(accountId); return true; } } });
+    await emit('usage-account-alice');
+    await emit('usage-account-alice');
+    await emit('usage-account-bob');
+    expect(delivered).toEqual(['usage-account-alice', 'usage-account-bob']);
+  });
+  it('refuses an unsigned plugin effect when its Account retires during platform discovery', async () => {
+    const settings = accountSettingsParse({});
+    const send = vi.fn(async (request: Parameters<PluginNotificationSenderBinding['send']>[0]) => ({ deliveryId: request.deliveryId, channelId: request.channelId,
+      status: 'accepted' as const, evidence: 'provider' as const }));
+    setActiveAccountSettingsSnapshot({ settings, source: 'network', rawSettings: {}, settingsVersion: 4, loadedAtMs: 1,
+      settingsSecretsReadKeys: [], scopeKey: 'notification-discovery-account',
+      notificationChannelCatalog: { status: 'ready', revision: 9, diagnostics: [], channels: [] } });
+    const pluginNotifications = createStablePluginNotificationsOwner({ categories: [],
+      channels: [{ provenance: 'external', source: { kind: 'path' }, pluginId: 'acme.delivery',
+        definition: { id: 'digest', kind: 'plugin', title: 'Digest', configurable: true, defaultEnabled: true } }],
+      activateChannel: async () => {}, readChannel: () => ({ occurrenceId: 'current',
+        isCurrent: async () => { clearActiveAccountSettingsSnapshot(); return true; }, send }),
+    });
+    try {
+      await expect(dispatchActivityNotification({ settings, pluginNotifications,
+        event: { topic: 'notify_me', message: 'Private Account content' } }))
+        .rejects.toMatchObject({ code: 'notification_channel_catalog_unavailable', reason: 'scope-retired' });
+      expect(send).not.toHaveBeenCalled();
+    } finally { resetActiveAccountSettingsSnapshotForTests(); }
+  });
+  it('refuses an unsigned plugin effect when its Account retires during channel activation', async () => {
+    const settings = accountSettingsParse({});
+    const send = vi.fn(async (request: Parameters<PluginNotificationSenderBinding['send']>[0]) => ({
+      deliveryId: request.deliveryId, channelId: request.channelId, status: 'accepted' as const, evidence: 'provider' as const,
+    }));
+    setActiveAccountSettingsSnapshot({ settings, source: 'network', rawSettings: {}, settingsVersion: 4, loadedAtMs: 1,
+      settingsSecretsReadKeys: [], scopeKey: 'notification-activation-account',
+      notificationChannelCatalog: { status: 'ready', revision: 9, diagnostics: [], channels: [] } });
+    const pluginNotifications = createStablePluginNotificationsOwner({ categories: [],
+      channels: [{ provenance: 'external', source: { kind: 'path' }, pluginId: 'acme.delivery',
+        definition: { id: 'digest', kind: 'plugin', title: 'Digest', configurable: true, defaultEnabled: true } }],
+      // Channel activation is an external plugin-runtime boundary; its binding
+      // can remain current after the dispatching Account has retired.
+      activateChannel: async () => { clearActiveAccountSettingsSnapshot(); },
+      readChannel: () => ({ occurrenceId: 'current', isCurrent: () => true, send }),
+    });
+    try {
+      await expect(dispatchActivityNotification({ settings, pluginNotifications,
+        event: { topic: 'notify_me', message: 'Private Account content' } }))
+        .rejects.toMatchObject({ code: 'notification_channel_catalog_unavailable', reason: 'scope-retired' });
+      expect(send).not.toHaveBeenCalled();
+    } finally { resetActiveAccountSettingsSnapshotForTests(); }
+  });
+  it('preserves typed Account retirement refusal between acknowledged push channels', async () => {
+    const settings = accountSettingsParse({});
+    setActiveAccountSettingsSnapshot({ settings, source: 'network', rawSettings: {}, settingsVersion: 4, loadedAtMs: 1,
+      settingsSecretsReadKeys: [], scopeKey: 'notification-between-push-channels-account',
+      notificationChannelCatalog: { status: 'ready', revision: 9, diagnostics: [], channels: ['first', 'second'].map(id =>
+        NotificationChannelRecordV1Schema.parse({ v: 1, kind: 'expo_push', id, topics: {} })) } });
+    // The device delivery boundary acknowledges the first channel, then retires
+    // the captured Account. No internal dispatcher/currentness owner is mocked.
+    const sendToAllDevicesAsync = vi.fn(async () => { clearActiveAccountSettingsSnapshot(); return true; });
+    try {
+      await expect(dispatchActivityNotification({ settings, pluginNotifications: null,
+        event: { topic: 'notify_me', message: 'Private Account content' }, expoPushSender: { sendToAllDevicesAsync } }))
+        .rejects.toMatchObject({ code: 'notification_channel_catalog_unavailable', reason: 'scope-retired' });
+      expect(sendToAllDevicesAsync).toHaveBeenCalledTimes(1);
+    } finally { resetActiveAccountSettingsSnapshotForTests(); }
+  });
+  it('preserves typed Account retirement refusal during unsigned webhook DNS admission', async () => {
+    const settings = accountSettingsParse({ attentionDeliveryPolicyV1: { v: 1, channels: { webhook: { enabled: true } } } });
+    setActiveAccountSettingsSnapshot({ settings, source: 'network', rawSettings: {}, settingsVersion: 4, loadedAtMs: 1,
+      settingsSecretsReadKeys: [], scopeKey: 'notification-webhook-dns-account',
+      notificationChannelCatalog: { status: 'ready', revision: 9, diagnostics: [], channels: [NotificationChannelRecordV1Schema.parse({
+        v: 1, kind: 'webhook', id: 'unsigned-dns-channel', topics: {}, url: 'https://receiver.example/hook', signingSecretRef: null,
+      })] } });
+    // DNS and the socket are genuine boundaries; the dispatcher, destination
+    // admission and captured Account lifetime guard remain real.
+    const resolveAddresses = vi.fn(async () => { clearActiveAccountSettingsSnapshot(); return ['93.184.216.34']; });
+    const openPinnedStream = vi.fn(async (): Promise<PinnedHttpStreamResponse> => { throw new Error('Retired Account reached socket'); });
+    try {
+      await expect(dispatchActivityNotification({ settings, pluginNotifications: null,
+        event: { topic: 'notify_me', message: 'Private Account content' }, webhookNetwork: { resolveAddresses, openPinnedStream } }))
+        .rejects.toMatchObject({ code: 'notification_channel_catalog_unavailable', reason: 'scope-retired' });
+      expect(resolveAddresses).toHaveBeenCalled();
+      expect(openPinnedStream).not.toHaveBeenCalled();
+    } finally { resetActiveAccountSettingsSnapshotForTests(); }
+  });
+  it('refuses an unavailable catalog without substituting push or an empty picker', async () => {
+    const sendToAllDevicesAsync = vi.fn(async () => true);
+    const params = { settings: accountSettingsParse({}), notificationChannelCatalog: {
+      status: 'unavailable' as const, reason: 'authority-not-confirmed' as const,
+    }, pluginNotifications: null, expoPushSender: { sendToAllDevicesAsync } };
+    await expect(dispatchActivityNotificationAsync({ ...params, event: { topic: 'notify_me', message: 'ready' } }))
+      .rejects.toMatchObject({ code: 'notification_channel_catalog_unavailable', reason: 'authority-not-confirmed' });
+    await expect(listActivityNotificationChannels(params))
+      .rejects.toMatchObject({ code: 'notification_channel_catalog_unavailable' });
+    expect(sendToAllDevicesAsync).not.toHaveBeenCalled();
+  });
+
+  it('preserves an authoritative empty catalog even with registered push tokens', async () => {
+    const sendToAllDevicesAsync = vi.fn(async () => true);
+    const params = { settings: accountSettingsParse({ notificationsSettingsV1: { pushEnabled: true },
+      attentionDeliveryPolicyV1: { v: 1, channels: { expo_push: { enabled: true } } },
+      notificationChannelsV1: [{ kind: 'expo_push', id: 'builtin:expo_push' }],
+    }), notificationChannelCatalog: {
+      status: 'ready' as const, channels: [], revision: 3, diagnostics: [],
+    }, pluginNotifications: null, expoPushSender: { sendToAllDevicesAsync },
+      pushTokenReader: { fetchPushTokens: async () => [{ id: 'device', token: 'ExponentPushToken[test]', createdAt: 1, updatedAt: 1 }] } };
+    await expect(dispatchActivityNotificationAsync({ ...params, event: { topic: 'notify_me', message: 'ready' } }))
+      .resolves.toEqual({ attemptedChannels: 0, deliveredChannels: 0 });
+    // A retained Workflow selection and enabled legacy preferences cannot
+    // recreate membership in an authoritative empty destination.
+    await expect(dispatchActivityNotificationAsync({ ...params, channels: ['builtin:expo_push'],
+      event: { topic: 'notify_me', message: 'retained selection' } }))
+      .resolves.toEqual({ attemptedChannels: 0, deliveredChannels: 0 });
+    await expect(listActivityNotificationChannels(params)).resolves.toEqual([]);
+    expect(sendToAllDevicesAsync).not.toHaveBeenCalled();
+  });
+
+  it('re-enables an imported disabled push row without overriding row guards or Account privacy', async () => {
+    const imported = prepareLegacyNotificationChannelCatalogV1({ accountId: 'push-reenable-account', settingsSecretsReadKeys: [],
+      raw: { notificationsSettingsV1: { pushEnabled: false, ready: true, permissionRequest: false,
+        readyIncludeMessageText: false, requestIncludeMessageText: false } } });
+    if (imported.status !== 'ready') throw new Error('Expected a complete legacy push source');
+    const initial = imported.record.channels[0];
+    if (!initial || initial.kind !== 'expo_push') throw new Error('Expected the retained builtin push identity');
+    const updated = NotificationChannelRecordV1Schema.parse({ ...initial, enabled: true });
+    const reopened = openNotificationChannelCatalogContentV1({ mode: 'plain', material: null,
+      content: sealNotificationChannelCatalogContentV1({ mode: 'plain', material: null, record: { v: 1, channels: [updated] } }) });
+    if (reopened.status !== 'opened') throw new Error('Expected a readable updated destination');
+    const destination = reopened.record.channels[0]!;
+    const sendToAllDevicesAsync = vi.fn(async (_title: string, _body: string) => true);
+    const event = { topic: 'ready' as const, sessionId: 'push-reenable-session', sessionTitle: 'Private Session title',
+      waitingForCommandLabel: 'Private waiting label', assistantPreviewText: 'Private assistant preview' };
+    const dispatch = (channel: typeof destination, policy: Readonly<{ enabled?: boolean; statusOnly?: boolean }>) =>
+      dispatchActivityNotification({ settings: accountSettingsParse({ attentionDeliveryPolicyV1: { v: 1,
+        channels: { expo_push: { enabled: policy.enabled ?? true } },
+        privacy: { defaultPreviewBehavior: policy.statusOnly ? 'status_only' : 'include_preview' },
+      } }), notificationChannelCatalog: { status: 'ready', revision: 4, diagnostics: [], channels: [channel] },
+      event, expoPushSender: { sendToAllDevicesAsync }, pluginNotifications: null, fetchSessionNotificationContext });
+    await expect(dispatch(initial, {})).resolves.toEqual({ attemptedChannels: 0, deliveredChannels: 0 });
+    await expect(dispatch(destination, {})).resolves.toEqual({ attemptedChannels: 1, deliveredChannels: 1 });
+    // The endpoint's retained preview restriction survives an enabled-only patch.
+    expect(sendToAllDevicesAsync.mock.calls[0]?.[1]).not.toContain(event.assistantPreviewText);
+    expect(destination).toMatchObject({ id: initial.id, topics: { permissionRequest: false }, readyIncludeMessageText: false });
+    await expect(dispatch(NotificationChannelRecordV1Schema.parse({ ...destination, readyIncludeMessageText: true }), { statusOnly: true }))
+      .resolves.toEqual({ attemptedChannels: 1, deliveredChannels: 1 });
+    expect(JSON.stringify(sendToAllDevicesAsync.mock.calls[1])).not.toContain('Private');
+    await expect(dispatch(destination, { enabled: false })).resolves.toEqual({ attemptedChannels: 0, deliveredChannels: 0 });
+    await expect(dispatch(NotificationChannelRecordV1Schema.parse({ ...destination, topics: { ...destination.topics, ready: false } }), {}))
+      .resolves.toEqual({ attemptedChannels: 0, deliveredChannels: 0 });
+    expect(sendToAllDevicesAsync).toHaveBeenCalledTimes(2);
+  });
+
+  it('admits all selected signing references before delivering any channel', async () => {
+    const sendToAllDevicesAsync = vi.fn(async () => true);
+    const catalog = { status: 'ready' as const, revision: 3, diagnostics: [], channels: [
+      NotificationChannelRecordV1Schema.parse({ v: 1, kind: 'expo_push', id: 'builtin:expo_push', topics: {} }),
+      NotificationChannelRecordV1Schema.parse({ v: 1, kind: 'webhook', id: 'unavailable-signer', topics: {},
+        url: 'https://hooks.example.test/happier', signingSecretRef: 'happier:shared-secret:v1:missing' }),
+    ] };
+    await expect(dispatchActivityNotificationAsync({ settings: accountSettingsParse({ attentionDeliveryPolicyV1: {
+      v: 1, channels: { webhook: { enabled: true } },
+    } }), notificationChannelCatalog: catalog,
+      savedSecretMaterializer: createSavedSecretMaterializerV1({ accountSettings: {}, settingsSecretsReadKeys: [], resources: [],
+        resourceCatalogState: 'ready' }), expoPushSender: { sendToAllDevicesAsync }, pluginNotifications: null,
+      event: { topic: 'notify_me', message: 'ready' },
+    })).rejects.toMatchObject({ code: 'saved_secret_resolution_failed' });
+    expect(sendToAllDevicesAsync).not.toHaveBeenCalled();
+  });
+
+  it('refuses partial channel inventory instead of delivering its valid neighbors', async () => {
+    const sendToAllDevicesAsync = vi.fn(async () => true);
+    await expect(dispatchActivityNotificationAsync({ settings: accountSettingsParse({}), pluginNotifications: null,
+      notificationChannelCatalog: { status: 'partial', revision: 3, channels: [NotificationChannelRecordV1Schema.parse({
+        v: 1, kind: 'expo_push', id: 'builtin:expo_push', topics: {},
+      })], diagnostics: [{ channelId: 'broken-hook', reason: 'invalid-stored-content' }] },
+      expoPushSender: { sendToAllDevicesAsync }, event: { topic: 'notify_me', message: 'ready' },
+    })).rejects.toMatchObject({ code: 'notification_channel_catalog_unavailable' });
+    expect(sendToAllDevicesAsync).not.toHaveBeenCalled();
+  });
   it('delivers each newly committed review hold in one Run without a time veto', async () => {
     const sendToAllDevicesAsync = vi.fn(async () => true);
+    const settings = accountSettingsParse({});
     const notify = createWorkflowRunReviewEntryNotificationHandler({
-      getSettingsSnapshot: () => ({ settings: accountSettingsParse({}) }),
+      getSettingsSnapshot: () => ({ settings, ...notificationCatalogFixture(settings) }),
       expoPushSender: { sendToAllDevicesAsync },
     });
     // Each callback denotes a different post-commit invocation hold; the producer
@@ -839,7 +1092,7 @@ describe('dispatchActivityNotificationAsync', () => {
     expect(sendToAllDevicesAsync).not.toHaveBeenCalled();
   });
 
-  it('uses canonical Expo push policy even when legacy channel rows are stale-disabled', async () => {
+  it('does not let an enabled policy revive a disabled Expo push entity', async () => {
     const sendToAllDevicesAsync = vi.fn(async () => { return true; });
     const settings = accountSettingsParse({
       attentionDeliveryPolicyV1: {
@@ -882,11 +1135,11 @@ describe('dispatchActivityNotificationAsync', () => {
       },
     });
 
-    expect(result).toEqual({ attemptedChannels: 1, deliveredChannels: 1 });
-    expect(sendToAllDevicesAsync).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ attemptedChannels: 0, deliveredChannels: 0 });
+    expect(sendToAllDevicesAsync).not.toHaveBeenCalled();
   });
 
-  it('uses canonical Expo push policy when legacy channel rows are absent', async () => {
+  it('does not let an enabled push policy manufacture absent catalog membership', async () => {
     const sendToAllDevicesAsync = vi.fn(async () => { return true; });
     const settings = accountSettingsParse({
       attentionDeliveryPolicyV1: {
@@ -916,8 +1169,8 @@ describe('dispatchActivityNotificationAsync', () => {
       },
     });
 
-    expect(result).toEqual({ attemptedChannels: 1, deliveredChannels: 1 });
-    expect(sendToAllDevicesAsync).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ attemptedChannels: 0, deliveredChannels: 0 });
+    expect(sendToAllDevicesAsync).not.toHaveBeenCalled();
   });
 
   it.each(['status_only', 'title_only', 'include_preview'] as const)(
@@ -1343,6 +1596,11 @@ describe('dispatchActivityNotificationAsync', () => {
   it('dispatches only to enabled explicit channels', async () => {
     const sendToAllDevicesAsync = vi.fn(async () => { return true; });
     const settings = accountSettingsParse({
+      attentionDeliveryPolicyV1: {
+        v: 1,
+        channels: { expo_push: { enabled: true }, webhook: { enabled: true } },
+        privacy: { defaultPreviewBehavior: 'status_only' },
+      },
       notificationChannelsV1: [
         {
           v: 1,
@@ -1406,11 +1664,48 @@ describe('dispatchActivityNotificationAsync', () => {
       body: 'Session is waiting for your command',
     });
     expect(payload.session).toEqual({ sessionId: 'session-2', title: null });
+    expect(JSON.stringify(payload)).not.toContain('Deployment is complete.');
+
+    // Allowing previews globally cannot reopen this endpoint's retained
+    // assistant-text restriction, while the finite policy admits its title.
+    await dispatchActivityNotification({
+      fetchSessionNotificationContext,
+      ...notificationCatalogFixture(settings),
+      settings: accountSettingsParse({ attentionDeliveryPolicyV1: {
+        v: 1,
+        channels: { expo_push: { enabled: true }, webhook: { enabled: true } },
+        privacy: { defaultPreviewBehavior: 'include_preview' },
+      } }),
+      webhookNetwork,
+      expoPushSender: { sendToAllDevicesAsync },
+      event: {
+        topic: 'ready',
+        sessionId: 'session-2-preview',
+        sessionTitle: 'Deploy fix',
+        waitingForCommandLabel: 'Gemini',
+        assistantPreviewText: 'Deployment is complete.',
+      },
+    });
+    expect(sendToAllDevicesAsync).not.toHaveBeenCalled();
+    expect(webhookRequests).toHaveLength(2);
+    const previewAllowedPayload = webhookRequestBody(webhookRequests[1]);
+    expect(previewAllowedPayload.content).toEqual({
+      title: 'Deploy fix',
+      body: 'Gemini is waiting for your command',
+    });
+    expect(previewAllowedPayload.session).toEqual({ sessionId: 'session-2-preview', title: 'Deploy fix' });
+    expect(JSON.stringify(previewAllowedPayload)).not.toContain('Deployment is complete.');
   });
 
   it('omits request previews when the webhook explicitly disables them', async () => {
     const sendToAllDevicesAsync = vi.fn(async () => { return true; });
     const settings = accountSettingsParse({
+      attentionDeliveryPolicyV1: {
+        v: 1,
+        channels: { expo_push: { enabled: false }, webhook: { enabled: true } },
+        events: { permission_request: { previewBehavior: 'include_preview' } },
+        privacy: { defaultPreviewBehavior: 'include_preview' },
+      },
       notificationChannelsV1: [
         {
           v: 1,
@@ -1467,6 +1762,10 @@ describe('dispatchActivityNotificationAsync', () => {
     const sendToAllDevicesAsync = vi.fn(async () => { return true; });
     const settingsSecretsKey = deriveSettingsSecretsKeyV1(new Uint8Array(32).fill(7));
     const settings = accountSettingsParse({
+      attentionDeliveryPolicyV1: {
+        v: 1,
+        channels: { expo_push: { enabled: false }, webhook: { enabled: true } },
+      },
       notificationChannelsV1: [
         {
           v: 1,

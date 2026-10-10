@@ -37,12 +37,14 @@ export type VoiceAgentStartParams = Readonly<{
   verbosity?: Verbosity;
   resumeHandle?: ExecutionRunResumeHandle | null;
   /**
-   * Connected-services selection for the voice run's backends. Threaded to the backend factory so
-   * a voice run with an explicit selection materializes its connected-service auth env instead of
-   * silently running on the runner's native account (R3-2 fail-closed). `null` opts out (native);
-   * `undefined` defers to session-mirrored defaulting inside the run runtime resolver.
+   * Host-resolved chat credential selection. `null` selects native auth;
+   * `undefined` preserves the existing runtime/Account-default resolution.
+   * Legacy direct Manager callers share this route with commit unless they
+   * supply the host-private commitConnectedServices override.
    */
   connectedServices?: ConnectedServiceBindingsV2 | null;
+  /** Host-resolved commit route; omission retains the shared legacy route. */
+  commitConnectedServices?: ConnectedServiceBindingsV2 | null;
   disabledActionIds?: readonly string[];
   /**
    * Optional one-time bootstrap behavior for newly created (non-resumed) sessions.
@@ -110,10 +112,17 @@ export type BackendFactory = (opts: {
   connectedServices?: ConnectedServiceBindingsV2 | null;
 }) => ExecutionRunHostRuntime;
 
-export type ResolveVoiceSystemAppendBlocksArgs = Readonly<{
+export type ResolveVoicePromptPreparationArgs = Readonly<{
   profileId?: string | null;
   sessionId?: string | null;
   workingDirectory?: string | null;
+  signal?: AbortSignal;
+}>;
+
+export type VoicePromptPreparation = Readonly<{
+  systemAppendBlocks: readonly string[];
+  memoryRecallGuidanceEnabled: boolean;
+  disabledActionIds: readonly string[];
 }>;
 
 export type VoiceAgentTurn = { role: 'user' | 'assistant' | 'context'; text: string };
@@ -160,8 +169,11 @@ export type VoiceAgentInstance = {
   initialContext: string;
   voicePolicy?: ExecutionRunVoiceAgentIntentInputV1['voicePolicy'];
   connectedServices?: ConnectedServiceBindingsV2 | null;
+  commitConnectedServices?: ConnectedServiceBindingsV2 | null;
+  requestedDisabledActionIds: readonly string[];
   disabledActionIds: readonly string[];
   memoryRecallGuidanceEnabled: boolean;
+  systemAppendBlocksContext: ResolveVoicePromptPreparationArgs;
   systemAppendBlocks: readonly string[];
   chatSessionSeeded: boolean;
   welcomed: boolean;

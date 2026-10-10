@@ -7,8 +7,10 @@ import { isDeepStrictEqual } from 'node:util';
 import { DAEMON_VOICE_SPEECH_INPUT_MAX_BYTES as VOICE_SPEECH_INPUT_MAX_BYTES, DAEMON_VOICE_SPEECH_OUTPUT_MAX_BYTES as VOICE_SPEECH_OUTPUT_MAX_BYTES, DAEMON_VOICE_SPEECH_TRANSFER_CHUNK_MAX_BYTES as VOICE_SPEECH_TRANSFER_CHUNK_MAX_BYTES, DaemonVoiceSpeechCatalogRequestSchema, DaemonVoiceSpeechSettingsActionRequestSchema, DaemonVoiceSpeechSettingsActionResponseSchema, DaemonVoiceSpeechDownloadAbortRequestSchema, DaemonVoiceSpeechDownloadAbortResponseSchema, DaemonVoiceSpeechDownloadChunkRequestSchema, DaemonVoiceSpeechDownloadChunkResponseSchema, DaemonVoiceSpeechDownloadFinalizeRequestSchema, DaemonVoiceSpeechDownloadFinalizeResponseSchema, DaemonVoiceSpeechSynthesizeRequestSchema, DaemonVoiceSpeechSynthesizeResponseSchema, DaemonVoiceSpeechTranscribeUploadAbortRequestSchema, DaemonVoiceSpeechTranscribeUploadAbortResponseSchema, DaemonVoiceSpeechTranscribeUploadChunkRequestSchema, DaemonVoiceSpeechTranscribeUploadChunkResponseSchema, DaemonVoiceSpeechTranscribeUploadFinalizeRequestSchema, DaemonVoiceSpeechTranscribeUploadFinalizeResponseSchema, DaemonVoiceSpeechTranscribeUploadInitRequestSchema, DaemonVoiceSpeechTranscribeUploadInitResponseSchema, DaemonVoiceSpeechTranscribeRequestSchema, DaemonVoiceSpeechTranscribeResponseSchema } from '@happier-dev/protocol/daemon/voiceSpeech';
 import { VoiceProviderCatalogResponseSchema } from '@happier-dev/protocol/voice/providerOperations';
 import { VoiceProviderSettingsEnvelopeV1Schema } from '@happier-dev/protocol/voice/realtime/providerSettings';
+import { VoiceProviderSettingsJsonValueV1Schema } from '@happier-dev/protocol/voice/realtime/providerSettings';
+import { admitDeclaredSessionVoicePreferenceV1, readSessionVoiceSettingFieldV1,
+  type SessionVoicePreferenceV1 } from '@happier-dev/protocol/sessions/instructions/sessionVoicePreferenceV1';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import { resolveAccountSettingsVoiceCredentialSource } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { resolveVoiceSpeechSettingsCorrespondence, resolveVoiceSpeechEndpointPolicy } from '@happier-dev/protocol/plugins/contributions/voice';
 import { resolveVoiceSpeechSynthesisInputLimits, isVoiceSpeechSynthesisInputWithinLimits } from '@happier-dev/protocol/voice/speech';
 import type { VoiceCredentialAccessPhase, VoiceProviderContribution } from '@happier-dev/protocol';
@@ -25,7 +27,7 @@ import {
 import { createTransferSessionLifecycle } from '@happier-dev/transfers/node';
 import { TransferSessionStore } from '@happier-dev/transfers/node';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
-import { createVoiceCredentialResolver } from '@/daemon/voice/credentials/resolver';
+import { createVoiceCredentialResolver, type VoiceCredentialResolver } from '@/daemon/voice/credentials/resolver';
 import { createGlobalFetchRuntime } from '@/plugins/runtime/fetch/globalFetchRuntime';
 import {
   createVoiceAccountOperationService,
@@ -115,7 +117,7 @@ function credentialUnavailable(): Error & { code: 'credential_unavailable' } {
   return Object.assign(new Error('credential_unavailable'), { code: 'credential_unavailable' as const });
 }
 
-type SpeechCredentialAuthority = ReturnType<typeof resolveAccountSettingsVoiceCredentialSource>;
+type SpeechCredentialAuthority = NonNullable<ReturnType<VoiceCredentialResolver['resolveSelectedAuthority']>>;
 type SpeechCredentialAdmission = Readonly<{
   hasSelectedSource: boolean;
   isAuthorityCurrent(): boolean;
@@ -124,18 +126,20 @@ type SpeechCredentialAdmission = Readonly<{
 function resolveSpeechCredentialAuthority(input: Readonly<{
   contribution: Extract<VoiceProviderContribution, { kind: 'speech' }>;
   target: VoiceSpeechTargetRef;
-  accountSettings: Readonly<Record<string, unknown>>;
+  accountSnapshot: ActiveAccountSettingsSnapshot;
+  credentialResolver: VoiceCredentialResolver;
   machineId: string | null;
 }>): SpeechCredentialAuthority {
   const declaration = input.contribution.credentials;
   if (!declaration) throw credentialUnavailable();
   try {
-    return resolveAccountSettingsVoiceCredentialSource(input.accountSettings, {
+    const authority = input.credentialResolver.resolveSelectedAuthority({
       contribution: input.target,
       credentialSlotId: declaration.slot.id,
       purpose: { consumer: input.target, purpose: declaration.slot.purpose },
-      machineId: input.machineId,
-    });
+    }, input.accountSnapshot);
+    if (!authority) throw credentialUnavailable();
+    return authority;
   } catch {
     throw credentialUnavailable();
   }
@@ -147,6 +151,7 @@ function isSpeechCredentialAuthorityCurrent(input: Readonly<{
   readAccountSettingsSnapshot: () => ActiveAccountSettingsSnapshot | null;
   machineId: string | null;
   authority: SpeechCredentialAuthority;
+  credentialResolver: VoiceCredentialResolver;
 }>): boolean {
   const current = input.readAccountSettingsSnapshot();
   if (!current) return false;
@@ -155,7 +160,8 @@ function isSpeechCredentialAuthorityCurrent(input: Readonly<{
       resolveSpeechCredentialAuthority({
         contribution: input.contribution,
         target: input.target,
-        accountSettings: current.settings as unknown as Readonly<Record<string, unknown>>,
+        accountSnapshot: current,
+        credentialResolver: input.credentialResolver,
         machineId: input.machineId,
       }),
       input.authority,
@@ -169,7 +175,8 @@ function resolveSpeechCredentialAdmission(input: Readonly<{
   contribution: Extract<VoiceProviderContribution, { kind: 'speech' }>;
   target: VoiceSpeechTargetRef;
   providerSettings: Readonly<Record<string, unknown>>;
-  accountSettings: Readonly<Record<string, unknown>>;
+  accountSnapshot: ActiveAccountSettingsSnapshot;
+  credentialResolver: VoiceCredentialResolver;
   readAccountSettingsSnapshot: () => ActiveAccountSettingsSnapshot | null;
   machineId: string | null;
 }>): SpeechCredentialAdmission {
@@ -196,6 +203,7 @@ function resolveSpeechCredentialAdmission(input: Readonly<{
         readAccountSettingsSnapshot: input.readAccountSettingsSnapshot,
         machineId: input.machineId,
         authority,
+        credentialResolver: input.credentialResolver,
       }),
     });
   }
@@ -207,6 +215,7 @@ function resolveSpeechCredentialAdmission(input: Readonly<{
       readAccountSettingsSnapshot: input.readAccountSettingsSnapshot,
       machineId: input.machineId,
       authority,
+      credentialResolver: input.credentialResolver,
     }),
   });
 }
@@ -273,6 +282,8 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
         PluginRawCredentialMaterializer
       >();
       let readAccountSettingsSnapshot = getActiveAccountSettingsSnapshot;
+      const credentialResolver = createVoiceCredentialResolver({ machineId: params.machineId ?? null,
+        getSnapshot: () => readAccountSettingsSnapshot() });
       const manifest = lease.registry.contributes.activationTargets.find((candidate) => (
         candidate.pluginId === target.pluginId
         && candidate.manifest.contributes.voiceProviders?.some((contribution) => (
@@ -316,6 +327,7 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
         } else if (!readAccountSettingsSnapshot() && dependencies?.credentials) {
           await warmActiveAccountSettingsSnapshotBestEffort({ credentials: dependencies.credentials });
         }
+        await credentialResolver.prepareForOperation();
         if (!speech.isCurrent()) {
           throw Object.assign(new Error('provider_unavailable'), { code: 'provider_unavailable' });
         }
@@ -330,10 +342,7 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
               provider: target,
               kind: 'speech',
               phase,
-              credentialResolver: createVoiceCredentialResolver({
-                machineId: params.machineId ?? null,
-                getSnapshot: readAccountSettingsSnapshot,
-              }),
+              credentialResolver,
               ...(connectedAccounts ? { connectedAccounts } : {}),
               isCurrent: () => speech.isCurrent() && lifecycle.isCurrent() && isCurrent(),
               isCredentialCurrent,
@@ -406,7 +415,8 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
                 contribution: speech.contribution,
                 target,
                 providerSettings,
-                accountSettings: snapshot.settings as unknown as Readonly<Record<string, unknown>>,
+                accountSnapshot: snapshot,
+                credentialResolver,
                 readAccountSettingsSnapshot,
                 machineId: params.machineId ?? null,
               });
@@ -534,17 +544,32 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
     }
     return Object.freeze({ requestId, text: result.text });
   };
-  const createSpeechOperationContext = (lease: VoiceSpeechRuntimeLease, signal: AbortSignal, capturePurpose?: 'conversation' | 'dictation') => {
+  const createSpeechOperationContext = (lease: VoiceSpeechRuntimeLease, signal: AbortSignal, capturePurpose?: 'conversation' | 'dictation',
+    selection?: Readonly<{ target: VoiceSpeechTargetRef; preference?: SessionVoicePreferenceV1 }>) => {
     try {
       const settingsLease = lease.readSettings(capturePurpose);
       if (!settingsLease.isCurrent()) {
         throw Object.assign(new Error('provider_unavailable'), { code: 'provider_unavailable' });
       }
+      let settings = settingsLease.settings;
+      if (selection) {
+        const config = VoiceProviderSettingsJsonValueV1Schema.parse(settings);
+        const providerContributionId = buildQualifiedPluginContributionKey(selection.target);
+        const resolved = admitDeclaredSessionVoicePreferenceV1({ providerContributionId,
+          declaration: lease.contribution, providerConfig: config, preference: selection.preference ?? null });
+        if (resolved.kind === 'unavailable') throw new Error('invalid_voice_preference');
+        settings = resolved.providerConfig;
+      }
       const correspondence = resolveVoiceSpeechSettingsCorrespondence({
         contribution: lease.contribution,
-        settings: settingsLease.settings,
+        settings,
         ...(settingsLease.recognitionLanguage !== undefined ? { recognitionLanguage: settingsLease.recognitionLanguage } : {}),
       });
+      const voiceField = selection ? readSessionVoiceSettingFieldV1(lease.contribution) : null;
+      const appliedVoice: SessionVoicePreferenceV1 | null = selection && voiceField && correspondence.synthesize
+        ? { providerContributionId: buildQualifiedPluginContributionKey(selection.target),
+          settingFieldPath: voiceField.path, value: correspondence.synthesize.voiceName }
+        : null;
       const endpointPolicy = resolveVoiceSpeechEndpointPolicy({
         settings: correspondence.settings,
         machineId: params.machineId ?? null,
@@ -563,6 +588,7 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
       }
       return Object.freeze({
         correspondence,
+        appliedVoice,
         isCurrent,
         context: Object.freeze({
           credentials,
@@ -855,6 +881,7 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
       target,
       requestId,
       input,
+      voicePreference,
       recipientPublicKeyBase64,
     } = parsed.data;
     try {
@@ -867,7 +894,7 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
       if (!lease.runtime.synthesize) return invalid;
       return await runBounded(async (signal) => {
         assertOperationMayPublish(lease!, signal);
-        const operation = createSpeechOperationContext(lease!, signal);
+        const operation = createSpeechOperationContext(lease!, signal, undefined, { target, preference: voicePreference });
         const synthesisSettings = operation.correspondence.synthesize;
         if (!isVoiceSpeechSynthesisInputWithinLimits(input, resolveVoiceSpeechSynthesisInputLimits({
           contribution: lease!.contribution, settings: operation.context.settings,
@@ -912,6 +939,7 @@ export function registerMachineVoiceSpeechRpcHandlers(params: Readonly<{
         return DaemonVoiceSpeechSynthesizeResponseSchema.parse(Object.freeze({
           ok: true as const, requestId, downloadId: session.downloadId,
           chunkSizeBytes: session.chunkSizeBytes, sizeBytes: synthesized.bytes.byteLength, mimeType: synthesized.mimeType,
+          appliedVoice: operation.appliedVoice,
         }));
       }, lease, context?.signal);
     } catch (error) {

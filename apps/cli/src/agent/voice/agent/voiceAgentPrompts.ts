@@ -55,8 +55,8 @@ export function buildVoiceAgentBootstrapPrompt(params: Readonly<{
   }
 
   if (params.mode === 'welcome') {
-    const welcomeText = String(params.welcomeText ?? '').trim();
-    if (welcomeText) {
+    const welcomeText = params.welcomeText ?? params.voicePolicy?.welcome?.text;
+    if (typeof welcomeText === 'string') {
       blocks.push({
         id: 'voice.bootstrap.welcome',
         scope: 'bootstrap',

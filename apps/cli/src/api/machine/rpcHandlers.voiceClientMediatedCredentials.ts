@@ -2,7 +2,6 @@ import { isDeepStrictEqual } from 'node:util';
 
 import { DaemonVoiceClientAccountOperationRequestV1Schema, DaemonVoiceClientAccountOperationResponseV1Schema } from '@happier-dev/protocol/daemon/voiceCredentials';
 import { deriveVoiceCredentialBindingIdentityV1 } from '@happier-dev/protocol/plugins/contributions/voice';
-import { resolveAccountSettingsVoiceCredentialSource } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import type { PluginContributionIdentityV1, QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -110,22 +109,16 @@ export function registerMachineVoiceClientMediatedCredentialRpcHandlers(params: 
           candidate.id === request.data.operationId
           && candidate.credentialSlotId === identity.credentialSlotId
         ));
-        let beforeSnapshot = getSnapshot();
-        if (!beforeSnapshot && operation) {
-          await ensureAccountSettingsSnapshot();
-          signal.throwIfAborted();
-          if (!lifecycle.isCurrent()) return failure(null);
-          beforeSnapshot = getSnapshot();
-        }
+        const credentialResolver = createVoiceCredentialResolver({ machineId: null, getSnapshot,
+          ensureSnapshot: ensureAccountSettingsSnapshot });
+        if (operation) await credentialResolver.prepareForOperation(signal);
+        signal.throwIfAborted();
+        if (!lifecycle.isCurrent()) return failure(null);
+        const beforeSnapshot = getSnapshot();
         if (!operation || !beforeSnapshot) return failure(null);
         const capturedSnapshot = beforeSnapshot;
-        const before = resolveAccountSettingsVoiceCredentialSource(beforeSnapshot.settings, {
-          contribution: identity.contribution,
-          credentialSlotId: identity.credentialSlotId,
-          purpose: identity.purpose,
-          machineId: null,
-        });
-        if (before.selection.kind !== 'connectedAccount') return failure(null);
+        const before = credentialResolver.resolveSelectedAuthority(identity);
+        if (!before || before.selection.kind !== 'connectedAccount') return failure(null);
         // Both processes resolve the selected source independently and each one
         // is internally consistent, so only comparing the caller's captured
         // selection against this daemon's can catch a switch that happened on
@@ -143,12 +136,7 @@ export function registerMachineVoiceClientMediatedCredentialRpcHandlers(params: 
             if (current !== capturedSnapshot) return false;
           } else if (current.scopeKey !== capturedSnapshot.scopeKey) return false;
           try {
-            return isDeepStrictEqual(before, resolveAccountSettingsVoiceCredentialSource(current.settings, {
-              contribution: identity.contribution,
-              credentialSlotId: identity.credentialSlotId,
-              purpose: identity.purpose,
-              machineId: null,
-            }));
+            return isDeepStrictEqual(before, credentialResolver.resolveSelectedAuthority(identity));
           } catch { return false; }
         };
         const operationSignal = AbortSignal.any([signal, lifecycle.retirementSignal]);
@@ -158,7 +146,7 @@ export function registerMachineVoiceClientMediatedCredentialRpcHandlers(params: 
           provider: provider.identity,
           kind: 'conversation',
           phase: request.data.phase,
-          credentialResolver: createVoiceCredentialResolver({ machineId: null, getSnapshot }),
+          credentialResolver,
           connectedAccounts,
           isCurrent: lifecycle.isCurrent,
           isCredentialCurrent,

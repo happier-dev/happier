@@ -5,15 +5,15 @@ import { assessEndpointHostLocality, ProviderEndpointSafetyError } from '@happie
 import { classifyProviderHostnameSyntax, parseProviderIpAddress } from '@happier-dev/protocol/providers/safety/locality';
 import { isProviderMetadataHostname } from '@happier-dev/protocol/providers/safety/metadataDestinations';
 import { buildActivityWebhookPayload } from '@happier-dev/protocol/activity/webhookPayload';
-import { decryptSecretValueWithKeysV1 } from '@happier-dev/protocol/crypto/settingsSecretStringsV1';
-import { hasConfiguredSecretStringValue } from '@happier-dev/protocol/account/settings/notificationChannels';
-import type { AttentionPreviewBehavior, WebhookNotificationChannelV1 } from '@happier-dev/protocol';
+import type { AttentionPreviewBehavior } from '@happier-dev/protocol';
+import type { WebhookNotificationChannelRecordV1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 import { openPinnedHttpStream, type PinnedHttpStreamTransport, type PinnedHttpStreamResponse } from '@/network/pinnedHttp';
 
 import type { ActivityNotificationEvent } from './activityNotificationEvent';
 import { buildActivityNotificationContent } from './buildActivityNotificationContent';
+import { SavedSecretResolutionError, type SavedSecretMaterializerV1 } from '@/settings/secrets/savedSecretCatalog';
 
 /** DNS is a genuine system boundary; every caller may substitute it. */
 export type WebhookDestinationAddressResolver = (hostname: string) => Promise<readonly string[]>;
@@ -48,13 +48,17 @@ export class WebhookDestinationAdmissionError extends Error {
   }
 }
 
-function readSigningSecret(
-  secret: WebhookNotificationChannelV1['signingSecret'],
-  settingsSecretsReadKeys: ReadonlyArray<Uint8Array | null | undefined>,
-): string | null {
-  if (!hasConfiguredSecretStringValue(secret)) return null;
-  const value = decryptSecretValueWithKeysV1(secret, settingsSecretsReadKeys)?.trim() ?? '';
-  return value.length > 0 ? value : null;
+/** Admission and delivery use the same canonical SavedSecret material owner. */
+export function resolveWebhookNotificationSigningSecret(input: Readonly<{
+  channel: WebhookNotificationChannelRecordV1;
+  savedSecretMaterializer?: SavedSecretMaterializerV1;
+}>) {
+  const reference = input.channel.signingSecretRef;
+  if (reference === null) return null;
+  const resolved = input.savedSecretMaterializer?.resolve(reference) ?? { status: 'temporarily_unavailable' as const };
+  if (resolved.status !== 'ready') throw new SavedSecretResolutionError({ reference, status: resolved.status,
+    consumer: 'notification-channel', field: 'signingSecretRef' });
+  return { reference, value: resolved.value, fingerprint: resolved.fingerprint };
 }
 
 /**
@@ -63,8 +67,10 @@ function readSigningSecret(
  * this decision saw is the address the connection uses. Resolving again at the
  * socket would reopen the window this check closes.
  *
- * A public destination must be HTTPS: the payload carries session titles,
- * assistant preview text and the channel HMAC. A non-public destination is
+ * Notifications require HTTPS for public destinations: their automatic payload
+ * carries Session previews and a channel HMAC. Explicitly authored JSON Actions
+ * may use HTTP as well. Both use the same host-locality and pinned-socket policy.
+ * A non-public destination is
  * admitted only when the configured URL itself names it — a literal address, or
  * a `localhost` host that the locality owner confirms resolves wholly inside
  * loopback. A name that merely *resolves* into loopback, private, link-local or
@@ -74,6 +80,7 @@ function readSigningSecret(
 async function admitWebhookDestination(
   rawUrl: string,
   resolveAddresses: WebhookDestinationAddressResolver,
+  requirePublicHttps: boolean,
 ): Promise<AdmittedWebhookDestination> {
   const parsed = new URL(rawUrl);
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
@@ -104,7 +111,7 @@ async function admitWebhookDestination(
   }
 
   if (assessed.locality === 'public') {
-    if (parsed.protocol !== 'https:') {
+    if (requirePublicHttps && parsed.protocol !== 'https:') {
       throw new Error('Webhook notification destination must use HTTPS');
     }
   } else if (literalAddress === null && classifyProviderHostnameSyntax(hostname) !== 'loopback') {
@@ -120,17 +127,20 @@ async function admitWebhookDestination(
 /** The one destination admission and pinned POST path for notifications and JSON Actions. */
 async function openWebhookPostAsync(params: Readonly<{
   url: string; body: Buffer; headers: Readonly<Record<string, string>>;
+  requirePublicHttps: boolean;
+  beforeOpen?: () => void | Promise<void>;
   signal?: AbortSignal; wallTimeMs?: number; network?: WebhookActivityNotificationNetworkDependencies;
 }>): Promise<PinnedHttpStreamResponse> {
   params.signal?.throwIfAborted();
   let destination: AdmittedWebhookDestination;
   try {
     destination = await admitWebhookDestination(params.url,
-      params.network?.resolveAddresses ?? resolveWebhookDestinationAddresses);
+      params.network?.resolveAddresses ?? resolveWebhookDestinationAddresses, params.requirePublicHttps);
   } catch (error) {
     throw new WebhookDestinationAdmissionError(error);
   }
   params.signal?.throwIfAborted();
+  await params.beforeOpen?.();
   return (params.network?.openPinnedStream ?? openPinnedHttpStream)({
     url: destination.url, validatedAddresses: destination.validatedAddresses,
     method: 'POST', headers: params.headers, body: params.body,
@@ -144,7 +154,7 @@ export async function postWebhookJsonAsync(params: Readonly<{
   network?: WebhookActivityNotificationNetworkDependencies;
 }>): Promise<Readonly<{ status: number; body: string }>> {
   const body = Buffer.from(JSON.stringify(params.body), 'utf8');
-  const response = await openWebhookPostAsync({ ...params, body, headers: {
+  const response = await openWebhookPostAsync({ ...params, body, requirePublicHttps: false, headers: {
     'content-type': 'application/json', 'content-length': String(body.byteLength),
     'idempotency-key': params.idempotencyKey,
   } });
@@ -162,9 +172,10 @@ export async function postWebhookJsonAsync(params: Readonly<{
 }
 
 export async function sendWebhookActivityNotificationAsync(params: Readonly<{
-  channel: WebhookNotificationChannelV1;
+  channel: WebhookNotificationChannelRecordV1;
   event: ActivityNotificationEvent;
-  settingsSecretsReadKeys?: ReadonlyArray<Uint8Array | null | undefined>;
+  savedSecretMaterializer?: SavedSecretMaterializerV1;
+  assertCurrent?: () => void | Promise<void>;
   nowMs?: () => number;
   network?: WebhookActivityNotificationNetworkDependencies;
   previewBehavior?: AttentionPreviewBehavior;
@@ -183,6 +194,9 @@ export async function sendWebhookActivityNotificationAsync(params: Readonly<{
     }
     : null;
   const payload = buildActivityWebhookPayload({
+    // Only the canonical content builder's privacy-admitted projection leaves
+    // the process; raw Account evidence never bypasses preview policy.
+    ...(params.event.topic === 'connected_service_usage' ? { metadata: built.data } : {}),
     ...(params.event.topic === 'notify_me' ? { notificationOpen: params.event.open } : {}),
     channelId: params.channel.id,
     createdAt: (params.nowMs ?? (() => Date.now()))(),
@@ -209,15 +223,20 @@ export async function sendWebhookActivityNotificationAsync(params: Readonly<{
     'content-type': 'application/json',
     'content-length': String(body.byteLength),
   };
-  const signingSecret = readSigningSecret(
-    params.channel.signingSecret,
-    params.settingsSecretsReadKeys ?? [],
-  );
+  const signingSecret = resolveWebhookNotificationSigningSecret(params);
   if (signingSecret) {
-    headers['x-happier-signature-256'] = `sha256=${createHmac('sha256', signingSecret).update(body).digest('hex')}`;
+    headers['x-happier-signature-256'] = `sha256=${createHmac('sha256', signingSecret.value).update(body).digest('hex')}`;
   }
 
-  const response = await openWebhookPostAsync({ url: params.channel.url, body, headers,
+  const response = await openWebhookPostAsync({ url: params.channel.url, body, headers, requirePublicHttps: true,
+    beforeOpen: async () => {
+      await params.assertCurrent?.();
+      if (!signingSecret) return;
+      const current = params.savedSecretMaterializer?.recheck(signingSecret.reference, signingSecret.fingerprint)
+        ?? { status: 'temporarily_unavailable' as const };
+      if (current.status !== 'ready') throw new SavedSecretResolutionError({ reference: signingSecret.reference,
+        status: current.status, consumer: 'notification-channel', field: 'signingSecretRef' });
+    },
     wallTimeMs: WEBHOOK_REQUEST_WALL_TIME_MS, ...(params.network ? { network: params.network } : {}) });
   response.cancel();
   if (response.status >= 300 && response.status < 400) {

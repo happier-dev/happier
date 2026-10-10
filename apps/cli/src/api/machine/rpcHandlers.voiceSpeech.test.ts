@@ -250,6 +250,8 @@ function registerDefaultCatalogWithNoCredentialSource(options: Readonly<{
     settingsVersion: 1,
     loadedAtMs: 1,
     settingsSecretsReadKeys: [],
+    connectedPurposeCatalog: { status: 'ready', revision: 1,
+      record: { key: 'purposes', value: { v: 1, bindings: [] } } } satisfies NonNullable<ActiveAccountSettingsSnapshot['connectedPurposeCatalog']>,
     settings: {
       voiceSettingsV1: {
         providers: {
@@ -299,6 +301,37 @@ async function upload(
 }
 
 describe('unified Voice speech machine RPC', () => {
+  it('applies an admitted declared voice without replacing Account credentials or other speech settings', async () => {
+    const { handlers, registrar } = manager();
+    const preference = { providerContributionId: `${target.pluginId}/${target.localId}`,
+      settingFieldPath: 'voiceName', value: ' session-custom-voice ' };
+    const actualVoice = { ...preference, value: 'session-custom-voice' };
+    const synthesize = vi.fn<NonNullable<SpeechProviderRuntime['synthesize']>>(async (request, context) => {
+      expect(request).toMatchObject({ voiceName: 'session-custom-voice', format: 'wav' });
+      expect(context.settings).toEqual({ voiceName: preference.value, format: 'wav' });
+      expect(context.credentials).toBe(credentials);
+      return { requestId: request.requestId, bytes: new Uint8Array([1]), mimeType: 'audio/wav' };
+    });
+    const registration = registerMachineVoiceSpeechRpcHandlers({
+      rpcHandlerManager: registrar as never,
+      resolveSpeechRuntime: resolveRuntime({ kind: 'speech', synthesize }, contribution({
+        roles: ['conversation_tts'], catalogs: [{ kind: 'voices', settingFieldId: 'voiceName', allowCustom: true }],
+      })),
+    });
+    const recipient = createTransferRecipientKeyPair();
+    try {
+      await expect(handlers.get(RPC_METHODS.DAEMON_VOICE_SPEECH_SYNTHESIZE)?.({
+        target, requestId: 'bound-voice', input: 'Hello', voicePreference: preference,
+        recipientPublicKeyBase64: recipient.recipientPublicKeyBase64,
+      })).resolves.toMatchObject({ ok: true, appliedVoice: actualVoice });
+      await expect(handlers.get(RPC_METHODS.DAEMON_VOICE_SPEECH_SYNTHESIZE)?.({
+        target, requestId: 'wrong-field', input: 'Hello',
+        voicePreference: { ...preference, settingFieldPath: 'format', value: 'mp3' },
+        recipientPublicKeyBase64: recipient.recipientPublicKeyBase64,
+      })).resolves.toEqual({ ok: false, errorCode: 'invalid_parameters' });
+      expect(synthesize).toHaveBeenCalledOnce();
+    } finally { await registration.dispose(); }
+  });
   it('pins a selected Connected Account revision for one speech callback and admits it for the next', async () => {
     const { handlers, registrar } = manager();
     const principal = PluginInstallReviewPrincipalDigestSchema.parse('a'.repeat(64));
@@ -430,6 +463,10 @@ describe('unified Voice speech machine RPC', () => {
             settingsVersion: 1,
             loadedAtMs: 1,
             settingsSecretsReadKeys: [],
+            connectedPurposeCatalog: { status: 'ready', revision: 1, record: { key: 'purposes', value: { v: 1, bindings: [{
+              purpose: { consumer: target, purpose: 'voice.speech' }, target: { kind: 'account',
+                account: { service: { pluginId: 'happier.google', localId: 'oauth' }, accountId: 'google-a' } },
+            }] } } } satisfies NonNullable<ActiveAccountSettingsSnapshot['connectedPurposeCatalog']>,
             settings: {
               voiceSettingsV1: {
                 providers: {
@@ -443,19 +480,6 @@ describe('unified Voice speech machine RPC', () => {
                   credentialSlotId: 'api_key',
                   credentialSource: { kind: 'connectedAccount' },
                   credentialBindings: { account: {} },
-                }],
-              },
-              connectedAccountPurposeBindingsV1: {
-                v: 1,
-                bindings: [{
-                  purpose: { consumer: target, purpose: 'voice.speech' },
-                  target: {
-                    kind: 'account',
-                    account: {
-                      service: { pluginId: 'happier.google', localId: 'oauth' },
-                      accountId: 'google-a',
-                    },
-                  },
                 }],
               },
             } as never,
@@ -519,6 +543,10 @@ describe('unified Voice speech machine RPC', () => {
       settingsVersion: 1,
       loadedAtMs: 1,
       settingsSecretsReadKeys: [],
+      connectedPurposeCatalog: { status: 'ready', revision: 1, record: { key: 'purposes', value: { v: 1, bindings: [{
+        purpose: { consumer: target, purpose: 'voice.speech' }, target: { kind: 'account',
+          account: { service: { pluginId: 'happier.google', localId: 'oauth' }, accountId } },
+      }] } } } satisfies NonNullable<ActiveAccountSettingsSnapshot['connectedPurposeCatalog']>,
       settings: accountSettingsParse({
         voiceSettingsV1: {
           providers: {
@@ -532,19 +560,6 @@ describe('unified Voice speech machine RPC', () => {
             credentialSlotId: 'api_key',
             credentialSource: { kind: 'connectedAccount' },
             credentialBindings: { account: {} },
-          }],
-        },
-        connectedAccountPurposeBindingsV1: {
-          v: 1,
-          bindings: [{
-            purpose: { consumer: target, purpose: 'voice.speech' },
-            target: {
-              kind: 'account',
-              account: {
-                service: { pluginId: 'happier.google', localId: 'oauth' },
-                accountId,
-              },
-            },
           }],
         },
       }),
@@ -612,7 +627,9 @@ describe('unified Voice speech machine RPC', () => {
         }),
         resolveConnectedAccountPurposeBindingOwner: () => ({
           getBinding: async () => {
-            const selectedTarget = currentSnapshot.settings.connectedAccountPurposeBindingsV1.bindings[0]!.target;
+            const purposes = currentSnapshot.connectedPurposeCatalog;
+            if (purposes?.status !== 'ready' || purposes.record.key !== 'purposes') throw new Error('Purpose catalog unavailable');
+            const selectedTarget = purposes.record.value.bindings[0]!.target;
             if (selectedTarget.kind !== 'account') throw new Error('speech fixture requires an account target');
             return {
               purpose: 'voice.speech',
@@ -1407,12 +1424,14 @@ describe('unified Voice speech machine RPC', () => {
     }
     const providerId = `${target.pluginId}/${target.localId}`;
     const providerConfig = Object.freeze({ model: 'gemini-2.5-flash' });
-    let snapshot = {
+    let snapshot: ActiveAccountSettingsSnapshot = {
       source: 'network' as const,
       scopeKey: 'account-scope',
       settingsVersion: 1,
       loadedAtMs: 1,
       settingsSecretsReadKeys: [],
+      connectedPurposeCatalog: { status: 'ready', revision: 1,
+        record: { key: 'purposes', value: { v: 1, bindings: [] } } } satisfies NonNullable<ActiveAccountSettingsSnapshot['connectedPurposeCatalog']>,
       settings: {
         voiceSettingsV1: {
           providers: {
@@ -1429,6 +1448,10 @@ describe('unified Voice speech machine RPC', () => {
       snapshot = {
         ...snapshot,
         settingsVersion: 2,
+        connectedPurposeCatalog: { status: 'ready', revision: 2, record: { key: 'purposes', value: { v: 1, bindings: [{
+          purpose: { consumer: target, purpose: 'voice.speech' }, target: { kind: 'account',
+            account: { service: { pluginId: 'happier.google', localId: 'oauth' }, accountId: 'google-a' } },
+        }] } } } satisfies NonNullable<ActiveAccountSettingsSnapshot['connectedPurposeCatalog']>,
         settings: {
           voiceSettingsV1: {
             providers: {
@@ -1442,19 +1465,6 @@ describe('unified Voice speech machine RPC', () => {
               credentialSlotId: 'api_key',
               credentialSource: { kind: 'connectedAccount' },
               credentialBindings: { account: {} },
-            }],
-          },
-          connectedAccountPurposeBindingsV1: {
-            v: 1,
-            bindings: [{
-              purpose: { consumer: target, purpose: 'voice.speech' },
-              target: {
-                kind: 'account',
-                account: {
-                  service: { pluginId: 'happier.google', localId: 'oauth' },
-                  accountId: 'google-a',
-                },
-              },
             }],
           },
         } as never,

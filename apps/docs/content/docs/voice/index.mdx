@@ -45,6 +45,27 @@ gate; a direct link cannot bypass it. Dictation remains independent. See
 
 ## Conversation modes
 
+### Session targets and preferences in development
+
+The development Voice lifecycle distinguishes a particular session from global
+mode. Opening another session does not retarget a running conversation; Mute,
+Interrupt, End and recovery address the captured attempt. These operations keep
+the ordinary configurable approval policy, and microphone consent still requires
+the device's permission flow. A headless caller without an answering client
+cannot start client-local audio.
+
+Development source also adds a private per-session voice preference. Leaving it
+unset follows the account's selected voice provider. Selecting a voice overrides
+only that provider's declared voice field: it does not change credentials, model
+or speed. An unavailable voice or a choice for another provider requires repair,
+not a silent provider switch. A saved choice is for the next supported preparation;
+the current-conversation fact reflects only the voice actually accepted there.
+
+The Work picker, Talk presentation and exact-bound instruction preparation are
+still being integrated. This is not a claim that every local, daemon or native
+Agent carrier already receives the bound session's current instructions. Global
+mode must not borrow the visible session's persona. See [Session settings](/sessions/session-settings).
+
 The provider list is built from what is installed, so it grows when a plugin
 contributes a voice provider. The table keeps capability and channel statuses
 separate from the current development UI labels:
@@ -91,6 +112,24 @@ provider is **Off**, and it has its own speech-to-text selection under
 **Device STT (experimental)**; choose **Same as Local Voice** if you would rather it
 follow whatever Local voice is using.
 
+### Setup, Try and Brief in development
+
+In 0.3 development, **Set up voice** on Home and in Voice settings guides you
+through choosing a service, fixing its prerequisites, allowing the microphone and
+trying a conversation. **Try it** starts a real conversation in place. The Try
+step completes only after a retained spoken input and reply.
+
+Home's **Brief me** uses the work and attention already shown in Inbox: items that
+need you, failed work and ready work. It reports incomplete information and follows
+your Voice sharing settings when speaking. Review any permission request with a
+tap in the ordinary request UI.
+
+To continue on another device, open the same synced conversation and start Voice
+there. After the new attempt connects, a continuation note is synchronized. The
+previous device ends its own microphone when it observes that newer note for the
+same conversation. A disconnected device cannot observe it immediately, so this
+does not guarantee that only one microphone is active at every instant.
+
 ## Common settings
 
 > **Development builds:** BYO ElevenLabs agents must use the current Happier
@@ -116,10 +155,11 @@ attempt starts and retains it through reconnect. Changing settings does not reta
 or rewrite an already admitted conversation.
 
 In 0.3 development, **Greeting → Right away** uses a short shared greeting in
-the selected **Reply in** language when a translation is available. ElevenLabs
-waits until you speak when that language has no translated greeting, including
-automatic language; the Greeting row explains this. Local Agents and model-driven
-realtime services can generate their greeting in the requested language.
+the selected **Reply in** language when a translation is available. A selected
+welcome Doc supplies its own greeting text. Without a selected welcome Doc,
+ElevenLabs waits until you speak when that language has no translated greeting,
+including automatic language; the Greeting row explains this. Local Agents and
+model-driven realtime services can generate their greeting in the requested language.
 **Off** and **After I speak** send no immediate greeting.
 
 ### Voice UI defaults
@@ -130,9 +170,11 @@ realtime services can generate their greeting in the requested language.
 - whether the transcript is shown and opens when a conversation starts
 
 In the 0.3 development interface, **Show live Voice as** selects **Top bar**,
-**Island**, or **Orb** on this device. The default is Top bar on desktop and Island
-on phones. The Companion's Voice section stays available in each mode. Changing
-the container changes presentation, not the running conversation or its microphone.
+**Island**, or **Orb** on wide layouts. Phones offer **Island** and **Orb** only.
+The default is Top bar on wide layouts and Island on phones. A stored Top-bar
+choice displays as Island on a phone without rewriting the stored preference.
+The Companion's Voice section stays available in each mode. Changing the container
+changes presentation, not the running conversation or its microphone.
 
 Conversation scope and transcript preferences synchronize with your account;
 presence placement is device-local. These settings do not change how a provider speaks
@@ -164,11 +206,11 @@ support it. Tapping still starts or ends Voice, and the shortcut remains a toggl
 the keyboard owner currently does not admit a held-key release. Dictation and
 your unsent draft stay independent.
 
-### Voice activity feed
+### Conversation transcript
 
-**Enable voice activity feed** shows recent voice events directly in the UI while voice is active.
+**Show the transcript while talking** shows what you and the agent say while Voice is active.
 
-You can also enable **Auto-expand on start** if you want the activity feed to open automatically whenever a voice session starts.
+You can also enable **Open it when a conversation starts** to open the transcript automatically.
 
 ### Privacy
 
@@ -179,6 +221,12 @@ recent messages, tool names, device inventory, permission requests; and
 **Voice History**.
 
 Local file paths and tool arguments are always excluded from Voice provider context. Current settings do not offer controls to enable either one. For stricter privacy, disable the other context categories you do not want to share, such as **Share recent messages**.
+
+In 0.3 development, diagnostic recordings under **Local speech diagnostics** in
+**Privacy & data** are off by default. Enabling them asks for explicit consent
+before recording selected speech-to-text input or text-to-speech output. The
+section shows the recording location and retention policy, with export and
+deletion controls.
 
 > **Development status:** **Current UI context** is a Developer Preview
 > capability whose implementation and packaged web/iOS/Android certification
