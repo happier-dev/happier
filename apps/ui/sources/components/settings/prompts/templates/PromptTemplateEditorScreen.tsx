@@ -13,7 +13,9 @@ import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import type { PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import { Modal } from '@/modal';
 import { randomUUID } from '@/platform/randomUUID';
-import { useArtifacts, useSettingMutable } from '@/sync/domains/state/storage';
+import { useArtifacts } from '@/sync/domains/state/storage';
+import { usePromptLibraryCatalogValue } from '@/sync/store/usePromptLibraryCatalog';
+import { requireUpdatedPromptLibraryMutation } from '@/sync/api/account/apiPromptLibraryCatalog';
 import { t } from '@/text';
 import { PromptDocSelectionGroup } from '@/components/settings/prompts/shared/PromptDocSelectionGroup';
 import { usePromptEditorDraftField } from '@/components/settings/prompts/shared/usePromptEditorDraftField';
@@ -33,12 +35,14 @@ export const PromptTemplateEditorScreen = React.memo((props: Readonly<{ invocati
   const navigation = useNavigation();
   const isNew = props.invocationId === null;
   const artifacts = useArtifacts();
-  const [invocations, setInvocations] = useSettingMutable('promptInvocationsV1');
+  const { value: invocations, write: writeInvocations, status, stale } = usePromptLibraryCatalogValue('invocations');
+  const hasInvocations = invocations !== null;
+  const canWriteInvocations = hasInvocations && status === 'ready' && !stale;
 
   const existingEntry = React.useMemo(() => {
     if (!props.invocationId) return null;
-    return invocations.entries.find((e) => e.id === props.invocationId) ?? null;
-  }, [invocations.entries, props.invocationId]);
+    return invocations?.entries.find((e) => e.id === props.invocationId) ?? null;
+  }, [invocations, props.invocationId]);
 
   const promptDocs = React.useMemo(
     () => artifacts
@@ -95,7 +99,9 @@ export const PromptTemplateEditorScreen = React.memo((props: Readonly<{ invocati
   const loadedInvocationIdRef = React.useRef<string | null>(null);
 
   React.useEffect(() => {
+    if (!invocations) return;
     if (!existingEntry) {
+      if (loadedInvocationIdRef.current === null) return;
       loadedInvocationIdRef.current = null;
       setPristineTitle('');
       setPristineToken('');
@@ -125,6 +131,7 @@ export const PromptTemplateEditorScreen = React.memo((props: Readonly<{ invocati
     existingEntry?.target.artifactId,
     existingEntry?.title,
     existingEntry?.token,
+    hasInvocations,
     setPristineAllowArgs,
     setPristineBehavior,
     setPristineTargetArtifactId,
@@ -142,7 +149,7 @@ export const PromptTemplateEditorScreen = React.memo((props: Readonly<{ invocati
   // Saving makes the fields pristine, so a saved draft opens in its place without asking.
   const dirty = changed;
   const complete = title.trim().length > 0 && token.trim().length > 0 && targetArtifactId.trim().length > 0;
-  const canSave = complete && !saving && (isNew || changed);
+  const canSave = canWriteInvocations && complete && !saving && (isNew || changed);
 
   const updateToken = React.useCallback((next: string) => {
     setTokenError(null);
@@ -150,7 +157,7 @@ export const PromptTemplateEditorScreen = React.memo((props: Readonly<{ invocati
   }, [setToken]);
 
   const save = React.useCallback(async (): Promise<boolean> => {
-    if (!complete || saving) return false;
+    if (!canWriteInvocations || !invocations || !complete || saving) return false;
 
     const validation = validatePromptInvocationTokenV1({ token, entries: invocations.entries,
       excludingInvocationId: props.invocationId,
@@ -171,7 +178,9 @@ export const PromptTemplateEditorScreen = React.memo((props: Readonly<{ invocati
         id,
         token: rawToken,
         title: title.trim(),
-        target: { kind: 'doc', artifactId: targetArtifactId.trim() },
+        target: existingEntry?.target.artifactId === targetArtifactId.trim()
+          ? existingEntry.target
+          : { kind: 'doc', artifactId: targetArtifactId.trim() },
         behavior,
         allowArgs,
         availableIn: 'global',
@@ -181,7 +190,7 @@ export const PromptTemplateEditorScreen = React.memo((props: Readonly<{ invocati
         ? invocations.entries.map((e) => (e.id === props.invocationId ? entry : e))
         : [...invocations.entries, entry];
 
-      setInvocations({ ...invocations, entries: nextEntries });
+      requireUpdatedPromptLibraryMutation(await writeInvocations({ ...invocations, entries: nextEntries }));
       setPristineTitle(entry.title);
       setPristineToken(entry.token);
       setPristineTargetArtifactId(entry.target.artifactId);
@@ -195,7 +204,7 @@ export const PromptTemplateEditorScreen = React.memo((props: Readonly<{ invocati
     } finally {
       setSaving(false);
     }
-  }, [allowArgs, behavior, complete, invocations, props.invocationId, saving, setInvocations, setPristineAllowArgs, setPristineBehavior, setPristineTargetArtifactId, setPristineTitle, setPristineToken, targetArtifactId, title, token]);
+  }, [allowArgs, behavior, canWriteInvocations, complete, existingEntry, invocations, props.invocationId, saving, writeInvocations, setPristineAllowArgs, setPristineBehavior, setPristineTargetArtifactId, setPristineTitle, setPristineToken, targetArtifactId, title, token]);
 
   const leave = React.useCallback(() => setPendingHref(promptCollectionRoot('template')), []);
   React.useEffect(() => {
@@ -221,17 +230,21 @@ export const PromptTemplateEditorScreen = React.memo((props: Readonly<{ invocati
   });
 
   const remove = React.useCallback(async () => {
-    if (!props.invocationId) return;
+    if (!props.invocationId || !canWriteInvocations || !invocations) return;
     const confirmed = await Modal.confirm(
       t('promptLibrary.deleteTemplate'),
       t('promptLibrary.deleteTemplateConfirm'),
       { confirmText: t('common.delete'), destructive: true },
     );
     if (!confirmed) return;
-    setInvocations({ ...invocations, entries: invocations.entries.filter((e) => e.id !== props.invocationId) });
-    discard();
-    leave();
-  }, [discard, invocations, leave, props.invocationId, setInvocations]);
+    try {
+      requireUpdatedPromptLibraryMutation(await writeInvocations({ ...invocations, entries: invocations.entries.filter((e) => e.id !== props.invocationId) }));
+      discard();
+      leave();
+    } catch {
+      Modal.alert(t('common.error'), t('promptLibrary.saveError'));
+    }
+  }, [canWriteInvocations, discard, invocations, leave, props.invocationId, writeInvocations]);
 
   const menuActions = React.useMemo((): readonly PageHeaderMenuAction[] => (props.invocationId
     ? [{ id: 'delete', testID: 'promptTemplate.delete', title: t('common.delete'), onSelect: remove }]

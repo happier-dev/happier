@@ -14,7 +14,7 @@ export const PROMPTS_CONTEXT_SETTINGS = defineSettingsPage({
     subpage: { id: 'context', route: PROMPTS_CONTEXT_ROUTE, titleKey: 'contextPages.account.title' },
     sections: {
         memoryDefaults: {
-            titleKey: 'promptLibrary.memoryDefaultsTitle',
+            titleKey: 'promptLibrary.memoryUseInNewSessionsTitle',
             settings: {
                 memoryUseInNewSessions: ACCOUNT_SETTING_DECLARATIONS_V1.memoryUseInNewSessions,
                 memoryUseInNewBots: ACCOUNT_SETTING_DECLARATIONS_V1.memoryUseInNewBots,

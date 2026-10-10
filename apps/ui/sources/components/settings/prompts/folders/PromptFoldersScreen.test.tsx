@@ -99,9 +99,11 @@ describe('Prompt folders: the Artifacts folder tree filtered to prompts, through
         await vi.waitFor(() => expect(screen.findByTestId('promptFolders:row:folder:parent')).toBeTruthy());
         prompt.mockClear();
         alert.mockClear();
-        prompt.mockResolvedValueOnce('  Release   notes  ');
+        expect(screen.findHostByTestId('promptFolders.add')?.props.accessibilityState).toMatchObject({ disabled: false, busy: false });
         await screen.pressByTestIdAsync('promptFolders.add');
-        expect(prompt).toHaveBeenCalledTimes(1);
+        await act(async () => { screen.findByTestId('promptFolders:edit:name')!.props.onChangeText('  Release   notes  '); });
+        await screen.pressByTestIdAsync('promptFolders:edit:save');
+        expect(prompt).not.toHaveBeenCalled();
         // The write and the catalog reread both cross the real Home HTTP boundary.
         await vi.waitFor(() => expect({
             alerts: alert.mock.calls,
@@ -115,9 +117,10 @@ describe('Prompt folders: the Artifacts folder tree filtered to prompts, through
             folder: { name: 'Release notes', parentId: null },
         }), { timeout: 10_000 });
         await vi.waitFor(() => expect(screen.findByTestId(`promptFolders:row:folder:${state.read().folders.find(folder => folder.name === 'Release notes')?.id}`)).toBeTruthy(), { timeout: 10_000 });
-        prompt.mockResolvedValueOnce('release NOTES');
         await screen.pressByTestIdAsync('promptFolders.add');
-        expect(prompt).toHaveBeenCalledTimes(2);
+        await act(async () => { screen.findByTestId('promptFolders:edit:name')!.props.onChangeText('release NOTES'); });
+        await screen.pressByTestIdAsync('promptFolders:edit:save');
+        expect(prompt).not.toHaveBeenCalled();
         expect(state.read().folders).toHaveLength(3);
         expect(state.read().artifactHeadersById?.received).toEqual({ folderId: 'parent', tags: ['personal'] });
         expect(state.fixture.requests.some(request => request.path === '/v2/account/settings' && request.method !== 'GET')).toBe(false);

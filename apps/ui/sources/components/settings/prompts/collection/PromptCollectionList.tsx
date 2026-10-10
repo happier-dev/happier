@@ -17,7 +17,8 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { useArtifacts, useSetting } from '@/sync/domains/state/storage';
+import { useArtifacts } from '@/sync/domains/state/storage';
+import { usePromptLibraryCatalogValue } from '@/sync/store/usePromptLibraryCatalog';
 import { t } from '@/text';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -108,8 +109,8 @@ function collectionCopy(kind: PromptCollectionKind) {
 /** The items of one prompt collection, filtered by `query`, grouped by folder where that says something. */
 export function usePromptCollection(kind: PromptCollectionKind, query: string): PromptCollection {
     const artifacts = useArtifacts();
-    const folders = useSetting('promptFoldersV1');
-    const invocations = useSetting('promptInvocationsV1');
+    const { value: folders } = usePromptLibraryCatalogValue('folders');
+    const { value: invocations } = usePromptLibraryCatalogValue('invocations');
     const untitled = kind === 'doc' ? t('promptLibrary.untitledPrompt') : t('promptLibrary.untitledSkill');
     return React.useMemo(() => (kind === 'template'
         ? buildPromptTemplateCollection({ invocations, query })

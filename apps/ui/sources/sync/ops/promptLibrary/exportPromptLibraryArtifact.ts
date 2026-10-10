@@ -1,29 +1,33 @@
-import { exportPromptLibraryArtifact, readPromptLibraryArtifactForExport as readStoredPromptLibraryArtifactForExport, type ExportablePromptLibraryArtifact } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
+import { exportPromptLibraryArtifact, readPromptLibraryArtifactForExport as readStoredPromptLibraryArtifactForExport, type ExportablePromptLibraryArtifact, type PromptLibraryArtifactStore } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
 import type { PromptAssetInstallModeV1, PromptAssetScopeV1 } from '@happier-dev/protocol/prompts/library/promptAssetDescriptorsV1';
 import type { PromptAssetMutationResponseV1 } from '@happier-dev/protocol/prompts/library/promptAssetsV1';
 import type { PromptExternalLinksV1 } from '@happier-dev/protocol/prompts/library/promptExternalLinksV1';
+import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
 
 import { machinePromptAssetsWrite } from '@/sync/ops/machinePromptAssets';
 import { randomUUID } from '@/platform/randomUUID';
 import { runTransferFinalizeRecovery } from '@/components/transfers/recovery/runTransferFinalizeRecovery';
 import { t } from '@/text';
 import { isTransferFinalizeRecoveryFailure } from '@/sync/domains/transfers/runtime/transferRuntime/plumbing/directTransferFinalizeRecovery';
-import { uiPromptLibraryArtifactStore } from './promptLibraryArtifactStore';
+import { withUiPromptLibraryArtifactStore } from './promptLibraryArtifactStore';
 
 export type { ExportablePromptLibraryArtifact };
 
 export async function readPromptLibraryArtifactForExport(
   artifactId: string,
+  serverId?: string | null,
 ): Promise<ExportablePromptLibraryArtifact | null> {
-  return await readStoredPromptLibraryArtifactForExport({
-    store: uiPromptLibraryArtifactStore,
+  return await withUiPromptLibraryArtifactStore((store) => readStoredPromptLibraryArtifactForExport({
+    store,
     artifactId,
-  });
+  }), { serverId });
 }
 
 export async function writePromptLibraryArtifactToExternalAsset(args: Readonly<{
   artifactId: string;
   machineId: string;
+  machineTarget: MachineAdministrationTargetV1;
+  libraryServerIdentityId: string;
   assetTypeId: string;
   scope: PromptAssetScopeV1;
   serverId?: string | null;
@@ -32,7 +36,7 @@ export async function writePromptLibraryArtifactToExternalAsset(args: Readonly<{
   installMode?: PromptAssetInstallModeV1;
   promptExternalLinks: PromptExternalLinksV1 | null | undefined;
   previewOnly: boolean;
-}>): Promise<
+}>, store?: PromptLibraryArtifactStore): Promise<
   | Readonly<{ ok: false; error: string; errorCode?: string; currentDigest?: string | null }>
   | Readonly<{
       ok: true;
@@ -41,8 +45,11 @@ export async function writePromptLibraryArtifactToExternalAsset(args: Readonly<{
       nextPromptExternalLinks?: PromptExternalLinksV1;
     }>
 > {
-  const result = await exportPromptLibraryArtifact({
-    store: uiPromptLibraryArtifactStore,
+  const { machineTarget, libraryServerIdentityId, ...request } = args;
+  const runExport = (current: PromptLibraryArtifactStore) => exportPromptLibraryArtifact({
+    machineTarget,
+    libraryServerIdentityId,
+    store: current,
     write: async ({ machineId, serverId, request }) => {
       let response = await machinePromptAssetsWrite(
         machineId,
@@ -71,9 +78,10 @@ export async function writePromptLibraryArtifactToExternalAsset(args: Readonly<{
       }
       return response;
     },
-    request: args,
+    request,
     randomId: randomUUID,
   });
+  const result = await (store ? runExport(store) : withUiPromptLibraryArtifactStore(runExport));
   if (!result.ok) return result;
   return {
     ok: true,

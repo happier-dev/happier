@@ -1,220 +1,288 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
-import type { PromptStackEntryV1, PromptStacksV1 } from '@happier-dev/protocol';
+import type { PromptArtifactRefV1 } from '@happier-dev/protocol/prompts/library/promptArtifactRefsV1';
+import type { PromptStackIntentV1 } from '@happier-dev/protocol/prompts/library/promptStacksV1';
 
+import { AccountMemoryDefaultsSection } from '@/components/settings/prompts/context/AccountMemoryDefaultsSection';
+import { ContextMemorySection } from '@/components/settings/prompts/context/ContextMemorySection';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
-import { Switch } from '@/components/ui/forms/Switch';
+import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
+import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { Modal } from '@/modal';
-import { useArtifacts, useSettingMutable } from '@/sync/domains/state/storage';
+import {
+  useActiveServerAccountScope,
+} from '@/sync/domains/state/storage';
+import { randomUUID } from '@/platform/randomUUID';
+import { useAiLaunchProfiles } from '@/sync/store/useAiLaunchProfiles';
+import { usePromptLibraryCatalogValue } from '@/sync/store/usePromptLibraryCatalog';
 import { t } from '@/text';
 
-const styles = StyleSheet.create(() => ({
-  rightControls: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-}));
+import { PromptStackDocumentMenu } from './PromptStackDocumentMenu';
+import { PromptStackEntryRow } from './PromptStackEntryRow';
+import {
+  isMemoryStackEntry,
+  promptStackEntryHref,
+  promptStackEntryTitle,
+  usePromptStackEntryPresentations,
+} from './promptStackEntryPresentation';
+import { usePromptStackEntries } from './usePromptStackEntries';
 
-function moveEntry(entries: PromptStackEntryV1[], id: string, delta: number): PromptStackEntryV1[] {
-  const idx = entries.findIndex((e) => e.id === id);
-  if (idx < 0) return entries;
-  const nextIndex = idx + delta;
-  if (nextIndex < 0 || nextIndex >= entries.length) return entries;
-  const next = entries.slice();
-  const [item] = next.splice(idx, 1);
-  if (!item) return entries;
-  next.splice(nextIndex, 0, item);
-  return next;
-}
+/**
+ * The stack editor of one layer of Context. `coding` is Settings → Context (lab `c-ctx` A/D; plan 65
+ * §2 flow 1): the Account's memory defaults, your memory with its load budget, the documents added
+ * to every session, then the Voice and launch-profile stacks as destinations. `voice` and `profile`
+ * are those destinations: the same document rows on their own page. Every edit is the layer's one
+ * stack writer (`usePromptStackEntries`).
+ */
+export const PromptStackEditorScreen = React.memo(
+  (
+    props: Readonly<{
+      surface: 'coding' | 'voice' | 'profile';
+      profileId?: string | null;
+      title: string;
+    }>,
+  ) => {
+    const router = useRouter();
+    const scope = useActiveServerAccountScope();
+    const stack = usePromptStackEntries(props.surface, props.profileId);
+    const entries = stack.entries;
+    const account = props.surface === 'coding';
 
-function updateStacksForSurface(args: Readonly<{
-  stacks: PromptStacksV1;
-  surface: 'coding' | 'voice' | 'profile';
-  profileId?: string | null;
-  nextEntries: PromptStackEntryV1[];
-}>): PromptStacksV1 {
-  if (args.surface === 'coding') {
-    return { ...args.stacks, surfaces: { ...args.stacks.surfaces, coding: args.nextEntries } };
-  }
-  if (args.surface === 'voice') {
-    return { ...args.stacks, surfaces: { ...args.stacks.surfaces, voice: args.nextEntries } };
-  }
-  const profileId = typeof args.profileId === 'string' ? args.profileId.trim() : '';
-  const profilesById = { ...(args.stacks.surfaces.profilesById ?? {}) };
-  profilesById[profileId] = args.nextEntries;
-  return { ...args.stacks, surfaces: { ...args.stacks.surfaces, profilesById } };
-}
-
-function readStackEntries(args: Readonly<{ stacks: PromptStacksV1; surface: 'coding' | 'voice' | 'profile'; profileId?: string | null }>): PromptStackEntryV1[] {
-  if (args.surface === 'coding') return args.stacks.surfaces.coding ?? [];
-  if (args.surface === 'voice') return args.stacks.surfaces.voice ?? [];
-  const profileId = typeof args.profileId === 'string' ? args.profileId.trim() : '';
-  return (args.stacks.surfaces.profilesById ?? {})[profileId] ?? [];
-}
-
-export const PromptStackEditorScreen = React.memo((props: Readonly<{
-  surface: 'coding' | 'voice' | 'profile';
-  profileId?: string | null;
-  title: string;
-}>) => {
-  const router = useRouter();
-  const artifacts = useArtifacts();
-  const [promptStacksV1, setPromptStacksV1] = useSettingMutable('promptStacksV1');
-
-  const entries = React.useMemo(
-    () => readStackEntries({ stacks: promptStacksV1, surface: props.surface, profileId: props.profileId }),
-    [promptStacksV1, props.profileId, props.surface],
-  );
-
-  const titleByArtifactId = React.useMemo(() => {
-    const map = new Map<string, string>();
-    for (const artifact of artifacts) {
-      const title = typeof artifact.header?.title === 'string' ? artifact.header.title : artifact.title;
-      if (title) map.set(artifact.id, title);
-    }
-    return map;
-  }, [artifacts]);
-
-  const setEntries = React.useCallback((nextEntries: PromptStackEntryV1[]) => {
-    setPromptStacksV1(updateStacksForSurface({
-      stacks: promptStacksV1,
-      surface: props.surface,
-      profileId: props.profileId,
-      nextEntries,
-    }));
-  }, [promptStacksV1, props.profileId, props.surface, setPromptStacksV1]);
-
-  const openArtifactEditor = React.useCallback((entry: PromptStackEntryV1) => {
-    router.push(entry.ref.kind === 'bundle'
-      ? `/settings/prompts/skills/${entry.ref.artifactId}`
-      : `/settings/prompts/docs/${entry.ref.artifactId}`);
-  }, [router]);
-
-  const onAdd = React.useCallback(() => {
-    const params: string[] = [`surface=${encodeURIComponent(props.surface)}`];
-    if (props.surface === 'profile' && typeof props.profileId === 'string' && props.profileId.trim().length > 0) {
-      params.push(`profileId=${encodeURIComponent(props.profileId)}`);
-    }
-    const query = params.length > 0 ? `?${params.join('&')}` : '';
-    router.push(`/settings/prompts/stacks/pick${query}`);
-  }, [props.profileId, props.surface, router]);
-
-  const remove = React.useCallback((entryId: string) => {
-    Modal.alert(
-      t('promptLibrary.removeFromStack'),
-      t('promptLibrary.removeFromStackConfirm'),
-      [
-        { text: t('common.cancel'), style: 'cancel' },
-        {
-          text: t('common.remove'),
-          style: 'destructive',
-          onPress: () => setEntries(entries.filter((e) => e.id !== entryId)),
-        },
-      ],
+    const presentations = usePromptStackEntryPresentations(entries, scope?.serverId ?? '');
+    // Your memory is its own section on the Account page; it is never listed again as a document.
+    const memoryEntry = React.useMemo(
+      () =>
+        account
+          ? (entries.find((entry) =>
+              isMemoryStackEntry(entry, presentations),
+            ) ?? null)
+          : null,
+      [account, presentations, entries],
     );
-  }, [entries, setEntries]);
+    const documents = React.useMemo(
+      () =>
+        memoryEntry
+          ? entries.filter((entry) => entry.id !== memoryEntry.id)
+          : entries,
+      [entries, memoryEntry],
+    );
 
-  const description = props.surface === 'coding'
-    ? t('promptLibrary.codingStackSubtitle')
-    : props.surface === 'voice'
-      ? t('promptLibrary.voiceStackSubtitle')
-      : t('promptLibrary.surface.profileStackEditorDescription');
+    // A change that did not save says so on the page, above the list it left as it was, until the
+    // next attempt. The cause is ours to word: a thrown message is an internal string, never copy.
+    const [updateFailed, setUpdateFailed] = React.useState(false);
+    const update = React.useCallback(
+      (intent: PromptStackIntentV1) => {
+        setUpdateFailed(false);
+        void stack.update(intent).catch(() => setUpdateFailed(true));
+      },
+      [stack.update],
+    );
 
-  return (
-    <ItemList>
-      <SettingsPageHeader title={props.title} description={description} />
-      <ItemGroup
-        title={t('promptLibrary.stackEntries')}
-        description={t('promptLibrary.surface.stackEntriesDescription')}
-        action={(
-          <SectionActionButton
-            testID="promptStack.add"
-            title={t('promptLibrary.addToStack')}
-            icon="plus"
-            onPress={onAdd}
+    // "Add document" is the one document menu every Context layer opens (Work and Project too).
+    const [adding, setAdding] = React.useState(false);
+    const addAnchorRef = React.useRef<View>(null);
+    const attachedRefs = React.useMemo(() => entries.map(entry => entry.ref), [entries]);
+    const attach = React.useCallback(
+      (ref: PromptArtifactRefV1) => {
+        setAdding(false);
+        update({
+          kind: 'attach',
+          entry: {
+            id: randomUUID(),
+            ref,
+            enabled: true,
+            placement: ref.kind === 'bundle' ? 'skill_instructions' : 'system_append',
+          },
+        });
+      },
+      [update],
+    );
+
+    const remove = React.useCallback(
+      (entryId: string) => {
+        Modal.alert(
+          t('promptLibrary.removeFromStack'),
+          t('promptLibrary.removeFromStackConfirm'),
+          [
+            { text: t('common.cancel'), style: 'cancel' },
+            {
+              text: t('common.remove'),
+              style: 'destructive',
+              onPress: () =>
+                update({ kind: 'detach', entryId }),
+            },
+          ],
+        );
+      },
+      [update],
+    );
+
+    const setMemoryBudget = React.useCallback(
+      (maxChars: number | null) => {
+        if (!memoryEntry) return;
+        update({ kind: 'set_budget', entryId: memoryEntry.id, maxChars });
+      },
+      [memoryEntry, update],
+    );
+
+    const description = account
+      ? t('contextPages.account.description')
+      : props.surface === 'voice'
+        ? t('promptLibrary.voiceStackSubtitle')
+        : t('promptLibrary.surface.profileStackEditorDescription');
+
+    return (
+      <ItemList>
+        <SettingsPageHeader title={props.title} description={description} />
+        {updateFailed ? (
+          <SurfaceFreshnessLine
+            testID="promptStack.updateFailed"
+            tone="warning"
+            reason={t('promptLibrary.stackUpdateFailed')}
           />
-        )}
-      >
-          {entries.map((entry, index) => {
-            const title = titleByArtifactId.get(entry.ref.artifactId) ?? t('promptLibrary.untitledPrompt');
-            const subtitle = entry.placement === 'skill_instructions'
-              ? t('promptLibrary.stackPlacementSkill')
-              : (entry.placement === 'composer_insert' ? t('promptLibrary.stackPlacementComposer') : t('promptLibrary.stackPlacementSystem'));
-
-            return (
-              <Item
-                key={entry.id}
-                testID={`promptStack.entry.${entry.id}`}
-                title={title}
-                subtitle={subtitle}
-                onPress={() => openArtifactEditor(entry)}
-                rightElement={(
-                  <View style={styles.rightControls}>
-                    <ItemRowActions
-                      title={title}
-                      compactActionIds={['edit', 'delete']}
-                      actions={[
-                        {
-                          id: 'edit',
-                          title: t('common.edit'),
-                          icon: 'pencil',
-                          onPress: () => openArtifactEditor(entry),
-                        },
-                        {
-                          id: 'moveUp',
-                          title: t('common.moveUp'),
-                          icon: 'caret-up',
-                          disabled: index === 0,
-                          onPress: () => setEntries(moveEntry(entries, entry.id, -1)),
-                        },
-                        {
-                          id: 'moveDown',
-                          title: t('common.moveDown'),
-                          icon: 'caret-down',
-                          disabled: index === entries.length - 1,
-                          onPress: () => setEntries(moveEntry(entries, entry.id, 1)),
-                        },
-                        {
-                          id: 'delete',
-                          title: t('common.delete'),
-                          icon: 'trash',
-                          destructive: true,
-                          onPress: () => remove(entry.id),
-                        },
-                      ]}
-                    />
-                    <Switch
-                      value={entry.enabled}
-                      onValueChange={(enabled) => setEntries(entries.map((e) => (e.id === entry.id ? { ...e, enabled } : e)))}
-                    />
-                  </View>
-                )}
-                showChevron={false}
+        ) : null}
+        {account ? <AccountMemoryDefaultsSection /> : null}
+        {account && scope ? (
+          <ContextMemorySection
+            key={`${scope.serverId}:${scope.accountId}`}
+            testID="context.accountMemory"
+            title={t('contextPages.account.memoryTitle')}
+            description={t('contextPages.account.memoryDescription')}
+            serverId={scope.serverId}
+            entry={memoryEntry}
+            scopeTarget={{ scope: 'account' }}
+            footer={`${t('memoryContext.memory.accessPrivate')} · ${t('memoryContext.memory.usedWithMemoryOn')}`}
+            emptyText={t('contextPages.account.memoryEmpty')}
+            onBudgetChange={setMemoryBudget}
+            onEnabledChange={memoryEntry ? (enabled) => update({ kind: 'set_enabled', entryId: memoryEntry.id, enabled }) : undefined}
+          />
+        ) : null}
+        <ItemGroup
+          title={
+            account
+              ? t('contextPages.account.stackTitle')
+              : t('promptLibrary.stackEntries')
+          }
+          description={
+            account
+              ? t('contextPages.stackDescription')
+              : t('promptLibrary.surface.stackEntriesDescription')
+          }
+          action={
+            <View ref={addAnchorRef} collapsable={false}>
+              <SectionActionButton
+                testID="promptStack.add"
+                title={
+                  account
+                    ? t('contextPages.addDocument')
+                    : t('promptLibrary.addToStack')
+                }
+                icon="plus"
+                expanded={adding}
+                disabled={!scope}
+                onPress={() => setAdding(true)}
               />
-            );
-          })}
+              {adding && scope ? (
+                <PromptStackDocumentMenu
+                  testID="promptStack.addMenu"
+                  anchorRef={addAnchorRef}
+                  serverId={scope.serverId}
+                  attachedRefs={attachedRefs}
+                  onClose={() => setAdding(false)}
+                  onPick={attach}
+                />
+              ) : null}
+            </View>
+          }
+        >
+          {documents.map((entry, index) => (
+            <PromptStackEntryRow
+              key={entry.id}
+              testID={`promptStack.entry.${entry.id}`}
+              entry={entry}
+              title={promptStackEntryTitle(entry, presentations)}
+              unavailable={presentations(entry).kind === 'unknown'}
+              onOpen={presentations(entry).kind === 'unknown' ? undefined : () => {
+                const href = promptStackEntryHref(entry, presentations(entry).kind, scope?.serverId ?? '');
+                if (href) router.push(href as never);
+              }}
+              onMove={(delta) => {
+                const sibling = documents[index + delta];
+                if (!sibling) return;
+                // Moves are among the listed documents; the memory entry keeps its place in the stack.
+                update({ kind: 'reorder', entryId: entry.id, siblingId: sibling.id, position: delta < 0 ? 'before' : 'after' });
+              }}
+              canMoveUp={index > 0}
+              canMoveDown={index < documents.length - 1}
+              onRemove={() => remove(entry.id)}
+              onEnabledChange={(enabled) =>
+                update({ kind: 'set_enabled', entryId: entry.id, enabled })
+              }
+              onBudgetChange={(maxChars) => update({ kind: 'set_budget', entryId: entry.id, maxChars })}
+            />
+          ))}
 
-          {entries.length === 0 ? (
+          {documents.length === 0 ? (
             <Item
               testID="promptStack.empty"
-              title={t('promptLibrary.stackEmptyTitle')}
-              subtitle={t('promptLibrary.stackEmptySubtitle')}
+              title={
+                account
+                  ? t('contextPages.account.stackEmpty')
+                  : t('promptLibrary.stackEmptyTitle')
+              }
+              subtitle={
+                account ? undefined : t('promptLibrary.stackEmptySubtitle')
+              }
               mode="info"
               showChevron={false}
             />
           ) : null}
-      </ItemGroup>
-    </ItemList>
-  );
-});
+        </ItemGroup>
+        {account ? <OtherSessionStacks /> : null}
+      </ItemList>
+    );
+  },
+);
 
 PromptStackEditorScreen.displayName = 'PromptStackEditorScreen';
+
+/** Settings → Context › Other sessions: the Voice and launch-profile stacks, each on its own page. */
+const OtherSessionStacks = React.memo(function OtherSessionStacks() {
+  const router = useRouter();
+  const voice = usePromptLibraryCatalogValue('voice').value;
+  const profiles = useAiLaunchProfiles();
+  const voiceCount = voice?.entries.length ?? 0;
+  const profileCount = profiles.filter(
+    (profile) => (profile.promptStack?.length ?? 0) > 0,
+  ).length;
+  return (
+    <ItemGroup title={t('contextPages.account.otherTitle')}>
+      <Item
+        testID="promptStacks.voice"
+        icon={<Icon name="microphone" />}
+        title={t('contextPages.account.voiceTitle')}
+        subtitle={t('promptLibrary.voiceStackSubtitle')}
+        detail={voiceCount > 0 ? String(voiceCount) : undefined}
+        onPress={() => router.push('/settings/prompts/stacks/voice')}
+      />
+      <Item
+        testID="promptStacks.profiles"
+        icon={<Icon name="sliders-horizontal" />}
+        title={t('contextPages.account.profilesTitle')}
+        subtitle={t('promptLibrary.surface.profileStacksDescription')}
+        detail={
+          profileCount > 0
+            ? t('contextPages.account.profileCount', { count: profileCount })
+            : undefined
+        }
+        onPress={() => router.push('/settings/prompts/stacks/profiles')}
+      />
+    </ItemGroup>
+  );
+});

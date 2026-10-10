@@ -10,7 +10,6 @@ import {
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const setInvocationsMock = vi.fn();
 const routerReplaceSpy = vi.hoisted(() => vi.fn());
 const pathnameState = vi.hoisted(() => ({ value: '/settings/prompts/templates' }));
 const modalConfirmMock = vi.hoisted(() => vi.fn(async () => true));
@@ -57,51 +56,15 @@ installPromptTemplatesCommonModuleMocks({
             },
         }).module;
     },
-    storage: async (importOriginal) => {
-        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        return createPartialStorageModuleMock(importOriginal, {
-            useSetting: (key: string) => {
-                if (key === 'promptInvocationsV1') {
-                    return {
-                        v: 1,
-                        entries: [
-                            {
-                                id: 'template-1',
-                                token: '/daily',
-                                title: 'Daily',
-                                target: { kind: 'doc', artifactId: 'doc-1' },
-                                behavior: 'insert',
-                                allowArgs: false,
-                                availableIn: 'global',
-                            },
-                        ],
-                    };
-                }
-                return null;
-            },
-            useSettingMutable: () => [
-                {
-                    v: 1,
-                    entries: [
-                        {
-                            id: 'template-1',
-                            token: '/daily',
-                            title: 'Daily',
-                            target: { kind: 'doc', artifactId: 'doc-1' },
-                            behavior: 'insert',
-                            allowArgs: false,
-                            availableIn: 'global',
-                        },
-                    ],
-                },
-                setInvocationsMock,
-            ],
-            useArtifacts: () => [
-                { id: 'doc-1', title: 'Prompt One', header: { kind: 'prompt_doc.v2', title: 'Prompt One' } },
-            ],
-        });
-    },
+    storage: importOriginal => importOriginal(),
 });
+
+const { storage } = await import('@/sync/domains/state/storageStore');
+const { settingsDefaults } = await import('@/sync/domains/settings/settings');
+const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+const { applyPromptLibraryCatalogSnapshot, resetPromptLibraryCatalogSnapshotsForTests } = await import('@/sync/store/settings/promptLibraryCatalogSnapshot');
+const { resetPromptLibraryCatalogEngineForTests } = await import('@/sync/engine/settings/promptLibraryCatalogEngine');
+const scope = { serverId: 'prompt-collection-home', accountId: 'prompt-collection-account' };
 
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
@@ -120,6 +83,14 @@ async function renderIndex(mode: CollectionLayoutHarnessMode) {
 
 describe('PromptCollectionIndex', () => {
     beforeEach(() => {
+        resetPromptLibraryCatalogEngineForTests();
+        resetPromptLibraryCatalogSnapshotsForTests();
+        storage.setState({ settings: settingsDefaults, settingsVersion: 7, settingsScope: scope, profileScope: scope, isDataReady: true });
+        publishAppliedActiveServerSnapshot({ serverId: scope.serverId, serverUrl: 'https://prompt-collection.invalid', generation: 1 });
+        applyPromptLibraryCatalogSnapshot(scope, { catalog: { status: 'ready', rows: [{ revision: 4,
+            record: { key: 'invocations', value: { v: 1, entries: [{ id: 'template-1', token: '/daily', title: 'Daily',
+                target: { kind: 'doc', artifactId: 'doc-1' }, behavior: 'insert', allowArgs: false, availableIn: 'global' }] } } }],
+            tombstones: [], diagnostics: [] }, rawSettings: {}, sourceSettingsVersion: 7 }, true);
         promptTemplatesRouterPushSpy.mockClear();
         routerReplaceSpy.mockClear();
         pathnameState.value = '/settings/prompts/templates';

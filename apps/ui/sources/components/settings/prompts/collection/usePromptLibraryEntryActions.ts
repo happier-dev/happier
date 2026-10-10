@@ -2,12 +2,14 @@ import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import { Modal } from '@/modal';
-import { deleteArtifact } from '@/sync/api/artifacts/apiArtifacts';
-import { storage, useSettingMutable } from '@/sync/domains/state/storage';
+import { ArtifactActionOutputSchemasV1, type ArtifactRevisionV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { ArtifactOrganizationMutationFailureV1 } from '@happier-dev/protocol/prompts/library/promptFolderActionsV1';
+import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
+import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { duplicatePromptBundle } from '@/sync/ops/promptLibrary/promptBundles';
 import { duplicatePromptDoc } from '@/sync/ops/promptLibrary/promptDocs';
-import { removePromptLibraryArtifactReferences } from '@/sync/ops/promptLibrary/promptLibraryReferences';
-import { sync } from '@/sync/sync';
 import { t } from '@/text';
 
 import { buildPromptAssetExportHref } from '../shared/buildPromptAssetExportHref';
@@ -15,14 +17,16 @@ import { promptCollectionItemHref } from './promptCollectionModel';
 
 /**
  * The rare operations on a saved prompt or skill, offered by its editor's `⋯` menu: duplicate it
- * (opening the copy), manage where it is exported, and delete it (after confirmation, pruning the
- * templates, system prompt additions and export links that point at it).
+ * (opening the copy), manage where it is exported, and delete it after confirmation.
+ * References stay authoritative: a required missing document must be explicitly repaired or detached.
  */
-export function usePromptLibraryEntryActions(kind: 'doc' | 'bundle') {
+export function usePromptLibraryEntryActions(kind: 'doc' | 'bundle', requestedScope?: ServerAccountScope | null,
+    review?: Readonly<{ expectedRevision?: ArtifactRevisionV1; assertCurrent?(): void }>) {
     const router = useRouter();
-    const [promptInvocationsV1, setPromptInvocationsV1] = useSettingMutable('promptInvocationsV1');
-    const [promptStacksV1, setPromptStacksV1] = useSettingMutable('promptStacksV1');
-    const [promptExternalLinksV1, setPromptExternalLinksV1] = useSettingMutable('promptExternalLinksV1');
+    const activeScope = useAccountSettingsScope();
+    const scope = requestedScope === undefined ? activeScope : requestedScope;
+    const serverId = scope?.serverId;
+    const accountId = scope?.accountId;
 
     /** Resolves `true` once the item is gone, so its editor can leave. */
     const remove = React.useCallback(async (artifactId: string): Promise<boolean> => {
@@ -33,46 +37,73 @@ export function usePromptLibraryEntryActions(kind: 'doc' | 'bundle') {
         );
         if (!confirmed) return false;
 
-        const credentials = sync.getCredentials();
-        if (!credentials) {
+        if (!serverId || !accountId) {
             Modal.alert(t('common.error'), t('errors.unknownError'));
             return false;
         }
 
+        let context: Awaited<ReturnType<typeof captureLazyActionAccountContext>> | undefined;
+        const controller = new AbortController();
+        let retirement: Readonly<{ dispose(): void }> | undefined;
         try {
-            await deleteArtifact(credentials, artifactId);
+            review?.assertCurrent?.();
+            context = await captureLazyActionAccountContext(serverId);
+            if (context.accountId !== accountId) throw new Error('action_account_scope_changed');
+            retirement = context.accountLifetime.onRetire(() => controller.abort());
+            const executor = createDefaultActionExecutor();
+            const actionContext = { serverId: context.serverId, surface: 'ui' as const, authority: 'present_user' as const, signal: controller.signal };
+            let expectedRevision = review?.expectedRevision;
+            if (!expectedRevision) {
+                const opened = await executor.execute('artifact.get', { artifactId }, actionContext);
+                if (!opened.ok) throw new Error(opened.errorCode);
+                const document = ArtifactActionOutputSchemasV1['artifact.get'].parse(opened.result).artifact;
+                if (!document) throw new Error('not_found');
+                expectedRevision = document.revision;
+            }
+            context.assertCurrent();
+            review?.assertCurrent?.();
+            const deleted = await executor.execute('artifact.delete', { artifactId, expectedRevision }, actionContext);
+            if (!deleted.ok) throw new Error(deleted.errorCode);
+            ArtifactActionOutputSchemasV1['artifact.delete'].parse(deleted.result);
+            return true;
         } catch {
             Modal.alert(t('common.error'), t('errors.unknownError'));
             return false;
-        }
-        storage.getState().deleteArtifact(artifactId);
-
-        const next = removePromptLibraryArtifactReferences({
-            artifactId,
-            promptInvocationsV1,
-            promptStacksV1,
-            promptExternalLinksV1,
-        });
-        setPromptInvocationsV1(next.promptInvocationsV1);
-        setPromptStacksV1(next.promptStacksV1);
-        setPromptExternalLinksV1(next.promptExternalLinksV1);
-        return true;
-    }, [promptExternalLinksV1, promptInvocationsV1, promptStacksV1, setPromptExternalLinksV1, setPromptInvocationsV1, setPromptStacksV1]);
+        } finally { retirement?.dispose(); context?.dispose(); }
+    }, [accountId, serverId, review?.assertCurrent, review?.expectedRevision]);
 
     const duplicate = React.useCallback(async (artifactId: string) => {
+        let context: Awaited<ReturnType<typeof captureLazyActionAccountContext>> | undefined;
+        const controller = new AbortController();
+        let retirement: Readonly<{ dispose(): void }> | undefined;
         try {
+            review?.assertCurrent?.();
+            if (!serverId || !accountId) throw new Error('action_account_scope_changed');
+            context = await captureLazyActionAccountContext(serverId);
+            if (context.accountId !== accountId) throw new Error('action_account_scope_changed');
+            retirement = context.accountLifetime.onRetire(() => controller.abort());
             const nextArtifactId = kind === 'doc'
-                ? await duplicatePromptDoc(artifactId)
-                : await duplicatePromptBundle(artifactId);
-            router.push(promptCollectionItemHref(kind, nextArtifactId) as never);
-        } catch {
+                ? await duplicatePromptDoc(artifactId, { serverId: context.serverId, signal: controller.signal })
+                : await duplicatePromptBundle(artifactId, { serverId: context.serverId, signal: controller.signal });
+            context.assertCurrent();
+            review?.assertCurrent?.();
+            router.push(promptCollectionItemHref(kind, nextArtifactId, { serverId }) as never);
+        } catch (error) {
+            if (error instanceof ArtifactOrganizationMutationFailureV1 && context) {
+                try {
+                    context.assertCurrent();
+                    review?.assertCurrent?.();
+                    router.push(promptCollectionItemHref(kind, error.details.artifactId, { serverId: context.serverId }) as never);
+                } catch { /* A retired captured Home cannot adopt the copied Artifact. */ }
+            }
             Modal.alert(t('common.error'), t('errors.unknownError'));
-        }
-    }, [kind, router]);
+        } finally { retirement?.dispose(); context?.dispose(); }
+    }, [kind, router, serverId, accountId, review?.assertCurrent]);
 
     const manageExternalAssets = React.useCallback((artifactId: string) => {
-        router.push(buildPromptAssetExportHref({ artifactId, libraryKind: kind }) as never);
-    }, [kind, router]);
+        if (!serverId) return;
+        router.push(buildPromptAssetExportHref({ artifactId, libraryKind: kind, serverId }) as never);
+    }, [kind, router, serverId]);
 
     return { remove, duplicate, manageExternalAssets } as const;
 }

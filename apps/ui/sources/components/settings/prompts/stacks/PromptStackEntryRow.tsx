@@ -12,15 +12,13 @@ import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { t } from '@/text';
 
 import { promptStackPlacementLabel } from './promptStackEntryPresentation';
-
-/** Forces the row's operations into the one "⋯" menu, beside the switch (lab `c-ctx`). */
-const OVERFLOW_ONLY_WIDTH_PX = 1;
+import { promptStackBudgetChoices } from './promptStackBudgetChoices';
 
 /**
- * One document in a Context list (Account, Voice, Profile, Project): its title, then one quiet line
- * of where its text goes and who can read it. "⋯" holds Edit, Move and Remove; the switch keeps a
- * document attached without using it. A layer that cannot switch or edit an entry passes no handler
- * and the control is not drawn; a read-only row has neither.
+ * One document in a Context list (Account, Voice, Profile, Project, a Session's Work › Context): its
+ * title, then one quiet line of where its text goes and who can read it. "⋯" holds Edit, Move and
+ * Remove beside the switch, which keeps a document attached without using it. A layer that cannot
+ * switch or edit an entry passes no handler and the control is not drawn; a read-only row has neither.
  */
 export const PromptStackEntryRow = React.memo(function PromptStackEntryRow(props: Readonly<{
     testID: string;
@@ -40,6 +38,17 @@ export const PromptStackEntryRow = React.memo(function PromptStackEntryRow(props
     onRemove?: () => void;
     onShare?: () => void;
     onEnabledChange?: (enabled: boolean) => void;
+    onBudgetChange?: (maxChars: number | null) => void;
+    /**
+     * Whether the document is in effect on this surface, when that is not the entry's own switch (a
+     * Session's view of an inherited entry it turned off, or one that is off where it was added).
+     */
+    on?: boolean;
+    /** The switch shows the state but cannot change it from here (off at its source). */
+    switchDisabled?: boolean;
+    /** This surface's word for taking the document out ("Remove from this session"). */
+    removeLabel?: string;
+    showDivider?: boolean;
 }>) {
     const { entry, onOpen, onMove, onRemove, onShare } = props;
     const actions = React.useMemo((): ItemAction[] => {
@@ -50,14 +59,23 @@ export const PromptStackEntryRow = React.memo(function PromptStackEntryRow(props
             list.push({ id: 'moveUp', title: t('common.moveUp'), icon: 'caret-up', disabled: !props.canMoveUp || props.disabled, onPress: () => onMove(-1) });
             list.push({ id: 'moveDown', title: t('common.moveDown'), icon: 'caret-down', disabled: !props.canMoveDown || props.disabled, onPress: () => onMove(1) });
         }
-        if (onRemove) list.push({ id: 'delete', title: t('common.remove'), icon: 'trash', destructive: true, disabled: props.disabled, onPress: onRemove });
+        if (props.onBudgetChange) {
+            for (const choice of promptStackBudgetChoices(entry.maxChars, {
+                everything: t('contextPages.load.everything'), words: count => t('contextPages.load.words', { count: count.toLocaleString() }),
+            })) list.push({ id: `budget.${choice.maxChars ?? 'all'}`, title: choice.title, icon: 'file-text',
+                group: { id: 'budget', title: t('contextPages.load.title') },
+                selected: (entry.maxChars ?? null) === choice.maxChars, disabled: props.disabled,
+                onPress: () => props.onBudgetChange?.(choice.maxChars) });
+        }
+        if (onRemove) list.push({ id: 'delete', title: props.removeLabel ?? t('common.remove'), icon: 'trash', destructive: true, disabled: props.disabled, onPress: onRemove });
         return list;
-    }, [onMove, onOpen, onRemove, onShare, props.canMoveDown, props.canMoveUp, props.disabled]);
-    const off = entry.enabled === false;
+    }, [entry.maxChars, onMove, onOpen, onRemove, onShare, props.canMoveDown, props.canMoveUp, props.disabled, props.removeLabel, props.onBudgetChange]);
+    const off = props.on === undefined ? entry.enabled === false : !props.on;
+    // With a switch on the row, the switch says "off"; the word is only for rows that have none.
     const subtitle = props.note ?? [
         promptStackPlacementLabel(entry.placement),
         props.access,
-        off ? t('contextPages.off') : null,
+        off && !props.onEnabledChange ? t('contextPages.off') : null,
     ].filter(Boolean).join('  ·  ');
     const hasControls = actions.length > 0 || props.onEnabledChange;
     return (
@@ -70,13 +88,15 @@ export const PromptStackEntryRow = React.memo(function PromptStackEntryRow(props
             onPress={onOpen}
             mode={onOpen ? 'interactive' : 'info'}
             showChevron={false}
+            showDivider={props.showDivider}
+            rightElementOutsidePressable
             rightElement={hasControls ? (
                 <View style={styles.controls}>
                     {actions.length > 0 ? (
                         <ItemRowActions
                             title={props.title}
                             actions={actions}
-                            layoutWidthPx={OVERFLOW_ONLY_WIDTH_PX}
+                            overflowOnly
                             overflowTriggerTestID={`${props.testID}.more`}
                         />
                     ) : null}
@@ -84,7 +104,8 @@ export const PromptStackEntryRow = React.memo(function PromptStackEntryRow(props
                         <Switch
                             testID={`${props.testID}.enabled`}
                             value={!off}
-                            disabled={props.disabled}
+                            disabled={props.disabled || props.switchDisabled}
+                            accessibilityLabel={props.title}
                             onValueChange={props.onEnabledChange}
                         />
                     ) : null}

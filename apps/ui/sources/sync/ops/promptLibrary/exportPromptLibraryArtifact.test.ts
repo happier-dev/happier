@@ -1,6 +1,8 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { getStorage } from '@/sync/domains/state/storage';
-import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { captureLazyActionAccountContext, type LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { createUiPromptLibraryArtifactStore } from './promptLibraryArtifactStore';
 import type { PromptAssetMutationResponseV1 } from '@happier-dev/protocol';
 import {
     createTransferFinalizeRecovery,
@@ -41,25 +43,22 @@ vi.mock('@/platform/randomUUID', () => ({
     randomUUID: () => 'link-1',
 }));
 
-beforeAll(async () => { await import('@/sync/domains/state/storageStore'); });
+let fixture: Awaited<ReturnType<typeof createPlainArtifactHomeFixture>>;
+let account: LazyActionAccountContext;
+afterEach(() => { account?.dispose(); fixture?.dispose(); });
 
 describe('writePromptLibraryArtifactToExternalAsset', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
         machinePromptAssetsWriteMock.mockClear();
-        const artifact = {
-            id: 'doc-1',
-            header: { title: 'Review prompt' },
-            title: 'Review prompt',
-            body: JSON.stringify({ v: 1, markdown: '# Review', createdAtMs: 1, updatedAtMs: 1 }),
-            headerVersion: 1,
-            bodyVersion: 1,
-            seq: 1,
-            createdAt: 1,
-            updatedAt: 1,
-            isDecrypted: true,
-        } satisfies DecryptedArtifact;
-        getStorage().setState({ artifacts: {} });
-        getStorage().getState().applyArtifacts([artifact]);
+        fixture = await createPlainArtifactHomeFixture('https://prompt-export-operations.test');
+        const { setServerProfileIdentityForUrl } = await import('@/sync/domains/server/serverProfiles');
+        await setServerProfileIdentityForUrl(fixture.home.serverUrl, 'srv_prompt_export_operations');
+        await fixture.boundary.handle('/v1/artifacts', { method: 'POST', body: JSON.stringify({ id: 'doc-1',
+            header: encodePlainArtifactStoredContent({ v: 1, kind: 'prompt_doc.v2', title: 'Review prompt' }),
+            body: encodePlainArtifactStoredContent({ body: JSON.stringify({ v: 1, markdown: '# Review', createdAtMs: 1, updatedAtMs: 1 }) }),
+            dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+        }) });
+        account = await captureLazyActionAccountContext(fixture.home.id);
     });
 
     it('finishes a retained prompt upload without issuing another write', async () => {
@@ -89,12 +88,14 @@ describe('writePromptLibraryArtifactToExternalAsset', () => {
         const result = await writePromptLibraryArtifactToExternalAsset({
             artifactId: 'doc-1',
             machineId: 'machine-1',
+            machineTarget: { serverIdentityId: 'srv_prompt_export_operations', machineId: 'machine-1' },
+            libraryServerIdentityId: 'srv_prompt_export_operations',
             assetTypeId: 'claude.command',
             scope: 'user',
             targetInput: 'review.md',
             promptExternalLinks: { v: 1, links: [] },
             previewOnly: false,
-        });
+        }, createUiPromptLibraryArtifactStore(account.workflowArtifacts));
 
         expect(result).toMatchObject({ ok: true, response: { digest: 'digest-recovered' } });
         expect(machinePromptAssetsWriteMock).toHaveBeenCalledTimes(1);
@@ -112,13 +113,15 @@ describe('writePromptLibraryArtifactToExternalAsset', () => {
         const result = await writePromptLibraryArtifactToExternalAsset({
             artifactId: 'doc-1',
             machineId: 'machine-1',
+            machineTarget: { serverIdentityId: 'srv_prompt_export_operations', machineId: 'machine-1' },
+            libraryServerIdentityId: 'srv_prompt_export_operations',
             assetTypeId: 'claude.command',
             scope: 'user',
             targetInput: 'review.md',
             promptExternalLinks: { v: 1, links: [] },
             previewOnly: false,
             serverId: 'server-1',
-        });
+        }, createUiPromptLibraryArtifactStore(account.workflowArtifacts));
 
         expect(result).toMatchObject({ ok: true });
         expect(machinePromptAssetsWriteMock).toHaveBeenCalledWith(

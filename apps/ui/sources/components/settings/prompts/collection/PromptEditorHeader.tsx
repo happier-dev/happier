@@ -1,8 +1,6 @@
 import * as React from 'react';
-import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { PageHeader, type PageHeaderMetaFact } from '@/components/ui/layout/PageHeader';
 import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
@@ -51,21 +49,16 @@ export const PromptEditorHeader = React.memo(function PromptEditorHeader(props: 
                     <Icon name={props.mark} size={20} color={theme.colors.text.secondary} />
                 </PageHeaderMarkSlot>
             )}
-            actions={(
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    <RoundButton
-                        testID={props.saveTestID}
-                        size="small"
-                        title={t('common.save')}
-                        disabled={props.saveDisabled}
-                        loading={props.saving}
-                        onPress={props.onSave}
-                    />
-                    {props.menuActions.length > 0 ? (
-                        <PageHeaderMenu testID={`${props.testID}.menu`} actions={props.menuActions} />
-                    ) : null}
-                </View>
-            )}
+            primaryAction={{
+                testID: props.saveTestID,
+                title: t('common.save'),
+                disabled: props.saveDisabled,
+                loading: props.saving,
+                onPress: props.onSave,
+            }}
+            actions={props.menuActions.length > 0 ? (
+                <PageHeaderMenu testID={`${props.testID}.menu`} actions={props.menuActions} />
+            ) : undefined}
         />
     );
 });

@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import type { PromptStacksV1 } from '@happier-dev/protocol';
 
 import { SettingRow } from '@/components/settings/shell/SettingRow';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
@@ -8,18 +7,15 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { useArtifacts, useSetting } from '@/sync/domains/state/storage';
+import { useArtifacts, useArtifactsLoaded } from '@/sync/domains/state/storage';
+import { usePromptLibraryCatalogValue } from '@/sync/store/usePromptLibraryCatalog';
+import { useHomeAiLaunchProfileCatalog } from '@/sync/store/useAiLaunchProfiles';
+import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { t } from '@/text';
 
+import { PROMPTS_CONTEXT_ROUTE } from './context/promptsContextSettings';
 import { PROMPTS_SETTINGS } from './promptsSettings';
 import { Icon } from '@/components/ui/icons/Icon';
-
-function countStackEntries(stacks: PromptStacksV1 | null | undefined): number {
-  const surfaces = stacks?.surfaces;
-  if (!surfaces) return 0;
-  const profileEntries = Object.values(surfaces.profilesById ?? {}).reduce((sum, entries) => sum + (entries?.length ?? 0), 0);
-  return (surfaces.coding?.length ?? 0) + (surfaces.voice?.length ?? 0) + profileEntries;
-}
 
 /**
  * `/settings/prompts`: the prompt library (prompts, skills, templates) with a count on each, then
@@ -30,9 +26,16 @@ export const PromptsSettingsHome = React.memo(() => {
   const promptAssetsExternalEnabled = useFeatureEnabled('prompts.assets.external');
   const promptRegistriesEnabled = useFeatureEnabled('prompts.skills.registries');
   const artifacts = useArtifacts();
-  const invocations = useSetting('promptInvocationsV1');
-  const folders = useSetting('promptFoldersV1');
-  const stacks = useSetting('promptStacksV1');
+  const artifactsLoaded = useArtifactsLoaded();
+  const invocations = usePromptLibraryCatalogValue('invocations').value;
+  const folders = usePromptLibraryCatalogValue('folders').value;
+  const coding = usePromptLibraryCatalogValue('coding').value;
+  const voice = usePromptLibraryCatalogValue('voice').value;
+  const { profiles, hasCompleteData: profilesLoaded } = useHomeAiLaunchProfileCatalog(useAccountSettingsScope());
+  const stackCount = coding && voice && profilesLoaded
+    ? coding.entries.length + voice.entries.length
+      + profiles.reduce((sum, profile) => sum + (profile.promptStack?.length ?? 0), 0)
+    : null;
 
   const counts = React.useMemo(() => {
     let docs = 0;
@@ -43,7 +46,8 @@ export const PromptsSettingsHome = React.memo(() => {
     }
     return { docs, skills };
   }, [artifacts]);
-  const count = (value: number) => t('promptLibrary.surface.itemCount', { count: value });
+  const count = (value: number | null | undefined) => value == null
+    ? undefined : t('promptLibrary.surface.itemCount', { count: value });
 
   return (
     <ItemList>
@@ -55,14 +59,14 @@ export const PromptsSettingsHome = React.memo(() => {
           icon={<Icon name="file-text" />}
           title={t('promptLibrary.prompts')}
           subtitle={t('promptLibrary.surface.promptsLinkDescription')}
-          detail={count(counts.docs)}
+          detail={count(artifactsLoaded ? counts.docs : null)}
           onPress={() => router.push('/settings/prompts/docs')}
         />
         <SettingRow
           testID="settings-prompts-library-skills"
           icon={<Icon name="sparkle" />}
           setting={PROMPTS_SETTINGS.settings.skills}
-          detail={count(counts.skills)}
+          detail={count(artifactsLoaded ? counts.skills : null)}
           onPress={() => router.push('/settings/prompts/skills')}
         />
         <Item
@@ -70,7 +74,7 @@ export const PromptsSettingsHome = React.memo(() => {
           icon={<Icon name="lightning" />}
           title={t('promptLibrary.templates')}
           subtitle={t('promptLibrary.surface.templatesLinkDescription')}
-          detail={count(invocations?.entries?.length ?? 0)}
+          detail={count(invocations?.entries.length)}
           onPress={() => router.push('/settings/prompts/templates')}
         />
       </ItemGroup>
@@ -79,17 +83,17 @@ export const PromptsSettingsHome = React.memo(() => {
         <Item
           testID="settings-prompts-stacks"
           icon={<Icon name="stack-simple" />}
-          title={t('promptLibrary.stacks')}
-          subtitle={t('promptLibrary.surface.stacksLinkDescription')}
-          detail={count(countStackEntries(stacks))}
-          onPress={() => router.push('/settings/prompts/stacks')}
+          title={t('contextPages.account.title')}
+          subtitle={t('contextPages.account.linkDescription')}
+          detail={count(stackCount)}
+          onPress={() => router.push(PROMPTS_CONTEXT_ROUTE)}
         />
         <Item
           testID="settings-prompts-folders"
           icon={<Icon name="folder-open" />}
           title={t('promptLibrary.folders')}
           subtitle={t('promptLibrary.surface.foldersLinkDescription')}
-          detail={count(folders?.folders?.length ?? 0)}
+          detail={count(folders?.folders.length)}
           onPress={() => router.push('/settings/prompts/folders')}
         />
       </ItemGroup>

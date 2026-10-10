@@ -5,12 +5,16 @@ import type { PromptExternalLinkEntryV1 } from '@happier-dev/protocol';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { useAllMachines, useSetting } from '@/sync/domains/state/storage';
+import { useAllMachines } from '@/sync/domains/state/storage';
+import { usePromptLibraryCatalogValue } from '@/sync/store/usePromptLibraryCatalog';
 import { t } from '@/text';
 
 import { buildPromptAssetExportHref } from './buildPromptAssetExportHref';
 import { describePromptExternalLinkSubtitle, describePromptExternalLinkTitle } from './promptExternalLinkPresentation';
 import { Icon } from '@/components/ui/icons/Icon';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
+import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
 
 export const PromptExternalLinksGroup = React.memo(function PromptExternalLinksGroup(props: Readonly<{
     artifactId: string | null;
@@ -18,10 +22,13 @@ export const PromptExternalLinksGroup = React.memo(function PromptExternalLinksG
     manageItemTestID: string;
     manageItemSubtitle: string;
     linkTestIDPrefix: string;
+    scope?: ServerAccountScope | null;
 }>) {
     const router = useRouter();
-    const machines = useAllMachines();
-    const promptExternalLinksV1 = useSetting('promptExternalLinksV1');
+    const activeMachines = useAllMachines();
+    const activeScope = useAccountSettingsScope();
+    const machines = props.scope === undefined || areAccountSettingsScopesEqual(props.scope, activeScope) ? activeMachines : [];
+    const promptExternalLinksV1 = usePromptLibraryCatalogValue('external-links', props.scope).value;
 
     const links = React.useMemo(() => (
         (promptExternalLinksV1?.links ?? []).filter((entry) => entry.artifactId === props.artifactId)
@@ -33,6 +40,7 @@ export const PromptExternalLinksGroup = React.memo(function PromptExternalLinksG
         router.push(buildPromptAssetExportHref({
             artifactId: props.artifactId!,
             libraryKind: props.libraryKind,
+            serverId: props.scope?.serverId,
             link,
         }));
     };

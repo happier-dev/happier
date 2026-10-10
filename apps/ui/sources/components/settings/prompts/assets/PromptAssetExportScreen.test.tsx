@@ -1,579 +1,138 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createPassThroughModule } from '@/dev/testkit/mocks/components';
-import { renderScreen } from '@/dev/testkit';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { PromptAssetTypeDescriptorV1 } from '@happier-dev/protocol';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { createPromptMachineTransferFixture, installPromptMachineSocketBoundary } from '@/dev/testkit/harness/promptMachineTransferBoundary';
+import { createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/promptLibraryCatalogBoundary';
+import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
 import { installPromptAssetsCommonModuleMocks } from './promptAssetsScreenTestHelpers';
 
+vi.mock('socket.io-client', async original => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
+vi.mock('@happier-dev/iroh-native', async original => (await import('@/dev/testkit/harness/promptMachineTransferBoundary')).createPromptNativeTransferModuleBoundary(original));
+installPromptMachineSocketBoundary();
+installPromptAssetsCommonModuleMocks({ storage: original => original(), reactNative: async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({ Platform: { OS: 'ios', select: ({ ios, default: fallback }: { ios?: unknown; default?: unknown }) => ios ?? fallback } });
+} });
+const { storage } = await import('@/sync/domains/state/storage');
+const { PromptAssetExportScreen } = await import('./PromptAssetExportScreen');
+const docType: PromptAssetTypeDescriptorV1 = { id: 'claude.command', providerId: 'claude', title: 'Commands', description: 'Markdown',
+    libraryKind: 'doc', supportsScope: { user: true, project: true }, supportsFiles: false, formatId: 'markdown_utf8_v1',
+    defaultRoots: [], capabilities: {} };
+const userType: PromptAssetTypeDescriptorV1 = { ...docType, id: 'claude.user.command', supportsScope: { user: true, project: false } };
+const skillType: PromptAssetTypeDescriptorV1 = { id: 'agents.skill', providerId: 'agents', title: 'Skills', description: 'Portable skills',
+    libraryKind: 'bundle', supportsScope: { user: true, project: true }, supportsFiles: true, formatId: 'skill_md_v1',
+    defaultRoots: [], capabilities: { supportsSymlinkInstall: true } };
+const artifactId = 'library-entry';
+let fixture: Awaited<ReturnType<typeof createPromptMachineTransferFixture>>;
+let catalog: ReturnType<typeof createPromptLibraryCatalogBoundary>;
+let previousState: ReturnType<typeof storage.getState>;
+beforeEach(() => { previousState = storage.getState(); });
+afterEach(async () => { await standardCleanup(); await fixture?.dispose(); storage.setState(previousState, true); });
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-const setPromptExternalLinksMock = vi.hoisted(() => vi.fn());
-const setContextSelectionsMock = vi.hoisted(() => vi.fn());
-const administrationTargetState = vi.hoisted(() => ({
-  current: {
-    target: { serverIdentityId: 'server-identity-1', machineId: 'machine-1' },
-    serverId: 'server-1',
-    machine: {
-      id: 'machine-1',
-      metadata: {
-        displayName: 'Laptop',
-        host: 'laptop.local',
-        homeDir: '/Users/test',
-      },
-    },
-  } as {
-    target: { serverIdentityId: string; machineId: string };
-    serverId: string;
-    machine: {
-      id: string;
-      metadata: { displayName: string; host: string; homeDir: string };
-    };
-  } | null,
-}));
-const machinePromptAssetsListTypesMock = vi.hoisted(() => vi.fn(async () => ({
-  ok: true,
-  types: [
-    {
-      id: 'claude.user.command',
-      providerId: 'claude',
-      title: 'Claude user commands (.claude)',
-      description: 'User markdown slash commands',
-      libraryKind: 'doc',
-      supportsScope: { user: true, project: false },
-      supportsFiles: false,
-      formatId: 'markdown_utf8_v1',
-      defaultRoots: [
-        { label: 'User commands', scope: 'user', pathTemplate: '~/.claude/commands' },
-      ],
-      capabilities: { supportsNestedNamespaces: true },
-    },
-    {
-      id: 'agents.skill',
-      providerId: 'agents',
-      title: 'Agent skills (.agents)',
-      description: 'Portable agent skills',
-      libraryKind: 'bundle',
-      supportsScope: { user: true, project: true },
-      supportsFiles: true,
-      formatId: 'skill_md_v1',
-      defaultRoots: [
-        { label: 'Project skills', scope: 'project', pathTemplate: '.agents/skills' },
-        { label: 'User skills', scope: 'user', pathTemplate: '~/.agents/skills' },
-      ],
-      capabilities: { supportsCatalogInstall: true, supportsSymlinkInstall: true },
-    },
-    {
-      id: 'claude.command',
-      providerId: 'claude',
-      title: 'Claude commands (.claude)',
-      description: 'Markdown slash commands',
-      libraryKind: 'doc',
-      supportsScope: { user: true, project: true },
-      supportsFiles: false,
-      formatId: 'markdown_utf8_v1',
-      defaultRoots: [
-        { label: 'Project commands', scope: 'project', pathTemplate: '.claude/commands' },
-        { label: 'User commands', scope: 'user', pathTemplate: '~/.claude/commands' },
-      ],
-      capabilities: { supportsNestedNamespaces: true },
-    },
-  ],
-})));
-const machinePromptAssetsWriteMock = vi.hoisted(() => vi.fn(async () => ({
-  ok: true,
-  externalRef: { relativePath: 'review/code.md' },
-  digest: 'sha256:new',
-  preview: {
-    operation: 'write',
-    targetPath: '.claude/commands/review/code.md',
-    fileCount: 1,
-  },
-})));
-const machinePromptAssetsDeleteMock = vi.hoisted(() => vi.fn(async () => ({
-  ok: true,
-  externalRef: { relativePath: 'review/code.md' },
-  digest: 'sha256:new',
-  preview: {
-    operation: 'delete',
-    targetPath: '.claude/commands/review/code.md',
-    fileCount: 1,
-  },
-})));
-const readPromptLibraryArtifactForExportMock = vi.hoisted(() => vi.fn(async (artifactId: string) => {
-  if (artifactId === 'broken-1') return null;
-  if (artifactId === 'bundle-1') {
-    return {
-      libraryKind: 'bundle' as const,
-      title: 'reviewer',
-      bundleBody: {
-        v: 1,
-        entries: [
-          {
-            path: 'SKILL.md',
-            contentBase64: Buffer.from('# Reviewer\n', 'utf8').toString('base64'),
-            contentKind: 'utf8' as const,
-          },
-        ],
-        createdAtMs: 1,
-        updatedAtMs: 2,
-      },
-    };
-  }
-  return {
-    libraryKind: 'doc' as const,
-    title: 'review/code',
-    markdown: '# Review code\n\nUse $ARGUMENTS',
-  };
-}));
-const writePromptLibraryArtifactToExternalAssetMock = vi.hoisted(() => vi.fn(async (args: any) => {
-  if (args.previewOnly) {
-    return {
-      ok: true as const,
-      artifactState: {
-        libraryKind: 'doc' as const,
-        title: 'review/code',
-        markdown: '# Review code\n\nUse $ARGUMENTS',
-      },
-      response: {
-        ok: true as const,
-        preview: {
-          operation: 'write',
-          targetPath: '.claude/commands/review/code.md',
-          fileCount: 1,
-        },
-      },
-    };
-  }
-  return {
-    ok: true as const,
-    artifactState: {
-      libraryKind: 'doc' as const,
-      title: 'review/code',
-      markdown: '# Review code\n\nUse $ARGUMENTS',
-    },
-    response: {
-      ok: true as const,
-      externalRef: { relativePath: 'review/code.md' },
-      digest: 'sha256:new',
-    },
-    nextPromptExternalLinks: {
-      v: 1,
-      links: [
-        {
-          id: 'link-1',
-          artifactId: args.artifactId,
-          assetTypeId: args.assetTypeId,
-          scope: args.scope,
-          machineId: args.machineId,
-          workspacePath: args.scope === 'project' ? args.workspacePath : null,
-          externalRef: { relativePath: 'review/code.md' },
-          syncMode: 'manual',
-          baseDigest: 'sha256:new',
-          lastLibraryDigest: 'sha256:lib',
-          lastExternalDigest: 'sha256:new',
-          lastSyncAtMs: 123,
-        },
-      ],
-    },
-  };
-}));
-
-const promptExternalLinksState = vi.hoisted(() => ({
-  value: {
-    v: 1,
-    links: [] as Array<Record<string, unknown>>,
-  },
-}));
-
-const contextSelectionsState = vi.hoisted(() => ({
-  value: { v: 1, selectionsByKey: {} as Record<string, { machineId?: string | null; workspacePath?: string | null }> },
-}));
-
-async function renderPromptAssetExportScreen(artifactId: string) {
-  const { PromptAssetExportScreen } = await import('./PromptAssetExportScreen');
-  return renderScreen(React.createElement(PromptAssetExportScreen, { artifactId }));
+async function setup(kind: 'doc' | 'bundle' | 'broken' = 'doc', workspacePath = '/repo', linked = false) {
+    catalog = createPromptLibraryCatalogBoundary({ revision: 4, records: [
+        { key: 'contexts', value: { v: 1, selectionsByKey: { ['promptAssets.export.' + artifactId]: { machineId: 'machine-2', workspacePath } } } },
+        { key: 'external-links', value: { v: 1, links: linked ? [{ id: 'link-1', artifactId, assetTypeId: docType.id,
+            machineId: 'machine-1', scope: 'project', workspacePath: '/repo', externalRef: { relativePath: 'review/code.md' },
+            lastExternalDigest: 'digest-previous' }] : [] } },
+    ] });
+    fixture = await createPromptMachineTransferFixture({ serverUrl: 'https://prompt-export-screen.test', serverIdentityId: 'srv_prompt_export_screen',
+        selectionKey: MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.promptAssets, types: [userType, docType, skillType],
+        handleHomeRequest: catalog.handle });
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const account = await captureLazyActionAccountContext(fixture.scope.serverId);
+    try {
+        await account.workflowArtifacts.create({ artifactId, header: kind === 'bundle'
+            ? { v: 1, kind: 'prompt_bundle.v2', title: 'reviewer', bundleSchemaId: 'skills.skill_md_v1' }
+            : { v: 1, kind: 'prompt_doc.v2', title: 'review/code' },
+            body: kind === 'broken' ? '{not-json' : kind === 'bundle'
+                ? JSON.stringify({ v: 1, entries: [{ path: 'SKILL.md', contentBase64: Buffer.from('# Reviewer').toString('base64'), contentKind: 'utf8' }], createdAtMs: 1, updatedAtMs: 1 })
+                : JSON.stringify({ v: 1, markdown: 'Review code carefully.', createdAtMs: 1, updatedAtMs: 1 }) });
+    } finally { account.dispose(); }
+    const { refreshPromptLibraryCatalog } = await import('@/sync/engine/settings/promptLibraryCatalogEngine');
+    await refreshPromptLibraryCatalog(fixture.scope);
+    const { getPromptLibraryCatalogValue } = await import('@/sync/store/settings/promptLibraryCatalogSnapshot');
+    expect(getPromptLibraryCatalogValue(fixture.scope, 'external-links'), JSON.stringify(fixture.diagnostic())).toMatchObject({ status: 'ready', stale: false });
+}
+function uploads() { return fixture.daemonRequests.filter(request => request.method.endsWith(':daemon.directTransfer.import.prepare')); }
+function deletes() { return fixture.daemonRequests.filter(request => request.method.endsWith(':daemon.promptAssets.delete')); }
+async function mountReady() {
+    const screen = await renderScreen(<PromptAssetExportScreen artifactId={artifactId} />);
+    await vi.waitFor(() => expect(screen.findByTestId('promptAssetExport.export')?.props.disabled, JSON.stringify({
+        ...fixture.diagnostic(), target: screen.findByTestId('promptAssetExport.targetInput')?.props.value,
+        directory: screen.findByTestId('promptAssetExport.directoryInput')?.props.value,
+        renderedText: screen.findAll(node => typeof node.props.children === 'string').map(node => node.props.children),
+    })).toBe(false));
+    return screen;
 }
 
-vi.mock('@expo/vector-icons', () => ({
-  Ionicons: 'Ionicons',
-}));
-
-installPromptAssetsCommonModuleMocks({
-  unistyles: async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock({
-      theme: {
-        colors: {
-          textSecondary: '#999',
-          input: { placeholder: '#666' },
-          accent: { blue: '#00f', indigo: '#60f', purple: '#90f' },
-          deleteAction: '#f33',
-          button: { primary: { tint: '#fff' } },
-        },
-      },
-    });
-  },
-  storage: async (importOriginal) => {
-    const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-    return createPartialStorageModuleMock(importOriginal, {
-      useAllMachines: () => [
-        {
-          id: 'machine-1',
-          metadata: {
-            displayName: 'Laptop',
-            host: 'laptop.local',
-            homeDir: '/Users/test',
-          },
-        },
-      ],
-      useSettingMutable: (key: string) => {
-        if (key === 'promptExternalLinksV1') {
-          return [promptExternalLinksState.value, setPromptExternalLinksMock];
-        }
-        if (key === 'contextSelectionsV1') {
-          return [contextSelectionsState.value, setContextSelectionsMock];
-        }
-        return [null, vi.fn()];
-      },
-      getState: () => ({
-        artifacts: {
-          'doc-1': {
-            id: 'doc-1',
-            header: { title: 'review/code', kind: 'prompt_doc.v2' },
-            body: JSON.stringify({
-              v: 1,
-              markdown: '# Review code\n\nUse $ARGUMENTS',
-              createdAtMs: 1,
-              updatedAtMs: 2,
-            }),
-          },
-          'bundle-1': {
-            id: 'bundle-1',
-            header: { title: 'reviewer', kind: 'prompt_bundle.v2' },
-            body: JSON.stringify({
-              v: 1,
-              entries: [
-                {
-                  path: 'SKILL.md',
-                  contentBase64: Buffer.from('# Reviewer\n', 'utf8').toString('base64'),
-                  contentKind: 'utf8',
-                },
-              ],
-              createdAtMs: 1,
-              updatedAtMs: 2,
-            }),
-          },
-          'broken-1': {
-            id: 'broken-1',
-            header: { title: 'broken artifact', kind: 'prompt_doc.v2' },
-            body: '{not-json',
-          },
-        },
-        updateArtifact: vi.fn(),
-      }),
-    });
-  },
-});
-
-vi.mock('@/components/ui/layout/layout', () => ({
-  layout: { maxWidth: 960 },
-  useLayoutMaxWidth: () => 960,
-  useLayoutMaxWidthStyle: () => ({ maxWidth: 960 }),
-}));
-
-vi.mock('@/components/settings/contextBar/ContextBar', () => createPassThroughModule(['ContextBar']));
-
-vi.mock('@/components/settings/machines/MachineAdministrationTargetSelector', () => createPassThroughModule([
-  'MachineAdministrationTargetSelector',
-]));
-
-vi.mock('@/sync/domains/machines/administration/useTargetSelection', () => ({
-  useMachineAdministrationTargetSelection: () => ({
-    selectedTarget: administrationTargetState.current?.target ?? null,
-    canExecute: administrationTargetState.current !== null,
-    resolveExecutionTarget: () => administrationTargetState.current,
-  }),
-}));
-
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => createPassThroughModule(['DropdownMenu']));
-
-vi.mock('@/components/ui/lists/Item', () => createPassThroughModule(['Item']));
-
-vi.mock('@/components/ui/lists/ItemGroup', () => createPassThroughModule(['ItemGroup']));
-
-vi.mock('@/components/ui/lists/ItemList', () => createPassThroughModule(['ItemList']));
-
-vi.mock('@/components/ui/text/Text', () => createPassThroughModule(['Text', 'TextInput']));
-
-vi.mock('@/sync/sync', () => ({
-  sync: {
-    getCredentials: () => ({ ok: true }),
-    fetchArtifactWithBody: vi.fn(async () => null),
-  },
-}));
-
-vi.mock('@/sync/ops/machinePromptAssets', () => ({
-  machinePromptAssetsListTypes: machinePromptAssetsListTypesMock,
-  machinePromptAssetsWrite: machinePromptAssetsWriteMock,
-  machinePromptAssetsDelete: machinePromptAssetsDeleteMock,
-}));
-
-vi.mock('@/sync/ops/promptLibrary/exportPromptLibraryArtifact', () => ({
-  readPromptLibraryArtifactForExport: readPromptLibraryArtifactForExportMock,
-  writePromptLibraryArtifactToExternalAsset: writePromptLibraryArtifactToExternalAssetMock,
-}));
-
-describe('PromptAssetExportScreen', () => {
-  beforeEach(() => {
-    machinePromptAssetsListTypesMock.mockClear();
-    machinePromptAssetsWriteMock.mockClear();
-    machinePromptAssetsDeleteMock.mockClear();
-    readPromptLibraryArtifactForExportMock.mockClear();
-    writePromptLibraryArtifactToExternalAssetMock.mockClear();
-    setPromptExternalLinksMock.mockReset();
-    setContextSelectionsMock.mockReset();
-    promptExternalLinksState.value = { v: 1, links: [] };
-    contextSelectionsState.value = { v: 1, selectionsByKey: {} };
-    administrationTargetState.current = {
-      target: { serverIdentityId: 'server-identity-1', machineId: 'machine-1' },
-      serverId: 'server-1',
-      machine: {
-        id: 'machine-1',
-        metadata: {
-          displayName: 'Laptop',
-          host: 'laptop.local',
-          homeDir: '/Users/test',
-        },
-      },
-    };
-  });
-
-  it('uses the Administration execution target instead of the legacy context machine for an export', async () => {
-    administrationTargetState.current = {
-      target: { serverIdentityId: 'server-identity-2', machineId: 'machine-2' },
-      serverId: 'server-2',
-      machine: {
-        id: 'machine-2',
-        metadata: {
-          displayName: 'Desktop',
-          host: 'desktop.local',
-          homeDir: '/Users/desktop',
-        },
-      },
-    };
-    contextSelectionsState.value = {
-      v: 1,
-      selectionsByKey: {
-        'promptAssets.export.doc-1': {
-          machineId: 'machine-1',
-          workspacePath: '/Users/test/repo',
-        },
-      },
-    };
-
-    const screen = await renderPromptAssetExportScreen('doc-1');
-
-    await screen.pressByTestIdAsync('promptAssetExport.export');
-
-    expect(writePromptLibraryArtifactToExternalAssetMock).toHaveBeenCalledWith(expect.objectContaining({
-      machineId: 'machine-2',
-      serverId: 'server-2',
-    }));
-  });
-
-  it('exports a prompt doc to a compatible external markdown asset and stores the link', async () => {
-    contextSelectionsState.value = {
-      v: 1,
-      selectionsByKey: {
-        'promptAssets.export.doc-1': {
-          machineId: 'machine-1',
-          workspacePath: '/Users/test/repo',
-        },
-      },
-    };
-
-    const screen = await renderPromptAssetExportScreen('doc-1');
-
-    await screen.pressByTestIdAsync('promptAssetExport.export');
-
-    expect(writePromptLibraryArtifactToExternalAssetMock).toHaveBeenCalledWith(expect.objectContaining({
-      artifactId: 'doc-1',
-      machineId: 'machine-1',
-      assetTypeId: 'claude.command',
-      scope: 'project',
-      targetInput: 'review/code.md',
-    }));
-    expect(setPromptExternalLinksMock).toHaveBeenCalledWith({
-      v: 1,
-      links: [
-        expect.objectContaining({
-          artifactId: 'doc-1',
-          assetTypeId: 'claude.command',
-          machineId: 'machine-1',
-          externalRef: { relativePath: 'review/code.md' },
-          syncMode: 'manual',
-          baseDigest: 'sha256:new',
-          lastLibraryDigest: 'sha256:lib',
-          lastExternalDigest: 'sha256:new',
-          lastSyncAtMs: 123,
-        }),
-      ],
-    });
-  });
-
-  it('selects a scope-compatible asset type before exporting', async () => {
-    contextSelectionsState.value = {
-      v: 1,
-      selectionsByKey: {
-        'promptAssets.export.doc-1': {
-          machineId: 'machine-1',
-          workspacePath: '/Users/test/repo',
-        },
-      },
-    };
-
-    const screen = await renderPromptAssetExportScreen('doc-1');
-
-    await screen.pressByTestIdAsync('promptAssetExport.export');
-
-    expect(writePromptLibraryArtifactToExternalAssetMock).toHaveBeenCalledWith(expect.objectContaining({
-      assetTypeId: 'claude.command',
-      scope: 'project',
-    }));
-  });
-
-  it('defaults bundle exports to symlink installs when the selected asset type supports them', async () => {
-    contextSelectionsState.value = {
-      v: 1,
-      selectionsByKey: {
-        'promptAssets.export.bundle-1': {
-          machineId: 'machine-1',
-          workspacePath: '/Users/test/repo',
-        },
-      },
-    };
-
-    const screen = await renderPromptAssetExportScreen('bundle-1');
-
-    await screen.pressByTestIdAsync('promptAssetExport.export');
-
-    expect(writePromptLibraryArtifactToExternalAssetMock).toHaveBeenCalledWith(expect.objectContaining({
-      artifactId: 'bundle-1',
-      assetTypeId: 'agents.skill',
-      scope: 'project',
-      installMode: 'symlink',
-    }));
-  });
-
-  it('reads the prompt artifact once during initial load', async () => {
-    await renderPromptAssetExportScreen('doc-1');
-
-    expect(readPromptLibraryArtifactForExportMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('passes machine browse config to the export workspace context bar input', async () => {
-    const screen = await renderPromptAssetExportScreen('doc-1');
-    const contextBar = screen.findByType('ContextBar');
-    expect(contextBar.props.workspace.browse).toEqual({
-      machineId: 'machine-1',
-      serverId: 'server-1',
-      enabled: true,
-    });
-  });
-
-  it('deletes a stored external link target and removes the persisted link', async () => {
-    contextSelectionsState.value = {
-      v: 1,
-      selectionsByKey: {
-        'promptAssets.export.doc-1': {
-          machineId: 'machine-1',
-          workspacePath: '/Users/test/repo',
-        },
-      },
-    };
-    promptExternalLinksState.value = {
-      v: 1,
-      links: [
-        {
-          id: 'link-1',
-          artifactId: 'doc-1',
-          assetTypeId: 'claude.command',
-          scope: 'project',
-          machineId: 'machine-1',
-          workspacePath: '/Users/test/repo',
-          externalRef: { relativePath: 'review/code.md' },
-          lastExternalDigest: 'sha256:new',
-        },
-      ],
-    };
-
-    const screen = await renderPromptAssetExportScreen('doc-1');
-
-    // Delete sits in the header's `⋯` menu beside Export.
-    await act(async () => {
-      await screen.findByTestId('promptAssetExport.menu')?.props.onSelect('delete');
+describe('PromptAssetExportScreen through Home and native daemon boundaries', () => {
+    it('exports a scope-compatible document through Administration, not Context, and acknowledges its qualified link', async () => {
+        await setup();
+        const screen = await mountReady();
+        await screen.pressByTestIdAsync('promptAssetExport.export');
+        await vi.waitFor(() => expect(fixture.uploadedRequests.some(request => request.previewOnly === false)).toBe(true));
+        expect(uploads().length).toBeGreaterThan(0);
+        expect(uploads().every(request => request.method === 'machine-1:daemon.directTransfer.import.prepare')).toBe(true);
+        expect(fixture.uploadedRequests.find(request => request.previewOnly === false)).toMatchObject({
+            assetTypeId: docType.id, scope: 'project', directory: '/repo', targetPath: 'review/code.md',
+            markdown: 'Review code carefully.',
+        });
+        await vi.waitFor(() => expect(catalog.read('external-links').value).toMatchObject({ links: [{ artifactId,
+            assetTypeId: docType.id, machineId: 'machine-1', serverIdentityId: 'srv_prompt_export_screen',
+            syncMode: 'manual', baseDigest: 'digest-1', lastExternalDigest: 'digest-1' }] }));
+        expect(catalog.requests).toMatchObject([{ key: 'external-links', expectedRevision: 4 }]);
+        expect(fixture.artifacts.list().map(artifact => artifact.id)).toEqual([artifactId]);
     });
 
-    expect(machinePromptAssetsDeleteMock).toHaveBeenCalledWith(
-      'machine-1',
-      expect.objectContaining({
-        assetTypeId: 'claude.command',
-        externalRef: { relativePath: 'review/code.md' },
-      }),
-      { serverId: 'server-1' },
-    );
-    expect(setPromptExternalLinksMock).toHaveBeenCalledWith({
-      v: 1,
-      links: [],
+    it('defaults a portable bundle to the supported symlink install mode', async () => {
+        await setup('bundle');
+        const screen = await mountReady();
+        await screen.pressByTestIdAsync('promptAssetExport.export');
+        await vi.waitFor(() => expect(fixture.uploadedRequests.some(request => request.previewOnly === false)).toBe(true));
+        expect(fixture.uploadedRequests.find(request => request.previewOnly === false)).toMatchObject({
+            assetTypeId: skillType.id, scope: 'project', installMode: 'symlink', bundleBody: { entries: [{ path: 'SKILL.md' }] },
+        });
+        await vi.waitFor(() => expect(catalog.read('external-links').value).toMatchObject({ links: [{ artifactId, assetTypeId: skillType.id }] }));
     });
-  });
 
-  it('does not surface a project-scope delete action when the workspace input is blank', async () => {
-    contextSelectionsState.value = {
-      v: 1,
-      selectionsByKey: {
-        'promptAssets.export.doc-1': {
-          machineId: 'machine-1',
-          workspacePath: '',
-        },
-      },
-    };
-    promptExternalLinksState.value = {
-      v: 1,
-      links: [
-        {
-          id: 'link-1',
-          artifactId: 'doc-1',
-          assetTypeId: 'claude.command',
-          scope: 'project',
-          machineId: 'machine-1',
-          workspacePath: '/Users/test/repo',
-          externalRef: { relativePath: 'review/code.md' },
-          lastExternalDigest: 'sha256:new',
-        },
-      ],
-    };
+    it('deletes a stored external target and its acknowledged link while retaining the library document', async () => {
+        await setup('doc', '/repo', true);
+        const screen = await mountReady();
+        await vi.waitFor(() => expect(screen.findByTestId('promptAssetExport.linked')).not.toBeNull());
+        const menu = screen.findAll(node => Array.isArray(node.props.actions)
+            && node.props.actions.some((action: { testID?: string }) => action.testID === 'promptAssetExport.delete'))[0];
+        if (!menu) throw new Error('Missing real linked deletion action');
+        await act(async () => { menu.props.actions.find((action: { testID?: string }) => action.testID === 'promptAssetExport.delete').onSelect(); });
+        await vi.waitFor(() => expect(catalog.read('external-links').value).toEqual({ v: 1, links: [] }));
+        expect(deletes().map(request => request.params)).toMatchObject([{ assetTypeId: docType.id,
+            scope: 'project', directory: '/repo', externalRef: { relativePath: 'review/code.md' }, expectedDigest: 'digest-previous' }]);
+        expect(catalog.requests).toMatchObject([{ key: 'external-links', expectedRevision: 4 }]);
+        expect(fixture.artifacts.list().map(artifact => artifact.id)).toEqual([artifactId]);
+    });
 
-    const screen = await renderPromptAssetExportScreen('doc-1');
+    it('requires a project workspace for export and refuses a stored project deletion for a blank workspace', async () => {
+        await setup('doc', '', true);
+        const screen = await renderScreen(<PromptAssetExportScreen artifactId={artifactId} />);
+        await vi.waitFor(() => expect(fixture.homes.requestsFor('/v1/artifacts/' + artifactId).length).toBeGreaterThan(0));
+        expect(screen.findByTestId('promptAssetExport.export')?.props.disabled).toBe(true);
+        expect(screen.findByTestId('promptAssetExport.linked')).toBeNull();
+        expect(screen.findAll(node => Array.isArray(node.props.actions) && node.props.actions.some(
+            (action: { testID?: string }) => action.testID === 'promptAssetExport.delete'))).toEqual([]);
+        expect(uploads()).toEqual([]);
+        expect(deletes()).toEqual([]);
+        expect(catalog.requests).toEqual([]);
+    });
 
-    expect(screen.findAllByTestId('promptAssetExport.menu')).toHaveLength(0);
-  });
-
-  it('does not export a project-scoped prompt asset until a workspace path is selected', async () => {
-    const screen = await renderPromptAssetExportScreen('doc-1');
-
-    expect(screen.findByTestId('promptAssetExport.export')?.props.disabled).toBe(true);
-    await screen.pressByTestIdAsync('promptAssetExport.export');
-
-    expect(writePromptLibraryArtifactToExternalAssetMock).not.toHaveBeenCalled();
-  });
-
-  it('does not crash when the artifact body is malformed json', async () => {
-    const screen = await renderPromptAssetExportScreen('broken-1');
-
-    expect(screen.findByTestId('promptAssetExport.export')?.props.disabled).toBe(true);
-    expect(writePromptLibraryArtifactToExternalAssetMock).not.toHaveBeenCalled();
-  });
-
+    it('fails closed without exporting malformed document content', async () => {
+        await setup('broken');
+        const screen = await renderScreen(<PromptAssetExportScreen artifactId={artifactId} />);
+        await vi.waitFor(() => expect(fixture.homes.requestsFor('/v1/artifacts/' + artifactId).length).toBeGreaterThan(0));
+        expect(screen.findByTestId('promptAssetExport.export')?.props.disabled).toBe(true);
+        expect(uploads()).toEqual([]);
+        expect(catalog.requests).toEqual([]);
+    });
 });

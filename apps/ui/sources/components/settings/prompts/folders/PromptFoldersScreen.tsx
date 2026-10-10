@@ -3,7 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { ArtifactFolderTree, useArtifactFolderCommands } from '@/components/artifacts/ArtifactFolderTree';
+import { ArtifactFolderTree, useArtifactFolderCommands, type ArtifactFolderTreeHandle } from '@/components/artifacts/ArtifactFolderTree';
 import { resolveArtifactOpenRoute, type ArtifactBrowserFilter } from '@/components/artifacts/artifactBrowserModel';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -15,7 +15,6 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { useArtifacts } from '@/sync/domains/state/storage';
 import { t } from '@/text';
-import { fireAndForget } from '@/utils/system/fireAndForget';
 
 /**
  * `/settings/prompts/folders` (EC D49, lab `lane12-final/c-art` L): how prompts and skills are filed. It is the
@@ -28,6 +27,7 @@ export const PromptFoldersScreen = React.memo(function PromptFoldersScreen() {
   const router = useRouter();
   const artifacts = useArtifacts();
   const folders = useArtifactFolderCommands();
+  const folderTree = React.useRef<ArtifactFolderTreeHandle>(null);
   const [query, setQuery] = React.useState('');
   const filter = React.useMemo((): ArtifactBrowserFilter => ({ query, kind: 'prompt', sort: 'title_asc' }), [query]);
   const openArtifact = React.useCallback((artifactId: string) => {
@@ -55,10 +55,11 @@ export const PromptFoldersScreen = React.memo(function PromptFoldersScreen() {
               title={t('artifacts.browser.folders.newFolder')}
               leading={<Icon name="folder-plus" size={14} color={theme.colors.text.secondary} />}
               disabled={!folders.canWrite}
-              onPress={() => { fireAndForget(folders.create(null), { tag: 'PromptFolders.create' }); }}
+              onPress={() => folderTree.current?.createFolder(null)}
             />
           </View>
           <ArtifactFolderTree
+            ref={folderTree}
             testID="promptFolders"
             accessibilityLabel={t('promptLibrary.folders')}
             filter={filter}

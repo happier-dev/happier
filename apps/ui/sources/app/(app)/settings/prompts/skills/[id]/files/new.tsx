@@ -3,9 +3,9 @@ import { useLocalSearchParams } from '@/components/appShell/workspace/destinatio
 import { SkillBundleSupportingFileEditorScreen } from '@/components/settings/prompts/skills/SkillBundleSupportingFileEditorScreen';
 
 export function NewSkillSupportingFilePage() {
-    const { id } = useLocalSearchParams<{ id: string }>();
+    const { id, serverId } = useLocalSearchParams<{ id: string; serverId?: string }>();
     if (!id) return null;
-    return <SkillBundleSupportingFileEditorScreen artifactId={id} path={null} />;
+    return <SkillBundleSupportingFileEditorScreen artifactId={id} path={null} serverId={serverId} />;
 }
 import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorkspaceRouteEntry';
 export { NewSkillSupportingFilePage as WorkspaceRouteBody };

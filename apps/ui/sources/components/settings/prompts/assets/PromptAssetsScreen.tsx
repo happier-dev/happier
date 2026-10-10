@@ -18,7 +18,12 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { Modal } from '@/modal';
-import { useArtifacts, useSettingMutable } from '@/sync/domains/state/storage';
+import { useArtifacts } from '@/sync/domains/state/storage';
+import { usePromptLibraryCatalogValue } from '@/sync/store/usePromptLibraryCatalog';
+import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
+import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { createUiPromptLibraryArtifactStore } from '@/sync/ops/promptLibrary/promptLibraryArtifactStore';
+import { requireUpdatedPromptLibraryMutation, writePromptLibraryRecordAndPublishInContext } from '@/sync/api/account/apiPromptLibraryCatalog';
 import { machinePromptAssetsDelete, machinePromptAssetsDiscover, machinePromptAssetsDownload, machinePromptAssetsListTypes } from '@/sync/ops/machinePromptAssets';
 import { removePromptExternalLink } from '@/sync/ops/promptLibrary/promptDocs';
 import { importPromptAssetToLibrary } from '@/sync/ops/promptLibrary/importPromptAssetToLibrary';
@@ -29,6 +34,8 @@ import { t } from '@/text';
 import { buildPromptAssetExportHref } from '@/components/settings/prompts/shared/buildPromptAssetExportHref';
 import { promptCollectionItemHref } from '@/components/settings/prompts/collection/promptCollectionModel';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
+import { isPromptExternalLinkForMachine } from '@happier-dev/protocol/prompts/library/promptExternalLinksV1';
+import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 
 /**
  * `/settings/prompts/assets`: prompts and skills already on the machine in the header chip (in a
@@ -38,7 +45,10 @@ import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 export const PromptAssetsScreen = React.memo(function PromptAssetsScreen() {
     const router = useRouter();
     const artifacts = useArtifacts();
-    const [promptExternalLinksV1, setPromptExternalLinksV1] = useSettingMutable('promptExternalLinksV1');
+    const libraryScope = useAccountSettingsScope();
+    const libraryServerIdentityId = libraryScope ? getServerProfileById(libraryScope.serverId)?.serverIdentityId : undefined;
+    const { value: promptExternalLinksV1, revision: linksRevision, sourceSettingsVersion: linksSourceSettingsVersion,
+        status: linksStatus, stale: linksStale } = usePromptLibraryCatalogValue('external-links');
     const administrationTargetSelection = useMachineAdministrationTargetSelection(
         MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.promptAssets,
     );
@@ -65,15 +75,8 @@ export const PromptAssetsScreen = React.memo(function PromptAssetsScreen() {
         // Administration-owned portable target.
         defaultMachineId: null,
         defaultWorkspacePath: '',
+        workspaceBindingKey: selectionKey,
     });
-    const previousSelectionKeyRef = React.useRef(selectionKey);
-
-    React.useLayoutEffect(() => {
-        const previousSelectionKey = previousSelectionKeyRef.current;
-        previousSelectionKeyRef.current = selectionKey;
-        if (!previousSelectionKey || previousSelectionKey === selectionKey) return;
-        setProjectDirectory('');
-    }, [selectionKey, setProjectDirectory]);
 
     React.useEffect(() => {
         refreshGenerationRef.current += 1;
@@ -163,6 +166,9 @@ export const PromptAssetsScreen = React.memo(function PromptAssetsScreen() {
     const linkByKey = React.useMemo(() => {
         const map = new Map<string, { artifactId: string; title: string; linkId: string }>();
         for (const link of promptExternalLinksV1?.links ?? []) {
+            if (!selectedTarget || !libraryServerIdentityId || !isPromptExternalLinkForMachine(link, {
+                target: selectedTarget, libraryServerIdentityId,
+            })) continue;
             const key = JSON.stringify([
                 link.assetTypeId,
                 link.machineId,
@@ -175,44 +181,61 @@ export const PromptAssetsScreen = React.memo(function PromptAssetsScreen() {
             map.set(key, { artifactId: link.artifactId, title, linkId: link.id });
         }
         return map;
-    }, [artifactTitleById, promptExternalLinksV1?.links]);
+    }, [artifactTitleById, libraryServerIdentityId, promptExternalLinksV1?.links, selectedTarget]);
 
     const deleteLinkedAsset = React.useCallback(async (linkId: string) => {
+        if (!libraryScope || !promptExternalLinksV1 || linksStatus !== 'ready' || linksStale) return;
         const link = (promptExternalLinksV1?.links ?? []).find((entry) => entry.id === linkId) ?? null;
         if (!link) return;
-
-        const confirmed = await Modal.confirm(
-            t('promptLibrary.externalAssetsDeleteConfirmTitle'),
-            t('promptLibrary.externalAssetsDeleteConfirmBody'),
-            { confirmText: t('common.delete'), destructive: true },
-        );
-        if (!confirmed) return;
-
         const requestedSelection = selectionKey;
-        const executionTarget = resolveExactExecutionTarget(selectedTarget);
-        if (!executionTarget || executionTarget.machine.id !== link.machineId) return;
+        const libraryAccount = await captureLazyActionAccountContext(libraryScope.serverId);
+        try {
+            if (libraryAccount.accountId !== libraryScope.accountId) throw new Error('action_account_scope_changed');
+            libraryAccount.assertCurrent();
+            if (!libraryAccount.serverIdentityId) throw new Error('content_unavailable');
+            const confirmed = await Modal.confirm(
+                t('promptLibrary.externalAssetsDeleteConfirmTitle'),
+                t('promptLibrary.externalAssetsDeleteConfirmBody'),
+                { confirmText: t('common.delete'), destructive: true },
+            );
+            if (!confirmed) return;
+            libraryAccount.assertCurrent();
+            const executionTarget = resolveExactExecutionTarget(selectedTarget);
+            if (!executionTarget || !isExecutionTargetCurrent(requestedSelection, executionTarget) || !isPromptExternalLinkForMachine(link, {
+                target: executionTarget.target, libraryServerIdentityId: libraryAccount.serverIdentityId,
+            })) return;
 
-        const directory = link.scope === 'project' ? (link.workspacePath ?? undefined) : undefined;
+            const directory = link.scope === 'project' ? (link.workspacePath ?? undefined) : undefined;
 
-        const result = await machinePromptAssetsDelete(executionTarget.machine.id, {
-            assetTypeId: link.assetTypeId,
-            scope: link.scope,
-            directory,
-            externalRef: link.externalRef,
-            previewOnly: false,
-            expectedDigest: link.lastExternalDigest ?? null,
-        }, { serverId: executionTarget.serverId });
-        if (!isExecutionTargetCurrent(requestedSelection, executionTarget)) return;
-        if (!result.ok) {
-            Modal.alert(t('common.error'), result.error);
-            return;
+            const result = await machinePromptAssetsDelete(executionTarget.machine.id, {
+                assetTypeId: link.assetTypeId,
+                scope: link.scope,
+                directory,
+                externalRef: link.externalRef,
+                previewOnly: false,
+                expectedDigest: link.lastExternalDigest ?? null,
+            }, { serverId: executionTarget.serverId });
+            libraryAccount.assertCurrent();
+            if (!isExecutionTargetCurrent(requestedSelection, executionTarget)) return;
+            if (!result.ok) {
+                Modal.alert(t('common.error'), result.error);
+                return;
+            }
+
+            requireUpdatedPromptLibraryMutation(await writePromptLibraryRecordAndPublishInContext(libraryAccount, {
+                record: { key: 'external-links', value: removePromptExternalLink(promptExternalLinksV1, link.id) },
+                expectedRevision: linksRevision,
+                ...(linksRevision === 'absent' && linksSourceSettingsVersion !== null ? { sourceSettingsVersion: linksSourceSettingsVersion } : {}),
+            }));
+            libraryAccount.assertCurrent();
+            await refreshAssets();
+        } finally {
+            libraryAccount.dispose();
         }
-
-        setPromptExternalLinksV1(removePromptExternalLink(promptExternalLinksV1, link.id));
-        await refreshAssets();
-    }, [isExecutionTargetCurrent, promptExternalLinksV1, refreshAssets, resolveExactExecutionTarget, selectedTarget, selectionKey, setPromptExternalLinksV1]);
+    }, [isExecutionTargetCurrent, libraryScope, linksRevision, linksSourceSettingsVersion, linksStatus, linksStale, promptExternalLinksV1, refreshAssets, resolveExactExecutionTarget, selectedTarget, selectionKey]);
 
     const handleImport = React.useCallback(async (item: PromptAssetDiscoveryItemV1) => {
+        if (!libraryScope || !promptExternalLinksV1 || linksStatus !== 'ready' || linksStale) return;
         const requestedSelection = selectionKey;
         const executionTarget = resolveExactExecutionTarget(selectedTarget);
         if (!executionTarget) return;
@@ -224,45 +247,61 @@ export const PromptAssetsScreen = React.memo(function PromptAssetsScreen() {
             Modal.alert(t('common.error'), t('promptLibrary.externalAssetsProjectDirectoryRequired'));
             return;
         }
-        const response = await machinePromptAssetsDownload(
-            executionTarget.machine.id,
-            {
-                assetTypeId: item.assetTypeId,
-                scope: item.scope,
-                directory: requestDirectory,
-                externalRef: item.externalRef,
-            },
-            { serverId: executionTarget.serverId },
-        );
-        if (!isExecutionTargetCurrent(requestedSelection, executionTarget)) return;
-        if (!response.ok) {
-            Modal.alert(t('common.error'), response.error);
-            return;
+        const libraryAccount = await captureLazyActionAccountContext(libraryScope.serverId);
+        try {
+            if (libraryAccount.accountId !== libraryScope.accountId) throw new Error('action_account_scope_changed');
+            libraryAccount.assertCurrent();
+            if (!libraryAccount.serverIdentityId) throw new Error('content_unavailable');
+            if (!isExecutionTargetCurrent(requestedSelection, executionTarget)) return;
+            const response = await machinePromptAssetsDownload(
+                executionTarget.machine.id,
+                {
+                    assetTypeId: item.assetTypeId,
+                    scope: item.scope,
+                    directory: requestDirectory,
+                    externalRef: item.externalRef,
+                },
+                { serverId: executionTarget.serverId },
+            );
+            libraryAccount.assertCurrent();
+            if (!isExecutionTargetCurrent(requestedSelection, executionTarget)) return;
+            if (!response.ok) {
+                Modal.alert(t('common.error'), response.error);
+                return;
+            }
+            if (response.item.libraryKind !== 'doc' && response.item.libraryKind !== 'bundle') {
+                Modal.alert(t('common.error'), t('promptLibrary.externalAssetsUnsupportedImport'));
+                return;
+            }
+            if (response.item.libraryKind === 'bundle' && response.item.bundleSchemaId !== 'skills.skill_md_v1') {
+                Modal.alert(t('common.error'), t('promptLibrary.externalAssetsUnsupportedImport'));
+                return;
+            }
+            const imported = await importPromptAssetToLibrary({
+                item: response.item,
+                machineTarget: executionTarget.target,
+                libraryServerIdentityId: libraryAccount.serverIdentityId,
+                workspacePath: item.scope === 'project'
+                    ? (requestDirectory ?? null)
+                    : null,
+                promptExternalLinks: promptExternalLinksV1,
+            }, createUiPromptLibraryArtifactStore(libraryAccount.workflowArtifacts, libraryAccount));
+            libraryAccount.assertCurrent();
+            if (!isExecutionTargetCurrent(requestedSelection, executionTarget)) return;
+            requireUpdatedPromptLibraryMutation(await writePromptLibraryRecordAndPublishInContext(libraryAccount, {
+                record: { key: 'external-links', value: imported.nextLinks }, expectedRevision: linksRevision,
+                ...(linksRevision === 'absent' && linksSourceSettingsVersion !== null ? { sourceSettingsVersion: linksSourceSettingsVersion } : {}),
+            }));
+            libraryAccount.assertCurrent();
+            router.push(
+                imported.routeKind === 'doc'
+                    ? promptCollectionItemHref('doc', imported.artifactId, { serverId: libraryAccount.serverId })
+                    : promptCollectionItemHref('bundle', imported.artifactId, { serverId: libraryAccount.serverId }),
+            );
+        } finally {
+            libraryAccount.dispose();
         }
-        if (response.item.libraryKind !== 'doc' && response.item.libraryKind !== 'bundle') {
-            Modal.alert(t('common.error'), t('promptLibrary.externalAssetsUnsupportedImport'));
-            return;
-        }
-        if (response.item.libraryKind === 'bundle' && response.item.bundleSchemaId !== 'skills.skill_md_v1') {
-            Modal.alert(t('common.error'), t('promptLibrary.externalAssetsUnsupportedImport'));
-            return;
-        }
-        const imported = await importPromptAssetToLibrary({
-            item: response.item,
-            machineId: executionTarget.machine.id,
-            workspacePath: item.scope === 'project'
-                ? (requestDirectory ?? null)
-                : null,
-            promptExternalLinks: promptExternalLinksV1,
-        });
-        if (!isExecutionTargetCurrent(requestedSelection, executionTarget)) return;
-        setPromptExternalLinksV1(imported.nextLinks);
-        router.push(
-            imported.routeKind === 'doc'
-                ? promptCollectionItemHref('doc', imported.artifactId)
-                : promptCollectionItemHref('bundle', imported.artifactId),
-        );
-    }, [isExecutionTargetCurrent, projectDirectory, promptExternalLinksV1, resolveExactExecutionTarget, router, selectedTarget, selectionKey, setPromptExternalLinksV1]);
+    }, [isExecutionTargetCurrent, libraryScope, linksRevision, linksSourceSettingsVersion, linksStatus, linksStale, projectDirectory, promptExternalLinksV1, resolveExactExecutionTarget, router, selectedTarget, selectionKey]);
 
     const executionTarget = resolveExactExecutionTarget(selectedTarget);
     const selectedMachineId = selectedTarget?.machineId ?? null;
@@ -366,9 +405,8 @@ export const PromptAssetsScreen = React.memo(function PromptAssetsScreen() {
                                                     subtitle={subtitle}
                                                     onPress={() => {
                                                         if (linkedArtifact) {
-                                                            router.push(item.libraryKind === 'bundle'
-                                                                ? `/settings/prompts/skills/${linkedArtifact.artifactId}`
-                                                                : `/settings/prompts/docs/${linkedArtifact.artifactId}`);
+                                                            router.push(promptCollectionItemHref(item.libraryKind === 'bundle' ? 'bundle' : 'doc',
+                                                                linkedArtifact.artifactId, { serverId: libraryScope?.serverId }));
                                                             return;
                                                         }
                                                         void handleImport(item);
@@ -382,9 +420,8 @@ export const PromptAssetsScreen = React.memo(function PromptAssetsScreen() {
                                                                     id: 'open',
                                                                     title: t('common.open'),
                                                                     icon: 'arrow-square-out',
-                                                                    onPress: () => router.push(item.libraryKind === 'bundle'
-                                                                        ? `/settings/prompts/skills/${linkedArtifact.artifactId}`
-                                                                        : `/settings/prompts/docs/${linkedArtifact.artifactId}`),
+                                                                    onPress: () => router.push(promptCollectionItemHref(item.libraryKind === 'bundle' ? 'bundle' : 'doc',
+                                                                        linkedArtifact.artifactId, { serverId: libraryScope?.serverId })),
                                                                 },
                                                                 {
                                                                     id: 'manage',
@@ -393,6 +430,7 @@ export const PromptAssetsScreen = React.memo(function PromptAssetsScreen() {
                                                                     onPress: () => router.push(buildPromptAssetExportHref({
                                                                         artifactId: linkedArtifact.artifactId,
                                                                         libraryKind: item.libraryKind,
+                                                                        serverId: libraryScope?.serverId,
                                                                         link: linkedLink,
                                                                     })),
                                                                 },
@@ -403,7 +441,7 @@ export const PromptAssetsScreen = React.memo(function PromptAssetsScreen() {
                                                                     destructive: true,
                                                                     onPress: () => {
                                                                         if (!linkedLink) return;
-                                                                        void deleteLinkedAsset(linkedLink.id);
+                                                                        void deleteLinkedAsset(linkedLink.id).catch(() => Modal.alert(t('common.error'), t('promptLibrary.saveError')));
                                                                     },
                                                                 },
                                                             ] : [
@@ -411,7 +449,7 @@ export const PromptAssetsScreen = React.memo(function PromptAssetsScreen() {
                                                                     id: 'import',
                                                                     title: t('promptLibrary.externalAssetsImportAction'),
                                                                     icon: 'download',
-                                                                    onPress: () => { void handleImport(item); },
+                                                                    onPress: () => { void handleImport(item).catch(() => Modal.alert(t('common.error'), t('promptLibrary.saveError'))); },
                                                                 },
                                                             ]}
                                                         />

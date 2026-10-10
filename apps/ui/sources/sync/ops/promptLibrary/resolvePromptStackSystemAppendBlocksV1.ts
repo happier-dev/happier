@@ -1,33 +1,11 @@
 import { PromptStacksV1Schema } from '@happier-dev/protocol/prompts/library/promptStacksV1';
-import { resolvePromptStackSystemAppendBlocksV1 as resolvePromptStackSystemAppendBlocksProtocolV1 } from '@happier-dev/protocol/prompts/library/resolvePromptStackSystemAppendBlocksV1';
-import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
+import { resolvePromptStackSystemAppendBlocksV1 as resolvePromptStackSystemAppendBlocksProtocolV1, type PromptStackSystemAppendInputV1, type PromptStackSystemAppendResultV1 } from '@happier-dev/protocol/prompts/library/resolvePromptStackSystemAppendBlocksV1';
 
-export async function resolvePromptStackSystemAppendBlocksV1(args: Readonly<{
-  surface: 'coding' | 'voice';
-  promptStacksV1: unknown;
-  profileId: string | null | undefined;
-  artifactsById: Record<string, DecryptedArtifact | undefined>;
-  fetchArtifactWithBody?: (artifactId: string) => Promise<DecryptedArtifact | null>;
-  updateArtifact?: (artifact: DecryptedArtifact) => void;
-}>): Promise<string[]> {
-  const readArtifactBody = async (artifactId: string): Promise<string | null> => {
-    const existing = args.artifactsById[artifactId] ?? null;
-    if (typeof existing?.body === 'string') return existing.body;
-    if (!args.fetchArtifactWithBody) return null;
-
-    const full = await args.fetchArtifactWithBody(artifactId);
-    if (full && args.updateArtifact) args.updateArtifact(full);
-    if (typeof full?.body === 'string') return full.body;
-
-    const next = args.artifactsById[artifactId] ?? null;
-    if (typeof next?.body === 'string') return next.body;
-    return null;
-  };
-
-  return await resolvePromptStackSystemAppendBlocksProtocolV1({
-    surface: args.surface,
-    promptStacksV1: PromptStacksV1Schema.parse(args.promptStacksV1),
-    profileId: args.profileId,
-    readArtifactBody,
+export async function resolvePromptStackSystemAppendBlocksV1(
+  args: Omit<PromptStackSystemAppendInputV1, 'promptStacksV1'> & Readonly<{ promptStacksV1?: unknown }>,
+): Promise<PromptStackSystemAppendResultV1> {
+  return resolvePromptStackSystemAppendBlocksProtocolV1({
+    ...args,
+    ...(args.promptStacksV1 === undefined ? {} : { promptStacksV1: PromptStacksV1Schema.parse(args.promptStacksV1) }),
   });
 }

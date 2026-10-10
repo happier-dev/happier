@@ -1,582 +1,213 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { PromptAssetTypeDescriptorV1 } from '@happier-dev/protocol';
+import type { IModal } from '@/modal';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/promptLibraryCatalogBoundary';
+import { createPromptMachineTransferFixture, installPromptMachineSocketBoundary } from '@/dev/testkit/harness/promptMachineTransferBoundary';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
-import { act, ReactTestRenderer } from 'react-test-renderer';
-import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import type {
-    PromptAssetDiscoverResponseV1,
-    PromptAssetListTypesResponseV1,
-    PromptAssetReadResponseV1,
-} from '@happier-dev/protocol';
-import { pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
-import {
-    installPromptAssetsCommonModuleMocks,
-    promptAssetsRouterPushSpy,
-} from './promptAssetsScreenTestHelpers';
+import { installPromptAssetsCommonModuleMocks, promptAssetsRouterPushSpy } from './promptAssetsScreenTestHelpers';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-const machinePromptAssetsListTypesMock = vi.hoisted(() => vi.fn<() => Promise<PromptAssetListTypesResponseV1>>(async () => ({
-    ok: true,
-    types: [
-        {
-            id: 'agents.skill',
-            providerId: 'agents',
-            title: 'Agent skills (.agents)',
-            description: 'Portable skill bundles',
-            libraryKind: 'bundle',
-            supportsScope: { user: true, project: true },
-            supportsFiles: true,
-            formatId: 'skill_md_v1',
-            defaultRoots: [
-                { label: 'User', scope: 'user', pathTemplate: '~/.agents/skills' },
-                { label: 'Project', scope: 'project', pathTemplate: '.agents/skills' },
-            ],
-            capabilities: { supportsSymlinkInstall: true },
-        },
-    ],
-})));
-const machinePromptAssetsDiscoverMock = vi.hoisted(() => vi.fn<() => Promise<PromptAssetDiscoverResponseV1>>(async () => ({
-    ok: true,
-    items: [
-        {
-            assetTypeId: 'agents.skill',
-            scope: 'project',
-            externalRef: { name: 'refactor' },
-            title: 'Refactor',
-            libraryKind: 'bundle',
-            bundleSchemaId: 'skills.skill_md_v1',
-            digest: 'digest-1',
-            displayPath: '/repo/.agents/skills/refactor',
-        },
-    ],
-})));
-const machinePromptAssetsDownloadMock = vi.hoisted(() => vi.fn<() => Promise<PromptAssetReadResponseV1>>(async () => ({
-    ok: true,
-    item: {
-        assetTypeId: 'agents.skill',
-        scope: 'project',
-        externalRef: { name: 'refactor' },
-        title: 'Refactor',
-        libraryKind: 'bundle',
-        bundleSchemaId: 'skills.skill_md_v1',
-        digest: 'digest-1',
-        displayPath: '/repo/.agents/skills/refactor',
-        bundleBody: {
-            v: 1,
-            entries: [
-                {
-                    path: 'SKILL.md',
-                    contentBase64: Buffer.from('# Refactor', 'utf8').toString('base64'),
-                    contentKind: 'utf8',
-                },
-            ],
-            createdAtMs: 1,
-            updatedAtMs: 1,
-        },
-    },
-})));
-const machinePromptAssetsDeleteMock = vi.hoisted(() => vi.fn(async () => ({
-    ok: true,
-    externalRef: { name: 'refactor' },
-    digest: 'digest-1',
-    preview: {
-        operation: 'delete',
-        targetPath: '/repo/.agents/skills/refactor',
-        fileCount: 1,
-    },
-})));
-const createPromptBundleArtifactMock = vi.hoisted(() => vi.fn(async () => 'bundle-1'));
-const createPromptDocMock = vi.hoisted(() => vi.fn(async () => 'doc-1'));
-const upsertPromptExternalLinkMock = vi.hoisted(() => vi.fn((links: any, nextLink: any) => ({
-    v: 1,
-    links: [...((links?.links ?? []).filter((entry: any) => entry.id !== nextLink.id)), nextLink],
-})));
-const contextSelectionsState = vi.hoisted(() => ({
-    value: { v: 1, selectionsByKey: {} as Record<string, { machineId?: string | null; workspacePath?: string | null }> },
-}));
-const setContextSelectionsMock = vi.hoisted(() => vi.fn());
-const setPromptExternalLinksMock = vi.hoisted(() => vi.fn());
-const promptExternalLinksState = vi.hoisted(() => ({
-    value: { v: 1, links: [] as Array<Record<string, unknown>> },
-}));
-const machinesState = vi.hoisted(() => ({
-    value: [
-        {
-            id: 'machine-1',
-            metadata: {
-                displayName: 'Laptop',
-                host: 'laptop.local',
-                homeDir: '/Users/test',
-            },
-        },
-        {
-            id: 'machine-2',
-            metadata: {
-                displayName: 'Desktop',
-                host: 'desktop.local',
-                homeDir: '/Users/desktop',
-            },
-        },
-    ] as Array<{
-        id: string;
-        metadata: {
-            displayName: string;
-            host: string;
-            homeDir: string;
-        };
-    }>,
-}));
-let administration: Awaited<ReturnType<typeof createMachineAdministrationFixture>>;
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
-
-vi.mock('@/components/ui/layout/layout', () => ({
-    layout: { maxWidth: 1000 },
-    useLayoutMaxWidth: () => 1000,
-    useLayoutMaxWidthStyle: () => ({ maxWidth: 1000 }),
-}));
-
-vi.mock('@/components/ui/lists/ItemRowActions', () => ({
-    ItemRowActions: (props: any) => React.createElement('ItemRowActions', props),
-}));
-
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
-}));
-
-vi.mock('@/components/settings/contextBar/ContextBar', () => ({
-    ContextBar: (props: any) => React.createElement('ContextBar', props),
-}));
-
-vi.mock('@/components/settings/machines/MachineAdministrationTargetSelector', () => ({
-    MachineAdministrationTargetSelector: (props: any) => React.createElement('MachineAdministrationTargetSelector', props),
-}));
-
-
-
-vi.mock('@/hooks/ui/useHappyAction', () => ({
-    useHappyAction: (action: any) => [false, React.useCallback(() => {
-        void action();
-    }, [action])],
-}));
-
-installPromptAssetsCommonModuleMocks({
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            View: 'View',
-            ScrollView: 'ScrollView',
-            Platform: {
-                OS: 'web',
-                select: ({ web, default: defaultValue }: any) => web ?? defaultValue,
-            },
-        });
-    },
-    storage: async (importOriginal) => {
-        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        return createPartialStorageModuleMock(importOriginal, {
-            useArtifacts: () => ([
-                { id: 'bundle-1', title: 'Refactor', header: { kind: 'prompt_bundle.v2', title: 'Refactor' } },
-                { id: 'doc-1', title: 'review/code', header: { kind: 'prompt_doc.v2', title: 'review/code' } },
-            ]),
-            useAllMachines: () => machinesState.value,
-            useMachineListByServerId: () => ({}),
-            useMachineListStatusByServerId: () => ({}),
-            useSetting: (key: string) => {
-                if (key === 'serverSelectionGroups') return [];
-                if (key === 'promptExternalLinksV1') return promptExternalLinksState.value;
-                return null;
-            },
-            useSettingMutable: (key: string) => {
-                if (key === 'contextSelectionsV1') {
-                    return [contextSelectionsState.value, setContextSelectionsMock];
-                }
-                if (key === 'promptExternalLinksV1') {
-                    return [promptExternalLinksState.value, setPromptExternalLinksMock];
-                }
-                return [null, vi.fn()];
-            },
-        });
-    },
+const deletionConfirmation = vi.hoisted(() => vi.fn<IModal['confirm']>(async () => true));
+const deletionAlert = vi.hoisted(() => vi.fn<IModal['alert']>());
+vi.mock('socket.io-client', async original => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
+vi.mock('@happier-dev/iroh-native', async original => (await import('@/dev/testkit/harness/promptMachineTransferBoundary')).createPromptNativeTransferModuleBoundary(original));
+installPromptMachineSocketBoundary();
+installPromptAssetsCommonModuleMocks({ storage: original => original(), modal: async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({ spies: { confirm: deletionConfirmation, alert: deletionAlert } }).module;
+}, reactNative: async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({ Platform: { OS: 'ios', select: ({ ios, default: fallback }: { ios?: unknown; default?: unknown }) => ios ?? fallback } });
+} });
+const { storage } = await import('@/sync/domains/state/storage');
+const { refreshPromptLibraryCatalog } = await import('@/sync/engine/settings/promptLibraryCatalogEngine');
+const { getPromptLibraryCatalogValue } = await import('@/sync/store/settings/promptLibraryCatalogSnapshot');
+const { PromptAssetsScreen } = await import('./PromptAssetsScreen');
+const skillType: PromptAssetTypeDescriptorV1 = { id: 'agents.skill', providerId: 'agents', title: 'Agent skills', description: 'Portable skills', libraryKind: 'bundle',
+    supportsScope: { user: true, project: true }, supportsFiles: true, formatId: 'skill_md_v1', defaultRoots: [], capabilities: { supportsSymlinkInstall: true } };
+const docType: PromptAssetTypeDescriptorV1 = { ...skillType, id: 'claude.command', providerId: 'claude', libraryKind: 'doc', supportsFiles: false, formatId: 'markdown_utf8_v1' };
+const skill = { assetTypeId: skillType.id, scope: 'project' as const, externalRef: { name: 'refactor' }, title: 'Refactor', libraryKind: 'bundle' as const,
+    bundleSchemaId: 'skills.skill_md_v1' as const, digest: 'digest-1', displayPath: '/repo/.agents/skills/refactor' };
+const doc = { assetTypeId: docType.id, scope: 'project' as const, externalRef: { relativePath: 'review/code.md' }, title: 'review/code', libraryKind: 'doc' as const,
+    digest: 'digest-doc', displayPath: '/repo/.claude/commands/review/code.md' };
+let fixture: Awaited<ReturnType<typeof createPromptMachineTransferFixture>>;
+let catalog: ReturnType<typeof createPromptLibraryCatalogBoundary>;
+let previousState: ReturnType<typeof storage.getState>;
+async function setup(workspacePath = '/repo') {
+    catalog = createPromptLibraryCatalogBoundary({ records: [
+        { key: 'contexts', value: { v: 1, selectionsByKey: { 'promptAssets.externalAssets': { machineId: 'machine-2', workspacePath } } } },
+        { key: 'external-links', value: { v: 1, links: [] } },
+    ], revision: 4 });
+    fixture = await createPromptMachineTransferFixture({ serverUrl: 'https://prompt-assets-screen.test', serverIdentityId: 'srv_prompt_assets_screen',
+        selectionKey: MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.promptAssets, types: [skillType], discoveries: [skill],
+        asset: { ...skill, bundleBody: { v: 1, entries: [{ path: 'SKILL.md', contentBase64: Buffer.from('# Refactor').toString('base64'), contentKind: 'utf8' }], createdAtMs: 1, updatedAtMs: 1 } },
+        handleHomeRequest: catalog.handle });
+    await refreshPromptLibraryCatalog(fixture.scope);
+    expect(getPromptLibraryCatalogValue(fixture.scope, 'contexts'), JSON.stringify(fixture.diagnostic())).toMatchObject({ status: 'ready', stale: false,
+        value: { selectionsByKey: { 'promptAssets.externalAssets': { workspacePath } } } });
+    expect(getPromptLibraryCatalogValue(fixture.scope, 'external-links'), JSON.stringify(fixture.diagnostic())).toMatchObject({ status: 'ready', stale: false });
+    expect(storage.getState().settingsScope).toEqual(fixture.scope);
+}
+function requests(method: string) { return fixture.daemonRequests.filter(request => request.method.endsWith(':' + method)); }
+async function waitForAsset(screen: Awaited<ReturnType<typeof renderScreen>>, itemId: string) {
+    await vi.waitFor(() => {
+        const diagnostic = JSON.stringify({ ...fixture.diagnostic(), contexts: getPromptLibraryCatalogValue(fixture.scope, 'contexts'),
+            renderedText: screen.findAll(node => typeof node.props.children === 'string').map(node => node.props.children),
+            directory: screen.findByTestId('promptAssets.directoryInput')?.props.value });
+        expect(screen.findByTestId('promptAssets.directoryInput')?.props.value, diagnostic).toBe('/repo');
+        expect(screen.findByTestId(itemId), diagnostic).not.toBeNull();
+    });
+}
+beforeEach(() => {
+    previousState = storage.getState(); promptAssetsRouterPushSpy.mockReset();
+    deletionConfirmation.mockReset(); deletionConfirmation.mockResolvedValue(true); deletionAlert.mockReset();
 });
+afterEach(async () => { await standardCleanup(); await fixture?.dispose(); storage.setState(previousState, true); });
 
-vi.mock('@/sync/ops/machinePromptAssets', () => ({
-    machinePromptAssetsDelete: machinePromptAssetsDeleteMock,
-    machinePromptAssetsListTypes: machinePromptAssetsListTypesMock,
-    machinePromptAssetsDiscover: machinePromptAssetsDiscoverMock,
-    machinePromptAssetsDownload: machinePromptAssetsDownloadMock,
-}));
-
-vi.mock('@/sync/ops/promptLibrary/promptBundles', () => ({
-    createPromptBundleArtifact: createPromptBundleArtifactMock,
-}));
-
-vi.mock('@/sync/ops/promptLibrary/promptDocs', () => {
-    const removePromptExternalLink = (links: any, linkId: string) => ({
-        v: 1,
-        links: (links?.links ?? []).filter((entry: any) => entry.id !== linkId),
+describe('PromptAssetsScreen through Home and daemon boundaries', () => {
+    it.each(['bundle', 'doc'] as const)('loads project assets and imports %s into the captured Account catalog', async kind => {
+        await setup();
+        if (kind === 'doc') {
+            fixture.setTypes([docType]); fixture.setDiscoveries([doc]);
+            fixture.setAsset({ ...doc, markdown: 'Review code carefully.' });
+        }
+        const screen = await renderScreen(<PromptAssetsScreen />);
+        const type = kind === 'doc' ? docType : skillType;
+        const itemId = 'promptAssets.item.project.' + type.id + '.0';
+        await waitForAsset(screen, itemId);
+        expect(requests('daemon.promptAssets.discover').at(-1)?.params).toMatchObject({ assetTypeId: type.id, scope: 'project', directory: '/repo' });
+        await screen.pressByTestIdAsync(itemId);
+        await vi.waitFor(() => expect(fixture.artifacts.list()).toHaveLength(1));
+        const created = fixture.artifacts.list()[0]!;
+        expect(fixture.artifacts.readPlainBody(created.id)).toContain(kind === 'doc' ? 'Review code carefully.' : 'SKILL.md');
+        await vi.waitFor(() => expect(catalog.read('external-links').value).toMatchObject({ links: [{ artifactId: created.id, assetTypeId: type.id, machineId: 'machine-1',
+            workspacePath: '/repo', scope: 'project', syncMode: 'manual' }] }));
+        expect(catalog.requests.find(request => request.key === 'external-links')?.expectedRevision).toBe(4);
+        await vi.waitFor(() => expect(promptAssetsRouterPushSpy).toHaveBeenCalledWith(expect.stringContaining(created.id)));
+        expect(fixture.homes.requestsFor('/v2/account/settings').filter(request => request.input !== null)).toEqual([]);
     });
-    return {
-        createPromptDoc: createPromptDocMock,
-        upsertPromptExternalLink: upsertPromptExternalLinkMock,
-        removePromptExternalLink,
-    };
-});
-
-vi.mock('@/text', async () => {
-    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
-});
-
-// Load the real store after the existing boundary mocks are configured, during collection.
-const { createMachineAdministrationFixture } = await import('@/dev/testkit/fixtures/machineAdministrationFixture');
-
-describe('PromptAssetsScreen', () => {
-    beforeEach(async () => {
-        promptAssetsRouterPushSpy.mockReset();
-        machinePromptAssetsListTypesMock.mockClear();
-        machinePromptAssetsDiscoverMock.mockClear();
-        machinePromptAssetsDownloadMock.mockClear();
-        machinePromptAssetsDeleteMock.mockClear();
-        createPromptBundleArtifactMock.mockClear();
-        createPromptDocMock.mockClear();
-        upsertPromptExternalLinkMock.mockClear();
-        setContextSelectionsMock.mockReset();
-        contextSelectionsState.value = { v: 1, selectionsByKey: {} };
-        promptExternalLinksState.value = { v: 1, links: [] };
-        machinesState.value = [
-            {
-                id: 'machine-1',
-                metadata: {
-                    displayName: 'Laptop',
-                    host: 'laptop.local',
-                    homeDir: '/Users/test',
-                },
-            },
-            {
-                id: 'machine-2',
-                metadata: {
-                    displayName: 'Desktop',
-                    host: 'desktop.local',
-                    homeDir: '/Users/desktop',
-                },
-            },
-        ];
-        administration = await createMachineAdministrationFixture(MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.promptAssets);
+    it('uses Administration rather than Context machine and clears project discovery after a target switch', async () => {
+        await setup(); const screen = await renderScreen(<PromptAssetsScreen />);
+        await waitForAsset(screen, 'promptAssets.item.project.agents.skill.0');
+        expect(requests('daemon.promptAssets.discover')[0]?.method).toMatch(/^machine-1:/);
+        const discoveriesBeforeSwitch = requests('daemon.promptAssets.discover').length;
+        await act(async () => { fixture.selectMachine('machine-2'); });
+        await vi.waitFor(() => expect(screen.findByTestId('promptAssets.item.project.agents.skill.0'), JSON.stringify({ ...fixture.diagnostic(),
+            contexts: getPromptLibraryCatalogValue(fixture.scope, 'contexts'),
+            directory: screen.findByTestId('promptAssets.directoryInput')?.props.value })).toBeNull());
+        expect(requests('daemon.promptAssets.discover')).toHaveLength(discoveriesBeforeSwitch);
+        await vi.waitFor(() => expect(catalog.read('contexts').value).toMatchObject({ selectionsByKey: { 'promptAssets.externalAssets': { workspacePath: '' } } }));
     });
-
-    afterEach(async () => {
-        standardCleanup();
-        await administration?.cleanup();
+    it('does not discover a project before choosing its workspace', async () => {
+        await setup(''); await renderScreen(<PromptAssetsScreen />);
+        await vi.waitFor(() => expect(requests('daemon.promptAssets.listTypes').length).toBeGreaterThan(0));
+        expect(requests('daemon.promptAssets.discover')).toEqual([]);
     });
-
-    it('auto-loads external project skills on mount and imports them into the prompt library', async () => {
-        contextSelectionsState.value = {
-            v: 1,
-            selectionsByKey: {
-                'promptAssets.externalAssets': {
-                    machineId: 'machine-1',
-                    workspacePath: '/Users/test/repo',
-                },
-            },
-        };
-        const { PromptAssetsScreen } = await import('./PromptAssetsScreen');
-
-        let tree!: ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(PromptAssetsScreen))).tree;
+    it('fails closed without an Administration target rather than falling back to Context', async () => {
+        await setup(); fixture.selectMachine(null); await renderScreen(<PromptAssetsScreen />);
         await act(async () => {});
-
-        expect(machinePromptAssetsListTypesMock).toHaveBeenCalledWith('machine-1', { serverId: administration.serverIds[0] });
-        expect(machinePromptAssetsDiscoverMock).toHaveBeenCalledWith(
-            'machine-1',
-            expect.objectContaining({ assetTypeId: 'agents.skill', scope: 'project', directory: '/Users/test/repo' }),
-            { serverId: administration.serverIds[0] },
-        );
-
-        const importedItem = tree.findByTestId('promptAssets.item.project.agents.skill.0');
-        expect(importedItem).toBeTruthy();
-
-        await act(async () => {
-            await pressTestInstanceAsync(importedItem);
-        });
-
-        expect(machinePromptAssetsDownloadMock).toHaveBeenCalledWith(
-            'machine-1',
-            expect.objectContaining({ assetTypeId: 'agents.skill', scope: 'project', externalRef: { name: 'refactor' }, directory: '/Users/test/repo' }),
-            { serverId: administration.serverIds[0] },
-        );
-        expect(createPromptBundleArtifactMock).toHaveBeenCalledWith(expect.objectContaining({
-            title: 'Refactor',
-            bundleSchemaId: 'skills.skill_md_v1',
-            origin: 'imported',
+        expect(fixture.daemonRequests).toEqual([]);
+        expect(catalog.requests).toEqual([]);
+    });
+    it('does not persist an empty Context when no Machine inventory is available', async () => {
+        await setup('');
+        storage.setState({ machines: {}, machineListByServerId: {}, machineListStatusByServerId: {} });
+        await renderScreen(<PromptAssetsScreen />); await act(async () => {});
+        expect(catalog.requests).toEqual([]);
+    });
+    async function prepareLinkedArtifact(serverIdentityId?: string) {
+        const { createPromptBundleArtifact } = await import('@/sync/ops/promptLibrary/promptBundles');
+        const artifactId = await createPromptBundleArtifact({ title: skill.title, bundleSchemaId: 'skills.skill_md_v1', origin: 'imported',
+            entries: [{ path: 'SKILL.md', contentBase64: Buffer.from('# Refactor').toString('base64'), contentKind: 'utf8' }] });
+        expect(storage.getState().artifacts[artifactId]?.header?.title).toBe(skill.title);
+        const { writePromptLibraryRecord, requireUpdatedPromptLibraryMutation } = await import('@/sync/api/account/apiPromptLibraryCatalog');
+        requireUpdatedPromptLibraryMutation(await writePromptLibraryRecord(fixture.scope, {
+            record: { key: 'external-links', value: { v: 1, links: [{ id: 'link-1', artifactId, assetTypeId: skillType.id,
+                machineId: 'machine-1', ...(serverIdentityId ? { serverIdentityId } : {}),
+                scope: 'project', workspacePath: '/repo', externalRef: skill.externalRef }] } }, expectedRevision: 4,
         }));
-        expect(setPromptExternalLinksMock).toHaveBeenCalledWith(expect.objectContaining({
-            v: 1,
-            links: [
-                expect.objectContaining({
-                    artifactId: 'bundle-1',
-                    assetTypeId: 'agents.skill',
-                    machineId: 'machine-1',
-                    scope: 'project',
-                    workspacePath: '/Users/test/repo',
-                    externalRef: { name: 'refactor' },
-                    syncMode: 'manual',
-                    baseDigest: 'digest-1',
-                    lastLibraryDigest: expect.any(String),
-                    lastExternalDigest: 'digest-1',
-                    lastSyncAtMs: expect.any(Number),
-                }),
-            ],
-        }));
-        expect(promptAssetsRouterPushSpy).toHaveBeenCalledWith('/settings/prompts/skills/bundle-1');
+        await refreshPromptLibraryCatalog(fixture.scope);
+        return artifactId;
+    }
+
+    it('shows linked management and deletes only the external asset and its acknowledged link without creating another Artifact', async () => {
+        await setup();
+        const artifactId = await prepareLinkedArtifact();
+        const screen = await renderScreen(<PromptAssetsScreen />);
+        await waitForAsset(screen, 'promptAssets.item.project.agents.skill.0');
+        const manage = screen.findAll(node => Array.isArray(node.props.actions) && node.props.actions.some((action: { id?: string }) => action.id === 'manage'))[0];
+        if (!manage) throw new Error('Missing linked management');
+        expect(manage.props.actions.map((action: { id: string }) => action.id)).toEqual(['open', 'manage', 'delete']);
+        await act(async () => { manage.props.actions.find((action: { id: string }) => action.id === 'delete').onPress(); });
+        await vi.waitFor(() => expect(catalog.read('external-links').value).toEqual({ v: 1, links: [] }));
+        expect(requests('daemon.promptAssets.delete').map(request => request.params)).toMatchObject([{
+            assetTypeId: skillType.id, scope: 'project', directory: '/repo', externalRef: skill.externalRef, previewOnly: false,
+        }]);
+        expect(catalog.requests.at(-1)).toMatchObject({ key: 'external-links', expectedRevision: 5 });
+        expect(fixture.artifacts.list().map(artifact => artifact.id)).toEqual([artifactId]);
     });
 
-    it('clears project-scoped discovery after the Administration target changes until a workspace path is chosen again', async () => {
-        contextSelectionsState.value = {
-            v: 1,
-            selectionsByKey: {
-                'promptAssets.externalAssets': {
-                    machineId: 'machine-1',
-                    workspacePath: '/Users/test/repo',
-                },
-            },
-        };
-        const { PromptAssetsScreen } = await import('./PromptAssetsScreen');
-
-        await renderScreen(React.createElement(PromptAssetsScreen));
-        await act(async () => {});
-
-        await act(async () => {
-            administration.selectTarget(administration.targets[1]);
-        });
-        await act(async () => {});
-
-        expect(machinePromptAssetsListTypesMock).toHaveBeenCalledWith('machine-2', { serverId: administration.serverIds[1] });
-        expect(machinePromptAssetsDiscoverMock).not.toHaveBeenCalledWith(
-            'machine-2',
-            expect.anything(),
-            { serverId: administration.serverIds[1] },
-        );
+    it('does not delete an independent Machine asset after the library Account retires during confirmation', async () => {
+        await setup();
+        const artifactId = await prepareLinkedArtifact('srv_asset_delete_machine');
+        let machineHome: Awaited<ReturnType<typeof fixture.addMachineHome>> | undefined;
+        let failure: unknown;
+        const admission = fixture.addMachineHome('https://asset-delete-machine.test', 'srv_asset_delete_machine')
+            .then(value => { machineHome = value; }, error => { failure = error; });
+        await vi.waitFor(() => { if (failure) throw failure; expect(machineHome, JSON.stringify(fixture.diagnostic())).toBeDefined(); });
+        await admission;
+        if (!machineHome) throw new Error('Independent deletion Machine admission did not settle');
+        const screen = await renderScreen(<PromptAssetsScreen />);
+        await waitForAsset(screen, 'promptAssets.item.project.agents.skill.0');
+        const manage = screen.findAll(node => Array.isArray(node.props.actions)
+            && node.props.actions.some((action: { id?: string }) => action.id === 'delete'))[0];
+        if (!manage) throw new Error('Missing real linked deletion action');
+        let confirm: ((value: boolean) => void) | undefined;
+        deletionConfirmation.mockImplementationOnce(() => new Promise<boolean>(resolve => { confirm = resolve; }));
+        await act(async () => { manage.props.actions.find((action: { id: string }) => action.id === 'delete').onPress(); });
+        await vi.waitFor(() => expect(confirm).toBeDefined());
+        await act(async () => { await fixture.homes.switchAccount(fixture.serverId, 'replacement-account'); });
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const { parseToken } = await import('@/utils/auth/parseToken');
+        const credentials = await TokenStorage.getCredentialsForServerUrl('https://asset-delete-machine.test', { serverId: machineHome.serverId });
+        if (!credentials) throw new Error('Independent Machine credentials were retired');
+        expect(parseToken(credentials.token)).toBe('account-b');
+        await act(async () => { confirm?.(true); });
+        await vi.waitFor(() => expect(deletionAlert).toHaveBeenCalled());
+        expect(requests('daemon.promptAssets.delete'), JSON.stringify(fixture.diagnostic())).toEqual([]);
+        expect(catalog.requests).toMatchObject([{ key: 'external-links', expectedRevision: 4 }]);
+        expect(catalog.read('external-links').value).toMatchObject({ links: [{ id: 'link-1', artifactId }] });
+        expect(fixture.artifacts.list().map(artifact => artifact.id)).toEqual([artifactId]);
+        expect(machineHome.artifacts.list()).toEqual([]);
     });
 
-    it('passes machine browse config to the project directory context bar input', async () => {
-        const { PromptAssetsScreen } = await import('./PromptAssetsScreen');
-
-        let tree!: ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(PromptAssetsScreen))).tree;
-        await act(async () => {});
-
-        const contextBar = tree.findByType('ContextBar' as any);
-        expect(contextBar.props.workspace.browse).toEqual({
-            machineId: 'machine-1',
-            serverId: administration.serverIds[0],
-            enabled: true,
-        });
-    });
-
-    it('imports doc prompt assets into the prompt library as prompt docs', async () => {
-        contextSelectionsState.value = {
-            v: 1,
-            selectionsByKey: {
-                'promptAssets.externalAssets': {
-                    machineId: 'machine-1',
-                    workspacePath: '/Users/test/repo',
-                },
-            },
-        };
-        machinePromptAssetsListTypesMock.mockResolvedValueOnce({
-            ok: true,
-            types: [
-                {
-                    id: 'claude.command',
-                    providerId: 'claude',
-                    title: 'Claude commands (.claude)',
-                    description: 'Markdown slash commands',
-                    libraryKind: 'doc',
-                    supportsScope: { user: true, project: true },
-                    supportsFiles: false,
-                    formatId: 'markdown_utf8_v1',
-                    defaultRoots: [
-                        { label: 'User', scope: 'user', pathTemplate: '~/.claude/commands' },
-                        { label: 'Project', scope: 'project', pathTemplate: '.claude/commands' },
-                    ],
-                    capabilities: { supportsNestedNamespaces: true },
-                },
-            ],
-        });
-        machinePromptAssetsDiscoverMock.mockResolvedValueOnce({
-            ok: true,
-            items: [
-                {
-                    assetTypeId: 'claude.command',
-                    scope: 'project',
-                    externalRef: { relativePath: 'review/code.md' },
-                    title: 'review/code',
-                    libraryKind: 'doc',
-                    digest: 'digest-doc',
-                    displayPath: '/repo/.claude/commands/review/code.md',
-                },
-            ],
-        });
-        machinePromptAssetsDownloadMock.mockResolvedValueOnce({
-            ok: true,
-            item: {
-                assetTypeId: 'claude.command',
-                scope: 'project',
-                externalRef: { relativePath: 'review/code.md' },
-                title: 'review/code',
-                libraryKind: 'doc',
-                digest: 'digest-doc',
-                displayPath: '/repo/.claude/commands/review/code.md',
-                markdown: '# Review code\n\nUse $ARGUMENTS',
-            },
-        });
-
-        const { PromptAssetsScreen } = await import('./PromptAssetsScreen');
-
-        let tree!: ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(PromptAssetsScreen))).tree;
-        await act(async () => {});
-
-        const importedItem = tree.findByTestId('promptAssets.item.project.claude.command.0');
-        expect(importedItem).toBeTruthy();
-
-        await act(async () => {
-            await pressTestInstanceAsync(importedItem);
-        });
-
-        expect(createPromptDocMock).toHaveBeenCalledWith(expect.objectContaining({
-            title: 'review/code',
-            markdown: '# Review code\n\nUse $ARGUMENTS',
-            origin: 'imported',
-        }));
-        expect(setPromptExternalLinksMock).toHaveBeenCalledWith(expect.objectContaining({
-            v: 1,
-            links: [
-                expect.objectContaining({
-                    artifactId: 'doc-1',
-                    assetTypeId: 'claude.command',
-                    machineId: 'machine-1',
-                    scope: 'project',
-                    workspacePath: '/Users/test/repo',
-                    externalRef: { relativePath: 'review/code.md' },
-                    syncMode: 'manual',
-                    baseDigest: 'digest-doc',
-                    lastLibraryDigest: expect.any(String),
-                    lastExternalDigest: 'digest-doc',
-                    lastSyncAtMs: expect.any(Number),
-                }),
-            ],
-        }));
-        expect(promptAssetsRouterPushSpy).toHaveBeenCalledWith('/settings/prompts/docs/doc-1');
-    });
-
-    it('uses the Administration target rather than the persisted ContextBar machine selection when refreshing external assets', async () => {
-        contextSelectionsState.value = {
-            v: 1,
-            selectionsByKey: {
-                'promptAssets.externalAssets': {
-                    machineId: 'machine-2',
-                    workspacePath: '/persisted/project',
-                },
-            },
-        };
-
-        const { PromptAssetsScreen } = await import('./PromptAssetsScreen');
-
-        let tree!: ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(PromptAssetsScreen))).tree;
-        await act(async () => {});
-
-        const refreshItem = tree.findByTestId('promptAssets.refresh');
-        expect(refreshItem).toBeTruthy();
-
-        await act(async () => {
-            await pressTestInstanceAsync(refreshItem);
-        });
-
-        expect(machinePromptAssetsListTypesMock).toHaveBeenCalledWith('machine-1', { serverId: administration.serverIds[0] });
-        expect(machinePromptAssetsDiscoverMock).toHaveBeenCalledWith(
-            'machine-1',
-            expect.objectContaining({
-                assetTypeId: 'agents.skill',
-                scope: 'project',
-                directory: '/persisted/project',
-            }),
-            { serverId: administration.serverIds[0] },
-        );
-    });
-
-    it('does not persist an empty context selection before machines are available', async () => {
-        machinesState.value = [];
-
-        const { PromptAssetsScreen } = await import('./PromptAssetsScreen');
-
-        await renderScreen(React.createElement(PromptAssetsScreen));
-
-        expect(setContextSelectionsMock).not.toHaveBeenCalled();
-    });
-
-    it('fails closed without a fresh Administration target instead of using a context-machine fallback', async () => {
-        administration.selectTarget(null);
-
-        const { PromptAssetsScreen } = await import('./PromptAssetsScreen');
-        await renderScreen(React.createElement(PromptAssetsScreen));
-        await act(async () => {});
-
-        expect(machinePromptAssetsListTypesMock).not.toHaveBeenCalled();
-        expect(machinePromptAssetsDiscoverMock).not.toHaveBeenCalled();
-        expect(machinePromptAssetsDownloadMock).not.toHaveBeenCalled();
-    });
-
-    it('shows manage and delete actions for linked external assets', async () => {
-        contextSelectionsState.value = {
-            v: 1,
-            selectionsByKey: {
-                'promptAssets.externalAssets': {
-                    machineId: 'machine-1',
-                    workspacePath: '/Users/test/repo',
-                },
-            },
-        };
-        promptExternalLinksState.value = {
-            v: 1,
-            links: [
-                {
-                    id: 'link-1',
-                    artifactId: 'bundle-1',
-                    assetTypeId: 'agents.skill',
-                    machineId: 'machine-1',
-                    scope: 'project',
-                    workspacePath: '/Users/test/repo',
-                    externalRef: { name: 'refactor' },
-                    lastExternalDigest: 'digest-1',
-                },
-            ],
-        };
-
-        const { PromptAssetsScreen } = await import('./PromptAssetsScreen');
-
-        let tree!: ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(PromptAssetsScreen))).tree;
-        await act(async () => {});
-
-        const actions = tree.findByType('ItemRowActions');
-        expect(actions.props.actions.map((action: any) => action.id)).toEqual([
-            'open',
-            'manage',
-            'delete',
-        ]);
-    });
-
-    it('does not discover project-scoped assets until a workspace path is selected', async () => {
-        const { PromptAssetsScreen } = await import('./PromptAssetsScreen');
-
-        await renderScreen(React.createElement(PromptAssetsScreen));
-        await act(async () => {});
-
-        expect(machinePromptAssetsDiscoverMock).not.toHaveBeenCalled();
+    it('does not adopt a bare original-Home link for the same Machine id on an independent Home', async () => {
+        await setup();
+        const originalArtifactId = await prepareLinkedArtifact();
+        let machineHome: Awaited<ReturnType<typeof fixture.addMachineHome>> | undefined;
+        let failure: unknown;
+        const admission = fixture.addMachineHome('https://asset-collision-machine.test', 'srv_asset_collision_machine')
+            .then(value => { machineHome = value; }, error => { failure = error; });
+        await vi.waitFor(() => { if (failure) throw failure; expect(machineHome, JSON.stringify(fixture.diagnostic())).toBeDefined(); });
+        await admission;
+        if (!machineHome) throw new Error('Independent colliding Machine admission did not settle');
+        const screen = await renderScreen(<PromptAssetsScreen />);
+        await waitForAsset(screen, 'promptAssets.item.project.agents.skill.0');
+        const actions = screen.findAll(node => Array.isArray(node.props.actions)
+            && node.props.actions.some((action: { id?: string }) => action.id === 'import'))[0];
+        expect(actions?.props.actions.map((action: { id: string }) => action.id), JSON.stringify(fixture.diagnostic())).toEqual(['import']);
+        await screen.pressByTestIdAsync('promptAssets.item.project.agents.skill.0');
+        await vi.waitFor(() => expect(fixture.artifacts.list()).toHaveLength(2));
+        const imported = fixture.artifacts.list().find(artifact => artifact.id !== originalArtifactId);
+        if (!imported) throw new Error('Independent Machine import was not acknowledged');
+        await vi.waitFor(() => expect(catalog.read('external-links').value).toMatchObject({ links: [
+            { id: 'link-1', artifactId: originalArtifactId },
+            { artifactId: imported.id, machineId: 'machine-1', serverIdentityId: 'srv_asset_collision_machine' },
+        ] }));
+        expect(machineHome.artifacts.list()).toEqual([]);
+        expect(requests('daemon.promptAssets.delete')).toEqual([]);
     });
 });

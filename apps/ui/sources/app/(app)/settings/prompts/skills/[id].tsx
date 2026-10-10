@@ -4,9 +4,9 @@ import { useLocalSearchParams } from '@/components/appShell/workspace/destinatio
 import { SkillBundleEditorScreen } from '@/components/settings/prompts/skills/SkillBundleEditorScreen';
 
 export function EditSkillBundlePage() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, serverId } = useLocalSearchParams<{ id: string; serverId?: string }>();
   if (!id) return null;
-  return <SkillBundleEditorScreen artifactId={id} />;
+  return <SkillBundleEditorScreen artifactId={id} serverId={serverId} />;
 }
 import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorkspaceRouteEntry';
 export { EditSkillBundlePage as WorkspaceRouteBody };

@@ -33,8 +33,8 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
 }));
 
 beforeEach(async () => {
-    await loadSyncSingletonForTests();
     installDisconnectedServerSocketBoundary();
+    await loadSyncSingletonForTests();
     clearActiveUnsavedChangesGuard();
     promptLibrarySettingsRouterPushSpy.mockClear();
     useFeatureEnabledMock.mockImplementation((featureId: string) => (
@@ -82,7 +82,7 @@ describe('PromptsSettingsHome', () => {
         expect(promptLibrarySettingsRouterPushSpy).toHaveBeenCalledWith('/settings/prompts/templates');
 
         await screen.pressByTestIdAsync('settings-prompts-stacks');
-        expect(promptLibrarySettingsRouterPushSpy).toHaveBeenCalledWith('/settings/prompts/stacks');
+        expect(promptLibrarySettingsRouterPushSpy).toHaveBeenCalledWith('/settings/prompts/stacks/coding');
 
         await screen.pressByTestIdAsync('settings-prompts-assets');
         expect(promptLibrarySettingsRouterPushSpy).toHaveBeenCalledWith('/settings/prompts/assets');

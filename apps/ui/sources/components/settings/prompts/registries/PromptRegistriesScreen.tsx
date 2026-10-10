@@ -25,7 +25,12 @@ import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { Modal } from '@/modal';
 import { randomUUID } from '@/platform/randomUUID';
-import { useSettingMutable } from '@/sync/domains/state/storage';
+import { usePromptLibraryCatalogValue } from '@/sync/store/usePromptLibraryCatalog';
+import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
+import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { createUiPromptLibraryArtifactStore } from '@/sync/ops/promptLibrary/promptLibraryArtifactStore';
+import { promptCollectionItemHref } from '@/components/settings/prompts/collection/promptCollectionRoutes';
+import { requireUpdatedPromptLibraryMutation } from '@/sync/api/account/apiPromptLibraryCatalog';
 import {
   machinePromptRegistriesListAdapters,
   machinePromptRegistriesListSources,
@@ -52,6 +57,7 @@ const styles = StyleSheet.create(() => ({
  */
 export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen() {
   const router = useRouter();
+  const libraryScope = useAccountSettingsScope();
   const administrationTargetSelection = useMachineAdministrationTargetSelection(
     MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.promptRegistries,
   );
@@ -62,7 +68,7 @@ export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen
     isExecutionTargetCurrent,
     isSelectionCurrent,
   } = useMachineAdministrationExecutionTargetBinding(administrationTargetSelection);
-  const [storedSources, setStoredSources] = useSettingMutable('promptRegistrySourcesV1');
+  const sourcesCatalog = usePromptLibraryCatalogValue('registry-sources');
   const {
     workspacePath,
     setWorkspacePath,
@@ -72,8 +78,9 @@ export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen
     // machine field is deliberately ignored so it cannot compete with the
     // Administration-owned portable target.
     defaultMachineId: null,
+    workspaceBindingKey: selectionKey,
   });
-  const [configuredSources, setConfiguredSources] = React.useState<PromptRegistryConfiguredSourceV1[]>(() => storedSources.sources);
+  const configuredSources = sourcesCatalog.status === 'ready' && !sourcesCatalog.stale ? sourcesCatalog.value?.sources ?? null : null;
   const [adapterDescriptors, setAdapterDescriptors] = React.useState<PromptRegistryAdapterDescriptorV1[]>([]);
   const [sources, setSources] = React.useState<PromptRegistrySourceDescriptorV1[]>([]);
   const [selectedSourceId, setSelectedSourceId] = React.useState<string | null>(null);
@@ -83,18 +90,12 @@ export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen
   const [sourceTitle, setSourceTitle] = React.useState('');
   const [sourceUrl, setSourceUrl] = React.useState('');
   const [hasLoadedOnce, setHasLoadedOnce] = React.useState(false);
-  const storedSourcesSnapshot = React.useMemo(() => JSON.stringify(storedSources.sources), [storedSources.sources]);
-
-  React.useEffect(() => {
-    setConfiguredSources(storedSources.sources);
-  }, [storedSourcesSnapshot]);
 
   const selectedSourceIdRef = React.useRef<string | null>(selectedSourceId);
   const searchQueryRef = React.useRef(searchQuery);
   const sourcesRef = React.useRef<PromptRegistrySourceDescriptorV1[]>(sources);
   const adapterDescriptorsRef = React.useRef<PromptRegistryAdapterDescriptorV1[]>(adapterDescriptors);
   const latestScanRequestIdRef = React.useRef(0);
-  const previousSelectionKeyRef = React.useRef(selectionKey);
 
   React.useEffect(() => {
     selectedSourceIdRef.current = selectedSourceId;
@@ -112,12 +113,6 @@ export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen
     adapterDescriptorsRef.current = adapterDescriptors;
   }, [adapterDescriptors]);
 
-  React.useLayoutEffect(() => {
-    const previousSelectionKey = previousSelectionKeyRef.current;
-    previousSelectionKeyRef.current = selectionKey;
-    if (!previousSelectionKey || previousSelectionKey === selectionKey) return;
-    setWorkspacePath('');
-  }, [selectionKey, setWorkspacePath]);
 
   React.useEffect(() => {
     latestScanRequestIdRef.current += 1;
@@ -128,10 +123,10 @@ export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen
     setHasLoadedOnce(false);
   }, [selectionKey]);
 
-  const persistConfiguredSources = React.useCallback((nextSources: PromptRegistryConfiguredSourceV1[]) => {
-    setConfiguredSources(nextSources);
-    setStoredSources({ v: 1, sources: nextSources });
-  }, [setStoredSources]);
+  const persistConfiguredSources = React.useCallback(async (nextSources: PromptRegistryConfiguredSourceV1[]) => {
+    if (!configuredSources) throw new Error('Prompt registry catalog is unavailable');
+    requireUpdatedPromptLibraryMutation(await sourcesCatalog.write({ v: 1, sources: nextSources }));
+  }, [configuredSources, sourcesCatalog.write]);
 
   const selectedSource = React.useMemo(
     () => sources.find((source) => source.id === selectedSourceId) ?? null,
@@ -144,6 +139,7 @@ export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen
   );
 
   const listSources = React.useCallback(async (): Promise<PromptRegistrySourceDescriptorV1[]> => {
+    if (!configuredSources) return [];
     const requestedSelection = selectionKey;
     const executionTarget = resolveExactExecutionTarget(selectedTarget);
     if (!executionTarget) {
@@ -190,6 +186,7 @@ export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen
     nextSources: readonly PromptRegistrySourceDescriptorV1[] = sourcesRef.current,
     nextAdapterDescriptors: readonly PromptRegistryAdapterDescriptorV1[] = adapterDescriptorsRef.current,
   ): Promise<PromptRegistryItemSummaryV1[]> => {
+    if (!configuredSources) return [];
     const requestedSelection = selectionKey;
     const executionTarget = resolveExactExecutionTarget(selectedTarget);
     if (!executionTarget) return [];
@@ -251,7 +248,8 @@ export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen
     runRefresh();
   }, [runRefresh]);
 
-  const addGitSource = React.useCallback(() => {
+  const addGitSource = React.useCallback(async () => {
+    if (!configuredSources) return;
     const title = sourceTitle.trim();
     const repositoryUrl = sourceUrl.trim();
     if (!title || !repositoryUrl) {
@@ -266,15 +264,26 @@ export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen
       enabled: true,
       config: { repositoryUrl },
     });
-    persistConfiguredSources([...configuredSources, nextSource]);
+    try {
+      await persistConfiguredSources([...configuredSources, nextSource]);
+    } catch {
+      Modal.alert(t('common.error'), t('errors.unknownError'));
+      return;
+    }
     setSourceTitle('');
     setSourceUrl('');
     setIsAddGitSourceOpen(false);
   }, [configuredSources, persistConfiguredSources, sourceTitle, sourceUrl]);
 
-  const removeSource = React.useCallback((sourceId: string) => {
+  const removeSource = React.useCallback(async (sourceId: string) => {
+    if (!configuredSources) return;
     const nextSources = configuredSources.filter((source) => `git:${source.id}` !== sourceId && source.id !== sourceId);
-    persistConfiguredSources(nextSources);
+    try {
+      await persistConfiguredSources(nextSources);
+    } catch {
+      Modal.alert(t('common.error'), t('errors.unknownError'));
+      return;
+    }
     if (selectedSourceId === sourceId) {
       setSelectedSourceId(null);
       setItems([]);
@@ -282,24 +291,37 @@ export const PromptRegistriesScreen = React.memo(function PromptRegistriesScreen
   }, [configuredSources, persistConfiguredSources, selectedSourceId]);
 
   const importItem = React.useCallback(async (item: PromptRegistryItemSummaryV1) => {
+    if (!libraryScope || !configuredSources) return;
     const requestedSelection = selectionKey;
     const executionTarget = resolveExactExecutionTarget(selectedTarget);
     if (!executionTarget) return;
 
-    const imported = await importPromptRegistrySkillItem({
-      machineId: executionTarget.machine.id,
-      serverId: executionTarget.serverId,
-      configuredSources,
-      sourceId: item.sourceId,
-      itemId: item.itemId,
-    });
-    if (!isExecutionTargetCurrent(requestedSelection, executionTarget)) return;
-    if (!imported.ok) {
-      Modal.alert(t('common.error'), translatePromptLibraryMessage(imported.error));
-      return;
+    const libraryAccount = await captureLazyActionAccountContext(libraryScope.serverId);
+    const controller = new AbortController();
+    const retirement = libraryAccount.accountLifetime.onRetire(() => controller.abort());
+    try {
+      if (libraryAccount.accountId !== libraryScope.accountId) throw new Error('action_account_scope_changed');
+      libraryAccount.assertCurrent();
+      const imported = await importPromptRegistrySkillItem({
+        machineId: executionTarget.machine.id,
+        serverId: executionTarget.serverId,
+        configuredSources,
+        sourceId: item.sourceId,
+        itemId: item.itemId,
+        signal: controller.signal,
+      }, createUiPromptLibraryArtifactStore(libraryAccount.workflowArtifacts, libraryAccount));
+      libraryAccount.assertCurrent();
+      if (!isExecutionTargetCurrent(requestedSelection, executionTarget)) return;
+      if (!imported.ok) {
+        Modal.alert(t('common.error'), translatePromptLibraryMessage(imported.error));
+        return;
+      }
+      router.push(promptCollectionItemHref('bundle', imported.artifactId, { serverId: libraryAccount.serverId }));
+    } finally {
+      retirement.dispose();
+      libraryAccount.dispose();
     }
-    router.push(`/settings/prompts/skills/${imported.artifactId}`);
-  }, [configuredSources, isExecutionTargetCurrent, resolveExactExecutionTarget, router, selectedTarget, selectionKey]);
+  }, [configuredSources, isExecutionTargetCurrent, libraryScope, resolveExactExecutionTarget, router, selectedTarget, selectionKey]);
 
   const openItemDetails = React.useCallback((item: PromptRegistryItemSummaryV1) => {
     const executionTarget = resolveExactExecutionTarget(selectedTarget);

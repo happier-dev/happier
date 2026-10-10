@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { captureLazyActionAccountContext, type LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { createUiPromptLibraryArtifactStore } from './promptLibraryArtifactStore';
 
 const machinePromptRegistriesDownloadItemMock = vi.hoisted(() => vi.fn(async () => ({
   ok: true as const,
@@ -45,25 +48,24 @@ const machinePromptRegistriesInstallMock = vi.hoisted(() => vi.fn(async (): Prom
     fileCount: 1,
   },
 })));
-const createPromptRegistrySkillArtifactFromFetchedItemMock = vi.hoisted(() => vi.fn(async () => ({
-  ok: true as const,
-  artifactId: 'bundle-1',
-})));
 
 vi.mock('@/sync/ops/machinePromptRegistries', () => ({
   machinePromptRegistriesDownloadItem: machinePromptRegistriesDownloadItemMock,
   machinePromptRegistriesInstall: machinePromptRegistriesInstallMock,
 }));
 
-vi.mock('./promptRegistrySkillImports', () => ({
-  createPromptRegistrySkillArtifactFromFetchedItem: createPromptRegistrySkillArtifactFromFetchedItemMock,
-}));
+let fixture: Awaited<ReturnType<typeof createPlainArtifactHomeFixture>>;
+let account: LazyActionAccountContext;
+afterEach(() => { account?.dispose(); fixture?.dispose(); });
 
 describe('installPromptRegistryItem', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     machinePromptRegistriesDownloadItemMock.mockClear();
     machinePromptRegistriesInstallMock.mockClear();
-    createPromptRegistrySkillArtifactFromFetchedItemMock.mockClear();
+    fixture = await createPlainArtifactHomeFixture('https://registry-install-operations.test');
+    const { setServerProfileIdentityForUrl } = await import('@/sync/domains/server/serverProfiles');
+    await setServerProfileIdentityForUrl(fixture.home.serverUrl, 'srv_registry_install_operations');
+    account = await captureLazyActionAccountContext(fixture.home.id);
   });
 
   it('imports to the library without calling machine install when installTarget is omitted', async () => {
@@ -71,15 +73,17 @@ describe('installPromptRegistryItem', () => {
 
     const result = await installPromptRegistryItem({
       machineId: 'machine-1',
+      machineTarget: { serverIdentityId: 'srv_registry_install_operations', machineId: 'machine-1' },
+      libraryServerIdentityId: 'srv_registry_install_operations',
       sourceId: 'skills_sh:featured',
       itemId: 'skills_sh:featured:web-design-guidelines',
       configuredSources: [],
       promptExternalLinks: { v: 1, links: [] },
-    });
+    }, createUiPromptLibraryArtifactStore(account.workflowArtifacts));
 
     expect(result).toEqual({
       ok: true,
-      artifactId: 'bundle-1',
+      artifactId: fixture.boundary.list()[0]?.id,
       routeKind: 'bundle',
       exported: false,
     });
@@ -92,6 +96,8 @@ describe('installPromptRegistryItem', () => {
 
     await installPromptRegistryItem({
       machineId: 'machine-1',
+      machineTarget: { serverIdentityId: 'srv_registry_install_operations', machineId: 'machine-1' },
+      libraryServerIdentityId: 'srv_registry_install_operations',
       sourceId: 'skills_sh:featured',
       itemId: 'skills_sh:featured:web-design-guidelines',
       configuredSources: [],
@@ -103,7 +109,7 @@ describe('installPromptRegistryItem', () => {
         installMode: 'symlink',
       },
       promptExternalLinks: { v: 1, links: [] },
-    });
+    }, createUiPromptLibraryArtifactStore(account.workflowArtifacts));
 
     expect(machinePromptRegistriesInstallMock).toHaveBeenCalledWith(
       'machine-1',
@@ -125,6 +131,8 @@ describe('installPromptRegistryItem', () => {
 
     await installPromptRegistryItem({
       machineId: 'machine-1',
+      machineTarget: { serverIdentityId: 'srv_registry_install_operations', machineId: 'machine-1' },
+      libraryServerIdentityId: 'srv_registry_install_operations',
       sourceId: 'skills_sh:featured',
       itemId: 'skills_sh:featured:web-design-guidelines',
       configuredSources: [],
@@ -136,7 +144,7 @@ describe('installPromptRegistryItem', () => {
       },
       promptExternalLinks: { v: 1, links: [] },
       serverId: 'server-1',
-    });
+    }, createUiPromptLibraryArtifactStore(account.workflowArtifacts));
 
     expect(machinePromptRegistriesDownloadItemMock).toHaveBeenCalledWith(
       'machine-1',
@@ -168,6 +176,8 @@ describe('installPromptRegistryItem', () => {
 
     const result = await installPromptRegistryItem({
       machineId: 'machine-1',
+      machineTarget: { serverIdentityId: 'srv_registry_install_operations', machineId: 'machine-1' },
+      libraryServerIdentityId: 'srv_registry_install_operations',
       sourceId: 'skills_sh:featured',
       itemId: 'skills_sh:featured:web-design-guidelines',
       configuredSources: [],
@@ -180,7 +190,7 @@ describe('installPromptRegistryItem', () => {
       },
       promptExternalLinks: { v: 1, links: [] },
       previewOnly: true,
-    });
+    }, createUiPromptLibraryArtifactStore(account.workflowArtifacts));
 
     expect(machinePromptRegistriesInstallMock).toHaveBeenCalledWith(
       'machine-1',
@@ -193,7 +203,7 @@ describe('installPromptRegistryItem', () => {
       errorCode: 'conflict',
       currentDigest: 'digest-current',
     });
-    expect(createPromptRegistrySkillArtifactFromFetchedItemMock).not.toHaveBeenCalled();
+    expect(fixture.boundary.list()).toEqual([]);
   });
 
   it('does not import a previewed registry install until the commit path runs', async () => {
@@ -201,6 +211,8 @@ describe('installPromptRegistryItem', () => {
 
     const preview = await installPromptRegistryItem({
       machineId: 'machine-1',
+      machineTarget: { serverIdentityId: 'srv_registry_install_operations', machineId: 'machine-1' },
+      libraryServerIdentityId: 'srv_registry_install_operations',
       sourceId: 'skills_sh:featured',
       itemId: 'skills_sh:featured:web-design-guidelines',
       configuredSources: [],
@@ -213,7 +225,7 @@ describe('installPromptRegistryItem', () => {
       },
       promptExternalLinks: { v: 1, links: [] },
       previewOnly: true,
-    });
+    }, createUiPromptLibraryArtifactStore(account.workflowArtifacts));
 
     expect(preview).toEqual({
       ok: true,
@@ -230,10 +242,12 @@ describe('installPromptRegistryItem', () => {
         },
       },
     });
-    expect(createPromptRegistrySkillArtifactFromFetchedItemMock).not.toHaveBeenCalled();
+    expect(fixture.boundary.list()).toEqual([]);
 
     const committed = await installPromptRegistryItem({
       machineId: 'machine-1',
+      machineTarget: { serverIdentityId: 'srv_registry_install_operations', machineId: 'machine-1' },
+      libraryServerIdentityId: 'srv_registry_install_operations',
       sourceId: 'skills_sh:featured',
       itemId: 'skills_sh:featured:web-design-guidelines',
       configuredSources: [],
@@ -246,14 +260,14 @@ describe('installPromptRegistryItem', () => {
       },
       promptExternalLinks: { v: 1, links: [] },
       previewOnly: false,
-    });
+    }, createUiPromptLibraryArtifactStore(account.workflowArtifacts));
 
     expect(committed).toEqual(expect.objectContaining({
       ok: true,
-      artifactId: 'bundle-1',
+      artifactId: fixture.boundary.list()[0]?.id,
       routeKind: 'bundle',
       exported: true,
     }));
-    expect(createPromptRegistrySkillArtifactFromFetchedItemMock).toHaveBeenCalledTimes(1);
+    expect(fixture.boundary.list()).toHaveLength(1);
   });
 });

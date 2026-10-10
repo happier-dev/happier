@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PromptRegistryListAdaptersResponseV1, PromptRegistryScanSourceResponseV1 } from '@happier-dev/protocol';
 import type { PromptRegistrySkillImportResult } from '@/sync/ops/promptLibrary/promptRegistrySkillImports';
 import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
-import { createPartialStorageModuleMock } from '@/dev/testkit/mocks/storage';
+import { createPlainPromptLibraryCatalogHomeFixture } from '@/dev/testkit/harness/promptLibraryCatalogBoundary';
 import { changeTextTestInstance, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
 import {
     installPromptRegistriesCommonModuleMocks,
@@ -14,7 +14,6 @@ import {
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const setRegistrySourcesMock = vi.fn();
 const modalAlertSpy = vi.hoisted(() => vi.fn());
 const machinePromptRegistriesListSourcesMock = vi.hoisted(() => vi.fn(async () => ({
     ok: true,
@@ -63,11 +62,8 @@ const machinePromptRegistriesScanSourceMock = vi.hoisted(() => vi.fn(async (_mac
     ],
 })));
 const importPromptRegistrySkillItemMock = vi.hoisted(() => vi.fn<() => Promise<PromptRegistrySkillImportResult>>(async () => ({ ok: true as const, artifactId: 'bundle-1' })));
-const contextSelectionsState = vi.hoisted(() => ({
-    value: { v: 1, selectionsByKey: {} as Record<string, { machineId?: string | null; workspacePath?: string | null }> },
-}));
-const setContextSelectionsMock = vi.hoisted(() => vi.fn());
 let administration: Awaited<ReturnType<typeof createMachineAdministrationFixture>>;
+let catalog: Awaited<ReturnType<typeof createPlainPromptLibraryCatalogHomeFixture>>;
 
 installPromptRegistriesCommonModuleMocks({
     modal: async () => createModalModuleMock({
@@ -76,17 +72,7 @@ installPromptRegistriesCommonModuleMocks({
             confirm: vi.fn(async () => true),
         },
     }).module,
-    storage: async (importOriginal) => createPartialStorageModuleMock(importOriginal, {
-        useSettingMutable: (key: string) => {
-            if (key === 'promptRegistrySourcesV1') {
-                return [{ v: 1, sources: [] }, setRegistrySourcesMock];
-            }
-            if (key === 'contextSelectionsV1') {
-                return [contextSelectionsState.value, setContextSelectionsMock];
-            }
-            return [null, vi.fn()];
-        },
-    }),
+    storage: importOriginal => importOriginal(),
 });
 
 function createDeferred<T>() {
@@ -158,11 +144,13 @@ vi.mock('@/sync/ops/promptLibrary/promptRegistrySkillImports', () => ({
 
 // Load the real store after the existing boundary mocks are configured, during collection.
 const { createMachineAdministrationFixture } = await import('@/dev/testkit/fixtures/machineAdministrationFixture');
+const { storage } = await import('@/sync/domains/state/storage');
+const { applyPromptLibraryCatalogSnapshot, resetPromptLibraryCatalogSnapshotsForTests } = await import('@/sync/store/settings/promptLibraryCatalogSnapshot');
+const { resetPromptLibraryCatalogEngineForTests } = await import('@/sync/engine/settings/promptLibraryCatalogEngine');
 
 describe('PromptRegistriesScreen', () => {
     beforeEach(async () => {
         promptRegistriesRouterPushSpy.mockReset();
-        setRegistrySourcesMock.mockReset();
         machinePromptRegistriesListSourcesMock.mockReset();
         machinePromptRegistriesListSourcesMock.mockResolvedValue({
             ok: true,
@@ -214,14 +202,22 @@ describe('PromptRegistriesScreen', () => {
         });
         importPromptRegistrySkillItemMock.mockClear();
         modalAlertSpy.mockReset();
-        contextSelectionsState.value = { v: 1, selectionsByKey: {} };
-        setContextSelectionsMock.mockReset();
+        resetPromptLibraryCatalogEngineForTests();
+        resetPromptLibraryCatalogSnapshotsForTests();
+        catalog = await createPlainPromptLibraryCatalogHomeFixture('https://registry-screen-catalog.test', {
+            key: 'registry-sources', value: { v: 1, sources: [] },
+        });
+        const scope = storage.getState().settingsScope;
+        if (!scope) throw new Error('Missing admitted registry Account');
+        applyPromptLibraryCatalogSnapshot(scope, { catalog: { status: 'ready', rows: [catalog.read()],
+            tombstones: catalog.tombstones, diagnostics: [] }, rawSettings: {}, sourceSettingsVersion: 7 }, true);
         administration = await createMachineAdministrationFixture(MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.promptRegistries);
     });
 
     afterEach(async () => {
         standardCleanup();
         await administration?.cleanup();
+        await catalog?.dispose();
     });
 
     it('auto-loads sources on mount, opens registry item details, and imports registry items from row actions', async () => {
@@ -269,7 +265,7 @@ describe('PromptRegistriesScreen', () => {
             addSourceExpander.props?.onSave?.();
         });
 
-        expect(setRegistrySourcesMock).toHaveBeenCalledWith({
+        await vi.waitFor(() => expect(catalog.read().record.value).toEqual({
             v: 1,
             sources: [
                 {
@@ -282,7 +278,9 @@ describe('PromptRegistriesScreen', () => {
                     },
                 },
             ],
-        });
+        }));
+        expect(catalog.mutations).toEqual([{ key: 'registry-sources', expectedRevision: 4 }]);
+        expect(catalog.settingsWrites()).toBe(0);
 
         const sourceItem = tree.findByTestId('promptRegistries.source.0');
         expect(sourceItem).toBeTruthy();
@@ -580,14 +578,14 @@ describe('PromptRegistriesScreen', () => {
     });
 
     it('uses the Administration target rather than a persisted contextual machine selection', async () => {
-        contextSelectionsState.value = {
+        storage.setState(state => ({ settings: { ...state.settings, contextSelectionsV1: {
             v: 1,
             selectionsByKey: {
                 'promptRegistries.browse': {
                     machineId: 'machine-2',
                 },
             },
-        };
+        } } }));
 
         const { PromptRegistriesScreen } = await import('./PromptRegistriesScreen');
 
@@ -631,7 +629,7 @@ describe('PromptRegistriesScreen', () => {
 
         await renderScreen(React.createElement(PromptRegistriesScreen));
 
-        expect(setContextSelectionsMock).not.toHaveBeenCalled();
+        expect(catalog.mutations).toEqual([]);
         expect(machinePromptRegistriesListAdaptersMock).not.toHaveBeenCalled();
         expect(machinePromptRegistriesListSourcesMock).not.toHaveBeenCalled();
         expect(machinePromptRegistriesScanSourceMock).not.toHaveBeenCalled();

@@ -6,21 +6,21 @@ import type { PromptStackEntryV1 } from '@happier-dev/protocol';
 import type { MemoryScopeTargetV1 } from '@happier-dev/protocol/actions/executor/types';
 
 import { MemoryDocumentBody } from '@/components/memory/MemoryDocumentBody';
+import { MemorySearchPanel } from '@/components/memory/MemorySearchPanel';
 import { useMemoryDocument } from '@/components/memory/useMemoryDocument';
-import type { MemoryCreationReceipt } from '@/sync/ops/promptLibrary/memoryDocuments';
-import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { useMemoryCreationReceipt } from '@/components/memory/useMemoryCreationReceipt';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { Switch } from '@/components/ui/forms/Switch';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
 
-import { CONTEXT_LOAD_CHARS_PER_WORD, CONTEXT_LOAD_WORD_OPTIONS } from '../stacks/promptStackEntryPresentation';
+import { promptStackBudgetChoices } from '../stacks/promptStackBudgetChoices';
 
 /** Key facts shown before "Show all N" on a Context page (lab `c-ctx`). */
 const COLLAPSED_FACTS = 4;
-const LOAD_ALL = 'all';
 
 /**
  * A Context page's memory section (lab `c-ctx` A/P; D48): the layer's `memory_doc.v1` document drawn
@@ -42,53 +42,52 @@ export const ContextMemorySection = React.memo(function ContextMemorySection(pro
     onDetach?: () => void;
     /** Sets or clears the entry's `maxChars`; omitted where this viewer cannot change the layer. */
     onBudgetChange?: (maxChars: number | null) => void;
+    /** Context use is separate from permission to edit the memory document. */
+    onEnabledChange?: (enabled: boolean) => void;
+    disabled?: boolean;
 }>) {
     const { entry, serverId, onBudgetChange } = props;
-    const accountScope = useActiveServerAccountScope(serverId);
-    const scopeKey = JSON.stringify([serverId, accountScope?.accountId, props.scopeTarget]);
-    const [createdMemory, setCreatedMemory] = React.useState<Readonly<{ scopeKey: string; receipt: MemoryCreationReceipt }> | null>(null);
-    const receipt = createdMemory?.scopeKey === scopeKey ? createdMemory.receipt : null;
-    const unattached = receipt?.attachment === 'conflict';
-    const onCreatedMemory = React.useCallback((next: MemoryCreationReceipt) => {
-        setCreatedMemory({ scopeKey, receipt: next });
-    }, [scopeKey]);
-    // Once the canonical row publishes this attachment, it alone drives the display again.
-    React.useEffect(() => {
-        if (receipt && entry?.ref.artifactId === receipt.ref.artifactId) setCreatedMemory(null);
-    }, [entry?.ref.artifactId, receipt]);
-    const ref = React.useMemo(
-        () => (unattached ? receipt.ref : entry && entry.ref.kind === 'doc'
+    const attachedRef = React.useMemo(
+        () => (entry && entry.ref.kind === 'doc'
             ? { kind: 'doc' as const, artifactId: entry.ref.artifactId, serverId: entry.ref.serverId ?? serverId }
-            : receipt?.ref ?? null),
-        [entry, receipt, serverId, unattached],
+            : null),
+        [entry, serverId],
     );
+    const { receipt, ref, onCreatedMemory } = useMemoryCreationReceipt({
+        serverId, scopeKey: JSON.stringify(props.scopeTarget), attachedRef,
+    });
+    const unattached = receipt?.attachment === 'conflict';
     const source = useMemoryDocument({ ref, serverId });
     const canRemember = !props.readOnly && Boolean(source.target || (!entry && source.status === 'none' && props.scopeTarget));
     const [composing, setComposing] = React.useState(false);
+    // Search takes the section's body while it is open (the same panel Work › Memory opens).
+    const [searching, setSearching] = React.useState(false);
     const navigateToSession = useNavigateToSession();
     const openSession = React.useCallback((session: Readonly<{ serverId: string; sessionId: string }>) => {
         fireAndForget(navigateToSession(session.sessionId, { serverId: session.serverId }), { tag: 'ContextMemorySection.openSession' });
     }, [navigateToSession]);
     const [budgetOpen, setBudgetOpen] = React.useState(false);
     const maxChars = entry?.maxChars;
-    const budgetItems = React.useMemo((): DropdownMenuItem[] => {
-        const words: number[] = [...CONTEXT_LOAD_WORD_OPTIONS];
-        const stored = maxChars === undefined ? null : Math.max(1, Math.round(maxChars / CONTEXT_LOAD_CHARS_PER_WORD));
-        // A budget set elsewhere (an Action, another client) is named as it is, never snapped to an option.
-        if (stored !== null && !words.includes(stored)) words.push(stored);
-        return [
-            { id: LOAD_ALL, title: t('contextPages.load.everything') },
-            ...words.sort((a, b) => a - b).map((count) => ({ id: String(count), title: t('contextPages.load.words', { count: count.toLocaleString() }) })),
-        ];
-    }, [maxChars]);
-    const selectedBudget = maxChars === undefined ? LOAD_ALL : String(Math.max(1, Math.round(maxChars / CONTEXT_LOAD_CHARS_PER_WORD)));
+    const budgetItems = React.useMemo(() => promptStackBudgetChoices(maxChars, {
+        everything: t('contextPages.load.everything'), words: count => t('contextPages.load.words', { count: count.toLocaleString() }),
+    }), [maxChars]);
+    const selectedBudget = budgetItems.find(choice => choice.maxChars === (maxChars ?? null))?.id ?? 'all';
     return (
         <ItemGroup
             title={props.title}
             description={props.description}
-            action={canRemember || (!unattached && props.onDetach) ? (
+            action={(
                 <View style={styles.actions}>
-                    {canRemember ? (
+                    <IconButton
+                        testID={`${props.testID}.search`}
+                        iconName={searching ? 'x' : 'magnifying-glass'}
+                        variant="plain"
+                        accessibilityLabel={searching ? t('memoryContext.memory.closeSearch') : t('memoryContext.memory.search')}
+                        tooltip={searching ? t('memoryContext.memory.closeSearch') : t('memoryContext.memory.search')}
+                        expanded={searching}
+                        onPress={() => { setSearching((open) => !open); setComposing(false); }}
+                    />
+                    {canRemember && !searching ? (
                         <IconButton
                             testID={`${props.testID}.remember`}
                             iconName="plus"
@@ -108,10 +107,18 @@ export const ContextMemorySection = React.memo(function ContextMemorySection(pro
                             onPress={props.onDetach}
                         />
                     ) : null}
+                    {!unattached && entry && props.onEnabledChange ? <Switch
+                        testID={`${props.testID}.enabled`}
+                        value={entry.enabled}
+                        disabled={props.disabled}
+                        accessibilityLabel={props.title}
+                        onValueChange={props.onEnabledChange}
+                    /> : null}
                 </View>
-            ) : undefined}
+            )}
         >
-            <MemoryDocumentBody
+            {searching ? <MemorySearchPanel testID={`${props.testID}.searchPanel`} serverId={serverId} /> : null}
+            {searching ? null : <MemoryDocumentBody
                 testID={props.testID}
                 source={source}
                 serverId={serverId}
@@ -124,15 +131,15 @@ export const ContextMemorySection = React.memo(function ContextMemorySection(pro
                 onCreatedMemory={onCreatedMemory}
                 emptyText={props.emptyText}
                 onOpenSession={openSession}
-            />
-            {!unattached && entry && onBudgetChange ? (
+            />}
+            {!searching && !unattached && entry && onBudgetChange ? (
                 <DropdownMenu
                     testID={`${props.testID}.load`}
                     open={budgetOpen}
                     onOpenChange={setBudgetOpen}
                     items={budgetItems}
                     selectedId={selectedBudget}
-                    onSelect={(id) => onBudgetChange(id === LOAD_ALL ? null : Number(id) * CONTEXT_LOAD_CHARS_PER_WORD)}
+                    onSelect={(id) => { const choice = budgetItems.find(candidate => candidate.id === id); if (choice) onBudgetChange(choice.maxChars); }}
                     itemTrigger={{
                         title: t('contextPages.load.title'),
                         subtitle: t('contextPages.load.description'),

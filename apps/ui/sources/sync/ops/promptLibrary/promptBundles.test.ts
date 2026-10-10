@@ -1,485 +1,253 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/promptLibraryCatalogBoundary';
+import { decodePlainArtifactStoredContent, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { PromptBundleBodyV1Schema } from '@happier-dev/protocol/prompts/library/promptBundleSchemas';
+import type { PromptLibraryArtifactStore, PromptLibraryStoredArtifact } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
+import type { PromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
+import type { PromptLibraryCatalogSnapshotV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
+import {
+  createPromptBundleArtifact,
+  createSkillPromptBundle,
+  duplicatePromptBundle,
+  listPromptBundleSupportingEntries,
+  readSkillMarkdownFromPromptBundleBody,
+  removeSkillPromptBundleEntry,
+  updateSkillPromptBundle,
+  updateSkillPromptBundleWithEntry,
+} from './promptBundles';
 
-import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
-import { storage } from '@/sync/domains/state/storageStore';
-import { PromptBundleBodyV1Schema, type PromptBundleBodyV1 } from '@happier-dev/protocol';
+let fixture:
+  | Awaited<ReturnType<typeof createPlainArtifactHomeFixture>>
+  | undefined;
+let catalog = createPromptLibraryCatalogBoundary();
+afterEach(() => {
+  fixture?.dispose();
+  fixture = undefined;
+});
+async function home() {
+  catalog = createPromptLibraryCatalogBoundary({ records: [{ key: 'folders', value: { v: 1,
+    folders: [{ id: 'folder-1', name: 'Personal' }] } }] });
+  return (fixture = await createPlainArtifactHomeFixture(
+    'https://prompt-bundle-operations.test',
+    { handleRequest: (path, init) => catalog.handle(path, init) },
+  ));
+}
 
-const createArtifactWithHeaderMock = vi.hoisted(() =>
-  vi.fn(async (_header: unknown, _body: string | null) => 'b1'),
-);
-const updateArtifactWithHeaderMock = vi.hoisted(() =>
-  vi.fn(async (_artifactId: string, _header: unknown, _body: string | null) => undefined),
-);
-const fetchArtifactWithBodyMock = vi.hoisted(
-  () => vi.fn<(artifactId: string) => Promise<DecryptedArtifact | null>>(),
-);
-
-vi.mock('@/sync/sync', () => ({
-  sync: {
-    createArtifactWithHeader: createArtifactWithHeaderMock,
-    updateArtifactWithHeader: updateArtifactWithHeaderMock,
-    fetchArtifactWithBody: fetchArtifactWithBodyMock,
-  },
-}));
-
-describe('promptBundles ops', () => {
-  beforeEach(() => {
-    createArtifactWithHeaderMock.mockReset();
-    updateArtifactWithHeaderMock.mockReset();
-    fetchArtifactWithBodyMock.mockReset();
-    fetchArtifactWithBodyMock.mockResolvedValue(null);
-    storage.setState({ artifacts: {}, isDataReady: true } as any);
+describe('promptBundles qualified operations', () => {
+  it.each([false, true])('keeps bundle placement personal and retains the created identity if its row write conflicts (%s)', async conflict => {
+    let stored: PromptLibraryStoredArtifact | null = null;
+    let created = 0;
+    let record: Extract<PromptLibraryRecordV1, { key: 'folders' }> = {
+      key: 'folders', value: { v: 1, folders: [{ id: 'mine', name: 'Mine' }] },
+    };
+    const store = {
+      read: async () => stored,
+      create: async (input: Readonly<{ header: Readonly<Record<string, unknown>>; body: string }>) => {
+        created += 1;
+        stored = { id: 'created-bundle', header: input.header, body: input.body, revision: { headerVersion: 1, bodyVersion: 1 } };
+        return 'created-bundle';
+      },
+      update: async () => { throw new Error('Creation cannot update an Artifact'); },
+      organization: {
+        serverId: 'home', assertCurrent: () => {},
+        readCatalog: async () => ({ catalog: { status: 'ready', rows: [{ record, revision: 1 }], tombstones: [], diagnostics: [] } satisfies PromptLibraryCatalogSnapshotV1 }),
+        readArtifactHeader: async () => stored ? { header: stored.header ?? {}, owned: true } : null,
+        listArtifactHeaders: async () => ({ items: stored ? [{ artifactId: stored.id, header: stored.header ?? {}, owned: true }] : [], coverage: 'complete' as const }),
+        writeRecord: async (input: Readonly<{ record: PromptLibraryRecordV1; expectedRevision: number | 'absent' }>) => {
+          if (conflict || input.expectedRevision !== 1) return { status: 'conflict' as const, revision: 2 };
+          if (input.record.key !== 'folders') throw new Error('wrong-domain');
+          record = input.record;
+          return { status: 'updated' as const, revision: 2, cursor: 2 };
+        },
+      },
+    } satisfies PromptLibraryArtifactStore;
+    const create = createPromptBundleArtifact({ title: 'Shared prompts', bundleSchemaId: 'bundle.generic_v1',
+      entries: [{ path: 'review.md', contentBase64: Buffer.from('Review').toString('base64'), contentKind: 'utf8' }],
+      folderId: 'mine', tags: [' Personal '],
+    }, store);
+    if (conflict) await expect(create).rejects.toMatchObject({ code: 'artifact_organization_failed', details: {
+      artifactId: 'created-bundle', organization: { status: 'conflict', revision: 2 },
+    } });
+    else {
+      await expect(create).resolves.toBe('created-bundle');
+      expect(record.value.artifactHeadersById?.['created-bundle']).toEqual({ folderId: 'mine', tags: ['Personal'] });
+    }
+    const saved = await store.read();
+    expect(saved?.header).not.toHaveProperty('folderId');
+    expect(saved?.header).not.toHaveProperty('tags');
+    expect(saved?.header).toMatchObject({ bundleSchemaId: 'bundle.generic_v1' });
+    expect(created).toBe(1);
   });
-
-  it('creates a prompt_bundle.v2 skill bundle with SKILL.md', async () => {
-    const { createSkillPromptBundle } = await import('./promptBundles');
-
-    const artifactId = await createSkillPromptBundle({ title: 'My skill', skillMarkdown: '# Skill' });
-    expect(artifactId).toBe('b1');
-
-    const createCall = createArtifactWithHeaderMock.mock.calls[0];
-    if (!createCall) {
-      throw new Error('Expected createArtifactWithHeader to be called');
-    }
-    const header = createCall[0] as { kind: string; bundleSchemaId: string; title: string };
-    const body = createCall[1] as string;
-    expect(header.kind).toBe('prompt_bundle.v2');
-    expect(header.bundleSchemaId).toBe('skills.skill_md_v1');
-    expect(header.title).toBe('My skill');
-
-    const parsed = PromptBundleBodyV1Schema.safeParse(JSON.parse(body));
-    expect(parsed.success).toBe(true);
-    if (parsed.success) {
-      expect(parsed.data.entries.some((e) => e.path === 'SKILL.md')).toBe(true);
-    }
-  });
-
-  it('creates a starter SKILL.md when the new skill editor passes empty markdown', async () => {
-    const { createSkillPromptBundle, readSkillMarkdownFromPromptBundleBody } = await import('./promptBundles');
-
-    await createSkillPromptBundle({ title: 'Starter skill', skillMarkdown: '' });
-
-    const createCall = createArtifactWithHeaderMock.mock.calls[0];
-    if (!createCall) {
-      throw new Error('Expected createArtifactWithHeader to be called');
-    }
-    const body = createCall[1] as string;
-    const parsed = PromptBundleBodyV1Schema.safeParse(JSON.parse(body));
-    expect(parsed.success).toBe(true);
-    if (parsed.success) {
-      expect(readSkillMarkdownFromPromptBundleBody(parsed.data)).toContain('## When to use');
-    }
-  });
-
-  it('creates a prompt_bundle.v2 skill bundle from imported entries and preserves supporting files', async () => {
-    const { createPromptBundleArtifact } = await import('./promptBundles');
-
-    const artifactId = await createPromptBundleArtifact({
-      title: 'Imported skill',
+  it('creates a starter SKILL.md for empty authoring and preserves imported files on duplication', async () => {
+    const f = await home();
+    const starterId = await createSkillPromptBundle({
+      title: 'Starter',
+      skillMarkdown: '',
+    });
+    expect(
+      readSkillMarkdownFromPromptBundleBody(
+        PromptBundleBodyV1Schema.parse(
+          JSON.parse(f.boundary.readPlainBody(starterId)!),
+        ),
+      ),
+    ).toContain('## When to use');
+    const importedId = await createPromptBundleArtifact({
+      title: 'Imported',
       bundleSchemaId: 'skills.skill_md_v1',
       origin: 'imported',
       folderId: 'folder-1',
-      tags: ['ops', 'review'],
+      tags: ['shared'],
       entries: [
         {
           path: 'SKILL.md',
-          contentBase64: Buffer.from('# Imported skill', 'utf8').toString('base64'),
+          contentBase64: Buffer.from('# Skill').toString('base64'),
           contentKind: 'utf8',
         },
         {
           path: 'templates/example.txt',
-          contentBase64: Buffer.from('example', 'utf8').toString('base64'),
+          contentBase64: Buffer.from('example').toString('base64'),
           contentKind: 'utf8',
         },
       ],
     });
-
-    expect(artifactId).toBe('b1');
-
-    const createCall = createArtifactWithHeaderMock.mock.calls[0];
-    if (!createCall) {
-      throw new Error('Expected createArtifactWithHeader to be called');
-    }
-    const header = createCall[0] as {
-      kind: string;
-      bundleSchemaId: string;
-      title: string;
-      origin: string;
-      folderId?: string | null;
-      tags?: string[];
-    };
-    const body = createCall[1] as string;
-    expect(header.kind).toBe('prompt_bundle.v2');
-    expect(header.bundleSchemaId).toBe('skills.skill_md_v1');
-    expect(header.title).toBe('Imported skill');
-    expect(header.origin).toBe('imported');
-    expect(header.folderId).toBe('folder-1');
-    expect(header.tags).toEqual(['ops', 'review']);
-
-    const parsed = PromptBundleBodyV1Schema.safeParse(JSON.parse(body));
-    expect(parsed.success).toBe(true);
-    if (parsed.success) {
-      expect(parsed.data.entries).toHaveLength(2);
-      expect(parsed.data.entries.some((e) => e.path === 'templates/example.txt')).toBe(true);
-    }
+    const copyId = await duplicatePromptBundle(importedId);
+    expect(copyId).not.toBe(importedId);
+    expect(
+      decodePlainArtifactStoredContent(f.boundary.read(copyId)!.header),
+    ).toMatchObject({
+      kind: 'prompt_bundle.v2',
+      title: 'Imported Copy',
+      origin: 'user',
+    });
+    expect(catalog.read('folders').value).toMatchObject({ artifactHeadersById: {
+      [copyId]: { folderId: 'folder-1', tags: ['shared'] },
+    } });
+    expect(JSON.parse(f.boundary.readPlainBody(copyId)!).entries).toEqual(
+      JSON.parse(f.boundary.readPlainBody(importedId)!).entries,
+    );
   });
 
-  it('creates a prompt_bundle.v2 generic bundle from imported entries', async () => {
-    const { createPromptBundleArtifact } = await import('./promptBundles');
-
-    await createPromptBundleArtifact({
+  it('preserves the generic bundle schema for imported non-skill entries', async () => {
+    const f = await home();
+    const id = await createPromptBundleArtifact({
       title: 'Shared prompts',
       bundleSchemaId: 'bundle.generic_v1',
-      origin: 'imported',
       entries: [
         {
           path: 'prompts/review.md',
-          contentBase64: Buffer.from('Review checklist', 'utf8').toString('base64'),
+          contentBase64: Buffer.from('Review checklist').toString('base64'),
           contentKind: 'utf8',
         },
       ],
     });
-
-    const createCall = createArtifactWithHeaderMock.mock.calls[0];
-    if (!createCall) {
-      throw new Error('Expected createArtifactWithHeader to be called');
-    }
-
-    const header = createCall[0] as { bundleSchemaId: string; title: string };
-    expect(header.bundleSchemaId).toBe('bundle.generic_v1');
-    expect(header.title).toBe('Shared prompts');
+    expect(
+      decodePlainArtifactStoredContent(f.boundary.read(id)!.header),
+    ).toMatchObject({ bundleSchemaId: 'bundle.generic_v1' });
+    const copyId = await duplicatePromptBundle(id);
+    expect(decodePlainArtifactStoredContent(f.boundary.read(copyId)!.header)).toMatchObject({ bundleSchemaId: 'bundle.generic_v1' });
+    expect(JSON.parse(f.boundary.readPlainBody(copyId)!).entries).toEqual(JSON.parse(f.boundary.readPlainBody(id)!).entries);
   });
 
-  it('updates SKILL.md and preserves createdAtMs', async () => {
-    const { updateSkillPromptBundle } = await import('./promptBundles');
-
-    const initialBody = PromptBundleBodyV1Schema.parse({
-      v: 1,
-      entries: [
-        {
-          path: 'SKILL.md',
-          contentBase64: Buffer.from('old', 'utf8').toString('base64'),
-          contentKind: 'utf8',
-        },
-      ],
-      createdAtMs: 10,
-      updatedAtMs: 10,
-    });
-    storage.setState({
-      artifacts: {
-        b1: {
-          id: 'b1',
-          header: { v: 1, kind: 'prompt_bundle.v2', title: 'Old', bundleSchemaId: 'skills.skill_md_v1', folderId: 'folder-1', tags: ['alpha'] },
-          title: 'Old',
-          body: JSON.stringify(initialBody),
-          headerVersion: 1,
-          bodyVersion: 1,
-          seq: 1,
-          createdAt: 0,
-          updatedAt: 0,
-          isDecrypted: true,
-        },
-      },
-      isDataReady: true,
-    } as any);
-
-    vi.spyOn(Date, 'now').mockReturnValueOnce(99);
-    await updateSkillPromptBundle({ artifactId: 'b1', title: 'New', skillMarkdown: 'new', folderId: null, tags: ['beta'] });
-
-    const updateCall = updateArtifactWithHeaderMock.mock.calls[0];
-    if (!updateCall) {
-      throw new Error('Expected updateArtifactWithHeader to be called');
-    }
-    const _artifactId = updateCall[0] as string;
-    const header = updateCall[1] as { kind: string; title: string; folderId?: string | null; tags?: string[] };
-    const body = updateCall[2] as string;
-    expect(_artifactId).toBe('b1');
-    expect(header.kind).toBe('prompt_bundle.v2');
-    expect(header.title).toBe('New');
-    expect(header.folderId).toBeNull();
-    expect(header.tags).toEqual(['beta']);
-
-    const parsed = PromptBundleBodyV1Schema.safeParse(JSON.parse(body));
-    expect(parsed.success).toBe(true);
-    if (parsed.success) {
-      expect(parsed.data.createdAtMs).toBe(10);
-      expect(parsed.data.updatedAtMs).toBe(99);
-      const entry = parsed.data.entries.find((e) => e.path === 'SKILL.md');
-      expect(entry).toBeTruthy();
-    }
-  });
-
-  it('duplicates a skill bundle into a new user-owned artifact', async () => {
-    const { duplicatePromptBundle } = await import('./promptBundles');
-
-    storage.setState({
-      artifacts: {
-        b1: {
-          id: 'b1',
-          header: {
-            v: 1,
-            kind: 'prompt_bundle.v2',
-            title: 'Original skill',
-            bundleSchemaId: 'skills.skill_md_v1',
-            origin: 'imported',
-            folderId: 'folder-1',
-            tags: ['shared'],
-          },
-          title: 'Original skill',
-          body: JSON.stringify({
-            v: 1,
-            entries: [
-              {
-                path: 'SKILL.md',
-                contentBase64: Buffer.from('# Original skill', 'utf8').toString('base64'),
-                contentKind: 'utf8',
-              },
-            ],
-            createdAtMs: 10,
-            updatedAtMs: 20,
-          }),
-          headerVersion: 1,
-          bodyVersion: 1,
-          seq: 1,
-          createdAt: 0,
-          updatedAt: 0,
-          isDecrypted: true,
-        },
-      },
-      isDataReady: true,
-    } as any);
-
-    const artifactId = await duplicatePromptBundle('b1');
-    expect(artifactId).toBe('b1');
-
-    const createCall = createArtifactWithHeaderMock.mock.calls[0];
-    if (!createCall) throw new Error('Expected createArtifactWithHeader to be called');
-    expect(createCall[0]).toMatchObject({
-      kind: 'prompt_bundle.v2',
-      title: 'Original skill Copy',
-      bundleSchemaId: 'skills.skill_md_v1',
-      origin: 'user',
-      folderId: 'folder-1',
-      tags: ['shared'],
-    });
-    expect(JSON.parse(createCall[1] as string)).toMatchObject({
-      entries: [
-        expect.objectContaining({ path: 'SKILL.md' }),
-      ],
-    });
-  });
-
-  it('lists supporting entries without SKILL.md and updates them without dropping other files', async () => {
-    const {
-      listPromptBundleSupportingEntries,
-      upsertPromptBundleUtf8Entry,
-      updateSkillPromptBundle,
-    } = await import('./promptBundles');
-
-    const initialBody = PromptBundleBodyV1Schema.parse({
-      v: 1,
-      entries: [
-        {
-          path: 'SKILL.md',
-          contentBase64: Buffer.from('old skill', 'utf8').toString('base64'),
-          contentKind: 'utf8',
-        },
-        {
-          path: 'templates/review.md',
-          contentBase64: Buffer.from('review body', 'utf8').toString('base64'),
-          contentKind: 'utf8',
-        },
-      ],
-      createdAtMs: 10,
-      updatedAtMs: 10,
-    });
-
-    expect(listPromptBundleSupportingEntries(initialBody)).toEqual([
-      expect.objectContaining({ path: 'templates/review.md', contentKind: 'utf8' }),
-    ]);
-
-    const nextEntries = upsertPromptBundleUtf8Entry(initialBody.entries, {
-      path: 'docs/checklist.md',
-      content: 'checklist',
-    });
-    expect(nextEntries.some((entry) => entry.path === 'docs/checklist.md')).toBe(true);
-    expect(nextEntries.some((entry) => entry.path === 'SKILL.md')).toBe(true);
-
-    storage.setState({
-      artifacts: {
-        b1: {
-          id: 'b1',
-          header: { v: 1, kind: 'prompt_bundle.v2', title: 'Old', bundleSchemaId: 'skills.skill_md_v1' },
-          title: 'Old',
-          body: JSON.stringify({
-            ...initialBody,
-            entries: nextEntries,
-          }),
-          headerVersion: 1,
-          bodyVersion: 1,
-          seq: 1,
-          createdAt: 0,
-          updatedAt: 0,
-          isDecrypted: true,
-        },
-      },
-      isDataReady: true,
-    } as any);
-
-    await updateSkillPromptBundle({ artifactId: 'b1', title: 'New', skillMarkdown: 'updated skill' });
-
-    const updateCall = updateArtifactWithHeaderMock.mock.calls.at(-1);
-    if (!updateCall) {
-      throw new Error('Expected updateArtifactWithHeader to be called');
-    }
-    const body = updateCall[2] as string;
-    const parsed = PromptBundleBodyV1Schema.parse(JSON.parse(body));
-    expect(parsed.entries.some((entry) => entry.path === 'docs/checklist.md')).toBe(true);
-    expect(parsed.entries.some((entry) => entry.path === 'templates/review.md')).toBe(true);
-  });
-
-  it('removes a supporting file without touching SKILL.md', async () => {
-    const { removePromptBundleEntry } = await import('./promptBundles');
-
-    const next = removePromptBundleEntry([
-      {
-        path: 'SKILL.md',
-        contentBase64: Buffer.from('skill', 'utf8').toString('base64'),
-        contentKind: 'utf8',
-      },
-      {
-        path: 'templates/review.md',
-        contentBase64: Buffer.from('review', 'utf8').toString('base64'),
-        contentKind: 'utf8',
-      },
-    ], 'templates/review.md');
-
-    expect(next).toEqual([
-      expect.objectContaining({ path: 'SKILL.md' }),
-    ]);
-  });
-
-  it('updates a supporting file by reusing the stored header title after fetching a missing body', async () => {
-    const { updateSkillPromptBundleWithEntry } = await import('./promptBundles');
-
-    storage.setState({
-      artifacts: {
-        b1: {
-          id: 'b1',
-          header: { v: 1, kind: 'prompt_bundle.v2', title: 'Stored title', bundleSchemaId: 'skills.skill_md_v1' },
-          title: 'Stored title',
-          body: undefined,
-          headerVersion: 1,
-          bodyVersion: 1,
-          seq: 1,
-          createdAt: 0,
-          updatedAt: 0,
-          isDecrypted: true,
-        },
-      },
-      isDataReady: true,
-    } as any);
-
-    fetchArtifactWithBodyMock.mockResolvedValueOnce({
-      id: 'b1',
-      header: { v: 1, kind: 'prompt_bundle.v2', title: 'Stored title', bundleSchemaId: 'skills.skill_md_v1' },
+  it('updates SKILL.md and supporting files through current reads while preserving creation time and title', async () => {
+    const f = await home();
+    const id = await createSkillPromptBundle({
       title: 'Stored title',
-      body: JSON.stringify({
-        v: 1,
-        entries: [
-          {
-            path: 'SKILL.md',
-            contentBase64: Buffer.from('skill', 'utf8').toString('base64'),
-            contentKind: 'utf8',
-          },
-        ],
-        createdAtMs: 10,
-        updatedAtMs: 10,
-      }),
-      headerVersion: 1,
-      bodyVersion: 1,
-      seq: 1,
-      createdAt: 0,
-      updatedAt: 0,
-      isDecrypted: true,
+      skillMarkdown: 'old skill',
     });
-
+    const original = JSON.parse(f.boundary.readPlainBody(id)!);
     await updateSkillPromptBundleWithEntry({
-      artifactId: 'b1',
+      artifactId: id,
       path: 'templates/review.md',
       content: 'review body',
     });
-
-    const updateCall = updateArtifactWithHeaderMock.mock.calls.at(-1);
-    if (!updateCall) {
-      throw new Error('Expected updateArtifactWithHeader to be called');
-    }
-    expect(updateCall[1]).toEqual(expect.objectContaining({ title: 'Stored title' }));
-    const parsed = PromptBundleBodyV1Schema.parse(JSON.parse(updateCall[2] as string));
-    expect(parsed.entries.some((entry) => entry.path === 'templates/review.md')).toBe(true);
-  });
-
-  it('removes a supporting file by reusing the stored header title after fetching a missing body', async () => {
-    const { removeSkillPromptBundleEntry } = await import('./promptBundles');
-
-    storage.setState({
-      artifacts: {
-        b1: {
-          id: 'b1',
-          header: { v: 1, kind: 'prompt_bundle.v2', title: 'Stored title', bundleSchemaId: 'skills.skill_md_v1' },
-          title: 'Stored title',
-          body: undefined,
-          headerVersion: 1,
-          bodyVersion: 1,
-          seq: 1,
-          createdAt: 0,
-          updatedAt: 0,
-          isDecrypted: true,
-        },
-      },
-      isDataReady: true,
-    } as any);
-
-    fetchArtifactWithBodyMock.mockResolvedValueOnce({
-      id: 'b1',
-      header: { v: 1, kind: 'prompt_bundle.v2', title: 'Stored title', bundleSchemaId: 'skills.skill_md_v1' },
-      title: 'Stored title',
-      body: JSON.stringify({
-        v: 1,
-        entries: [
-          {
-            path: 'SKILL.md',
-            contentBase64: Buffer.from('skill', 'utf8').toString('base64'),
-            contentKind: 'utf8',
-          },
-          {
-            path: 'templates/review.md',
-            contentBase64: Buffer.from('review', 'utf8').toString('base64'),
-            contentKind: 'utf8',
-          },
-        ],
-        createdAtMs: 10,
-        updatedAtMs: 10,
-      }),
-      headerVersion: 1,
-      bodyVersion: 1,
-      seq: 1,
-      createdAt: 0,
-      updatedAt: 0,
-      isDecrypted: true,
+    const acceptedRevision = await updateSkillPromptBundle({
+      artifactId: id,
+      title: 'New title',
+      skillMarkdown: 'new skill',
+      expectedRevision: { headerVersion: 2, bodyVersion: 2 },
     });
-
+    expect(acceptedRevision).toEqual({ headerVersion: 3, bodyVersion: 3 });
+    const withSupporting = PromptBundleBodyV1Schema.parse(
+      JSON.parse(f.boundary.readPlainBody(id)!),
+    );
+    expect(withSupporting.createdAtMs).toBe(original.createdAtMs);
+    expect(readSkillMarkdownFromPromptBundleBody(withSupporting)).toBe(
+      'new skill',
+    );
+    expect(
+      listPromptBundleSupportingEntries(withSupporting).map(
+        (entry) => entry.path,
+      ),
+    ).toEqual(['templates/review.md']);
     await removeSkillPromptBundleEntry({
-      artifactId: 'b1',
+      artifactId: id,
       path: 'templates/review.md',
     });
+    expect(
+      PromptBundleBodyV1Schema.parse(
+        JSON.parse(f.boundary.readPlainBody(id)!),
+      ).entries.map((entry) => entry.path),
+    ).toEqual(['SKILL.md']);
+    expect(
+      decodePlainArtifactStoredContent(f.boundary.read(id)!.header),
+    ).toMatchObject({ title: 'New title' });
+  });
 
-    const updateCall = updateArtifactWithHeaderMock.mock.calls.at(-1);
-    if (!updateCall) {
-      throw new Error('Expected updateArtifactWithHeader to be called');
-    }
-    expect(updateCall[1]).toEqual(expect.objectContaining({ title: 'Stored title' }));
-    const parsed = PromptBundleBodyV1Schema.parse(JSON.parse(updateCall[2] as string));
-    expect(parsed.entries.map((entry) => entry.path)).toEqual(['SKILL.md']);
+  it('refuses a stale reviewed skill revision without rebasing its draft over a native winner', async () => {
+    const f = await home();
+    const id = await createSkillPromptBundle({ title: 'Reviewed', skillMarkdown: 'Reviewed instructions' });
+    const reviewed = { headerVersion: 1, bodyVersion: 1 };
+    await updateSkillPromptBundle({ artifactId: id, title: 'Native winner', skillMarkdown: 'Native winner instructions' });
+    const winner = f.boundary.read(id)!;
+    await expect(updateSkillPromptBundle({ artifactId: id, title: 'Stale draft', skillMarkdown: 'Stale reviewed instructions',
+      expectedRevision: reviewed })).rejects.toMatchObject({ code: 'version_mismatch' });
+    expect(f.boundary.read(id)).toEqual(winner);
+    expect(readSkillMarkdownFromPromptBundleBody(PromptBundleBodyV1Schema.parse(JSON.parse(f.boundary.readPlainBody(id)!))))
+      .toBe('Native winner instructions');
+  });
+
+  it('refuses to convert a wrong-kind Artifact with a bundle-shaped body into a skill', async () => {
+    const f = await home();
+    const id = await createSkillPromptBundle({ title: 'Original', skillMarkdown: 'Non-skill content' });
+    const response = await f.boundary.handle(`/v1/artifacts/${id}`, { method: 'POST', body: JSON.stringify({
+      header: encodePlainArtifactStoredContent({ v: 1, kind: 'prompt_doc.v2', title: 'Not a skill' }),
+      expectedHeaderVersion: 1,
+    }) });
+    expect(response?.ok).toBe(true);
+    const original = f.boundary.read(id)!;
+    await expect(updateSkillPromptBundle({ artifactId: id, title: 'Converted', skillMarkdown: 'Overwrite' }))
+      .rejects.toMatchObject({ code: 'prompt_bundle_invalid_kind' });
+    expect(f.boundary.read(id)).toEqual(original);
+  });
+
+  it('returns the exact committed content revision when independent personal placement loses CAS', async () => {
+    const f = await home();
+    const id = await createSkillPromptBundle({ title: 'Reviewed', skillMarkdown: 'Reviewed instructions' });
+    catalog = createPromptLibraryCatalogBoundary({ records: [catalog.read('folders')], mutationOutcome: 'conflict', revision: 4 });
+    await expect(updateSkillPromptBundle({ artifactId: id, title: 'Committed content', skillMarkdown: 'Committed instructions',
+      expectedRevision: { headerVersion: 1, bodyVersion: 1 }, tags: ['uncommitted placement'] }))
+      .rejects.toMatchObject({ code: 'artifact_organization_failed', details: { artifactId: id,
+        contentRevision: { headerVersion: 2, bodyVersion: 2 }, organization: { status: 'conflict', revision: 4 } } });
+    expect(f.boundary.read(id)).toMatchObject({ headerVersion: 2, bodyVersion: 2 });
+    expect(readSkillMarkdownFromPromptBundleBody(PromptBundleBodyV1Schema.parse(JSON.parse(f.boundary.readPlainBody(id)!))))
+      .toBe('Committed instructions');
+    const folders = catalog.read('folders');
+    if (folders.key !== 'folders') throw new Error('Wrong catalog');
+    expect(folders.value.artifactHeadersById?.[id]?.tags ?? []).toEqual([]);
+  });
+
+  it.each(['edit', 'remove'] as const)('refuses a stale reviewed supporting-file %s without rebasing on a native winner', async operation => {
+    const f = await home();
+    const id = await createSkillPromptBundle({ title: 'Reviewed', skillMarkdown: 'Reviewed instructions' });
+    await updateSkillPromptBundleWithEntry({ artifactId: id, path: 'reference.txt', content: 'Reviewed reference' });
+    const expectedRevision = { headerVersion: 2, bodyVersion: 2 };
+    await updateSkillPromptBundleWithEntry({ artifactId: id, path: 'reference.txt', content: 'Native winner reference' });
+    const winner = f.boundary.read(id)!;
+    const change = operation === 'edit'
+      ? updateSkillPromptBundleWithEntry({ artifactId: id, path: 'reference.txt', content: 'Stale draft', expectedRevision })
+      : removeSkillPromptBundleEntry({ artifactId: id, path: 'reference.txt', expectedRevision });
+    await expect(change).rejects.toMatchObject({ code: 'version_mismatch' });
+    expect(f.boundary.read(id)).toEqual(winner);
   });
 });

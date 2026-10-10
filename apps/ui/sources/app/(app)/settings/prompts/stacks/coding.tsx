@@ -4,7 +4,7 @@ import { PromptStackEditorScreen } from '@/components/settings/prompts/stacks/Pr
 import { t } from '@/text';
 
 export function CodingPromptStackRoute() {
-  return <PromptStackEditorScreen surface="coding" title={t('promptLibrary.codingStack')} />;
+  return <PromptStackEditorScreen surface="coding" title={t('contextPages.account.title')} />;
 }
 import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorkspaceRouteEntry';
 export { CodingPromptStackRoute as WorkspaceRouteBody };

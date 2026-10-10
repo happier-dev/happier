@@ -27,10 +27,15 @@ import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { Text } from '@/components/ui/text/Text';
 import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { Modal } from '@/modal';
-import { useSettingMutable } from '@/sync/domains/state/storage';
+import { usePromptLibraryCatalogValue } from '@/sync/store/usePromptLibraryCatalog';
+import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
+import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { createUiPromptLibraryArtifactStore } from '@/sync/ops/promptLibrary/promptLibraryArtifactStore';
+import { promptCollectionItemHref } from '@/components/settings/prompts/collection/promptCollectionRoutes';
+import { requireUpdatedPromptLibraryMutation, writePromptLibraryRecordAndPublishInContext } from '@/sync/api/account/apiPromptLibraryCatalog';
 import { machinePromptAssetsListTypes } from '@/sync/ops/machinePromptAssets';
 import { machinePromptRegistriesDownloadItem } from '@/sync/ops/machinePromptRegistries';
-import { installPromptRegistryItem } from '@/sync/ops/promptLibrary/installPromptRegistryItem';
+import { installPromptRegistryItem, type PromptRegistryInstallResult } from '@/sync/ops/promptLibrary/installPromptRegistryItem';
 import { createPromptRegistrySkillArtifactFromFetchedItem } from '@/sync/ops/promptLibrary/promptRegistrySkillImports';
 import { translatePromptLibraryMessage } from '@/sync/ops/promptLibrary/translatePromptLibraryMessage';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
@@ -79,16 +84,23 @@ function decodeUtf8BundleEntry(item: PromptRegistryFetchedItemV1 | null, path: s
   }
 }
 
+function installFailureMessage(error: string, result: PromptRegistryInstallResult): string {
+  const message = translatePromptLibraryMessage(error);
+  const targetPath = result.exported === true ? result.response?.preview?.targetPath : undefined;
+  return targetPath ? `${message}\n${targetPath}` : message;
+}
+
 export const PromptRegistryItemDetailsScreen = React.memo(function PromptRegistryItemDetailsScreen(props: Readonly<{
   sourceId: string;
   itemId: string;
-  configuredSources: PromptRegistryConfiguredSourceV1[];
+  configuredSources: PromptRegistryConfiguredSourceV1[] | null;
   title?: string | null;
   displayPath?: string | null;
   workspacePath?: string | null;
 }>) {
   const { theme } = useUnistyles();
   const router = useRouter();
+  const libraryScope = useAccountSettingsScope();
   const administrationTargetSelection = useMachineAdministrationTargetSelection(
     MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.promptRegistries,
   );
@@ -98,7 +110,8 @@ export const PromptRegistryItemDetailsScreen = React.memo(function PromptRegistr
     resolveExactExecutionTarget,
     isExecutionTargetCurrent,
   } = useMachineAdministrationExecutionTargetBinding(administrationTargetSelection);
-  const [promptExternalLinksV1, setPromptExternalLinksV1] = useSettingMutable('promptExternalLinksV1');
+  const { value: promptExternalLinksV1, revision: linksRevision, sourceSettingsVersion: linksSourceSettingsVersion,
+    status: linksStatus, stale: linksStale } = usePromptLibraryCatalogValue('external-links');
   const [item, setItem] = React.useState<PromptRegistryFetchedItemV1 | null>(null);
   const [installTypes, setInstallTypes] = React.useState<PromptAssetTypeDescriptorV1[]>([]);
   const [installScope, setInstallScope] = React.useState<PromptAssetScopeV1>('project');
@@ -115,15 +128,8 @@ export const PromptRegistryItemDetailsScreen = React.memo(function PromptRegistr
     // the exact machine/server target for every registry operation below.
     defaultMachineId: null,
     defaultWorkspacePath: props.workspacePath ?? '',
+    workspaceBindingKey: selectionKey,
   });
-  const previousSelectionKeyRef = React.useRef(selectionKey);
-
-  React.useLayoutEffect(() => {
-    const previousSelectionKey = previousSelectionKeyRef.current;
-    previousSelectionKeyRef.current = selectionKey;
-    if (!previousSelectionKey || previousSelectionKey === selectionKey) return;
-    setWorkspacePath('');
-  }, [selectionKey, setWorkspacePath]);
 
   React.useEffect(() => {
     setItem(null);
@@ -132,6 +138,7 @@ export const PromptRegistryItemDetailsScreen = React.memo(function PromptRegistr
   }, [selectionKey]);
 
   const loadItem = React.useCallback(async () => {
+    if (!props.configuredSources) return;
     const requestedSelection = selectionKey;
     const executionTarget = resolveExactExecutionTarget(selectedTarget);
     if (!executionTarget) return;
@@ -237,89 +244,133 @@ export const PromptRegistryItemDetailsScreen = React.memo(function PromptRegistr
   );
 
   const importItem = React.useCallback(async () => {
-    if (!item || !resolveExactExecutionTarget(selectedTarget)) return;
-    const imported = await createPromptRegistrySkillArtifactFromFetchedItem(item);
-    if (!imported.ok) {
-      Modal.alert(t('common.error'), translatePromptLibraryMessage(imported.error));
-      return;
+    if (!libraryScope || !props.configuredSources || !item || !resolveExactExecutionTarget(selectedTarget)) return;
+    const libraryAccount = await captureLazyActionAccountContext(libraryScope.serverId);
+    try {
+      if (libraryAccount.accountId !== libraryScope.accountId) throw new Error('action_account_scope_changed');
+      libraryAccount.assertCurrent();
+      const imported = await createPromptRegistrySkillArtifactFromFetchedItem(item,
+        createUiPromptLibraryArtifactStore(libraryAccount.workflowArtifacts, libraryAccount));
+      libraryAccount.assertCurrent();
+      if (!imported.ok) {
+        Modal.alert(t('common.error'), translatePromptLibraryMessage(imported.error));
+        return;
+      }
+      router.push(promptCollectionItemHref('bundle', imported.artifactId, { serverId: libraryAccount.serverId }));
+    } finally {
+      libraryAccount.dispose();
     }
-    router.push(`/settings/prompts/skills/${imported.artifactId}`);
-  }, [item, resolveExactExecutionTarget, router, selectedTarget]);
+  }, [item, libraryScope, props.configuredSources, resolveExactExecutionTarget, router, selectedTarget]);
 
   const [importing, runImport] = useHappyAction(importItem);
 
   const installItem = React.useCallback(async () => {
+    if (!libraryScope || !props.configuredSources) return;
+    if (!promptExternalLinksV1 || linksStatus !== 'ready' || linksStale) return;
     const requestedSelection = selectionKey;
     const executionTarget = resolveExactExecutionTarget(selectedTarget);
     if (!installType || !executionTarget) return;
     const resolvedInstallMode = selectedInstallMode;
-    const preview = await installPromptRegistryItem({
-      machineId: executionTarget.machine.id,
-      serverId: executionTarget.serverId,
-      configuredSources: props.configuredSources,
-      sourceId: props.sourceId,
-      itemId: props.itemId,
-      installTarget: {
-        assetTypeId: installType.id,
-        scope: installScope,
-        ...(installScope === 'project' && workspacePath.trim().length > 0 ? { directory: workspacePath.trim() } : {}),
-        targetName: targetInput.trim(),
-        installMode: resolvedInstallMode,
-      },
-      promptExternalLinks: promptExternalLinksV1,
-      previewOnly: true,
-    });
-    if (!isExecutionTargetCurrent(requestedSelection, executionTarget)) return;
-    if (!preview.ok) {
-      Modal.alert(t('common.error'), translatePromptLibraryMessage(preview.error));
-      if (preview.artifactId) {
-        router.push(`/settings/prompts/skills/${preview.artifactId}`);
+    const libraryAccount = await captureLazyActionAccountContext(libraryScope.serverId);
+    const controller = new AbortController();
+    const retirement = libraryAccount.accountLifetime.onRetire(() => controller.abort());
+    let installed: PromptRegistryInstallResult | undefined;
+    try {
+      if (libraryAccount.accountId !== libraryScope.accountId) throw new Error('action_account_scope_changed');
+      libraryAccount.assertCurrent();
+      if (!libraryAccount.serverIdentityId) throw new Error('content_unavailable');
+      const store = createUiPromptLibraryArtifactStore(libraryAccount.workflowArtifacts, libraryAccount);
+      const preview = await installPromptRegistryItem({
+        machineId: executionTarget.machine.id,
+        machineTarget: executionTarget.target,
+        libraryServerIdentityId: libraryAccount.serverIdentityId,
+        serverId: executionTarget.serverId,
+        configuredSources: props.configuredSources,
+        sourceId: props.sourceId,
+        itemId: props.itemId,
+        installTarget: {
+          assetTypeId: installType.id,
+          scope: installScope,
+          ...(installScope === 'project' && workspacePath.trim().length > 0 ? { directory: workspacePath.trim() } : {}),
+          targetName: targetInput.trim(),
+          installMode: resolvedInstallMode,
+        },
+        promptExternalLinks: promptExternalLinksV1,
+        previewOnly: true,
+        signal: controller.signal,
+      }, store);
+      libraryAccount.assertCurrent();
+      if (!isExecutionTargetCurrent(requestedSelection, executionTarget)) return;
+      if (!preview.ok) {
+        Modal.alert(t('common.error'), translatePromptLibraryMessage(preview.error));
+        if (preview.artifactId) {
+          router.push(promptCollectionItemHref('bundle', preview.artifactId, { serverId: libraryAccount.serverId }));
+        }
+        return;
       }
-      return;
-    }
 
-    const confirmed = await Modal.confirm(
-      t('promptLibrary.registriesItemInstallConfirmTitle'),
-      preview.response?.preview?.targetPath ?? t('promptLibrary.registriesItemInstallConfirmBody'),
-      { confirmText: t('promptLibrary.registriesItemInstallAction') },
-    );
-    if (!confirmed) return;
+      const confirmed = await Modal.confirm(
+        t('promptLibrary.registriesItemInstallConfirmTitle'),
+        preview.response?.preview?.targetPath ?? t('promptLibrary.registriesItemInstallConfirmBody'),
+        { confirmText: t('promptLibrary.registriesItemInstallAction') },
+      );
+      libraryAccount.assertCurrent();
+      if (!confirmed) return;
 
-    const committedExecutionTarget = resolveExactExecutionTarget(executionTarget.target);
-    if (
-      !committedExecutionTarget
-      || !isExecutionTargetCurrent(requestedSelection, committedExecutionTarget)
-    ) {
-      return;
-    }
-
-    const installed = await installPromptRegistryItem({
-      machineId: committedExecutionTarget.machine.id,
-      serverId: committedExecutionTarget.serverId,
-      configuredSources: props.configuredSources,
-      sourceId: props.sourceId,
-      itemId: props.itemId,
-      installTarget: {
-        assetTypeId: installType.id,
-        scope: installScope,
-        ...(installScope === 'project' && workspacePath.trim().length > 0 ? { directory: workspacePath.trim() } : {}),
-        targetName: targetInput.trim(),
-        installMode: resolvedInstallMode,
-      },
-      promptExternalLinks: promptExternalLinksV1,
-      previewOnly: false,
-    });
-    if (!isExecutionTargetCurrent(requestedSelection, committedExecutionTarget)) return;
-    if (!installed.ok) {
-      Modal.alert(t('common.error'), translatePromptLibraryMessage(installed.error));
-      if (installed.artifactId) {
-        router.push(`/settings/prompts/skills/${installed.artifactId}`);
+      const committedExecutionTarget = resolveExactExecutionTarget(executionTarget.target);
+      if (
+        !committedExecutionTarget
+        || !isExecutionTargetCurrent(requestedSelection, committedExecutionTarget)
+      ) {
+        return;
       }
-      return;
+
+      installed = await installPromptRegistryItem({
+        machineId: committedExecutionTarget.machine.id,
+        machineTarget: committedExecutionTarget.target,
+        libraryServerIdentityId: libraryAccount.serverIdentityId,
+        serverId: committedExecutionTarget.serverId,
+        configuredSources: props.configuredSources,
+        sourceId: props.sourceId,
+        itemId: props.itemId,
+        installTarget: {
+          assetTypeId: installType.id,
+          scope: installScope,
+          ...(installScope === 'project' && workspacePath.trim().length > 0 ? { directory: workspacePath.trim() } : {}),
+          targetName: targetInput.trim(),
+          installMode: resolvedInstallMode,
+        },
+        promptExternalLinks: promptExternalLinksV1,
+        previewOnly: false,
+        signal: controller.signal,
+      }, store);
+      if (!installed.ok) {
+        Modal.alert(t('common.error'), installFailureMessage(installed.error, installed));
+        if (installed.artifactId && libraryAccount.accountLifetime.isCurrent()
+          && isExecutionTargetCurrent(requestedSelection, committedExecutionTarget)) {
+          router.push(promptCollectionItemHref('bundle', installed.artifactId, { serverId: libraryAccount.serverId }));
+        }
+        return;
+      }
+      libraryAccount.assertCurrent();
+      if (!isExecutionTargetCurrent(requestedSelection, committedExecutionTarget)) return;
+      if (!installed.nextPromptExternalLinks) throw new Error('Prompt external links were not acknowledged');
+      requireUpdatedPromptLibraryMutation(await writePromptLibraryRecordAndPublishInContext(libraryAccount, {
+        record: { key: 'external-links', value: installed.nextPromptExternalLinks },
+        expectedRevision: linksRevision,
+        ...(linksRevision === 'absent' && linksSourceSettingsVersion !== null ? { sourceSettingsVersion: linksSourceSettingsVersion } : {}),
+      }, controller.signal));
+      libraryAccount.assertCurrent();
+      if (!installed.artifactId) throw new Error('Prompt library Artifact was not acknowledged');
+      router.push(promptCollectionItemHref('bundle', installed.artifactId, { serverId: libraryAccount.serverId }));
+    } catch (error) {
+      if (installed?.exported !== true) throw error;
+      Modal.alert(t('common.error'), installFailureMessage('promptLibrary.saveError', installed));
+    } finally {
+      retirement.dispose();
+      libraryAccount.dispose();
     }
-    setPromptExternalLinksV1(installed.nextPromptExternalLinks ?? { v: 1, links: [] });
-    router.push(`/settings/prompts/skills/${installed.artifactId}`);
-  }, [installScope, installType, isExecutionTargetCurrent, promptExternalLinksV1, props.configuredSources, props.itemId, props.sourceId, resolveExactExecutionTarget, router, selectedInstallMode, selectedTarget, selectionKey, setPromptExternalLinksV1, targetInput, workspacePath]);
+  }, [installScope, installType, isExecutionTargetCurrent, libraryScope, linksRevision, linksSourceSettingsVersion, linksStatus, linksStale, promptExternalLinksV1, props.configuredSources, props.itemId, props.sourceId, resolveExactExecutionTarget, router, selectedInstallMode, selectedTarget, selectionKey, targetInput, workspacePath]);
 
   const [installing, runInstall] = useHappyAction(installItem);
 

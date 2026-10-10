@@ -6,6 +6,7 @@ import { PromptAssetExportScreen } from '@/components/settings/prompts/assets/Pr
 export function ExportSkillBundlePage() {
   const params = useLocalSearchParams<{
     id: string;
+    serverId?: string | string[];
     assetTypeId?: string | string[];
     scope?: string | string[];
     workspacePath?: string | string[];
@@ -15,6 +16,7 @@ export function ExportSkillBundlePage() {
   return (
     <PromptAssetExportScreen
       artifactId={id}
+      serverId={Array.isArray(params.serverId) ? params.serverId[0] : params.serverId}
       initialSelection={{
         assetTypeId: Array.isArray(params.assetTypeId) ? params.assetTypeId[0] : params.assetTypeId,
         scope: (Array.isArray(params.scope) ? params.scope[0] : params.scope) as 'project' | 'user' | undefined,

@@ -6,16 +6,13 @@ import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHead
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { useSetting } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { Icon } from '@/components/ui/icons/Icon';
 
 /** `/settings/prompts/stacks/profiles`: each profile with how many prompts and skills it adds. */
 export const PromptProfileStacksScreen = React.memo(() => {
   const router = useRouter();
-  const rawProfiles = useSetting('profiles');
-  const profiles = useAiLaunchProfilesForLegacyUi(rawProfiles);
-  const promptStacksV1 = useSetting('promptStacksV1');
+  const profiles = useAiLaunchProfilesForLegacyUi();
 
   return (
     <ItemList>
@@ -23,7 +20,7 @@ export const PromptProfileStacksScreen = React.memo(() => {
       <ItemGroup title={t('promptLibrary.surface.profilesSection')}>
         {profiles.map((profile) => {
           const profileId = profile.id;
-          const count = (promptStacksV1.surfaces.profilesById?.[profileId] ?? []).length;
+          const count = (profile.promptStack ?? []).length;
           return (
             <Item
               key={profileId}

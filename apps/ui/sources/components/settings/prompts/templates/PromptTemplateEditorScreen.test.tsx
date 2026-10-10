@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { createPlainPromptLibraryCatalogHomeFixture } from '@/dev/testkit/harness/promptLibraryCatalogBoundary';
 import {
     installPromptTemplatesCommonModuleMocks,
     promptTemplatesRouterBackSpy,
@@ -13,7 +14,7 @@ const promptTemplatesRouterReplaceSpy = vi.hoisted(() => vi.fn());
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const setInvocationsMock = vi.fn();
+let catalog: Awaited<ReturnType<typeof createPlainPromptLibraryCatalogHomeFixture>>;
 
 installPromptTemplatesCommonModuleMocks({
     reactNative: async () => {
@@ -50,23 +51,12 @@ installPromptTemplatesCommonModuleMocks({
         });
         return routerMock.module;
     },
-    storage: async (importOriginal) => {
-        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        return createPartialStorageModuleMock(importOriginal, {
-            useArtifacts: () => [
-                { id: 'doc-1', title: 'Prompt One', header: { kind: 'prompt_doc.v2', title: 'Prompt One' } },
-                { id: 'doc-2', title: 'Prompt Two', header: { kind: 'prompt_doc.v2', title: 'Prompt Two' } },
-            ],
-            useSettingMutable: () => [
-                {
-                    v: 1,
-                    entries: [],
-                },
-                setInvocationsMock,
-            ],
-        });
-    },
+    storage: importOriginal => importOriginal(),
 });
+
+const { storage } = await import('@/sync/domains/state/storageStore');
+const { applyPromptLibraryCatalogSnapshot, resetPromptLibraryCatalogSnapshotsForTests } = await import('@/sync/store/settings/promptLibraryCatalogSnapshot');
+const { resetPromptLibraryCatalogEngineForTests } = await import('@/sync/engine/settings/promptLibraryCatalogEngine');
 
 /** Whether the screen currently asks the navigator to hold a departure (the unsaved-changes guard). */
 const preventRemoveState = vi.hoisted(() => ({ last: null as boolean | null }));
@@ -102,11 +92,27 @@ vi.mock('@/platform/randomUUID', () => ({
 }));
 
 describe('PromptTemplateEditorScreen', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
+        resetPromptLibraryCatalogEngineForTests();
+        resetPromptLibraryCatalogSnapshotsForTests();
         promptTemplatesRouterPushSpy.mockClear();
         promptTemplatesRouterBackSpy.mockClear();
         promptTemplatesRouterReplaceSpy.mockClear();
-        setInvocationsMock.mockClear();
+        catalog = await createPlainPromptLibraryCatalogHomeFixture('https://template-catalog.test', {
+            key: 'invocations', value: { v: 1, entries: [] },
+        });
+        onTestFinished(catalog.dispose);
+        const scope = storage.getState().settingsScope;
+        if (!scope) throw new Error('Missing admitted template Account');
+        storage.setState({ isDataReady: true });
+        applyPromptLibraryCatalogSnapshot(scope, { catalog: { status: 'ready', rows: [catalog.read()],
+            tombstones: catalog.tombstones, diagnostics: [] }, rawSettings: {}, sourceSettingsVersion: 7 }, true);
+        storage.getState().applyArtifacts(['doc-1', 'doc-2'].map((id, index) => ({
+            id, title: `Prompt ${index === 0 ? 'One' : 'Two'}`, headerVersion: 1, bodyVersion: 1,
+            ownerAccountId: scope.accountId, access: 'owner' as const,
+            header: { kind: 'prompt_doc.v2', title: `Prompt ${index === 0 ? 'One' : 'Two'}` },
+            body: null, createdAt: 1, updatedAt: 1, seq: 1, isDecrypted: true,
+        })));
     });
 
     it('uses a dropdown selector for the target prompt and exposes create/edit prompt actions', async () => {
@@ -138,7 +144,7 @@ describe('PromptTemplateEditorScreen', () => {
         });
 
         expect(screen.findByTestId('promptTemplate.token.error')).toBeTruthy();
-        expect(setInvocationsMock).not.toHaveBeenCalled();
+        expect(catalog.mutations).toEqual([]);
     });
 
     it('opens a new template in the collection once its draft is saved', async () => {
@@ -157,10 +163,12 @@ describe('PromptTemplateEditorScreen', () => {
         // The saved draft has nothing left to lose, so opening the saved template is not held for a decision.
         expect(preventRemoveState.last).toBe(false);
 
-        expect(setInvocationsMock).toHaveBeenCalledWith({
+        expect(catalog.read().record.value).toEqual({
             v: 1,
             entries: [expect.objectContaining({ id: 'template-1', token: '/daily', title: 'Daily' })],
         });
+        expect(catalog.mutations).toEqual([{ key: 'invocations', expectedRevision: 4 }]);
+        expect(catalog.settingsWrites()).toBe(0);
         expect(promptTemplatesRouterReplaceSpy).toHaveBeenCalledWith('/settings/prompts/templates/template-1');
     });
 });

@@ -4,7 +4,6 @@ import { useLocalSearchParams } from '@/components/appShell/workspace/destinatio
 
 import { PromptStacksScreen } from '@/components/settings/prompts/stacks/PromptStacksScreen';
 import { PromptStackEditorScreen } from '@/components/settings/prompts/stacks/PromptStackEditorScreen';
-import { useSetting } from '@/sync/domains/state/storage';
 
 function firstParam(value: string | string[] | undefined): string | null {
   if (!value) return null;
@@ -13,8 +12,7 @@ function firstParam(value: string | string[] | undefined): string | null {
 export function PromptProfileStackEditorRoute() {
   const params = useLocalSearchParams<{ id?: string | string[] }>();
   const profileId = firstParam(params.id);
-  const rawProfiles = useSetting('profiles');
-  const profiles = useAiLaunchProfilesForLegacyUi(rawProfiles);
+  const profiles = useAiLaunchProfilesForLegacyUi();
 
   if (!profileId) return <PromptStacksScreen />;
 

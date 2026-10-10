@@ -54,6 +54,8 @@ export function installPromptAssetsCommonModuleMocks(
     };
 
     vi.mock('react-native', async () => {
+    const activeOptions = promptAssetsModuleState.options;
+    if (activeOptions.reactNative) return await activeOptions.reactNative();
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock(
         {

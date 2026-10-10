@@ -11,11 +11,7 @@ export const PROMPTS_SETTINGS = defineSettingsPage({
         library: {
             titleKey: 'promptLibrary.library',
             settings: {
-                skills: {
-                    titleKey: 'promptLibrary.skills',
-                    descriptionKey: 'promptLibrary.surface.skillsLinkDescription',
-                    keywordKeys: ['promptLibrary.surface.skillsKeywords'],
-                },
+                skills: {},
             },
         },
     },

@@ -1,247 +1,85 @@
-import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
-import {
-    installPromptLibrarySettingsCommonModuleMocks,
-    promptLibrarySettingsRouterBackSpy,
-    promptLibrarySettingsRouterPushSpy,
-} from '../promptLibrarySettingsTestHelpers';
-import type { usePromptLibraryEntryActions } from './usePromptLibraryEntryActions';
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { renderHook } from '@/dev/testkit/hooks/renderHook';
+import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/promptLibraryCatalogBoundary';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { installPromptLibrarySettingsCommonModuleMocks, promptLibrarySettingsRouterPushSpy } from '../promptLibrarySettingsTestHelpers';
 
+const modalConfirm = vi.hoisted(() => vi.fn(async () => true));
+const modalAlert = vi.hoisted(() => vi.fn());
+installDisconnectedServerSocketBoundary();
+installPromptLibrarySettingsCommonModuleMocks({ storage: importOriginal => importOriginal(),
+    modal: async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({
+        spies: { confirm: modalConfirm, alert: modalAlert },
+    }).module });
+const { usePromptLibraryEntryActions } = await import('./usePromptLibraryEntryActions');
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-const deleteArtifactMock = vi.hoisted(() => vi.fn(async () => undefined));
-const modalConfirmMock = vi.hoisted(() => vi.fn(async () => true));
-const duplicatePromptDocMock = vi.hoisted(() => vi.fn(async () => 'doc-1-copy'));
-const duplicatePromptBundleMock = vi.hoisted(() => vi.fn(async () => 'bundle-1-copy'));
-const modalAlertMock = vi.hoisted(() => vi.fn());
-const setPromptInvocationsMock = vi.fn();
-const setPromptStacksMock = vi.fn();
-const setPromptExternalLinksMock = vi.fn();
-const setPromptFoldersMock = vi.fn();
-
-const useArtifactsMock = vi.hoisted(() => vi.fn(() => [
-    {
-        id: 'doc-1',
-        title: 'Prompt One',
-        header: { kind: 'prompt_doc.v2', title: 'Prompt One', origin: 'user', folderId: 'folder-1', tags: ['urgent', 'release'] },
-    },
-    {
-        id: 'doc-2',
-        title: 'Prompt Two',
-        header: { kind: 'prompt_doc.v2', title: 'Prompt Two', origin: 'imported', tags: ['docs'] },
-    },
-]));
-
-installPromptLibrarySettingsCommonModuleMocks({
-    modal: async () => {
-        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-        return createModalModuleMock({
-            spies: {
-                confirm: modalConfirmMock,
-                alert: modalAlertMock,
-            },
-        }).module;
-    },
-    unistyles: async () => {
-        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-        return createUnistylesMock({
-            theme: {
-                colors: {
-                    groupped: { background: 'white' },
-                    textSecondary: '#999',
-                    input: { background: '#fff', text: '#111', placeholder: '#666' },
-                    accent: { blue: '#00f', indigo: '#60f', purple: '#90f' },
-                    deleteAction: '#f00',
-                    button: { secondary: { tint: '#777' } },
-                },
-            },
-        });
-    },
-    router: async () => {
-        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-        const routerMock = createExpoRouterMock({
-            router: {
-                push: promptLibrarySettingsRouterPushSpy,
-                back: promptLibrarySettingsRouterBackSpy,
-            },
-        });
-        return routerMock.module;
-    },
-    storage: async (importOriginal) => {
-        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
-        return createPartialStorageModuleMock(importOriginal, {
-            useArtifacts: () => useArtifactsMock(),
-            useAllMachines: () => [],
-            useSettingMutable: (key: string) => {
-                if (key === 'promptInvocationsV1') return [{ v: 1, entries: [{ id: 'template-1', target: { kind: 'doc', artifactId: 'doc-1' } }] }, setPromptInvocationsMock];
-                if (key === 'promptStacksV1') {
-                    return [{
-                        v: 1,
-                        surfaces: {
-                            coding: [{ id: 'stack-1', ref: { kind: 'doc', artifactId: 'doc-1' }, enabled: true, placement: 'system_append', editPolicy: 'user_only' }],
-                            voice: [],
-                            profilesById: {},
-                        },
-                    }, setPromptStacksMock];
-                }
-                if (key === 'promptExternalLinksV1') {
-                    return [{
-                        v: 1,
-                        links: [
-                            {
-                                id: 'link-1',
-                                artifactId: 'doc-1',
-                                assetTypeId: 'claude.command',
-                                machineId: 'machine-1',
-                                scope: 'user',
-                                workspacePath: null,
-                                externalRef: { relativePath: 'qa.md' },
-                                lastExternalDigest: 'digest-1',
-                            },
-                        ],
-                    }, setPromptExternalLinksMock];
-                }
-                if (key === 'promptFoldersV1') {
-                    return [{
-                        v: 1,
-                        folders: [
-                            { id: 'folder-1', name: 'Ops', parentId: null },
-                        ],
-                    }, setPromptFoldersMock];
-                }
-                return [null, vi.fn()];
-            },
-            storage: {
-                getState: () => ({
-                    deleteArtifact: vi.fn(),
-                }),
-            },
-        });
-    },
-});
-
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
-
-vi.mock('@/sync/sync', () => ({
-    sync: {
-        getCredentials: () => ({ token: 'token' }),
-    },
-}));
-
-vi.mock('@/sync/api/artifacts/apiArtifacts', () => ({
-    deleteArtifact: deleteArtifactMock,
-}));
-
-vi.mock('@/sync/ops/promptLibrary/promptDocs', async () => {
-    const actual = await vi.importActual<any>('@/sync/ops/promptLibrary/promptDocs');
-    return {
-        ...actual,
-        duplicatePromptDoc: duplicatePromptDocMock,
-    };
-});
-
-vi.mock('@/sync/ops/promptLibrary/promptBundles', async () => {
-    const actual = await vi.importActual<any>('@/sync/ops/promptLibrary/promptBundles');
-    return {
-        ...actual,
-        duplicatePromptBundle: duplicatePromptBundleMock,
-    };
-});
-
-type EntryActions = ReturnType<typeof usePromptLibraryEntryActions>;
-
-/** Renders the hook the prompt and skill editors' `⋯` menus call, and hands its actions to the test. */
-async function renderEntryActions(kind: 'doc' | 'bundle'): Promise<EntryActions> {
-    // Imported per test, after the shared module mocks are configured for this file.
-    const { usePromptLibraryEntryActions: useEntryActions } = await import('./usePromptLibraryEntryActions');
-    let actions: EntryActions | null = null;
-    function Probe() {
-        actions = useEntryActions(kind);
-        return null;
-    }
-    await renderScreen(<Probe />);
-    if (!actions) throw new Error('entry actions not rendered');
-    return actions;
+async function createFailureFixture(failingMethod: 'DELETE' | 'POST') {
+    await loadSyncSingletonForTests();
+    const catalog = createPromptLibraryCatalogBoundary({ records: [{ key: 'folders',
+        value: { v: 1, folders: [], artifactHeadersById: { 'doc-1': { tags: ['personal'] } } } }], revision: 4 });
+    let fail = false;
+    const fixture = await createPlainArtifactHomeFixture(`https://prompt-action-${failingMethod.toLowerCase()}-failure.test`, {
+        handleRequest: async (path, init) => {
+            if (fail && path.startsWith('/v1/artifacts') && init?.method === failingMethod)
+                return Response.json({ error: 'Artifact write failed' }, { status: 500 });
+            return catalog.handle(path, init);
+        },
+    });
+    onTestFinished(fixture.dispose);
+    await fixture.boundary.handle('/v1/artifacts', { method: 'POST', body: JSON.stringify({ id: 'doc-1',
+        header: encodePlainArtifactStoredContent({ v: 1, kind: 'prompt_doc.v2', title: 'Prompt' }),
+        body: encodePlainArtifactStoredContent({ body: JSON.stringify({ v: 1, markdown: 'Retained prompt', createdAtMs: 1, updatedAtMs: 1 }) }),
+        dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+    }) });
+    fail = true;
+    return { fixture, catalog };
 }
 
-describe('usePromptLibraryEntryActions', () => {
+// Successful deletion/reference preservation and duplicate/CAS adoption are
+// covered through the real same owner in usePromptLibraryEntryActions.entityRows.
+describe('prompt entry action failure and cancellation', () => {
     beforeEach(() => {
-        deleteArtifactMock.mockClear();
-        modalConfirmMock.mockClear();
+        modalConfirm.mockReset().mockResolvedValue(true);
+        modalAlert.mockClear();
         promptLibrarySettingsRouterPushSpy.mockClear();
-        promptLibrarySettingsRouterBackSpy.mockClear();
-        setPromptInvocationsMock.mockClear();
-        setPromptStacksMock.mockClear();
-        setPromptExternalLinksMock.mockClear();
-        setPromptFoldersMock.mockClear();
-        duplicatePromptDocMock.mockClear();
-        duplicatePromptBundleMock.mockClear();
-        modalAlertMock.mockClear();
     });
 
-    it('deletes a prompt artifact and prunes linked template, stack, and external-link references', async () => {
-        const actions = await renderEntryActions('doc');
-        let removed = false;
-
-        await act(async () => {
-            removed = await actions.remove('doc-1');
-        });
-
-        expect(removed).toBe(true);
-        expect(deleteArtifactMock).toHaveBeenCalledWith({ token: 'token' }, 'doc-1');
-        expect(setPromptInvocationsMock).toHaveBeenCalledWith({ v: 1, entries: [] });
-        expect(setPromptStacksMock).toHaveBeenCalledWith({
-            v: 1,
-            surfaces: {
-                coding: [],
-                voice: [],
-                profilesById: {},
-            },
-        });
-        expect(setPromptExternalLinksMock).toHaveBeenCalledWith({ v: 1, links: [] });
-    });
-
-    it('duplicates a prompt artifact and opens the copy in the collection', async () => {
-        const actions = await renderEntryActions('doc');
-
-        await act(async () => {
-            await actions.duplicate('doc-1');
-        });
-
-        expect(duplicatePromptDocMock).toHaveBeenCalledWith('doc-1');
-        expect(promptLibrarySettingsRouterPushSpy).toHaveBeenCalledWith('/settings/prompts/docs/doc-1-copy');
-    });
-
-    it('keeps local references unchanged when deleting a prompt artifact fails', async () => {
-        deleteArtifactMock.mockRejectedValueOnce(new Error('delete failed'));
-        const actions = await renderEntryActions('doc');
-        let removed = true;
-
-        await act(async () => {
-            removed = await actions.remove('doc-1');
-        });
-
+    it('keeps the Artifact and personal references when the Home rejects deletion', async () => {
+        const { fixture, catalog } = await createFailureFixture('DELETE');
+        const originalFolders = structuredClone(catalog.read('folders'));
+        const hook = await renderHook(() => usePromptLibraryEntryActions('doc'));
+        let removed: boolean | undefined;
+        await act(async () => { removed = await hook.getCurrent().remove('doc-1'); });
         expect(removed).toBe(false);
-        expect(setPromptInvocationsMock).not.toHaveBeenCalled();
-        expect(setPromptStacksMock).not.toHaveBeenCalled();
-        expect(setPromptExternalLinksMock).not.toHaveBeenCalled();
-        expect(modalAlertMock).toHaveBeenCalledWith('common.error', 'errors.unknownError');
+        expect(fixture.boundary.read('doc-1')).not.toBeNull();
+        expect(catalog.read('folders')).toEqual(originalFolders);
+        expect(catalog.requests).toEqual([]);
+        expect(modalAlert).toHaveBeenCalled();
     });
 
-    it('shows an error and stays on the current screen when duplication fails', async () => {
-        duplicatePromptDocMock.mockRejectedValueOnce(new Error('copy failed'));
-        const actions = await renderEntryActions('doc');
-
-        await act(async () => {
-            await actions.duplicate('doc-1');
-        });
-
+    it('stays on the editor and retains the original when the Home rejects creation of a copy', async () => {
+        const { fixture, catalog } = await createFailureFixture('POST');
+        const hook = await renderHook(() => usePromptLibraryEntryActions('doc'));
+        await act(async () => { await hook.getCurrent().duplicate('doc-1'); });
+        expect(fixture.boundary.list().map(row => row.id)).toEqual(['doc-1']);
+        expect(catalog.requests).toEqual([]);
         expect(promptLibrarySettingsRouterPushSpy).not.toHaveBeenCalled();
-        expect(modalAlertMock).toHaveBeenCalledWith('common.error', 'errors.unknownError');
+        expect(modalAlert).toHaveBeenCalled();
+    });
+
+    it('does not delete or alert when the person cancels confirmation', async () => {
+        const { fixture, catalog } = await createFailureFixture('DELETE');
+        modalConfirm.mockResolvedValueOnce(false);
+        const hook = await renderHook(() => usePromptLibraryEntryActions('doc'));
+        let removed: boolean | undefined;
+        await act(async () => { removed = await hook.getCurrent().remove('doc-1'); });
+        expect(removed).toBe(false);
+        expect(fixture.boundary.list().map(row => row.id)).toEqual(['doc-1']);
+        expect(catalog.requests).toEqual([]);
+        expect(modalAlert).not.toHaveBeenCalled();
     });
 });
