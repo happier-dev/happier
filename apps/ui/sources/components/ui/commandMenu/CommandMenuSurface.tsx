@@ -62,6 +62,7 @@ interface CommandMenuSurfaceProps {
     maxHeight?: number;
     maxWidth?: number;
     placement?: PopoverPlacement;
+    flip?: boolean;
     gap?: number;
     boundaryRef?: React.RefObject<any> | null;
     keyboardBottomInset?: number;
@@ -112,6 +113,7 @@ export const CommandMenuSurface = React.memo((props: CommandMenuSurfaceProps) =>
             anchor={anchor}
             anchorRef={anchorRef}
             placement={placement}
+            flip={props.flip}
             gap={gap}
             maxHeightCap={maxHeight}
             maxWidthCap={maxWidth}

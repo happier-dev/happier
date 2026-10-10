@@ -29,6 +29,8 @@ export type SetupBlockItem = Readonly<{
      * starts — a pairing invite, the camera — lives exactly as long as the panel is on screen.
      */
     renderPanel?: (controls: Readonly<{ close: () => void }>) => React.ReactNode;
+    /** Borrow this grid's actual open/close controls while the item is mounted. */
+    registerPresentation?: (controls: Readonly<{ open: () => void; close: () => void }>) => () => void;
 }>;
 
 const PanelWidthContext = React.createContext<number | null>(null);
@@ -193,6 +195,12 @@ export const SetupBlockGrid = React.memo(function SetupBlockGrid(props: Readonly
             reportOpen(null);
         }
     }, [controlled, reportOpen, runClose]);
+
+    React.useLayoutEffect(() => {
+        const disposers = props.items.flatMap(item => item.renderPanel && item.registerPresentation
+            ? [item.registerPresentation({ open: () => openItem(item.id), close })] : []);
+        return () => { for (const dispose of disposers) dispose(); };
+    }, [props.items, openItem, close]);
 
     // A host that decides follows through here: a newly named block grows from its slot, null runs
     // backwards, and a different block while one is open takes its place at once.
