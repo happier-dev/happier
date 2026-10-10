@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import type { MachinePoolResolveResultV1 } from '@happier-dev/protocol';
+import type { MachinePoolResolveInputV1, MachinePoolResolveResultV1 } from '@happier-dev/protocol';
 
 import type { ServerScopedMachinePoolSelection } from '@/components/sessions/new/components/machineSelection/useMachineSelectionListModel';
 import { randomUUID } from '@/platform/randomUUID';
@@ -16,20 +16,26 @@ export type MachinePoolSelectionStatus =
     | Readonly<{ kind: 'unavailable'; serverId: string; accountId: string; poolId: string; reason: UnavailableReason }>
     | Readonly<{ kind: 'error'; serverId: string; accountId: string; poolId: string }>;
 
+type PoolSelectionPurpose = Readonly<{ purpose?: 'session' }> | Readonly<Pick<
+    Extract<MachinePoolResolveInputV1, { purpose: 'finite' | 'service-start' }>, 'purpose' | 'workspace' | 'memoryDemand'
+>>;
+
 export function useMachinePoolSelection(params: Readonly<{
     requestKey: string;
     /** The stable draft identity already produced a committed Pool choice before this mount. */
     requestKeyAlreadyConsumed?: boolean;
     scopeKey?: string;
     onResolved: (target: Readonly<{ serverId: string; poolId: string; machineId: string }>) => void;
-}>) {
+}> & PoolSelectionPurpose) {
     const [status, setStatus] = React.useState<MachinePoolSelectionStatus>({ kind: 'idle' });
     const generationRef = React.useRef(0);
     const activeAttemptRef = React.useRef<Readonly<{ selectionKey: string; requestKey: string }> | null>(null);
     const baseRequestConsumedRef = React.useRef(params.requestKeyAlreadyConsumed === true);
     const onResolvedRef = React.useRef(params.onResolved);
     onResolvedRef.current = params.onResolved;
-    const requestContextKey = `${params.requestKey}\u0000${params.scopeKey ?? ''}`;
+    const placementKey = JSON.stringify(params.purpose === 'finite' || params.purpose === 'service-start'
+        ? [params.purpose, params.workspace, params.memoryDemand ?? null] : ['session']);
+    const requestContextKey = `${params.requestKey}\u0000${params.scopeKey ?? ''}\u0000${placementKey}`;
     const latestRequestContextKeyRef = React.useRef(requestContextKey);
     latestRequestContextKeyRef.current = requestContextKey;
 
@@ -42,18 +48,20 @@ export function useMachinePoolSelection(params: Readonly<{
     const requestContextRef = React.useRef({
         requestKey: params.requestKey,
         scopeKey: params.scopeKey,
+        placementKey,
     });
     React.useEffect(() => {
         const previous = requestContextRef.current;
         const requestChanged = previous.requestKey !== params.requestKey;
         const scopeChanged = previous.scopeKey !== params.scopeKey;
-        if (!requestChanged && !scopeChanged) {
+        if (!requestChanged && !scopeChanged && previous.placementKey === placementKey) {
             if (params.requestKeyAlreadyConsumed === true) baseRequestConsumedRef.current = true;
             return;
         }
         requestContextRef.current = {
             requestKey: params.requestKey,
             scopeKey: params.scopeKey,
+            placementKey,
         };
         // A request identity is the custody boundary for a pool resolve. If the
         // picker is reused for a newer draft or exact authoring context while
@@ -66,7 +74,7 @@ export function useMachinePoolSelection(params: Readonly<{
         } else if (params.requestKeyAlreadyConsumed === true) {
             baseRequestConsumedRef.current = true;
         }
-    }, [cancelPendingSelection, params.requestKey, params.requestKeyAlreadyConsumed, params.scopeKey]);
+    }, [cancelPendingSelection, params.requestKey, params.requestKeyAlreadyConsumed, params.scopeKey, placementKey]);
 
     React.useEffect(() => () => {
         generationRef.current += 1;
@@ -96,10 +104,14 @@ export function useMachinePoolSelection(params: Readonly<{
         let resolved = false;
         let settlementHandledInsideAccount = false;
         try {
-            await resolveMachinePool(serverId, {
+            const input: MachinePoolResolveInputV1 = params.purpose === 'finite' || params.purpose === 'service-start' ? {
+                poolId, requestKey, purpose: params.purpose, workspace: params.workspace,
+                ...(params.memoryDemand ? { memoryDemand: params.memoryDemand } : {}),
+            } : {
                 poolId,
                 requestKey,
-            }, {
+            };
+            await resolveMachinePool(serverId, input, {
                 expectedAccountId: accountId,
                 onSettled: (settlement) => {
                     settlementHandledInsideAccount = true;
@@ -148,7 +160,7 @@ export function useMachinePoolSelection(params: Readonly<{
             return false;
         }
         return resolved;
-    }, [params.requestKey]);
+    }, [params.requestKey, placementKey]);
 
     return {
         status,
