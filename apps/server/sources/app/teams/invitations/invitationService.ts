@@ -25,6 +25,7 @@ import {
     type TeamOperationAuthenticationContext,
 } from "../actorContext";
 import {
+    activeTeamInvitationWhere,
     createTeamInvitationInTx,
     readActiveTeamInvitationAdmissionReferenceInTx,
     readTeamInvitationByTokenHashInTx,
@@ -298,7 +299,7 @@ function invitationStateFilter(
         case "expired":
             return { acceptedAt: null, revokedAt: null, expiresAt: { lte: now } };
         case "active":
-            return { acceptedAt: null, revokedAt: null, expiresAt: { gt: now } };
+            return activeTeamInvitationWhere(now);
     }
 }
 

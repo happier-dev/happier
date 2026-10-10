@@ -1,11 +1,17 @@
 import Fastify from "fastify";
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from "fastify-type-provider-zod";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { auth } from "@/app/auth/auth";
 import type { AuthEmailMessage } from "@/app/auth/email/authEmailDelivery";
 import { createPerSendAuthEmailDelivery } from "@/app/auth/email/resolveAuthEmailDelivery";
-import { readHomeConfigEnv } from "@/app/home/settings/homeSettings";
+import { readHomeConfigEnv, setHomeSettings } from "@/app/home/settings/homeSettings";
+import { logger } from '@/utils/logging/log';
+import { enableServeUi } from '../../utils/enableServeUi';
+import { bugReportDiagnosticsRoutes } from '../diagnostics/bugReportDiagnosticsRoutes';
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { db } from "@/storage/db";
 
@@ -13,6 +19,11 @@ import { createAppCloseTracker } from "../../testkit/appLifecycle";
 import { enableAuthentication } from "../../utils/enableAuthentication";
 import { homeGovernanceRoutes } from "./homeGovernanceRoutes";
 import { registerHomeSettingsRoutes } from "./homeSettingsRoutes";
+import { registerHomeReachabilityRoutes } from './homeReachabilityRoutes';
+import { registerHomeRetentionRoutes } from './homeRetentionRoutes';
+import { homeDomainActionPathForMethod } from '../actions/homeDomainActionRoute';
+import { resolveRateLimitEnvKeysForId } from '../../utils/apiRateLimitDefaults';
+import { applyStartupHomeEnvToProcess, loadStartupHomeEnv } from '@/app/home/settings/startupHomeEnv';
 
 const { trackApp, closeTrackedApps } = createAppCloseTracker();
 
@@ -82,6 +93,78 @@ afterEach(async () => {
 });
 
 describe("Home settings routes", () => {
+    it('registers Home rate limits from saved startup values after the route modules were imported', async () => {
+        const keys = resolveRateLimitEnvKeysForId('account.settings');
+        const claimKeys = resolveRateLimitEnvKeysForId('home.governance.claim');
+        const mailKeys = resolveRateLimitEnvKeysForId('home.mailDelivery.test');
+        vi.stubEnv(keys.maxEnvKey, '');
+        vi.stubEnv(claimKeys.maxEnvKey, '');
+        vi.stubEnv(mailKeys.maxEnvKey, '');
+        try {
+            const startup = await loadStartupHomeEnv({ env: {}, readStored: async () => ({ values: { [keys.maxEnvKey]: 17, [claimKeys.maxEnvKey]: 7, [mailKeys.maxEnvKey]: 5 }, secrets: {} }), log: () => {} });
+            applyStartupHomeEnvToProcess(startup, process.env);
+            const app = trackApp(Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>());
+            const limits = new Map<string, unknown>();
+            app.addHook('onRoute', (route) => { limits.set(route.url, route.config?.rateLimit); });
+            enableAuthentication(app);
+            homeGovernanceRoutes(app);
+            registerHomeSettingsRoutes(app, { authEmailDelivery: createPerSendAuthEmailDelivery({ readEnv: () => readHomeConfigEnv({}), createSmtpTransport: () => ({ async send() {} }) }) });
+            registerHomeReachabilityRoutes(app);
+            registerHomeRetentionRoutes(app);
+            expect(limits.get('/v1/home/settings/get')).toMatchObject({ max: 17 });
+            expect(limits.get('/v1/home/governance/get')).toMatchObject({ max: 17 });
+            expect(limits.get(homeDomainActionPathForMethod('identity.providers.list', 'POST'))).toMatchObject({ max: 17 });
+            expect(limits.get(homeDomainActionPathForMethod('home.reachability.get', 'POST'))).toMatchObject({ max: 17 });
+            expect(limits.get(homeDomainActionPathForMethod('home.retention.dryRun', 'POST'))).toMatchObject({ max: 17 });
+            expect(limits.get(homeDomainActionPathForMethod('home.governance.claim', 'POST'))).toMatchObject({ max: 7 });
+            expect(limits.get(homeDomainActionPathForMethod('home.mailDelivery.test', 'POST'))).toMatchObject({ max: 5 });
+        } finally {
+            vi.unstubAllEnvs();
+            await loadStartupHomeEnv({ env: {}, readStored: async () => ({ values: {}, secrets: {} }), log: () => {} });
+        }
+    });
+
+    it("uses saved live log locations, auth diagnostics and UI fallback disclosure on the next request", async () => {
+        const dir = await mkdtemp(join(tmpdir(), 'happier-home-live-diagnostics-'));
+        const path = join(dir, 'server.log');
+        await writeFile(path, 'Home diagnostic marker\n');
+        const info = vi.spyOn(logger, 'info').mockImplementation(() => {});
+        vi.stubEnv('NODE_ENV', 'production');
+        try {
+            const owner = await createAccount('owner');
+            const saved = await setHomeSettings({ actorAccountId: owner.accountId, write: { expectedRevision: 0, values: {
+                HAPPIER_BUG_REPORTS_SERVER_DIAGNOSTICS_ENABLED: true,
+                HAPPIER_BUG_REPORTS_SERVER_DIAGNOSTICS_ACCESS_MODE: 'authenticated',
+                HAPPIER_BUG_REPORTS_SERVER_LOG_PATH: path,
+                HAPPIER_AUTH_DECORATOR_DIAGNOSTIC_LOGS: true,
+                HAPPIER_SERVER_UI_DEBUG_PATH: true,
+            } } });
+            expect(saved.status).toBe('applied');
+            const app = createTestApp();
+            bugReportDiagnosticsRoutes(app);
+            enableServeUi(app, { dir: join(dir, 'missing-ui'), prefix: '/', mountRoot: true, required: false });
+            const snapshot = await app.inject({ method: 'GET', url: '/v1/diagnostics/bug-report-snapshot', headers: { authorization: `Bearer ${owner.token}` } });
+            expect(snapshot.statusCode).toBe(200);
+            expect(snapshot.json().logs.tail).toContain('Home diagnostic marker');
+            expect(info.mock.calls.some(([entry]) => typeof entry === 'object' && entry !== null && 'module' in entry && entry.module === 'auth-decorator')).toBe(true);
+            const fallback = await app.inject({ method: 'GET', url: '/' });
+            expect(fallback.body).toContain(join(dir, 'missing-ui', 'index.html'));
+            await setHomeSettings({ actorAccountId: owner.accountId, write: { expectedRevision: 1, values: {
+                HAPPIER_BUG_REPORTS_SERVER_LOG_PATH: null,
+                HAPPIER_SELF_HOST_LOG_DIR: dir,
+                HAPPIER_SERVER_UI_DEBUG_PATH: false,
+            } } });
+            const byDirectory = await app.inject({ method: 'GET', url: '/v1/diagnostics/bug-report-snapshot', headers: { authorization: `Bearer ${owner.token}` } });
+            expect(byDirectory.json().logs.tail).toContain('Home diagnostic marker');
+            const hidden = await app.inject({ method: 'GET', url: '/' });
+            expect(hidden.body).not.toContain(join(dir, 'missing-ui', 'index.html'));
+        } finally {
+            info.mockRestore();
+            vi.unstubAllEnvs();
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
     it("saves SMTP from the console and the next test email uses the stored password, which no read ever returns", async () => {
         const app = createTestApp();
         const owner = await createAccount("owner");

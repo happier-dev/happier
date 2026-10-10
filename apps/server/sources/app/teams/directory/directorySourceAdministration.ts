@@ -223,6 +223,7 @@ export async function listDirectorySourceSetupOptionsForActor(
             }, dependencies.resolveWorkosPlatform
                 ? { resolvePlatform: dependencies.resolveWorkosPlatform }
                 : undefined));
+            if (runtime.status === "not_configured") continue;
             if (runtime.status !== "ready") return { ok: false, error: "directory_sync_unavailable" };
             const organizationId = runtime.connection.externalReference.organizationId;
             if (!runtimesByOrganization.has(organizationId)) {

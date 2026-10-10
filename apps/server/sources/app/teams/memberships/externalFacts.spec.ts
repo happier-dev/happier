@@ -25,6 +25,7 @@ describe("directory management handoff contributions", () => {
             }) },
             teamMembership: { findUnique: async () => ({ accountId: "account" }) },
             session: { findMany: async () => [] },
+            machine: { findMany: async () => [] },
         } as unknown as Tx;
         const handoff = {
             teamId: "team", teamMembershipId: "membership", accountId: "account",

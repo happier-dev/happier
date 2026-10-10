@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
     findEffectiveAuthMethodDecision,
+    applyHomePolicyToAuthMethodDecision,
     isEffectiveAuthMethodActionEnabled,
     resolveEffectiveAuthMethodDecisions,
     toPublishedAuthMethods,
@@ -21,6 +22,27 @@ function emailPasswordOptedOutEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.Pro
 }
 
 describe("effective auth method decisions", () => {
+    it.each(["inherited", "closed", "invitation_only", "self_service"] as const)(
+        "requires explicit self_service for company Home SSO provisioning (%s)", (admission) => {
+            const decision = applyHomePolicyToAuthMethodDecision({
+                id: "company-sso",
+                ui: { displayName: "Company", providerKind: "workos_sso" },
+                actions: [
+                    { id: "connect", mode: "either", enabled: true },
+                    { id: "login", mode: "keyless", enabled: true },
+                    { id: "provision", mode: "keyed", enabled: true },
+                    { id: "provision", mode: "keyless", enabled: true },
+                ],
+                allowedProvisionModes: ["e2ee", "plain"], recommendedProvisionMode: null,
+            }, admission === "inherited" ? { status: "inherited" } : {
+                status: "narrowed", policy: { v: 1, admission },
+            });
+            expect(decision.actions.filter((action) => action.id === "provision")
+                .every((action) => action.enabled === (admission === "self_service"))).toBe(true);
+            expect(decision.actions.filter((action) => action.id !== "provision")
+                .every((action) => action.enabled)).toBe(true);
+        },
+    );
     it("does not bound password login by the Key Challenge method's own policy", () => {
         const env = baseEnv({ HAPPIER_FEATURE_AUTH_EMAIL_PASSWORD__ENABLED: "1" });
         const login = (inputs: EffectiveAuthMethodInputs) => findEffectiveAuthMethodDecision(inputs, "email_password")

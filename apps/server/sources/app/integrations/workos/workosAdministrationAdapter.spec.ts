@@ -3,6 +3,38 @@ import { describe, expect, it, vi } from "vitest";
 import { createWorkosAdministrationAdapter } from "./workosAdministrationAdapter";
 
 describe("WorkOS administration adapter", () => {
+    it("keeps Home organization recovery distinct from every Team namespace", async () => {
+        const getOrganizationByExternalId = vi.fn().mockResolvedValue({ id: "org_home", name: "Company" });
+        const adapter = createWorkosAdministrationAdapter({ organizations: { getOrganizationByExternalId } } as never);
+        await expect(adapter.ensureOrganization({
+            homeServerIdentityId: "server_exact", teamId: null, teamName: "Company",
+        })).resolves.toEqual({ id: "org_home", name: "Company" });
+        expect(getOrganizationByExternalId).toHaveBeenCalledWith("happier:server_exact:home");
+    });
+    it("uses only verified domains from the exact live WorkOS Organization", async () => {
+        const getOrganization = vi.fn().mockResolvedValue({
+            id: "org_exact", name: "Acme", domains: [
+                { domain: "Acme.Example", organizationId: "org_exact", state: "verified" },
+                { domain: "pending.example", organizationId: "org_exact", state: "pending" },
+                { domain: "failed.example", organizationId: "org_exact", state: "failed" },
+                { domain: "unverified.example", organizationId: "org_exact" },
+            ],
+        });
+        // WorkOS SDK is the external boundary; the adapter's validation stays real.
+        const adapter = createWorkosAdministrationAdapter({ organizations: { getOrganization } } as never);
+        await expect(adapter.getVerifiedOrganizationDomains("org_exact")).resolves.toEqual(["acme.example"]);
+        getOrganization.mockResolvedValueOnce({ id: "org_other", name: "Other", domains: [] });
+        await expect(adapter.getVerifiedOrganizationDomains("org_exact"))
+            .rejects.toThrow("workos_organization_mismatch");
+        getOrganization.mockResolvedValueOnce({ id: "org_exact", name: "Acme", domains: [
+            { domain: "wrong.example", state: "verified", organizationId: "org_other" },
+        ] });
+        await expect(adapter.getVerifiedOrganizationDomains("org_exact"))
+            .rejects.toThrow("workos_organization_mismatch");
+        getOrganization.mockRejectedValueOnce({ status: 503 });
+        await expect(adapter.getVerifiedOrganizationDomains("org_exact"))
+            .rejects.toEqual({ status: 503 });
+    });
     it("ensures the deterministic external organization and rereads after a create conflict", async () => {
         const getOrganizationByExternalId = vi.fn()
             .mockRejectedValueOnce({ status: 404 })

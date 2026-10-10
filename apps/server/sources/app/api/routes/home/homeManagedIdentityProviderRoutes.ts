@@ -63,8 +63,6 @@ const ERROR_RESPONSES = {
     503: ManagedProviderRouteErrorV1Schema,
 } as const;
 
-const RATE_LIMIT = { rateLimit: resolveApiHotEndpointRateLimit(process.env, "account.settings") };
-
 function rejectInvalidProviderInput(reply: FastifyReply): FastifyReply {
     return reply.code(400).send({ error: "identity_provider_invalid" as const });
 }
@@ -273,6 +271,7 @@ async function mutationError(result: Readonly<{ status: string; instance?: Ident
 
 /** Registers the owner-scoped managed identity-provider administration surface. */
 export function registerHomeManagedIdentityProviderRoutes(app: Fastify): void {
+    const RATE_LIMIT = { rateLimit: resolveApiHotEndpointRateLimit(process.env, "account.settings") };
     app.post(
         homeDomainActionPathForMethod("identity.providers.list", "POST"),
         {

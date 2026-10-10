@@ -9,6 +9,8 @@ import { applyExternalGroupContributionInTx, applyExternalTeamMembershipInTx } f
 import { addTeamGroupMemberForActorInTx, createTeamGroupForActorInTx } from "../groups/groupService";
 import { resolveEffectiveTeamGroupIdsForAccountInTx } from "../groups/effectiveGroupMembership";
 import { readTeamSummaryForActorInTx } from "../lifecycle";
+import { resolveTeamActorContextInTx } from "../actorContext";
+import { listHomeAdministrationEventsInTx } from "@/app/home/audit/homeAdministrationEvents";
 import {
     addTeamMemberForActorInTx,
     getTeamMemberForActorInTx,
@@ -413,6 +415,92 @@ describe("Team member administration (SQLite integration)", () => {
         expect(again.value.id).toBe(membership.teamMembershipId);
     });
 
+    it.each(["active", "suspended"] as const)("lets a %s member leave through removal, cascading Groups and grants", async (status) => {
+        const owner = await account();
+        const person = await account();
+        const acme = await team(`Leave ${status}`);
+        await member(acme.id, owner.id, "owner");
+        const membership = await member(acme.id, person.id, "member");
+        await db.teamMembership.update({ where: { id: membership.teamMembershipId }, data: { status } });
+        const group = await db.teamGroup.create({ data: { teamId: acme.id, name: "Leave Group", nameKey: "leave-group" } });
+        await db.teamGroupMembership.create({ data: {
+            teamId: acme.id, teamGroupId: group.id, teamMembershipId: membership.teamMembershipId, nativeContribution: true,
+        } });
+        const resource = await db.teamCredentialResource.create({ data: {
+            teamId: acme.id, custodianAccountId: owner.id, displayName: "Leave grant",
+            disclosureCeiling: "brokered_only", sessionUsePolicy: "personal_allowed", sourceBindingJson: "{}",
+            memberGrants: { create: { teamMembershipId: membership.teamMembershipId, deliveryMode: "brokered" } },
+        } });
+        const before = await inTx((tx) => resolveTeamActorContextInTx(tx, { teamId: acme.id, actorAccountId: person.id }));
+        expect(before?.capabilities).toMatchObject({ leave: true, manageMembers: false });
+        const removed = await inTx((tx) => removeTeamMemberForActorInTx(tx, {
+            teamId: acme.id, actorAccountId: person.id, membershipId: membership.teamMembershipId,
+        }));
+        expect(removed).toEqual({ ok: true, value: { status: "removed", membershipId: membership.teamMembershipId } });
+        expect(await db.teamMembership.findUnique({ where: { id: membership.teamMembershipId } })).toBeNull();
+        expect(await db.teamGroupMembership.count({ where: { teamMembershipId: membership.teamMembershipId } })).toBe(0);
+        expect(await db.teamCredentialMemberGrant.count({ where: { resourceId: resource.id } })).toBe(0);
+        const audit = await inTx((tx) => listHomeAdministrationEventsInTx(tx, { targetId: person.id }));
+        expect(audit).toMatchObject({ status: "ok", result: { items: [
+            { action: "teams.members.remove", actor: { kind: "account", accountId: person.id },
+                target: { kind: "account", id: person.id },
+                summary: { teamId: acme.id, membershipId: membership.teamMembershipId } },
+        ] } });
+        const after = await inTx((tx) => resolveTeamActorContextInTx(tx, { teamId: acme.id, actorAccountId: person.id }));
+        expect(after?.capabilities).toMatchObject({ leave: false });
+        const rejoined = await member(acme.id, person.id, "member");
+        expect(rejoined.teamMembershipId).not.toBe(membership.teamMembershipId);
+    });
+
+    it("refuses leaving as the last active owner and projects the same decision", async () => {
+        const owner = await account();
+        const acme = await team("Last owner cannot leave");
+        const membership = await member(acme.id, owner.id, "owner");
+        const context = await inTx((tx) => resolveTeamActorContextInTx(tx, { teamId: acme.id, actorAccountId: owner.id }));
+        expect(context?.capabilities).toMatchObject({ leave: false });
+        expect(await inTx((tx) => removeTeamMemberForActorInTx(tx, {
+            teamId: acme.id, actorAccountId: owner.id, membershipId: membership.teamMembershipId,
+        }))).toEqual({ ok: false, error: "team_owner_transfer_required" });
+        const other = await account();
+        await member(acme.id, other.id, "owner");
+        const shared = await inTx((tx) => resolveTeamActorContextInTx(tx, { teamId: acme.id, actorAccountId: owner.id }));
+        expect(shared?.capabilities).toMatchObject({ leave: true });
+        expect((await inTx((tx) => removeTeamMemberForActorInTx(tx, {
+            teamId: acme.id, actorAccountId: owner.id, membershipId: membership.teamMembershipId,
+        }))).ok).toBe(true);
+    });
+
+    it("lets the last owner leave after archiving the Team", async () => {
+        const owner = await account();
+        const acme = await team("Archived owner leave");
+        const membership = await member(acme.id, owner.id, "owner");
+        await db.team.update({ where: { id: acme.id }, data: { archivedAt: new Date() } });
+        const context = await inTx((tx) => resolveTeamActorContextInTx(tx, { teamId: acme.id, actorAccountId: owner.id }));
+        expect(context?.capabilities.leave).toBe(true);
+        expect(await inTx((tx) => removeTeamMemberForActorInTx(tx, {
+            teamId: acme.id, actorAccountId: owner.id,
+        }))).toEqual({ ok: true, value: { status: "removed", membershipId: membership.teamMembershipId } });
+    });
+
+    it("refuses directory-managed self-removal and withholds leave", async () => {
+        const owner = await account();
+        const person = await account();
+        const acme = await team("Directory owns leave");
+        await member(acme.id, owner.id, "owner");
+        const membership = await member(acme.id, person.id, "member");
+        const source = await workosSource(acme.id, "Leave directory");
+        await db.teamProvisionedIdentity.create({ data: {
+            teamId: acme.id, directorySourceId: source.id, externalUserId: crypto.randomUUID(),
+            boundAccountId: person.id, teamMembershipId: membership.teamMembershipId,
+        } });
+        const context = await inTx((tx) => resolveTeamActorContextInTx(tx, { teamId: acme.id, actorAccountId: person.id }));
+        expect(context?.capabilities).toMatchObject({ leave: false });
+        expect(await inTx((tx) => removeTeamMemberForActorInTx(tx, {
+            teamId: acme.id, actorAccountId: person.id, membershipId: membership.teamMembershipId,
+        }))).toEqual({ ok: false, error: "managed_by_directory" });
+        expect(await db.teamMembership.findUnique({ where: { id: membership.teamMembershipId } })).not.toBeNull();
+    });
+
     it("ends the lifetime on removal and mints a new one on rejoin", async () => {
         const owner = await account();
         const target = await account();
@@ -447,6 +535,12 @@ describe("Team member administration (SQLite integration)", () => {
             teamId: acme.id, actorAccountId: owner.id, membershipId: first.teamMembershipId,
         }));
         expect(again).toEqual({ ok: true, value: { status: "unchanged" } });
+        const audit = await inTx((tx) => listHomeAdministrationEventsInTx(tx, { targetId: target.id }));
+        expect(audit).toMatchObject({ status: "ok", result: { items: [
+            { action: "teams.members.remove", actor: { kind: "account", accountId: owner.id },
+                target: { kind: "account", id: target.id },
+                summary: { teamId: acme.id, membershipId: first.teamMembershipId } },
+        ] } });
 
         const rejoined = await member(acme.id, target.id, "member");
         expect(rejoined.teamMembershipId).not.toBe(first.teamMembershipId);

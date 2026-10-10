@@ -114,7 +114,8 @@ describe("Provider-reset Account replacement", () => {
                 ownerTeamId: teamId,
                 kind: "workos_sso",
                 displayName: "WorkOS",
-                config: { v: 1 },
+                enabled: true,
+                config: { v: 1, kind: "workos_sso" },
             },
         });
         const connection = await db.teamIdentityConnection.create({

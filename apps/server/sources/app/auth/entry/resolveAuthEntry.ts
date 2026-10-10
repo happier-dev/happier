@@ -9,6 +9,7 @@ import {
     type TeamInvitationPreviewV1,
 } from '@happier-dev/protocol';
 import { normalizeAuthMethodId, readServerEnabledBit } from '@happier-dev/protocol';
+import { normalizeVerifiedEmail } from '@happier-dev/protocol/auth/verifiedEmail';
 import type { AuthTokenAuthenticationEvidenceV1 } from '@happier-dev/protocol';
 
 import {
@@ -47,6 +48,8 @@ import { resolveJoinScreenHomeIdentity } from '@/app/teams/invitations/joinScree
 import type { JoinScreenHomeIdentity } from '@/app/teams/invitations/invitationService';
 import { readNativeAuthOneTimeOperation } from '@/app/auth/email/nativeAuthOneTimeOperations';
 import { resolvePublicSignupProvisioningActionMode } from '@/app/integrations/publicUrl/publicSignupProvisioningPolicy';
+import { createWorkosAdministrationAdapter } from '@/app/integrations/workos/workosAdministrationAdapter';
+import { resolveWorkosPlatformConfig } from '@/app/integrations/workos/workosPlatform';
 import type { Tx } from '@/storage/inTx';
 
 import {
@@ -353,6 +356,70 @@ function projectHomeAuthEntryProjection(
         return projectUnavailableHomeAuthEntry('authentication_policy_unavailable');
     }
     return AuthEntryProjectionV1Schema.parse(projection);
+}
+
+/** An email hint narrows choices; it never proves identity or admits an Account. */
+async function resolveHomeCompanyChoicesByEmail(
+    email: string,
+    env: NodeJS.ProcessEnv,
+    emailDeliveryReady: boolean,
+    homeMethods: Extract<EffectiveHomeAuthMethodsResult, { status: 'ready' }>,
+): Promise<EffectiveHomeAuthMethodsResult> {
+    const mailbox = normalizeVerifiedEmail(email);
+    if (!mailbox) return { status: 'unavailable' };
+    const domain = mailbox.normalizedEmail.slice(mailbox.normalizedEmail.lastIndexOf('@') + 1);
+    const publishedIds = new Set(homeMethods.decisions
+        .filter((decision) => decision.ui?.providerKind === 'workos_sso'
+            && decision.actions.some((action) => action.enabled))
+        .map((decision) => decision.id));
+    const connections = await inTx(async (tx) =>
+        (await listTeamIdentityConnectionsInTx(tx, { teamId: null }))
+            .filter((connection) => connection.state === 'connected'
+                && connection.providerKind === 'workos_sso'
+                && connection.externalReference.kind === 'workos_sso'
+                && connection.externalReference.organizationId !== null
+                && connection.externalReference.connectionId !== null
+                && publishedIds.has(connection.providerInstanceId)));
+    if (connections.length === 0) return { status: 'unavailable' };
+    const platform = resolveWorkosPlatformConfig(env);
+    if (!platform.available) return { status: 'unavailable' };
+    const adapter = createWorkosAdministrationAdapter(platform.client);
+    try {
+        const matching = await Promise.all(connections.map(async (connection) => {
+            const reference = connection.externalReference;
+            if (reference.kind !== 'workos_sso' || reference.organizationId === null) return null;
+            const domains = await adapter.getVerifiedOrganizationDomains(reference.organizationId);
+            return domains.includes(domain) ? connection : null;
+        }));
+        const matches = matching.filter((connection) => connection !== null);
+        if (matches.length === 0) return { status: 'unavailable' };
+        return await inTx(async (tx) => {
+            const current = await listTeamIdentityConnectionsInTx(tx, { teamId: null });
+            for (const connection of connections) {
+                const latest = current.find((candidate) => candidate.id === connection.id);
+                if (!latest || latest.state !== 'connected'
+                    || latest.revision !== connection.revision
+                    || latest.providerInstanceId !== connection.providerInstanceId
+                    || latest.externalReference.kind !== 'workos_sso'
+                    || connection.externalReference.kind !== 'workos_sso'
+                    || latest.externalReference.organizationId !== connection.externalReference.organizationId
+                    || latest.externalReference.connectionId !== connection.externalReference.connectionId) {
+                    return { status: 'unavailable' };
+                }
+            }
+            const effective = await resolveEffectiveHomeAuthMethodsInTx(tx, { env, emailDeliveryReady });
+            if (effective.status !== 'ready') return effective;
+            const matchedIds = new Set(matches.map((connection) => connection.providerInstanceId));
+            const decisions = effective.decisions.filter((decision) => matchedIds.has(decision.id));
+            if (!decisions.some((decision) => decision.actions.some((action) => action.enabled))) {
+                return { status: 'unavailable' };
+            }
+            return { ...effective, decisions };
+        });
+    } catch {
+        // Failed verification is not a default/first-match route.
+        return { status: 'unavailable' };
+    }
 }
 
 type TeamConnectionAuthenticateActionV1 = Readonly<{
@@ -779,17 +846,22 @@ export async function resolveAuthEntry(
         });
     }
     const emailDeliveryReady = context.emailDeliveryReady ?? await isAuthEmailDeliveryReady({ env: context.env });
-    const homeMethods = await resolveEffectiveHomeAuthMethods({
+    let homeMethods = await resolveEffectiveHomeAuthMethods({
         env: context.env,
         emailDeliveryReady,
     });
     if (homeMethods.status !== 'ready') {
         return projectUnavailableHomeAuthEntry('authentication_policy_unavailable');
     }
+    const email = input.scope.kind === 'home' ? input.email : undefined;
+    if (email !== undefined) {
+        homeMethods = await resolveHomeCompanyChoicesByEmail(email, context.env, emailDeliveryReady, homeMethods);
+        if (homeMethods.status !== 'ready') return projectUnavailableHomeAuthEntry('entry_not_available');
+    }
     return projectHomeAuthEntryProjection(homeMethods, {
         env: context.env,
         principal: context.principal ?? null,
         ...(context.requestIp === undefined ? {} : { requestIp: context.requestIp }),
         emailDeliveryReady,
-    }, true);
+    }, email === undefined);
 }

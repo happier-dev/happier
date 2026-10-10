@@ -3,13 +3,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { applyEnvValues, restoreEnv, snapshotEnv } from "@/app/api/testkit/env";
 
 const dbAccountFindUniqueMock = vi.hoisted(() => vi.fn());
-vi.mock("@/storage/db", () => ({
-    db: {
+vi.mock("@/storage/db", async () => {
+    const { createDbTransactionMock } = await import("@/app/api/testkit/dbMocks");
+    // Only persistent database IO is replaced; auth and inTx retain their real logic.
+    const boundary = {
         account: {
             findUnique: (...args: unknown[]) => dbAccountFindUniqueMock(...args),
         },
-    },
-}));
+    };
+    const { wrapDb } = createDbTransactionMock(() => boundary);
+    return { db: wrapDb(boundary) };
+});
 
 const MASTER_SECRET = "compat-probe-0";
 
@@ -52,6 +56,8 @@ describe("auth persistent token compatibility", () => {
             extras: { provenance: "privacy-kit-0.0.25-node" },
             authTokenKind: "account",
             authority: "present_user",
+            authTokenMintedAuthority: "present_user",
+            tokenEpoch: 0,
             legacy: true,
         });
         await expect(auth.verifyLegacyHomeToken(LEGACY_BUN_RETRY_TOKEN)).resolves.toEqual({
@@ -59,6 +65,8 @@ describe("auth persistent token compatibility", () => {
             extras: { provenance: "privacy-kit-0.0.25-bun-1.3.5" },
             authTokenKind: "account",
             authority: "present_user",
+            authTokenMintedAuthority: "present_user",
+            tokenEpoch: 0,
             legacy: true,
         });
 

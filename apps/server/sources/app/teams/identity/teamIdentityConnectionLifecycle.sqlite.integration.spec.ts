@@ -7,6 +7,7 @@ import {
     createTeamIdentityConnectionInTx,
     deleteTeamIdentityConnectionInTx,
     listTeamIdentityConnectionsInTx,
+    readTeamIdentityConnectionInTx,
     recordTeamIdentityConnectionTestInTx,
     setTeamIdentityConnectionEnabledInTx,
     updateTeamIdentityConnectionInTx,
@@ -73,6 +74,98 @@ describe("TeamIdentityConnection lifecycle", () => {
         },
         settings: { v: 1 as const, kind: "workos_sso" as const },
     };
+
+    it("persists Home bindings in the shared lifecycle without allowing Team-provider or directory attachment", async () => {
+        const homeProvider = await createProvider({ ownerTeamId: null });
+        const team = await db.team.create({ data: { name: "Separate company" } });
+        const teamProvider = await createProvider({ ownerTeamId: team.id });
+        const created = await inTx((tx) => createTeamIdentityConnectionInTx(tx, {
+            teamId: null,
+            providerInstanceId: homeProvider.id,
+            ...workosDocuments,
+            createdByAccountId: null,
+        }));
+        expect(created.status).toBe("created");
+        if (created.status !== "created") throw new Error("Home binding missing");
+        expect(created.connection.teamId).toBeNull();
+        expect(await inTx((tx) => createTeamIdentityConnectionInTx(tx, {
+            teamId: null,
+            providerInstanceId: teamProvider.id,
+            ...workosDocuments,
+            createdByAccountId: null,
+        }))).toEqual({ status: "provider_not_available" });
+        const enabled = await inTx((tx) => setTeamIdentityConnectionEnabledInTx(tx, {
+            id: created.connection.id, teamId: null, expectedRevision: 1, enabled: true,
+        }));
+        expect(enabled.status).toBe("applied");
+        expect(await inTx((tx) => updateTeamIdentityConnectionInTx(tx, {
+            id: created.connection.id, teamId: null, expectedRevision: 2,
+            externalReference: { ...workosDocuments.externalReference, connectionId: "different" },
+        }))).toMatchObject({ status: "immutable_external_identity" });
+        await expect(db.teamDirectorySource.create({ data: {
+            teamId: team.id,
+            teamIdentityConnectionId: created.connection.id,
+            kind: "workos_directory",
+            displayName: "Rejected Home directory",
+            externalSourceKey: `workos:org_Exact:${created.connection.id}`,
+            bindingConfig: { v: 1, kind: "workos_directory", workosDirectoryId: "directory_home" },
+        } })).rejects.toMatchObject({ code: "P2003" });
+        expect(await inTx((tx) => listTeamIdentityConnectionsInTx(tx, { teamId: team.id }))).toEqual([]);
+        expect((await inTx((tx) => listTeamIdentityConnectionsInTx(tx, { teamId: null }))).map((row) => row.id))
+            .toContain(created.connection.id);
+    });
+
+    it("keeps one exact WorkOS namespace when a Home provider is shared across scopes", async () => {
+        const provider = await createProvider({ ownerTeamId: null });
+        const team = await db.team.create({ data: { name: "Home provider consumer" } });
+        const otherTeam = await db.team.create({ data: { name: "Rejected namespace" } });
+        const home = await inTx((tx) => createTeamIdentityConnectionInTx(tx, {
+            teamId: null, providerInstanceId: provider.id, ...workosDocuments, createdByAccountId: null,
+        }));
+        expect(home.status).toBe("created");
+        if (home.status !== "created") throw new Error("Home namespace missing");
+        const shared = await inTx((tx) => createTeamIdentityConnectionInTx(tx, {
+            teamId: team.id, providerInstanceId: provider.id, ...workosDocuments, createdByAccountId: null,
+        }));
+        expect(shared.status).toBe("created");
+        expect(await inTx((tx) => createTeamIdentityConnectionInTx(tx, {
+            teamId: otherTeam.id, providerInstanceId: provider.id, createdByAccountId: null,
+            settings: workosDocuments.settings,
+            externalReference: { ...workosDocuments.externalReference, connectionId: "conn_Different" },
+        }))).toEqual({ status: "invalid_document" });
+        expect(await inTx((tx) => updateTeamIdentityConnectionInTx(tx, {
+            id: home.connection.id, teamId: null, expectedRevision: 1,
+            externalReference: { ...workosDocuments.externalReference, organizationId: "org_Different" },
+        }))).toEqual({ status: "invalid_document" });
+        await db.teamIdentityConnection.update({ where: { id: home.connection.id }, data: {
+            externalReference: { ...workosDocuments.externalReference, connectionId: "conn_LegacyDivergent" },
+        } });
+        expect(await inTx((tx) => setTeamIdentityConnectionEnabledInTx(tx, {
+            id: home.connection.id, teamId: null, expectedRevision: 1, enabled: true,
+        }))).toEqual({ status: "invalid_document" });
+    });
+
+    it("withdraws already-enabled divergent WorkOS namespaces from exact reads and scope lists", async () => {
+        const provider = await createProvider({ ownerTeamId: null });
+        const team = await db.team.create({ data: { name: "Legacy namespace consumer" } });
+        const home = await db.teamIdentityConnection.create({ data: {
+            teamId: null, providerInstanceId: provider.id, ...workosDocuments,
+            enabled: true, firstEnabledAt: new Date(),
+        } });
+        const shared = await db.teamIdentityConnection.create({ data: {
+            teamId: team.id, providerInstanceId: provider.id, settings: workosDocuments.settings,
+            externalReference: { ...workosDocuments.externalReference, connectionId: "conn_LegacyDivergent" },
+            enabled: true, firstEnabledAt: new Date(),
+        } });
+        expect.soft(await inTx((tx) => readTeamIdentityConnectionInTx(tx, { id: home.id, teamId: null })))
+            .toEqual({ status: "unreadable" });
+        expect.soft(await inTx((tx) => readTeamIdentityConnectionInTx(tx, { id: shared.id, teamId: team.id })))
+            .toEqual({ status: "unreadable" });
+        expect.soft((await inTx((tx) => listTeamIdentityConnectionsInTx(tx, { teamId: null }))).map((row) => row.id))
+            .not.toContain(home.id);
+        expect.soft((await inTx((tx) => listTeamIdentityConnectionsInTx(tx, { teamId: team.id }))).map((row) => row.id))
+            .not.toContain(shared.id);
+    });
 
     it("creates only exact same-Team or Home-provider bindings and returns a redacted projection", async () => {
         const teamA = await db.team.create({ data: { name: "Team A" } });

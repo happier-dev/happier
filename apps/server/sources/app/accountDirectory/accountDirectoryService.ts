@@ -136,7 +136,7 @@ function descriptorsEqual(left: HomeConnectionDescriptorV1, right: HomeConnectio
 }
 
 export async function readAccountDirectoryMe(accountId: string): Promise<AccountDirectoryMeResponseV1> {
-    const user = await db.account.findUnique({
+    const user = await inTx(tx => tx.account.findUnique({
         where: { id: accountId },
         select: {
             id: true,
@@ -147,7 +147,7 @@ export async function readAccountDirectoryMe(accountId: string): Promise<Account
             AccountPasswordCredential: { select: { accountId: true } },
             AccountIdentity: { select: { provider: true, providerLogin: true }, orderBy: { provider: "asc" } },
         },
-    });
+    }), { readOnly: true });
     if (!user) throw new AccountDirectoryError("not_found", "Account not found");
     const displayName = [user.firstName, user.lastName].filter((part): part is string => Boolean(part?.trim())).join(" ") || null;
     return AccountDirectoryMeResponseSchema.parse({
@@ -190,7 +190,7 @@ export async function listAccountHomeDirectory(accountId: string) {
             preferredHomeServerIdentityId: account.preferredHomeServerIdentityId ?? null,
             homes: rows.map((row) => mapHomeRow(row, account.preferredHomeServerIdentityId ?? null)),
         });
-    });
+    }, { readOnly: true });
 }
 
 async function upsertAccountHomeDirectoryEntryInTx(

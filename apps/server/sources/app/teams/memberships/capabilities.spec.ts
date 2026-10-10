@@ -30,6 +30,7 @@ describe("Team membership capability mapping", () => {
 
         expect(capabilities).toEqual({
             viewTeam: true,
+            viewRoster: true,
             manageSettings: true,
             managePolicy: true,
             manageMembers: true,
@@ -39,6 +40,7 @@ describe("Team membership capability mapping", () => {
             manageOwners: true,
             archiveTeam: true,
             restoreTeam: false,
+            leave: false,
         });
     });
 

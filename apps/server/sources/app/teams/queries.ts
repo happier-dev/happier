@@ -1,4 +1,5 @@
 import {
+    NO_TEAM_CAPABILITIES_V1,
     TEAM_DIRECTORY_PAGE_LIMIT_DEFAULT_V1,
     decodeTeamDirectoryCursorV1,
     encodeTeamDirectoryCursorV1,
@@ -19,6 +20,7 @@ import {
 import { resolveTeamCapabilitiesV1 } from "./capabilities";
 import { isEffectiveTeamMembership } from "./memberships/effectiveMembership";
 import { TEAM_PROJECTION_SELECT, projectTeamSummaryV1 } from "./projections";
+import { readTeamSummaryCountsInTx } from "./teamSummaryCounts";
 
 /**
  * The Home-local Team directory.
@@ -131,25 +133,26 @@ export async function listTeamsForActorInTx(
             ...TEAM_PROJECTION_SELECT,
             memberships: {
                 where: { accountId: input.actorAccountId },
-                select: { id: true, role: true, status: true },
+                select: { id: true, role: true, status: true,
+                    provisionedIdentity: { select: { id: true } },
+                    identityConnectionManagement: { select: { teamMembershipId: true } } },
             },
         },
     });
 
     const page = rows.slice(0, limit);
-    // The owner-required condition for the whole page in one query rather than a
-    // count per row. The notice asks only whether an active owner exists, so the
-    // distinct Team ids of the page's active owners answer it exactly.
-    const teamsWithActiveOwner = new Set((await tx.teamMembership.findMany({
+    // One active-owner count per Team supplies both ownerless recovery and the
+    // shared leave decision, without a separate query for each directory row.
+    const activeOwnerCounts = new Map((await tx.teamMembership.groupBy({
         where: {
             teamId: { in: page.map((row) => row.id) },
             role: TeamRole.owner,
             status: TeamMembershipStatus.active,
             account: { status: AccountStatus.active },
         },
-        distinct: ["teamId"],
-        select: { teamId: true },
-    })).map((row) => row.teamId));
+        by: ["teamId"],
+        _count: { _all: true },
+    })).map((row) => [row.teamId, row._count._all]));
 
     const contexts = page.map((row) => {
         const membership = row.memberships[0] ?? null;
@@ -158,15 +161,18 @@ export async function listTeamsForActorInTx(
             actorAccountId: input.actorAccountId,
             accountStatus: account.status,
             membership: membership
-                ? { id: membership.id, role: membership.role, status: membership.status }
+                ? { id: membership.id, role: membership.role, status: membership.status,
+                    managedExternally: membership.provisionedIdentity !== null || membership.identityConnectionManagement !== null }
                 : null,
             homeAuthority: authority,
-            ownerRequired: !teamsWithActiveOwner.has(row.id),
+            ownerRequired: (activeOwnerCounts.get(row.id) ?? 0) === 0,
+            activeOwnerCount: activeOwnerCounts.get(row.id) ?? 0,
         });
     });
     // Either directory scope can include membership-derived authority. Qualify
     // that arm in one batch while preserving independent Home administration.
     const qualifications = await qualifyTeamProjectionReadAuthenticationsInTx(tx, { contexts, ...input.authentication });
+    const counts = await readTeamSummaryCountsInTx(tx, page.map((row) => row.id));
 
     const items: TeamsPageV1["items"] = [];
     for (const context of contexts) {
@@ -182,6 +188,8 @@ export async function listTeamsForActorInTx(
         // the membership removed rather than re-decided here.
         const qualified = qualifications.get(context.team.id)?.ok ?? false;
         items.push(projectTeamSummaryV1({
+            counts: counts.get(context.team.id)!,
+            teamCapabilities: qualified ? context.teamCapabilities : NO_TEAM_CAPABILITIES_V1,
             team: context.team,
             viewerRole: context.membership?.role ?? null,
             capabilities: qualified
@@ -191,6 +199,7 @@ export async function listTeamsForActorInTx(
                     homeAuthority: context.homeAuthority,
                     membership: null,
                     teamArchivedAt: context.team.archivedAt,
+                    ownerRequired: context.ownerRequired,
                 }),
             ownerRequired: context.ownerRequired,
             homeAuthority: context.homeAuthority,

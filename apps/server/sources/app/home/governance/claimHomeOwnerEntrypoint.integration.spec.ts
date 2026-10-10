@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { db } from "@/storage/db";
@@ -50,7 +51,7 @@ function runEntrypoint(entrypoint: string, args: readonly string[]): EntrypointR
         process.execPath,
         ["./scripts/runTsx.mjs", "--tsconfig", "./tsconfig.json", entrypoint, ...args],
         {
-            cwd: process.cwd(),
+            cwd: fileURLToPath(new URL('../../../../', import.meta.url)),
             env,
             encoding: "utf8",
             stdio: ["ignore", "pipe", "pipe"],
@@ -69,9 +70,15 @@ function runEntrypoint(entrypoint: string, args: readonly string[]): EntrypointR
  * server logger may also write diagnostic lines to stdout.
  */
 function readClaimOutput(run: EntrypointRun): Record<string, unknown> {
-    const lines = run.stdout.split("\n").map((line) => line.trim()).filter((line) => line.startsWith("{"));
-    expect(lines, `no JSON line on stdout. stderr: ${run.stderr}`).toHaveLength(1);
-    return JSON.parse(lines[0]!) as Record<string, unknown>;
+    const results = run.stdout.split("\n").flatMap((line) => {
+        if (!line.trim().startsWith("{")) return [];
+        const value: unknown = JSON.parse(line);
+        if (!value || typeof value !== 'object' || !('v' in value) || value.v !== 1 || !('command' in value)) return [];
+        if (value.command !== 'claim-home-owner' && value.command !== 'print-home-claim-code') return [];
+        return [value];
+    });
+    expect(results, `missing or duplicate command result. stderr: ${run.stderr}`).toHaveLength(1);
+    return results[0]!;
 }
 
 async function createAccount(

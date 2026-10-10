@@ -166,7 +166,7 @@ export async function publishIdentityProviderTeamsChangedInTx(
         select: { teamId: true },
     });
     return await publishTeamsChangedInTx(tx, {
-        teamIds: connections.map(({ teamId }) => teamId),
+        teamIds: connections.flatMap(({ teamId }) => teamId === null ? [] : [teamId]),
     });
 }
 

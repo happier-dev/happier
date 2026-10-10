@@ -61,10 +61,25 @@ owner** and asks you to choose another owner first.
 
 ## Members
 
+A Team's page opens with what is going on in it: its shared sessions, how many
+people it has (and how many are suspended), its Groups and the directory that keeps
+them in step, the invitations still waiting, how members sign in, the credentials it
+shares, and its sharing and history defaults. Trouble — a directory that couldn't
+sync, an invitation email that didn't arrive — appears first under **Needs your
+attention**, each with a way to deal with it. A Team you have just created shows its first steps
+instead — invite people, choose how members sign in, share a session — until
+someone else joins or is invited. **Invite people** at the top of the page opens
+the invitation for that Team.
+
 The **Members** tab lists everybody in the Team with their role and status, and
-filters for owners and admins, members, guests, and suspended people. **Add
-member** adds somebody who already has an Account on this Home; to reach anybody
-else, send an [invitation](/accounts/team-invitations).
+filters for owners and admins, members, guests, and suspended people. Opening a
+person keeps the Members list beside them on a wide screen, so you can move from one
+person to the next. A member without management rights sees the roster and each
+person's role, and is told who can change it. **Add
+member** offers two ways in: **Add someone on this Home** for a person who already
+has an Account here, or **Invite by link or email** for anybody else (see
+[invitations](/accounts/team-invitations)). If you can do only one of the two, the
+button goes straight there.
 
 Three lifecycle actions, each with a different blast radius:
 
@@ -78,9 +93,28 @@ Three lifecycle actions, each with a different blast radius:
   memberships and membership-lifetime grants. It does not erase prior authorship
   or content the person already saw. Rejoining later starts a new membership.
 
-Where a membership comes from a directory, the row says **Managed through** that
-source and the role is read-only here — change it in the source. You can move a
-membership between Happier and a directory under **Management source**; that
+Removing someone asks once, in plain sentences: their access ends, the Groups they
+leave by name, and that what they wrote stays.
+
+### Leave a Team
+
+Choose **Leave Team** on your own entry in **Members**. If you do not manage the
+Team, the same action is at the bottom of its overview. Confirming ends your
+Team and Group access and removes your Group memberships and grants tied to that
+membership. Your Home Account, prior authorship, and content you already saw stay.
+You return to the Teams list, where that Team no longer appears. Rejoining later
+starts a new membership.
+
+A directory-managed membership must be changed at its source. The final active
+owner of a live Team must hand ownership over or archive the Team before leaving.
+Leave follows the same approval policy as removing a member; an agent can request
+it through the session Agent or CLI surface when you ask. Both operations appear
+in the Home’s administration activity, with your own Account as actor and subject
+when you leave.
+
+Where a membership comes from a directory, the row names that source and the role
+is read-only here — change it in the source. You can move a membership between
+Happier and a directory with **Managed by** on the person's page; that
 keeps the membership, its role, status, and session history, and changes only who
 may edit it.
 
@@ -108,6 +142,19 @@ be shared with new members at all; they stay readable for the people who already
 have them. If preparation stops partway, whatever was already prepared is kept —
 run it again to finish.
 
+## What an agent can request
+
+In the unreleased 0.3 checkout, a session agent or MCP client can request an
+invitation, reissue an invitation, test a shared credential, or preview and
+remove a directory source. Each call requires approval from a present user;
+turning off optional approval prompts does not waive that requirement.
+
+Invitation results shown to agents contain safe invitation details, never the
+bearer link. The approving user's UI shows the one-time link for copying,
+sharing or scanning. **Check preparation** is a separate read: agents and the
+UI receive readiness and aggregate counts, not credential material or recipient
+encryption keys. Preparing the material still runs on the source's computer.
+
 ## Groups
 
 A Group is a flat set of Team members you can share with together: **Developers**,
@@ -127,26 +174,34 @@ belong to the source, though you can still add people to it in Happier.
 
 The **Settings** tab holds the decisions that apply to the whole Team.
 
+Under **Sharing**, each choice applies as soon as you pick it, and the line under
+it says what the current choice means. Nothing already shared changes.
+
 **Session defaults** decides what happens to a session somebody starts in this
 Team:
 
-- **Private by default** — nothing is shared until the person shares it.
-- **Shared with the Team by default** — new sessions start visible to the Team,
-  and the person can still make one private.
-- **Always shared with the Team** — new sessions are shared and stay that way.
+- **Private** — nothing is shared until the person shares it.
+- **Shared** — new sessions start visible to the Team, and the person can still
+  make one private.
+- **Always shared** — new sessions are shared and stay that way.
 
 This applies to new sessions only. Existing private sessions are never exposed by
 changing it.
 
 **External sharing** decides who may share a Team session outside the Team —
-**Anyone who can share**, **Team admins only**, or **Not allowed**. It blocks
-future sharing; it cannot withdraw a copy already shared.
+**Anyone** who can share it, **Admins** only, or **Nobody**. It blocks future
+sharing; it cannot withdraw a copy already shared.
 
 **History default** preselects the **Session history** choice offered when
-somebody joins: **Include sessions already shared with the Team**, or **Only
-sessions shared after they join**. It is a default for new members, not a rewrite
-of the history existing members already have. The choice works at whole-session
-granularity — it does not reveal only the messages created after somebody joined.
+somebody joins: **From joining** (only sessions shared after they join) or
+**Earlier too** (sessions already shared with the Team as well). It is a default
+for new members, not a rewrite of the history existing members already have. The
+choice works at whole-session granularity — it does not reveal only the messages
+created after somebody joined.
+
+The Team's name, description and logo are saved together: **Cancel** and **Save**
+appear beside the section title while you have changes. People who cannot change
+these settings see the current values and who can change them.
 
 A **Logo** replaces the Team's monogram everywhere the Team appears. Team and
 Group names, descriptions, Group membership, and policy are administration data
@@ -160,7 +215,7 @@ and outstanding invitation links are revoked, while memberships, Groups, policie
 and existing grants are retained — restoring the Team may make those retained
 grants effective again. Revoked invitation links do not come back; issue new ones.
 Archived Teams stay listed under **Show archived** and are read-only until
-restored.
+restored; the Team's **Settings** page says it is archived and offers **Restore**.
 
 ## Team sign-in
 

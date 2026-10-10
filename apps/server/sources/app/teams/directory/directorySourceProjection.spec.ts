@@ -54,7 +54,7 @@ describe("directory source projection", () => {
                 activeReconcileStartedAt: new Date("2026-09-06T09:58:59.999Z"),
             },
             now,
-        }).sync.attempt).toBe("failed");
+        }).sync.attempt).toBe("syncing");
         expect(projectTeamDirectorySourceSummary({
             source: { ...base, state: "needs_attention", lastErrorCode: "directory_snapshot_incomplete" },
             now,

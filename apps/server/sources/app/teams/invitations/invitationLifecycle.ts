@@ -131,6 +131,16 @@ export type RevokeTeamInvitationInput = Readonly<{
 }>;
 
 /**
+ * The one "still waiting" predicate: neither accepted nor revoked, and strictly
+ * before expiry, so the exact expiry instant already reads as expired. Every
+ * reader that asks whether an invitation is active — the state filter, archive
+ * revocation and the Team summary count — composes it rather than restating it.
+ */
+export function activeTeamInvitationWhere(now: Date) {
+    return { acceptedAt: null, revokedAt: null, expiresAt: { gt: now } } as const;
+}
+
+/**
  * Revokes one still-active invitation.
  *
  * The Team is part of the condition so a manager of one Team can never revoke another
@@ -165,12 +175,7 @@ export async function revokeActiveTeamInvitationsForTeamInTx(
     input: Readonly<{ teamId: string; now: Date }>,
 ): Promise<number> {
     const result = await tx.teamInvitation.updateMany({
-        where: {
-            teamId: input.teamId,
-            acceptedAt: null,
-            revokedAt: null,
-            expiresAt: { gt: input.now },
-        },
+        where: { teamId: input.teamId, ...activeTeamInvitationWhere(input.now) },
         data: { revokedAt: input.now },
     });
     return result.count;

@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
     resolveTeamAdmissionProjectionV1,
     type TeamCapabilitiesV1,
+    type TeamSummaryCountsV1,
     type TeamPolicyV1,
     type TeamSummaryV1,
 } from "@happier-dev/protocol/teams";
@@ -117,9 +118,36 @@ export function projectTeamPolicyV1(team: TeamRecord): TeamPolicyV1 {
 }
 
 /**
+ * The Overview counts this viewer may see, decided exactly as the lists they
+ * summarize decide it: roster and Group counts follow the composed
+ * `viewRoster` capability, and the waiting-invitation count follows qualified
+ * membership `manageInvitations`.
+ */
+function projectTeamSummaryCountsV1(input: Readonly<{
+    counts: TeamSummaryCountFacts;
+    capabilities: TeamCapabilitiesV1;
+    teamCapabilities: TeamCapabilitiesV1;
+}>): TeamSummaryV1["counts"] {
+    if (!input.capabilities.viewRoster) return null;
+    return {
+        members: input.counts.members,
+        suspendedMembers: input.counts.suspendedMembers,
+        groups: input.counts.groups,
+        waitingInvitations: input.teamCapabilities.manageInvitations ? input.counts.waitingInvitations : null,
+    };
+}
+
+/** The unqualified counts of one Team, as read by `readTeamSummaryCountsInTx`. */
+export type TeamSummaryCountFacts = Readonly<Omit<TeamSummaryCountsV1, "waitingInvitations"> & {
+    waitingInvitations: number;
+}>;
+
+/**
  * The one Team summary builder used by `teams.get`, `teams.list`, and every
  * mutation result, so a client never has to reconcile two shapes of the same
  * Team. Capabilities arrive already decided; nothing here compares a role.
+ * Counts arrive unqualified from `readTeamSummaryCountsInTx` and are narrowed
+ * here to what those capabilities may read.
  */
 export function projectTeamSummaryV1(input: Readonly<{
     team: TeamRecord;
@@ -127,6 +155,12 @@ export function projectTeamSummaryV1(input: Readonly<{
     capabilities: TeamCapabilitiesV1;
     ownerRequired: boolean;
     homeAuthority: Pick<HomeGovernanceAuthority, "manageAllTeams">;
+    /**
+     * Membership-derived authority after Team authentication qualification
+     * (none when unqualified); it decides whether invitation counts are visible.
+     */
+    teamCapabilities: TeamCapabilitiesV1;
+    counts: TeamSummaryCountFacts;
 }>): TeamSummaryV1 {
     return {
         id: input.team.id,
@@ -144,5 +178,10 @@ export function projectTeamSummaryV1(input: Readonly<{
         viewerRole: input.viewerRole,
         capabilities: input.capabilities,
         admission: resolveTeamAdmissionProjectionV1(),
+        counts: projectTeamSummaryCountsV1({
+            counts: input.counts,
+            capabilities: input.capabilities,
+            teamCapabilities: input.teamCapabilities,
+        }),
     };
 }

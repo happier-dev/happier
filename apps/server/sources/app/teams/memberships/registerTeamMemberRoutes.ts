@@ -19,6 +19,7 @@ import {
     TeamMembersPageV1Schema,
     TeamGroupsPageV1Schema,
     TeamMembershipV1Schema,
+    TeamRefInputV1Schema,
     teamErrorHttpStatusV1,
     type TeamErrorCodeV1,
 } from "@happier-dev/protocol/teams";
@@ -269,6 +270,21 @@ export function registerTeamMemberRoutes(app: Fastify) {
             actorAccountId: request.userId,
             authentication: readTeamOperationAuthenticationFromRequest(request),
             membershipId: request.body.membershipId,
+        }));
+        if (!result.ok) return fail(reply, result.error);
+        return reply.send(result.value);
+    });
+
+    teamsApp.post(homeDomainActionPathForMethod("teams.members.leave", "POST"), {
+        preHandler: app.authenticate,
+        attachValidation: true,
+        schema: { body: TeamRefInputV1Schema, response: { 200: TeamMemberRemoveResultV1Schema, ...TEAM_ERROR_RESPONSES } },
+    }, async (request, reply) => {
+        if (request.validationError) return fail(reply, "invalid_team_input");
+        const result = await inTx((tx) => removeTeamMemberForActorInTx(tx, {
+            teamId: request.body.teamId,
+            actorAccountId: request.userId,
+            authentication: readTeamOperationAuthenticationFromRequest(request),
         }));
         if (!result.ok) return fail(reply, result.error);
         return reply.send(result.value);

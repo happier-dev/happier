@@ -199,17 +199,12 @@ export function projectTeamDirectorySourceSummary(params: Readonly<{
     const now = params.now ?? new Date();
     const source = params.source;
     const safeError = readSafeError(source.lastErrorCode);
-    const targetMs = readDirectorySyncTargetMs(source.kind);
-    const activeRunWithinOperationWindow = source.activeReconcileRunId !== null
-        && source.activeReconcileStartedAt !== null
-        && now.getTime() - source.activeReconcileStartedAt.getTime() <= targetMs;
-
+    // Freshness targets are scheduling facts, not terminal failure evidence.
+    // The reconcile owner releases its run token when the attempt settles.
     const attempt = source.state === "paused"
         ? "paused" as const
-        : activeRunWithinOperationWindow
+        : source.activeReconcileRunId !== null
             ? "syncing" as const
-            : source.activeReconcileRunId !== null
-                ? "failed" as const
             : safeError !== null
                 ? "failed" as const
                 : source.lastAttemptAt === null
@@ -230,7 +225,7 @@ export function projectTeamDirectorySourceSummary(params: Readonly<{
         if (pendingRetryAt !== null) {
             nextScheduledAt = pendingRetryAt;
         } else if (source.state === "active" && source.lastSuccessAt !== null) {
-            const incrementalDueAt = new Date(source.lastSuccessAt.getTime() + targetMs);
+            const incrementalDueAt = new Date(source.lastSuccessAt.getTime() + readDirectorySyncTargetMs(source.kind));
             const fullDueAt = source.lastFullReconcileAt === null
                 ? now
                 : new Date(source.lastFullReconcileAt.getTime() + DIRECTORY_FULL_RECONCILE_TARGET_MS);

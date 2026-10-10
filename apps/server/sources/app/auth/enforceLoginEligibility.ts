@@ -4,7 +4,7 @@ import type { LoginEligibilityResult } from "@/app/auth/loginEligibilityResult";
 import { isActiveHomeAccountStatus, type AccountStatusV1 } from "@happier-dev/protocol";
 import { resolveIdentityRuntimeById } from "@/app/auth/providers/identityProviderCatalog";
 import { observeLoginEligibilityStage, recordLoginEligibilityCache } from "@/app/monitoring/metrics/authMetrics";
-import { db } from "@/storage/db";
+import { inTx } from "@/storage/inTx";
 import { log } from "@/utils/logging/log";
 
 const DEFAULT_LOGIN_ELIGIBILITY_CACHE_TTL_MS = 1_000;
@@ -72,10 +72,10 @@ export async function enforceLoginEligibility(params: {
     let account: { id: string; status: AccountStatusV1 } | null = null;
     const accountLookupStartedAt = Date.now();
     try {
-        account = await db.account.findUnique({
+        account = await inTx(tx => tx.account.findUnique({
             where: { id: accountId },
             select: { id: true, status: true },
-        });
+        }), { readOnly: true });
         observeLoginEligibilityStage({
             stage: "account_lookup",
             result: "ok",

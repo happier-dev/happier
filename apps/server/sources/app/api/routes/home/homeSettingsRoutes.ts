@@ -33,8 +33,6 @@ import { inTx } from "@/storage/inTx";
 
 import type { Fastify } from "../../types";
 
-const SETTINGS_RATE_LIMIT = { rateLimit: resolveApiHotEndpointRateLimit(process.env, "account.settings") };
-const MAIL_TEST_RATE_LIMIT = { rateLimit: resolveApiHotEndpointRateLimit(process.env, "home.mailDelivery.test") };
 
 const ERROR_RESPONSES = {
     400: z.union([HomeGovernanceErrorV1Schema, HomeSettingsInvalidErrorV1Schema]),
@@ -53,6 +51,8 @@ const FORBIDDEN_STATUS = homeGovernanceErrorHttpStatusV1("home_governance_forbid
  * routes call; the routes only authenticate, validate and map results.
  */
 export function registerHomeSettingsRoutes(app: Fastify, deps: Readonly<{ authEmailDelivery: AuthEmailDelivery }>): void {
+    const SETTINGS_RATE_LIMIT = { rateLimit: resolveApiHotEndpointRateLimit(process.env, "account.settings") };
+    const MAIL_TEST_RATE_LIMIT = { rateLimit: resolveApiHotEndpointRateLimit(process.env, "home.mailDelivery.test") };
     app.post(
         homeDomainActionPathForMethod("home.settings.get", "POST"),
         {

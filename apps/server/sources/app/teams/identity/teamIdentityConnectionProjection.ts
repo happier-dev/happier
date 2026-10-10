@@ -1,6 +1,7 @@
 import type {
     TeamIdentityConnectionUserActionIdV1,
-    TeamIdentityConnectionV1,
+    IdentityConnectionUserActionIdV1,
+    IdentityConnectionV1,
 } from "@happier-dev/protocol/teams";
 
 import { resolveTeamAuthenticationPolicyInTx } from "@/app/auth/entry/resolveTeamAuthenticationPolicy";
@@ -9,7 +10,10 @@ import { readHomeGovernancePolicyInTx, resolveTeamProviderKindPolicy } from "@/a
 import { resolveWorkosPlatformRuntimeMetadata } from "@/app/integrations/workos/workosPlatform";
 import type { Tx } from "@/storage/inTx";
 
-import type { TeamIdentityConnectionView } from "./teamIdentityConnectionLifecycle";
+import type { TeamIdentityConnectionView as LifecycleConnectionView } from "./teamIdentityConnectionLifecycle";
+import { identityConnectionOwner } from "./teamIdentityAdministrationAuthority";
+
+type TeamIdentityConnectionView = LifecycleConnectionView<string | null>;
 
 export type TeamIdentityConnectionCurrentness = Readonly<{
     runtimeAvailable: boolean;
@@ -44,13 +48,13 @@ export type TeamIdentityCurrentnessInputs = Readonly<{
 
 export async function readTeamIdentityCurrentnessInputsInTx(
     tx: Tx,
-    input: Readonly<{ env: NodeJS.ProcessEnv; teamId: string }>,
+    input: Readonly<{ env: NodeJS.ProcessEnv; teamId: string | null }>,
 ): Promise<TeamIdentityCurrentnessInputs> {
     const [team, home] = await Promise.all([
-        tx.team.findUnique({ where: { id: input.teamId }, select: { authenticationPolicy: true } }),
+        input.teamId === null ? Promise.resolve(null) : tx.team.findUnique({ where: { id: input.teamId }, select: { authenticationPolicy: true } }),
         readHomeGovernancePolicyInTx(tx),
     ]);
-    const policy = team
+    const policy = team && input.teamId !== null
         ? await resolveTeamAuthenticationPolicyInTx(tx, {
             env: input.env,
             teamId: input.teamId,
@@ -60,6 +64,7 @@ export async function readTeamIdentityCurrentnessInputsInTx(
     return {
         home,
         policyStatusFor: (connectionId) => {
+            if (input.teamId === null) return "available";
             if (!policy || policy.resolution.status === "unavailable") return "unavailable";
             return policy.resolution.status === "restricted"
                 && policy.resolution.choices.some((choice) =>
@@ -85,7 +90,7 @@ export async function resolveTeamIdentityConnectionCurrentnessInTx(
     tx: Tx,
     input: Readonly<{
         env: NodeJS.ProcessEnv;
-        teamId: string;
+        teamId: string | null;
         connection: TeamIdentityConnectionView;
         inputs?: TeamIdentityCurrentnessInputs;
     }>,
@@ -95,7 +100,7 @@ export async function resolveTeamIdentityConnectionCurrentnessInTx(
         tx,
         input.env,
         input.connection.providerInstanceId,
-        { kind: "team", teamId: input.teamId },
+        identityConnectionOwner(input.teamId),
         "identity_connection_test",
     );
     return {
@@ -114,11 +119,11 @@ export async function projectCurrentTeamIdentityConnectionV1InTx(
     tx: Tx,
     input: Readonly<{
         env: NodeJS.ProcessEnv;
-        teamId: string;
+        teamId: string | null;
         connection: TeamIdentityConnectionView;
         inputs?: TeamIdentityCurrentnessInputs;
     }>,
-): Promise<TeamIdentityConnectionV1> {
+): Promise<IdentityConnectionV1> {
     const current = await resolveTeamIdentityConnectionCurrentnessInTx(tx, input);
     return projectTeamIdentityConnectionV1(input.connection, current.currentness, current.runtimeFingerprint);
 }
@@ -127,7 +132,7 @@ export function projectTeamIdentityConnectionV1(
     connection: TeamIdentityConnectionView,
     current: TeamIdentityConnectionCurrentness,
     currentRuntimeFingerprint: string | null,
-): TeamIdentityConnectionV1 {
+): IdentityConnectionV1 {
     const observation = connection.lastObservation;
     return {
         v: 1,
@@ -177,7 +182,7 @@ export function projectTeamIdentityConnectionV1(
 export function projectTeamIdentityConnectionAllowedActions(
     connection: TeamIdentityConnectionView,
     current: TeamIdentityConnectionCurrentness,
-): readonly TeamIdentityConnectionUserActionIdV1[] {
+): readonly IdentityConnectionUserActionIdV1[] {
     const actions: TeamIdentityConnectionUserActionIdV1[] = ["teams.identity.connections.remove"];
     if (connection.providerKind === "oidc") {
         actions.unshift("teams.identity.connections.settings.update");
@@ -205,5 +210,16 @@ export function projectTeamIdentityConnectionAllowedActions(
             );
         }
     }
-    return actions;
+    if (connection.teamId !== null) return actions;
+    const homeActions = {
+        "teams.identity.connections.settings.update": "home.identity.connections.settings.update",
+        "teams.identity.connections.enable": "home.identity.connections.enable",
+        "teams.identity.connections.disable": "home.identity.connections.disable",
+        "teams.identity.connections.remove": "home.identity.connections.remove",
+        "teams.identity.connections.test.start": "home.identity.connections.test.start",
+        "teams.identity.workos.adminPortalLink.create": "home.identity.workos.adminPortalLink.create",
+        "teams.identity.workos.reconcile": "home.identity.workos.reconcile",
+        "teams.identity.workos.connection.set": "home.identity.workos.connection.set",
+    } as const satisfies Record<TeamIdentityConnectionUserActionIdV1, IdentityConnectionUserActionIdV1>;
+    return actions.map((action) => homeActions[action]);
 }

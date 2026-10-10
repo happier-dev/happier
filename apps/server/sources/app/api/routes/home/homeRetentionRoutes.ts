@@ -14,15 +14,14 @@ import { inTx } from "@/storage/inTx";
 
 import type { Fastify } from "../../types";
 
-/** The governance rate-limit id (plan §3.6): a dry run is database work an owner should not loop. */
-const RATE_LIMIT = { rateLimit: resolveApiHotEndpointRateLimit(process.env, "account.settings") };
-
 /**
  * `home.retention.dryRun` (plan `2026-09-26-home-owner-console` §3.6): owners only
  * (`manageHomeSettings`). The Home's effective rules come from the request overlay; the sweep, its
  * lock and its budget belong to `runRetentionDryRun`. Read-only, so not audited.
  */
 export function registerHomeRetentionRoutes(app: Fastify): void {
+    // Resolve restart configuration at registration, after the Home startup overlay.
+    const RATE_LIMIT = { rateLimit: resolveApiHotEndpointRateLimit(process.env, "account.settings") };
     app.post(
         homeDomainActionPathForMethod("home.retention.dryRun", "POST"),
         {

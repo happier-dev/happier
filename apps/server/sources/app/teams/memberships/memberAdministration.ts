@@ -35,6 +35,7 @@ import {
     admitsNewTeamOwner,
     isHomeOwnerRecoveryPromotion,
     isStructurallyActiveOwner,
+    resolveTeamLeaveDecision,
     type TeamMemberActorFacts,
 } from "./capabilities";
 import { resolveTeamMembershipCapabilitiesV1 } from "../capabilities";
@@ -49,6 +50,7 @@ import {
 } from "./project";
 import { revokeTeamCredentialExternalApiKeysForMembershipInTx } from "../credentials/externalApiKey";
 import { revokeTeamCredentialAudienceForMembershipInTx } from "../credentials/resourceAudience";
+import { recordHomeAdministrationEventInTx } from "@/app/home/audit/homeAdministrationEvents";
 
 /**
  * The authorized Team-member administration operations.
@@ -704,13 +706,16 @@ export function reactivateTeamMemberForActorInTx(
  */
 export async function removeTeamMemberForActorInTx(
     tx: Tx,
-    input: Readonly<{ teamId: string; actorAccountId: string; membershipId: string; authentication?: TeamOperationAuthenticationContext }>,
+    input: Readonly<{ teamId: string; actorAccountId: string; membershipId?: string; authentication?: TeamOperationAuthenticationContext }>,
 ): Promise<TeamMemberServiceResult<TeamMemberRemoveResultV1>> {
-    const authorized = await resolveTeamViewerContextInTx(tx, input);
-    if (!authorized.ok) return authorized;
-    const context = authorized.value;
+    const context = await resolveTeamActorContextInTx(tx, input);
+    if (!context) return denied("team_not_found");
+    const selfRemoval = input.membershipId === undefined || input.membershipId === context.membership?.id;
+    if (!selfRemoval && !context.readsTeamForRecovery) return denied("team_not_found");
 
-    const target = await readMembershipRowInTx(tx, input);
+    const membershipId = input.membershipId ?? context.membership?.id;
+    if (!membershipId) return denied("team_not_found");
+    const target = await readMembershipRowInTx(tx, { teamId: input.teamId, membershipId });
     if (!target) {
         if (context.team.archivedAt !== null) return denied("team_archived");
         if (!context.teamCapabilities.manageMembers) return denied("team_forbidden");
@@ -719,15 +724,21 @@ export async function removeTeamMemberForActorInTx(
         return { ok: true, value: { status: "unchanged" } };
     }
 
-    const authority = resolveMemberAdministrationAuthority({
-        context,
-        target,
-        requiresNativeLifecycle: true,
-    });
-    if (!authority.permitted) return denied(authority.denial);
+    if (selfRemoval) {
+        const decision = resolveTeamLeaveDecision({
+            accountStatus: context.accountStatus,
+            membership: { role: target.role, status: target.status, managedExternally: isExternallyManagedMembership(target) },
+            activeOwnerCount: context.activeOwnerCount,
+            teamArchivedAt: context.team.archivedAt,
+        });
+        if (!decision.permitted) return denied(decision.error);
+    } else {
+        const authority = resolveMemberAdministrationAuthority({ context, target, requiresNativeLifecycle: true });
+        if (!authority.permitted) return denied(authority.denial);
+    }
     const qualified = await qualifyTeamViewerInTx(tx, { context, authentication: input.authentication });
     if (!qualified.ok) return qualified;
-    if (await wouldStrandTeamInTx(tx, { target })) return denied("team_owner_transfer_required");
+    if (!selfRemoval && await wouldStrandTeamInTx(tx, { target })) return denied("team_owner_transfer_required");
 
     await withTeamSessionAccessEffectsInTx(tx, {
         teamId: input.teamId, accountIds: [target.accountId], origin: "relationship_change",
@@ -745,6 +756,11 @@ export async function removeTeamMemberForActorInTx(
             actor: { kind: "account", accountId: input.actorAccountId },
         });
         await tx.teamMembership.delete({ where: { id: target.id } });
+        await recordHomeAdministrationEventInTx(tx, {
+            actor: { kind: "account", accountId: input.actorAccountId },
+            target: { kind: "account", id: target.accountId },
+            detail: { action: "teams.members.remove", summary: { teamId: input.teamId, membershipId: target.id, teamName: context.team.name } },
+        });
     });
     await publishTeamChangedInTx(tx, {
         teamId: input.teamId,

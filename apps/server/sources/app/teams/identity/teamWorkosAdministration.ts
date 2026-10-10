@@ -1,8 +1,8 @@
 import type {
-    TeamIdentityConnectionV1,
+    IdentityConnectionV1,
     TeamIdentityErrorCodeV1,
     TeamIdentityWorkosConnectionCreateInputV1,
-    TeamIdentityWorkosReconcileResultV1,
+    IdentityWorkosReconcileResultV1,
 } from "@happier-dev/protocol/teams";
 
 import {
@@ -29,13 +29,17 @@ import {
     readTeamIdentityConnectionInTx,
     recordTeamIdentityConnectionWorkosObservationInTx,
     updateTeamIdentityConnectionInTx,
-    type TeamIdentityConnectionView,
+    type TeamIdentityConnectionView as LifecycleConnectionView,
 } from "./teamIdentityConnectionLifecycle";
+import { publishCommittedHomeProviderMutationInTx } from "@/app/home/governance/homeManagedIdentityProviders";
 import type { TeamOperationAuthenticationContext } from "../actorContext";
-import { authorizeTeamIdentityAdministrationInTx } from "./teamIdentityAdministrationAuthority";
+import { authorizeTeamIdentityAdministrationInTx, identityConnectionOwner } from "./teamIdentityAdministrationAuthority";
 import { projectCurrentTeamIdentityConnectionV1InTx } from "./teamIdentityConnectionProjection";
 import { resolveTeamIdentityConnectionReturnUrl } from "./teamIdentityConnectionUrls";
-import { publishTeamChangedInTx } from "../teamChanges";
+
+
+type TeamIdentityConnectionView = LifecycleConnectionView<string | null>;
+type ScopedInput<T> = Omit<T, "teamId"> & Readonly<{ teamId: string | null }>;
 
 type Result<T> = Readonly<{ ok: true; value: T }> | Readonly<{ ok: false; error: TeamIdentityErrorCodeV1 }>;
 
@@ -66,7 +70,7 @@ async function preflightWorkosConnectionInTx(
     tx: Tx,
     input: Partial<TeamOperationAuthenticationContext> & Readonly<{
         actorAccountId: string;
-        teamId: string;
+        teamId: string | null;
         connectionId: string;
         directorySourceId?: string;
         expectedRevision?: number;
@@ -78,15 +82,15 @@ async function preflightWorkosConnectionInTx(
     const [home, resolved, team, directorySource] = await Promise.all([
         readHomeGovernancePolicyInTx(tx),
         readTeamIdentityConnectionInTx(tx, { id: input.connectionId, teamId: input.teamId }),
-        tx.team.findUnique({ where: { id: input.teamId }, select: { name: true } }),
-        input.directorySourceId
+        input.teamId === null ? Promise.resolve(null) : tx.team.findUnique({ where: { id: input.teamId }, select: { name: true } }),
+        input.teamId !== null && input.directorySourceId
             ? tx.teamDirectorySource.findFirst({
                 where: { id: input.directorySourceId, teamId: input.teamId },
                 select: { kind: true, teamIdentityConnectionId: true },
             })
             : Promise.resolve(null),
     ]);
-    if (!team) return { ok: false, error: "team_not_found" };
+    if (input.teamId !== null && !team) return { ok: false, error: "team_not_found" };
     if (!workosAllowedByHomePolicy(home)) return { ok: false, error: "team_identity_not_allowed" };
     if (resolved.status === "not_found") return { ok: false, error: "identity_connection_not_found" };
     if (resolved.status !== "ready") return { ok: false, error: "identity_connection_invalid" };
@@ -105,7 +109,7 @@ async function preflightWorkosConnectionInTx(
     return {
         ok: true,
         value: {
-            teamName: team.name,
+            teamName: team?.name ?? resolved.connection.providerDisplayName,
             connection: resolved.connection as WorkosConnectionPreflight["connection"],
         },
     };
@@ -123,20 +127,20 @@ function resolvePlatform(
 }
 
 export async function createTeamWorkosConnection(
-    input: TeamIdentityWorkosConnectionCreateInputV1 & Partial<TeamOperationAuthenticationContext> & Readonly<{
+    input: ScopedInput<TeamIdentityWorkosConnectionCreateInputV1> & Partial<TeamOperationAuthenticationContext> & Readonly<{
         actorAccountId: string;
         env: NodeJS.ProcessEnv;
     }>,
     dependencies: WorkosAdministrationDependencies = {},
-): Promise<Result<TeamIdentityConnectionV1>> {
+): Promise<Result<IdentityConnectionV1>> {
     return await inTx(async (tx) => {
         const authority = await authorizeTeamIdentityAdministrationInTx(tx, input);
         if (!authority.ok) return authority;
         const [home, team] = await Promise.all([
             readHomeGovernancePolicyInTx(tx),
-            tx.team.findUnique({ where: { id: input.teamId }, select: { name: true, updatedAt: true } }),
+            input.teamId === null ? Promise.resolve(null) : tx.team.findUnique({ where: { id: input.teamId }, select: { name: true, updatedAt: true } }),
         ]);
-        if (!team) return { ok: false, error: "team_not_found" };
+        if (input.teamId !== null && !team) return { ok: false, error: "team_not_found" };
         if (!workosAllowedByHomePolicy(home)) {
             return { ok: false, error: "team_identity_not_allowed" };
         }
@@ -148,11 +152,18 @@ export async function createTeamWorkosConnection(
         // without changing its bytes: serializable PostgreSQL/MySQL transactions
         // retry the loser from a fresh snapshot and SQLite already serializes the
         // write, so two presses cannot both create a draft carrier.
-        await tx.team.update({
-            where: { id: input.teamId },
-            data: { updatedAt: team.updatedAt },
-            select: { id: true },
-        });
+        if (team && input.teamId !== null) {
+            await tx.team.update({
+                where: { id: input.teamId },
+                data: { updatedAt: team.updatedAt },
+                select: { id: true },
+            });
+        }
+        // Home creators read the same scope predicate in the canonical
+        // serializable transaction; a competing writer retries with its draft.
+        if (input.teamId === null && !input.displayName?.trim()) {
+            return { ok: false, error: "identity_connection_invalid" };
+        }
         // A still-draft WorkOS connection is the one setup in progress, so a replay
         // returns it. Once a connection's namespace is activated (enabled or an
         // identity was issued) it is immutable; recovering from a replaced or
@@ -185,13 +196,13 @@ export async function createTeamWorkosConnection(
         const provider = unboundProvider
             ? await readIdentityProviderInstanceInTx(tx, {
                 id: unboundProvider.id,
-                owner: { kind: "team", teamId: input.teamId },
+                owner: identityConnectionOwner(input.teamId),
             })
             : await createIdentityProviderInstanceInTx(tx, {
                 env: input.env,
-                owner: { kind: "team", teamId: input.teamId },
+                owner: identityConnectionOwner(input.teamId),
                 kind: "workos_sso",
-                displayName: `${team.name} SSO`,
+                displayName: input.displayName?.trim() || `${team!.name} SSO`,
                 config: { v: 1, kind: "workos_sso" },
                 secrets: null,
                 createdByAccountId: input.actorAccountId,
@@ -203,7 +214,7 @@ export async function createTeamWorkosConnection(
         if (!providerInstance.enabled) {
             const enabled = await setIdentityProviderInstanceEnabledInTx(tx, {
                 id: providerInstance.id,
-                owner: { kind: "team", teamId: input.teamId },
+                owner: identityConnectionOwner(input.teamId),
                 expectedRevision: providerInstance.revision,
                 expectedSecurityRevision: providerInstance.securityRevision,
                 enabled: true,
@@ -226,7 +237,9 @@ export async function createTeamWorkosConnection(
             createdByAccountId: input.actorAccountId,
         });
         if (created.status === "created") {
-            await publishTeamChangedInTx(tx, { teamId: input.teamId });
+            await publishCommittedHomeProviderMutationInTx(tx, identityConnectionOwner(input.teamId), created.connection.providerInstanceId, true, {
+                actorAccountId: input.actorAccountId, action: "identity_provider.create",
+            });
             return { ok: true, value: await projectCurrentTeamIdentityConnectionV1InTx(tx, { env: input.env, teamId: input.teamId, connection: created.connection }) };
         }
         if (created.status === "already_exists" && created.connection) {
@@ -256,7 +269,7 @@ function mapWorkosError(error: unknown): TeamIdentityErrorCodeV1 {
 export async function createTeamWorkosAdminPortalLink(
     input: Partial<TeamOperationAuthenticationContext> & Readonly<{
         actorAccountId: string;
-        teamId: string;
+        teamId: string | null;
         connectionId: string;
         directorySourceId?: string;
         intent: "sso" | "dsync";
@@ -266,6 +279,7 @@ export async function createTeamWorkosAdminPortalLink(
 ): Promise<Result<Readonly<{ url: string }>>> {
     let preflight = await inTx((tx) => preflightWorkosConnectionInTx(tx, input));
     if (!preflight.ok) return preflight;
+    if (input.teamId === null && input.intent !== "sso") return { ok: false, error: "identity_connection_invalid" };
     const initialConnectionRevision = preflight.value.connection.revision;
     const platform = resolvePlatform(input.env, dependencies);
     if (!platform) return { ok: false, error: "workos_platform_unavailable" };
@@ -305,7 +319,9 @@ export async function createTeamWorkosAdminPortalLink(
                 },
             });
             if (updated.status === "applied") {
-                await publishTeamChangedInTx(tx, { teamId: input.teamId });
+                await publishCommittedHomeProviderMutationInTx(tx, identityConnectionOwner(input.teamId), updated.connection.providerInstanceId, true, {
+                    actorAccountId: input.actorAccountId, action: "identity_provider.update",
+                });
             }
             return updated.status === "applied"
                 ? { ok: true as const, value: { ...current.value, connection: updated.connection as WorkosConnectionPreflight["connection"] } }
@@ -353,7 +369,7 @@ async function recordWorkosCandidateInTx(
         now: Date;
         env: NodeJS.ProcessEnv;
     }>,
-): Promise<Result<TeamIdentityConnectionV1>> {
+): Promise<Result<IdentityConnectionV1>> {
     let connection = input.preflight.connection;
     if (connection.externalReference.connectionId !== input.candidate.connectionId) {
         // Whether the exact connection may still change is the connection
@@ -402,13 +418,13 @@ async function recordWorkosCandidateInTx(
 export async function reconcileTeamWorkosConnection(
     input: Partial<TeamOperationAuthenticationContext> & Readonly<{
         actorAccountId: string;
-        teamId: string;
+        teamId: string | null;
         connectionId: string;
         expectedRevision: number;
         env: NodeJS.ProcessEnv;
     }>,
     dependencies: WorkosAdministrationDependencies = {},
-): Promise<Result<TeamIdentityWorkosReconcileResultV1>> {
+): Promise<Result<IdentityWorkosReconcileResultV1>> {
     const preflight = await inTx((tx) => preflightWorkosConnectionInTx(tx, input));
     if (!preflight.ok) return preflight;
     const organizationId = preflight.value.connection.externalReference.organizationId;
@@ -481,7 +497,7 @@ export async function reconcileTeamWorkosConnection(
                     },
             });
             if (result.status === "applied") {
-                await publishTeamChangedInTx(tx, { teamId: input.teamId });
+                await publishCommittedHomeProviderMutationInTx(tx, identityConnectionOwner(input.teamId), result.connection.providerInstanceId, true, null);
             }
             return result.status === "applied"
                 ? { ok: true as const, value: await projectCurrentTeamIdentityConnectionV1InTx(tx, { env: input.env, teamId: input.teamId, connection: result.connection }) }
@@ -510,7 +526,9 @@ export async function reconcileTeamWorkosConnection(
             now,
             env: input.env,
         });
-        if (result.ok) await publishTeamChangedInTx(tx, { teamId: input.teamId });
+        if (result.ok) await publishCommittedHomeProviderMutationInTx(tx, identityConnectionOwner(input.teamId), result.value.provider.id, true, {
+            actorAccountId: input.actorAccountId, action: "identity_provider.update",
+        });
         return result;
     });
     return recorded.ok
@@ -529,14 +547,14 @@ export async function reconcileTeamWorkosConnection(
 export async function setTeamWorkosConnection(
     input: Partial<TeamOperationAuthenticationContext> & Readonly<{
         actorAccountId: string;
-        teamId: string;
+        teamId: string | null;
         connectionId: string;
         expectedRevision: number;
         workosConnectionId: string;
         env: NodeJS.ProcessEnv;
     }>,
     dependencies: WorkosAdministrationDependencies = {},
-): Promise<Result<TeamIdentityConnectionV1>> {
+): Promise<Result<IdentityConnectionV1>> {
     const preflight = await inTx((tx) => preflightWorkosConnectionInTx(tx, input));
     if (!preflight.ok) return preflight;
     const organizationId = preflight.value.connection.externalReference.organizationId;
@@ -565,7 +583,9 @@ export async function setTeamWorkosConnection(
             now,
             env: input.env,
         });
-        if (result.ok) await publishTeamChangedInTx(tx, { teamId: input.teamId });
+        if (result.ok) await publishCommittedHomeProviderMutationInTx(tx, identityConnectionOwner(input.teamId), result.value.provider.id, true, {
+            actorAccountId: input.actorAccountId, action: "identity_provider.update",
+        });
         return result;
     });
 }

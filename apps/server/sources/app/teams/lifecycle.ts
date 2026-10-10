@@ -2,6 +2,7 @@ import { withTeamSessionAccessEffectsInTx } from "./memberships/sessionAccessEff
 import { createHash } from "node:crypto";
 
 import {
+    NO_TEAM_CAPABILITIES_V1,
     type TeamSummaryV1,
     validateTeamDescriptionV1,
     validateTeamNameV1,
@@ -22,6 +23,7 @@ import { AccountStatus } from "@/storage/enums.generated";
 import { revokeActiveTeamInvitationsForTeamInTx } from "./invitations/invitationLifecycle";
 import { admitTeamMemberInTx } from "./memberships/membershipService";
 import { TEAM_PROJECTION_SELECT, projectTeamSummaryV1, type TeamRecord } from "./projections";
+import { readTeamSummaryCountsInTx } from "./teamSummaryCounts";
 import { publishTeamChangedInTx } from "./teamChanges";
 import {
     qualifyTeamOperationAuthenticationInTx,
@@ -439,9 +441,12 @@ async function projectQualifiedTeamContextInTx(
     const qualification = context.teamCapabilities.viewTeam || !context.homeAuthority.manageAllTeams
         ? await qualifyTeamProjectionReadAuthenticationInTx(tx, { context, ...authentication })
         : { ok: true as const };
+    const counts = await readTeamSummaryCountsInTx(tx, [context.team.id]);
     return {
         qualification,
         team: projectTeamSummaryV1({
+            counts: counts.get(context.team.id)!,
+            teamCapabilities: qualification.ok ? context.teamCapabilities : NO_TEAM_CAPABILITIES_V1,
             team: context.team,
             viewerRole: context.membership?.role ?? null,
             capabilities: qualification.ok ? context.capabilities : resolveTeamCapabilitiesV1({
@@ -449,6 +454,7 @@ async function projectQualifiedTeamContextInTx(
                 homeAuthority: context.homeAuthority,
                 membership: null,
                 teamArchivedAt: context.team.archivedAt,
+                ownerRequired: context.ownerRequired,
             }),
             ownerRequired: context.ownerRequired,
             homeAuthority: context.homeAuthority,

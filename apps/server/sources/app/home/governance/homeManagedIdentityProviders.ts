@@ -57,7 +57,7 @@ type HomeProviderAuditAction = Extract<HomeAdministrationActionV1, `identity_pro
  * A committed Home-owned mutation is also Home administration, so it is recorded
  * in Activity here, in the same transaction, naming the provider and never a secret.
  */
-async function publishCommittedHomeProviderMutationInTx(
+export async function publishCommittedHomeProviderMutationInTx(
     tx: Tx,
     owner: ProviderCatalogContext,
     providerInstanceId: string,

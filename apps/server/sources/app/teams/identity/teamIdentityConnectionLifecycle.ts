@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { TeamIdentityConnectionExternalReferenceV1Schema } from "@happier-dev/protocol/teams";
 
 import { resolveTeamAuthenticationPolicy } from "@/app/auth/entry/resolveTeamAuthenticationPolicy";
 import {
@@ -28,9 +29,9 @@ export type TeamIdentityConnectionState =
     | "needs_attention"
     | "disabled";
 
-export type TeamIdentityConnectionView = Readonly<{
+export type TeamIdentityConnectionView<TeamId extends string | null = string> = Readonly<{
     id: string;
-    teamId: string;
+    teamId: TeamId;
     providerInstanceId: string;
     providerKind: IdentityProviderInstanceView["kind"];
     providerDisplayName: string;
@@ -47,9 +48,9 @@ export type TeamIdentityConnectionView = Readonly<{
     updatedAt: Date;
 }>;
 
-type ConnectionRow = Readonly<{
+type ConnectionRow<TeamId extends string | null> = Readonly<{
     id: string;
-    teamId: string;
+    teamId: TeamId;
     providerInstanceId: string;
     externalReference: unknown;
     settings: unknown;
@@ -84,9 +85,9 @@ function isConfiguredExternalReference(reference: TeamIdentityConnectionExternal
         || (reference.organizationId !== null && reference.connectionId !== null);
 }
 
-function deriveState(input: Readonly<{
+function deriveState<TeamId extends string | null>(input: Readonly<{
     provider: IdentityProviderInstanceView;
-    row: ConnectionRow;
+    row: ConnectionRow<TeamId>;
     documents: TeamIdentityConnectionDocuments;
 }>): TeamIdentityConnectionState {
     if (!input.provider.enabled) return "unavailable";
@@ -104,10 +105,10 @@ function deriveState(input: Readonly<{
     return "connected";
 }
 
-function projectConnection(input: Readonly<{
+function projectConnection<TeamId extends string | null>(input: Readonly<{
     provider: IdentityProviderInstanceView;
-    row: ConnectionRow;
-}>): TeamIdentityConnectionView | null {
+    row: ConnectionRow<TeamId>;
+}>): TeamIdentityConnectionView<TeamId> | null {
     const documents = parseTeamIdentityConnectionDocuments({
         providerKind: input.provider.kind,
         externalReference: input.row.externalReference,
@@ -148,19 +149,56 @@ function areConnectionDocumentsCompatible(
         });
 }
 
-async function readAvailableProviderInTx(
+/** AccountIdentity uses the provider id across scopes, so every WorkOS carrier must name the same exact namespace. */
+async function findConflictingWorkosProviderIdsInTx(
     tx: Tx,
-    input: Readonly<{ providerInstanceId: string; teamId: string }>,
+    input: Readonly<{
+        providerInstanceIds: readonly string[];
+        proposed?: Readonly<{
+            id?: string;
+            providerInstanceId: string;
+            externalReference: Extract<TeamIdentityConnectionExternalReference, { kind: "workos_sso" }>;
+        }>;
+    }>,
+): Promise<ReadonlySet<string>> {
+    if (input.providerInstanceIds.length === 0) return new Set();
+    const rows = await tx.teamIdentityConnection.findMany({
+        where: { providerInstanceId: { in: [...new Set(input.providerInstanceIds)] } },
+        select: { id: true, providerInstanceId: true, externalReference: true },
+    });
+    const references = rows.filter((row) => row.id !== input.proposed?.id);
+    const candidates = input.proposed ? [...references, input.proposed] : references;
+    const firstByProvider = new Map<string, Extract<TeamIdentityConnectionExternalReference, { kind: "workos_sso" }>>();
+    const conflicts = new Set<string>();
+    for (const candidate of candidates) {
+        const parsed = TeamIdentityConnectionExternalReferenceV1Schema.safeParse(candidate.externalReference);
+        if (!parsed.success || parsed.data.kind !== "workos_sso") {
+            conflicts.add(candidate.providerInstanceId);
+            continue;
+        }
+        const first = firstByProvider.get(candidate.providerInstanceId);
+        if (first && (first.organizationId !== parsed.data.organizationId || first.connectionId !== parsed.data.connectionId)) {
+            conflicts.add(candidate.providerInstanceId);
+        } else if (!first) {
+            firstByProvider.set(candidate.providerInstanceId, parsed.data);
+        }
+    }
+    return conflicts;
+}
+
+async function readAvailableProviderInTx<TeamId extends string | null>(
+    tx: Tx,
+    input: Readonly<{ providerInstanceId: string; teamId: TeamId }>,
 ): Promise<IdentityProviderInstanceView | null> {
     const result = await inspectAvailableProviderInTx(tx, input);
     return result.status === "ready" ? result.provider : null;
 }
 
-async function inspectAvailableProviderInTx(
+async function inspectAvailableProviderInTx<TeamId extends string | null>(
     tx: Tx,
-    input: Readonly<{ providerInstanceId: string; teamId: string }>,
+    input: Readonly<{ providerInstanceId: string; teamId: TeamId }>,
 ): Promise<Readonly<{ status: "ready"; provider: IdentityProviderInstanceView }> | Readonly<{ status: "not_found" | "unreadable" }>> {
-    const teamOwned = await readIdentityProviderInstanceInTx(tx, {
+    const teamOwned = input.teamId === null ? { status: "not_found" as const } : await readIdentityProviderInstanceInTx(tx, {
         id: input.providerInstanceId,
         owner: { kind: "team", teamId: input.teamId },
     });
@@ -174,36 +212,37 @@ async function inspectAvailableProviderInTx(
     return homeOwned;
 }
 
-async function readCurrentInTx(
+async function readCurrentInTx<TeamId extends string | null>(
     tx: Tx,
-    input: Readonly<{ id: string; teamId: string }>,
-): Promise<Readonly<{ row: ConnectionRow; provider: IdentityProviderInstanceView; view: TeamIdentityConnectionView | null }> | null> {
+    input: Readonly<{ id: string; teamId: TeamId }>,
+): Promise<Readonly<{ row: ConnectionRow<TeamId>; provider: IdentityProviderInstanceView; view: TeamIdentityConnectionView<TeamId> | null }> | null> {
     const row = await tx.teamIdentityConnection.findFirst({
         where: { id: input.id, teamId: input.teamId },
         select: connectionSelect,
     });
-    if (!row) return null;
+    if (!row || row.teamId !== input.teamId) return null;
+    const scopedRow = { ...row, teamId: input.teamId };
     const provider = await readAvailableProviderInTx(tx, {
         providerInstanceId: row.providerInstanceId,
-        teamId: row.teamId,
+        teamId: input.teamId,
     });
     if (!provider) return null;
-    return { row, provider, view: projectConnection({ provider, row }) };
+    return { row: scopedRow, provider, view: projectConnection({ provider, row: scopedRow }) };
 }
 
-export async function readTeamIdentityConnectionInTx(
+export async function readTeamIdentityConnectionInTx<TeamId extends string | null>(
     tx: Tx,
-    input: Readonly<{ id: string; teamId: string }>,
-): Promise<Readonly<{ status: "ready"; connection: TeamIdentityConnectionView }> | Readonly<{ status: "not_found" | "unreadable" }>> {
+    input: Readonly<{ id: string; teamId: TeamId }>,
+): Promise<Readonly<{ status: "ready"; connection: TeamIdentityConnectionView<TeamId> }> | Readonly<{ status: "not_found" | "unreadable" }>> {
     const reads = await readTeamIdentityConnectionsByIdInTx(tx, { references: [input] });
     return reads.get(teamIdentityConnectionReferenceKey(input)) ?? { status: "not_found" };
 }
 
-export type TeamIdentityConnectionReadResult =
-    | Readonly<{ status: "ready"; connection: TeamIdentityConnectionView }>
+export type TeamIdentityConnectionReadResult<TeamId extends string | null = string> =
+    | Readonly<{ status: "ready"; connection: TeamIdentityConnectionView<TeamId> }>
     | Readonly<{ status: "not_found" | "unreadable" }>;
 
-export function teamIdentityConnectionReferenceKey(input: Readonly<{ id: string; teamId: string }>): string {
+export function teamIdentityConnectionReferenceKey<TeamId extends string | null>(input: Readonly<{ id: string; teamId: TeamId }>): string {
     return `${input.teamId}\u0000${input.id}`;
 }
 
@@ -213,10 +252,10 @@ export function teamIdentityConnectionReferenceKey(input: Readonly<{ id: string;
  * keyed by both identities so a connection from one Team can never satisfy a
  * reference from another Team.
  */
-export async function readTeamIdentityConnectionsByIdInTx(
+export async function readTeamIdentityConnectionsByIdInTx<TeamId extends string | null>(
     tx: Tx,
-    input: Readonly<{ references: readonly Readonly<{ id: string; teamId: string }>[] }>,
-): Promise<ReadonlyMap<string, TeamIdentityConnectionReadResult>> {
+    input: Readonly<{ references: readonly Readonly<{ id: string; teamId: TeamId }>[] }>,
+): Promise<ReadonlyMap<string, TeamIdentityConnectionReadResult<TeamId>>> {
     const references = [...new Map(input.references.map((reference) => [
         teamIdentityConnectionReferenceKey(reference),
         reference,
@@ -226,7 +265,7 @@ export async function readTeamIdentityConnectionsByIdInTx(
     const rows = await tx.teamIdentityConnection.findMany({
         where: {
             id: { in: [...new Set(references.map((reference) => reference.id))] },
-            teamId: { in: [...new Set(references.map((reference) => reference.teamId))] },
+            OR: references.map((reference) => ({ id: reference.id, teamId: reference.teamId })),
         },
         select: connectionSelect,
     });
@@ -236,7 +275,7 @@ export async function readTeamIdentityConnectionsByIdInTx(
     const rowsByKey = new Map(rows
         .filter((row) => wantedKeys.has(teamIdentityConnectionReferenceKey(row)))
         .map((row) => [teamIdentityConnectionReferenceKey(row), row] as const));
-    const entries: Array<readonly [string, TeamIdentityConnectionReadResult]> = references.map((reference) => {
+    const entries: Array<readonly [string, TeamIdentityConnectionReadResult<TeamId>]> = references.map((reference) => {
         const key = teamIdentityConnectionReferenceKey(reference);
         const row = rowsByKey.get(key);
         if (!row) return [key, { status: "not_found" as const }] as const;
@@ -245,7 +284,7 @@ export async function readTeamIdentityConnectionsByIdInTx(
         const provider = providerRead.instance;
         const ownerMatches = provider.owner.kind === "home"
             || (provider.owner.kind === "team" && provider.owner.teamId === row.teamId);
-        const connection = ownerMatches ? projectConnection({ provider, row }) : null;
+        const connection = ownerMatches ? projectConnection({ provider, row: { ...row, teamId: reference.teamId } }) : null;
         return [key, connection
             ? { status: "ready" as const, connection }
             : { status: "unreadable" as const }] as const;
@@ -253,10 +292,10 @@ export async function readTeamIdentityConnectionsByIdInTx(
     return new Map(entries);
 }
 
-export async function listTeamIdentityConnectionsInTx(
+export async function listTeamIdentityConnectionsInTx<TeamId extends string | null>(
     tx: Tx,
-    input: Readonly<{ teamId: string }>,
-): Promise<readonly TeamIdentityConnectionView[]> {
+    input: Readonly<{ teamId: TeamId }>,
+): Promise<readonly TeamIdentityConnectionView<TeamId>[]> {
     const rows = await tx.teamIdentityConnection.findMany({
         where: { teamId: input.teamId },
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
@@ -267,23 +306,23 @@ export async function listTeamIdentityConnectionsInTx(
             providerInstanceId: row.providerInstanceId,
             teamId: row.teamId,
         });
-        return provider ? projectConnection({ provider, row }) : null;
+        return provider ? projectConnection({ provider, row: { ...row, teamId: input.teamId } }) : null;
     }));
-    return projected.filter((connection): connection is TeamIdentityConnectionView => connection !== null);
+    return projected.filter((connection): connection is TeamIdentityConnectionView<TeamId> => connection !== null);
 }
 
-export type CreateTeamIdentityConnectionResult =
-    | Readonly<{ status: "created"; connection: TeamIdentityConnectionView }>
+export type CreateTeamIdentityConnectionResult<TeamId extends string | null = string> =
+    | Readonly<{ status: "created"; connection: TeamIdentityConnectionView<TeamId> }>
     | Readonly<{ status: "provider_not_available" | "invalid_document" }>
-    | Readonly<{ status: "already_exists"; connection: TeamIdentityConnectionView | null }>;
+    | Readonly<{ status: "already_exists"; connection: TeamIdentityConnectionView<TeamId> | null }>;
 
-export async function createTeamIdentityConnectionInTx(tx: Tx, input: Readonly<{
-    teamId: string;
+export async function createTeamIdentityConnectionInTx<TeamId extends string | null>(tx: Tx, input: Readonly<{
+    teamId: TeamId;
     providerInstanceId: string;
     externalReference: unknown;
     settings: unknown;
     createdByAccountId: string | null;
-}>): Promise<CreateTeamIdentityConnectionResult> {
+}>): Promise<CreateTeamIdentityConnectionResult<TeamId>> {
     const provider = await readAvailableProviderInTx(tx, input);
     if (!provider) return { status: "provider_not_available" };
     const documents = parseTeamIdentityConnectionDocuments({
@@ -297,7 +336,35 @@ export async function createTeamIdentityConnectionInTx(tx: Tx, input: Readonly<{
         return { status: "invalid_document" };
     }
 
+    // Reuse the provider-row serialization needed for nullable Home creation for
+    // every WorkOS namespace writer, including its Team consumers.
+    if (input.teamId === null || provider.kind === "workos_sso") {
+        await tx.identityProviderInstance.update({ where: { id: provider.id }, data: { updatedAt: provider.updatedAt }, select: { id: true } });
+    }
+    if (documents.value.externalReference.kind === "workos_sso") {
+        const conflicts = await findConflictingWorkosProviderIdsInTx(tx, {
+            providerInstanceIds: [provider.id],
+            proposed: { providerInstanceId: provider.id, externalReference: documents.value.externalReference },
+        });
+        if (conflicts.has(provider.id)) return { status: "invalid_document" };
+    }
+
     const proposedId = randomUUID();
+    // A null scope cannot use Prisma's compound unique selector. Serialize on
+    // the canonical provider row, then reuse the exact Home binding in this transaction.
+    if (input.teamId === null) {
+        const existing = await readCurrentInTx(tx, {
+            id: (await tx.teamIdentityConnection.findFirst({ where: { teamId: null, providerInstanceId: provider.id }, select: { id: true } }))?.id ?? proposedId,
+            teamId: input.teamId,
+        });
+        if (existing) return { status: "already_exists", connection: existing.view };
+        const created = await tx.teamIdentityConnection.create({ data: {
+            id: proposedId, teamId: null, providerInstanceId: provider.id,
+            externalReference: documents.value.externalReference, settings: documents.value.settings,
+            createdByAccountId: input.createdByAccountId,
+        }, select: connectionSelect });
+        return { status: "created", connection: projectConnection({ provider, row: { ...created, teamId: input.teamId } })! };
+    }
     const row = await tx.teamIdentityConnection.upsert({
         where: {
             teamId_providerInstanceId: {
@@ -316,17 +383,17 @@ export async function createTeamIdentityConnectionInTx(tx: Tx, input: Readonly<{
         update: {},
         select: connectionSelect,
     });
-    const connection = projectConnection({ provider, row });
+    const connection = projectConnection({ provider, row: { ...row, teamId: input.teamId } });
     return row.id === proposedId
         ? { status: "created", connection: connection! }
         : { status: "already_exists", connection };
 }
 
-type TeamIdentityConnectionMutationResult =
-    | Readonly<{ status: "applied"; connection: TeamIdentityConnectionView }>
-    | Readonly<{ status: "immutable_external_identity"; connection: TeamIdentityConnectionView }>
+type TeamIdentityConnectionMutationResult<TeamId extends string | null = string> =
+    | Readonly<{ status: "applied"; connection: TeamIdentityConnectionView<TeamId> }>
+    | Readonly<{ status: "immutable_external_identity"; connection: TeamIdentityConnectionView<TeamId> }>
     | Readonly<{ status: "not_found" | "invalid_document" | "provider_not_available" | "not_configured" | "policy_in_use" | "authentication_policy_unavailable" }>
-    | Readonly<{ status: "revision_conflict"; connection: TeamIdentityConnectionView | null }>;
+    | Readonly<{ status: "revision_conflict"; connection: TeamIdentityConnectionView<TeamId> | null }>;
 
 /**
  * Whether a connection's external reference now defines an immutable provider
@@ -343,13 +410,13 @@ export async function isTeamIdentityConnectionNamespaceActivatedInTx(
         || await tx.accountIdentity.count({ where: { provider: input.providerInstanceId } }) > 0;
 }
 
-export async function updateTeamIdentityConnectionInTx(tx: Tx, input: Readonly<{
+export async function updateTeamIdentityConnectionInTx<TeamId extends string | null>(tx: Tx, input: Readonly<{
     id: string;
-    teamId: string;
+    teamId: TeamId;
     expectedRevision: number;
     externalReference?: unknown;
     settings?: unknown;
-}>): Promise<TeamIdentityConnectionMutationResult> {
+}>): Promise<TeamIdentityConnectionMutationResult<TeamId>> {
     const current = await readCurrentInTx(tx, input);
     if (!current) return { status: "not_found" };
     if (current.row.revision !== input.expectedRevision) {
@@ -366,6 +433,15 @@ export async function updateTeamIdentityConnectionInTx(tx: Tx, input: Readonly<{
     });
     if (!nextDocuments.ok || !areConnectionDocumentsCompatible(current.provider, nextDocuments.value)) {
         return { status: "invalid_document" };
+    }
+
+    if (nextDocuments.value.externalReference.kind === "workos_sso") {
+        await tx.identityProviderInstance.update({ where: { id: current.provider.id }, data: { updatedAt: current.provider.updatedAt }, select: { id: true } });
+        const conflicts = await findConflictingWorkosProviderIdsInTx(tx, {
+            providerInstanceIds: [current.provider.id],
+            proposed: { id: input.id, providerInstanceId: current.provider.id, externalReference: nextDocuments.value.externalReference },
+        });
+        if (conflicts.has(current.provider.id)) return { status: "invalid_document" };
     }
 
     if (
@@ -386,25 +462,29 @@ export async function updateTeamIdentityConnectionInTx(tx: Tx, input: Readonly<{
             settings: nextDocuments.value.settings,
         },
     });
-    if (updated.count > 0 && policyUse !== "not_in_use") {
+    if (input.teamId !== null && updated.count > 0 && policyUse !== "not_in_use") {
         await applyTeamSessionAuthenticationContextEffectsInTx(tx, { teamIds: [input.teamId] });
     }
     return await projectMutationResultInTx(tx, input, updated.count);
 }
 
-export async function setTeamIdentityConnectionEnabledInTx(tx: Tx, input: Readonly<{
+export async function setTeamIdentityConnectionEnabledInTx<TeamId extends string | null>(tx: Tx, input: Readonly<{
     id: string;
-    teamId: string;
+    teamId: TeamId;
     expectedRevision: number;
     enabled: boolean;
     now?: Date;
-}>): Promise<TeamIdentityConnectionMutationResult> {
+}>): Promise<TeamIdentityConnectionMutationResult<TeamId>> {
     const current = await readCurrentInTx(tx, input);
     if (!current) return { status: "not_found" };
     if (current.row.revision !== input.expectedRevision) {
         return { status: "revision_conflict", connection: current.view };
     }
     if (!current.view) return { status: "invalid_document" };
+    if (input.enabled && current.provider.kind === "workos_sso") {
+        const conflicts = await findConflictingWorkosProviderIdsInTx(tx, { providerInstanceIds: [current.provider.id] });
+        if (conflicts.has(current.provider.id)) return { status: "invalid_document" };
+    }
     const policyUse = await resolveTeamAuthenticationPolicyUseInTx(tx, input);
     if (!input.enabled) {
         if (policyUse !== "not_in_use") return { status: policyUse };
@@ -424,7 +504,7 @@ export async function setTeamIdentityConnectionEnabledInTx(tx: Tx, input: Readon
                 : {}),
         },
     });
-    if (updated.count > 0 && policyUse !== "not_in_use") {
+    if (input.teamId !== null && updated.count > 0 && policyUse !== "not_in_use") {
         await applyTeamSessionAuthenticationContextEffectsInTx(tx, { teamIds: [input.teamId] });
     }
     return await projectMutationResultInTx(tx, input, updated.count);
@@ -436,13 +516,13 @@ function emptyObservation(kind: IdentityProviderInstanceView["kind"]): TeamIdent
         : { v: 1, kind, successfulTest: null };
 }
 
-export async function recordTeamIdentityConnectionTestInTx(tx: Tx, input: Readonly<{
+export async function recordTeamIdentityConnectionTestInTx<TeamId extends string | null>(tx: Tx, input: Readonly<{
     id: string;
-    teamId: string;
+    teamId: TeamId;
     expectedRevision: number;
     runtimeFingerprint: string;
     testedAt: Date;
-}>): Promise<TeamIdentityConnectionMutationResult> {
+}>): Promise<TeamIdentityConnectionMutationResult<TeamId>> {
     const current = await readCurrentInTx(tx, input);
     if (!current) return { status: "not_found" };
     if (current.row.revision !== input.expectedRevision) {
@@ -461,15 +541,15 @@ export async function recordTeamIdentityConnectionTestInTx(tx: Tx, input: Readon
         where: { id: input.id, teamId: input.teamId, revision: input.expectedRevision },
         data: { lastObservation: nextObservation, lastSuccessfulTestAt: input.testedAt },
     });
-    if (updated.count > 0 && policyUse !== "not_in_use") {
+    if (input.teamId !== null && updated.count > 0 && policyUse !== "not_in_use") {
         await applyTeamSessionAuthenticationContextEffectsInTx(tx, { teamIds: [input.teamId] });
     }
     return await projectMutationResultInTx(tx, input, updated.count);
 }
 
-export async function recordTeamIdentityConnectionWorkosObservationInTx(tx: Tx, input: Readonly<{
+export async function recordTeamIdentityConnectionWorkosObservationInTx<TeamId extends string | null>(tx: Tx, input: Readonly<{
     id: string;
-    teamId: string;
+    teamId: TeamId;
     expectedRevision: number;
     presentation: Readonly<{
         displayName: string;
@@ -477,7 +557,7 @@ export async function recordTeamIdentityConnectionWorkosObservationInTx(tx: Tx, 
         status: string;
         lastCheckedAt: Date;
     }> | null;
-}>): Promise<TeamIdentityConnectionMutationResult> {
+}>): Promise<TeamIdentityConnectionMutationResult<TeamId>> {
     const current = await readCurrentInTx(tx, input);
     if (!current) return { status: "not_found" };
     if (current.row.revision !== input.expectedRevision) {
@@ -503,17 +583,17 @@ export async function recordTeamIdentityConnectionWorkosObservationInTx(tx: Tx, 
         where: { id: input.id, teamId: input.teamId, revision: input.expectedRevision },
         data: { lastObservation: nextObservation },
     });
-    if (updated.count > 0 && policyUse !== "not_in_use") {
+    if (input.teamId !== null && updated.count > 0 && policyUse !== "not_in_use") {
         await applyTeamSessionAuthenticationContextEffectsInTx(tx, { teamIds: [input.teamId] });
     }
     return await projectMutationResultInTx(tx, input, updated.count);
 }
 
-async function projectMutationResultInTx(
+async function projectMutationResultInTx<TeamId extends string | null>(
     tx: Tx,
-    input: Readonly<{ id: string; teamId: string }>,
+    input: Readonly<{ id: string; teamId: TeamId }>,
     updatedCount: number,
-): Promise<TeamIdentityConnectionMutationResult> {
+): Promise<TeamIdentityConnectionMutationResult<TeamId>> {
     const latest = await readCurrentInTx(tx, input);
     if (updatedCount === 0) {
         return latest
@@ -525,17 +605,17 @@ async function projectMutationResultInTx(
         : { status: "invalid_document" };
 }
 
-export type DeleteTeamIdentityConnectionResult =
+export type DeleteTeamIdentityConnectionResult<TeamId extends string | null = string> =
     | Readonly<{ status: "deleted" | "not_found" }>
-    | Readonly<{ status: "revision_conflict"; connection: TeamIdentityConnectionView | null }>
+    | Readonly<{ status: "revision_conflict"; connection: TeamIdentityConnectionView<TeamId> | null }>
     | Readonly<{ status: "policy_in_use" | "authentication_policy_unavailable" }>
     | Readonly<{ status: "blocked"; blockers: Readonly<{ directorySources: number; externalGroupBindings: number; managedMemberships: number }> }>;
 
-export async function deleteTeamIdentityConnectionInTx(tx: Tx, input: Readonly<{
+export async function deleteTeamIdentityConnectionInTx<TeamId extends string | null>(tx: Tx, input: Readonly<{
     id: string;
-    teamId: string;
+    teamId: TeamId;
     expectedRevision: number;
-}>): Promise<DeleteTeamIdentityConnectionResult> {
+}>): Promise<DeleteTeamIdentityConnectionResult<TeamId>> {
     const current = await readCurrentInTx(tx, input);
     if (!current) return { status: "not_found" };
     if (current.row.revision !== input.expectedRevision) {
@@ -562,23 +642,23 @@ export async function deleteTeamIdentityConnectionInTx(tx: Tx, input: Readonly<{
         : { status: "not_found" };
 }
 
-export type RemoveTeamWorkosSsoConfigurationResult =
+export type RemoveTeamWorkosSsoConfigurationResult<TeamId extends string | null = string> =
     | Readonly<{ status: "removed"; retainedCarrier: boolean }>
     | Readonly<{ status: "not_found" | "invalid_document" | "policy_in_use" | "authentication_policy_unavailable" }>
-    | Readonly<{ status: "revision_conflict"; connection: TeamIdentityConnectionView | null }>;
+    | Readonly<{ status: "revision_conflict"; connection: TeamIdentityConnectionView<TeamId> | null }>;
 
 /**
  * Completes WorkOS SSO removal after the upstream connection has been deleted
  * (or confirmed absent). Directory and group consumers retain the organization
  * carrier; otherwise its now-unused Team connection and provider are removed.
  */
-export async function removeTeamWorkosSsoConfigurationInTx(tx: Tx, input: Readonly<{
+export async function removeTeamWorkosSsoConfigurationInTx<TeamId extends string | null>(tx: Tx, input: Readonly<{
     id: string;
-    teamId: string;
+    teamId: TeamId;
     expectedRevision: number;
     organizationId: string | null;
     connectionId: string | null;
-}>): Promise<RemoveTeamWorkosSsoConfigurationResult> {
+}>): Promise<RemoveTeamWorkosSsoConfigurationResult<TeamId>> {
     const current = await readCurrentInTx(tx, input);
     if (!current) return { status: "not_found" };
     if (current.row.revision !== input.expectedRevision) {
@@ -647,7 +727,7 @@ export async function removeTeamWorkosSsoConfigurationInTx(tx: Tx, input: Readon
     await removeIdentitiesForProviderInTx(tx, current.provider.id);
     const providerDeletion = await deleteIdentityProviderInstanceInTx(tx, {
         id: current.provider.id,
-        owner: { kind: "team", teamId: input.teamId },
+        owner: input.teamId === null ? { kind: "home" } : { kind: "team", teamId: input.teamId },
         expectedRevision: current.provider.revision,
     });
     if (providerDeletion.status === "revision_conflict") {
@@ -656,10 +736,11 @@ export async function removeTeamWorkosSsoConfigurationInTx(tx: Tx, input: Readon
     return { status: "removed", retainedCarrier: false };
 }
 
-async function resolveTeamAuthenticationPolicyUseInTx(
+async function resolveTeamAuthenticationPolicyUseInTx<TeamId extends string | null>(
     tx: Tx,
-    input: Readonly<{ id: string; teamId: string }>,
+    input: Readonly<{ id: string; teamId: TeamId }>,
 ): Promise<"not_in_use" | "policy_in_use" | "authentication_policy_unavailable"> {
+    if (input.teamId === null) return "not_in_use";
     const team = await tx.team.findUnique({
         where: { id: input.teamId },
         select: { authenticationPolicy: true },

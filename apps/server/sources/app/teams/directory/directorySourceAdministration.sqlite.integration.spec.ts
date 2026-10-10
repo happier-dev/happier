@@ -384,6 +384,19 @@ describe("directory source administration", () => {
             },
             settings: { v: 1, kind: "workos_sso" },
         } });
+        // An abandoned Portal draft is not a directory candidate and must not
+        // prevent choosing the configured sibling or verified GitHub sources.
+        const draftProvider = await db.identityProviderInstance.create({ data: {
+            ownerTeamId: f.team.id, kind: "workos_sso", displayName: "Unfinished WorkOS",
+            enabled: true, config: { v: 1, kind: "workos_sso" },
+        } });
+        await db.teamIdentityConnection.create({ data: {
+            teamId: f.team.id,
+            providerInstanceId: draftProvider.id,
+            enabled: false,
+            externalReference: { v: 1, kind: "workos_sso", organizationId: null, connectionId: null },
+            settings: { v: 1, kind: "workos_sso" },
+        } });
         await db.teamDirectorySource.create({ data: {
             teamId: f.team.id,
             kind: "workos_directory",

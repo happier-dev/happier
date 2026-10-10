@@ -215,18 +215,19 @@ export async function requireTeamOAuthAdmissionInTx(
     // binds the Account to the exact provider runtime and Team connection carried
     // from the consumed server-owned OAuth attempt; a caller-supplied Account id
     // alone can never mint a membership.
+    const teamConnection = input.provider.context.kind === "team" ? input.connection : null;
     const evidence = await readOAuthAuthenticationEvidenceInTx(tx, {
         accountId: input.accountId,
         providerId: input.provider.id,
         runtimeFingerprint: input.provider.runtimeFingerprint,
-        ...(input.connection ? { teamConnectionId: input.connection.id } : {}),
+        ...(teamConnection ? { teamConnectionId: teamConnection.id } : {}),
     });
     if (!evidence) throw new TeamOAuthAdmissionAbort("team_authentication_unavailable");
 
     const admission = await finalizeTeamOAuthAdmissionInTx(tx, {
         teamId,
-        connectionId: input.connection?.id ?? null,
-        connectionRevision: input.connection?.revision ?? null,
+        connectionId: teamConnection?.id ?? null,
+        connectionRevision: teamConnection?.revision ?? null,
         providerInstanceId: input.provider.id,
         accountId: input.accountId,
         source: input.admission,

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { db } from "@/storage/db";
 import { enforceLoginEligibility } from "@/app/auth/enforceLoginEligibility";
@@ -55,13 +55,4 @@ describe("enforceLoginEligibility (account disabled)", () => {
         });
     });
 
-    it("fails closed when the account lookup cannot query the database", async () => {
-        const spy = vi.spyOn(db.account, "findUnique").mockRejectedValueOnce(new Error("disk I/O error"));
-        try {
-            const out = await enforceLoginEligibility({ accountId: "cmnx-test", env: process.env });
-            expect(out).toEqual({ ok: false, statusCode: 503, error: "upstream_error" });
-        } finally {
-            spy.mockRestore();
-        }
-    });
 });

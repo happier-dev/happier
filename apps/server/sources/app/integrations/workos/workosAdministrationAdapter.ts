@@ -1,5 +1,6 @@
 import type { WorkOS } from "@workos-inc/node";
 import { computeCanonicalDomainSeparatedDigest } from "@happier-dev/protocol/crypto/canonicalDigest";
+import { normalizeVerifiedEmail } from "@happier-dev/protocol/auth/verifiedEmail";
 
 export type WorkosSsoConnectionCandidate = Readonly<{
     connectionId: string;
@@ -68,12 +69,33 @@ function normalizeConnection(value: unknown): Readonly<WorkosSsoConnectionCandid
 
 export function createWorkosAdministrationAdapter(client: WorkOS) {
     return Object.freeze({
+        /** Live routing facts only; Organization/domain identity must match the exact binding. */
+        async getVerifiedOrganizationDomains(organizationId: string): Promise<readonly string[]> {
+            const organization = await client.organizations.getOrganization(organizationId);
+            if (organization.id !== organizationId) throw new Error("workos_organization_mismatch");
+            if (!Array.isArray(organization.domains)) throw new Error("workos_invalid_response");
+            const domains = new Set<string>();
+            for (const domain of organization.domains) {
+                // WorkOS Node 10.13 OrganizationDomain.state is verified/pending/failed.
+                // Only verified Organization domains can narrow Home sign-in choices.
+                if (domain.state !== "verified") continue;
+                if (domain.organizationId !== organizationId) throw new Error("workos_organization_mismatch");
+                if (typeof domain.domain !== "string") throw new Error("workos_invalid_response");
+                const normalized = normalizeVerifiedEmail(`routing@${domain.domain}`);
+                if (!normalized) throw new Error("workos_invalid_response");
+                domains.add(normalized.normalizedEmail.slice(normalized.normalizedEmail.lastIndexOf("@") + 1));
+            }
+            return [...domains];
+        },
+
         async ensureOrganization(input: Readonly<{
             homeServerIdentityId: string;
-            teamId: string;
+            teamId: string | null;
             teamName: string;
         }>): Promise<Readonly<{ id: string; name: string }>> {
-            const externalId = `happier:${input.homeServerIdentityId}:team:${input.teamId}`;
+            const externalId = input.teamId === null
+                ? `happier:${input.homeServerIdentityId}:home`
+                : `happier:${input.homeServerIdentityId}:team:${input.teamId}`;
             try {
                 return normalizeOrganization(await client.organizations.getOrganizationByExternalId(externalId));
             } catch (error) {

@@ -73,6 +73,7 @@ export type TeamActorContext = Readonly<{
         id: string;
         role: TeamRole;
         status: TeamMembershipStatus;
+        managedExternally: boolean;
     }> | null;
     homeAuthority: HomeGovernanceAuthority;
     /** Team-membership authority before the independent Home detail/lifecycle arm is composed. */
@@ -99,6 +100,7 @@ export type TeamActorContext = Readonly<{
      * the per-membership decision owner.
      */
     ownerRequired: boolean;
+    activeOwnerCount: number;
 }>;
 
 /**
@@ -140,7 +142,9 @@ export async function resolveTeamActorContextsInTx(
         readHomeGovernanceAccountInTx(tx, input.actorAccountId),
         tx.teamMembership.findMany({
             where: { teamId: { in: teamIds }, accountId: input.actorAccountId },
-            select: { id: true, teamId: true, role: true, status: true },
+            select: { id: true, teamId: true, role: true, status: true,
+                provisionedIdentity: { select: { id: true } },
+                identityConnectionManagement: { select: { teamMembershipId: true } } },
         }),
         tx.teamMembership.findMany({
             where: {
@@ -150,14 +154,18 @@ export async function resolveTeamActorContextsInTx(
             select: { teamId: true },
         }),
     ]);
-    const membershipByTeam = new Map(memberships.map(({ teamId, ...membership }) => [teamId, membership] as const));
-    const teamsWithOwner = new Set(ownerRows.map(row => row.teamId));
+    const membershipByTeam = new Map(memberships.map(({ teamId, provisionedIdentity, identityConnectionManagement, ...membership }) => [teamId, {
+        ...membership, managedExternally: provisionedIdentity !== null || identityConnectionManagement !== null,
+    }] as const));
+    const ownerCounts = new Map<string, number>();
+    for (const row of ownerRows) ownerCounts.set(row.teamId, (ownerCounts.get(row.teamId) ?? 0) + 1);
     const accountStatus = account?.status ?? AccountStatus.disabled;
     const homeAuthority = resolveHomeGovernanceAuthority(account);
     return new Map(teams.map(team => [team.id, composeTeamActorContext({
         team, actorAccountId: input.actorAccountId, accountStatus,
         membership: membershipByTeam.get(team.id) ?? null, homeAuthority,
-        ownerRequired: !teamsWithOwner.has(team.id),
+        ownerRequired: (ownerCounts.get(team.id) ?? 0) === 0,
+        activeOwnerCount: ownerCounts.get(team.id) ?? 0,
     })]));
 }
 
@@ -361,7 +369,9 @@ export async function resolveTeamActorContextForTeamInTx(
 
     const membership = await tx.teamMembership.findUnique({
         where: { teamId_accountId: { teamId: team.id, accountId: input.actorAccountId } },
-        select: { id: true, role: true, status: true },
+        select: { id: true, role: true, status: true,
+            provisionedIdentity: { select: { id: true } },
+            identityConnectionManagement: { select: { teamMembershipId: true } } },
     });
 
     const activeOwnerCount = await countActiveTeamOwnersInTx(tx, { teamId: team.id });
@@ -370,9 +380,13 @@ export async function resolveTeamActorContextForTeamInTx(
         team,
         actorAccountId: input.actorAccountId,
         accountStatus,
-        membership,
+        membership: membership ? {
+            id: membership.id, role: membership.role, status: membership.status,
+            managedExternally: membership.provisionedIdentity !== null || membership.identityConnectionManagement !== null,
+        } : null,
         homeAuthority,
         ownerRequired: activeOwnerCount === 0,
+        activeOwnerCount,
     });
 }
 
@@ -384,23 +398,28 @@ export function composeTeamActorContext(input: Readonly<{
     membership: TeamActorContext["membership"];
     homeAuthority: HomeGovernanceAuthority;
     ownerRequired: boolean;
+    activeOwnerCount: number;
 }>): TeamActorContext {
     const teamCapabilities = resolveTeamMembershipCapabilitiesV1({
         accountStatus: input.accountStatus,
         membership: input.membership,
         teamArchivedAt: input.team.archivedAt,
     });
+    const capabilities = resolveTeamCapabilitiesV1({
+        accountStatus: input.accountStatus,
+        homeAuthority: input.homeAuthority,
+        membership: input.membership,
+        teamArchivedAt: input.team.archivedAt,
+        ownerRequired: input.ownerRequired,
+        activeOwnerCount: input.activeOwnerCount,
+    });
     return {
         ...input,
         teamCapabilities,
-        capabilities: resolveTeamCapabilitiesV1({
-            accountStatus: input.accountStatus,
-            homeAuthority: input.homeAuthority,
-            membership: input.membership,
-            teamArchivedAt: input.team.archivedAt,
-        }),
-        readsTeamForRecovery: teamCapabilities.viewTeam
-            || (input.ownerRequired && input.homeAuthority.manageAllTeams),
+        capabilities,
+        // The same decision the projection publishes, so a client gating on `viewRoster` and the
+        // roster/Group reads gating here cannot disagree.
+        readsTeamForRecovery: capabilities.viewRoster,
     };
 }
 

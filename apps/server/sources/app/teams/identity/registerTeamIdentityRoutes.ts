@@ -23,7 +23,9 @@ import {
     teamIdentityErrorHttpStatusV1,
     type TeamIdentityErrorCodeV1,
 } from "@happier-dev/protocol/teams";
-import { TEAM_IDENTITY_ACTION_PATHS_V1 } from "@happier-dev/protocol/actions";
+import { HOME_IDENTITY_ACTION_PATHS_V1, TEAM_IDENTITY_ACTION_PATHS_V1 } from "@happier-dev/protocol/actions";
+import * as home from "@happier-dev/protocol/home";
+import { z } from "zod";
 import type { FastifyReply } from "fastify";
 
 import type { Fastify } from "@/app/api/types";
@@ -85,7 +87,41 @@ export function registerTeamIdentityRoutes(
     app: Fastify,
     dependencies: TeamIdentityRouteDependencies = {},
 ) {
+    registerScopedIdentityRoutes(app, dependencies, "team");
+}
+
+function homeInput<T extends z.ZodObject>(schema: T) {
+    return schema.transform((input) => ({ ...input, teamId: null }));
+}
+
+/** Both public scopes adapt into the same administration and vendor owners. */
+export function registerScopedIdentityRoutes(
+    app: Fastify,
+    dependencies: TeamIdentityRouteDependencies,
+    scope: "home" | "team",
+) {
     const workosDependencies: WorkosAdministrationDependencies = dependencies;
+    const isHome = scope === "home";
+    const paths = (id: keyof typeof TEAM_IDENTITY_ACTION_PATHS_V1) => isHome
+        ? HOME_IDENTITY_ACTION_PATHS_V1[id.replace("teams.", "home.") as keyof typeof HOME_IDENTITY_ACTION_PATHS_V1]
+        : TEAM_IDENTITY_ACTION_PATHS_V1[id];
+    const schemas = {
+        listInput: isHome ? homeInput(home.HomeIdentityConnectionListInputV1Schema) : TeamIdentityConnectionListInputV1Schema,
+        listResult: isHome ? home.HomeIdentityConnectionListResultV1Schema : TeamIdentityConnectionListResultV1Schema,
+        createInput: isHome ? homeInput(home.HomeIdentityConnectionCreateInputV1Schema) : TeamIdentityConnectionCreateInputV1Schema,
+        updateInput: isHome ? homeInput(home.HomeIdentityConnectionSettingsUpdateInputV1Schema) : TeamIdentityConnectionSettingsUpdateInputV1Schema,
+        refInput: isHome ? homeInput(home.HomeIdentityConnectionRefInputV1Schema) : TeamIdentityConnectionRefInputV1Schema,
+        mutationResult: isHome ? home.HomeIdentityConnectionMutationResultV1Schema : TeamIdentityConnectionMutationResultV1Schema,
+        removalPreflight: isHome ? home.HomeIdentityConnectionRemovalPreflightV1Schema : TeamIdentityConnectionRemovalPreflightV1Schema,
+        testStartInput: isHome ? homeInput(home.HomeIdentityConnectionTestStartInputV1Schema) : TeamIdentityConnectionTestStartInputV1Schema,
+        testConsumeInput: isHome ? homeInput(home.HomeIdentityConnectionTestConsumeInputV1Schema) : TeamIdentityConnectionTestConsumeInputV1Schema,
+        testConsumeResult: isHome ? home.HomeIdentityConnectionTestConsumeResultV1Schema : TeamIdentityConnectionTestConsumeResultV1Schema,
+        portalInput: isHome ? homeInput(home.HomeIdentityWorkosAdminPortalLinkCreateInputV1Schema) : TeamIdentityWorkosAdminPortalLinkCreateInputV1Schema,
+        workosCreateInput: isHome ? homeInput(home.HomeIdentityWorkosConnectionCreateInputV1Schema) : TeamIdentityWorkosConnectionCreateInputV1Schema,
+        reconcileInput: isHome ? homeInput(home.HomeIdentityWorkosReconcileInputV1Schema) : TeamIdentityWorkosReconcileInputV1Schema,
+        reconcileResult: isHome ? home.HomeIdentityWorkosReconcileResultV1Schema : TeamIdentityWorkosReconcileResultV1Schema,
+        selectionInput: isHome ? homeInput(home.HomeIdentityWorkosConnectionSetInputV1Schema) : TeamIdentityWorkosConnectionSetInputV1Schema,
+    };
 
     async function renderMemberSignInUrl(teamId: string): Promise<string | null> {
         const resolve = dependencies.resolveMemberSignInLinkTarget;
@@ -105,11 +141,11 @@ export function registerTeamIdentityRoutes(
         }
     }
 
-    app.post(TEAM_IDENTITY_ACTION_PATHS_V1["teams.identity.connections.list"], {
+    app.post(paths("teams.identity.connections.list"), {
         preHandler: app.authenticate,
         schema: {
-            body: TeamIdentityConnectionListInputV1Schema,
-            response: { 200: TeamIdentityConnectionListResultV1Schema, ...ErrorResponses },
+            body: schemas.listInput,
+            response: { 200: schemas.listResult, ...ErrorResponses },
         },
     }, async (request, reply) => {
         const result = await listTeamIdentityConnectionsForActor({
@@ -118,17 +154,20 @@ export function registerTeamIdentityRoutes(
             ...readTeamOperationAuthenticationFromRequest(request, await readRequestHomeEnv(request)),
         });
         if (!result.ok) return sendError(reply, result.error);
+        if (request.body.teamId === null) return reply.send({
+            items: result.value.items, eligibleProviders: result.value.eligibleProviders,
+        });
         return reply.send({
             ...result.value,
             memberSignInUrl: await renderMemberSignInUrl(request.body.teamId),
         });
     });
 
-    app.post(TEAM_IDENTITY_ACTION_PATHS_V1["teams.identity.connections.create"], {
+    app.post(paths("teams.identity.connections.create"), {
         preHandler: app.authenticate,
         schema: {
-            body: TeamIdentityConnectionCreateInputV1Schema,
-            response: { 200: TeamIdentityConnectionMutationResultV1Schema, ...ErrorResponses },
+            body: schemas.createInput,
+            response: { 200: schemas.mutationResult, ...ErrorResponses },
         },
     }, async (request, reply) => {
         const result = await createTeamIdentityConnectionForActor({
@@ -139,11 +178,11 @@ export function registerTeamIdentityRoutes(
         return result.ok ? reply.send({ connection: result.value }) : sendError(reply, result.error);
     });
 
-    app.post(TEAM_IDENTITY_ACTION_PATHS_V1["teams.identity.connections.settings.update"], {
+    app.post(paths("teams.identity.connections.settings.update"), {
         preHandler: app.authenticate,
         schema: {
-            body: TeamIdentityConnectionSettingsUpdateInputV1Schema,
-            response: { 200: TeamIdentityConnectionMutationResultV1Schema, ...ErrorResponses },
+            body: schemas.updateInput,
+            response: { 200: schemas.mutationResult, ...ErrorResponses },
         },
     }, async (request, reply) => {
         const result = await updateTeamIdentityConnectionSettingsForActor({
@@ -155,14 +194,14 @@ export function registerTeamIdentityRoutes(
     });
 
     for (const [path, enabled] of [
-        [TEAM_IDENTITY_ACTION_PATHS_V1["teams.identity.connections.enable"], true],
-        [TEAM_IDENTITY_ACTION_PATHS_V1["teams.identity.connections.disable"], false],
+        [paths("teams.identity.connections.enable"), true],
+        [paths("teams.identity.connections.disable"), false],
     ] as const) {
         app.post(path, {
             preHandler: app.authenticate,
             schema: {
-                body: TeamIdentityConnectionRefInputV1Schema,
-                response: { 200: TeamIdentityConnectionMutationResultV1Schema, ...ErrorResponses },
+                body: schemas.refInput,
+                response: { 200: schemas.mutationResult, ...ErrorResponses },
             },
         }, async (request, reply) => {
             const result = await setTeamIdentityConnectionEnabledForActor({
@@ -175,10 +214,10 @@ export function registerTeamIdentityRoutes(
         });
     }
 
-    app.post(TEAM_IDENTITY_ACTION_PATHS_V1["teams.identity.connections.remove"], {
+    app.post(paths("teams.identity.connections.remove"), {
         preHandler: app.authenticate,
         schema: {
-            body: TeamIdentityConnectionRefInputV1Schema,
+            body: schemas.refInput,
             response: { 200: TeamIdentityConnectionRemoveResultV1Schema, ...ErrorResponses },
         },
     }, async (request, reply) => {
@@ -190,11 +229,11 @@ export function registerTeamIdentityRoutes(
         return result.ok ? reply.send(result.value) : sendError(reply, result.error);
     });
 
-    app.post(TEAM_IDENTITY_ACTION_PATHS_V1["teams.identity.connections.remove.preview"], {
+    app.post(paths("teams.identity.connections.remove.preview"), {
         preHandler: app.authenticate,
         schema: {
-            body: TeamIdentityConnectionRefInputV1Schema,
-            response: { 200: TeamIdentityConnectionRemovalPreflightV1Schema, ...ErrorResponses },
+            body: schemas.refInput,
+            response: { 200: schemas.removalPreflight, ...ErrorResponses },
         },
     }, async (request, reply) => {
         const result = await preflightTeamIdentityConnectionRemovalForActor({
@@ -205,11 +244,11 @@ export function registerTeamIdentityRoutes(
         return result.ok ? reply.send(result.value) : sendError(reply, result.error);
     });
 
-    app.post(TEAM_IDENTITY_ACTION_PATHS_V1["teams.identity.connections.test.consume"], {
+    app.post(paths("teams.identity.connections.test.consume"), {
         preHandler: app.authenticate,
         schema: {
-            body: TeamIdentityConnectionTestConsumeInputV1Schema,
-            response: { 200: TeamIdentityConnectionTestConsumeResultV1Schema, ...ErrorResponses },
+            body: schemas.testConsumeInput,
+            response: { 200: schemas.testConsumeResult, ...ErrorResponses },
         },
     }, async (request, reply) => {
         const result = await consumeTeamIdentityConnectionTestForActor({
@@ -221,10 +260,10 @@ export function registerTeamIdentityRoutes(
         return result.ok ? reply.send(result.value) : sendError(reply, result.error);
     });
 
-    app.post(TEAM_IDENTITY_ACTION_PATHS_V1["teams.identity.connections.test.start"], {
+    app.post(paths("teams.identity.connections.test.start"), {
         preHandler: app.authenticate,
         schema: {
-            body: TeamIdentityConnectionTestStartInputV1Schema,
+            body: schemas.testStartInput,
             response: { 200: TeamIdentityConnectionTestStartResultV1Schema, ...ErrorResponses },
         },
     }, async (request, reply) => {
@@ -237,10 +276,10 @@ export function registerTeamIdentityRoutes(
         return result.ok ? reply.send(result.value) : sendError(reply, result.error);
     });
 
-    app.post(TEAM_IDENTITY_ACTION_PATHS_V1["teams.identity.workos.adminPortalLink.create"], {
+    app.post(paths("teams.identity.workos.adminPortalLink.create"), {
         preHandler: app.authenticate,
         schema: {
-            body: TeamIdentityWorkosAdminPortalLinkCreateInputV1Schema,
+            body: schemas.portalInput,
             response: { 200: TeamIdentityWorkosAdminPortalLinkCreateResultV1Schema, ...ErrorResponses },
         },
     }, async (request, reply) => {
@@ -254,11 +293,11 @@ export function registerTeamIdentityRoutes(
         return reply.send(result.value);
     });
 
-    app.post(TEAM_IDENTITY_ACTION_PATHS_V1["teams.identity.workos.connection.create"], {
+    app.post(paths("teams.identity.workos.connection.create"), {
         preHandler: app.authenticate,
         schema: {
-            body: TeamIdentityWorkosConnectionCreateInputV1Schema,
-            response: { 200: TeamIdentityConnectionMutationResultV1Schema, ...ErrorResponses },
+            body: schemas.workosCreateInput,
+            response: { 200: schemas.mutationResult, ...ErrorResponses },
         },
     }, async (request, reply) => {
         const result = await createTeamWorkosConnection({
@@ -269,11 +308,11 @@ export function registerTeamIdentityRoutes(
         return result.ok ? reply.send({ connection: result.value }) : sendError(reply, result.error);
     });
 
-    app.post(TEAM_IDENTITY_ACTION_PATHS_V1["teams.identity.workos.reconcile"], {
+    app.post(paths("teams.identity.workos.reconcile"), {
         preHandler: app.authenticate,
         schema: {
-            body: TeamIdentityWorkosReconcileInputV1Schema,
-            response: { 200: TeamIdentityWorkosReconcileResultV1Schema, ...ErrorResponses },
+            body: schemas.reconcileInput,
+            response: { 200: schemas.reconcileResult, ...ErrorResponses },
         },
     }, async (request, reply) => {
         const result = await reconcileTeamWorkosConnection({
@@ -284,11 +323,11 @@ export function registerTeamIdentityRoutes(
         return result.ok ? reply.send(result.value) : sendError(reply, result.error);
     });
 
-    app.post(TEAM_IDENTITY_ACTION_PATHS_V1["teams.identity.workos.connection.set"], {
+    app.post(paths("teams.identity.workos.connection.set"), {
         preHandler: app.authenticate,
         schema: {
-            body: TeamIdentityWorkosConnectionSetInputV1Schema,
-            response: { 200: TeamIdentityConnectionMutationResultV1Schema, ...ErrorResponses },
+            body: schemas.selectionInput,
+            response: { 200: schemas.mutationResult, ...ErrorResponses },
         },
     }, async (request, reply) => {
         const result = await setTeamWorkosConnection({

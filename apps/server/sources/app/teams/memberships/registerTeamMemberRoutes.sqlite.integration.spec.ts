@@ -13,6 +13,7 @@ import { inTx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
 import { registerTeamGroupRoutes } from "../groups/registerTeamGroupRoutes";
+import { listTeamsForActorInTx } from "../queries";
 import { admitTeamMemberInTx } from "./membershipService";
 import { registerTeamMemberRoutes } from "./registerTeamMemberRoutes";
 
@@ -108,6 +109,7 @@ describe("Team member and Group routes (SQLite integration)", () => {
         // Bodies are valid so the refusal can only come from authentication;
         // an invalid body would be rejected first and prove nothing.
         for (const [url, payload] of [
+            ["/v1/teams/members/leave", { v: 1, teamId }],
             ["/v1/teams/members/list", { v: 1, teamId, filter: "all" }],
             ["/v1/teams/members/add", {
                 v: 1, teamId, accountId: "someone", role: "member", historyAccess: "all_existing",
@@ -121,6 +123,33 @@ describe("Team member and Group routes (SQLite integration)", () => {
             const response = await post(url, null, payload);
             expect(response.statusCode).toBe(401);
         }
+    });
+
+    it("leaves the acting membership via the Team-only action route and withdraws directory membership", async () => {
+        const { teamId, ownerAccountId } = await teamWithOwner("Leave route");
+        const person = await account();
+        const admitted = await inTx((tx) => admitTeamMemberInTx(tx, { teamId, accountId: person.id, role: "member", historyAccess: "from_membership" }));
+        if (!admitted.ok) throw new Error("member admission failed");
+        const before = await inTx((tx) => listTeamsForActorInTx(tx, { v: 1, actorAccountId: person.id, scope: "member", archived: "active" }));
+        expect(before.ok && before.page.items.find((item) => item.id === teamId)?.capabilities.leave).toBe(true);
+        const badInput = await post("/v1/teams/members/leave", person.id, { v: 1, teamId, membershipId: "other" });
+        expect(badInput.statusCode).toBe(400);
+        const owner = await post("/v1/teams/members/leave", ownerAccountId, { v: 1, teamId });
+        expect(owner.statusCode).toBe(409);
+        expect(owner.json()).toEqual({ error: "team_owner_transfer_required" });
+        const outsider = await account();
+        for (const hiddenTeamId of [teamId, crypto.randomUUID()]) {
+            const hidden = await post("/v1/teams/members/leave", outsider.id, { v: 1, teamId: hiddenTeamId });
+            expect(hidden.statusCode).toBe(404);
+            expect(hidden.json()).toEqual({ error: "team_not_found" });
+        }
+        const removed = await post("/v1/teams/members/leave", person.id, { v: 1, teamId });
+        expect(removed.statusCode).toBe(200);
+        expect(removed.json()).toEqual({ status: "removed", membershipId: admitted.membership.teamMembershipId });
+        expect(await db.teamMembership.count({ where: { teamId, accountId: person.id } })).toBe(0);
+        expect(await db.teamMembership.count({ where: { teamId, accountId: ownerAccountId } })).toBe(1);
+        const after = await inTx((tx) => listTeamsForActorInTx(tx, { v: 1, actorAccountId: person.id, scope: "member", archived: "active" }));
+        expect(after).toMatchObject({ ok: true, page: { items: [] } });
     });
 
     it("carries one member through add, role, suspend, reactivate, and remove", async () => {

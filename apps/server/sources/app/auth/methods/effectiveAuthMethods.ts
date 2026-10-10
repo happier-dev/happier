@@ -186,6 +186,18 @@ export function applyHomePolicyToAuthMethodDecision(
     homePolicy: HomeAuthenticationPolicyReadV1 | undefined,
     admission?: EffectiveAuthMethodInputs["admission"],
 ): EffectiveAuthMethodDecision {
+    // Only the Home catalog publishes WorkOS here. Team-owned bindings reach
+    // the separately bounded Team admission owner and never this Home table.
+    // A company proof cannot create an Account under inherited admission.
+    if (decision.ui?.providerKind === "workos_sso" && !admission
+        && !(homePolicy?.status === "narrowed" && homePolicy.policy.admission === "self_service")) {
+        decision = {
+            ...decision,
+            actions: decision.actions.map((action) => action.id === "provision"
+                ? { ...action, enabled: false, reason: "provisioning_not_enabled" as const }
+                : action),
+        };
+    }
     if (!homePolicy || homePolicy.status === "inherited") return decision;
     if (homePolicy.status === "unreadable") {
         return {

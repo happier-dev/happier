@@ -1,11 +1,10 @@
 ---
 title: Home administration
-description: Administer the people, roles and policy of a Home you own — from the app, on any Home, including a Personal Home.
+description: Manage people, sign-in, reachability, mail and server settings for a Home you administer.
 ---
 
-By the end of this page you will be able to see everyone on a Home, change what
-they can do there, put an account on hold or remove it for good, and set the
-policy that decides who can join at all.
+Open a Home's console to manage its people and Teams, decide who can sign in,
+configure mail and addresses, and review settings that need a server restart.
 
 > **Availability:** Home Administration is in the current unreleased 0.3 checkout. It is not evidence that an installed stable or preview server already offers it — check the version of the server binary you are running.
 
@@ -18,8 +17,15 @@ policy that decides who can join at all.
 - The Home selected in the app. Administration is always of one named Home; each
   Home keeps its own accounts, roles and policies.
 
-Open **Settings → Profile & account → Home administration**. If you administer more
-than one, Happier asks you to **Choose a Home** first.
+Open **Settings → Homes**, choose the Home, then open **Home administration**.
+The console names the Home and your role. Its navigation sits beside the page on
+wide screens and becomes a menu in narrower windows; phones open each page separately.
+
+**Overview** lists only what needs you — a value the server ignored at its last
+start, mail or a public address that is missing, a sign-in platform that is half
+set up, changes waiting for a restart — each with the page that fixes it. Values
+your deployment fixes are not listed there; each row that has one says so. An owner
+renames the Home from **This Home → Home name**; the name is the one devices show.
 
 ## Roles
 
@@ -30,6 +36,11 @@ Three roles, and the third one is not an administrator at all:
 | **Owner** | Administer everything on this Home, including deleting accounts and changing owners. |
 | **Admin** | Administer accounts and Teams, but not change owners. |
 | **Member** | No Home administration authority. |
+
+Owners change authentication policy, Home settings and runtime configuration.
+Admins read those facts and use the account and Team actions their capabilities
+allow. Reading sign-in deployment facts does not grant access to the owner-only
+managed-provider lists or their mutation controls.
 
 A Home always needs at least one **active** owner. Any change that would remove the
 last one is refused with *This Home needs at least one active owner. Make another
@@ -55,6 +66,16 @@ lifecycle state:
 
 Search resolves accounts by name on Homes that offer it; older Homes report that
 search is unavailable rather than silently returning nothing.
+
+Open a person to see their sign-in email and methods, linked identity providers,
+Teams and roles, Machine and API-token counts, and recent administration events.
+These are administration facts; token contents and encryption keys are not shown.
+**Sign out everywhere** ends the person's device sign-ins without deleting their
+account. Device sessions are not tracked individually; API tokens are separate.
+
+A failed refresh keeps the last-known detail with a visible error and **Retry**.
+If the Home says the account is gone or you can no longer read it, that answer
+replaces the detail and its actions.
 
 ### Disable and re-enable
 
@@ -86,20 +107,18 @@ it.
 
 ## Policies
 
-The **Policies** tab is owner-editable; admins see it read-only (*Only a Home owner
-can change these.*). Saving checks the revision you loaded, so two administrators
+**Policies** contains sign-in, admission and encryption. Owners change
+authentication policy. Saving checks the revision you loaded, so two administrators
 editing at once get *This policy changed elsewhere* rather than a silent overwrite.
 
 ### Team creation
 
-- **Anyone can create Teams** — active members create a Team and become its owner.
-- **Admins create Teams** — owners and admins create Teams and choose the initial owner.
-- **Team creation disabled** — no new Teams; existing Teams are unchanged.
+Who can create Teams is set at the top of the console's **Teams** page, where
+admins can change it when authorised:
 
-**Automatic Team membership from sign-in** lets signing in through a Team's
-connected identity provider join that Team automatically, with no invitation or
-approval. **Approved GitHub Enterprise hosts** restricts which canonical HTTPS
-origins Teams may connect GitHub Apps to, one per line.
+- **Anyone** — active members create a Team and become its owner.
+- **Admins** — owners and admins create Teams and choose the initial owner.
+- **Nobody** — no new Teams; existing Teams are unchanged.
 
 ### Sign-in and admission
 
@@ -109,8 +128,10 @@ explicitly: then the row shows **Fixed by your deployment** with the setting's
 name, and only the operator can change it.
 
 - **Sign-in methods** — which methods this Home offers. A method that needs
-  something the server does not have (for example GitHub sign-in without a GitHub
-  sign-in app) is shown as unavailable with what is missing.
+  something first says so: GitHub sign-in without a GitHub sign-in app shows
+  *Needs a GitHub sign-in app first* with **Set up**, which opens that app's row on
+  **Sign-in providers**. Only something the deployment alone can provide is named
+  by its environment key.
 - **Account types** — **Plain**, **End-to-end encrypted**, or both, plus which is
   **Recommended for new accounts**. Changing the recommendation sets the default for
   new accounts and changes no existing one.
@@ -132,13 +153,115 @@ straight away.
   different service; that is the operator's environment configuration, described in
   [Authentication](/self-hosting/auth).
 
-**Deployment services** and **Private identity endpoints** show what the operator
-configured for the whole server. Deployment services are read-only from Home
-Administration by design.
-
 If a Home stores a sign-in configuration this server version cannot read, Happier
 says **Configuration needs attention** and sign-in stays unavailable until the
 operator repairs it. It does not guess a safe interpretation.
+
+## Sign-in providers
+
+Use **Sign-in providers** for managed identity providers, GitHub Apps, private
+identity endpoints and Team sign-in rules. Deployment-defined OIDC providers
+remain read-only and are identified separately from managed instances.
+
+**Sign-in platforms**, at the top of the page, holds the credentials the Home
+signs in through: **GitHub sign-in** (the GitHub OAuth app and its callback
+address, **Who can sign in with GitHub**, and the rarely changed keys under
+**Advanced**) and **WorkOS** (client ID and API key).
+Closed, each row says its state in one line — not set up, what it still needs,
+saved and waiting for a restart, ready, set by your deployment, or not in use
+because the last start could not read a value. Open a row to edit it in place:
+nothing is written until you press the row's **Save**, which saves its fields and
+secrets together. A key explicitly set in the server environment stays locked,
+key by key, so a deployment-set API key and an owner-set client ID can sit side
+by side. A secret that is not set yet is an open masked field; once saved it shows
+presence only, with **Replace** and **Clear**. If the last start ignored a saved
+sign-in value, the page says so at the top and **Show me** opens its row. Credential
+changes apply after the server restarts; the page shows the same **Restart now**
+banner as **Server settings**, counting every pending change on the Home. Admins
+see the rows as facts; only owners change them.
+
+These credentials are the Home's; supplying them alone does not connect anyone's
+company account.
+
+> **Home company sign-in is not available yet.** AM-13 implementation and validation
+> are incomplete. The following describes the approved target, not a shipped or
+> usable company sign-in flow.
+
+In **Identity providers**, an owner will be able to add a company Home sign-in
+connection through WorkOS. The connection uses the same setup as a Team connection:
+open the **Admin Portal**, choose the exact SSO connection, **Test sign-in**, then
+turn it on. Test sign-in checks the connection without creating or linking an
+account. If the platform credentials are missing, follow the link to **WorkOS**
+in **Sign-in platforms** first.
+
+Members see the company's name when signing in. A verified company domain can
+route them to its exact connection; an unverified or ambiguous domain cannot
+choose a connection automatically. New accounts can be created only when
+**Policies** explicitly allows **Self-service**, that provider and the account
+type. **Closed** and **Invitation only** do not become open signup merely because
+SSO is enabled. Existing accounts can explicitly link the company identity;
+matching an email address never links two accounts.
+
+Turning the connection off stops new company sign-ins and keeps existing accounts
+and linked identities. Removing it checks whether anyone would lose their only
+usable way to sign in. SSO alone does not remove people who leave the company,
+grant Home roles or add anyone to a Team. Each Team can still connect its own
+company sign-in and directory from **Team → Authentication**; directory sync
+remains Team-scoped. SMTP belongs on **Email**. **Automatic Team membership from sign-in** and **Approved GitHub
+Enterprise hosts** are Home-level Team sign-in rules on this page.
+
+## Reach and Email
+
+**Reach** shows how devices reach the Home: its public and web-app addresses,
+direct connections and host-side access method. It distinguishes saved addresses
+from deployment-set and inferred addresses. Changing reachability does not change
+the Home's authentication identity. Hosting controls appear only where an
+executor exists.
+
+**Email** configures SMTP, sender identity and a write-only password. Use **Save**
+for staged changes, then **Send a test email** to check delivery. Readiness requires
+both a mail transport and an address for links; the page points to **Reach** when
+the link target is missing. If readiness or reachability cannot be read, the page
+shows a failure with **Retry**, retaining useful last-known facts during refresh.
+
+## Features and Data
+
+**Features** shows server capabilities, with common choices first and advanced
+families below. Unavailable rows explain their dependency, deployment lock or
+build restriction. Device-only feature choices stay in the device's settings.
+
+**Data** controls automatic deletion and per-domain retention, including the
+**System records** disclosure. **Run a dry run** reports what would be deleted
+without deleting it. Backups use the hosting runtime's existing controls where
+available; the console does not add a hosted-server backup executor.
+
+## Server settings and Runtime
+
+**Server settings** covers configuration without a dedicated console page — sign-in
+platform credentials, the Home's name and the Reach addresses live on their own
+pages and are not repeated here. A row
+shows its effective value and source. Live settings apply to later requests or
+jobs; restart settings say **Applies after restart** and remain pending against
+what the running server actually applied. Secrets never return their saved value.
+Bootstrap settings are read-only and explain why they must be supplied before
+startup or kept under deployment control.
+
+Use the shared **Restart now** action when this device has a hosting-desktop,
+Remote-host or connected-Machine executor. **Overview** offers the same action on
+its *changes apply after restart* row, naming the settings that wait; on a device
+that cannot restart the server, that row leads to **Runtime** instead. Acceptance of the task is not
+completion: failures stay visible, and settings refresh after the runtime reports
+that it is up. If approval is required, use the console's approval details; the
+restart stays pending through the decision and task completion. A deployment-managed Home tells you to restart through your
+deployment. **Runtime** also shows the version and available hosting operations.
+
+**Discard** reverts saved pending restart changes to the running values and
+records the change in **Activity**. If a saved setting prevents startup, set its
+environment key explicitly to override it, then restart. Invalid saved values are
+ignored at startup with a reason; an explicit environment value takes precedence.
+
+**Activity** records administration changes with the actor. Secrets are recorded
+as set or unset, never as their contents.
 
 ## When it goes wrong
 

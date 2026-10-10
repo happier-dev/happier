@@ -188,6 +188,7 @@ describe("Team accepted-authentication policy (SQLite integration)", () => {
     it("authorizes Session defaults and admission/authentication through their distinct capabilities", () => {
         const base = {
             viewTeam: true,
+            viewRoster: true,
             manageSettings: false,
             manageMembers: false,
             manageGroups: false,
@@ -195,6 +196,7 @@ describe("Team accepted-authentication policy (SQLite integration)", () => {
             manageOwners: false,
             archiveTeam: false,
             restoreTeam: false,
+            leave: false,
         };
         const managesPolicy = { ...base, managePolicy: true, manageAuthentication: false };
         const managesAuthentication = { ...base, managePolicy: false, manageAuthentication: true };

@@ -17,9 +17,9 @@ describe('parseOauthRedirectPaste', () => {
     expect(parsed).toEqual({ ok: true, code: 'abc123', state: 'state1' });
   });
 
-  it('parses code + state from a pasted querystring', () => {
+  it.each(['?code=abc123&state=state1', 'code=abc123&state=state1'])('parses code + state from a pasted querystring: %s', (pasted) => {
     const parsed = parseOauthRedirectPaste({
-      pasted: '?code=abc123&state=state1',
+      pasted,
     });
     expect(parsed).toEqual({ ok: true, code: 'abc123', state: 'state1' });
   });

@@ -7,6 +7,7 @@ import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lig
 
 import {
     isEffectiveHomeAuthMethodActionEnabledInTx,
+    resolveEffectiveHomeAuthMethodsInTx,
     type HomeAuthMethodAdmissionContext,
 } from "./effectiveHomeAuthMethods";
 
@@ -159,6 +160,69 @@ describe("Home authentication method admission", () => {
             update: { authenticationPolicy },
         });
     }
+
+    it("bounds company Home SSO provisioning by explicit admission, provider and Account-mode policy", async () => {
+        const provider = await db.identityProviderInstance.create({ data: {
+            kind: "workos_sso", displayName: "Company SSO", enabled: true,
+            firstEnabledAt: new Date(), config: { v: 1, kind: "workos_sso" },
+        } });
+        await db.teamIdentityConnection.create({ data: {
+            teamId: null, providerInstanceId: provider.id, enabled: true, firstEnabledAt: new Date(),
+            externalReference: { v: 1, kind: "workos_sso", organizationId: "org_home", connectionId: "conn_home" },
+            settings: { v: 1, kind: "workos_sso" },
+            lastObservation: { v: 1, kind: "workos_sso", presentation: {
+                displayName: "Company SSO", strategy: "SAML", status: "active",
+                lastCheckedAt: "2026-10-09T00:00:00.000Z",
+            }, successfulTest: null },
+        } });
+        const env = {
+            HAPPIER_PUBLIC_SERVER_URL: "https://home.example.test",
+            WORKOS_API_KEY: "sk_test", WORKOS_CLIENT_ID: "client_test",
+            AUTH_ANONYMOUS_SIGNUP_ENABLED: "false",
+            HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED: "1",
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_ENABLED: "1",
+            HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_PROVIDERS: provider.id,
+            HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_AUTO_PROVISION: "1",
+        };
+        const read = async (policy: Record<string, unknown> | null, overrides: NodeJS.ProcessEnv = {}) => {
+            await writeHomeGovernancePolicy(policy);
+            const result = await inTx((tx) => resolveEffectiveHomeAuthMethodsInTx(tx, { env: { ...env, ...overrides } }));
+            expect(result.status).toBe("ready");
+            if (result.status !== "ready") throw new Error("expected ready methods");
+            const method = result.decisions.find((decision) => decision.id === provider.id);
+            expect(method).toBeDefined();
+            return method!;
+        };
+        const selfService = { v: 1, admission: "self_service" };
+        expect((await read(selfService)).actions.filter((action) => action.id === "provision")
+            .every((action) => action.enabled)).toBe(true);
+        for (const admission of [null, "closed", "invitation_only"] as const) {
+            const decision = await read(admission ? { v: 1, admission } : null);
+            expect(decision.actions.filter((action) => action.id === "provision").every((action) => !action.enabled)).toBe(true);
+            expect(decision.actions.find((action) => action.id === "connect")?.enabled).toBe(true);
+            expect(decision.actions.find((action) => action.id === "login")?.enabled).toBe(true);
+        }
+        for (const permittedAccountModes of [["e2ee"], ["plain"]]) {
+            const decision = await read({ ...selfService, permittedAccountModes });
+            expect(decision.actions.filter((action) => action.id === "provision" && action.enabled)
+                .map((action) => action.mode)).toEqual(permittedAccountModes[0] === "e2ee" ? ["keyed"] : ["keyless"]);
+            expect(decision.actions.find((action) => action.id === "connect")?.enabled).toBe(true);
+            expect(decision.actions.find((action) => action.id === "login")?.enabled).toBe(true);
+        }
+        expect((await read({ ...selfService, enabledMethodIds: ["key_challenge"] })).actions
+            .every((action) => !action.enabled)).toBe(true);
+        for (const overrides of [
+            { HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "required_e2ee" },
+            { HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_ENABLED: "0" },
+            { HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_AUTO_PROVISION: "0" },
+            { HAPPIER_FEATURE_AUTH_OAUTH__KEYLESS_PROVIDERS: "github" },
+        ]) {
+            const decision = await read(selfService, overrides);
+            expect(decision.actions.find((action) => action.id === "provision" && action.mode === "keyed")?.enabled).toBe(true);
+            expect(decision.actions.find((action) => action.id === "provision" && action.mode === "keyless")?.enabled).toBe(false);
+        }
+    });
 
     it("applies the Home's permitted Account modes to a Team-provider admission", async () => {
         harness.resetEnv({

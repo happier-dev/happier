@@ -41,11 +41,11 @@ See also [Team lifecycle, policy, and branding](teams.md),
 | Managed OIDC outbound network policy | `apps/server/sources/app/auth/providers/managed/managedIdentityNetworkPolicy.ts` |
 | Home administration of managed providers | `apps/server/sources/app/home/governance/homeManagedIdentityProviders.ts` |
 | Which provider kinds a Team may use | `HomeGovernancePolicy.teamProviders` via `resolveTeamProviderKindPolicy` |
-| Team ↔ provider connection identity and lifecycle | `apps/server/sources/app/teams/identity/teamIdentityConnectionLifecycle.ts` |
+| Home/Team ↔ provider connection identity and lifecycle | `apps/server/sources/app/teams/identity/teamIdentityConnectionLifecycle.ts` |
 | Team identity administration authority | `apps/server/sources/app/teams/identity/teamIdentityAdministrationAuthority.ts` |
 | WorkOS platform credentials and client construction | `apps/server/sources/app/integrations/workos/workosPlatform.ts` |
 | WorkOS organization, Admin Portal, and SSO connection calls | `apps/server/sources/app/integrations/workos/workosAdministrationAdapter.ts` |
-| WorkOS Team administration flow | `apps/server/sources/app/teams/identity/teamWorkosAdministration.ts` |
+| Shared Home/Team WorkOS administration flow | `apps/server/sources/app/teams/identity/teamWorkosAdministration.ts` |
 | GitHub App registration and installation lifecycle | `apps/server/sources/app/integrations/github/githubManagedAppLifecycle.ts` |
 | Directory source lifecycle, cursors, and claims | `apps/server/sources/app/teams/directory/directorySourceService.ts` |
 | Directory projection writes and native activation | `apps/server/sources/app/teams/directory/directoryProjectionRepository.ts` |
@@ -108,8 +108,8 @@ Every catalog lookup returns an opaque `ProviderReference`: normalized id, sourc
 the fingerprint unchanged and compare it for equality; nobody parses it.
 
 The fingerprint covers security-relevant configuration — for managed OIDC it includes the
-effective network policy, and for a Team-bound provider it includes the exact Team connection
-revision. An OAuth attempt stores that reference in its `securityBinding` alongside the exact
+effective network policy, and for a connection-bound provider it includes the exact Home or
+Team connection revision. An OAuth attempt stores that reference in its `securityBinding` alongside the exact
 connection id and revision and the canonical purpose, and the same binding is carried
 unchanged through every pending variant. The binding's typed `admission` slot carries the exact
 Team-admission reference when the initiating flow requires one and remains null for flows that do
@@ -294,12 +294,27 @@ effect; a stale mode or mismatched admission reference returns the typed restart
 ## WorkOS
 
 The Home deployment owns the WorkOS platform credentials, `WORKOS_API_KEY` and
-`WORKOS_CLIENT_ID`. A Team never stores an API key; it stores exact WorkOS object references.
+`WORKOS_CLIENT_ID`. Home Administration · Sign-in platforms · WorkOS owns their setup;
+Sign-in providers owns the company connection. A Team never stores an API key; it stores
+exact WorkOS object references.
 Missing both credentials is `not_configured`, exactly one is `partial_configuration`, and an
 unusable pair is `invalid_configuration` — all surface as `workos_platform_unavailable`
 rather than a partially working integration.
 
-Setup is deliberately staged:
+Home company sign-in and Team sign-in use one connection lifecycle, administration service,
+and WorkOS runtime. A null `TeamIdentityConnection.teamId` is the Home scope and must bind a
+Home-owned provider (`IdentityProviderInstance.ownerTeamId` null); a non-null scope binds only
+the matching Team-owned provider. Home bindings cannot become Team directory sources.
+Home owners mutate the company binding, while Home administrators can read the connection
+facts permitted by the governance projection.
+
+> **AM-13 status:** Home company sign-in is only partially implemented. The scope migration
+> and policy/domain boundary work do not yet establish usable administration, OAuth, or UI
+> flows. The Home behavior below is the approved target; its implementation and validation
+> gates remain open.
+
+Setup is deliberately staged, with the same setup, Test, and Admin Portal presentation for
+both scopes:
 
 1. **Create the connection.** `createTeamWorkosConnection` requires Team
    `manageAuthentication`, Home policy allowing `workos_sso`, and an available platform. It is
@@ -326,6 +341,23 @@ At sign-in, the WorkOS OAuth adapter requires PKCE `S256`, authorizes against th
 `connection`, and validates the returned profile against **both** the expected organization and
 connection before it becomes identity evidence. The Profile id is the Account identity key.
 Roles, Groups, and domains carried in a WorkOS profile authorize nothing.
+
+Home company sign-in does not admit someone to a Team or grant a Home role. A fresh Account
+requires explicit Home `self_service` admission, the company provider being permitted, and the
+effective Account-mode policy and deployment locks. Keyed company signup does not depend on
+the separate anonymous-signup switch; Plain signup retains the OAuth keyless deployment
+ceilings. `closed` and `invitation_only` do not become JIT admission. Existing Accounts link
+through an explicit authenticated flow, never by matching an email address.
+
+Domain routing reads current verified domains from the exact bound WorkOS Organization and
+selects only its current connection. An unverified, ambiguous, stale, or unavailable routing
+result does not silently choose another provider. Test sign-in checks the current binding and
+profile without creating or linking an Account. Disablement stops new sign-ins without
+discarding existing identities, and removal retains the ordinary sole-login protections.
+
+SSO alone does not remove people who leave a company. Home directory synchronization,
+offboarding, IdP role grants, and Teams derived from groups are not part of Home company
+sign-in; Team directory behavior remains separately scoped.
 
 ## Managed OIDC
 

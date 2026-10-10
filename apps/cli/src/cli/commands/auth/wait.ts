@@ -4,6 +4,7 @@ import tweetnacl from 'tweetnacl';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol';
+import { ManagedEnrollmentCorrelationV1Schema, type ManagedEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 
 import { decodeBase64 } from '@/api/encryption';
 import { writeJsonStdout } from '@/cli/output/jsonEnvelope';
@@ -12,6 +13,7 @@ import type { StoredCredentials } from '@/persistence';
 import { applyServerSelectionFromArgs } from '@/server/serverSelection';
 import {
   persistTerminalEnrollmentCredential,
+  registerAndPersistManagedTerminalEnrollmentCredential,
   registerTerminalEnrollmentMachine,
 } from '@/auth/persistTerminalEnrollmentCredential';
 import {
@@ -29,6 +31,7 @@ import {
   verifyTerminalAuthEnrollmentRuntime,
 } from '@/auth/terminalAuthEnrollmentClient';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
+import { useServerProfile } from '@/server/serverProfiles';
 
 type PendingAuthState = Readonly<{
   publicKey: string;
@@ -41,6 +44,8 @@ type PendingAuthState = Readonly<{
   supportsTokenOnly: true;
   pairingRequirement: 'v3';
   homeConnectionDescriptor?: HomeConnectionDescriptorV1;
+  managedEnrollment?: ManagedEnrollmentCorrelationV1;
+  remoteProfileId?: string;
   createdAt: string;
 }>;
 
@@ -138,6 +143,15 @@ function parsePendingAuthState(raw: string): PendingAuthState {
   if (parsedDescriptor?.success && parsedDescriptor.data.homeServerIdentityId !== normalizedServerIdentityId) {
     throw new Error('Invalid auth state (homeConnectionDescriptor identity)');
   }
+  const managedEnrollment = parsed.managedEnrollment === undefined ? undefined
+    : ManagedEnrollmentCorrelationV1Schema.parse(parsed.managedEnrollment);
+  if (managedEnrollment && (!parsedDescriptor?.success || managedEnrollment.homeId !== normalizedServerIdentityId)) {
+    throw new Error('Invalid auth state (managed enrollment Home)');
+  }
+  const remoteProfileId = parsed.remoteProfileId;
+  if (remoteProfileId !== undefined && (typeof remoteProfileId !== 'string' || !remoteProfileId.trim())) {
+    throw new Error('Invalid auth state (remote profile)');
+  }
 
   if (typeof pairingSecret !== 'string' || !hasCanonicalEncodedLength(pairingSecret, 'base64url', 32)) {
     throw new Error('Invalid auth state (pairingSecret)');
@@ -165,6 +179,8 @@ function parsePendingAuthState(raw: string): PendingAuthState {
     supportsTokenOnly: true,
     pairingRequirement: 'v3',
     ...(parsedDescriptor?.success ? { homeConnectionDescriptor: parsedDescriptor.data } : {}),
+    ...(managedEnrollment ? { managedEnrollment } : {}),
+    ...(typeof remoteProfileId === 'string' ? { remoteProfileId } : {}),
   };
 }
 
@@ -221,6 +237,10 @@ export async function handleAuthWait(argsRaw: string[], signal?: AbortSignal): P
     statePath,
     PENDING_AUTH_STATE_PROTECTION,
   ));
+  const remoteEnrollment = args.includes('--remote-enrollment');
+  if (remoteEnrollment && (!state.remoteProfileId || state.remoteProfileId !== configuration.activeServerId)) {
+    throw new Error('Remote enrollment requires its exact prepared Home profile.');
+  }
   const pairing = {
     secret: decodeBase64(state.pairingSecret, 'base64url'),
     createdAtMs: state.pairingCreatedAtMs,
@@ -306,16 +326,35 @@ export async function handleAuthWait(argsRaw: string[], signal?: AbortSignal): P
         process.exit(1);
       }
 
-      const persisted = await persistTerminalEnrollmentCredential({ token, opened });
-      const machineId = await completeClaimedCredentialHandoff({
-        credentials: persisted.credentials,
-        statePath,
-        runtimeOrigin: acquired.runtime.runtimeOrigin,
-      });
+      signal?.throwIfAborted();
+      let machineId: string;
+      if (state.managedEnrollment) {
+        // The normal server registration atomically validates the retained
+        // admission and links this machine. Never persist its Account bearer
+        // when the managed row was canceled, replaced or otherwise retired.
+        await removeProtectedLocalStateFile(statePath, PENDING_AUTH_STATE_PROTECTION);
+        ({ machineId } = await registerAndPersistManagedTerminalEnrollmentCredential({ token, opened,
+          runtimeOrigin: acquired.runtime.runtimeOrigin, managedEnrollment: state.managedEnrollment,
+          assertCurrent: () => signal?.throwIfAborted() }));
+      } else {
+        const persisted = await persistTerminalEnrollmentCredential({ token, opened });
+        machineId = await completeClaimedCredentialHandoff({
+          credentials: persisted.credentials, statePath, runtimeOrigin: acquired.runtime.runtimeOrigin,
+        });
+      }
+      if (remoteEnrollment) {
+        signal?.throwIfAborted();
+        await useServerProfile(state.remoteProfileId!);
+        signal?.throwIfAborted();
+        await writeJsonStdout({ kind: 'remote_home_enrollment_result', protocolVersion: 1,
+          success: true, homeServerIdentityId: state.serverIdentityId, machineId,
+          encryptionType: opened.type, pairingAuthentication: 'v3', remoteProfileId: state.remoteProfileId });
+        return;
+      }
       await writeJsonStdout({
         success: true,
         token,
-        encryptionType: persisted.encryptionType,
+        encryptionType: opened.type,
         pairingAuthentication: 'v3' as const,
         machineId,
       });

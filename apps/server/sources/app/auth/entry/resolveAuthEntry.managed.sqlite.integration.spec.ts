@@ -1,10 +1,16 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { encryptString } from "@/modules/encrypt";
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
 import { resolveAuthEntry } from "./resolveAuthEntry";
+
+const workosBoundary = vi.hoisted(() => ({ getOrganization: vi.fn() }));
+// WorkOS is the network/SDK boundary. Catalog, policy, binding and routing remain real.
+vi.mock("@workos-inc/node", () => ({ WorkOS: class {
+    organizations = { getOrganization: workosBoundary.getOrganization };
+} }));
 
 const managedOidcConfig = {
     v: 1,
@@ -34,8 +40,82 @@ describe("resolveAuthEntry managed Home providers (SQLite integration)", () => {
     }, 180_000);
 
     afterEach(async () => {
+        workosBoundary.getOrganization.mockReset();
+        await db.teamIdentityConnection.deleteMany({});
         await db.identityProviderInstance.deleteMany({});
         await db.homeGovernancePolicy.deleteMany({});
+    });
+
+    async function createHomeWorkos(name: string) {
+        const provider = await db.identityProviderInstance.create({ data: {
+            kind: "workos_sso", displayName: name, enabled: true, firstEnabledAt: new Date(),
+            config: { v: 1, kind: "workos_sso" },
+        } });
+        const connection = await db.teamIdentityConnection.create({ data: {
+            teamId: null, providerInstanceId: provider.id, enabled: true, firstEnabledAt: new Date(),
+            externalReference: { v: 1, kind: "workos_sso", organizationId: `org_${provider.id}`, connectionId: `conn_${provider.id}` },
+            settings: { v: 1, kind: "workos_sso" },
+            lastObservation: { v: 1, kind: "workos_sso", presentation: {
+                displayName: name, strategy: "SAML", status: "active", lastCheckedAt: "2026-10-09T00:00:00.000Z",
+            }, successfulTest: null },
+        } });
+        return { provider, connection, organizationId: `org_${provider.id}` };
+    }
+
+    const workosEnv = {
+        HAPPIER_PUBLIC_SERVER_URL: "https://home.example.test", WORKOS_API_KEY: "sk_test", WORKOS_CLIENT_ID: "client_test",
+    };
+    const routeByEmail = (email: string) => resolveAuthEntry({
+        v: 1, scope: { kind: "home" }, email,
+    }, { env: workosEnv, principal: { accountId: "existing-account" }, emailDeliveryReady: false });
+
+    it("routes only a unique live verified domain to its exact Home connection and keeps ambiguity explicit", async () => {
+        const first = await createHomeWorkos("First company");
+        const second = await createHomeWorkos("Second company");
+        workosBoundary.getOrganization.mockImplementation(async (id: string) => ({
+            id, name: "Company", domains: [{
+                organizationId: id, domain: id === first.organizationId ? "acme.example" : "other.example", state: "verified",
+            }],
+        }));
+        const normal = await resolveAuthEntry({ v: 1, scope: { kind: "home" } }, {
+            env: workosEnv, principal: { accountId: "existing-account" }, emailDeliveryReady: false,
+        });
+        expect(normal.state).toBe("ready");
+        expect(workosBoundary.getOrganization).not.toHaveBeenCalled();
+        const unique = await routeByEmail("Person@ACME.EXAMPLE");
+        expect(unique.state).toBe("ready");
+        if (unique.state !== "ready") throw new Error("expected domain choice");
+        expect([...new Set(unique.actions.map((action) => action.methodId))]).toEqual([first.provider.id]);
+        expect(unique.actions[0]?.presentation.displayName).toBe("First company");
+        workosBoundary.getOrganization.mockImplementation(async (id: string) => ({
+            id, name: "Company", domains: [{ organizationId: id, domain: "acme.example", state: "verified" }],
+        }));
+        const ambiguous = await routeByEmail("person@acme.example");
+        expect(ambiguous.state).toBe("ready");
+        if (ambiguous.state !== "ready") throw new Error("expected explicit choices");
+        expect(new Set(ambiguous.actions.map((action) => action.methodId))).toEqual(new Set([first.provider.id, second.provider.id]));
+        expect(ambiguous.autoRedirect).toBeNull();
+    });
+
+    it("fails routing closed for an unverified domain, wrong organization, SDK failure or changed binding", async () => {
+        const target = await createHomeWorkos("Company");
+        workosBoundary.getOrganization.mockResolvedValue({
+            id: target.organizationId, name: "Company", domains: [{
+                organizationId: target.organizationId, domain: "acme.example", state: "pending",
+            }],
+        });
+        expect(await routeByEmail("person@acme.example")).toMatchObject({ state: "unavailable", autoRedirect: null });
+        workosBoundary.getOrganization.mockResolvedValue({ id: "org_other", name: "Other", domains: [] });
+        expect(await routeByEmail("person@acme.example")).toMatchObject({ state: "unavailable", autoRedirect: null });
+        workosBoundary.getOrganization.mockRejectedValue(new Error("upstream unavailable"));
+        expect(await routeByEmail("person@acme.example")).toMatchObject({ state: "unavailable", autoRedirect: null });
+        workosBoundary.getOrganization.mockImplementation(async () => {
+            await db.teamIdentityConnection.update({ where: { id: target.connection.id }, data: { revision: { increment: 1 } } });
+            return { id: target.organizationId, name: "Company", domains: [{
+                organizationId: target.organizationId, domain: "acme.example", state: "verified",
+            }] };
+        });
+        expect(await routeByEmail("person@acme.example")).toMatchObject({ state: "unavailable", autoRedirect: null });
     });
 
     afterAll(async () => {

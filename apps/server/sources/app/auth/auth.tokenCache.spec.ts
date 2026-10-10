@@ -2,13 +2,17 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { applyEnvValues, restoreEnv, snapshotEnv } from "@/testkit/env";
 
 const dbAccountFindUniqueMock = vi.hoisted(() => vi.fn());
-vi.mock("@/storage/db", () => ({
-    db: {
+vi.mock("@/storage/db", async () => {
+    const { createDbTransactionMock } = await import("@/app/api/testkit/dbMocks");
+    // Only persistent database IO is replaced; auth and inTx retain their real logic.
+    const boundary = {
         account: {
             findUnique: (...args: unknown[]) => dbAccountFindUniqueMock(...args),
         },
-    },
-}));
+    };
+    const { wrapDb } = createDbTransactionMock(() => boundary);
+    return { db: wrapDb(boundary) };
+});
 
 const envBackup = snapshotEnv();
 

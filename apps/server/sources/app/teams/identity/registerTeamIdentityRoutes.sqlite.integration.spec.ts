@@ -547,6 +547,7 @@ describe("Team identity WorkOS routes", () => {
             providerSecurityRevision: 1,
             connectionRevision: 1,
             platformRuntimeFingerprint: platform.runtimeFingerprint,
+            externalReference: { organizationId: "org_exact", connectionId: "workos_connection_exact" },
         });
         await db.teamIdentityConnection.create({
             data: {

@@ -2,6 +2,7 @@ import {
   parseHomeTargetInput,
   type HomeTargetInput,
 } from '@happier-dev/cli-common/homeTarget';
+import { ManagedEnrollmentCorrelationV1Schema, type ManagedEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 
 import { runRemoteTerminalEnrollment } from '@/auth/remoteTerminalEnrollment';
 import { writeJsonStdout } from '@/cli/output/jsonEnvelope';
@@ -12,6 +13,7 @@ import {
   upsertServerProfileByUrl,
   useServerProfile,
 } from '@/server/serverProfiles';
+import type { Readable } from 'node:stream';
 
 const MAX_HOME_TARGET_STDIN_BYTES = 64 * 1024;
 const DEFAULT_REMOTE_ENROLLMENT_TIMEOUT_MS = 10 * 60_000;
@@ -22,12 +24,13 @@ type EnrollRemoteDeps = Readonly<{
   runEnrollment: typeof runRemoteTerminalEnrollment;
   useHomeProfile: typeof useServerProfile;
   writeOutput: typeof writeJsonStdout;
+  readManagedEnrollmentInput: () => Promise<Readonly<{ homeTarget: HomeTargetInput; managedEnrollment: ManagedEnrollmentCorrelationV1 }>>;
 }>;
 
-async function readBoundedStdin(): Promise<string> {
+async function readBoundedStdin(input: Readable = process.stdin): Promise<string> {
   const chunks: Buffer[] = [];
   let bytes = 0;
-  for await (const chunk of process.stdin) {
+  for await (const chunk of input) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     bytes += buffer.length;
     if (bytes > MAX_HOME_TARGET_STDIN_BYTES) {
@@ -38,8 +41,8 @@ async function readBoundedStdin(): Promise<string> {
   return Buffer.concat(chunks).toString('utf8');
 }
 
-async function readHomeTargetInputFromStdin(): Promise<HomeTargetInput> {
-  const rawInput = await readBoundedStdin();
+export async function readHomeTargetInputFromStdin(input?: Readable): Promise<HomeTargetInput> {
+  const rawInput = await readBoundedStdin(input);
   let parsedInput: unknown;
   try {
     parsedInput = JSON.parse(rawInput);
@@ -47,6 +50,22 @@ async function readHomeTargetInputFromStdin(): Promise<HomeTargetInput> {
     throw new Error('Home target input is not valid JSON.');
   }
   return parseHomeTargetInput(parsedInput);
+}
+
+export async function readManagedEnrollmentInputFromStdin(input?: Readable): Promise<Readonly<{
+  homeTarget: HomeTargetInput;
+  managedEnrollment: ManagedEnrollmentCorrelationV1;
+}>> {
+  const value: unknown = JSON.parse(await readBoundedStdin(input));
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || Object.keys(value).some((key) => key !== 'homeTarget' && key !== 'managedEnrollment')) {
+    throw new Error('Invalid managed enrollment input.');
+  }
+  const envelope = value as Record<string, unknown>;
+  return {
+    homeTarget: parseHomeTargetInput(envelope.homeTarget),
+    managedEnrollment: ManagedEnrollmentCorrelationV1Schema.parse(envelope.managedEnrollment),
+  };
 }
 
 function parseTimeoutMs(args: readonly string[]): number {
@@ -92,7 +111,7 @@ export async function prepareRemoteEnrollmentHomeTarget(input: HomeTargetInput):
   return { profileId: profile.id, target };
 }
 
-/** Internal SSH automation command. Public split request/wait remains compatibility-only. */
+/** Internal SSH automation command; buffered native IO uses normal request/wait. */
 export async function handleAuthEnrollRemote(
   args: string[],
   parentSignal?: AbortSignal,
@@ -101,7 +120,7 @@ export async function handleAuthEnrollRemote(
   if (!args.includes('--json-lines') || !args.includes('--home-target-stdin')) {
     throw new Error('auth enroll-remote requires --json-lines --home-target-stdin.');
   }
-  const allowed = new Set(['--json-lines', '--home-target-stdin', '--wait-timeout-ms']);
+  const allowed = new Set(['--json-lines', '--home-target-stdin', '--wait-timeout-ms', '--managed-enrollment-stdin']);
   const timeoutIndex = args.indexOf('--wait-timeout-ms');
   const unexpected = args.filter((arg, index) => {
     if (index === timeoutIndex + 1) return false;
@@ -117,6 +136,7 @@ export async function handleAuthEnrollRemote(
     runEnrollment: runRemoteTerminalEnrollment,
     useHomeProfile: useServerProfile,
     writeOutput: writeJsonStdout,
+    readManagedEnrollmentInput: readManagedEnrollmentInputFromStdin,
     ...dependencies,
   };
   const controller = new AbortController();
@@ -128,7 +148,8 @@ export async function handleAuthEnrollRemote(
   process.once('SIGTERM', onSignal);
   try {
     signal.throwIfAborted();
-    const input = await deps.readHomeTargetInput();
+    const managed = args.includes('--managed-enrollment-stdin') ? await deps.readManagedEnrollmentInput() : undefined;
+    const input = managed?.homeTarget ?? await deps.readHomeTargetInput();
     signal.throwIfAborted();
     const prepared = await deps.prepareHomeTarget(input);
     signal.throwIfAborted();
@@ -136,6 +157,7 @@ export async function handleAuthEnrollRemote(
       target: prepared.target,
       signal,
       timeoutMs,
+      ...(managed ? { managedEnrollment: managed.managedEnrollment } : {}),
       onPairingRequest: async (request) => {
         await deps.writeOutput({
           kind: 'remote_home_enrollment_pairing_request',

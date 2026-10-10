@@ -69,6 +69,7 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
     'HAPPIER_NO_BROWSER_OPEN',
     'HAPPIER_AUTH_METHOD',
     'HAPPIER_AUTH_POLL_INTERVAL_MS',
+    'HAPPIER_LOG_LEVEL',
     'HAPPIER_SERVER_URL',
     'HAPPIER_PUBLIC_SERVER_URL',
     'HAPPIER_WEBAPP_URL',
@@ -83,6 +84,10 @@ describe('auth pairing commands (request/approve/wait) (json)', () => {
   beforeEach(async () => {
     vi.useRealTimers();
     envScope = createEnvKeyScope(envKeys);
+    // These in-process homes are removed while logger instances survive module
+    // resets. Keep console diagnostics, but avoid queued file writes recreating
+    // the homes during teardown; file logging has its own owner-level tests.
+    envScope.patch({ HAPPIER_LOG_LEVEL: 'silent' });
     remoteHomeDir = await createTempDir('happier-cli-auth-remote-');
     localHomeDir = await createTempDir('happier-cli-auth-local-');
     restoreTty = setStdioTtyForTest({ stdin: false, stdout: false });

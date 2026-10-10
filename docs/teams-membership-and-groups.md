@@ -66,6 +66,31 @@ services. Nothing else writes `TeamMembership`, `TeamGroupMembership`, or a cont
 belongs to an invitation; `disabled` is the Home Account lifecycle's separate meaning; and
 decryptability is a key-delivery projection, never a membership state.
 
+### Self-removal
+
+`teams.members.leave` accepts only `{ v: 1, teamId }`. The shared
+`removeTeamMemberForActorInTx` transaction resolves the acting Account's own lifetime
+and performs the same access reconciliation, credential revocation, cascades and
+Team AccountChange publication as manager removal. No membership status or second
+removal writer is introduced.
+
+`resolveTeamLeaveDecision` supplies both the `TeamCapabilitiesV1.leave` projection
+and transaction admission. An active Account may end its own active or suspended
+native membership without manager authority. Directory-owned lifetimes return
+`managed_by_directory`; the final structurally active owner of an unarchived Team
+receives `team_owner_transfer_required`. An archived Team may be left after its
+resource access has stopped. Team credential qualification still applies.
+
+Both manager removal and leave write the typed `teams.members.remove` detail through
+the existing Home audit writer in the removal transaction, targeting the subject
+Account. Its summary names the Team and ended lifetime; leave has actor = subject.
+No-op retries write no event. Session Agent and CLI exposure, dangerous approval
+policy and MCP=false come from the same Home-family Action row owner as remove.
+
+The own Members entry and non-manager Overview share one confirmation and deferred
+approval continuation. Successful immediate or approved execution refreshes the
+exact Home's Team and member directories before returning to Settings → Teams.
+
 ### Structural effective membership
 
 One predicate, consumed rather than rebuilt:

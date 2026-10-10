@@ -128,9 +128,15 @@ They are encrypted with your `HANDY_MASTER_SECRET`. Two things follow:
 
 ## WorkOS
 
-WorkOS is the option for "our customers each use a different SAML IdP and we do not want to
-configure each one." Your deployment holds the WorkOS platform credentials; each Team holds
-only references to exact WorkOS objects.
+WorkOS connects a company's identity system to Happier. Home-level company sign-in is
+being implemented; on a Home shared by several companies, each customer
+keeps its connection scoped to its Team. The Home holds the WorkOS platform credentials;
+each Home or Team connection holds only references to exact WorkOS objects.
+
+In **Home administration → Sign-in providers → Sign-in platforms**, open **WorkOS**
+to save its client ID and API key. These values apply after a server restart. A value
+explicitly supplied by the deployment remains locked. You can also supply both values
+through the server environment:
 
 ```bash
 WORKOS_API_KEY=sk_...
@@ -141,6 +147,37 @@ Set both or neither. With exactly one set, or with a pair WorkOS rejects, every 
 reports the platform as unavailable rather than half working. Changing either value
 invalidates OAuth attempts already in flight against the old configuration; those users see a
 restart prompt rather than a partially applied sign-in.
+
+### Company sign-in for a Home
+
+> **Not available yet.** AM-13 implementation and validation are incomplete. These
+> are the approved Home company sign-in semantics, not a shipped or usable flow.
+
+A Home owner will add a company connection in **Sign-in providers → Identity providers**.
+Finish setup in the Admin Portal, select the exact connection, run **Test sign-in** and
+turn it on. These steps share the Team setup flow described below. The test creates no
+Account or linked identity and grants no role or membership. Members see the company's
+name, rather than WorkOS branding, on the sign-in surface.
+
+Company signup follows **Policies**: it requires explicit **Self-service** admission,
+permission to use that provider and an allowed Account type, within deployment controls.
+Enabling SSO does not widen **Closed** or **Invitation only** admission. Company signup
+with an encryption key is independent of anonymous key-only signup; Plain signup still
+requires the Home's keyless OAuth configuration to permit it.
+
+Existing Accounts can link the company identity explicitly. Happier identifies it by
+the immutable provider instance and the WorkOS subject, never by matching email addresses.
+Domain routing uses currently verified WorkOS Organization domains to select an exact
+bound connection. Unverified or ambiguous domains fail safely; they never select the
+first matching company.
+
+SSO alone does not remove people who leave a company, invalidate their existing Happier
+credentials or grant Home roles and Team access. Home directory sync is not included;
+directory provisioning remains scoped to a Team. Turning SSO off retains Accounts and
+identities. Removal is refused when it would leave an Account without a usable sign-in
+method, and it does not delete the Account or native Team membership.
+
+### Company sign-in for a Team
 
 Setup runs in three steps, and each one is separately visible in the Team's **Sign-in
 connections**:

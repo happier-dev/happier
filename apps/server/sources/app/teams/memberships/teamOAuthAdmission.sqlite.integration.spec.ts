@@ -45,12 +45,24 @@ describe("team OAuth admission continuation", () => {
 
     afterAll(async () => await harness.close());
 
-    it("requires an existing Account invitation to remain current without consuming it", async () => {
+    it.each(["builtin", "home_company"] as const)("requires an existing Account invitation through %s to remain current without consuming it", async (method) => {
         harness.resetEnv({
             HAPPIER_PUBLIC_SERVER_URL: "https://home.example.test",
             AUTH_SIGNUP_PROVIDERS: "github",
+            WORKOS_API_KEY: "sk_test",
+            WORKOS_CLIENT_ID: "client_test",
         });
-        const provider = await resolveOAuthRuntimeById(process.env, "github");
+        const company = method === "home_company" ? await db.identityProviderInstance.create({ data: {
+            ownerTeamId: null, kind: "workos_sso", displayName: "Company Home", enabled: true,
+            firstEnabledAt: new Date(), config: { v: 1, kind: "workos_sso" },
+        } }) : null;
+        const connection = company ? await db.teamIdentityConnection.create({ data: {
+            teamId: null, providerInstanceId: company.id, enabled: true,
+            externalReference: { v: 1, kind: "workos_sso", organizationId: "org_home", connectionId: "conn_home" },
+            settings: { v: 1, kind: "workos_sso" },
+        } }) : null;
+        const providerId = company?.id ?? "github";
+        const provider = await resolveOAuthRuntimeById(process.env, providerId);
         expect(provider?.reference.context).toEqual({ kind: "home" });
         const account = await db.account.create({
             data: { publicKey: crypto.randomUUID(), encryptionMode: "plain" },
@@ -58,7 +70,7 @@ describe("team OAuth admission continuation", () => {
         await db.accountIdentity.create({
             data: {
                 accountId: account.id,
-                provider: "github",
+                provider: providerId,
                 providerUserId: "existing-invitation-user",
                 providerLogin: "existing-invitation-user",
                 profile: { id: 7100, login: "existing-invitation-user" },
@@ -81,7 +93,7 @@ describe("team OAuth admission continuation", () => {
         const admission = {
             kind: "team_invitation" as const,
             teamId: team.id,
-            providerId: "github",
+            providerId,
             providerOrigin: "home" as const,
             connectionId: null,
             connectionRevision: null,
@@ -90,16 +102,18 @@ describe("team OAuth admission continuation", () => {
             tokenHash: Buffer.from(tokenHash).toString("hex"),
         };
 
-        await expect(inTx((tx) => requireTeamOAuthAdmissionInTx(tx, {
+        const result = await inTx((tx) => requireTeamOAuthAdmissionInTx(tx, {
             env: process.env,
             accountId: account.id,
             provider: provider!.reference,
-            connection: null,
+            connection: connection ? { id: connection.id, revision: connection.revision } : null,
             admission,
-        }))).resolves.toEqual({
-            authenticationEvidence: [expect.objectContaining({ kind: "provider", providerId: "github" })],
+        }));
+        expect(result).toEqual({
+            authenticationEvidence: [expect.objectContaining({ kind: "provider", providerId })],
             invitationRequired: true,
         });
+        expect(result.authenticationEvidence[0]).not.toHaveProperty("teamConnectionId");
         expect(await db.teamMembership.findUnique({
             where: { teamId_accountId: { teamId: team.id, accountId: account.id } },
         })).toBeNull();
@@ -114,7 +128,7 @@ describe("team OAuth admission continuation", () => {
             env: process.env,
             accountId: account.id,
             provider: provider!.reference,
-            connection: null,
+            connection: connection ? { id: connection.id, revision: connection.revision } : null,
             admission,
         }))).rejects.toMatchObject({ code: "team_authentication_required" });
         expect(await db.teamMembership.findUnique({

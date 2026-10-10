@@ -17,8 +17,6 @@ import { inTx } from "@/storage/inTx";
 
 import type { Fastify } from "../../types";
 
-const SETTINGS_RATE_LIMIT = { rateLimit: resolveApiHotEndpointRateLimit(process.env, "account.settings") };
-
 const ERROR_RESPONSES = {
     400: HomeGovernanceErrorV1Schema,
     403: HomeGovernanceErrorV1Schema,
@@ -34,6 +32,7 @@ const FORBIDDEN_STATUS = homeGovernanceErrorHttpStatusV1("home_governance_forbid
  * The addresses themselves are Home settings written through `home.settings.set`.
  */
 export function registerHomeReachabilityRoutes(app: Fastify): void {
+    const SETTINGS_RATE_LIMIT = { rateLimit: resolveApiHotEndpointRateLimit(process.env, "account.settings") };
     app.post(
         homeDomainActionPathForMethod("home.reachability.get", "POST"),
         {
@@ -49,10 +48,10 @@ export function registerHomeReachabilityRoutes(app: Fastify): void {
                 request: { operation: "view" },
             })).status !== "rejected");
             if (!admitted) return await reply.code(FORBIDDEN_STATUS).send({ error: "home_governance_forbidden" as const });
-            // The console may wait for a fresh inference; request paths only ever peek at it. It runs
-            // before the overlay is built so the overlay sees the address it just inferred.
-            const access = await resolveInferredPublicServerAccess(process.env).catch(() => null);
-            const env = await readRequestHomeEnv(request);
+            // Authentication may already have captured the settings. Reach waits for inference,
+            // then updates only that read-only source through the same request/precedence owner.
+            const access = await resolveInferredPublicServerAccess(await readRequestHomeEnv(request)).catch(() => null);
+            const env = await readRequestHomeEnv(request, { inferred: access?.inferred ? { HAPPIER_PUBLIC_SERVER_URL: access.inferred.url } : {} });
             return await reply.send(await readHomeReachability({ env, access }));
         },
     );

@@ -47,6 +47,7 @@ export function resolveTeamMembershipCredentialCapabilities(input: MembershipCap
 
 const NONE: TeamMembershipCapabilities = {
     viewTeam: false,
+    viewRoster: false,
     manageSettings: false,
     managePolicy: false,
     manageMembers: false,
@@ -56,6 +57,7 @@ const NONE: TeamMembershipCapabilities = {
     manageOwners: false,
     archiveTeam: false,
     restoreTeam: false,
+    leave: false,
 };
 
 /**
@@ -84,6 +86,7 @@ export function resolveTeamMembershipCapabilities(
 
     return {
         viewTeam: true,
+        viewRoster: true,
         manageSettings: administersTeam,
         managePolicy: administersTeam,
         manageMembers: administersTeam,
@@ -93,6 +96,7 @@ export function resolveTeamMembershipCapabilities(
         manageOwners: input.role === TeamRole.owner && !archived,
         archiveTeam: administersTeam,
         restoreTeam: manages && archived,
+        leave: false,
     };
 }
 
@@ -172,6 +176,35 @@ export function isStructurallyActiveOwner(
     return target.role === TeamRole.owner
         && target.status === TeamMembershipStatus.active
         && target.accountStatus === AccountStatus.active;
+}
+
+/** One self-removal decision for both the capability projection and its transaction. */
+export function resolveTeamLeaveDecision(input: Readonly<{
+    accountStatus: AccountStatus;
+    membership: Readonly<{
+        role: TeamRole;
+        status: TeamMembershipStatus;
+        managedExternally?: boolean;
+    }> | null;
+    activeOwnerCount?: number;
+    teamArchivedAt: Date | null;
+}>): Readonly<{ permitted: true }> | Readonly<{
+    permitted: false;
+    error: "team_forbidden" | "managed_by_directory" | "team_owner_transfer_required";
+}> {
+    if (input.accountStatus !== AccountStatus.active || !input.membership) {
+        return { permitted: false, error: "team_forbidden" };
+    }
+    // Missing source/count evidence cannot advertise or admit self-removal.
+    if (input.membership.managedExternally !== false) {
+        return { permitted: false, error: "managed_by_directory" };
+    }
+    if (input.teamArchivedAt === null
+        && isStructurallyActiveOwner({ ...input.membership, accountStatus: input.accountStatus })
+        && (input.activeOwnerCount === undefined || input.activeOwnerCount <= 1)) {
+        return { permitted: false, error: "team_owner_transfer_required" };
+    }
+    return { permitted: true };
 }
 
 /**

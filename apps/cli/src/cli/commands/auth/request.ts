@@ -22,6 +22,8 @@ import {
   verifyTerminalAuthEnrollmentRuntime,
 } from '@/auth/terminalAuthEnrollmentClient';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
+import type { Readable } from 'node:stream';
+import { prepareRemoteEnrollmentHomeTarget, readHomeTargetInputFromStdin, readManagedEnrollmentInputFromStdin } from './enrollRemote';
 
 const PENDING_AUTH_STATE_PROTECTION = { authority: 'owned' } as const;
 
@@ -38,18 +40,31 @@ function pendingAuthStatePath(publicKey: Uint8Array): string {
   return join(pendingAuthStateDir(), `${publicKeyHex}.json`);
 }
 
-export async function handleAuthRequest(args: string[], signal?: AbortSignal): Promise<void> {
+export async function handleAuthRequest(args: string[], signal?: AbortSignal, input: Readable = process.stdin): Promise<void> {
   signal?.throwIfAborted();
   args = await applyServerSelectionFromArgs(args);
 
   const json = args.includes('--json');
   const remotePairingContextOnly = args.includes('--remote-pairing-context');
+  const remoteEnrollment = args.includes('--remote-enrollment');
   if (!json) {
     console.error('Missing required flag: --json');
     process.exit(2);
   }
 
-  const selectedTarget = await resolveCurrentCliHomeTarget();
+  if (args.includes('--managed-enrollment-stdin') && (!remoteEnrollment || !args.includes('--home-target-stdin'))) {
+    throw new Error('Managed enrollment requires protected remote Home input.');
+  }
+  if (remoteEnrollment && !args.includes('--home-target-stdin')) throw new Error('Remote enrollment requires --home-target-stdin.');
+  const managed = remoteEnrollment && args.includes('--managed-enrollment-stdin')
+    ? await readManagedEnrollmentInputFromStdin(input) : undefined;
+  const homeInput = remoteEnrollment ? managed?.homeTarget ?? await readHomeTargetInputFromStdin(input) : undefined;
+  if (managed && (homeInput?.kind !== 'descriptor' || homeInput.descriptor.homeServerIdentityId !== managed.managedEnrollment.homeId)) {
+    throw new Error('Managed enrollment does not match the selected Home.');
+  }
+  signal?.throwIfAborted();
+  const prepared = homeInput ? await prepareRemoteEnrollmentHomeTarget(homeInput) : undefined;
+  const selectedTarget = prepared?.target ?? await resolveCurrentCliHomeTarget();
   const target = selectedTarget.descriptor
     ? selectedTarget
     : await resolveCliHomeTarget({ kind: 'https_url', url: configuration.apiServerUrl });
@@ -99,6 +114,8 @@ export async function handleAuthRequest(args: string[], signal?: AbortSignal): P
           supportsTokenOnly: true,
           pairingRequirement: 'v3',
           ...(target.descriptor ? { homeConnectionDescriptor: target.descriptor } : {}),
+          ...(managed ? { managedEnrollment: managed.managedEnrollment } : {}),
+          ...(prepared ? { remoteProfileId: prepared.profileId } : {}),
           createdAt: new Date().toISOString(),
         },
         null,
@@ -149,6 +166,14 @@ export async function handleAuthRequest(args: string[], signal?: AbortSignal): P
       webappUrl: configuration.webappUrl,
     } as const;
 
+    if (remoteEnrollment) {
+      signal?.throwIfAborted();
+      await writeJsonStdout({ kind: 'remote_home_enrollment_pairing_request', protocolVersion: 1,
+        publicKey: publicKeyB64, homeServerIdentityId: serverIdentityId,
+        pairing: remotePairingContext.pairing, supportsTokenOnly: true, pairingRequirement: 'v3',
+        remoteProfileId: prepared!.profileId });
+      return;
+    }
     if (remotePairingContextOnly) {
       await writeJsonStdout(remotePairingContext);
       return;

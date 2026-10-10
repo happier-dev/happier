@@ -151,15 +151,15 @@ describe("Team directory routes", () => {
         const team = await db.team.create({ data: { name: `Mapping route ${crypto.randomUUID()}` } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: "owner" } });
         const provider = await db.identityProviderInstance.create({
-            data: { ownerTeamId: team.id, kind: "workos_sso", displayName: "WorkOS", config: { v: 1, kind: "workos_sso" } },
+            data: { ownerTeamId: team.id, kind: "workos_sso", displayName: "WorkOS", enabled: true, config: { v: 1, kind: "workos_sso" } },
         });
         const connection = await db.teamIdentityConnection.create({
             data: {
                 teamId: team.id,
                 providerInstanceId: provider.id,
                 enabled: true,
-                externalReference: { v: 1 },
-                settings: { v: 1 },
+                externalReference: { v: 1, kind: "workos_sso", organizationId: "org_mapping", connectionId: null },
+                settings: { v: 1, kind: "workos_sso" },
             },
         });
         const source = await db.teamDirectorySource.create({
@@ -169,7 +169,7 @@ describe("Team directory routes", () => {
                 state: "active",
                 displayName: "Directory",
                 externalSourceKey: `workos:${crypto.randomUUID()}`,
-                bindingConfig: { v: 1, kind: "workos_directory" },
+                bindingConfig: { v: 1, kind: "workos_directory", workosDirectoryId: "directory_mapping" },
                 teamIdentityConnectionId: connection.id,
             },
         });
@@ -233,14 +233,14 @@ describe("Team directory routes", () => {
         });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: "owner" } });
         const provider = await db.identityProviderInstance.create({
-            data: { ownerTeamId: team.id, kind: "workos_sso", displayName: "WorkOS", config: { v: 1, kind: "workos_sso" } },
+            data: { ownerTeamId: team.id, kind: "workos_sso", displayName: "WorkOS", enabled: true, config: { v: 1, kind: "workos_sso" } },
         });
         const connection = await db.teamIdentityConnection.create({
             data: {
                 teamId: team.id,
                 providerInstanceId: provider.id,
-                externalReference: { v: 1 },
-                settings: { v: 1 },
+                externalReference: { v: 1, kind: "workos_sso", organizationId: "org_restricted", connectionId: null },
+                settings: { v: 1, kind: "workos_sso" },
             },
         });
         const source = await db.teamDirectorySource.create({

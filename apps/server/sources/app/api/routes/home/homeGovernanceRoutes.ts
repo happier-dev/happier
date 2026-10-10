@@ -48,9 +48,6 @@ import type { Fastify } from "../../types";
 import { registerHomeManagedIdentityProviderRoutes } from "./homeManagedIdentityProviderRoutes";
 import { readRequestHomeEnv } from "@/app/home/settings/requestHomeEnv";
 
-const GOVERNANCE_RATE_LIMIT = { rateLimit: resolveApiHotEndpointRateLimit(process.env, "account.settings") };
-const CLAIM_RATE_LIMIT = { rateLimit: resolveApiHotEndpointRateLimit(process.env, "home.governance.claim") };
-
 const ERROR_RESPONSES = {
     400: HomeGovernanceErrorV1Schema,
     403: HomeGovernanceErrorV1Schema,
@@ -69,6 +66,8 @@ const ERROR_RESPONSES = {
  * produced.
  */
 export function homeGovernanceRoutes(app: Fastify): void {
+    const GOVERNANCE_RATE_LIMIT = { rateLimit: resolveApiHotEndpointRateLimit(process.env, "account.settings") };
+    const CLAIM_RATE_LIMIT = { rateLimit: resolveApiHotEndpointRateLimit(process.env, "home.governance.claim") };
     registerHomeManagedIdentityProviderRoutes(app);
     // Keep the governance projection on the same resolved feature decision as
     // the Team route gate. Reading the raw env here would bypass build-policy
@@ -371,7 +370,7 @@ export function homeGovernanceRoutes(app: Fastify): void {
             }
             switch (result.code) {
                 case "account_erasure_managed_resources_review_required":
-                    return await reply.code(409).send({ error: result.code, resources: result.resources });
+                    return await reply.code(409).send({ error: result.code, resources: [...result.resources] });
                 case "home_governance_forbidden":
                 case "home_account_not_found":
                 case "home_owner_transfer_required":

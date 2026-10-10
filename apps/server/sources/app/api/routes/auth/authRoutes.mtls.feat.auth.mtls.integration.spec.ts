@@ -49,6 +49,7 @@ describe("authRoutes (mTLS) (integration)", () => {
         await db.team.deleteMany().catch(() => {});
         await db.repeatKey.deleteMany().catch(() => {});
         await db.homeGovernancePolicy.deleteMany().catch(() => {});
+        await db.homeSettings.deleteMany();
         await db.accountIdentity.deleteMany().catch(() => {});
         await db.account.deleteMany().catch(() => {});
     });
@@ -57,7 +58,7 @@ describe("authRoutes (mTLS) (integration)", () => {
         await harness.close();
     });
 
-    it("auto-provisions a keyless account and returns a bearer token (forwarded mode)", async () => {
+    it("auto-provisions with saved Home mTLS policy and refuses provisioning after it is disabled", async () => {
         harness.resetEnv({
             HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: "0",
             AUTH_ANONYMOUS_SIGNUP_ENABLED: "0",
@@ -68,7 +69,6 @@ describe("authRoutes (mTLS) (integration)", () => {
             HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED: "1",
             HAPPIER_FEATURE_AUTH_MTLS__ENABLED: "1",
             HAPPIER_FEATURE_AUTH_MTLS__MODE: "forwarded",
-            HAPPIER_FEATURE_AUTH_MTLS__AUTO_PROVISION: "1",
             HAPPIER_FEATURE_AUTH_MTLS__TRUST_FORWARDED_HEADERS: "1",
             HAPPIER_FEATURE_AUTH_MTLS__IDENTITY_SOURCE: "san_email",
             HAPPIER_FEATURE_AUTH_MTLS__ALLOWED_EMAIL_DOMAINS: "example.com",
@@ -77,6 +77,11 @@ describe("authRoutes (mTLS) (integration)", () => {
             HAPPIER_FEATURE_AUTH_MTLS__FORWARDED_FINGERPRINT_HEADER: "x-happier-client-cert-sha256",
             HAPPIER_FEATURE_AUTH_MTLS__FORWARDED_ISSUER_HEADER: "x-happier-client-cert-issuer",
         });
+        delete process.env.HAPPIER_FEATURE_AUTH_MTLS__AUTO_PROVISION;
+        await db.homeSettings.create({ data: {
+            id: "home",
+            values: { HAPPIER_FEATURE_AUTH_MTLS__AUTO_PROVISION: true },
+        } });
         expect(readAuthMtlsFeatureEnv(process.env).allowedIssuers).toEqual(["cn=example root ca"]);
 
         const app = createTestApp();
@@ -106,6 +111,22 @@ describe("authRoutes (mTLS) (integration)", () => {
         expect(accounts[0]?.publicKey).toBeNull();
         expect(accounts[0]?.AccountIdentity?.[0]?.provider).toBe("mtls");
         expect(accounts[0]?.AccountIdentity?.[0]?.providerUserId).toBe("alice@example.com");
+
+        await db.homeSettings.update({ where: { id: "home" }, data: {
+            values: { HAPPIER_FEATURE_AUTH_MTLS__AUTO_PROVISION: false },
+        } });
+        const disabledProvisioning = await app.inject({
+            method: "POST",
+            url: "/v1/auth/mtls",
+            headers: {
+                "x-happier-client-cert-email": "bob@example.com",
+                "x-happier-client-cert-sha256": "sha256:bob",
+                "x-happier-client-cert-issuer": "CN=Example Root CA",
+            },
+        });
+        expect(disabledProvisioning.statusCode).toBe(403);
+        expect(disabledProvisioning.json()).toEqual({ error: "not-eligible" });
+        expect(await db.account.count()).toBe(1);
 
         await db.account.update({ where: { id: accounts[0]!.id }, data: { status: "suspended" } });
         const inactive = await app.inject({ method: "POST", url: "/v1/auth/mtls", headers: {
@@ -860,7 +881,7 @@ describe("authRoutes (mTLS) (integration)", () => {
         await app.close();
     });
 
-    it("supports browser handoff via /start -> /complete -> /claim (forwarded mode)", async () => {
+    it("supports browser handoff via /start -> /complete -> /claim with saved Home mTLS policy", async () => {
         harness.resetEnv({
             HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: "0",
             AUTH_ANONYMOUS_SIGNUP_ENABLED: "0",
@@ -872,7 +893,6 @@ describe("authRoutes (mTLS) (integration)", () => {
             HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED: "1",
             HAPPIER_FEATURE_AUTH_MTLS__ENABLED: "1",
             HAPPIER_FEATURE_AUTH_MTLS__MODE: "forwarded",
-            HAPPIER_FEATURE_AUTH_MTLS__AUTO_PROVISION: "1",
             HAPPIER_FEATURE_AUTH_MTLS__TRUST_FORWARDED_HEADERS: "1",
             HAPPIER_FEATURE_AUTH_MTLS__IDENTITY_SOURCE: "san_email",
             HAPPIER_FEATURE_AUTH_MTLS__ALLOWED_EMAIL_DOMAINS: "example.com",
@@ -882,6 +902,11 @@ describe("authRoutes (mTLS) (integration)", () => {
             HAPPIER_FEATURE_AUTH_MTLS__FORWARDED_ISSUER_HEADER: "x-happier-client-cert-issuer",
             HAPPIER_FEATURE_AUTH_MTLS__RETURN_TO_ALLOW_PREFIXES: "happier://",
         });
+        delete process.env.HAPPIER_FEATURE_AUTH_MTLS__AUTO_PROVISION;
+        await db.homeSettings.create({ data: {
+            id: "home",
+            values: { HAPPIER_FEATURE_AUTH_MTLS__AUTO_PROVISION: true },
+        } });
 
         const app = createTestApp();
         registerMtlsAuthRoutes(app);

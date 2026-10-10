@@ -1,16 +1,17 @@
 import type {
     TeamIdentityConnectionCreateInputV1,
-    TeamIdentityConnectionListResultV1,
+    IdentityEligibleProviderV1,
+    TeamAdmissionModeApplicabilityV1,
     TeamIdentityConnectionRefInputV1,
     TeamIdentityConnectionSettingsUpdateInputV1,
     TeamIdentityConnectionRemoveResultV1,
     TeamIdentityConnectionRemovalBlockerV1,
-    TeamIdentityConnectionRemovalPreflightV1,
+    IdentityConnectionRemovalPreflightV1,
     TeamIdentityConnectionTestConsumeInputV1,
-    TeamIdentityConnectionTestConsumeResultV1,
+    IdentityConnectionTestConsumeResultV1,
     TeamIdentityConnectionTestStartInputV1,
     TeamIdentityConnectionTestStartResultV1,
-    TeamIdentityConnectionV1,
+    IdentityConnectionV1,
     TeamIdentityErrorCodeV1,
 } from "@happier-dev/protocol/teams";
 import { isDeepStrictEqual } from "node:util";
@@ -28,7 +29,8 @@ import {
     resolveEffectiveAccountLoginMethodsForDecisions,
 } from "@/app/auth/methods/effectiveAccountLoginMethods";
 import { resolveEffectiveHomeAuthMethodsInTx } from "@/app/auth/methods/effectiveHomeAuthMethods";
-import { resolveTeamAuthenticationPolicyInTx } from "@/app/auth/entry/resolveTeamAuthenticationPolicy";
+import { resolveTeamAuthenticationPolicy, resolveTeamAuthenticationPolicyInTx } from "@/app/auth/entry/resolveTeamAuthenticationPolicy";
+import { normalizeAuthMethodId } from "@happier-dev/protocol";
 import { findIdentityProviderBlockers } from "@/app/auth/providers/accountIdentityLifecycle";
 import {
     readIdentityProviderInstanceInTx,
@@ -59,17 +61,22 @@ import {
     updateTeamIdentityConnectionInTx,
     recordTeamIdentityConnectionWorkosObservationInTx,
 } from "./teamIdentityConnectionLifecycle";
-import type { TeamIdentityConnectionView } from "./teamIdentityConnectionLifecycle";
+import type { TeamIdentityConnectionView as LifecycleConnectionView } from "./teamIdentityConnectionLifecycle";
+import { isSameProviderContext } from "@/app/auth/providers/providerReference";
+import { publishCommittedHomeProviderMutationInTx } from "@/app/home/governance/homeManagedIdentityProviders";
 import type { TeamOperationAuthenticationContext } from "../actorContext";
-import { authorizeTeamIdentityAdministrationInTx } from "./teamIdentityAdministrationAuthority";
+import { authorizeTeamIdentityAdministrationInTx, identityConnectionOwner } from "./teamIdentityAdministrationAuthority";
 import {
     projectCurrentTeamIdentityConnectionV1InTx,
     readTeamIdentityCurrentnessInputsInTx,
 } from "./teamIdentityConnectionProjection";
 import { resolveTeamIdentityConnectionReturnUrl } from "./teamIdentityConnectionUrls";
-import { publishTeamChangedInTx } from "../teamChanges";
+
 import { resolveTeamAdmissionModeApplicabilityInTx } from "./teamAdmissionModeApplicability";
 import type { WorkosAdministrationDependencies } from "./teamWorkosAdministration";
+
+type TeamIdentityConnectionView = LifecycleConnectionView<string | null>;
+type ScopedInput<T> = Omit<T, "teamId"> & Readonly<{ teamId: string | null }>;
 
 type Result<T> = Readonly<{ ok: true; value: T }> | Readonly<{ ok: false; error: TeamIdentityErrorCodeV1 }>;
 
@@ -80,21 +87,21 @@ class TeamIdentityConnectionCreateAbort extends Error {
 }
 
 export async function preflightTeamIdentityConnectionRemovalForActor(
-    input: TeamIdentityConnectionRefInputV1 & Partial<TeamOperationAuthenticationContext> & Readonly<{
+    input: ScopedInput<TeamIdentityConnectionRefInputV1> & Partial<TeamOperationAuthenticationContext> & Readonly<{
         actorAccountId: string;
         env: NodeJS.ProcessEnv;
     }>,
-): Promise<Result<TeamIdentityConnectionRemovalPreflightV1>> {
+): Promise<Result<IdentityConnectionRemovalPreflightV1>> {
     return await inTx(async (tx) => await resolveTeamIdentityConnectionRemovalPreflightInTx(tx, input));
 }
 
 async function resolveTeamIdentityConnectionRemovalPreflightInTx(
     tx: Tx,
-    input: TeamIdentityConnectionRefInputV1 & Partial<TeamOperationAuthenticationContext> & Readonly<{
+    input: ScopedInput<TeamIdentityConnectionRefInputV1> & Partial<TeamOperationAuthenticationContext> & Readonly<{
         actorAccountId: string;
         env: NodeJS.ProcessEnv;
     }>,
-): Promise<Result<TeamIdentityConnectionRemovalPreflightV1>> {
+): Promise<Result<IdentityConnectionRemovalPreflightV1>> {
     const authority = await authorizeTeamIdentityAdministrationInTx(tx, input);
     if (!authority.ok) return authority;
     const resolved = await readTeamIdentityConnectionInTx(tx, {
@@ -112,30 +119,44 @@ async function resolveTeamIdentityConnectionRemovalPreflightInTx(
     }
 
     const [team, identityRows, directorySources, externalGroupBindings, managedMemberships, effectiveHome] = await Promise.all([
-        tx.team.findUnique({ where: { id: input.teamId }, select: { authenticationPolicy: true } }),
+        input.teamId === null ? Promise.resolve(null) : tx.team.findUnique({ where: { id: input.teamId }, select: { authenticationPolicy: true } }),
         findIdentityProviderBlockers(tx, resolved.connection.providerInstanceId),
         tx.teamDirectorySource.count({ where: { teamIdentityConnectionId: input.connectionId } }),
         tx.teamExternalGroupBinding.count({ where: { teamIdentityConnectionId: input.connectionId } }),
         tx.teamMembershipIdentityConnectionManagement.count({ where: { teamIdentityConnectionId: input.connectionId } }),
         resolveEffectiveHomeAuthMethodsInTx(tx, { env: input.env }),
     ]);
-    if (!team) return { ok: false, error: "team_not_found" };
+    if (input.teamId !== null && !team) return { ok: false, error: "team_not_found" };
 
-    const policy = await resolveTeamAuthenticationPolicyInTx(tx, {
+    const policy = input.teamId !== null && team ? await resolveTeamAuthenticationPolicyInTx(tx, {
         env: input.env,
         teamId: input.teamId,
         policy: team.authenticationPolicy,
-    });
+    }) : null;
     const blockers: TeamIdentityConnectionRemovalBlockerV1[] = [];
-    if (policy.resolution.status === "unavailable") {
+    const siblingBindings = await tx.teamIdentityConnection.count({ where: {
+        providerInstanceId: resolved.connection.providerInstanceId,
+        id: { not: input.connectionId },
+    } });
+    if (siblingBindings > 0) blockers.push("identity_connection_in_use");
+    if (input.teamId === null) {
+        const teams = await tx.team.findMany({ select: { authenticationPolicy: true } });
+        const providerId = normalizeAuthMethodId(resolved.connection.providerInstanceId);
+        if (teams.some((candidate) => {
+            const accepted = resolveTeamAuthenticationPolicy({ policy: candidate.authenticationPolicy, homeMethods: [], teamConnections: [] });
+            return accepted.status === "restricted" && accepted.choices.some((choice) =>
+                choice.reference.kind === "home_method" && normalizeAuthMethodId(choice.reference.methodId) === providerId);
+        })) blockers.push("team_authentication_policy_in_use");
+    }
+    if (policy?.resolution.status === "unavailable") {
         blockers.push("team_authentication_policy_unavailable");
     } else if (
-        policy.resolution.status === "restricted"
+        policy?.resolution.status === "restricted"
         && policy.resolution.choices.some((choice) =>
             choice.reference.kind === "team_connection"
             && choice.reference.connectionId === input.connectionId)
     ) {
-        blockers.push("team_authentication_policy_in_use");
+        if (!blockers.includes("team_authentication_policy_in_use")) blockers.push("team_authentication_policy_in_use");
     }
 
     const accountIds = [...new Set(identityRows.map((row) => row.accountId))];
@@ -202,7 +223,7 @@ async function resolveTeamIdentityConnectionRemovalPreflightInTx(
 }
 
 export async function startTeamIdentityConnectionTestForActor(
-    input: TeamIdentityConnectionTestStartInputV1 & Partial<TeamOperationAuthenticationContext> & Readonly<{
+    input: ScopedInput<TeamIdentityConnectionTestStartInputV1> & Partial<TeamOperationAuthenticationContext> & Readonly<{
         actorAccountId: string;
         env: NodeJS.ProcessEnv;
     }>,
@@ -236,7 +257,7 @@ export async function startTeamIdentityConnectionTestForActor(
     const runtime = await resolveOAuthRuntimeById(
         input.env,
         preflight.connection.providerInstanceId,
-        { kind: "team", teamId: input.teamId },
+        identityConnectionOwner(input.teamId),
         "identity_connection_test",
     );
     if (!runtime) return { ok: false, error: "identity_provider_unavailable" };
@@ -281,44 +302,48 @@ export async function startTeamIdentityConnectionTestForActor(
  * and completes the wire result there, so there is one link renderer rather
  * than a second origin decision inside the identity transaction.
  */
-export type TeamIdentityConnectionListProjectionV1 =
-    Omit<TeamIdentityConnectionListResultV1, "memberSignInUrl">;
+export type TeamIdentityConnectionListProjectionV1 = Readonly<{
+    items: IdentityConnectionV1[];
+    eligibleProviders: IdentityEligibleProviderV1[];
+    admissionModeApplicability?: TeamAdmissionModeApplicabilityV1;
+}>;
 
 export async function listTeamIdentityConnectionsForActor(
-    input: Partial<TeamOperationAuthenticationContext> & Readonly<{ teamId: string; actorAccountId: string; env: NodeJS.ProcessEnv }>,
+    input: Partial<TeamOperationAuthenticationContext> & Readonly<{ teamId: string | null; actorAccountId: string; env: NodeJS.ProcessEnv }>,
 ): Promise<Result<TeamIdentityConnectionListProjectionV1>> {
     return await inTx(async (tx) => {
-        const authority = await authorizeTeamIdentityAdministrationInTx(tx, input);
+        const authority = await authorizeTeamIdentityAdministrationInTx(tx, input, "view");
         if (!authority.ok) return authority;
         const connections = await listTeamIdentityConnectionsInTx(tx, input);
         const inputs = await readTeamIdentityCurrentnessInputsInTx(tx, { env: input.env, teamId: input.teamId });
-        const items = await Promise.all(connections.map((connection) => projectCurrentTeamIdentityConnectionV1InTx(tx, {
+        const projectedItems = await Promise.all(connections.map((connection) => projectCurrentTeamIdentityConnectionV1InTx(tx, {
             env: input.env,
             teamId: input.teamId,
             connection,
             inputs,
         })));
+        const items = authority.canMutate ? projectedItems : projectedItems.map((item) => ({ ...item, allowedActions: [] }));
         const [eligibleProviders, admissionModeApplicability] = await Promise.all([
-            listEligibleTeamIdentityProvidersInTx(tx, {
+            authority.canMutate ? listEligibleTeamIdentityProvidersInTx(tx, {
                 env: input.env,
                 teamId: input.teamId,
                 connectedProviderInstanceIds: new Set(connections.map((connection) => connection.providerInstanceId)),
-            }),
-            resolveTeamAdmissionModeApplicabilityInTx({ tx, env: input.env, teamId: input.teamId }),
+            }) : Promise.resolve([]),
+            input.teamId === null ? Promise.resolve(null) : resolveTeamAdmissionModeApplicabilityInTx({ tx, env: input.env, teamId: input.teamId }),
         ]);
         return {
             ok: true,
-            value: { items, eligibleProviders: [...eligibleProviders], admissionModeApplicability },
+            value: { items, eligibleProviders: [...eligibleProviders], ...(admissionModeApplicability ? { admissionModeApplicability } : {}) },
         };
     });
 }
 
 export async function createTeamIdentityConnectionForActor(
-    input: TeamIdentityConnectionCreateInputV1 & Partial<TeamOperationAuthenticationContext> & Readonly<{
+    input: ScopedInput<TeamIdentityConnectionCreateInputV1> & Partial<TeamOperationAuthenticationContext> & Readonly<{
         actorAccountId: string;
         env: NodeJS.ProcessEnv;
     }>,
-): Promise<Result<TeamIdentityConnectionV1>> {
+): Promise<Result<IdentityConnectionV1>> {
     try {
         return await inTx(async (tx) => {
             const authority = await authorizeTeamIdentityAdministrationInTx(tx, input);
@@ -328,7 +353,7 @@ export async function createTeamIdentityConnectionForActor(
             if (policy !== "allowed") return { ok: false, error: "identity_provider_unavailable" };
             const teamProvider = await readIdentityProviderInstanceInTx(tx, {
                 id: input.providerInstanceId,
-                owner: { kind: "team", teamId: input.teamId },
+                owner: identityConnectionOwner(input.teamId),
         });
             const disabledTeamGitHubProvider = teamProvider.status === "ready"
                 && teamProvider.instance.kind === "github_app_identity"
@@ -338,7 +363,7 @@ export async function createTeamIdentityConnectionForActor(
             if (disabledTeamGitHubProvider) {
                 const draft = await resolveManagedGitHubIdentityProviderConnectionDraftInTx(tx, {
                     env: input.env,
-                    context: { kind: "team", teamId: input.teamId },
+                    context: identityConnectionOwner(input.teamId),
                     provider: disabledTeamGitHubProvider,
                 });
                 if (!draft) return { ok: false, error: "identity_provider_unavailable" };
@@ -376,7 +401,9 @@ export async function createTeamIdentityConnectionForActor(
                     }
                     connection = current.connection;
                 }
-                await publishTeamChangedInTx(tx, { teamId: input.teamId });
+                await publishCommittedHomeProviderMutationInTx(tx, identityConnectionOwner(input.teamId), connection.providerInstanceId, true, {
+                    actorAccountId: input.actorAccountId, action: "identity_provider.update",
+                });
                 return { ok: true, value: await projectCurrentTeamIdentityConnectionV1InTx(tx, { env: input.env, teamId: input.teamId, connection }) };
             }
             if (
@@ -402,11 +429,11 @@ export async function createTeamIdentityConnectionForActor(
 }
 
 export async function updateTeamIdentityConnectionSettingsForActor(
-    input: TeamIdentityConnectionSettingsUpdateInputV1 & Partial<TeamOperationAuthenticationContext> & Readonly<{
+    input: ScopedInput<TeamIdentityConnectionSettingsUpdateInputV1> & Partial<TeamOperationAuthenticationContext> & Readonly<{
         actorAccountId: string;
         env: NodeJS.ProcessEnv;
     }>,
-): Promise<Result<TeamIdentityConnectionV1>> {
+): Promise<Result<IdentityConnectionV1>> {
     return await inTx(async (tx) => {
         const authority = await authorizeTeamIdentityAdministrationInTx(tx, input);
         if (!authority.ok) return authority;
@@ -417,7 +444,9 @@ export async function updateTeamIdentityConnectionSettingsForActor(
             settings: input.settings,
         });
         if (result.status !== "applied") return { ok: false, error: mapLifecycleError(result.status) };
-        await publishTeamChangedInTx(tx, { teamId: input.teamId });
+        await publishCommittedHomeProviderMutationInTx(tx, identityConnectionOwner(input.teamId), result.connection.providerInstanceId, true, {
+            actorAccountId: input.actorAccountId, action: "identity_provider.update",
+        });
         return { ok: true, value: await projectCurrentTeamIdentityConnectionV1InTx(tx, { env: input.env, teamId: input.teamId, connection: result.connection }) };
     });
 }
@@ -479,13 +508,13 @@ async function observeWorkosUpstreamConnection(
 }
 
 export async function setTeamIdentityConnectionEnabledForActor(
-    input: TeamIdentityConnectionRefInputV1 & Partial<TeamOperationAuthenticationContext> & Readonly<{
+    input: ScopedInput<TeamIdentityConnectionRefInputV1> & Partial<TeamOperationAuthenticationContext> & Readonly<{
         actorAccountId: string;
         enabled: boolean;
         env: NodeJS.ProcessEnv;
     }>,
     dependencies: WorkosAdministrationDependencies = {},
-): Promise<Result<TeamIdentityConnectionV1>> {
+): Promise<Result<IdentityConnectionV1>> {
     if (input.enabled) {
         const preflight = await inTx(async (tx) => {
             const authority = await authorizeTeamIdentityAdministrationInTx(tx, input);
@@ -510,7 +539,7 @@ export async function setTeamIdentityConnectionEnabledForActor(
         const runtime = await resolveOAuthRuntimeById(
             input.env,
             preflight.connection.providerInstanceId,
-            { kind: "team", teamId: input.teamId },
+            identityConnectionOwner(input.teamId),
             "identity_connection_test",
         );
         if (!runtime) return { ok: false, error: "identity_provider_unavailable" };
@@ -537,7 +566,7 @@ export async function setTeamIdentityConnectionEnabledForActor(
                     presentation: upstream.presentation,
                 });
                 if (observed.status !== "applied") return { ok: false, error: mapLifecycleError(observed.status) };
-                await publishTeamChangedInTx(tx, { teamId: input.teamId });
+                await publishCommittedHomeProviderMutationInTx(tx, identityConnectionOwner(input.teamId), observed.connection.providerInstanceId, true, null);
                 if (!upstream.active) return { ok: false, error: "workos_connection_mismatch" };
                 expectedRevision = observed.connection.revision;
             }
@@ -556,7 +585,9 @@ export async function setTeamIdentityConnectionEnabledForActor(
                 enabled: true,
             });
             if (result.status !== "applied") return { ok: false, error: mapLifecycleError(result.status) };
-            await publishTeamChangedInTx(tx, { teamId: input.teamId });
+            await publishCommittedHomeProviderMutationInTx(tx, identityConnectionOwner(input.teamId), result.connection.providerInstanceId, true, {
+                actorAccountId: input.actorAccountId, action: "identity_provider.enable",
+            });
             return { ok: true, value: await projectCurrentTeamIdentityConnectionV1InTx(tx, { env: input.env, teamId: input.teamId, connection: result.connection }) };
         });
     }
@@ -571,7 +602,9 @@ export async function setTeamIdentityConnectionEnabledForActor(
             enabled: input.enabled,
         });
         if (result.status === "applied") {
-            await publishTeamChangedInTx(tx, { teamId: input.teamId });
+            await publishCommittedHomeProviderMutationInTx(tx, identityConnectionOwner(input.teamId), result.connection.providerInstanceId, true, {
+                actorAccountId: input.actorAccountId, action: "identity_provider.disable",
+            });
             return { ok: true, value: await projectCurrentTeamIdentityConnectionV1InTx(tx, { env: input.env, teamId: input.teamId, connection: result.connection }) };
         }
         return { ok: false, error: mapLifecycleError(result.status) };
@@ -579,7 +612,7 @@ export async function setTeamIdentityConnectionEnabledForActor(
 }
 
 export async function removeTeamIdentityConnectionForActor(
-    input: TeamIdentityConnectionRefInputV1 & Partial<TeamOperationAuthenticationContext> & Readonly<{
+    input: ScopedInput<TeamIdentityConnectionRefInputV1> & Partial<TeamOperationAuthenticationContext> & Readonly<{
         actorAccountId: string;
         env: NodeJS.ProcessEnv;
     }>,
@@ -600,7 +633,7 @@ export async function removeTeamIdentityConnectionForActor(
         | Readonly<{
             ok: true;
             kind: "workos";
-            connection: TeamIdentityConnectionV1;
+            connection: IdentityConnectionV1;
         }>;
     const prepared = await inTx<RemovalPreparation>(async (tx) => {
         const authority = await authorizeTeamIdentityAdministrationInTx(tx, input);
@@ -656,7 +689,9 @@ export async function removeTeamIdentityConnectionForActor(
             if (disabled.status !== "applied") {
                 return { ok: false as const, error: mapLifecycleError(disabled.status) };
             }
-            await publishTeamChangedInTx(tx, { teamId: input.teamId });
+            await publishCommittedHomeProviderMutationInTx(tx, identityConnectionOwner(input.teamId), disabled.connection.providerInstanceId, true, {
+                actorAccountId: input.actorAccountId, action: "identity_provider.disable",
+            });
             return {
                 ok: true as const,
                 kind: "workos" as const,
@@ -669,7 +704,9 @@ export async function removeTeamIdentityConnectionForActor(
             expectedRevision: input.expectedRevision,
         });
         if (result.status === "deleted") {
-            await publishTeamChangedInTx(tx, { teamId: input.teamId });
+            await publishCommittedHomeProviderMutationInTx(tx, identityConnectionOwner(input.teamId), connection.provider.id, true, {
+                actorAccountId: input.actorAccountId, action: "identity_provider.remove", displayName: connection.provider.displayName,
+            });
             return { ok: true as const, kind: "complete" as const, value: { outcome: "removed" as const } };
         }
         if (result.status === "not_found") {
@@ -724,7 +761,9 @@ export async function removeTeamIdentityConnectionForActor(
             connectionId: externalReference.connectionId,
         });
         if (removed.status === "removed") {
-            await publishTeamChangedInTx(tx, { teamId: input.teamId });
+            await publishCommittedHomeProviderMutationInTx(tx, identityConnectionOwner(input.teamId), prepared.connection.provider.id, true, {
+                actorAccountId: input.actorAccountId, action: "identity_provider.remove", displayName: prepared.connection.provider.displayName,
+            });
             return { ok: true, value: { outcome: "removed" } };
         }
         if (removed.status === "not_found") return { ok: true, value: { outcome: "already_absent" } };
@@ -733,11 +772,11 @@ export async function removeTeamIdentityConnectionForActor(
 }
 
 export async function consumeTeamIdentityConnectionTestForActor(
-    input: TeamIdentityConnectionTestConsumeInputV1 & Partial<TeamOperationAuthenticationContext> & Readonly<{
+    input: ScopedInput<TeamIdentityConnectionTestConsumeInputV1> & Partial<TeamOperationAuthenticationContext> & Readonly<{
         actorAccountId: string;
         env: NodeJS.ProcessEnv;
     }>,
-): Promise<Result<TeamIdentityConnectionTestConsumeResultV1>> {
+): Promise<Result<IdentityConnectionTestConsumeResultV1>> {
     return await inTx(async (tx) => {
         const authority = await authorizeTeamIdentityAdministrationInTx(tx, input);
         if (!authority.ok) return authority;
@@ -748,8 +787,7 @@ export async function consumeTeamIdentityConnectionTestForActor(
         if (!result) return { ok: false, error: "identity_connection_test_invalid" };
         const binding = result.securityBinding;
         if (
-            binding.provider.context.kind !== "team"
-            || binding.provider.context.teamId !== input.teamId
+            !isSameProviderContext(binding.provider.context, identityConnectionOwner(input.teamId))
             || binding.connection?.id !== input.connectionId
         ) return { ok: false, error: "identity_connection_test_invalid" };
         const connectionBinding = binding.connection;
@@ -777,7 +815,7 @@ export async function consumeTeamIdentityConnectionTestForActor(
             testedAt: result.testedAt,
         });
         if (recorded.status === "applied") {
-            await publishTeamChangedInTx(tx, { teamId: input.teamId });
+            await publishCommittedHomeProviderMutationInTx(tx, identityConnectionOwner(input.teamId), recorded.connection.providerInstanceId, true, null);
             return {
                 ok: true,
                 value: {

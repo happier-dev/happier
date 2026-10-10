@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import tweetnacl from 'tweetnacl';
 import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
+import { ManagedEnrollmentCorrelationV1Schema, type ManagedEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 
 import { decodeBase64, encodeBase64 } from '@/api/encryption';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
@@ -17,6 +18,7 @@ import {
 import { acquireTerminalAuthEnrollmentRuntime } from '@/auth/terminalAuthEnrollmentRuntime';
 import {
   persistTerminalEnrollmentCredential,
+  registerAndPersistManagedTerminalEnrollmentCredential,
   registerTerminalEnrollmentMachine,
 } from '@/auth/persistTerminalEnrollmentCredential';
 import {
@@ -88,6 +90,7 @@ async function delayWithSignal(ms: number, signal: AbortSignal | undefined): Pro
  */
 export async function runRemoteTerminalEnrollment(params: Readonly<{
   target: ResolvedHomeTarget;
+  managedEnrollment?: ManagedEnrollmentCorrelationV1;
   signal?: AbortSignal;
   timeoutMs: number;
   pollIntervalMs?: number;
@@ -96,6 +99,11 @@ export async function runRemoteTerminalEnrollment(params: Readonly<{
   const deadlineMs = Date.now() + Math.max(1, Math.floor(params.timeoutMs));
   const pollIntervalMs = Math.max(1, Math.floor(params.pollIntervalMs ?? 500));
   throwIfStopped(params.signal, deadlineMs);
+  const managedEnrollment = params.managedEnrollment === undefined ? undefined
+    : ManagedEnrollmentCorrelationV1Schema.parse(params.managedEnrollment);
+  if (managedEnrollment && params.target.homeServerIdentityId !== managedEnrollment.homeId) {
+    throw new Error('Managed enrollment does not match the selected Home.');
+  }
 
   const acquired = await acquireTerminalAuthEnrollmentRuntime(
     params.target.descriptor ?? params.target,
@@ -214,16 +222,22 @@ export async function runRemoteTerminalEnrollment(params: Readonly<{
       if (!opened) {
         throw new Error('Authenticated terminal pairing v3 is required.');
       }
-      const persisted = await persistTerminalEnrollmentCredential({ token, opened });
-      const machineId = await registerTerminalEnrollmentMachine(
-        persisted.credentials,
-        acquired.runtime.runtimeOrigin,
-      );
+      throwIfStopped(params.signal, deadlineMs);
+      let completion: Readonly<{ machineId: string; encryptionType: 'dataKey' | 'tokenOnly' }>;
+      if (managedEnrollment) {
+        completion = await registerAndPersistManagedTerminalEnrollmentCredential({ token, opened,
+          runtimeOrigin: acquired.runtime.runtimeOrigin, managedEnrollment,
+          assertCurrent: () => throwIfStopped(params.signal, deadlineMs) });
+      } else {
+        const persisted = await persistTerminalEnrollmentCredential({ token, opened });
+        const machineId = await registerTerminalEnrollmentMachine(persisted.credentials, acquired.runtime.runtimeOrigin);
+        throwIfStopped(params.signal, deadlineMs);
+        completion = { machineId, encryptionType: persisted.encryptionType };
+      }
       return {
         success: true,
         homeServerIdentityId: verified.homeServerIdentityId,
-        machineId,
-        encryptionType: persisted.encryptionType,
+        ...completion,
         pairingAuthentication: 'v3',
       };
     }

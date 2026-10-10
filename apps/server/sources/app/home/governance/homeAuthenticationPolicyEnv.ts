@@ -1,5 +1,9 @@
 import {
     readServerConfigRaw,
+    HOME_AUTH_METHOD_ENABLE_KEYS,
+    HOME_ANONYMOUS_SIGNUP_KEY,
+    HOME_STORAGE_POLICY_KEY,
+    HOME_KEYLESS_ACCOUNTS_KEY,
     type HomeAuthenticationPolicyReadV1,
     type ServerConfigEnv,
     type ServerConfigValue,
@@ -22,14 +26,7 @@ import { SERVER_CONFIG_REGISTRY } from "@/config/serverConfigRegistry";
  * directions: widening arrives as an env value, narrowing stays in
  * `applyHomePolicyToAuthMethodDecision`.
  */
-export const HOME_AUTH_METHOD_ENABLE_KEYS: Readonly<Record<string, string>> = Object.freeze({
-    key_challenge: "HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED",
-    email_password: "HAPPIER_FEATURE_AUTH_EMAIL_PASSWORD__ENABLED",
-    mtls: "HAPPIER_FEATURE_AUTH_MTLS__ENABLED",
-});
-export const HOME_ANONYMOUS_SIGNUP_KEY = "AUTH_ANONYMOUS_SIGNUP_ENABLED";
-export const HOME_STORAGE_POLICY_KEY = "HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY";
-export const HOME_KEYLESS_ACCOUNTS_KEY = "HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED";
+export { HOME_AUTH_METHOD_ENABLE_KEYS, HOME_ANONYMOUS_SIGNUP_KEY, HOME_STORAGE_POLICY_KEY, HOME_KEYLESS_ACCOUNTS_KEY };
 
 /**
  * Deployment keys a method needs before any Home decision can offer it, where this Home knows
