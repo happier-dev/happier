@@ -472,6 +472,7 @@ describe('Account API token HTTP adapter', () => {
           workspaceId: source.id, workspace: { serverId: homeId, workspaceId: source.id, machineId: source.machineId, rootPath: source.rootPath },
           cwd: source.rootPath, declaration: { workspaceRefId: source.id, selection: { kind: 'manifest', name: 'web' } } }] : [] } };
     });
+    const restoreTestAdapter = installAxiosFastifyAdapter({ app, origin: 'https://account.test' });
     const executor = createActionExecutor(createAccountProjectWorkerActionDeps({ token: 'interactive', serverId: homeId, serverHttpBaseUrl: 'https://account.test' }));
     const get = () => executor.execute('projects.service.placement.get', { workspace: { serverId: homeId, refId: source.id }, serviceName: 'web' },
       { surface: 'cli', serverId: homeId });
@@ -489,7 +490,7 @@ describe('Account API token HTTP adapter', () => {
       graph.relationships[0]!.betaWorkspaceRefId = 'missing-copy';
       graphRevision++;
       expect(await get()).toMatchObject({ ok: true, result: { actual: { status: 'unavailable' } } });
-    } finally { remote.mockRestore(); }
+    } finally { remote.mockRestore(); restoreTestAdapter(); }
   });
 
   it('reads actual native declaration custody on a linked copy using the original source identity', async () => {

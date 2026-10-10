@@ -728,8 +728,8 @@ target produce the existing preview/removal identity, including `rootFingerprint
 consumers do not calculate it. Not-owned and unavailable remain distinct from an
 empty copy. No caller path, row presence or
 preview result grants deletion authority; removal remains the separately approved
-`projects.worker.copy.retire` Action. This preview's composed validation is still
-in progress in development source.
+`projects.worker.copy.retire` Action. Loaded app/headless validation remains an
+integration prerequisite for this development contract.
 
 These are unreleased source contracts. Installed target status/admission, service
 execution and the composed app/headless journey must be validated together
