@@ -39,6 +39,8 @@ import { refreshTriageListWindow } from '../ui/window/mountedWindow.js';
 import { createTriageEphemeralSharedScopeFixture } from '../ui/window/ephemeralSharedScope.test-support.js';
 import { renderSurface as renderPickerSurface } from './entryPicker.js';
 import { TRIAGE_UI_TRANSLATIONS } from '../ui/translations.js';
+import { TriageMountedUiInputV1Schema } from '../actions/mountedUiProtocol.js';
+import { invokeTriageMountedUiAction } from '../ui/mountedActions.js';
 
 /**
  * The mounted Composer entry picker (`core/COMPOSER.md` §2, §3).
@@ -105,6 +107,7 @@ function createHarness(options: Readonly<{
 
     const scanCalls = { count: 0 };
     const listActionCalls: unknown[] = [];
+    const publishedContexts: unknown[] = [];
 
     const scan = async (input: TriageScanInputV1): Promise<TriageScanResultV1> => {
         void input;
@@ -238,7 +241,11 @@ function createHarness(options: Readonly<{
         ephemeralSharedScope,
         scanCalls,
         listActionCalls,
+        publishedContexts,
         handlers: {
+            publishCurrentUiContext: ({ enrichment }: Readonly<{ enrichment: unknown }>) => {
+                publishedContexts.push(enrichment);
+            },
             executeAction: async ({ action, input }: Readonly<{ action: unknown; input: unknown }>) => {
                 listActionCalls.push(action);
                 return await listTriageEntries(TriageListEntriesInputV1Schema.parse(input), {
@@ -353,6 +360,45 @@ afterEach(async () => {
 });
 
 describe('the mounted Composer entry picker', () => {
+    it('attaches and removes through its addressed Action using the canonical draft owner', async () => {
+        const harness = createHarness();
+        const picker = await mountPicker(harness, COMPOSER_A, 'triage-picker-action');
+        const enrichment = harness.publishedContexts.at(-1);
+        expect(enrichment).toMatchObject({ detail: { mountedAction: {
+            action: { pluginId: 'happier.triage', localId: 'ui/mounted-v1' },
+        } } });
+        if (!enrichment || typeof enrichment !== 'object' || !('detail' in enrichment)) throw new Error('Missing context');
+        const detail = enrichment.detail;
+        if (!detail || typeof detail !== 'object' || !('mountedAction' in detail)) throw new Error('Missing address');
+        const address = detail.mountedAction;
+        if (!address || typeof address !== 'object' || !('mountId' in address)) throw new Error('Missing mount');
+        const entryRef = { source: SOURCE, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '42' };
+        const invoke = async (kind: 'attachEntry' | 'removeEntry', ref = entryRef) => {
+            const input = TriageMountedUiInputV1Schema.parse({ mountId: address.mountId, operation: { kind, entryRef: ref } });
+            let result;
+            await act(async () => { result = await invokeTriageMountedUiAction(harness.ephemeralSharedScope,
+                input.mountId, input.operation, new AbortController().signal); });
+            return result;
+        };
+        expect(await invoke('attachEntry', { ...entryRef, entryId: 'missing' })).toEqual({ status: 'unavailable' });
+        expect(harness.attachments).toHaveLength(0);
+        expect(await invoke('attachEntry')).toEqual({ status: 'applied' });
+        expect(harness.attachments).toHaveLength(1);
+        expect(harness.attachments[0]?.value).toMatchObject({ v: 1, entryRef,
+            sourceInstance: { source: SOURCE, sourceInstanceId: INSTANCE_ID } });
+        expect(harness.applyCalls.at(-1)?.ref).toEqual(COMPOSER_A);
+        await expect(picker.findByRole('button', { name: 'Remove Replace the duplicated normalizer' })).resolves.toBeDefined();
+        expect(await invoke('attachEntry')).toEqual({ status: 'applied' });
+        expect(harness.attachments).toHaveLength(1);
+        expect(await invoke('removeEntry')).toEqual({ status: 'applied' });
+        expect(harness.attachments).toHaveLength(0);
+        expect(harness.openCalls).toHaveLength(0);
+        expect(harness.snapshot(COMPOSER_A).text).toBe('please look at this');
+        await picker.dispose();
+        expect(harness.publishedContexts.at(-1)).toBeNull();
+        expect(await invoke('attachEntry')).toEqual({ status: 'unavailable' });
+    });
+
     it('shows the canonical kind, address and lifecycle beside the entry title', async () => {
         const picker = await mountPicker(createHarness({
             observations: [observation('42', 'Replace the duplicated normalizer')],

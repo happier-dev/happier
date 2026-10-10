@@ -1,6 +1,6 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from 'zod';
-import { ScmComparisonSchema, type ScmComparison } from './comparison.js';
+import { ScmComparisonSchema, ScmComparisonSourceSchema, type ScmComparison } from './comparison.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 
 /** Workspace's existing Account JSON namespace owns mode admission and transition inventory. */
@@ -11,9 +11,14 @@ export const ScmReviewedMarksRecordSchema = lazyZodSchema(() => z.object({
 }).strict());
 const storedReviewedMarksRecordSchema = createStoredReadSchema(ScmReviewedMarksRecordSchema);
 export type ScmReviewedMarksRecord = z.infer<typeof ScmReviewedMarksRecordSchema>;
-export const ScmReviewedMarkInputSchema = lazyZodSchema(() => z.object({
-  cwd: z.string().min(1), resultId: z.string().min(1), changeRefs: changeRefs.refine(refs => refs.length > 0, 'An explicit selection is required'),
-}).strict());
+const selectedChangeRefs = changeRefs.refine(refs => refs.length > 0, 'An explicit selection is required');
+export const ScmReviewedMarkInputSchema = lazyZodSchema(() => z.union([
+  // Preserve the existing saved-result selector. The new authority-bearing arm
+  // has an explicit epoch so an older terminal rejects it before Account writes.
+  z.object({ cwd: z.string().min(1), resultId: z.string().min(1), changeRefs: selectedChangeRefs }).strict(),
+  z.object({ v: z.literal(2), cwd: z.string().min(1), comparisonId: z.string().regex(/^[a-f0-9]{64}$/),
+    source: ScmComparisonSourceSchema, sessionId: z.string().min(1).optional(), changeRefs: selectedChangeRefs }).strict(),
+]));
 export type ScmReviewedMarkInput = z.infer<typeof ScmReviewedMarkInputSchema>;
 export const ScmReviewedMarkResponseSchema = lazyZodSchema(() => z.discriminatedUnion('success', [
   z.object({ success: z.literal(true), record: ScmReviewedMarksRecordSchema, version: z.number().int().min(-1) }).strict(),

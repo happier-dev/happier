@@ -23,6 +23,7 @@ import { buildScmNonInteractiveEnv } from '../providers/shared/nonInteractiveEnv
 import { runScmCommand } from '../runtime.js';
 import { mapGitErrorCode } from '../remote.js';
 import type { ResolvedScmHostingProviderRegistry } from '../hostingProviders/types.js';
+import { classifyHostingProviderError } from '../hostingProviders/providerFailure.js';
 import { resolveDefaultPullRequestStatusProjectionRegistry } from './pullRequestStatusProjection.js';
 import { realizeGitWorkspaceCheckout, resolveGitRepoRoot } from '../workspaceIntegration.js';
 import { assertGitWorkspaceCheckoutMutationPathsAuthorized } from './materializeGitWorkspaceCheckout.js';
@@ -54,8 +55,12 @@ type GitPullRequestCheckoutOperationDeps = Readonly<{
     ) => Promise<ScmWorkspaceIntegrationWorkspaceCheckoutRealizationResult>;
 }>;
 
-function errorResponse(error: string, errorCode: ScmOperationErrorCode): ScmPullRequestCheckoutResponse & ScmPullRequestPrepareWorktreeResponse {
-    return { success: false, error, errorCode };
+function errorResponse(
+    error: string,
+    errorCode: ScmOperationErrorCode,
+    details?: ReturnType<typeof classifyHostingProviderError>['details'],
+): ScmPullRequestCheckoutResponse & ScmPullRequestPrepareWorktreeResponse {
+    return { success: false, error, errorCode, ...details };
 }
 
 function resolveProvider(snapshot: ScmWorkingSnapshot): ScmHostingProviderRef | null {
@@ -184,11 +189,17 @@ export function createGitPullRequestCheckoutOperations(
             return { error: errorResponse('SCM hosting provider does not support pull request checkout', SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED) };
         }
         const resolveCheckoutReference = adapter.resolvePullRequestCheckoutReference;
-        const metadata = await resolveCheckoutReference({
-            provider,
-            reference: input.reference,
-            runtimeServices: readRuntimeServices(),
-        });
+        let metadata: PullRequestCheckoutMetadata;
+        try {
+            metadata = await resolveCheckoutReference({
+                provider,
+                reference: input.reference,
+                runtimeServices: readRuntimeServices(),
+            });
+        } catch (error) {
+            const failure = classifyHostingProviderError(error);
+            return { error: errorResponse(failure.message, failure.code, failure.details) };
+        }
         const branch = metadata.branch ?? metadata.pullRequest?.headBranch;
         if (!branch) {
             return { error: errorResponse('Pull request checkout metadata did not include a branch', SCM_OPERATION_ERROR_CODES.INVALID_REQUEST) };
