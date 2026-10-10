@@ -1,205 +1,18 @@
 import { Platform } from 'react-native';
 import { log } from '@/log';
 import { createNativeCacheFileSink, shareNativeCacheFile } from '@/sync/runtime/files/nativeCacheFileSink';
-
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { setClipboardImageSafe, setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { decodeBase64, encodeBase64 } from '@/encryption/base64';
+import { readCanonicalPaddedBase64DecodedLength } from '@happier-dev/protocol/crypto/base64';
 import { t } from '@/text';
-import type {
-    UsageAnalyticsViewModel,
-    UsageFilterState,
-    UsagePivotDimension,
-} from '@/sync/api/account/usageAnalytics';
-import { buildUsagePivotView } from '@/sync/api/account/usageAnalytics';
-import { getUsagePeriodDefinition } from '@/sync/api/account/usagePeriods';
-import { formatTokenCountLong, formatUsageCost } from '@/utils/format/usageNumbers';
 import {
-    buildUsageRecapCardModels,
-    type UsageRecapCardAccentTone,
-    type UsageRecapCardId,
-    type UsageRecapCardValueTone,
-} from './buildUsageRecapCardModels';
-import { resolveUsageCostModeLabel } from './resolveUsageCostModeLabel';
+    buildUsageAnalyticsExportPayload, buildUsageAnalyticsSummaryText,
+    buildUsagePivotCsv, buildUsagePivotTableExport,
+    type UsageAnalyticsExportInput,
+} from '@/sync/domains/usage/usageAnalyticsExport';
 import {
-    buildUsageCsvDocument,
-    exportUsageCsvDocument,
-    exportUsageTextDocument,
-    formatUsageExportFileTimestamp,
-    shareUsageExportCacheFile,
+    exportUsageCsvDocument, exportUsageTextDocument, formatUsageExportFileTimestamp, shareUsageExportCacheFile,
 } from './usageExportFile';
-
-export type UsageAnalyticsExportInput = Readonly<{
-    viewModel: UsageAnalyticsViewModel;
-    filters: UsageFilterState;
-    sessionId?: string | null;
-    /** The active Band-5 pivot dimension whose table is exported (E-5). */
-    pivotDimension?: UsagePivotDimension;
-}>;
-
-export type UsagePivotTableRowExport = Readonly<{
-    rank: number;
-    key: string;
-    name: string;
-    tokens: number;
-    cost: number;
-    events: number;
-    sharePct: number;
-}>;
-
-export type UsagePivotTableExport = Readonly<{
-    dimension: UsagePivotDimension;
-    rows: readonly UsagePivotTableRowExport[];
-}>;
-
-export type UsageAnalyticsExportPayload = Readonly<{
-    exportedAt: string;
-    sessionId: string | null;
-    filters: UsageFilterState;
-    viewModel: UsageAnalyticsViewModel;
-    recapCards: readonly UsageRecapCardExportPayload[];
-    /** The active pivot dimension's ranked table (E-5); omitted when no dimension is active. */
-    pivotTable: UsagePivotTableExport | null;
-}>;
-
-const DEFAULT_PIVOT_DIMENSION: UsagePivotDimension = 'model';
-
-/** The active pivot dimension's ranked rows, flattened for CSV/JSON export (E-5). */
-export function buildUsagePivotTableExport(input: UsageAnalyticsExportInput): UsagePivotTableExport {
-    const dimension = input.pivotDimension ?? DEFAULT_PIVOT_DIMENSION;
-    const view = buildUsagePivotView(input.viewModel.breakdowns, input.viewModel.leaderTrends, dimension);
-    return {
-        dimension,
-        rows: view.rows.map((entry, index) => ({
-            rank: index + 1,
-            key: entry.row.key,
-            name: entry.row.label,
-            tokens: entry.row.totalTokens,
-            cost: entry.row.totalCost,
-            events: entry.row.reportCount,
-            sharePct: entry.sharePct,
-        })),
-    };
-}
-
-/**
- * The active pivot dimension's table as CSV (E-5). Header + one row per ranked
- * entry: rank, key, name, tokens, cost, events, share%. Raw numeric values (no
- * locale formatting) so the export is machine-parseable.
- */
-export function buildUsagePivotCsv(input: UsageAnalyticsExportInput): string {
-    const table = buildUsagePivotTableExport(input);
-    return buildUsageCsvDocument([
-        ['rank', 'key', 'name', 'tokens', 'cost', 'events', 'share_pct'],
-        ...table.rows.map((row) => [
-            String(row.rank),
-            row.key,
-            row.name,
-            String(row.tokens),
-            String(row.cost),
-            String(row.events),
-            row.sharePct.toFixed(2),
-        ]),
-    ]);
-}
-
-export type UsageRecapCardExportPayload = Readonly<{
-    id: UsageRecapCardId;
-    label: string;
-    value: string;
-    subtitle: string;
-    valueTone: UsageRecapCardValueTone;
-    accentTone: UsageRecapCardAccentTone;
-    visualKind: 'activityMatrix' | 'progress' | 'rankBars';
-}>;
-
-export type UsageRecapCardExportInput = UsageAnalyticsExportInput & Readonly<{
-    cardId: UsageRecapCardId;
-}>;
-
-function formatPeriodLabel(period: UsageFilterState['period']): string {
-    return t(getUsagePeriodDefinition(period).translationKey);
-}
-
-function formatTimelineLeaderLabel(input: UsageAnalyticsViewModel['modelTimeline'] | UsageAnalyticsViewModel['engineTimeline']): string | null {
-    const mostRecentBucket = [...input].sort((left, right) => right.bucketStartMs - left.bucketStartMs)[0];
-    return mostRecentBucket?.leaders[0]?.label ?? null;
-}
-
-export function buildUsageAnalyticsExportPayload(input: UsageAnalyticsExportInput): UsageAnalyticsExportPayload {
-    const recapCards = buildUsageRecapCardModels({
-        viewModel: input.viewModel,
-        filters: input.filters,
-    }).map((card) => ({
-        id: card.id,
-        label: card.label,
-        value: card.value,
-        subtitle: card.subtitle,
-        valueTone: card.valueTone,
-        accentTone: card.accentTone,
-        visualKind: card.visual.kind,
-    }));
-
-    return {
-        exportedAt: new Date().toISOString(),
-        sessionId: input.sessionId ?? null,
-        filters: input.filters,
-        viewModel: input.viewModel,
-        recapCards,
-        pivotTable: buildUsagePivotTableExport(input),
-    };
-}
-
-export function buildUsageAnalyticsSummaryText(input: UsageAnalyticsExportInput): string {
-    const payload = buildUsageAnalyticsExportPayload(input);
-    const modelTimelineLabel = formatTimelineLeaderLabel(input.viewModel.modelTimeline);
-    const engineTimelineLabel = formatTimelineLeaderLabel(input.viewModel.engineTimeline);
-    const costModeLabel = resolveUsageCostModeLabel({
-        availableCostModes: input.viewModel.availableCostModes,
-        mode: payload.viewModel.costPresentation.mode,
-    });
-
-    const lines = [
-        t('usage.summary.title'),
-        payload.sessionId ? `${t('usage.summary.export.session')}: ${payload.sessionId}` : null,
-        `${t('usage.summary.export.period')}: ${formatPeriodLabel(payload.filters.period)}`,
-        `${t('usage.summary.export.metric')}: ${payload.filters.metric}`,
-        `${t('usage.summary.export.costMode')}: ${costModeLabel}`,
-        `${t('usage.summary.export.totalTokens')}: ${formatTokenCountLong(payload.viewModel.overview.totalTokens)}`,
-        `${t('usage.summary.export.totalCost')}: ${formatUsageCost(payload.viewModel.overview.totalCost, payload.viewModel.costPresentation.currency)}`,
-        `${t('usage.summary.currentStreak')}: ${payload.viewModel.insights.currentStreakDays}d`,
-        `${t('usage.summary.export.activeDays')}: ${payload.viewModel.insights.activeDays}`,
-        `${t('usage.summary.export.topModel')}: ${payload.viewModel.insights.favoriteModel?.label ?? payload.viewModel.breakdowns.models[0]?.label ?? t('usage.noData.title')}`,
-        `${t('usage.summary.export.topEngine')}: ${payload.viewModel.leaders.engines[0]?.label ?? t('usage.noData.title')}`,
-        `${t('usage.summary.export.modelTimeline')}: ${modelTimelineLabel ?? t('usage.noData.title')}`,
-        `${t('usage.summary.export.engineTimeline')}: ${engineTimelineLabel ?? t('usage.noData.title')}`,
-    ].filter((line): line is string => typeof line === 'string' && line.length > 0);
-
-    return lines.join('\n');
-}
-
-export function buildUsageRecapCardSummaryText(input: UsageRecapCardExportInput): string {
-    const payload = buildUsageAnalyticsExportPayload(input);
-    const recapCard = payload.recapCards.find((card) => card.id === input.cardId);
-    if (!recapCard) {
-        return buildUsageAnalyticsSummaryText(input);
-    }
-
-    const costModeLabel = resolveUsageCostModeLabel({
-        availableCostModes: input.viewModel.availableCostModes,
-        mode: payload.viewModel.costPresentation.mode,
-    });
-
-    const lines = [
-        t('usage.summary.title'),
-        payload.sessionId ? `${t('usage.summary.export.session')}: ${payload.sessionId}` : null,
-        `${recapCard.label}: ${recapCard.value}`,
-        recapCard.subtitle,
-        `${t('usage.summary.export.period')}: ${formatPeriodLabel(payload.filters.period)}`,
-        `${t('usage.summary.export.metric')}: ${payload.filters.metric}`,
-        `${t('usage.summary.export.costMode')}: ${costModeLabel}`,
-    ].filter((line): line is string => typeof line === 'string' && line.length > 0);
-
-    return lines.join('\n');
-}
 
 async function shareTextOnWeb(text: string): Promise<boolean> {
     if (typeof navigator !== 'undefined' && typeof (navigator as { share?: unknown }).share === 'function') {
@@ -225,14 +38,6 @@ async function shareTextOnNative(text: string): Promise<boolean> {
 
 export async function shareUsageAnalyticsSummary(input: UsageAnalyticsExportInput): Promise<boolean> {
     const summaryText = buildUsageAnalyticsSummaryText(input);
-    if (Platform.OS === 'web') {
-        return await shareTextOnWeb(summaryText);
-    }
-    return await shareTextOnNative(summaryText);
-}
-
-export async function shareUsageRecapCardSummary(input: UsageRecapCardExportInput): Promise<boolean> {
-    const summaryText = buildUsageRecapCardSummaryText(input);
     if (Platform.OS === 'web') {
         return await shareTextOnWeb(summaryText);
     }
@@ -267,64 +72,94 @@ function downloadDataUriOnWeb(dataUri: string, fileName: string): boolean {
     }
 }
 
+/** A rendered usage image as file bytes: the one capture output every delivery below consumes. */
+export type UsageImageFile = Readonly<{ mediaType: 'image/png'; fileName: string; base64: string }>;
+
+export type UsageImageAuthority = Readonly<{ signal?: AbortSignal; isCurrent?: () => boolean }>;
+function assertImageCurrent(authority: UsageImageAuthority): void {
+    authority.signal?.throwIfAborted();
+    if (authority.isCurrent?.() === false) throw new Error('action_account_scope_changed');
+}
+
 /**
- * Share a rendered recap story card as a PNG image. Captures the given view
- * via react-native-view-shot (already a dependency; same pattern as the tour's
- * `captureStageFrame`), then shares through the native cache owner or downloads
- * on web. Falls back to the text summary share when capture/share fails.
+ * Capture a mounted view as PNG bytes (react-native-view-shot, the tour's `captureStageFrame`
+ * pattern). Production only: no file, clipboard or share effect happens here.
  */
-export async function shareUsageRecapCardImage(
-    input: UsageRecapCardExportInput & Readonly<{ node: unknown }>,
-): Promise<boolean> {
+export async function captureUsageViewPng(node: unknown, authority: UsageImageAuthority = {}): Promise<string> {
+    assertImageCurrent(authority);
+    if (Platform.OS === 'web') {
+        const viewShotWeb = (await import('react-native-view-shot/src/RNViewShot.web')).default;
+        assertImageCurrent(authority);
+        const dataUri: string = await viewShotWeb.captureRef(node, { format: 'png', quality: 1, result: 'data-uri' });
+        assertImageCurrent(authority);
+        const prefix = 'data:image/png;base64,';
+        if (!dataUri.startsWith(prefix)) throw new Error('usage_image_capture_invalid');
+        const base64 = dataUri.slice(prefix.length);
+        if (readCanonicalPaddedBase64DecodedLength(base64) === null) throw new Error('usage_image_capture_invalid');
+        return base64;
+    }
+    const { captureRef, releaseCapture } = await import('react-native-view-shot');
+    assertImageCurrent(authority);
+    // Boundary cast: callers pass a mounted native view ref (same contract as the tour's captureStageFrame).
+    const captureUri = await captureRef(node as Parameters<typeof captureRef>[0], { format: 'png', quality: 1, result: 'tmpfile' });
     try {
-        if (Platform.OS === 'web') {
-            const viewShotWeb = (await import('react-native-view-shot/src/RNViewShot.web')).default;
-            const dataUri = await viewShotWeb.captureRef(input.node, {
-                format: 'png',
-                quality: 1,
-                result: 'data-uri',
-            });
-            if (downloadDataUriOnWeb(dataUri, `usage-recap-${input.cardId}-${formatUsageExportFileTimestamp(new Date())}.png`)) {
+        assertImageCurrent(authority);
+        const { File } = await import('expo-file-system');
+        // View-shot iOS returns a raw temporary path; Expo File requires a file URL.
+        const bytes = await new File(captureUri.startsWith('file://') ? captureUri : `file://${encodeURI(captureUri)}`).bytes();
+        assertImageCurrent(authority);
+        return encodeBase64(bytes);
+    } finally {
+        releaseCapture(captureUri);
+    }
+}
+
+async function shareUsageImageOnNative(file: UsageImageFile, authority: UsageImageAuthority): Promise<boolean> {
+    const sink = await createNativeCacheFileSink({ directoryName: 'happier-downloads', fileName: file.fileName });
+    if (!sink.ok) throw new Error(sink.error);
+    let retainCacheFile = false;
+    try {
+        assertImageCurrent(authority);
+        await sink.writeBytes(decodeBase64(file.base64));
+        await sink.close();
+        assertImageCurrent(authority);
+        const result = await shareNativeCacheFile({ fileUri: sink.fileUri, name: file.fileName, mimeType: file.mediaType,
+            isCurrent: () => !authority.signal?.aborted && authority.isCurrent?.() !== false });
+        if (result.status !== 'shared') return false;
+        retainCacheFile = result.retainCacheFile;
+        return true;
+    } finally {
+        if (!retainCacheFile) await sink.cleanup();
+    }
+}
+
+/**
+ * Deliver already-produced image bytes with the person's explicit intent: Save downloads (web) or
+ * opens the system sheet that offers Save Image (native); Share uses the platform share target when
+ * one exists; Copy places the image on the clipboard.
+ */
+export async function deliverUsageImageFile(file: UsageImageFile, intent: 'save' | 'share' | 'copy', authority: UsageImageAuthority = {}): Promise<boolean> {
+    try {
+        assertImageCurrent(authority);
+        if (intent === 'copy') return await setClipboardImageSafe(file.base64);
+        if (Platform.OS !== 'web') return await shareUsageImageOnNative(file, authority);
+        if (intent === 'share' && typeof navigator !== 'undefined' && typeof navigator.share === 'function'
+            && typeof navigator.canShare === 'function') {
+            const bytes = decodeBase64(file.base64);
+            // A plain ArrayBuffer copy: `File` parts do not admit a view over a shared buffer type.
+            const shared = new File([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer],
+                file.fileName, { type: file.mediaType });
+            if (navigator.canShare({ files: [shared] })) {
+                assertImageCurrent(authority);
+                await navigator.share({ files: [shared] });
                 return true;
             }
-            return await shareUsageRecapCardSummary(input);
         }
-
-        const { captureRef, releaseCapture } = await import('react-native-view-shot');
-        // Boundary cast: callers pass a mounted native view ref (same contract
-        // as the tour's captureStageFrame).
-        const captureSource = input.node as Parameters<typeof captureRef>[0];
-        const uri = await captureRef(captureSource, {
-            format: 'png',
-            quality: 1,
-            result: 'tmpfile',
-        });
-        try {
-            const name = `usage-recap-${input.cardId}-${formatUsageExportFileTimestamp(new Date())}.png`;
-            const sink = await createNativeCacheFileSink({ directoryName: 'happier-downloads', fileName: name });
-            if (!sink.ok) throw new Error(sink.error);
-            let retainCacheFile = false;
-            try {
-                // Legacy's standard copyAsync overwrites the closed sink file;
-                // modern File.copy rejects an already-created destination.
-                await sink.close();
-                const { copyAsync } = await import('expo-file-system/legacy');
-                await copyAsync({ from: uri, to: sink.fileUri });
-                const result = await shareNativeCacheFile({ fileUri: sink.fileUri, name, mimeType: 'image/png' });
-                if (result.status === 'shared') {
-                    retainCacheFile = result.retainCacheFile;
-                    return true;
-                }
-            } finally {
-                if (!retainCacheFile) await sink.cleanup();
-            }
-        } finally {
-            releaseCapture(uri);
-        }
-        return await shareUsageRecapCardSummary(input);
+        assertImageCurrent(authority);
+        return downloadDataUriOnWeb(`data:${file.mediaType};base64,${file.base64}`, file.fileName);
     } catch (error) {
-        log.log(`Failed to export usage recap image: ${error instanceof Error ? error.message : String(error)}`);
-        return await shareUsageRecapCardSummary(input);
+        log.log(`Failed to deliver usage image: ${error instanceof Error ? error.message : String(error)}`);
+        return false;
     }
 }
 

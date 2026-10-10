@@ -55,11 +55,12 @@ type RippleCellProps = Readonly<{
     animate: boolean;
     /** True = scale+fade travel; false = crossfade only. */
     travel: boolean;
-    size: number;
+    /** Omit when the canonical renderer already owns the cell's dimensions. */
+    size?: number;
     children: React.ReactNode;
 }>;
 
-const RippleCell = React.memo(function RippleCell(props: RippleCellProps) {
+export const RippleCell = React.memo(function RippleCell(props: RippleCellProps) {
     const progress = useSharedValue(props.animate ? 0 : 1);
 
     React.useEffect(() => {
@@ -78,7 +79,7 @@ const RippleCell = React.memo(function RippleCell(props: RippleCellProps) {
     }));
 
     return (
-        <Animated.View style={[{ width: props.size, height: props.size }, styles.cell, style]}>
+        <Animated.View style={[props.size === undefined ? { width: '100%', height: '100%' } : { width: props.size, height: props.size }, styles.cell, style]}>
             {props.children}
         </Animated.View>
     );

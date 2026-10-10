@@ -17,7 +17,8 @@ const credentials: AuthCredentials = { token: 't', secret: 's' };
 
 async function activateTestHome() {
     const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
-    await upsertAndActivateServer({ serverUrl: 'https://api.example.test', scope: 'tab' });
+    // This node harness has no browser sessionStorage; use the durable selection.
+    await upsertAndActivateServer({ serverUrl: 'https://api.example.test', scope: 'device' });
 }
 
 function makeSnapshot(): ProviderAccountUsageSnapshotV1 {
@@ -57,6 +58,74 @@ async function loadApi() {
 }
 
 describe('apiProviderAccountUsage', () => {
+    it.each(['pending', 'witness'] as const)('samples completion time after held %s HTTP without changing explicit as-of reads', async held => {
+        const source = { ref: { service: { pluginId: 'example.usage', localId: 'usage' }, accountId: 'account' }, bindingKind: 'account' as const };
+        const witness = ProviderAccountUsageSnapshotV1Schema.parse({ ...makeSnapshot(), observedAtMs: 500, fetchedAtMs: 500, staleAfterMs: 2000, meters: [{ meterId: 'weekly', label: 'Weekly', used: 50, limit: 100, utilizationPct: 50, unit: 'requests', resetsAt: 1000, windowDurationMs: 1000, status: 'ok', details: {} }] });
+        const current = { ...witness, observedAtMs: 1250, fetchedAtMs: 1250, staleAfterMs: 500, meters: [{ ...witness.meters[0]!, resetsAt: 2000 }] };
+        const record = (snapshot: ProviderAccountUsageSnapshotV1) => ({ content: { t: 'plain', v: snapshot }, metadata: { fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs, status: 'ok' }, sources: [source] });
+        let nowMs = 1250;
+        const clock = vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+        let release!: () => void;
+        const heldResponse = new Promise<void>(resolve => { release = resolve; });
+        let entered!: () => void;
+        const responseEntered = new Promise<void>(resolve => { entered = resolve; });
+        const request = vi.fn(async (path: string) => {
+            if (path.includes(held === 'pending' ? '/reset-starts/read' : '/history')) { entered(); await heldResponse; }
+            const value = path.includes('/sources/resolve') ? { source, recordId: current.recordId, providerAccountId: current.recordKey.accountSubjectId, fetchedAt: 1250, staleAfterMs: 500 }
+                : path.includes('/reset-starts/read') ? { entries: [{ sessionId: 'session', localId: 'held', reset: { source, recordId: witness.recordId, meterId: 'weekly', witness: { id: 'accepted', observedAtMs: 500 } }, authorityCurrent: true }] }
+                : path.includes('/history') ? { entries: [{ id: 'accepted', observedAtMs: 500, record: record(witness) }], nextCursor: null } : record(current);
+            return new Response(JSON.stringify(value), { status: 200 });
+        });
+        try {
+            const { getProviderAccountUsageQuota } = await loadApi();
+            const options = { accountMode: 'plain' as const, request };
+            const reading = getProviderAccountUsageQuota({ token: 'plain-token' }, { source }, options);
+            await responseEntered;
+            nowMs = 2251;
+            release();
+            const result = await reading;
+            expect(result.current).toEqual(current);
+            expect(result.pace).toMatchObject([{ value: { status: 'unavailable', reason: 'stale' } }]);
+            expect(result.waitingWork).toMatchObject({ status: 'available', entries: [{ readiness: { status: 'waiting', reason: 'quota_stale' } }] });
+            const deterministic = await getProviderAccountUsageQuota({ token: 'plain-token' }, { source }, { ...options, nowMs: 1250 });
+            expect(deterministic.pace).toMatchObject([{ value: { status: 'available', pace: 2 } }]);
+            expect(deterministic.waitingWork).toMatchObject({ status: 'available', entries: [{ readiness: { status: 'ready' } }] });
+        } finally { release(); clock.mockRestore(); }
+    });
+    it('does not report requested history as empty when its admitted source has an unavailable history route', async () => {
+        const source = { ref: { service: { pluginId: 'example.usage', localId: 'usage' }, accountId: 'account' }, bindingKind: 'account' as const };
+        const snapshot = makeSnapshot();
+        let historyAvailable = false;
+        const request = vi.fn(async (path: string) => path.includes('/history')
+            ? new Response(JSON.stringify(historyAvailable ? { entries: [], nextCursor: null } : {}), { status: historyAvailable ? 200 : 404 })
+            : new Response(JSON.stringify(path.includes('/sources/resolve') ? { source, recordId: snapshot.recordId, providerAccountId: snapshot.recordKey.accountSubjectId, fetchedAt: 1, staleAfterMs: 2 } : path.includes('/reset-starts/read') ? { entries: [] } : { content: { t: 'plain', v: snapshot }, metadata: { fetchedAt: 1, staleAfterMs: 2, status: 'ok' }, sources: [source] }), { status: 200 }));
+        const { getProviderAccountUsageQuota } = await loadApi();
+        await expect(getProviderAccountUsageQuota({ token: 'plain-token' }, { source, history: { range: { startAtMs: 0, endAtMs: 2 }, pageSize: 1 } }, { accountMode: 'plain', request, nowMs: 1 })).rejects.toMatchObject({ code: 'provider_account_usage_content_unavailable' });
+        historyAvailable = true;
+        expect((await getProviderAccountUsageQuota({ token: 'plain-token' }, { source, history: { range: { startAtMs: 0, endAtMs: 2 }, pageSize: 1 } }, { accountMode: 'plain', request, nowMs: 1 })).history).toEqual({ entries: [], nextCursor: null });
+    });
+    it('projects actual held work only after the canonical Pending metadata and exact immutable B witness are opened', async () => {
+        const source = { ref: { service: { pluginId: 'example.usage', localId: 'usage' }, accountId: 'account' }, bindingKind: 'account' as const };
+        const base = makeSnapshot();
+        const witness = ProviderAccountUsageSnapshotV1Schema.parse({ ...base, observedAtMs: 500, fetchedAtMs: 500, staleAfterMs: 2000, meters: [{ meterId: 'weekly', label: 'Weekly', used: 50, limit: 100, utilizationPct: 50, unit: 'requests', resetsAt: 1000, windowDurationMs: 1000, status: 'ok', details: {} }] });
+        const current = ProviderAccountUsageSnapshotV1Schema.parse({ ...witness, observedAtMs: 1250, fetchedAtMs: 1250, meters: [{ ...witness.meters[0]!, resetsAt: 2000 }] });
+        const record = (snapshot: ProviderAccountUsageSnapshotV1) => ({ content: { t: 'plain', v: snapshot }, metadata: { fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs, status: 'ok' }, sources: [source] });
+        const request = vi.fn(async (path: string) => {
+            const value = path.includes('/sources/resolve') ? { source, recordId: current.recordId, providerAccountId: current.recordKey.accountSubjectId, fetchedAt: 1250, staleAfterMs: 2000 }
+                : path.includes('/reset-starts/read') ? { entries: [{ sessionId: 'session', localId: 'held', reset: { source, recordId: witness.recordId, meterId: 'weekly', witness: { id: 'accepted', observedAtMs: 500 } }, authorityCurrent: true }] }
+                : path.includes('/history') ? { entries: [{ id: 'accepted', observedAtMs: 500, record: record(witness) }], nextCursor: null } : record(current);
+            return new Response(JSON.stringify(value), { status: 200 });
+        });
+        const { getProviderAccountUsageQuota } = await loadApi();
+        expect((await getProviderAccountUsageQuota({ token: 'plain-token' }, { source }, { accountMode: 'plain', request, nowMs: 1250 })).waitingWork).toEqual({ status: 'available', entries: [{ sessionId: 'session', localId: 'held', recordId: witness.recordId, meterId: 'weekly', readiness: { status: 'ready' } }] });
+    });
+    it('opens qualified current usage through the captured request in keyless plain mode', async () => {
+        const source = { ref: { service: { pluginId: 'example.usage', localId: 'usage' }, accountId: 'account' }, bindingKind: 'account' as const };
+        const snapshot = makeSnapshot();
+        const request = vi.fn(async (path: string) => new Response(JSON.stringify(path.includes('/sources/resolve') ? { source, recordId: snapshot.recordId, providerAccountId: snapshot.recordKey.accountSubjectId, fetchedAt: 1, staleAfterMs: 2 } : path.includes('/reset-starts/read') ? { entries: [] } : { content: { t: 'plain', v: snapshot }, metadata: { fetchedAt: 1, staleAfterMs: 2, status: 'ok' }, sources: [source] }), { status: 200 }));
+        const { getProviderAccountUsageQuota } = await loadApi();
+        expect((await getProviderAccountUsageQuota({ token: 'plain-token' }, { source }, { accountMode: 'plain', request, nowMs: 1 })).current).toEqual(snapshot);
+    });
     it('gets a plaintext provider account usage snapshot by record id', async () => {
         await activateTestHome();
         const snapshot = makeSnapshot();

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { UsageAnalyticsQueryRequestSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 
 afterEach(() => {
     vi.unstubAllGlobals();
@@ -10,6 +11,32 @@ afterEach(() => {
 const credentials: AuthCredentials = { token: 'test-token', secret: 'test-secret' };
 
 describe('apiUsage v2 analytics query', () => {
+    it('classifies richer HTTP authority refusal for the canonical Resource lifecycle', async () => {
+        const { queryUsageAnalytics } = await import('./apiUsage');
+        await expect(queryUsageAnalytics(credentials, UsageAnalyticsQueryRequestSchema.parse({}), {
+            request: async () => Response.json({ error: 'forbidden' }, { status: 403 }),
+        })).rejects.toMatchObject({ code: 'denied', kind: 'auth', status: 403 });
+    });
+
+    it('refuses unsupported filter clauses rather than returning unfiltered HTTP facts', async () => {
+        const { queryUsage } = await import('./apiUsage');
+        await expect(queryUsage(credentials, { focus: { dimension: 'unsupported', key: 'private' } }, {
+            request: async () => Response.json({ v: 1, totals: { eventCount: 0,
+                tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+                cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } } }),
+        })).rejects.toMatchObject({ code: 'usage_filter_unsupported' });
+    });
+
+    it('refuses unavailable focused reads instead of projecting an unfiltered legacy report', async () => {
+        const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+        await upsertAndActivateServer({ serverUrl: 'https://api.example.test', scope: 'tab' });
+        vi.stubGlobal('fetch', async (input: RequestInfo | URL) => String(input).includes('/v2/usage/query')
+            ? Response.json({ error: 'not_found' }, { status: 404 }) : Response.json({ usage: [] }));
+        const { queryUsage } = await import('./apiUsage');
+        await expect(queryUsage(credentials, { focus: { dimension: 'machine', key: 'private' } }))
+            .rejects.toMatchObject({ status: 404 });
+    });
+
     it('queries the v2 analytics endpoint with structured date range and breakdowns', async () => {
         const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
         await upsertAndActivateServer({ serverUrl: 'https://api.example.test', scope: 'tab' });
@@ -43,7 +70,7 @@ describe('apiUsage v2 analytics query', () => {
         const body = JSON.parse(String(options?.body));
         expect(body).toMatchObject({
             granularity: 'day',
-            timeZoneOffsetMinutes: -new Date().getTimezoneOffset(),
+            timeZoneOffsetMinutes: -new Date().getTimezoneOffset() || 0,
             includeSeries: true,
             includeInsights: true,
             includeActivity: true,
@@ -55,7 +82,7 @@ describe('apiUsage v2 analytics query', () => {
         });
         expect(body).toHaveProperty('dateRange');
         expect(body).toHaveProperty('breakdowns');
-        expect(body.breakdowns).toEqual(expect.arrayContaining(['provider', 'model', 'backendMode', 'source']));
+        expect(body.breakdowns).toEqual(expect.arrayContaining(['agent', 'model', 'backendMode', 'source']));
         expect(body).not.toHaveProperty('startTime');
         expect(body).not.toHaveProperty('endTime');
         expect(body).not.toHaveProperty('groupBy');

@@ -23,7 +23,10 @@ export type LineFadeProps = Readonly<{
     testID?: string;
 }>;
 
-export const LineFade = React.memo(function LineFade(props: LineFadeProps) {
+/** The incumbent single opacity engine, also used around filled chart ink. */
+export const ChartInkFade = React.memo(function ChartInkFade(props: Readonly<{
+    children: React.ReactNode; animateEntrance: boolean; durationMs?: number; testID?: string;
+}>) {
     const opacity = useSharedValue(props.animateEntrance ? 0 : 1);
 
     React.useEffect(() => {
@@ -39,6 +42,14 @@ export const LineFade = React.memo(function LineFade(props: LineFadeProps) {
 
     return (
         <Animated.View testID={props.testID} style={style}>
+            {props.children}
+        </Animated.View>
+    );
+});
+
+export const LineFade = React.memo(function LineFade(props: LineFadeProps) {
+    return (
+        <ChartInkFade animateEntrance={props.animateEntrance} durationMs={props.durationMs} testID={props.testID}>
             <Svg width={props.width} height={props.height} viewBox={`0 0 ${props.width} ${props.height}`}>
                 <Path
                     d={props.path}
@@ -49,6 +60,6 @@ export const LineFade = React.memo(function LineFade(props: LineFadeProps) {
                     fill="none"
                 />
             </Svg>
-        </Animated.View>
+        </ChartInkFade>
     );
 });

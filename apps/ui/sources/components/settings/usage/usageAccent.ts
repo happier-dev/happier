@@ -8,9 +8,18 @@
  * neutrals; the accent is reserved for the row that MEANS something (the
  * leader, the current selection, the over-threshold value).
  *
- * Every usage component takes its colors from here. A per-section palette or a
- * per-dimension hue map is a review-rejectable regression.
+ * Two governed exceptions (lab `kitcharts`, accepted in the widgets handoff §3.12):
+ *  - the AGENT dimension draws each Agent in its own fixed identity hue, because Agents are the one
+ *    dimension people already recognise by mark and colour across the app. Models, projects,
+ *    machines and token kinds keep the accent ramp;
+ *  - status is said with an icon and words, in the theme's status roles.
+ *
+ * Magnitude colors come from here; Agent identity hues come from the Agent catalog.
+ * A per-section palette or a hue map for any
+ * dimension other than Agent is a review-rejectable regression.
  */
+
+import { getNeutralAgentIdentityColor } from '@/agents/catalog/catalog';
 
 type UsageAccentThemeSlice = Readonly<{
     colors: Readonly<{
@@ -18,8 +27,15 @@ type UsageAccentThemeSlice = Readonly<{
             link: string;
             secondary: string;
         }>;
+        /** The paper the ramp is mixed with; a slice without it keeps translucent steps. */
+        surface?: Readonly<{ base: string }>;
     }>;
 }>;
+
+/** The neutral every folded "Other" series takes, in any dimension. */
+export function usageOtherColor(theme: Readonly<{ dark: boolean }>): string {
+    return getNeutralAgentIdentityColor(theme);
+}
 
 /** The one signature accent for usage surfaces. */
 export function usageSignatureAccent(theme: UsageAccentThemeSlice): string {
@@ -50,11 +66,31 @@ export function withUsageAccentAlpha(color: string, alpha: number): string {
  */
 export const USAGE_SERIES_RAMP_ALPHAS = [1, 0.82, 0.68, 0.56, 0.46, 0.37, 0.29, 0.22] as const;
 
+const HEX6 = /^#([0-9a-fA-F]{6})$/;
+
+/** `accent` at `amount` over `paper`, as one solid colour; `null` when either is not `#RRGGBB`. */
+function mixOverPaper(accent: string, paper: string, amount: number): string | null {
+    const top = HEX6.exec(accent.trim());
+    const under = HEX6.exec(paper.trim());
+    if (!top || !under) return null;
+    const a = parseInt(top[1]!, 16);
+    const b = parseInt(under[1]!, 16);
+    const channel = (shift: number) =>
+        Math.round(((a >> shift) & 0xff) * amount + ((b >> shift) & 0xff) * (1 - amount));
+    return `#${[16, 8, 0].map((shift) => channel(shift).toString(16).padStart(2, '0')).join('')}`;
+}
+
+/**
+ * Step `index` of the magnitude ramp. On a known paper the step is SOLID (the accent pre-mixed with
+ * the paper), so stacked steps keep their order on glass and never show what is behind them.
+ */
 export function usageSeriesColor(theme: UsageAccentThemeSlice, index: number): string {
     const clampedIndex = Math.max(0, Math.min(index, USAGE_SERIES_RAMP_ALPHAS.length - 1));
     const alpha = USAGE_SERIES_RAMP_ALPHAS[clampedIndex]!;
     const accent = usageSignatureAccent(theme);
-    return alpha >= 1 ? accent : withUsageAccentAlpha(accent, alpha);
+    if (alpha >= 1) return accent;
+    const paper = theme.colors.surface?.base;
+    return (paper ? mixOverPaper(accent, paper, alpha) : null) ?? withUsageAccentAlpha(accent, alpha);
 }
 
 /**

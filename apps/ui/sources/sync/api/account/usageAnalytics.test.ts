@@ -13,6 +13,7 @@ import {
     buildUsageTrendDelta,
     buildUsageWeeksBreakdown,
     resolveSessionsUsed,
+    resolveDisplayCost,
     selectUsageBreakdownRows,
     USAGE_MODEL_MIX_OTHER_KEY,
     type UsageAnalyticsTimelineBucket,
@@ -32,7 +33,75 @@ const baseState: UsageFilterState = {
     costMode: 'auto',
 };
 
+describe('exact model-mix amounts', () => {
+    it('retains original per-series bucket amounts rather than reconstructing them from shares', () => {
+        const mix = buildUsageModelMix([0, 1].map((index) => ({ bucketStartMs: index, bucketEndMs: index + 1,
+            leaders: [
+                { key: 'a', label: 'A', totalTokens: 15, totalCost: 0, eventCount: 1 },
+                { key: 'b', label: 'B', totalTokens: 7, totalCost: 0, eventCount: 1 },
+            ],
+        })));
+        expect(mix.buckets[0]!.tokens).toEqual([15, 7]);
+        expect(mix.buckets[0]!.shares[0]! * mix.buckets[0]!.total).not.toBe(15);
+    });
+});
+
 describe('buildUsageAnalyticsViewModel', () => {
+    it('groups legacy hourly reports on the captured fixed-offset calendar rather than UTC report rows', () => {
+        const usage: UsageDataPoint[] = [
+            { timestamp: Date.parse('2026-07-01T22:00:00Z') / 1000, tokens: { total: 10 }, cost: { total: 1 }, reportCount: 2 },
+            { timestamp: Date.parse('2026-07-02T00:00:00Z') / 1000, tokens: { total: 20 }, cost: { total: 2 }, reportCount: 3 },
+        ];
+        const result = buildUsageAnalyticsViewModel(usage, { ...baseState, period: 'today' }, 120);
+        expect(result.activity.calendarDays).toEqual([{ date: '2026-07-02', eventCount: 5 }]);
+        expect(result.activity.weekdayHourBuckets).toEqual([]);
+        expect(result.overview.activeDays).toBe(1);
+        expect(result.insights.activeDays).toBe(1);
+    });
+
+    it('derives legacy streaks from distinct observed calendar days and preserves gaps in the summary', () => {
+        const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-07-06T12:00:00Z'));
+        try {
+            const usage: UsageDataPoint[] = ['2026-07-02T23:00:00Z', '2026-07-04T22:15:00Z', '2026-07-05T22:15:00Z', '2026-07-06T08:00:00Z']
+                .map(instant => ({ timestamp: Date.parse(instant) / 1000, tokens: { total: 10 }, cost: { total: 1 }, reportCount: 1 }));
+            const result = buildUsageAnalyticsViewModel(usage, baseState, 120);
+            expect(result.insights).toMatchObject({ activeDays: 3, longestStreakDays: 2, currentStreakDays: 2 });
+            const summary = buildUsageAnalyticsSummaryViewModel(usage, 120);
+            expect(summary).toMatchObject({ activeDays: 3, currentStreakDays: 2, totalTokens: 40 });
+            expect(summary.recentActivity).toHaveLength(3);
+        } finally {
+            clock.mockRestore();
+        }
+    });
+    it('leaves legacy additive categories unknown without erasing known raw cache counts', () => {
+        const result = buildUsageAnalyticsViewModel([{ timestamp: 1_700_000_000,
+            tokens: { input: 100, output: 20, cache_read: 30, reasoning: 5, total: 120 },
+            cost: { total: 1 }, reportCount: 1 }], baseState);
+        expect(result.overview.totalTokens).toBe(120);
+        expect(result.cacheSavings?.cachedReadTokens).toBe(30);
+        expect(result.composition.total).toBe(0);
+    });
+    it('does not synthesize a price from a population without one cost basis', () => {
+        expect(resolveDisplayCost({ reportedUsd: 2, estimatedUsd: 3, costSource: 'none', currency: 'USD' })).toBe(0);
+    });
+    it('distinguishes missing legacy prices from explicitly observed zero prices', () => {
+        const point: UsageDataPoint = { timestamp: 1_700_000_000, tokens: { total: 120 }, cost: {}, reportCount: 1 };
+        expect(buildUsageAnalyticsViewModel([point], baseState).costPresentation?.source).toBe('none');
+        expect(buildUsageAnalyticsViewModel([{ ...point, cost: { total: 0 } }], baseState).costPresentation?.source).toBe('legacy_total_synthesized');
+    });
+    it('uses server disjoint categories without re-adding cached input or reasoning', () => {
+        const source: UsageAnalyticsQueryResponse = { v: 1, totals: { eventCount: 1,
+            tokens: { input: 100, output: 20, cacheRead: 30, cacheWrite: 0, reasoning: 5, total: 120 },
+            cost: { reportedUsd: 0, estimatedUsd: 0, costSource: 'none', currency: 'USD' } },
+            tokenCategories: { input: 70, output: 15, cacheRead: 30, cacheWrite: 0, reasoning: 5, total: 120 } };
+        const result = buildUsageAnalyticsViewModel(source, baseState);
+        expect(result.overview.totalTokens).toBe(120);
+        expect(result.composition.total).toBe(120);
+        expect(result.composition.segments.find((segment) => segment.key === 'input')?.tokens).toBe(70);
+        const { tokenCategories: _known, ...unknown } = source;
+        expect(buildUsageAnalyticsViewModel(unknown, baseState).composition.total).toBe(0);
+        expect(buildUsageAnalyticsViewModel(unknown, baseState).overview.totalTokens).toBe(120);
+    });
     it('aggregates explicit totals and groups drilldowns by provider, model, session, project, and workspace', () => {
         const usage: UsageDataPoint[] = [
             {
@@ -281,11 +350,11 @@ describe('buildUsageAnalyticsViewModel', () => {
         }
     });
 
-    it('preserves server-computed effective cost for mixed-provenance auto responses', () => {
+    it('does not use an invented blended effective cost for mixed-provenance auto responses', () => {
         const mixedCost = {
             reportedUsd: 0.12,
             estimatedUsd: 0.29,
-            effectiveUsd: 0.32,
+            costSource: 'none',
             currency: 'USD',
         } as const;
         const response: UsageAnalyticsQueryResponse = {
@@ -320,20 +389,14 @@ describe('buildUsageAnalyticsViewModel', () => {
                     cost: mixedCost,
                 }],
             }],
-            costPresentation: {
-                mode: 'auto',
-                effectiveUsd: 0.32,
-                currency: 'USD',
-                source: 'provider_reported_api_equivalent',
-            },
         };
 
         const viewModel = buildUsageAnalyticsViewModel(response, baseState);
 
-        expect(viewModel.overview.totalCost).toBeCloseTo(0.32);
-        expect(viewModel.trend[0]?.cost).toBeCloseTo(0.32);
-        expect(viewModel.breakdowns.agents[0]?.totalCost).toBeCloseTo(0.32);
-        expect(viewModel.modelTimeline[0]?.leaders[0]?.totalCost).toBeCloseTo(0.32);
+        expect(viewModel.overview.totalCost).toBe(0);
+        expect(viewModel.trend[0]?.cost).toBe(0);
+        expect(viewModel.breakdowns.agents[0]?.totalCost).toBe(0);
+        expect(viewModel.modelTimeline[0]?.leaders[0]?.totalCost).toBe(0);
     });
 
     it('does not treat sparse older 30-day buckets as current-week summary usage', () => {
@@ -801,6 +864,8 @@ describe('usage view-model L6 extensions (T2)', () => {
     }): UsageAnalyticsQueryResponse {
         return {
             v: 1,
+            tokenCategories: { input: 90, output: 30, reasoning: 10, cacheRead: overrides?.cacheRead ?? 25,
+                cacheWrite: overrides?.cacheWrite ?? 4, total: 159 },
             totals: {
                 eventCount: 3,
                 tokens: {
@@ -1081,24 +1146,29 @@ describe('usage dashboard derivations', () => {
             reportCount: events,
         });
 
-        it('groups trend points into UTC Sunday-anchored weeks, sums metrics, newest first', () => {
-            // 2026-07-12 is a Sunday; 07-13 Mon, 07-14 Tue in the same week.
-            // 2026-07-05 is the prior Sunday.
+        it('groups trend points into canonical Monday weeks, sums metrics, newest first', () => {
             const rows = buildUsageWeeksBreakdown([
                 point('2026-07-05', 100, 1, 5),
                 point('2026-07-13', 40, 0.4, 2),
                 point('2026-07-14', 60, 0.6, 3),
             ]);
             expect(rows).toHaveLength(2);
-            // Newest week (starting 07-12) first.
-            expect(rows[0]!.key).toBe('2026-07-12');
+            expect(rows[0]!.key).toBe('2026-07-13');
             expect(rows[0]!.totalTokens).toBe(100);
             expect(rows[0]!.totalCost).toBeCloseTo(1);
             expect(rows[0]!.reportCount).toBe(5);
-            expect(rows[1]!.key).toBe('2026-07-05');
+            expect(rows[1]!.key).toBe('2026-06-29');
             expect(rows[1]!.totalTokens).toBe(100);
             expect(rows.every((r) => r.dimension === 'week')).toBe(true);
             void DAY;
+        });
+
+        it('uses the query fixed offset when a Sunday UTC event is already Monday locally', () => {
+            const sunday = { ...point('2026-07-05', 20, 2, 1), timestamp: Date.parse('2026-07-05T23:30:00Z') / 1000 };
+            const rows = buildUsageWeeksBreakdown([sunday], 120);
+            expect(rows[0]!.key).toBe('2026-07-06');
+            expect(rows[0]!.firstSeenAt).toBe(Date.parse('2026-07-05T22:00:00Z') / 1000);
+            expect(rows[0]!.lastSeenAt).toBe(Date.parse('2026-07-12T22:00:00Z') / 1000);
         });
 
         it('drives the week pivot in chronological (not token-ranked) order, accenting the busiest week', () => {
@@ -1111,10 +1181,10 @@ describe('usage dashboard derivations', () => {
             };
             const view = buildUsagePivotView(breakdowns, { models: {}, engines: {}, agents: {} }, 'week');
             // Order preserved (newest first), NOT re-sorted by tokens.
-            expect(view.rows.map((r) => r.row.key)).toEqual(['2026-07-12', '2026-07-05']);
+            expect(view.rows.map((r) => r.row.key)).toEqual(['2026-07-13', '2026-06-29']);
             // The busiest week (300 tokens) carries the accent even though it is first anyway here.
-            expect(view.rows.find((r) => r.row.key === '2026-07-12')!.isLeader).toBe(true);
-            expect(view.rows.find((r) => r.row.key === '2026-07-05')!.isLeader).toBe(false);
+            expect(view.rows.find((r) => r.row.key === '2026-07-13')!.isLeader).toBe(true);
+            expect(view.rows.find((r) => r.row.key === '2026-06-29')!.isLeader).toBe(false);
         });
     });
 

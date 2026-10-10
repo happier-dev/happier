@@ -47,3 +47,12 @@ export function formatPercent(value: number): string {
     if (!isValidUsageNumber(value)) return '—';
     return `${trimTrailingZero(value.toFixed(1))}%`;
 }
+
+/**
+ * Identifier-friendly display form for model/agent ids (R-DESIGN D-4/D-7):
+ * short trailing segments are joined with a non-breaking hyphen (U+2011) so
+ * wrapping never orphans a tiny tail ("claude-fable-\n5" → "claude-\nfable‑5").
+ */
+export function formatIdentifierLabel(value: string): string {
+    return value.replace(/-(?=[^-]{1,3}$)/, '‑');
+}

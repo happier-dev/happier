@@ -35,6 +35,15 @@ describe('usageAccent — the single usage palette owner (R-DESIGN D-1)', () => 
         expect(usageSeriesColor(lightTheme, -1)).toBe('#2BACCC');
     });
 
+    it('mixes the ramp with a known paper into solid steps that keep their order', () => {
+        const onPaper = { colors: { ...lightTheme.colors, surface: { base: '#FFFFFF' } } };
+        expect(usageSeriesColor(onPaper, 0)).toBe('#2BACCC');
+        expect(usageSeriesColor(onPaper, 1)).toBe('#51bbd5');
+        const steps = Array.from({ length: 8 }, (_v, index) => usageSeriesColor(onPaper, index));
+        expect(steps.every((step) => /^#[0-9a-fA-F]{6}$/.test(step))).toBe(true);
+        expect(new Set(steps).size).toBe(8);
+    });
+
     it('carries at least 8 ordered steps so 8-category legends never wrap (D-6)', () => {
         // The context-gauge popover legend renders up to 8 categories; the ramp
         // must supply 8 DISTINCT ordered tones so no two categories collide and

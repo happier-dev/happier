@@ -1,11 +1,15 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { backoff } from '@/utils/timing/time';
 import { HappyError } from '@/utils/errors/errors';
-import { serverFetch } from '@/sync/http/client';
+import { serverFetch, type ServerFetch } from '@/sync/http/client';
+import { UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import type {
     UsageAnalyticsQueryRequest,
     UsageAnalyticsQueryResponse,
 } from '@happier-dev/protocol';
+import { resolveUsageCalendarInstant } from '@happier-dev/protocol';
+import { buildUsageFocusFilters } from './usageFocusFilters';
+export { buildUsageFocusFilters } from './usageFocusFilters';
 import {
     getUsagePeriodDefinition,
     resolveUsagePeriodStartTimeSeconds,
@@ -63,31 +67,6 @@ function isTotalKey(key: string): boolean {
     return key === 'total' || key.endsWith('Total') || key.endsWith('_total');
 }
 
-function buildFocusFilters(focus?: UsageQueryParams['focus']): UsageAnalyticsQueryRequest['filters'] | undefined {
-    if (!focus) {
-        return undefined;
-    }
-
-    switch (focus.dimension) {
-        case 'agent':
-            return { agentIds: [focus.key] };
-        case 'model':
-            return { modelIds: [focus.key] };
-        case 'session':
-            return { sessionIds: [focus.key] };
-        case 'project':
-            return { projectKeys: [focus.key] };
-        case 'workspace':
-            return { workspaceIds: [focus.key] };
-        case 'backendMode':
-            return { backendModes: [focus.key] };
-        case 'source':
-            return { sources: [focus.key] };
-        default:
-            return undefined;
-    }
-}
-
 export function sumRecordValues(record: Record<string, number>): number {
     let total = 0;
     for (const [key, value] of Object.entries(record)) {
@@ -112,10 +91,12 @@ export function getRecordTotal(record: Record<string, number>): number {
  */
 export async function queryUsage(
     credentials: AuthCredentials,
-    params: UsageQueryParams = {}
+    params: UsageQueryParams = {},
+    options?: Readonly<{ request?: ServerFetch; signal?: AbortSignal; analyticsRequest?: UsageAnalyticsQueryRequest }>,
 ): Promise<UsageResponse> {
-    return await backoff(async () => {
-        const request: UsageAnalyticsQueryRequest = {
+    const read = async () => {
+        options?.signal?.throwIfAborted();
+        const request: UsageAnalyticsQueryRequest = options?.analyticsRequest ?? {
             dateRange: typeof params.startTime === 'number' || typeof params.endTime === 'number'
                 ? {
                     startMs: typeof params.startTime === 'number' ? params.startTime * 1000 : undefined,
@@ -146,14 +127,15 @@ export async function queryUsage(
             ],
             filters: {
                 ...(params.sessionId ? { sessionIds: [params.sessionId] } : {}),
-                ...buildFocusFilters(params.focus),
+                ...buildUsageFocusFilters(params.focus),
             },
             includeSeries: true,
             topLimit: 20,
         };
 
-        const response = await serverFetch('/v2/usage/query', {
+        const response = await (options?.request ?? serverFetch)('/v2/usage/query', {
             method: 'POST',
+            signal: options?.signal,
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
                 'Content-Type': 'application/json'
@@ -170,21 +152,36 @@ export async function queryUsage(
                 // ignore
             }
 
-            if (response.status === 404 && message !== 'Session not found') {
+            if (response.status === 404 && !options?.analyticsRequest && !params.focus && message !== 'Session not found') {
                 return await queryLegacyUsage(credentials, params);
             }
             if (response.status === 404 && params.sessionId) {
                 throw new HappyError('Session not found', false, { status: 404, kind: 'config' });
             }
             if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
-                throw new HappyError(message, false, { status: response.status, kind: response.status === 401 || response.status === 403 ? 'auth' : 'config' });
+                const authorityRefused = response.status === 401 || response.status === 403;
+                throw new HappyError(message, false, { status: response.status, kind: authorityRefused ? 'auth' : 'config',
+                    ...(options?.analyticsRequest && authorityRefused ? { code: 'denied' } : {}) });
             }
             throw new Error(`Failed to query usage: ${response.status}`);
         }
 
-        const data = await response.json() as UsageResponse;
-        return data;
-    });
+        const data: unknown = await response.json();
+        options?.signal?.throwIfAborted();
+        return options?.analyticsRequest ? UsageAnalyticsQueryResponseSchema.parse(data) : data as UsageResponse;
+    };
+    // Rich Resource reads use their existing lifecycle's failure/retry owner.
+    // Legacy callers retain their established backoff and route translation.
+    return options?.analyticsRequest ? await read() : await backoff(read);
+}
+
+/** The same captured HTTP transport with the complete canonical query clauses. */
+export async function queryUsageAnalytics(
+    credentials: AuthCredentials,
+    request: UsageAnalyticsQueryRequest,
+    options: Readonly<{ request: ServerFetch; signal?: AbortSignal }>,
+): Promise<UsageAnalyticsQueryResponse> {
+    return UsageAnalyticsQueryResponseSchema.parse(await queryUsage(credentials, {}, { ...options, analyticsRequest: request }));
 }
 
 async function queryLegacyUsage(
@@ -249,8 +246,9 @@ export async function getUsageForPeriod(
     costMode: UsageQueryParams['costMode'] = 'auto',
 ): Promise<UsageResponse> {
     const nowMs = Date.now();
+    const timeZoneOffsetMinutes = -new Date(nowMs).getTimezoneOffset();
     const definition = getUsagePeriodDefinition(period);
-    const startTime = resolveUsagePeriodStartTimeSeconds(period, nowMs);
+    const startTime = resolveUsagePeriodStartTimeSeconds(period, nowMs, timeZoneOffsetMinutes);
     const endTime = Math.floor(nowMs / 1000);
 
     return queryUsage(credentials, {
@@ -258,7 +256,7 @@ export async function getUsageForPeriod(
         startTime,
         endTime,
         groupBy: definition.granularity,
-        timeZoneOffsetMinutes: -new Date().getTimezoneOffset(),
+        timeZoneOffsetMinutes,
         focus,
         costMode,
     });
@@ -267,7 +265,7 @@ export async function getUsageForPeriod(
 /**
  * Calculate total tokens and cost from usage data
  */
-export function calculateTotals(usage: UsageDataPoint[]): {
+export function calculateTotals(usage: UsageDataPoint[], timeZoneOffsetMinutes?: number): {
     totalTokens: number;
     totalCost: number;
     tokensByModel: Record<string, number>;
@@ -294,8 +292,12 @@ export function calculateTotals(usage: UsageDataPoint[]): {
         result.totalCost += getRecordTotal(dataPoint.cost);
         result.reportCount += Number.isFinite(dataPoint.reportCount) ? dataPoint.reportCount : 0;
 
-        const dayKey = new Date(dataPoint.timestamp * 1000).toDateString();
-        activeDayKeys.add(dayKey);
+        const timestampMs = dataPoint.timestamp * 1000;
+        if (Number.isFinite(timestampMs)) {
+            // Omitted offset is the incumbent native-local Team/default contract.
+            const offset = timeZoneOffsetMinutes ?? -new Date(timestampMs).getTimezoneOffset();
+            activeDayKeys.add(resolveUsageCalendarInstant(timestampMs, offset).date);
+        }
 
         for (const [bucket, tokens] of Object.entries(dataPoint.tokens)) {
             if (typeof tokens === 'number' && Number.isFinite(tokens) && !isTotalKey(bucket)) {

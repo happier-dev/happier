@@ -10,7 +10,7 @@ import {
     buildUsageAnalyticsExportPayload,
     buildUsagePivotCsv,
     buildUsageRecapCardSummaryText,
-} from './usageAnalyticsExport';
+} from '@/sync/domains/usage/usageAnalyticsExport';
 
 const response: UsageAnalyticsQueryResponse = {
     v: 1,
@@ -228,6 +228,23 @@ describe('usageAnalyticsExport', () => {
         });
 
         expect(summaryText).toContain('Last year');
+    });
+
+    it('withholds a calendar share after captured authority retires while the OS resolves availability', async () => {
+        const fs = createExpoFileSystemFileMock();
+        let current = true;
+        const shareAsync = vi.fn(async () => {});
+        vi.doMock('react-native', async () => {
+            const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
+            return createReactNativeNativeMock({ platformOS: 'ios' });
+        });
+        vi.doMock('expo-file-system', () => fs.module);
+        vi.doMock('expo-sharing', () => ({ isAvailableAsync: async () => { current = false; return true; }, shareAsync }));
+        const { exportUsageTextDocument } = await import('./usageExportFile');
+        expect(await exportUsageTextDocument({ content: 'BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n', fileName: 'usage-calendar.ics',
+            mimeType: 'text/calendar', isCurrent: () => current })).toBe(false);
+        expect(shareAsync).not.toHaveBeenCalled();
+        expect(fs.files.size).toBe(0);
     });
 
     it('shares native summaries using a cache File instead of deprecated top-level writes', async () => {

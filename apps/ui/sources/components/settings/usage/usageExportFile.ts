@@ -2,6 +2,8 @@ import { Platform } from 'react-native';
 import { log } from '@/log';
 import { createNativeCacheFileSink, shareNativeCacheFile } from '@/sync/runtime/files/nativeCacheFileSink';
 
+export { escapeUsageCsvField, buildUsageCsvDocument } from '@happier-dev/protocol/usage/usageExport';
+
 /**
  * The one place usage exports become a file.
  *
@@ -16,25 +18,14 @@ export function formatUsageExportFileTimestamp(date: Date): string {
     return date.toISOString().replace(/[:.]/g, '-');
 }
 
-/** RFC 4180 quoting, applied only to the fields that actually need it. */
-export function escapeUsageCsvField(value: string): string {
-    return /[",\n\r]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
-}
-
-/**
- * A CSV document from already-stringified cells. Values are written raw rather
- * than locale-formatted so an export stays machine-parseable.
- */
-export function buildUsageCsvDocument(rows: readonly (readonly string[])[]): string {
-    return `${rows.map((row) => row.map(escapeUsageCsvField).join(',')).join('\n')}\n`;
-}
-
 /** Shares a written cache file, reporting whether the platform actually took it. */
 export async function shareUsageExportCacheFile(input: Readonly<{
     content: string;
     fileName: string;
     mimeType?: string;
+    isCurrent?: () => boolean;
 }>): Promise<boolean> {
+    if (input.isCurrent?.() === false) return false;
     try {
         const sink = await createNativeCacheFileSink({ directoryName: 'happier-downloads', fileName: input.fileName });
         if (!sink.ok) throw new Error(sink.error);
@@ -42,7 +33,7 @@ export async function shareUsageExportCacheFile(input: Readonly<{
         try {
             await sink.writeBytes(new TextEncoder().encode(input.content));
             await sink.close();
-            const result = await shareNativeCacheFile({ fileUri: sink.fileUri, name: input.fileName, mimeType: input.mimeType });
+            const result = await shareNativeCacheFile({ fileUri: sink.fileUri, name: input.fileName, mimeType: input.mimeType, isCurrent: input.isCurrent });
             if (result.status !== 'shared') return false;
             retainCacheFile = result.retainCacheFile;
             return true;
@@ -98,7 +89,9 @@ export async function exportUsageTextDocument(input: Readonly<{
     content: string;
     fileName: string;
     mimeType: string;
+    isCurrent?: () => boolean;
 }>): Promise<boolean> {
+    if (input.isCurrent?.() === false) return false;
     if (Platform.OS === 'web') {
         return downloadTextOnWeb(input.content, input.fileName, input.mimeType);
     }
@@ -108,10 +101,12 @@ export async function exportUsageTextDocument(input: Readonly<{
 export async function exportUsageCsvDocument(input: Readonly<{
     csv: string;
     fileName: string;
+    isCurrent?: () => boolean;
 }>): Promise<boolean> {
     return await exportUsageTextDocument({
         content: input.csv,
         fileName: input.fileName,
         mimeType: 'text/csv',
+        isCurrent: input.isCurrent,
     });
 }
